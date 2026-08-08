@@ -892,13 +892,26 @@ pub struct ResponseExploiterContractV1 {
     pub(crate) authorized_base_seeds: [u64; 5],
     pub(crate) authorized_screen_seeds: [u64; 4],
     pub(crate) authorized_denovo_seeds: [u64; 1],
-    // Phase 2 horizon amendment (CLAUDE-DENOVO-SCREEN-SHEET-V1.md): the
-    // 512-update denovo-screen-512 role's own dedicated authorized-seed
-    // array, present and unconditionally checked on every response-exploiter
-    // record regardless of that record's own role, exactly like
-    // `authorized_base_seeds`/`authorized_screen_seeds`/`authorized_denovo_seeds`
-    // already are.
-    pub(crate) authorized_denovo_512_seeds: [u64; 1],
+    // Phase 2 horizon amendment (CLAUDE-DENOVO-SCREEN-SHEET-V1.md), amended
+    // again for backward compatibility: the 512-update denovo-screen-512
+    // role's own dedicated authorized-seed array. It was originally
+    // modeled as an unconditional, always-present field like
+    // `authorized_base_seeds`/`authorized_screen_seeds`/`authorized_denovo_seeds`,
+    // but that orphaned every record written before this field existed
+    // (denovo-screen-256's real store's run.json among them) with a hard
+    // decode failure, which is a real backward-compatibility defect, not
+    // intended fail-closed behavior for a pre-amendment record. It is now
+    // `Option`-shaped like the `parent_*` fields below:
+    // `#[serde(default, skip_serializing_if = "Option::is_none")]` lets a
+    // pre-amendment record (any role) decode with the field absent and
+    // keeps its canonical bytes unchanged on re-encode (absence never
+    // serializes as `null`). Presence/content is still role-conditional
+    // and fail-closed, not merely tolerated: see
+    // `validate_response_exploiter_v1` for the exact rule (denovo-screen-512
+    // REQUIRES it present and exactly correct; every other role accepts
+    // absence but still rejects wrong content if present).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) authorized_denovo_512_seeds: Option<[u64; 1]>,
     pub(crate) expected_base_seed: u64,
     pub(crate) run_role: String,
     pub(crate) expected_completion_generation: u64,
@@ -2587,6 +2600,22 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
     };
     let is_denovo = response.run_role == "denovo-screen" || response.run_role == "denovo-screen-512";
 
+    // Backward-compatibility amendment: unlike `authorized_base_seeds` /
+    // `authorized_screen_seeds` / `authorized_denovo_seeds` above (always
+    // present, always checked unconditionally), this array may be entirely
+    // absent -- a record written before the Phase 2 512-horizon amendment
+    // introduced it, of ANY role (the real denovo-screen-256 store's
+    // run.json among them). Absence is accepted for every role except
+    // "denovo-screen-512" itself, which cannot have a pre-amendment shape
+    // (the role did not exist before the amendment that added this field).
+    // Presence is still checked exactly, for every role: a record that
+    // does carry the field but with wrong content is rejected, the same
+    // fail-closed treatment every other literal in this contract gets.
+    let authorized_denovo_512_seeds_invalid = match response.authorized_denovo_512_seeds {
+        Some(seeds) => seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1,
+        None => expected_role_and_completion.0 == "denovo-screen-512",
+    };
+
     // Parent lineage and warm-start initialization are role-conditional, not
     // sentinel-filled: "build"/"screen" always bind the exact promoted(2)
     // gen-384 identity on both this contract's parent_* fields and the
@@ -2648,7 +2677,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         || response.authorized_base_seeds != RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
         || response.authorized_screen_seeds != RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
         || response.authorized_denovo_seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
-        || response.authorized_denovo_512_seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1
+        || authorized_denovo_512_seeds_invalid
         || response.expected_base_seed != record.schedule.base_seed
         || response.run_role != expected_role_and_completion.0
         || response.expected_completion_generation != expected_role_and_completion.1
@@ -5963,7 +5992,7 @@ mod tests {
             authorized_base_seeds: RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1,
             authorized_screen_seeds: RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1,
             authorized_denovo_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
-            authorized_denovo_512_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1,
+            authorized_denovo_512_seeds: Some(RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1),
             expected_base_seed,
             run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
                 .contains(&expected_base_seed)
@@ -6588,7 +6617,7 @@ mod tests {
             |r| r.authorized_base_seeds = [971_001, 971_002, 971_101, 971_102, 971_003],
             |r| r.authorized_screen_seeds = [971_091, 971_092, 971_191, 971_003],
             |r| r.authorized_denovo_seeds = [971_202],
-            |r| r.authorized_denovo_512_seeds = [971_299],
+            |r| r.authorized_denovo_512_seeds = Some([971_299]),
             |r| r.expected_base_seed = 971_002,
             |r| r.run_role = "screen".to_owned(),
             |r| r.run_role = "denovo-screen".to_owned(),
@@ -6691,6 +6720,12 @@ mod tests {
                 r.parent_model_parameter_sha256 =
                     Some(POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned())
             },
+            // Backward-compatibility amendment: unlike every other role,
+            // "denovo-screen-512" has no pre-amendment shape to fall back to
+            // (the role did not exist before the field did), so an absent
+            // array must still be rejected for this role specifically.
+            |r| r.authorized_denovo_512_seeds = None,
+            |r| r.authorized_denovo_512_seeds = Some([971_299]),
         ];
         for mutate in mutations {
             let mut record = response_exploiter_denovo_record_for_seed(971_202);
@@ -7765,6 +7800,93 @@ mod tests {
         assert_eq!(
             validated.record().contracts().opponent_policy.identity,
             FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
+        );
+    }
+
+    /// Backward-compatibility regression for the Phase 2 512-horizon
+    /// amendment: this reads the REAL, already-published denovo-screen-256
+    /// store's run.json (read-only; not a fixture, not modified by this
+    /// test) and proves it decodes and recomputes the exact same
+    /// `run_sha256` the store already published for it. Before the fix in
+    /// this commit, `authorized_denovo_512_seeds` was an unconditional,
+    /// always-present field, and this exact record (minted before that
+    /// field existed) failed to decode at all
+    /// (`missing field authorized_denovo_512_seeds`) -- a real
+    /// backward-compatibility defect, not intended fail-closed behavior.
+    /// This test depends on that external evidence directory remaining
+    /// present on this machine.
+    #[test]
+    fn real_denovo_screen_256_run_json_decodes_after_backward_compatibility_fix() {
+        const REAL_RUN_JSON_PATH: &str = r"D:\mtg-kernel-denovo-screen-v1\denovo-screen-build\attempt-002\denovo-store\run-0\store\run.json";
+        // Independently confirmed via `certutil -hashfile run.json SHA256`
+        // and cross-checked against the `run_sha256` field stored in that
+        // store's `latest.json` pointer.
+        const STORED_RUN_SHA256: &str =
+            "8d98ee5411e2407af7530421d2eac44cfdf3a6b0198b9ab898caec51b7e8e3cc";
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real denovo-screen-256 run.json fixture at {REAL_RUN_JSON_PATH}: {error}"
+            )
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real denovo-screen-256 run.json failed validation: {error:?}")
+        });
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+
+        let response = validated
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .expect("this store's record carries the response-exploiter contract");
+        assert_eq!(response.run_role, "denovo-screen");
+        assert_eq!(response.expected_base_seed, 971_201);
+        // The real, pre-amendment shape: the array this fix made optional is
+        // genuinely absent from this record's bytes, not merely defaulted.
+        assert!(response.authorized_denovo_512_seeds.is_none());
+        assert!(!String::from_utf8(bytes)
+            .unwrap()
+            .contains("authorized_denovo_512_seeds"));
+    }
+
+    /// Direct fixture-level companion to the real-store regression above:
+    /// a "build"-role record with `authorized_denovo_512_seeds` set to
+    /// `None` (the pre-amendment shape, any role other than
+    /// "denovo-screen-512") validates, the key is entirely absent from its
+    /// canonical bytes (never written as `null`), and decoding those exact
+    /// bytes back reproduces them byte for byte -- `skip_serializing_if`
+    /// really does make absence round-trip, not just decode.
+    #[test]
+    fn response_exploiter_absent_denovo_512_seeds_round_trips_without_the_key() {
+        let mut record = response_exploiter_record_for_seed(971_001);
+        record
+            .contracts
+            .response_exploiter_v1
+            .as_mut()
+            .unwrap()
+            .authorized_denovo_512_seeds = None;
+        refresh_derived(&mut record);
+        let validated = validate_train_run_record_v2(record).unwrap();
+        let bytes = validated.canonical_bytes().to_vec();
+        assert!(!String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("authorized_denovo_512_seeds"));
+
+        let redecoded = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(redecoded.canonical_bytes(), bytes.as_slice());
+        assert!(
+            redecoded
+                .record()
+                .contracts()
+                .response_exploiter_v1
+                .as_ref()
+                .unwrap()
+                .authorized_denovo_512_seeds
+                .is_none()
         );
     }
 
