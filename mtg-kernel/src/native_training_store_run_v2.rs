@@ -426,6 +426,28 @@ const RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1: &str = "00000000";
 const RESPONSE_EXPLOITER_DENOVO_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1: &str =
     "weights-bit-exact-from-common-model-snapshot-adam-moments-positive-zero-adam-step-zero/v1";
 
+// De-novo response screen, Phase 2 horizon amendment
+// (CLAUDE-DENOVO-SCREEN-SHEET-V1.md Phase 2 amendment, owner-authorized
+// 2026-08-08): a fourth response-exploiter run role, "denovo-screen-512",
+// structurally identical to "denovo-screen" in every respect (fresh Net8
+// from the frozen common model snapshot, no warm start, beta=0, no KL
+// anchor, same frozen refresh-008 mixture) except the training horizon,
+// which extends from 256 to 512 updates to read whether the screen's
+// decisively positive, still-climbing 256-update curve crosses 50 percent
+// against the mixture. A genuinely new schedule shape (unlike the original
+// 256-update denovo-screen role, which could reuse
+// RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1 unchanged because it matched
+// "build"'s existing 256-update shape): this role gets its own dedicated
+// seed array and its own training-update-count/completion-generation
+// constant, mirroring exactly how "build" and "screen" already use separate
+// arrays and separate completion generations rather than one shared,
+// reinterpreted array. One authorized seed today (971_202, verified fresh
+// against collab and every sibling mtg-kernel-* worktree before
+// authorization; the array stays closed/compile-bound and is widened, not
+// reinterpreted, if a future seed is authorized).
+const RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1: [u64; 1] = [971_202];
+const RESPONSE_EXPLOITER_DENOVO_512_TRAINING_UPDATE_COUNT_V1: u64 = 512;
+
 // V2 opponent seed-schedule namespace declarations (Self-Play Ladder Design
 // Contract S2, Section 2), owned by `native_trainer_schedule_v2`. Present in
 // a record if and only if `opponent_policy.identity` carries the ladder
@@ -870,6 +892,13 @@ pub struct ResponseExploiterContractV1 {
     pub(crate) authorized_base_seeds: [u64; 5],
     pub(crate) authorized_screen_seeds: [u64; 4],
     pub(crate) authorized_denovo_seeds: [u64; 1],
+    // Phase 2 horizon amendment (CLAUDE-DENOVO-SCREEN-SHEET-V1.md): the
+    // 512-update denovo-screen-512 role's own dedicated authorized-seed
+    // array, present and unconditionally checked on every response-exploiter
+    // record regardless of that record's own role, exactly like
+    // `authorized_base_seeds`/`authorized_screen_seeds`/`authorized_denovo_seeds`
+    // already are.
+    pub(crate) authorized_denovo_512_seeds: [u64; 1],
     pub(crate) expected_base_seed: u64,
     pub(crate) run_role: String,
     pub(crate) expected_completion_generation: u64,
@@ -2512,22 +2541,51 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         .contracts
         .opponent_ladder_initialization
         .as_ref();
+    // Third tuple element: the role's own training-update-count/schedule-
+    // length pin. For "build"/"screen"/"denovo-screen" this always coincides
+    // with the shared RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1 (256),
+    // independent of "screen"'s shorter completion generation (4) -- "screen"
+    // is still a 256-update-scheduled run read early, not a shorter schedule.
+    // "denovo-screen-512" (Phase 2 horizon amendment) is a genuinely longer
+    // schedule, so its training-update-count, completion generation, and
+    // `record.schedule.requested_successful_updates` all move together to
+    // its own dedicated 512 constant.
     let expected_role_and_completion = if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
         .contains(&response.expected_base_seed)
     {
-        ("build", RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1)
+        (
+            "build",
+            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+        )
     } else if RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
         .contains(&response.expected_base_seed)
     {
-        ("screen", RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1)
+        (
+            "screen",
+            RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1,
+            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+        )
     } else if RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
         .contains(&response.expected_base_seed)
     {
-        ("denovo-screen", RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1)
+        (
+            "denovo-screen",
+            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+        )
+    } else if RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1
+        .contains(&response.expected_base_seed)
+    {
+        (
+            "denovo-screen-512",
+            RESPONSE_EXPLOITER_DENOVO_512_TRAINING_UPDATE_COUNT_V1,
+            RESPONSE_EXPLOITER_DENOVO_512_TRAINING_UPDATE_COUNT_V1,
+        )
     } else {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     };
-    let is_denovo = response.run_role == "denovo-screen";
+    let is_denovo = response.run_role == "denovo-screen" || response.run_role == "denovo-screen-512";
 
     // Parent lineage and warm-start initialization are role-conditional, not
     // sentinel-filled: "build"/"screen" always bind the exact promoted(2)
@@ -2584,12 +2642,13 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         || response.effective_weight_total_units
             != RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_TOTAL_UNITS_V1
         || effective_weight_total != response.effective_weight_total_units
-        || response.training_update_count != RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1
+        || response.training_update_count != expected_role_and_completion.2
         || response.episodes_per_update != RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
         || response.reward_identity != POPULATION_REWARD_IDENTITY_V1
         || response.authorized_base_seeds != RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
         || response.authorized_screen_seeds != RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
         || response.authorized_denovo_seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
+        || response.authorized_denovo_512_seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1
         || response.expected_base_seed != record.schedule.base_seed
         || response.run_role != expected_role_and_completion.0
         || response.expected_completion_generation != expected_role_and_completion.1
@@ -2620,8 +2679,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         || record.schedule.checkpoint_episode_interval
             != RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
                 * RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1
-        || record.schedule.requested_successful_updates
-            != RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1
+        || record.schedule.requested_successful_updates != expected_role_and_completion.2
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
@@ -5905,6 +5963,7 @@ mod tests {
             authorized_base_seeds: RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1,
             authorized_screen_seeds: RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1,
             authorized_denovo_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
+            authorized_denovo_512_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1,
             expected_base_seed,
             run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
                 .contains(&expected_base_seed)
@@ -5933,15 +5992,31 @@ mod tests {
     }
 
     /// De-novo sibling of [`response_exploiter_fixture_for_seed`]: same
-    /// mixture/schedule binding, "denovo-screen" role, beta=0 bits, no
-    /// parent lineage (see the struct's own doc comment: Option-per-role,
-    /// not a sentinel).
+    /// mixture/schedule binding, "denovo-screen"/"denovo-screen-512" role
+    /// (auto-selected by `expected_base_seed` membership, exactly mirroring
+    /// how the base fixture auto-selects "build" vs "screen"), beta=0 bits,
+    /// no parent lineage (see the struct's own doc comment: Option-per-role,
+    /// not a sentinel). The 512-update Phase 2 horizon amendment
+    /// (CLAUDE-DENOVO-SCREEN-SHEET-V1.md) shares every structural denovo
+    /// requirement with the original 256-update role; only the seed
+    /// membership, role string, completion generation, and
+    /// training-update-count differ, so this stays one function rather than
+    /// a duplicated sibling -- seed 971_201 takes the exact same branch and
+    /// produces byte-identical output as before this amendment.
     fn response_exploiter_denovo_fixture_for_seed(expected_base_seed: u64) -> ResponseExploiterContractV1 {
+        let is_horizon_512 =
+            RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1.contains(&expected_base_seed);
+        let training_update_count = if is_horizon_512 {
+            RESPONSE_EXPLOITER_DENOVO_512_TRAINING_UPDATE_COUNT_V1
+        } else {
+            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1
+        };
         ResponseExploiterContractV1 {
             fresh_adam_after_weight_init_identity:
                 RESPONSE_EXPLOITER_DENOVO_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1.to_owned(),
-            run_role: "denovo-screen".to_owned(),
-            expected_completion_generation: RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+            run_role: if is_horizon_512 { "denovo-screen-512" } else { "denovo-screen" }.to_owned(),
+            training_update_count,
+            expected_completion_generation: training_update_count,
             policy_anchor_beta_f32_bits: RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1.to_owned(),
             parent_source_run_sha256: None,
             parent_generation: None,
@@ -5980,7 +6055,10 @@ mod tests {
     /// De-novo sibling of [`response_exploiter_record_for_seed`]: identical
     /// mixture/ladder-pool/schedule binding, but
     /// `opponent_ladder_initialization` stays `None` (no warm start) and the
-    /// attached contract is the "denovo-screen" fixture.
+    /// attached contract is the "denovo-screen"/"denovo-screen-512" fixture
+    /// (auto-selected by seed, see
+    /// [`response_exploiter_denovo_fixture_for_seed`]). Seed 971_201 takes
+    /// the exact same branch as before the Phase 2 horizon amendment.
     fn response_exploiter_denovo_record_for_seed(expected_base_seed: u64) -> TrainRunV2 {
         let mut record = coherent_v2_record();
         record.schedule.base_seed = expected_base_seed;
@@ -5988,7 +6066,11 @@ mod tests {
         record.schedule.checkpoint_segment_updates =
             RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
         record.schedule.requested_successful_updates =
-            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1;
+            if RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1.contains(&expected_base_seed) {
+                RESPONSE_EXPLOITER_DENOVO_512_TRAINING_UPDATE_COUNT_V1
+            } else {
+                RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1
+            };
         record.schedule.checkpoint_episode_interval = RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
             * RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
         record.contracts.opponent_policy.identity =
@@ -6506,6 +6588,7 @@ mod tests {
             |r| r.authorized_base_seeds = [971_001, 971_002, 971_101, 971_102, 971_003],
             |r| r.authorized_screen_seeds = [971_091, 971_092, 971_191, 971_003],
             |r| r.authorized_denovo_seeds = [971_202],
+            |r| r.authorized_denovo_512_seeds = [971_299],
             |r| r.expected_base_seed = 971_002,
             |r| r.run_role = "screen".to_owned(),
             |r| r.run_role = "denovo-screen".to_owned(),
@@ -6573,6 +6656,50 @@ mod tests {
         }
     }
 
+    /// De-novo-screen-512 mirror of
+    /// `response_exploiter_denovo_role_fields_fail_closed` (Phase 2 horizon
+    /// amendment, CLAUDE-DENOVO-SCREEN-SHEET-V1.md): the 512-update horizon
+    /// extension shares every structural denovo requirement (no parent,
+    /// beta=0) with the original 256-update role, but its own role string,
+    /// completion generation, and training-update-count are role-specific
+    /// (including against its immediate sibling "denovo-screen") and must
+    /// reject a one-at-a-time mutation just like the 256-update role does.
+    #[test]
+    fn response_exploiter_denovo_512_role_fields_fail_closed() {
+        let mutations: &[fn(&mut ResponseExploiterContractV1)] = &[
+            |r| r.run_role = "build".to_owned(),
+            |r| r.run_role = "screen".to_owned(),
+            |r| r.run_role = "denovo-screen".to_owned(),
+            |r| r.expected_completion_generation = RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+            |r| r.training_update_count = RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
+            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned(),
+            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned(),
+            |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
+            |r| {
+                r.parent_source_run_sha256 = Some(POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned())
+            },
+            |r| r.parent_generation = Some(POPULATION_PARENT_GENERATION_V1),
+            |r| {
+                r.parent_checkpoint_sha256 =
+                    Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
+            },
+            |r| {
+                r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned())
+            },
+            |r| r.parent_state_sha256 = Some(POPULATION_PARENT_STATE_SHA256_V1.to_owned()),
+            |r| {
+                r.parent_model_parameter_sha256 =
+                    Some(POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned())
+            },
+        ];
+        for mutate in mutations {
+            let mut record = response_exploiter_denovo_record_for_seed(971_202);
+            mutate(record.contracts.response_exploiter_v1.as_mut().unwrap());
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
     /// A "denovo-screen" record with the warm-start
     /// `opponent_ladder_initialization` section installed (the exact section
     /// "build"/"screen" require) must fail closed: presence, not just
@@ -6580,6 +6707,18 @@ mod tests {
     #[test]
     fn response_exploiter_denovo_role_rejects_installed_initialization() {
         let mut record = response_exploiter_denovo_record_for_seed(971_201);
+        record.contracts.opponent_ladder_initialization =
+            Some(population_parent_initialization_fixture());
+        refresh_derived(&mut record);
+        assert!(validate_train_run_record_v2(record).is_err());
+    }
+
+    /// De-novo-screen-512 mirror: presence, not just content, of the
+    /// warm-start `opponent_ladder_initialization` section is
+    /// role-conditional for the 512-update horizon extension too.
+    #[test]
+    fn response_exploiter_denovo_512_role_rejects_installed_initialization() {
+        let mut record = response_exploiter_denovo_record_for_seed(971_202);
         record.contracts.opponent_ladder_initialization =
             Some(population_parent_initialization_fixture());
         refresh_derived(&mut record);
@@ -6601,6 +6740,46 @@ mod tests {
             .unwrap();
         assert_eq!(response.run_role, "denovo-screen");
         assert_eq!(response.expected_completion_generation, 256);
+        assert_eq!(response.policy_anchor_beta_f32_bits, "00000000");
+        assert!(response.parent_source_run_sha256.is_none());
+        assert!(response.parent_generation.is_none());
+        assert!(response.parent_checkpoint_sha256.is_none());
+        assert!(response.parent_sidecar_sha256.is_none());
+        assert!(response.parent_state_sha256.is_none());
+        assert!(response.parent_model_parameter_sha256.is_none());
+        assert!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_initialization
+                .is_none()
+        );
+        assert!(
+            validated
+                .record()
+                .contracts()
+                .opponent_ladder_pool
+                .is_some()
+        );
+    }
+
+    /// The valid "denovo-screen-512" record (Phase 2 horizon amendment; no
+    /// parent, no initialization, beta bits 0.0, role/completion-generation/
+    /// training-update-count matching seed 971_202) validates cleanly,
+    /// matching the equivalent 256-update positive test above.
+    #[test]
+    fn response_exploiter_denovo_512_role_validates_with_no_parent_and_no_initialization() {
+        let record = response_exploiter_denovo_record_for_seed(971_202);
+        let validated = validate_train_run_record_v2(record).unwrap();
+        let response = validated
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .unwrap();
+        assert_eq!(response.run_role, "denovo-screen-512");
+        assert_eq!(response.expected_completion_generation, 512);
+        assert_eq!(response.training_update_count, 512);
         assert_eq!(response.policy_anchor_beta_f32_bits, "00000000");
         assert!(response.parent_source_run_sha256.is_none());
         assert!(response.parent_generation.is_none());
@@ -6656,6 +6835,56 @@ mod tests {
                 .unwrap();
             assert_eq!(response.expected_base_seed, seed);
             assert_eq!(response.run_role, "denovo-screen");
+            assert!(validated.record().contracts().population_program_v1.is_none());
+            assert_eq!(
+                validated.record().contracts().opponent_ladder_initialization,
+                None
+            );
+            let text = String::from_utf8(bytes).unwrap();
+            assert!(!text.contains("parent_source_run_sha256"));
+            assert!(!text.contains("parent_generation"));
+            assert!(!text.contains("parent_checkpoint_sha256"));
+            assert!(!text.contains("parent_sidecar_sha256"));
+            assert!(!text.contains("parent_state_sha256"));
+            assert!(!text.contains("parent_model_parameter_sha256"));
+        }
+    }
+
+    /// Builder round-trip for the authorized denovo-512 seed (Phase 2
+    /// horizon amendment), mirroring
+    /// `response_exploiter_denovo_builder_mints_authorized_seed`: same
+    /// builder function (it already dispatches "denovo-screen" vs
+    /// "denovo-screen-512" by seed membership), just called with the 512
+    /// horizon's own seed and requested-update count.
+    #[test]
+    fn response_exploiter_denovo_512_builder_mints_authorized_seed() {
+        use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
+
+        for seed in RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1 {
+            let bytes =
+                test_fixture_bytes_with_schedule_and_base_seed_response_exploiter_denovo_environment_v2(
+                    NativeTrainingNumericalBackendV1::Sequential,
+                    64,
+                    4,
+                    512,
+                    2,
+                    32,
+                    16,
+                    1_024,
+                    2_048,
+                    seed,
+                    valid_ladder_pool_fixture(),
+                );
+            let validated = decode_train_run_v2(&bytes).unwrap();
+            let response = validated
+                .record()
+                .contracts()
+                .response_exploiter_v1
+                .as_ref()
+                .unwrap();
+            assert_eq!(response.expected_base_seed, seed);
+            assert_eq!(response.run_role, "denovo-screen-512");
+            assert_eq!(response.expected_completion_generation, 512);
             assert!(validated.record().contracts().population_program_v1.is_none());
             assert_eq!(
                 validated.record().contracts().opponent_ladder_initialization,
