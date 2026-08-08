@@ -973,6 +973,7 @@
     },
     {
       "name": "Faerie Miscreant",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -1004,6 +1005,7 @@
     },
     {
       "name": "Faerie Seer",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [

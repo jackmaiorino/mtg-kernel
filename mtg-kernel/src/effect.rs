@@ -134,6 +134,13 @@ pub enum EffectCond {
     /// anywhere -- recomputed fresh every time it's checked, same as
     /// `LandfallThisTurn`.
     ControlsArtifactCount(u8),
+    /// True iff `ctx.controller` currently controls a battlefield object
+    /// with the same card definition as this effect's source, excluding the
+    /// exact source object. Faerie Miscreant uses this for the resolution
+    /// half of its intervening-if clause. Excluding the source is important:
+    /// the condition can remain true after the triggering Miscreant leaves
+    /// the battlefield as long as its controller still controls another one.
+    ControlsAnotherSourceCard,
     /// True iff the cast this resolution's ETB trigger followed from was
     /// kicked (`card_def::CardDef::kicker_cost`, Goblin Bushwhacker's "if it
     /// was kicked" intervening-if). Reads `ExecCtx::kicked` -- cast-time
@@ -3832,6 +3839,14 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 })
                 .count();
             count >= *n as usize
+        }
+        EffectCond::ControlsAnotherSourceCard => {
+            let source_def = state.objects.get(ctx.source).card_def;
+            state.players[ctx.controller.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .any(|id| id != ctx.source && state.objects.get(id).card_def == source_def)
         }
         EffectCond::WasKicked => ctx.kicked,
     }

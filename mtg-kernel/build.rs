@@ -2619,7 +2619,10 @@ fn effect_recipe_for(card: &CardJson) -> String {
 fn keywords_for(name: &str) -> &'static str {
     match name {
         "Masked Meower" | "Clockwork Percussionist" => "Keywords::HASTE",
-        "Sneaky Snacker" | "Bird Illusion Token" => "Keywords::FLYING",
+        "Sneaky Snacker"
+        | "Bird Illusion Token"
+        | "Faerie Miscreant"
+        | "Faerie Seer" => "Keywords::FLYING",
         "Samurai Token" => "Keywords::VIGILANCE",
         _ => "Keywords::NONE",
     }

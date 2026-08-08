@@ -656,10 +656,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v7_is_frozen() {
-        // Version 7 promotes Gut Shot's shared Phyrexian burn recipe and
-        // Ichor Wellspring's ordinary permanent plus trigger contract.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x7677_9a66_a707_0988);
+    fn card_db_hash_v8_is_frozen() {
+        // Version 8 promotes Faerie Miscreant and Faerie Seer as ordinary
+        // flying permanents with their exact ETB trigger programs.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x09f1_4312_14fb_2e60);
     }
 
     #[test]

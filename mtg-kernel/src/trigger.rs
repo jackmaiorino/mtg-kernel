@@ -59,11 +59,14 @@ pub struct TriggeredAbilityDef {
     /// battlefield unless its reminder text says otherwise (like Sneaky
     /// Snacker's "from your graveyard").
     pub home_zone: Zone,
-    /// 603.4 intervening-if gate checked when the event happens. Goblin
-    /// Bushwhacker is the only card in this pool with one: an unkicked
-    /// Bushwhacker must not create a stack item at all (as opposed to
+    /// 603.4 intervening-if gate checked when the event happens. An unkicked
+    /// Goblin Bushwhacker must not create a stack item at all (as opposed to
     /// creating a trigger whose effect later resolves to a no-op).
     pub intervening_if_kicked: bool,
+    /// Faerie Miscreant's trigger-time 603.4 gate. This is deliberately a
+    /// same-definition board predicate rather than a card-name branch. The
+    /// matching resolution-time gate lives in `EffectCond`.
+    pub intervening_if_controls_another_source_card: bool,
     pub effect: fn() -> EffectOp,
 }
 
@@ -120,24 +123,28 @@ const GUTTERSNIPE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::CastInstantOrSorcery,
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
     effect: guttersnipe_effect,
 }];
 const MURMURING_MYSTIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::CastInstantOrSorcery,
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
     effect: murmuring_mystic_effect,
 }];
 const VOLDAREN_EPICURE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
     effect: voldaren_epicure_effect,
 }];
 const SNEAKY_SNACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::DrawNth(3),
     home_zone: Zone::Graveyard,
     intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
     effect: sneaky_snacker_effect,
 }];
 
@@ -162,6 +169,24 @@ fn ichor_wellspring_draw_effect() -> EffectOp {
     EffectOp::DrawCards {
         player: PlayerRef::Controller,
         count: 1,
+    }
+}
+
+fn faerie_miscreant_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::ControlsAnotherSourceCard,
+        then: Box::new(EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        }),
+        else_: Box::new(EffectOp::Sequence(vec![])),
+    }
+}
+
+fn faerie_seer_effect() -> EffectOp {
+    EffectOp::Scry {
+        player: PlayerRef::Controller,
+        count: 2,
     }
 }
 
@@ -195,12 +220,14 @@ const BURNING_TREE_EMISSARY_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbili
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
     effect: burning_tree_emissary_effect,
 }];
 const CLOCKWORK_PERCUSSIONIST_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::LeftBattlefieldToGraveyard,
     home_zone: Zone::Graveyard,
     intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
     effect: clockwork_percussionist_dies_effect,
 }];
 const ICHOR_WELLSPRING_TRIGGERS: [TriggeredAbilityDef; 2] = [
@@ -208,12 +235,14 @@ const ICHOR_WELLSPRING_TRIGGERS: [TriggeredAbilityDef; 2] = [
         condition: TriggerCondition::Etb,
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
         effect: ichor_wellspring_draw_effect,
     },
     TriggeredAbilityDef {
         condition: TriggerCondition::LeftBattlefieldToGraveyard,
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
         effect: ichor_wellspring_draw_effect,
     },
 ];
@@ -222,6 +251,7 @@ const EXPERIMENTAL_SYNTHESIZER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         condition: TriggerCondition::Etb,
         home_zone: Zone::Battlefield,
         intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
         effect: experimental_synthesizer_impulse_effect,
     },
     TriggeredAbilityDef {
@@ -230,6 +260,7 @@ const EXPERIMENTAL_SYNTHESIZER_TRIGGERS: [TriggeredAbilityDef; 2] = [
         // therefore deliberately ignore this post-event zone gate.
         home_zone: Zone::Graveyard,
         intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
         effect: experimental_synthesizer_impulse_effect,
     },
 ];
@@ -237,7 +268,24 @@ const GOBLIN_BUSHWHACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityD
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
     intervening_if_kicked: true,
+    intervening_if_controls_another_source_card: false,
     effect: goblin_bushwhacker_effect,
+}];
+
+const FAERIE_MISCREANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: true,
+    effect: faerie_miscreant_effect,
+}];
+
+const FAERIE_SEER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: faerie_seer_effect,
 }];
 
 /// The pool's implemented triggered abilities, matched by card name (ids are
@@ -262,6 +310,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Ichor Wellspring" => &ICHOR_WELLSPRING_TRIGGERS,
         "Experimental Synthesizer" => &EXPERIMENTAL_SYNTHESIZER_TRIGGERS,
         "Goblin Bushwhacker" => &GOBLIN_BUSHWHACKER_TRIGGERS,
+        "Faerie Miscreant" => &FAERIE_MISCREANT_TRIGGERS,
+        "Faerie Seer" => &FAERIE_SEER_TRIGGERS,
         _ => &[],
     }
 }
@@ -433,6 +483,19 @@ fn triggers_from_events(
                     let kicked = Some(id) == kicked_source;
                     if def.intervening_if_kicked && !kicked {
                         continue;
+                    }
+                    if def.intervening_if_controls_another_source_card {
+                        let source_def = obj.card_def;
+                        let controls_another = state.players[event_controller.index()]
+                            .battlefield
+                            .iter()
+                            .copied()
+                            .any(|other| {
+                                other != id && state.objects.get(other).card_def == source_def
+                            });
+                        if !controls_another {
+                            continue;
+                        }
                     }
                     new_triggers.push(PendingTrigger {
                         controller: event_controller,
