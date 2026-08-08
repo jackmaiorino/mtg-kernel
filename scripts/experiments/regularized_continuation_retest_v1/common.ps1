@@ -12,6 +12,22 @@ $script:InitGeneration = 384
 $script:RunnerTest = 'native_science_loop_v1::windows_science_loop_tests::multirun_pilot_v1'
 $script:RequiredCloseReopenMarker = 'STORE CLOSE_REOPEN'
 $script:PolicyAnchorAuthorityFileName = 'policy-anchor-authority.json'
+# De-novo response screen (CLAUDE-DENOVO-SCREEN-SHEET-V1.md): a genuinely
+# separate authority record/file from policy-anchor-authority.json above --
+# never written together for the same run (Set-ScaledNativeEnvironment calls
+# exactly one of Assert-OrCreatePolicyAnchorAuthority /
+# Assert-OrCreateDenovoGenesisAuthority per run) -- so it never states or
+# implies a promoted(2) parent. Identity/hashes below are read independently
+# off disk each call and asserted against the values this session verified
+# by hand (`sha256sum data/common_model_snapshot_v1/{manifest.json,parameters.f32le}`,
+# matching the Rust crate's own FROZEN_SNAPSHOT_MANIFEST_FILE_SHA256_V2 /
+# FROZEN_SNAPSHOT_PAYLOAD_SHA256_V2 constants in native_training_store_run_v2.rs
+# bit-for-bit), not merely trusted from the manifest's own internal claim.
+$script:DenovoGenesisAuthorityFileName = 'denovo-genesis-authority.json'
+$script:DenovoSnapshotRelativePath = 'data\common_model_snapshot_v1'
+$script:DenovoSnapshotManifestFileSha256 = 'd5d296f5d4ee1f7e40a6005f1e1dd328b2885f6b95f0c6968c6bf1b87351c7cc'
+$script:DenovoSnapshotPayloadSha256 = '79f715b11ccce80ac66cc832bfdc0c963a8a20f27f7b492fdfbb433c008a90a5'
+$script:DenovoModelInitSeed = [uint64]6443515232517447393
 $script:EnvironmentNames = @(
     'MULTIRUN_RUNS', 'MULTIRUN_UPDATES', 'MULTIRUN_WORKERS',
     'MULTIRUN_SESSIONS', 'MULTIRUN_BROKER_TARGET', 'MULTIRUN_RECORD_ONLY',
@@ -368,6 +384,80 @@ function Assert-OrCreatePolicyAnchorAuthority {
         path = $path
         sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
         beta = $PolicyAnchorBeta
+    }
+}
+
+function Get-DenovoGenesisAuthorityRecord {
+    # Fail-closed identity check: recompute the common model snapshot's
+    # manifest/payload hashes off disk right now and compare against the
+    # frozen literals this session independently verified, before ever
+    # trusting them into an authority record. A silent snapshot drift (wrong
+    # file, wrong version, local edit) must stop the run here, not surface
+    # later as an uninterpretable training anomaly.
+    if ($null -eq $script:RepoRoot -or [string]::IsNullOrWhiteSpace($script:RepoRoot)) {
+        throw 'Get-DenovoGenesisAuthorityRecord requires $script:RepoRoot to be set by the caller'
+    }
+    $snapshotDir = Join-Path $script:RepoRoot $script:DenovoSnapshotRelativePath
+    $manifestPath = Join-Path $snapshotDir 'manifest.json'
+    $payloadPath = Join-Path $snapshotDir 'parameters.f32le'
+    foreach ($path in @($manifestPath, $payloadPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "denovo genesis authority: common model snapshot file is missing: $path"
+        }
+    }
+    $manifestSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
+    $payloadSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $payloadPath).Hash.ToLowerInvariant()
+    if ($manifestSha256 -cne $script:DenovoSnapshotManifestFileSha256) {
+        throw "denovo genesis authority: common model snapshot manifest.json hash drifted: expected $script:DenovoSnapshotManifestFileSha256, got $manifestSha256"
+    }
+    if ($payloadSha256 -cne $script:DenovoSnapshotPayloadSha256) {
+        throw "denovo genesis authority: common model snapshot parameters.f32le hash drifted: expected $script:DenovoSnapshotPayloadSha256, got $payloadSha256"
+    }
+    return [ordered]@{
+        schema = 'denovo-response-screen-genesis-authority/v1'
+        genesis_source = 'common-model-snapshot'
+        model_init_seed = [string]$script:DenovoModelInitSeed
+        snapshot_manifest_path = $manifestPath
+        snapshot_manifest_sha256 = $manifestSha256
+        snapshot_payload_path = $payloadPath
+        snapshot_payload_sha256 = $payloadSha256
+        parent_run = $null
+        parent_generation = $null
+        policy_anchor_beta = '0'
+    }
+}
+
+function Assert-OrCreateDenovoGenesisAuthority {
+    # De-novo sibling of Assert-OrCreatePolicyAnchorAuthority: never writes
+    # or implies a promoted(2) parent (Mechanism Decision Memo V1 / coordinator
+    # ruling: de-novo runs get their own authority record path stating the
+    # common-model-snapshot genesis explicitly). Fails closed on a resume if
+    # the recomputed snapshot identity has drifted since the record was
+    # first written, exactly like the policy-anchor authority's own resume
+    # check.
+    param(
+        [Parameter(Mandatory = $true)][string]$StoreParent,
+        [switch]$ResumeExistingStore
+    )
+    $path = Join-Path $StoreParent $script:DenovoGenesisAuthorityFileName
+    $expected = Get-DenovoGenesisAuthorityRecord
+    if ($ResumeExistingStore) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "resume is missing denovo genesis authority: $path"
+        }
+        $actual = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        foreach ($field in @('schema', 'genesis_source', 'model_init_seed', 'snapshot_manifest_sha256', 'snapshot_payload_sha256', 'policy_anchor_beta')) {
+            if ([string]$actual.$field -ne [string]$expected[$field]) {
+                throw "resume denovo genesis authority mismatch for $field"
+            }
+        }
+    }
+    else {
+        Write-JsonFile -Value $expected -Path $path
+    }
+    return [ordered]@{
+        path = $path
+        sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
     }
 }
 
