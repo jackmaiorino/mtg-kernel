@@ -43,6 +43,13 @@ pub enum ReplacementEffectKind {
     /// replacement pipeline shape end-to-end; see
     /// `tests::prevention_shield_absorbs_then_expires`.
     PreventNextDamage { target: Target, remaining: i32 },
+    /// Prevent all damage that sources sharing `color` would deal during
+    /// the turn in which this replacement was installed.
+    PreventDamageFromColorUntilEndOfTurn {
+        color: ManaColor,
+        turn: u32,
+        active_player: PlayerId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -78,6 +85,12 @@ pub struct ZoneChangeProposed {
     /// inserted identity. Other observers learn no new identity, while their
     /// still-valid prior library position facts shift through the insertion.
     pub library_insert_visibility: LibraryInsertVisibility,
+    /// Optional transformed battlefield face. Ordinary zone changes retain
+    /// `None`, which resets the object to its front face.
+    pub battlefield_face_index: Option<u8>,
+    /// Optional controller for a battlefield return whose effect says
+    /// "under your control" rather than the ordinary owner-controlled rule.
+    pub battlefield_controller: Option<PlayerId>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -149,6 +162,8 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Hidden,
+            battlefield_face_index: None,
+            battlefield_controller: None,
             touched_by: Vec::new(),
         })
     }
@@ -159,6 +174,8 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: true,
             library_insert_visibility: LibraryInsertVisibility::Hidden,
+            battlefield_face_index: None,
+            battlefield_controller: None,
             touched_by: Vec::new(),
         })
     }
@@ -172,6 +189,8 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Owner,
+            battlefield_face_index: None,
+            battlefield_controller: None,
             touched_by: Vec::new(),
         })
     }
@@ -186,6 +205,24 @@ impl ProposedEvent {
             library_placement: placement,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Public,
+            battlefield_face_index: None,
+            battlefield_controller: None,
+            touched_by: Vec::new(),
+        })
+    }
+    pub fn transformed_battlefield_return(
+        object: ObjectId,
+        face_index: u8,
+        controller: PlayerId,
+    ) -> ProposedEvent {
+        ProposedEvent::ZoneChange(ZoneChangeProposed {
+            object,
+            to_zone: Zone::Battlefield,
+            library_placement: LibraryPlacement::Top,
+            preserve_known_identity: false,
+            library_insert_visibility: LibraryInsertVisibility::Public,
+            battlefield_face_index: Some(face_index),
+            battlefield_controller: Some(controller),
             touched_by: Vec::new(),
         })
     }
@@ -342,6 +379,15 @@ pub enum CommittedEvent {
         player: PlayerId,
         amount: i32,
     },
+    /// A Saga received this exact lore counter and its corresponding chapter
+    /// ability triggered. Captures the source incarnation at counter time so
+    /// later zone changes cannot relabel the chapter ability.
+    SagaChapter {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        controller: PlayerId,
+        chapter: u8,
+    },
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -352,6 +398,20 @@ pub fn apply_replacements(
     state: &mut GameState,
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
+    let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
+        && state.engine.until_end_of_turn.iter().any(|effect| {
+            matches!(
+                effect,
+                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+            )
+        });
+    if let ProposedEvent::Damage(damage) = &proposed {
+        if !damage_cannot_be_prevented
+            && crate::engine::damage_is_prevented_by_protection(state, damage.source, damage.target)
+        {
+            return None;
+        }
+    }
     loop {
         let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
             && state.engine.until_end_of_turn.iter().any(|effect| {
@@ -367,8 +427,12 @@ pub fn apply_replacements(
             .find(|r| {
                 !proposed.touched_by().contains(&r.id)
                     && !(damage_cannot_be_prevented
-                        && matches!(&r.kind, ReplacementEffectKind::PreventNextDamage { .. }))
-                    && replacement_applies(r, &proposed)
+                        && matches!(
+                            &r.kind,
+                            ReplacementEffectKind::PreventNextDamage { .. }
+                                | ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                        ))
+                    && replacement_applies(r, &proposed, state)
             })
             .cloned();
 
@@ -384,12 +448,30 @@ pub fn apply_replacements(
     }
 }
 
-fn replacement_applies(repl: &ActiveReplacement, proposed: &ProposedEvent) -> bool {
+fn replacement_applies(
+    repl: &ActiveReplacement,
+    proposed: &ProposedEvent,
+    state: &GameState,
+) -> bool {
     match (&repl.kind, proposed) {
         (
             ReplacementEffectKind::PreventNextDamage { target, remaining },
             ProposedEvent::Damage(d),
         ) => *remaining > 0 && d.target == *target,
+        (
+            ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
+                color,
+                turn,
+                active_player,
+            },
+            ProposedEvent::Damage(d),
+        ) => {
+            *turn == state.turn
+                && *active_player == state.active_player
+                && crate::engine::object_color_mask(state, d.source)
+                    & crate::card_def::mana_color_mask(*color)
+                    != 0
+        }
         _ => false,
     }
 }
@@ -435,8 +517,40 @@ fn replacement_apply(
                 Some(ProposedEvent::Damage(d))
             }
         }
+        (
+            ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. },
+            ProposedEvent::Damage(_),
+        ) => None,
         (_, other) => Some(other),
     }
+}
+
+/// Installs a W/U/B/R/G prevention replacement through the same monotonic
+/// identity allocator used by all replacement effects.
+pub fn install_color_damage_prevention(
+    state: &mut GameState,
+    source: ObjectId,
+    color: ManaColor,
+) -> Result<ReplacementId, String> {
+    if color == ManaColor::C {
+        return Err("colorless is not a legal Prismatic Strands choice".to_string());
+    }
+    let id = state
+        .engine
+        .next_replacement_id
+        .checked_add(1)
+        .ok_or("replacement identity space exhausted")?;
+    state.engine.next_replacement_id = id;
+    state.engine.active_replacements.push(ActiveReplacement {
+        id,
+        source,
+        kind: ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
+            color,
+            turn: state.turn,
+            active_player: state.active_player,
+        },
+    });
+    Ok(id)
 }
 
 fn lifelink_gain_for(state: &GameState, event: &ProposedEvent) -> Option<(PlayerId, i32)> {
@@ -494,6 +608,8 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 z.library_placement,
                 z.preserve_known_identity,
                 z.library_insert_visibility,
+                z.battlefield_face_index,
+                z.battlefield_controller,
             );
             CommittedEvent::ZoneChange {
                 object: z.object,
@@ -586,8 +702,33 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
             }
         }
     };
+    let saga_entered = matches!(
+        committed,
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        } if state.objects.get(object).v4.face_index == 0
+            && crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize]
+                .saga
+                .is_some()
+    );
+    let saga_source = match &committed {
+        CommittedEvent::ZoneChange { object, .. } if saga_entered => Some(*object),
+        _ => None,
+    };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if let Some(source) = saga_source {
+        let chapter = {
+            let lore = &mut state.objects.get_mut(source).counters.lore;
+            *lore = lore
+                .checked_add(1)
+                .expect("a newly entered Saga's first lore counter fits i16");
+            u8::try_from(*lore).expect("a supported Saga chapter fits u8")
+        };
+        log_saga_chapter(state, source, chapter);
+    }
 }
 
 /// Runs the replace/prevent pass independently on every event in `events`
@@ -684,6 +825,20 @@ pub fn log_combat_damage_to_player(
     state.engine.event_history.push(committed);
 }
 
+/// Logs the nonreplaceable chapter marker immediately after a lore counter
+/// is placed by the Saga rules action.
+pub fn log_saga_chapter(state: &mut GameState, source: ObjectId, chapter: u8) {
+    let object = state.objects.get(source);
+    let committed = CommittedEvent::SagaChapter {
+        source,
+        source_zone_change_count: object.zone_change_count,
+        controller: object.controller,
+        chapter,
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
 fn permanent_enters_battlefield_tapped(
     state: &GameState,
     object: ObjectId,
@@ -726,6 +881,8 @@ fn commit_zone_change(
     library_placement: LibraryPlacement,
     preserve_known_identity: bool,
     library_insert_visibility: LibraryInsertVisibility,
+    battlefield_face_index: Option<u8>,
+    battlefield_controller: Option<PlayerId>,
 ) {
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
@@ -775,7 +932,9 @@ fn commit_zone_change(
             state.players[owner.index()].library.insert(position, id);
         }
         Zone::Hand => state.players[owner.index()].hand.push(id),
-        Zone::Battlefield => state.players[owner.index()].battlefield.push(id),
+        Zone::Battlefield => state.players[battlefield_controller.unwrap_or(owner).index()]
+            .battlefield
+            .push(id),
         Zone::Graveyard => state.players[owner.index()].graveyard.push(id),
         Zone::Exile => state.exile.push(id),
         Zone::Command => state.command.push(id),
@@ -791,7 +950,11 @@ fn commit_zone_change(
         // A zone change creates a new object with no carried-over control
         // effect. Moves to Stack are engine actions and never enter this
         // helper, so every destination handled here begins owner-controlled.
-        obj.controller = owner;
+        obj.controller = if to_zone == Zone::Battlefield {
+            battlefield_controller.unwrap_or(owner)
+        } else {
+            owner
+        };
         // Plot is provenance of one exact exile incarnation, not a durable
         // property of the physical card. `engine::plot_spell` re-stamps the
         // newly-created Exile incarnation immediately after this move; every
@@ -804,7 +967,29 @@ fn commit_zone_change(
         // zone-specific special case.
         obj.zone_change_count += 1;
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
+        obj.name = crate::card_def::CARD_DEFS[obj.card_def as usize]
+            .object_name
+            .to_string();
         if to_zone == Zone::Battlefield {
+            if let Some(face_index) = battlefield_face_index {
+                let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+                let Some(face) = (face_index == 1)
+                    .then_some(def.transform_face.as_ref())
+                    .flatten()
+                else {
+                    panic!("transformed battlefield return requested an undefined face");
+                };
+                obj.v4.face_index = face_index;
+                obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
+                obj.v4.effective_subtype_ids = face
+                    .subtypes
+                    .iter()
+                    .map(|subtype| subtype.stable_id())
+                    .collect();
+                obj.v4.effective_subtype_ids.sort_unstable();
+                obj.v4.effective_subtype_ids.dedup();
+                obj.name = face.name.to_string();
+            }
             obj.tapped = enters_battlefield_tapped;
             obj.summoning_sick = true;
             obj.damage = 0;

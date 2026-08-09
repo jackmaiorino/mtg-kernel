@@ -2299,6 +2299,43 @@ fn core_surface_action_candidates_v1(
                             SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
                         )?;
                     }
+                } else if let Some(crate::effect::PendingEffectChoice::ChooseOption {
+                    player: color_player,
+                    options,
+                    purpose:
+                        crate::effect::EffectOptionChoicePurpose::ChooseColor { legal_colors, .. },
+                    ..
+                }) = state
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .and_then(|pending| pending.choice.as_ref())
+                {
+                    if color_player != player
+                        || options.len() != usize::from(*option_count)
+                        || state.engine.pending_effect.as_ref().is_none_or(|pending| {
+                            pending.resolving_item.source.0 != source.arena_id
+                        })
+                    {
+                        return Err(RlContractError(
+                            "effect color-choice decision disagrees with its continuation"
+                                .to_string(),
+                        ));
+                    }
+                    for (option_index, color) in legal_colors.iter().copied().enumerate() {
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseEffectColor {
+                                actor,
+                                source: source.clone(),
+                                color,
+                            },
+                            SurfaceAction::Action(Action::ChooseEffectOption(
+                                u16::try_from(option_index)
+                                    .expect("five colors fit the u16 option contract"),
+                            )),
+                        )?;
+                    }
                 } else {
                     for option_index in 0..*option_count {
                         push_action(
@@ -4384,10 +4421,12 @@ fn object_is_live_in_zone_index(state: &GameState, id: ObjectId) -> Result<bool>
         Zone::Stack => state.stack.iter().any(|item| {
             item.kind == StackItemKind::Spell
                 && item.source == id
-                && item
-                    .v4
-                    .source_contract
-                    .is_some_and(|contract| contract.zone_change_count == object.zone_change_count)
+                && item.v4.source_contract.is_some_and(|contract| {
+                    contract.source == id
+                        && contract.card_def == object.card_def
+                        && contract.owner == object.owner
+                        && contract.zone_change_count == object.zone_change_count
+                })
         }),
         Zone::Command => state.command.contains(&id),
     })
@@ -4563,7 +4602,13 @@ fn public_card_v2(
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
-        card_name: text_mode.card_name(object.card_def),
+        card_name: if object.v4.face_index == 1
+            && matches!(text_mode, ObservationTextModeV2::FullArtifact)
+        {
+            object.name.clone()
+        } else {
+            text_mode.card_name(object.card_def)
+        },
         tapped: object.tapped,
         summoning_sick: object.summoning_sick,
         damage: object.damage,
@@ -4696,17 +4741,17 @@ fn known_hand_cards_v4(
 fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristicsV2 {
     let object = state.objects.get(id);
     let def = &CARD_DEFS[object.card_def as usize];
-    let base_power = def.power.map(i32::from);
-    let base_toughness = def.toughness.map(i32::from);
+    let base_power = def.power_for_face(object.v4.face_index).map(i32::from);
+    let base_toughness = def.toughness_for_face(object.v4.face_index).map(i32::from);
     let has_pt = base_power.is_some() || base_toughness.is_some();
     CardCharacteristicsV2 {
         type_flags: CardTypeFlagsV2 {
-            land: def.has_type(CardType::Land),
-            creature: def.has_type(CardType::Creature),
-            instant: def.has_type(CardType::Instant),
-            sorcery: def.has_type(CardType::Sorcery),
-            artifact: def.has_type(CardType::Artifact),
-            enchantment: def.has_type(CardType::Enchantment),
+            land: engine::object_has_type(state, id, CardType::Land),
+            creature: engine::object_has_type(state, id, CardType::Creature),
+            instant: engine::object_has_type(state, id, CardType::Instant),
+            sorcery: engine::object_has_type(state, id, CardType::Sorcery),
+            artifact: engine::object_has_type(state, id, CardType::Artifact),
+            enchantment: engine::object_has_type(state, id, CardType::Enchantment),
         },
         base_power,
         base_toughness,
@@ -4734,7 +4779,7 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
                 Keywords::PROTECTION_FROM_MONOCOLORED,
             ),
             ward_generic: object.v4.ward_generic,
-            minimum_blockers: if def.has_type(CardType::Creature) {
+            minimum_blockers: if engine::object_has_type(state, id, CardType::Creature) {
                 engine::minimum_blockers_required(state, id) as u8
             } else {
                 0
@@ -4895,7 +4940,9 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
             || record.source.attached_to.is_some()
             || crate::card_def::CARD_DEFS
                 .get(record.source.card_def as usize)
-                .is_none_or(|definition| definition.name != "Mesmeric Fiend")
+                .is_none_or(|definition| {
+                    !matches!(definition.name, "Mesmeric Fiend" | "Journey to Nowhere")
+                })
             || state.engine.linked_exile_records[..index]
                 .iter()
                 .any(|other| other.source == record.source)
@@ -5314,14 +5361,23 @@ fn pending_effect_semantic_v4(
                     player,
                     path,
                     options,
-                    ..
-                } => Ok(PendingEffectChoiceSemanticV4::Options {
-                    player: (*player).into(),
-                    structural_path: path.clone(),
-                    option_count: options.len().try_into().map_err(|_| {
-                        RlContractError("effect option count exceeds u16".to_string())
-                    })?,
-                }),
+                    purpose,
+                } => match purpose {
+                    crate::effect::EffectOptionChoicePurpose::ChooseColor {
+                        legal_colors, ..
+                    } => Ok(PendingEffectChoiceSemanticV4::Color {
+                        player: (*player).into(),
+                        structural_path: path.clone(),
+                        legal_colors: legal_colors.clone(),
+                    }),
+                    _ => Ok(PendingEffectChoiceSemanticV4::Options {
+                        player: (*player).into(),
+                        structural_path: path.clone(),
+                        option_count: options.len().try_into().map_err(|_| {
+                            RlContractError("effect option count exceeds u16".to_string())
+                        })?,
+                    }),
+                },
                 crate::effect::PendingEffectChoice::SelectTargets {
                     player,
                     path,
@@ -5494,7 +5550,7 @@ fn pending_effect_semantic_v4(
         // A resolving stack item's source was already public as part of that
         // stack item. Reuse the same unconditional public source reference even
         // if the underlying card has since moved to a normally hidden zone.
-        source: Some(card_ref(state, pending.resolving_item.source)?),
+        source: Some(stack_source_ref(state, &pending.resolving_item)?),
         controller: pending.resolving_item.controller.into(),
         choice,
     })
@@ -5515,11 +5571,22 @@ fn pending_cast_semantic_v2(
     // current value encoder also does not pool legal actions, so candidate
     // exclusion alone is not a Markov substitute; Escape remains gated from
     // current policy-training authority until the explicit successor lands.
-    let sacrifice_chosen = if p.source_contract.cast_method == CastMethodV4::Escape {
-        Vec::new()
-    } else {
-        visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
-    };
+    let source_def = &CARD_DEFS[state.objects.get(p.spell).card_def as usize];
+    let object_cost_is_tap = p.is_flashback
+        && source_def.flashback.as_ref().is_some_and(|flashback| {
+            flashback.cost.iter().any(|component| {
+                matches!(
+                    component,
+                    crate::card_def::CostComponent::TapUntappedControlledPermanent(_)
+                )
+            })
+        });
+    let sacrifice_chosen =
+        if p.source_contract.cast_method == CastMethodV4::Escape || object_cost_is_tap {
+            Vec::new()
+        } else {
+            visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
+        };
     Ok(PendingCastSemanticV2 {
         source: visible_card_ref(state, p.spell, acting_player)?,
         controller: p.controller.into(),

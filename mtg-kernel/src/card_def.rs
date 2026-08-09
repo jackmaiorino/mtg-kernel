@@ -335,6 +335,11 @@ pub enum TargetSpec {
     /// Faerie Macabre may legally announce no target, and its two targets
     /// may come from different graveyards.
     UpToTwoCardsInGraveyards,
+    /// Exactly one battlefield creature other than the targeting spell or
+    /// ability's own source incarnation. Journey to Nowhere is the first
+    /// consumer. The source-relative exclusion is applied by the caller so
+    /// the stable target vocabulary remains card-name-neutral.
+    CreatureOtherThanSource,
 }
 
 impl Default for TargetSpec {
@@ -380,6 +385,7 @@ impl TargetSpec {
             TargetSpec::OpponentControlledCreature => 28,
             TargetSpec::SpellManaValueAtMostControlledSubtypes { .. } => 29,
             TargetSpec::UpToTwoCardsInGraveyards => 30,
+            TargetSpec::CreatureOtherThanSource => 31,
         }
     }
 }
@@ -453,6 +459,10 @@ pub enum PermanentFilterDef {
     /// subtype. Control is checked independently from the ownership-oriented
     /// battlefield vectors.
     LandWithSubtype(Subtype),
+    /// A permanent with the Creature card type and the named effective
+    /// color. Control and untapped status are checked independently by the
+    /// cost component that consumes this filter.
+    CreatureWithColor(ManaColor),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -519,6 +529,10 @@ pub enum CostComponent {
     /// effective subtype. The physical object is chosen during activation
     /// staging and paid atomically with the remaining components.
     TapOtherUntappedControlledPermanentWithSubtype(Subtype),
+    /// Tap one untapped permanent the payer controls matching the typed
+    /// filter. Unlike the preceding activation-only form, this component
+    /// may appear in an alternative casting cost such as flashback.
+    TapUntappedControlledPermanent(PermanentFilterDef),
     /// Reveal the payer's complete hand, but only if it contains no card of
     /// the named type. The reveal itself is the cost, so it happens during
     /// payment after the spell has left hand for the stack. Land Grant is
@@ -721,6 +735,28 @@ pub enum WardCostDef {
     Generic(u8),
 }
 
+/// Alternate battlefield characteristics for a transforming permanent's
+/// back face. The physical card definition and stable card id remain those
+/// of the front face; live characteristic queries select this immutable
+/// record from `ObjectStateV4::face_index`.
+pub struct TransformFaceDef {
+    pub name: &'static str,
+    pub types: &'static [CardType],
+    pub subtypes: &'static [Subtype],
+    pub colors: &'static [ManaColor],
+    pub power: Option<i16>,
+    pub toughness: Option<i16>,
+    pub keywords: Keywords,
+}
+
+/// Ordered chapter programs for a Saga. Index zero is chapter I. A Saga's
+/// final chapter is therefore `chapter_effects.len()`; the engine uses the
+/// same definition both to create chapter triggers and to apply the final-
+/// chapter state-based action.
+pub struct SagaDef {
+    pub chapter_effects: &'static [fn() -> EffectOp],
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -854,11 +890,72 @@ pub struct CardDef {
     /// attachment state-based actions and for continuous host restrictions.
     /// Appended so every existing generated field identity remains fixed.
     pub attachment: Option<AttachmentDef>,
+    /// Alternate battlefield face, if this card can transform. Appended so
+    /// all existing generated field identities remain fixed.
+    pub transform_face: Option<TransformFaceDef>,
+    /// Ordered Saga chapter programs. Appended independently from subtype
+    /// metadata because not every card with a printed Saga subtype is
+    /// necessarily executable.
+    pub saga: Option<SagaDef>,
 }
 
 impl CardDef {
     pub fn has_type(&self, t: CardType) -> bool {
         self.types.contains(&t)
+    }
+
+    pub fn types_for_face(&self, face_index: u8) -> &'static [CardType] {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.types;
+            }
+        }
+        self.types
+    }
+
+    pub fn subtypes_for_face(&self, face_index: u8) -> &'static [Subtype] {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.subtypes;
+            }
+        }
+        self.subtypes
+    }
+
+    pub fn colors_for_face(&self, face_index: u8) -> &'static [ManaColor] {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.colors;
+            }
+        }
+        self.colors
+    }
+
+    pub fn power_for_face(&self, face_index: u8) -> Option<i16> {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.power;
+            }
+        }
+        self.power
+    }
+
+    pub fn toughness_for_face(&self, face_index: u8) -> Option<i16> {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.toughness;
+            }
+        }
+        self.toughness
+    }
+
+    pub fn keywords_for_face(&self, face_index: u8) -> Keywords {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.keywords;
+            }
+        }
+        self.keywords
     }
 
     pub fn is_castable(&self) -> bool {
@@ -1125,6 +1222,8 @@ mod tests {
                 },
                 29,
             ),
+            (TargetSpec::UpToTwoCardsInGraveyards, 30),
+            (TargetSpec::CreatureOtherThanSource, 31),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1140,10 +1239,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v27_is_frozen() {
-        // Version 26 composes the exact Faeries card programs after the
-        // green-value and Spy combo waves without renumbering prior ids.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x3233_08d3_9735_f18c);
+    fn card_db_hash_v28_is_frozen() {
+        // Version 28 composes the remaining Caw-Gates mechanics after the
+        // green-value, Faeries, and Spy waves without renumbering prior ids.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xa3fc_e98a_cfb5_64d7);
     }
 
     #[test]

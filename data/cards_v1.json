@@ -1514,6 +1514,7 @@
     },
     {
       "name": "Guardian of the Guildpact",
+      "engine_capability": "full",
       "mana_cost": "{3}{W}",
       "mana_value": 4,
       "colors": [
@@ -1892,6 +1893,7 @@
     },
     {
       "name": "Journey to Nowhere",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -2726,6 +2728,7 @@
     },
     {
       "name": "Prismatic Strands",
+      "engine_capability": "full",
       "mana_cost": "{2}{W}",
       "mana_value": 3,
       "colors": [
@@ -3558,6 +3561,7 @@
     },
     {
       "name": "The Modern Age",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [

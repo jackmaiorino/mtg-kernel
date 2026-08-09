@@ -657,6 +657,29 @@ pub enum EffectOp {
     /// Return the card still exiled by this exact historical ability-source
     /// incarnation to its owner's hand, if that exact incarnation remains.
     ReturnLinkedExiledCardToOwnersHand,
+    /// Exile one exact target and link it to this resolving ability's frozen
+    /// source incarnation. If that source already left before this trigger
+    /// resolves, the target is still exiled but no return link is created.
+    ExileTargetLinkedToSource {
+        object: ObjectRef,
+    },
+    /// Return every object linked to this exact historical source
+    /// incarnation from exile to the battlefield under its owner's control.
+    ReturnObjectsExiledBySource,
+    /// The resolving spell's controller chooses W, U, B, R, or G and installs
+    /// a prevention effect covering all damage from sources sharing that
+    /// color through the current turn.
+    PreventDamageFromChosenColorUntilEndOfTurn {
+        player: PlayerRef,
+    },
+    /// Interpreter-owned branch produced by the preceding color choice.
+    InstallDamagePreventionFromColor {
+        player: PlayerId,
+        color: ManaColor,
+    },
+    /// Exile this exact Saga incarnation and return the same physical card
+    /// transformed under this ability's controller.
+    TransformSagaSource,
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1100,6 +1123,14 @@ pub enum EffectOptionChoicePurpose {
         top: EffectObjectBinding,
         canonical_path: Vec<u16>,
     },
+    /// A W/U/B/R/G choice whose public projection uses the already-reserved
+    /// color semantic and action identity rather than generic options.
+    ChooseColor {
+        player: PlayerId,
+        legal_colors: Vec<ManaColor>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -1246,9 +1277,9 @@ impl std::hash::Hash for ExecCtx {
             std::hash::Hash::hash(&0x6869_6464_656e_5f73_u64, state);
             std::hash::Hash::hash(&source, state);
         }
-        if let Some(source) = self.ability_source_contract {
+        if let Some(contract) = self.ability_source_contract {
             std::hash::Hash::hash(&0x6162_696c_6974_795f_u64, state);
-            std::hash::Hash::hash(&source, state);
+            std::hash::Hash::hash(&contract, state);
         }
     }
 }
@@ -1288,7 +1319,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayPayManaThen { .. }
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
-        | EffectOp::ReturnLinkedExiledCardToOwnersHand => true,
+        | EffectOp::ReturnLinkedExiledCardToOwnersHand
+        | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. } => true,
         _ => false,
     }
 }
@@ -1399,6 +1431,31 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                     continuation.frames.push(frame);
                 }
                 EffectOptionChoicePurpose::ExploreNonlandTop { .. } => {
+                    path.push(option_index);
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: selected, path });
+                }
+                EffectOptionChoicePurpose::ChooseColor {
+                    player: color_player,
+                    legal_colors,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    let Some(&color) = legal_colors.get(index) else {
+                        return Err("validated color choice lost its printed index".to_string());
+                    };
+                    if player != color_player
+                        || path != canonical_path
+                        || continuation.frames != expected_remaining_frames
+                        || selected
+                            != (EffectOp::InstallDamagePreventionFromColor {
+                                player: color_player,
+                                color,
+                            })
+                    {
+                        return Err("color choice metadata changed before answer".to_string());
+                    }
                     path.push(option_index);
                     continuation
                         .frames
@@ -2879,6 +2936,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         || pending.ctx.hidden_ability_source != pending.resolving_item.v4.hidden_ability_source
         || pending.ctx.ability_source_contract != pending.resolving_item.v4.ability_source_contract
         || pending.ctx.kicked != pending.resolving_item.kicked
+        || pending.ctx.ability_source_contract != pending.resolving_item.v4.ability_source_contract
     {
         return Err(
             "effect continuation context no longer mirrors its resolving stack item".to_string(),
@@ -3693,6 +3751,38 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     return Err(
                         "explore choice no longer binds the revealed nonland on top".to_string()
                     );
+                }
+            }
+            EffectOptionChoicePurpose::ChooseColor {
+                player: color_player,
+                legal_colors,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                if player != color_player
+                    || path != canonical_path
+                    || &pending.frames != expected_remaining_frames
+                    || legal_colors.as_slice()
+                        != [
+                            ManaColor::W,
+                            ManaColor::U,
+                            ManaColor::B,
+                            ManaColor::R,
+                            ManaColor::G,
+                        ]
+                {
+                    return Err("color choice metadata is not canonical".to_string());
+                }
+                let expected = legal_colors
+                    .iter()
+                    .copied()
+                    .map(|color| EffectOp::InstallDamagePreventionFromColor {
+                        player: *color_player,
+                        color,
+                    })
+                    .collect::<Vec<_>>();
+                if options != &expected {
+                    return Err("color choice options changed from WUBRG order".to_string());
                 }
             }
         },
@@ -5251,6 +5341,36 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     );
                 }
                 state.engine.linked_exile_records.remove(position);
+            }
+            EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { player } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let legal_colors = vec![
+                    ManaColor::W,
+                    ManaColor::U,
+                    ManaColor::B,
+                    ManaColor::R,
+                    ManaColor::G,
+                ];
+                let options = legal_colors
+                    .iter()
+                    .copied()
+                    .map(|color| EffectOp::InstallDamagePreventionFromColor { player, color })
+                    .collect();
+                let canonical_path = path.clone();
+                let expected_remaining_frames = continuation.frames.clone();
+                continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                    player,
+                    path,
+                    options,
+                    purpose: EffectOptionChoicePurpose::ChooseColor {
+                        player,
+                        legal_colors,
+                        canonical_path,
+                        expected_remaining_frames,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
             }
             EffectOp::MayPayManaThen {
                 player,
@@ -7613,6 +7733,169 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             commit_zone_change_batch(state, &objects, Zone::Graveyard, true)
                 .expect("freshly revealed library prefix remains valid");
         }
+        EffectOp::ExileTargetLinkedToSource { object } => {
+            let target_index = match *object {
+                ObjectRef::Target(index) => Some(usize::from(index)),
+                ObjectRef::ThisSource => None,
+            };
+            let object = ctx.resolve_object(*object);
+            let Some(target_index) = target_index else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            if !ctx.target_incarnation_matches(target_index, state)
+                || state.objects.get(object).zone != Zone::Battlefield
+            {
+                return;
+            }
+            let Some(source_contract) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let source_is_live = state.objects.try_get(ctx.source).is_some_and(|source| {
+                source.card_def == source_contract.card_def
+                    && source.owner == source_contract.owner
+                    && source.zone == Zone::Battlefield
+                    && source.zone_change_count == source_contract.zone_change_count
+            });
+            let target_card_def = state.objects.get(object).card_def;
+            let target_owner = state.objects.get(object).owner;
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(object, Zone::Exile),
+            );
+            if source_is_live {
+                let exiled_zone_change_count = state.objects.get(object).zone_change_count;
+                let source = ObjectLinkV4 {
+                    object: ctx.source,
+                    zone_change_count: source_contract.zone_change_count,
+                };
+                if state.engine.linked_exile_records.iter().any(|record| {
+                    record.source == source_contract
+                        || (record.exiled == object
+                            && record.exiled_zone_change_count == exiled_zone_change_count)
+                }) {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+                state.engine.linked_exile_records.push(LinkedExileRecordV4 {
+                    source: source_contract,
+                    exiled: object,
+                    exiled_card_def: target_card_def,
+                    exiled_owner: target_owner,
+                    exiled_zone_change_count,
+                });
+                state.objects.get_mut(object).v4.exiled_by = Some(source);
+            }
+        }
+        EffectOp::ReturnObjectsExiledBySource => {
+            let Some(source_contract) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let same_source_incarnation = |record: &LinkedExileRecordV4| {
+                record.source.source == ctx.source
+                    && record.source.card_def == source_contract.card_def
+                    && record.source.owner == source_contract.owner
+                    && record.source.zone == Zone::Battlefield
+                    && record.source.zone_change_count == source_contract.zone_change_count
+            };
+            let matching = state
+                .engine
+                .linked_exile_records
+                .iter()
+                .copied()
+                .filter(same_source_incarnation)
+                .collect::<Vec<_>>();
+            let structurally_valid = matching.iter().all(|record| {
+                record.source.zone == source_contract.zone
+                    && state.objects.try_get(record.exiled).is_some_and(|exiled| {
+                        exiled.card_def == record.exiled_card_def
+                            && exiled.owner == record.exiled_owner
+                            && exiled.zone_change_count >= record.exiled_zone_change_count
+                            && (exiled.zone_change_count != record.exiled_zone_change_count
+                                || exiled.zone == Zone::Exile)
+                    })
+            });
+            if !structurally_valid {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            state
+                .engine
+                .linked_exile_records
+                .retain(|record| !same_source_incarnation(record));
+            let events = matching
+                .iter()
+                .filter(|record| {
+                    let live = state.objects.get(record.exiled);
+                    live.zone == Zone::Exile
+                        && live.zone_change_count == record.exiled_zone_change_count
+                })
+                .map(|record| event::ProposedEvent::zone_change(record.exiled, Zone::Battlefield))
+                .collect::<Vec<_>>();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::InstallDamagePreventionFromColor { player, color } => {
+            if *player != ctx.controller
+                || event::install_color_damage_prevention(state, ctx.source, *color).is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::TransformSagaSource => {
+            let Some(source_contract) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let Some(source) = state.objects.try_get(ctx.source) else {
+                return;
+            };
+            if source.card_def != source_contract.card_def
+                || source.owner != source_contract.owner
+                || source.zone_change_count != source_contract.zone_change_count
+                || source.zone != Zone::Battlefield
+            {
+                return;
+            }
+            let def = &crate::card_def::CARD_DEFS[source.card_def as usize];
+            if source.v4.face_index != 0 || def.saga.is_none() || def.transform_face.is_none() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Exile),
+            );
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::transformed_battlefield_return(ctx.source, 1, ctx.controller),
+            );
+        }
         EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }
         | EffectOp::PutCardsFromHandOnLibraryTop { .. }
@@ -7630,6 +7913,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand => {
             panic!("choice-bearing effects must use the resumable interpreter")
+        }
+        EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. } => {
+            panic!("color-choice effects must use the resumable interpreter")
         }
     }
 }

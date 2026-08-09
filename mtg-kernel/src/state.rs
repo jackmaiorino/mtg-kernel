@@ -466,11 +466,11 @@ impl MadnessOfferSourceContractV4 {
     }
 }
 
-/// Frozen source identity for a non-Madness triggered ability. The physical
-/// card may legally change zones, or even be cast again, while the ability
-/// remains on the stack. This contract therefore authenticates the
-/// definition, owner, controller, zone, and generation at trigger creation
-/// without requiring the live object to remain in that incarnation.
+/// Frozen source identity for a non-Madness triggered or activated ability.
+/// The physical card may legally change zones, or even be cast again, while
+/// the ability remains on the stack. This contract authenticates the
+/// definition, owner, controller, zone, generation, and attachment at
+/// creation without requiring the historical incarnation to remain live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AbilitySourceContractV4 {
     pub source: ObjectId,
@@ -623,6 +623,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::RedPermanent
                 | TargetSpec::NonlandPermanent
                 | TargetSpec::Creature
+                | TargetSpec::CreatureOtherThanSource
                 | TargetSpec::NonlegendaryCreature
                 | TargetSpec::ArtifactPermanent
                 | TargetSpec::EnchantmentPermanent
@@ -753,9 +754,10 @@ pub struct StackStateV4 {
     /// Other abilities retain `None`.
     #[serde(default)]
     pub hidden_ability_source: Option<ObjectLinkV4>,
-    /// Historical source incarnation for a definition-owned triggered
-    /// ability. Unlike a spell source, it need not remain live in its
-    /// captured zone while the ability waits or resolves.
+    /// Historical source incarnation for a definition-owned triggered or
+    /// activated ability. Unlike a spell source, it need not remain live in
+    /// its captured zone while the ability waits or resolves. Spells,
+    /// Madness offers, and hidden-zone activations retain `None`.
     #[serde(default)]
     pub ability_source_contract: Option<AbilitySourceContractV4>,
 }

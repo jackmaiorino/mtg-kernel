@@ -2339,6 +2339,9 @@ enum Special {
     /// Damage cannot be prevented this turn. Flaring Pain's flashback cost
     /// is modeled independently by `flashback_for`.
     DamageCannotBePreventedThisTurn,
+    /// Choose a color, then prevent all damage from sources of that color
+    /// this turn. Its flashback tap cost is modeled independently.
+    PrismaticStrands,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2537,6 +2540,9 @@ impl Special {
             Special::DamageCannotBePreventedThisTurn => {
                 "damage_cannot_be_prevented_this_turn".to_string()
             }
+            Special::PrismaticStrands => {
+                "prismatic_strands:choose_color_prevent_source_damage_this_turn".to_string()
+            }
         }
     }
 }
@@ -2725,6 +2731,7 @@ fn special_for(name: &str) -> Special {
         "Bind the Monster" => Special::BindTheMonster,
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
+        "Prismatic Strands" => Special::PrismaticStrands,
         _ => Special::None,
     }
 }
@@ -2869,6 +2876,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::DamageCannotBePreventedThisTurn => {
             "target=None;spell=DamageCannotBePreventedThisTurn;mana=None".to_string()
         }
+        Special::PrismaticStrands => "target=None;spell=PreventDamageFromChosenColorUntilEndOfTurn;mana=None".to_string(),
     }
 }
 
@@ -2910,6 +2918,7 @@ fn keywords_for(card: &CardJson) -> String {
         "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" => {
             keywords.push("Keywords::LIFELINK")
         }
+        "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
@@ -2988,6 +2997,20 @@ fn object_name_for(name: &str) -> &str {
     match name {
         "Sacred Cat Embalmed Token" => "Sacred Cat",
         _ => name,
+    }
+}
+
+fn transform_face_for(name: &str) -> &'static str {
+    match name {
+        "The Modern Age" => "Some(TransformFaceDef { name: \"Vector Glider\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Spirit], colors: &[ManaColor::U], power: Some(2), toughness: Some(3), keywords: Keywords::FLYING })",
+        _ => "None",
+    }
+}
+
+fn saga_for(name: &str) -> &'static str {
+    match name {
+        "The Modern Age" => "Some(SagaDef { chapter_effects: &[saga_chapter_modern_age_loot, saga_chapter_modern_age_loot, saga_chapter_modern_age_transform] })",
+        _ => "None",
     }
 }
 
@@ -3096,6 +3119,7 @@ fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
+        "Prismatic Strands" => "Some(FlashbackDef { cost: &[CostComponent::TapUntappedControlledPermanent(PermanentFilterDef::CreatureWithColor(ManaColor::W))] })".to_string(),
         _ => "None".to_string(),
     }
 }
@@ -5270,6 +5294,44 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::PrismaticStrands))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_prismatic_strands() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::PreventDamageFromChosenColorUntilEndOfTurn {{ player: PlayerRef::Controller }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards.iter().any(|card| {
+        card.name == "The Modern Age" && card.engine_capability != EngineCapabilityJson::NoEffect
+    }) {
+        writeln!(out, "fn saga_chapter_modern_age_loot() -> EffectOp {{").unwrap();
+        writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(out, "    ])").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+        writeln!(out, "fn saga_chapter_modern_age_transform() -> EffectOp {{").unwrap();
+        writeln!(out, "    EffectOp::TransformSagaSource").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     // ---- CARD_DEFS -------------------------------------------------
     writeln!(out, "pub static CARD_DEFS: [CardDef; {}] = [", cards.len()).unwrap();
     for c in cards {
@@ -5546,6 +5608,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_damage_cannot_be_prevented_this_turn".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::PrismaticStrands => (
+                "TargetSpec::None",
+                "spell_effect_prismatic_strands".to_string(),
+                "no_effect".to_string(),
+            ),
         };
 
         let executable = c.engine_capability != EngineCapabilityJson::NoEffect;
@@ -5716,6 +5783,26 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        attachment: {},", attachment_for(&c.name)).unwrap();
+        writeln!(
+            out,
+            "        transform_face: {},",
+            if executable {
+                transform_face_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        saga: {},",
+            if executable {
+                saga_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -5741,7 +5828,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v24\n");
+    let mut canon = String::from("kernel_carddb/v28\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -5847,6 +5934,20 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str("attachment=");
         canon.push_str(attachment_for(&c.name));
+        canon.push('|');
+        canon.push_str("transform_face=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            transform_face_for(&c.name)
+        } else {
+            "None"
+        });
+        canon.push('|');
+        canon.push_str("saga=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            saga_for(&c.name)
+        } else {
+            "None"
+        });
         canon.push('|');
         canon.push_str("trigger=");
         canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {

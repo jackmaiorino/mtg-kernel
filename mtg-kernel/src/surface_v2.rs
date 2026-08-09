@@ -1941,6 +1941,7 @@ mod tests {
             id,
             crate::state::CastMethodV4::Normal,
         );
+        state.engine.next_stack_item_id = 1;
         state.stack.push(crate::state::StackItem {
             kind: crate::state::StackItemKind::Spell,
             source: id,
@@ -1954,6 +1955,7 @@ mod tests {
             madness_offer: false,
             kicked: false,
             v4: crate::state::StackStateV4 {
+                stack_item_id: crate::ids::StackItemId(1),
                 target_spec: Some(crate::card_def::TargetSpec::AnyTarget),
                 target_contracts: vec![crate::state::StackTargetContractV4::Player(PlayerId::P1)],
                 source_contract: Some(source_contract),

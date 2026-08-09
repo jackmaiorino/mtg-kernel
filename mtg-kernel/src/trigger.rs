@@ -525,6 +525,16 @@ fn spellstutter_sprite_etb_effect() -> EffectOp {
     }
 }
 
+fn journey_to_nowhere_etb_effect() -> EffectOp {
+    EffectOp::ExileTargetLinkedToSource {
+        object: crate::effect::ObjectRef::Target(0),
+    }
+}
+
+fn journey_to_nowhere_ltb_effect() -> EffectOp {
+    EffectOp::ReturnObjectsExiledBySource
+}
+
 fn experimental_synthesizer_impulse_effect() -> EffectOp {
     // When Experimental Synthesizer enters or leaves the battlefield, exile
     // the top card of your library. Until end of turn, you may play that
@@ -710,6 +720,25 @@ const SPELLSTUTTER_SPRITE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbility
     effect: spellstutter_sprite_etb_effect,
 }];
 
+const JOURNEY_TO_NOWHERE_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Etb,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: journey_to_nowhere_etb_effect,
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefield,
+        // Leave-the-battlefield triggers use the historical battlefield
+        // incarnation and deliberately ignore this post-event zone gate.
+        home_zone: Zone::Graveyard,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: journey_to_nowhere_ltb_effect,
+    },
+];
+
 /// The pool's implemented triggered abilities, matched by card name (ids are
 /// codegen-assigned from `cards_v1.json`'s array order and not worth
 /// duplicating as constants here -- see `build.rs`'s module doc on id
@@ -755,6 +784,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Ninja of the Deep Hours" => &NINJA_OF_THE_DEEP_HOURS_TRIGGERS,
         "Saiba Cryptomancer" => &SAIBA_CRYPTOMANCER_TRIGGERS,
         "Spellstutter Sprite" => &SPELLSTUTTER_SPRITE_TRIGGERS,
+        "Journey to Nowhere" => &JOURNEY_TO_NOWHERE_TRIGGERS,
         _ => &[],
     }
 }
@@ -802,6 +832,11 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     triggers_for(card_def)
         .iter()
         .any(|definition| (definition.effect)() == *effect)
+        || card.saga.as_ref().is_some_and(|saga| {
+            saga.chapter_effects
+                .iter()
+                .any(|chapter_effect| chapter_effect() == *effect)
+        })
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
@@ -812,6 +847,8 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
     Some(
         if card.name == "Mesmeric Fiend" && *effect == mesmeric_fiend_exile_effect() {
             TargetSpec::TargetOpponent
+        } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
+            TargetSpec::CreatureOtherThanSource
         } else {
             trigger_target_spec(card_def)
         },
@@ -856,8 +893,9 @@ pub struct PendingTrigger {
     /// been ordered by its controller or proven singleton.
     #[serde(default)]
     pub placement_ordered: bool,
-    /// Exact source incarnation captured when the trigger was created. The
-    /// independent ability remains valid after the source changes zones.
+    /// Exact historical source incarnation captured when the trigger was
+    /// created. This lets independent and linked abilities remain valid
+    /// across later zone changes of the same physical card.
     #[serde(default)]
     pub source_contract: Option<AbilitySourceContractV4>,
 }
@@ -873,6 +911,57 @@ fn creature_dies_to_state_based_actions(
 /// Runs state-based actions to a fixed point: repeat the full SBA sweep
 /// until one pass makes no change (704.3).
 pub fn sba_fixed_point(state: &mut GameState) {
+    sba_fixed_point_with_protected_triggers(state, &[]);
+}
+
+fn saga_final_chapter_is_pending(
+    state: &GameState,
+    source: ObjectId,
+    source_zone_change_count: u32,
+    final_effect: &EffectOp,
+    protected_triggers: &[PendingTrigger],
+) -> bool {
+    let matches_pending = |pending: &PendingTrigger| {
+        pending.source == source
+            && pending.effect == *final_effect
+            && pending
+                .source_contract
+                .is_some_and(|contract| contract.zone_change_count == source_zone_change_count)
+    };
+    protected_triggers.iter().any(matches_pending)
+        || state.engine.pending_triggers.iter().any(matches_pending)
+        || state.stack.iter().any(|item| {
+            item.source == source
+                && item.kind == crate::state::StackItemKind::TriggeredAbility
+                && item.inline_effect.as_ref() == Some(final_effect)
+                && item
+                    .v4
+                    .ability_source_contract
+                    .is_some_and(|contract| contract.zone_change_count == source_zone_change_count)
+        })
+        || state.engine.event_log.iter().any(|event| {
+            matches!(
+                event,
+                CommittedEvent::SagaChapter {
+                    source: event_source,
+                    source_zone_change_count: event_generation,
+                    chapter,
+                    ..
+                } if *event_source == source
+                    && *event_generation == source_zone_change_count
+                    && usize::from(*chapter)
+                        == crate::card_def::CARD_DEFS[state.objects.get(source).card_def as usize]
+                            .saga
+                            .as_ref()
+                            .map_or(0, |saga| saga.chapter_effects.len())
+            )
+        })
+}
+
+fn sba_fixed_point_with_protected_triggers(
+    state: &mut GameState,
+    protected_triggers: &[PendingTrigger],
+) {
     loop {
         let mut changed = false;
 
@@ -884,8 +973,7 @@ pub fn sba_fixed_point(state: &mut GameState) {
             if obj.zone != Zone::Battlefield {
                 continue;
             }
-            let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-            if !def.has_type(crate::card_def::CardType::Creature) {
+            if !crate::engine::object_has_type(state, id, crate::card_def::CardType::Creature) {
                 continue;
             }
             let toughness = crate::engine::effective_toughness(state, id);
@@ -939,6 +1027,41 @@ pub fn sba_fixed_point(state: &mut GameState) {
             })
             .collect::<Vec<_>>();
         for id in invalid_auras {
+            crate::event::commit(
+                state,
+                crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
+            );
+            changed = true;
+        }
+
+        // 704.5s: after a Saga's final chapter ability leaves the stack, its
+        // controller sacrifices it. The chapter trigger is protected across
+        // the pre-placement SBA checkpoint by its exact source incarnation.
+        let completed_sagas = state
+            .objects
+            .iter()
+            .filter_map(|(id, object)| {
+                if object.zone != Zone::Battlefield || object.v4.face_index != 0 {
+                    return None;
+                }
+                let saga = crate::card_def::CARD_DEFS[object.card_def as usize]
+                    .saga
+                    .as_ref()?;
+                if object.counters.lore < saga.chapter_effects.len() as i16 {
+                    return None;
+                }
+                let final_effect = (saga.chapter_effects.last().copied()?)();
+                (!saga_final_chapter_is_pending(
+                    state,
+                    id,
+                    object.zone_change_count,
+                    &final_effect,
+                    protected_triggers,
+                ))
+                .then_some(id)
+            })
+            .collect::<Vec<_>>();
+        for id in completed_sagas {
             crate::event::commit(
                 state,
                 crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
@@ -1009,7 +1132,7 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
     // graveyard here; its dies trigger belongs to this same trigger-placement
     // checkpoint, not some later action. Match that second batch only after
     // the fixed point, then order both batches together under 603.3b.
-    sba_fixed_point(state);
+    sba_fixed_point_with_protected_triggers(state, &new_triggers);
     let sba_events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
 
@@ -1041,6 +1164,50 @@ fn triggers_from_events(
         let card = &crate::card_def::CARD_DEFS[obj.card_def as usize];
         if !card.is_executable() {
             continue;
+        }
+        if let Some(saga) = card.saga.as_ref() {
+            for ev in events {
+                let CommittedEvent::SagaChapter {
+                    source,
+                    source_zone_change_count,
+                    controller,
+                    chapter,
+                } = ev
+                else {
+                    continue;
+                };
+                if *source != id
+                    || *chapter == 0
+                    || usize::from(*chapter) > saga.chapter_effects.len()
+                    || obj.zone_change_count < *source_zone_change_count
+                    || (obj.zone_change_count == *source_zone_change_count
+                        && (obj.zone != Zone::Battlefield || obj.v4.face_index != 0))
+                {
+                    continue;
+                }
+                let effect = (saga.chapter_effects[usize::from(*chapter - 1)])();
+                new_triggers.push(PendingTrigger {
+                    controller: *controller,
+                    source: id,
+                    target_spec: target_spec_for_trigger(obj.card_def, &effect)
+                        .expect("Saga chapter effect is definition-owned"),
+                    effect,
+                    is_madness_offer: false,
+                    kicked: false,
+                    targets: Vec::new(),
+                    target_contracts: Vec::new(),
+                    placement_ordered: false,
+                    source_contract: Some(AbilitySourceContractV4 {
+                        source: id,
+                        card_def: obj.card_def,
+                        owner: obj.owner,
+                        controller: *controller,
+                        zone: Zone::Battlefield,
+                        zone_change_count: *source_zone_change_count,
+                        attached_to: None,
+                    }),
+                });
+            }
         }
         for def in triggers_for(obj.card_def) {
             let uses_leave_lki = matches!(

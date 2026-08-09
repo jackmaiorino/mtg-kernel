@@ -1707,7 +1707,9 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             card_def::CostComponent::PayLife(n) => format!("Pay {n} life"),
             unsupported @ (card_def::CostComponent::SacrificeControlled { .. }
             | card_def::CostComponent::ReturnControlledPermanentToOwnersHand(_)
-            | card_def::CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)) => {
+            | card_def::CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
+            | card_def::CostComponent::TapUntappedControlledPermanent(_)
+            | card_def::CostComponent::RevealHandIfNoCardsWithType(_)) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }

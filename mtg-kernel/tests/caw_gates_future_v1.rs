@@ -126,7 +126,7 @@ fn reference_shuffle(
 
 #[test]
 fn definitions_ids_and_generic_programs_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0x3233_08d3_9735_f18c);
+    assert_eq!(KERNEL_CARDDB_HASH, 0xa3fc_e98a_cfb5_64d7);
     let expected_ids = [
         ("Basilisk Gate", 3),
         ("Citadel Gate", 14),
@@ -585,6 +585,7 @@ fn squadron_hawk_searches_zero_through_three_exact_physical_hawks_reveals_and_sh
             ..StackStateV4::default()
         },
     });
+    state.engine.next_stack_item_id = 1;
     state.engine.priority_passes = [true, true];
 
     let search = engine::advance_until_decision(&mut state);

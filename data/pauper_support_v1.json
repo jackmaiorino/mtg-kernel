@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "4f760ab0836cba29094e59f8d2b3879d57b873e7338b57264b11511a4d9ffaf9"
+    "registry_raw_sha256": "1db12e9e6222181f55681d61ee57639a0544047c178ea873b55710f8d931a110"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 128,
+    "full_cards": 132,
     "partial_cards": 0,
-    "no_effect_cards": 22,
+    "no_effect_cards": 18,
     "token_dependencies": 9
   },
   "deck_mainboard_copy_totals": [
@@ -66,9 +66,9 @@
     },
     {
       "deck_id": "CawGates",
-      "full": 47,
+      "full": 60,
       "partial": 0,
-      "no_effect": 13,
+      "no_effect": 0,
       "total": 60
     },
     {
@@ -1461,10 +1461,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Gut Shot",
@@ -1761,10 +1759,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Krark-Clan Shaman",
@@ -2486,10 +2482,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Pulse of Murasa",
@@ -3146,10 +3140,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Thought Scour",

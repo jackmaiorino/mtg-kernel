@@ -1233,7 +1233,8 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::CreatureCardInOwnGraveyard
         | TargetSpec::TargetOpponent
         | TargetSpec::OpponentControlledCreature
-        | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. } => 1,
+        | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
+        | TargetSpec::CreatureOtherThanSource => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -1542,7 +1543,7 @@ fn validate_spell_source_contract_fields(
         return Err("spell stack item carries activated-ability source provenance".to_string());
     }
     if item.v4.ability_source_contract.is_some() {
-        return Err("spell stack item carries trigger source provenance".to_string());
+        return Err("spell stack item carries ability source provenance".to_string());
     }
     let contract = item
         .v4
@@ -1701,7 +1702,7 @@ fn validate_ability_source_contract(
     let source = state
         .objects
         .try_get(item.source)
-        .ok_or("trigger source object no longer exists")?;
+        .ok_or("ability source object no longer exists")?;
     if contract.source != item.source
         || contract.card_def != source.card_def
         || contract.owner != source.owner
@@ -1709,11 +1710,10 @@ fn validate_ability_source_contract(
         || contract.zone == Zone::Stack
         || source.zone_change_count < contract.zone_change_count
         || (source.zone_change_count == contract.zone_change_count && source.zone != contract.zone)
-        || (item.kind == StackItemKind::TriggeredAbility
-            && source.zone_change_count == contract.zone_change_count
+        || (source.zone_change_count == contract.zone_change_count
             && source.v4.attached_to != contract.attached_to)
     {
-        return Err("trigger source contract is structurally malformed".to_string());
+        return Err("ability source contract is structurally malformed".to_string());
     }
     Ok(())
 }
@@ -1740,9 +1740,13 @@ pub(crate) fn validate_spell_stack_source(
     if appears_outside_stack {
         return Err("spell source is also indexed in an ordinary zone".to_string());
     }
-    let mut matches = state.stack.iter().filter(|candidate| {
-        candidate.kind == StackItemKind::Spell && candidate.source == item.source
-    });
+    if item.v4.stack_item_id == StackItemId::default() {
+        return Err("spell source has no stack-incarnation identity".to_string());
+    }
+    let mut matches = state
+        .stack
+        .iter()
+        .filter(|candidate| candidate.v4.stack_item_id == item.v4.stack_item_id);
     let live = matches
         .next()
         .ok_or("spell source has no live stack membership")?;
@@ -1752,10 +1756,37 @@ pub(crate) fn validate_spell_stack_source(
     if live != item {
         return Err("spell source contract belongs to a different stack item".to_string());
     }
+    if state
+        .stack
+        .iter()
+        .filter(|candidate| {
+            candidate.kind == StackItemKind::Spell && candidate.source == item.source
+        })
+        .count()
+        != 1
+    {
+        return Err("spell source has duplicate physical-source membership".to_string());
+    }
     for produced in state.stack.iter().filter(|candidate| {
         candidate.source == item.source && candidate.kind != StackItemKind::Spell
     }) {
         validate_spell_source_contract_fields(state, produced)?;
+    }
+    let source_contract = item
+        .v4
+        .source_contract
+        .ok_or("spell stack item lost its source contract")?;
+    if state
+        .stack
+        .iter()
+        .filter(|candidate| {
+            candidate.kind == StackItemKind::Spell
+                && candidate.v4.source_contract == Some(source_contract)
+        })
+        .count()
+        != 1
+    {
+        return Err("spell source contract has duplicate live spell membership".to_string());
     }
     Ok(())
 }
@@ -1823,10 +1854,7 @@ fn spell_targets_without_type(state: &GameState, excluded: CardType) -> Vec<Targ
 
 fn permanent_targets_with_type(state: &GameState, card_type: CardType) -> Vec<Target> {
     battlefield_objects(state)
-        .filter(|&id| {
-            let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-            def.has_type(card_type)
-        })
+        .filter(|&id| object_has_type(state, id, card_type))
         .map(Target::Object)
         .collect()
 }
@@ -1843,13 +1871,42 @@ pub fn legal_targets_for(
     legal_targets_for_controller(spec, targets_chosen, state.priority_player, state)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TargetingSource {
+    object: ObjectId,
+    card_def: u16,
+}
+
+fn targeting_source_for_object(state: &GameState, object: ObjectId) -> Option<TargetingSource> {
+    state.objects.try_get(object).map(|live| TargetingSource {
+        object,
+        card_def: live.card_def,
+    })
+}
+
+fn targeting_source_is_monocolored(source: TargetingSource) -> bool {
+    card_def::CARD_DEFS
+        .get(source.card_def as usize)
+        .is_some_and(|def| (card_def::mana_colors_mask(def.colors) & 0x1f).count_ones() == 1)
+}
+
 fn legal_targets_for_controller(
     spec: TargetSpec,
     targets_chosen: &[Target],
     controller: PlayerId,
     state: &GameState,
 ) -> Vec<Target> {
-    let targets = match spec {
+    legal_targets_for_controller_from_source(spec, targets_chosen, controller, None, state)
+}
+
+fn legal_targets_for_controller_from_source(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    source: Option<TargetingSource>,
+    state: &GameState,
+) -> Vec<Target> {
+    let mut targets = match spec {
         TargetSpec::None => Vec::new(),
         TargetSpec::AnyPlayer => {
             vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)]
@@ -1864,8 +1921,7 @@ fn legal_targets_for_controller(
             let mut out = vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)];
             for p in [PlayerId::P0, PlayerId::P1] {
                 for &id in &state.players[p.index()].battlefield {
-                    let obj = state.objects.get(id);
-                    if card_def::CARD_DEFS[obj.card_def as usize].has_type(CardType::Creature) {
+                    if object_has_type(state, id, CardType::Creature) {
                         out.push(Target::Object(id));
                     }
                 }
@@ -1880,10 +1936,7 @@ fn legal_targets_for_controller(
                     .battlefield
                     .iter()
                     .copied()
-                    .filter(|&id| {
-                        card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
-                            .has_type(CardType::Creature)
-                    })
+                    .filter(|&id| object_has_type(state, id, CardType::Creature))
                     .map(Target::Object)
                     .collect()
             } else {
@@ -1928,16 +1981,16 @@ fn legal_targets_for_controller(
         TargetSpec::BluePermanent => permanent_targets_of_color(state, mana::ManaColor::U),
         TargetSpec::RedPermanent => permanent_targets_of_color(state, mana::ManaColor::R),
         TargetSpec::NonlandPermanent => battlefield_objects(state)
-            .filter(|&id| {
-                let def_idx = state.objects.get(id).card_def;
-                !card_def::CARD_DEFS[def_idx as usize].has_type(CardType::Land)
-            })
+            .filter(|&id| !object_has_type(state, id, CardType::Land))
             .map(Target::Object)
             .collect(),
-        TargetSpec::Creature | TargetSpec::UpToTwoCreatures => battlefield_objects(state)
+        TargetSpec::Creature
+        | TargetSpec::CreatureOtherThanSource
+        | TargetSpec::UpToTwoCreatures => battlefield_objects(state)
             .filter(|&id| {
-                let def_idx = state.objects.get(id).card_def;
-                card_def::CARD_DEFS[def_idx as usize].has_type(CardType::Creature)
+                object_has_type(state, id, CardType::Creature)
+                    && (spec != TargetSpec::CreatureOtherThanSource
+                        || source.is_none_or(|source| id != source.object))
             })
             .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
             .map(Target::Object)
@@ -1946,7 +1999,7 @@ fn legal_targets_for_controller(
             .filter(|&id| {
                 let def_idx = state.objects.get(id).card_def;
                 let def = &card_def::CARD_DEFS[def_idx as usize];
-                def.has_type(CardType::Creature)
+                object_has_type(state, id, CardType::Creature)
                     && !def.supertypes.contains(&card_def::Supertype::Legendary)
             })
             .map(Target::Object)
@@ -1978,7 +2031,7 @@ fn legal_targets_for_controller(
                 let object = state.objects.get(id);
                 object.controller == controller
                     && object.zone == Zone::Battlefield
-                    && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+                    && object_has_type(state, id, CardType::Creature)
             })
             .map(Target::Object)
             .collect(),
@@ -2071,18 +2124,24 @@ fn legal_targets_for_controller(
             .map(Target::Object)
             .collect(),
     };
-    targets
-        .into_iter()
-        .filter(|target| {
-            let Target::Object(object) = *target else {
+    targets.retain(|target| {
+        let Target::Object(object) = *target else {
+            return true;
+        };
+        let live = state.objects.get(object);
+        live.zone != Zone::Battlefield
+            || live.controller == controller
+            || !has_effective_keyword(state, object, Keywords::HEXPROOF)
+    });
+    if source.is_some_and(targeting_source_is_monocolored) {
+        targets.retain(|target| {
+            let Target::Object(object) = target else {
                 return true;
             };
-            let live = state.objects.get(object);
-            live.zone != Zone::Battlefield
-                || live.controller == controller
-                || !has_effective_keyword(state, object, Keywords::HEXPROOF)
-        })
-        .collect()
+            !has_effective_keyword(state, *object, Keywords::PROTECTION_FROM_MONOCOLORED)
+        });
+    }
+    targets
 }
 
 /// Whether the already-chosen target prefix can be extended to a complete
@@ -2090,6 +2149,7 @@ fn legal_targets_for_controller(
 /// recursively: `PlayerThenTheirCreature` is viable only when at least one
 /// first-pick player has a legal second-pick creature, not merely because
 /// its unconditional first pool contains both players.
+#[cfg(test)]
 fn target_prefix_can_complete(
     spec: TargetSpec,
     targets_chosen: &[Target],
@@ -2104,14 +2164,36 @@ pub(crate) fn target_prefix_can_complete_for_controller(
     controller: PlayerId,
     state: &GameState,
 ) -> bool {
+    target_prefix_can_complete_for_controller_and_source(
+        spec,
+        targets_chosen,
+        controller,
+        None,
+        state,
+    )
+}
+
+fn target_prefix_can_complete_for_controller_and_source(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    source: Option<TargetingSource>,
+    state: &GameState,
+) -> bool {
     let max = target_count(spec) as usize;
     if targets_chosen.len() > max {
         return false;
     }
     let mut validated_prefix = Vec::with_capacity(targets_chosen.len());
     for &target in targets_chosen {
-        if !legal_targets_for_controller(spec, &validated_prefix, controller, state)
-            .contains(&target)
+        if !legal_targets_for_controller_from_source(
+            spec,
+            &validated_prefix,
+            controller,
+            source,
+            state,
+        )
+        .contains(&target)
         {
             return false;
         }
@@ -2120,12 +2202,14 @@ pub(crate) fn target_prefix_can_complete_for_controller(
     if targets_chosen.len() >= usize::from(target_min_count(spec)) {
         return true;
     }
-    legal_targets_for_controller(spec, targets_chosen, controller, state)
+    legal_targets_for_controller_from_source(spec, targets_chosen, controller, source, state)
         .into_iter()
         .any(|candidate| {
             let mut next = targets_chosen.to_vec();
             next.push(candidate);
-            target_prefix_can_complete_for_controller(spec, &next, controller, state)
+            target_prefix_can_complete_for_controller_and_source(
+                spec, &next, controller, source, state,
+            )
         })
 }
 
@@ -2146,12 +2230,30 @@ fn completable_next_targets_for_controller(
     controller: PlayerId,
     state: &GameState,
 ) -> Vec<Target> {
-    legal_targets_for_controller(spec, targets_chosen, controller, state)
+    completable_next_targets_for_controller_and_source(
+        spec,
+        targets_chosen,
+        controller,
+        None,
+        state,
+    )
+}
+
+fn completable_next_targets_for_controller_and_source(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    source: Option<TargetingSource>,
+    state: &GameState,
+) -> Vec<Target> {
+    legal_targets_for_controller_from_source(spec, targets_chosen, controller, source, state)
         .into_iter()
         .filter(|candidate| {
             let mut next = targets_chosen.to_vec();
             next.push(*candidate);
-            target_prefix_can_complete_for_controller(spec, &next, controller, state)
+            target_prefix_can_complete_for_controller_and_source(
+                spec, &next, controller, source, state,
+            )
         })
         .collect()
 }
@@ -2163,25 +2265,34 @@ fn activation_legal_targets_for(
     state: &GameState,
 ) -> Vec<Target> {
     let controller = state.objects.get(source).controller;
-    legal_targets_for_controller(ability.target_spec, targets_chosen, controller, state)
-        .into_iter()
-        .filter(|target| match ability.activation_target_filter {
-            ActivationTargetFilter::TargetSpecOnly => true,
-            ActivationTargetFilter::CreatureBlockedBySource => {
-                let Target::Object(attacker) = target else {
-                    return false;
-                };
-                state
-                    .engine
-                    .combat
-                    .blocked_by
-                    .iter()
-                    .any(|(candidate_attacker, blockers)| {
-                        candidate_attacker == attacker && blockers.contains(&source)
-                    })
-            }
-        })
-        .collect()
+    legal_targets_for_controller_from_source(
+        ability.target_spec,
+        targets_chosen,
+        controller,
+        Some(TargetingSource {
+            object: source,
+            card_def: state.objects.get(source).card_def,
+        }),
+        state,
+    )
+    .into_iter()
+    .filter(|target| match ability.activation_target_filter {
+        ActivationTargetFilter::TargetSpecOnly => true,
+        ActivationTargetFilter::CreatureBlockedBySource => {
+            let Target::Object(attacker) = target else {
+                return false;
+            };
+            state
+                .engine
+                .combat
+                .blocked_by
+                .iter()
+                .any(|(candidate_attacker, blockers)| {
+                    candidate_attacker == attacker && blockers.contains(&source)
+                })
+        }
+    })
+    .collect()
 }
 
 fn activation_target_prefix_can_complete(
@@ -2234,19 +2345,43 @@ fn completable_next_activation_targets_for(
 /// Printed modal indices whose target requirements can be completed in the
 /// current state. Omen uses the same public two-form decision, but its forms
 /// also have distinct timing and costs and are filtered after announcement.
-fn viable_printed_spell_modes(def: &card_def::CardDef, state: &GameState) -> Vec<u8> {
+fn viable_printed_spell_modes(
+    def: &card_def::CardDef,
+    source: ObjectId,
+    controller: PlayerId,
+    state: &GameState,
+) -> Vec<u8> {
     let mut modes =
         Vec::with_capacity(1 + usize::from(def.mode2.is_some()) + usize::from(def.mode3.is_some()));
-    if target_prefix_can_complete(def.target_spec, &[], state) {
+    let source = targeting_source_for_object(state, source);
+    if target_prefix_can_complete_for_controller_and_source(
+        def.target_spec,
+        &[],
+        controller,
+        source,
+        state,
+    ) {
         modes.push(0);
     }
     if let Some(mode2) = &def.mode2 {
-        if target_prefix_can_complete(mode2.target_spec, &[], state) {
+        if target_prefix_can_complete_for_controller_and_source(
+            mode2.target_spec,
+            &[],
+            controller,
+            source,
+            state,
+        ) {
             modes.push(1);
         }
     }
     if let Some(mode3) = &def.mode3 {
-        if target_prefix_can_complete(mode3.target_spec, &[], state) {
+        if target_prefix_can_complete_for_controller_and_source(
+            mode3.target_spec,
+            &[],
+            controller,
+            source,
+            state,
+        ) {
             modes.push(2);
         }
     }
@@ -2497,6 +2632,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut tap_count = 0;
     let mut source_departure_count = 0;
     let mut tap_other_permanent_count = 0;
+    let mut tap_filtered_permanent_count = 0;
     let mut reveal_hand_condition_count = 0;
 
     for component in components {
@@ -2562,6 +2698,10 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 tap_other_permanent_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::TapUntappedControlledPermanent(_) => {
+                tap_filtered_permanent_count += 1;
+                saw_source_changing_component = true;
+            }
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 reveal_hand_condition_count += 1;
             }
@@ -2574,11 +2714,13 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             + graveyard_exile_count
             + return_permanent_count
             + tap_other_permanent_count
+            + tap_filtered_permanent_count
             > 1
         || pay_life_count > 1
         || tap_count > 1
         || source_departure_count > 1
         || tap_other_permanent_count > 1
+        || tap_filtered_permanent_count > 1
         || reveal_hand_condition_count > 1
     {
         return false;
@@ -2602,6 +2744,7 @@ fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
                 component,
                 CostComponent::SacrificeLands(_)
                     | CostComponent::ExileOtherCardsFromOwnGraveyard(_)
+                    | CostComponent::TapUntappedControlledPermanent(_)
             )
         })
 }
@@ -2646,10 +2789,10 @@ fn return_permanent_filter_in(components: &[CostComponent]) -> Option<PermanentF
 
 fn permanent_matches_return_filter(
     state: &GameState,
-    object: ObjectId,
+    object_id: ObjectId,
     filter: PermanentFilterDef,
 ) -> bool {
-    let Some(object) = state.objects.try_get(object) else {
+    let Some(object) = state.objects.try_get(object_id) else {
         return false;
     };
     let Some(definition) = card_def::CARD_DEFS.get(object.card_def as usize) else {
@@ -2664,7 +2807,39 @@ fn permanent_matches_return_filter(
                     .binary_search(&subtype.stable_id())
                     .is_ok()
         }
+        PermanentFilterDef::CreatureWithColor(color) => {
+            definition.has_type(CardType::Creature)
+                && object_color_mask(state, object_id) & card_def::mana_color_mask(color) != 0
+        }
     }
+}
+
+fn tap_permanent_filter_in(components: &[CostComponent]) -> Option<PermanentFilterDef> {
+    components.iter().find_map(|component| match component {
+        CostComponent::TapUntappedControlledPermanent(filter) => Some(*filter),
+        _ => None,
+    })
+}
+
+fn tap_permanent_cost_candidates(
+    player: PlayerId,
+    state: &GameState,
+    filter: PermanentFilterDef,
+    already_chosen: &[ObjectId],
+) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|id| !already_chosen.contains(id))
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            object.zone == Zone::Battlefield
+                && object.controller == player
+                && !object.tapped
+                && permanent_matches_return_filter(state, id, filter)
+        })
+        .collect()
 }
 
 fn return_permanent_cost_candidates(
@@ -2750,6 +2925,9 @@ fn can_pay_components(
             }
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
                 !activation_cost_object_candidates(player, source, *subtype, state, &[]).is_empty()
+            }
+            CostComponent::TapUntappedControlledPermanent(filter) => {
+                !tap_permanent_cost_candidates(player, state, *filter, &[]).is_empty()
             }
             CostComponent::RevealHandIfNoCardsWithType(card_type) => {
                 state.players[player.index()].hand.iter().all(|&object| {
@@ -2923,12 +3101,22 @@ fn pay_cost_components(
             return false;
         }
     }
+    let tap_filter = tap_permanent_filter_in(components);
+    if let Some(filter) = tap_filter {
+        if object_cost_chosen.len() != 1
+            || !tap_permanent_cost_candidates(player, state, filter, &[])
+                .contains(&object_cost_chosen[0])
+        {
+            return false;
+        }
+    }
     if sacrifice_needed.is_none()
         && sacrifice_controlled.is_none()
         && graveyard_exile_needed.is_none()
         && return_filter.is_none()
         && !returns_unblocked_attacker
         && tap_other_subtype.is_none()
+        && tap_filter.is_none()
         && !object_cost_chosen.is_empty()
     {
         return false;
@@ -2946,6 +3134,9 @@ fn pay_cost_components(
         reserved.push(source);
     }
     if tap_other_subtype.is_some() {
+        reserved.extend(object_cost_chosen.iter().copied());
+    }
+    if tap_filter.is_some() {
         reserved.extend(object_cost_chosen.iter().copied());
     }
     let mana_plan = mana_cost.map(|cost| {
@@ -3017,6 +3208,9 @@ fn pay_cost_components(
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
                 event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
             }
+            CostComponent::TapUntappedControlledPermanent(_) => {
+                event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
+            }
             CostComponent::RevealHandIfNoCardsWithType(_) => {
                 let hand = state.players[player.index()].hand.clone();
                 for object in hand {
@@ -3085,6 +3279,27 @@ fn sacrifice_lands_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 
         }
     }
     0
+}
+
+fn cast_tap_permanent_filter_needed(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+) -> Option<PermanentFilterDef> {
+    if pending.is_flashback {
+        if let Some(filter) = def
+            .flashback
+            .as_ref()
+            .and_then(|flashback| tap_permanent_filter_in(flashback.cost))
+        {
+            return Some(filter);
+        }
+    }
+    if pending.cast_mode == Some(CastMode::Alternative) {
+        if let Some(filter) = def.alt_cost.and_then(tap_permanent_filter_in) {
+            return Some(filter);
+        }
+    }
+    def.additional_cost.and_then(tap_permanent_filter_in)
 }
 
 /// `player`'s currently-controlled lands, minus whichever have already
@@ -3445,18 +3660,28 @@ fn viable_pending_spell_forms(
     state: &GameState,
 ) -> Vec<u8> {
     let Some(omen) = supported_omen(def) else {
-        return viable_printed_spell_modes(def, state);
+        return viable_printed_spell_modes(def, pending.spell, pending.controller, state);
     };
     let mut forms = Vec::with_capacity(2);
     let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-    if target_prefix_can_complete(def.target_spec, &pending.targets_chosen, state)
-        && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
+    if target_prefix_can_complete_for_controller_and_source(
+        def.target_spec,
+        &pending.targets_chosen,
+        pending.controller,
+        targeting_source_for_object(state, pending.spell),
+        state,
+    ) && pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
         && mana::can_pay(&normal_cost, 0, pending.controller, state).is_some()
     {
         forms.push(0);
     }
-    if target_prefix_can_complete(omen.target_spec, &pending.targets_chosen, state)
-        && pending_cast_form_timing_ok(omen.types, Keywords::NONE, pending, state)
+    if target_prefix_can_complete_for_controller_and_source(
+        omen.target_spec,
+        &pending.targets_chosen,
+        pending.controller,
+        targeting_source_for_object(state, pending.spell),
+        state,
+    ) && pending_cast_form_timing_ok(omen.types, Keywords::NONE, pending, state)
         && mana::can_pay(&omen.cost, 0, pending.controller, state).is_some()
     {
         forms.push(1);
@@ -3513,7 +3738,9 @@ fn is_castable_now(
     if def.omen.is_some() && supported_omen(def).is_none() {
         return false;
     }
-    if cast_method != CastMethodV4::Normal && viable_printed_spell_modes(def, state).is_empty() {
+    if cast_method != CastMethodV4::Normal
+        && viable_printed_spell_modes(def, id, player, state).is_empty()
+    {
         return false;
     }
     // 601.3a/117.1a: sorcery-speed timing applies to every permanent-or-
@@ -3556,7 +3783,7 @@ fn is_castable_now(
                 .alt_cost
                 .map(|c| main_timing_ok && can_pay_components(c, player, id, state))
                 .unwrap_or(false);
-            let main_ok = !viable_printed_spell_modes(def, state).is_empty()
+            let main_ok = !viable_printed_spell_modes(def, id, player, state).is_empty()
                 && (normal_ok || alt_ok)
                 && def
                     .additional_cost
@@ -3564,7 +3791,13 @@ fn is_castable_now(
             let omen_ok = supported_omen(def).is_some_and(|omen| {
                 matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
                     && cast_form_timing_ok(omen.types, Keywords::NONE, player, state)
-                    && target_prefix_can_complete(omen.target_spec, &[], state)
+                    && target_prefix_can_complete_for_controller_and_source(
+                        omen.target_spec,
+                        &[],
+                        player,
+                        targeting_source_for_object(state, id),
+                        state,
+                    )
                     && mana::can_pay(&omen.cost, 0, player, state).is_some()
             });
             main_ok || omen_ok
@@ -3668,7 +3901,7 @@ fn is_plotted_castable_now(player: PlayerId, id: ObjectId, state: &GameState) ->
         && def.plot_cost.is_some()
         && plotted_turn < state.turn
         && def.is_castable()
-        && !viable_printed_spell_modes(def, state).is_empty()
+        && !viable_printed_spell_modes(def, id, player, state).is_empty()
         && sorcery_speed_timing_ok(player, state)
 }
 
@@ -4193,7 +4426,12 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
                 return false;
             }
             let def = &card_def::CARD_DEFS[obj.card_def as usize];
-            if !def.is_executable() || !def.has_type(CardType::Creature) {
+            if !def.is_executable() || !object_has_type(state, id, CardType::Creature) {
+                return false;
+            }
+            if has_effective_keyword(state, attacker, Keywords::PROTECTION_FROM_MONOCOLORED)
+                && object_is_monocolored(state, id)
+            {
                 return false;
             }
             if attacker_flying
@@ -4960,7 +5198,13 @@ fn drain_pending_spell_copy_or_decide(state: &mut GameState) -> Option<Decision>
                 player: pending.player,
                 spell: copy,
                 remaining: 1,
-                legal_targets: legal_targets_for(TargetSpec::AnyTarget, &[], state),
+                legal_targets: legal_targets_for_controller_from_source(
+                    TargetSpec::AnyTarget,
+                    &[],
+                    pending.player,
+                    targeting_source_for_object(state, copy),
+                    state,
+                ),
                 can_finish: false,
             })
         }
@@ -5396,7 +5640,15 @@ pub(crate) fn validate_pending_cast(
     if let Some(spec) = active_spec {
         let mut prefix = Vec::new();
         for &target in &pending.targets_chosen {
-            if !completable_next_targets_for(spec, &prefix, state).contains(&target) {
+            if !completable_next_targets_for_controller_and_source(
+                spec,
+                &prefix,
+                pending.controller,
+                targeting_source_for_object(state, pending.spell),
+                state,
+            )
+            .contains(&target)
+            {
                 return Err("pending cast carries an illegal target prefix".to_string());
             }
             prefix.push(target);
@@ -5413,15 +5665,18 @@ pub(crate) fn validate_pending_cast(
     let sacrifice_needed = sacrifice_lands_needed(pending, def);
     let graveyard_exile_needed = graveyard_exile_cards_needed(pending, def);
     let controlled_sacrifice = controlled_permanent_sacrifice_needed(pending, def);
+    let tap_permanent_filter = cast_tap_permanent_filter_needed(pending, def);
     let active_object_cost_families = u8::from(sacrifice_needed != 0)
         + u8::from(graveyard_exile_needed != 0)
-        + u8::from(controlled_sacrifice.is_some());
+        + u8::from(controlled_sacrifice.is_some())
+        + u8::from(tap_permanent_filter.is_some());
     if active_object_cost_families > 1 {
         return Err("pending cast has multiple interactive object-cost families".to_string());
     }
     let interactive_object_cost_needed = sacrifice_needed
         .max(graveyard_exile_needed)
-        .max(controlled_sacrifice.map_or(0, |(count, _)| count));
+        .max(controlled_sacrifice.map_or(0, |(count, _)| count))
+        .max(u8::from(tap_permanent_filter.is_some()));
     if pending.sacrifice_chosen.len() > usize::from(interactive_object_cost_needed) {
         return Err("pending cast chose too many interactive cost objects".to_string());
     }
@@ -5470,6 +5725,19 @@ pub(crate) fn validate_pending_cast(
         {
             return Err(
                 "pending cast sacrifice prefix is not unique matching controlled permanents"
+                    .to_string(),
+            );
+        }
+    } else if let Some(filter) = tap_permanent_filter {
+        let candidates = tap_permanent_cost_candidates(pending.controller, state, filter, &[]);
+        if pending.sacrifice_chosen.len() > 1
+            || pending
+                .sacrifice_chosen
+                .iter()
+                .any(|object| !candidates.contains(object))
+        {
+            return Err(
+                "pending cast tap-cost prefix is not an untapped matching controlled permanent"
                     .to_string(),
             );
         }
@@ -5629,8 +5897,15 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // self-excluding stack state, and revert any impossible announcement
     // instead of exposing an empty targeting decision.
     let targeting_can_complete = match pending.mode_chosen {
-        Some(mode) => spell_form_target_spec(def, mode)
-            .is_some_and(|spec| target_prefix_can_complete(spec, &pending.targets_chosen, state)),
+        Some(mode) => spell_form_target_spec(def, mode).is_some_and(|spec| {
+            target_prefix_can_complete_for_controller_and_source(
+                spec,
+                &pending.targets_chosen,
+                pending.controller,
+                targeting_source_for_object(state, pending.spell),
+                state,
+            )
+        }),
         None => !viable_pending_spell_forms(def, &pending, state).is_empty(),
     };
     if !targeting_can_complete {
@@ -5703,9 +5978,11 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             player: pending.controller,
             spell: pending.spell,
             remaining: need - pending.targets_chosen.len() as u8,
-            legal_targets: completable_next_targets_for(
+            legal_targets: completable_next_targets_for_controller_and_source(
                 active_target_spec,
                 &pending.targets_chosen,
+                pending.controller,
+                targeting_source_for_object(state, pending.spell),
                 state,
             ),
             can_finish: pending.targets_chosen.len()
@@ -5857,6 +6134,35 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     PermanentFilter::ArtifactOrCreature => CostKind::SacrificePermanents,
                 },
                 remaining,
+                candidates,
+            });
+        }
+    }
+
+    if let Some(filter) = cast_tap_permanent_filter_needed(&pending, def) {
+        if pending.sacrifice_chosen.is_empty() {
+            let candidates = tap_permanent_cost_candidates(pending.controller, state, filter, &[]);
+            if candidates.is_empty() {
+                let cast_method = finalized_cast_method(&pending, staged_method, def);
+                let pending = state.engine.pending_cast.take().unwrap();
+                abort_cast(state, pending, cast_method);
+                return None;
+            }
+            if candidates.len() == 1 {
+                state
+                    .engine
+                    .pending_cast
+                    .as_mut()
+                    .unwrap()
+                    .sacrifice_chosen
+                    .push(candidates[0]);
+                return drain_pending_cast_or_decide(state);
+            }
+            return Some(Decision::ChooseCostTargets {
+                player: pending.controller,
+                source: pending.spell,
+                cost_kind: CostKind::TapPermanents,
+                remaining: 1,
                 candidates,
             });
         }
@@ -6439,10 +6745,14 @@ fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
                 player: pending.controller,
                 spell: pending.source,
                 remaining: need - pending.targets.len() as u8,
-                legal_targets: completable_next_targets_for_controller(
+                legal_targets: completable_next_targets_for_controller_and_source(
                     pending.target_spec,
                     &pending.targets,
                     pending.controller,
+                    pending.source_contract.map(|contract| TargetingSource {
+                        object: pending.source,
+                        card_def: contract.card_def,
+                    }),
                     state,
                 ),
                 can_finish: pending.targets.len()
@@ -7145,7 +7455,11 @@ pub(crate) fn validated_stack_item_target_spec(
                 candidate.kind == StackItemKind::Spell
                     && candidate.source == object
                     && candidate.v4.source_contract.is_some_and(|source_contract| {
-                        source_contract.zone_change_count == zone_change_count
+                        source_contract.source == object
+                            && source_contract.card_def == live.card_def
+                            && source_contract.owner == live.owner
+                            && source_contract.zone_change_count == zone_change_count
+                            && source_contract.spell_copy_origin == spell_copy_origin
                     })
             });
             if let Some(target_item) = matches.next() {
@@ -7195,15 +7509,45 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     .v4
                     .activated_ability_index
                     .ok_or("activated stack item lost its definition-owned ability index")?;
-                let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
+                let source_contract = item
+                    .v4
+                    .ability_source_contract
+                    .ok_or("activated stack item lost its source incarnation")?;
+                let def = card_def::CARD_DEFS
+                    .get(source_contract.card_def as usize)
+                    .ok_or("activated stack item source definition is missing")?;
                 let ability = def
                     .activated_abilities
                     .get(ability_index as usize)
                     .ok_or("activated stack item carries an out-of-range ability index")?;
                 activation_legal_targets_for(item.source, ability, &chosen, state).contains(&target)
             }
-            _ => legal_targets_for_controller(spec, &chosen, item.controller, state)
-                .contains(&target),
+            _ => legal_targets_for_controller_from_source(
+                spec,
+                &chosen,
+                item.controller,
+                Some(match item.kind {
+                    StackItemKind::Spell => TargetingSource {
+                        object: item.source,
+                        card_def: state.objects.get(item.source).card_def,
+                    },
+                    StackItemKind::TriggeredAbility => {
+                        let source_contract = item
+                            .v4
+                            .ability_source_contract
+                            .ok_or("triggered stack item lost its source incarnation")?;
+                        TargetingSource {
+                            object: item.source,
+                            card_def: source_contract.card_def,
+                        }
+                    }
+                    StackItemKind::MadnessOffer | StackItemKind::ActivatedAbility => {
+                        unreachable!("handled or untargeted")
+                    }
+                }),
+                state,
+            )
+            .contains(&target),
         };
         any_legal |= same_incarnation && legal_now;
         chosen.push(target);
@@ -7757,6 +8101,41 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 collect_and_queue_triggers(state);
             }
         }
+        Step::Main1 => {
+            // 714.3b: as the precombat main phase begins, each front-face Saga
+            // controlled by the active player receives one lore counter. All
+            // chapter markers are logged before their triggers are collected.
+            let sagas = state
+                .objects
+                .iter()
+                .filter_map(|(id, object)| {
+                    (object.zone == Zone::Battlefield
+                        && object.controller == state.active_player
+                        && object.v4.face_index == 0
+                        && card_def::CARD_DEFS[object.card_def as usize].saga.is_some())
+                    .then_some(id)
+                })
+                .collect::<Vec<_>>();
+            for saga in sagas {
+                let chapter_count = card_def::CARD_DEFS[state.objects.get(saga).card_def as usize]
+                    .saga
+                    .as_ref()
+                    .map_or(0, |definition| definition.chapter_effects.len());
+                let current = state.objects.get(saga).counters.lore;
+                if current < 0 || usize::try_from(current).unwrap_or(usize::MAX) >= chapter_count {
+                    continue;
+                }
+                let chapter = {
+                    let lore = &mut state.objects.get_mut(saga).counters.lore;
+                    *lore = lore
+                        .checked_add(1)
+                        .expect("supported Saga lore counter fits i16");
+                    u8::try_from(*lore).expect("supported Saga chapter fits u8")
+                };
+                event::log_saga_chapter(state, saga, chapter);
+            }
+            collect_and_queue_triggers(state);
+        }
         Step::BeginCombat => {
             state.engine.combat = CombatState::default();
         }
@@ -7771,6 +8150,12 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 obj.damage = 0;
             }
             state.engine.until_end_of_turn.clear();
+            state.engine.active_replacements.retain(|replacement| {
+                !matches!(
+                    replacement.kind,
+                    event::ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                )
+            });
             let p = state.active_player;
             state.players[p.index()].lands_played_this_turn = 0;
             // `EndOfTurn` permissions expire at the very next Cleanup,
@@ -7841,10 +8226,53 @@ pub(crate) fn static_self_boost_for(name: &str) -> Option<StaticSelfBoostDef> {
     }
 }
 
+/// Effective card-type query for one live object face. Nonbattlefield cards
+/// are always front-face objects because every zone change resets the face.
+pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> bool {
+    state.objects.try_get(id).is_some_and(|object| {
+        card_def::CARD_DEFS
+            .get(object.card_def as usize)
+            .is_some_and(|def| {
+                def.types_for_face(object.v4.face_index)
+                    .contains(&card_type)
+            })
+    })
+}
+
+/// Effective W/U/B/R/G/C mask already materialized on the object's current
+/// incarnation. Missing objects fail closed as colorless.
+pub fn object_color_mask(state: &GameState, id: ObjectId) -> u8 {
+    state
+        .objects
+        .try_get(id)
+        .map_or(0, |object| object.v4.effective_color_mask)
+}
+
+pub fn object_is_monocolored(state: &GameState, id: ObjectId) -> bool {
+    const WUBRG_MASK: u8 = (1 << 5) - 1;
+    (object_color_mask(state, id) & WUBRG_MASK).count_ones() == 1
+}
+
+pub fn damage_is_prevented_by_protection(
+    state: &GameState,
+    source: ObjectId,
+    target: Target,
+) -> bool {
+    let Target::Object(target) = target else {
+        return false;
+    };
+    state.objects.try_get(target).is_some_and(|object| {
+        object.zone == Zone::Battlefield
+            && has_effective_keyword(state, target, Keywords::PROTECTION_FROM_MONOCOLORED)
+            && object_is_monocolored(state, source)
+    })
+}
+
 pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
-    let mut power = def.power.unwrap_or(0) as i32 + obj.counters.plus1_plus1 as i32
+    let mut power = def.power_for_face(obj.v4.face_index).unwrap_or(0) as i32
+        + obj.counters.plus1_plus1 as i32
         - obj.counters.minus1_minus1 as i32;
     if def.is_executable() {
         if let Some(boost) = static_self_boost_for(def.name) {
@@ -7886,7 +8314,8 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
 pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
-    let mut toughness = def.toughness.unwrap_or(0) as i32 + obj.counters.plus1_plus1 as i32
+    let mut toughness = def.toughness_for_face(obj.v4.face_index).unwrap_or(0) as i32
+        + obj.counters.plus1_plus1 as i32
         - obj.counters.minus1_minus1 as i32
         - obj.counters.minus0_minus1 as i32;
     if def.is_executable() {
@@ -7936,7 +8365,7 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if !def.is_executable() {
         return false;
     }
-    if def.keywords.has(kw) {
+    if def.keywords_for_face(obj.v4.face_index).has(kw) {
         return true;
     }
     if state.engine.until_end_of_turn.iter().any(|effect| {
@@ -8289,6 +8718,11 @@ fn pending_cast_action_stage(
     if pending.sacrifice_chosen.len()
         < controlled_permanent_sacrifice_needed(pending, def)
             .map_or(0, |(count, _)| usize::from(count))
+    {
+        return Ok(PendingCastActionStage::ChooseCostTarget);
+    }
+    if cast_tap_permanent_filter_needed(pending, def).is_some()
+        && pending.sacrifice_chosen.is_empty()
     {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
@@ -8685,7 +9119,14 @@ fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, Stri
 fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), String> {
     match exact_targeting_producer(state)? {
         TargetingProducer::Cast { pending, spec } => {
-            if !completable_next_targets_for(spec, &pending.targets_chosen, state).contains(&target)
+            if !completable_next_targets_for_controller_and_source(
+                spec,
+                &pending.targets_chosen,
+                pending.controller,
+                targeting_source_for_object(state, pending.spell),
+                state,
+            )
+            .contains(&target)
             {
                 return Err(format!("{target:?} is not a legal cast target"));
             }
@@ -8736,10 +9177,14 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
             apply_choose_spell_copy_target(state, target)
         }
         TargetingProducer::Trigger(pending) => {
-            if !completable_next_targets_for_controller(
+            if !completable_next_targets_for_controller_and_source(
                 pending.target_spec,
                 &pending.targets,
                 pending.controller,
+                pending.source_contract.map(|contract| TargetingSource {
+                    object: pending.source,
+                    card_def: contract.card_def,
+                }),
                 state,
             )
             .contains(&target)
@@ -8983,6 +9428,39 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                     return Err(format!(
                         "{id} is not a legal permanent-sacrifice cost candidate"
                     ));
+                }
+                state
+                    .engine
+                    .pending_cast
+                    .as_mut()
+                    .unwrap()
+                    .sacrifice_chosen
+                    .push(id);
+                return Ok(());
+            }
+        }
+        if let Some(filter) = cast_tap_permanent_filter_needed(&pending, def) {
+            if pending.sacrifice_chosen.is_empty() {
+                let active_target_spec = spell_form_target_spec(
+                    def,
+                    pending
+                        .mode_chosen
+                        .ok_or("cast tap-cost target chosen before spell form completed")?,
+                )
+                .ok_or("pending cast selected a nonexistent spell form")?;
+                if pending.kicked.is_none()
+                    || !pending_cast_targeting_is_complete(&pending, active_target_spec)
+                    || pending.cast_mode.is_none()
+                {
+                    return Err(
+                        "cast tap-cost target chosen before prior cast stages completed"
+                            .to_string(),
+                    );
+                }
+                let candidates =
+                    tap_permanent_cost_candidates(pending.controller, state, filter, &[]);
+                if !candidates.contains(&id) {
+                    return Err(format!("{id} is not a legal tap-cost candidate"));
                 }
                 state
                     .engine
@@ -9602,12 +10080,20 @@ fn apply_choose_spell_copy_target(state: &mut GameState, target: Target) -> Resu
         return Err("the pending spell-copy decision is not at its target stage".to_string());
     }
     validate_pending_spell_copy(state, &pending)?;
-    if !legal_targets_for(TargetSpec::AnyTarget, &[], state).contains(&target) {
-        return Err(format!("{target:?} is not a legal spell-copy target"));
-    }
     let copy_source = pending
         .copy_source
         .ok_or("the target-stage spell copy does not exist")?;
+    if !legal_targets_for_controller_from_source(
+        TargetSpec::AnyTarget,
+        &[],
+        pending.player,
+        targeting_source_for_object(state, copy_source),
+        state,
+    )
+    .contains(&target)
+    {
+        return Err(format!("{target:?} is not a legal spell-copy target"));
+    }
     let copy_stack_item = pending
         .copy_stack_item
         .ok_or("the target-stage spell copy lacks a stack incarnation")?;
@@ -10208,10 +10694,10 @@ fn finalize_owned_cast(
     } else {
         pending.sacrifice_chosen.clone()
     };
-    let additional_owns_object_cost = def
-        .additional_cost
-        .and_then(controlled_permanent_sacrifice_in)
-        .is_some();
+    let additional_owns_object_cost = def.additional_cost.is_some_and(|components| {
+        controlled_permanent_sacrifice_in(components).is_some()
+            || tap_permanent_filter_in(components).is_some()
+    });
     let base_object_cost_chosen: &[ObjectId] = if additional_owns_object_cost {
         &[]
     } else {
