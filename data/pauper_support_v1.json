@@ -5,14 +5,14 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "b29267a762de2f2da5ca9c62e6c1a786657b3ae5ad61e21ff8c6f720fcbd197d"
+    "registry_raw_sha256": "0be33eba66106abb0f9d9fc96893dcb54a0998dae348b74fe2117161d84361d0"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 97,
+    "full_cards": 103,
     "partial_cards": 0,
-    "no_effect_cards": 53,
-    "token_dependencies": 6
+    "no_effect_cards": 47,
+    "token_dependencies": 8
   },
   "deck_mainboard_copy_totals": [
     {
@@ -66,9 +66,9 @@
     },
     {
       "deck_id": "CawGates",
-      "full": 23,
+      "full": 45,
       "partial": 0,
-      "no_effect": 37,
+      "no_effect": 15,
       "total": 60
     },
     {
@@ -145,6 +145,30 @@
       "name": "Map Token",
       "required_by": [
         "Fanatical Offering"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Sacred Cat Embalmed Token",
+      "required_by": [
+        "Sacred Cat"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Treasure Token",
+      "required_by": [
+        "Heap Gate"
       ],
       "registry_status": "present",
       "expected_decks": [],
@@ -261,10 +285,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Bind the Monster",
@@ -525,10 +547,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Cleansing Wildfire",
@@ -1545,10 +1565,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Highway Robbery",
@@ -2744,10 +2762,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Sagu Wildling",
@@ -2828,10 +2844,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Searing Blaze",
@@ -3080,10 +3094,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Steel Sabotage",

@@ -107,6 +107,7 @@
     },
     {
       "name": "Basilisk Gate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -446,6 +447,7 @@
     },
     {
       "name": "Citadel Gate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -1628,6 +1630,7 @@
     },
     {
       "name": "Heap Gate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3015,6 +3018,7 @@
     },
     {
       "name": "Sacred Cat",
+      "engine_capability": "full",
       "mana_cost": "{W}",
       "mana_value": 1,
       "colors": [
@@ -3074,6 +3078,7 @@
     },
     {
       "name": "Sea Gate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3445,6 +3450,7 @@
     },
     {
       "name": "Squadron Hawk",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -4567,6 +4573,73 @@
         "reveal"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/MapToken.java"
+    },
+    {
+      "name": "Sacred Cat Embalmed Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "lifelink",
+        "embalm"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SacredCat.java"
+    },
+    {
+      "name": "Treasure Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Treasure"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "mana_ability",
+        "tap_ability",
+        "sacrifice_cost",
+        "any_color_mana"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/TreasureToken.java"
     }
   ],
   "unresolved": [

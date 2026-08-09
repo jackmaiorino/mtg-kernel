@@ -2054,9 +2054,8 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
                 for &id in mana_abilities {
-                    let choices =
-                        CARD_DEFS[state.objects.get(id).card_def as usize].mana_ability_choices;
-                    for &choice in choices {
+                    let choices = engine::available_mana_ability_choices(*player, id, state);
+                    for &choice in &choices {
                         let cost_targets = engine::mana_ability_cost_targets(*player, id, state);
                         if cost_targets.is_empty() {
                             push_action(
@@ -2237,17 +2236,53 @@ fn core_surface_action_candidates_v1(
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *source)?;
-                for option_index in 0..*option_count {
-                    push_action(
-                        &mut out,
-                        ActionSemanticV1::ChooseEffectOption {
-                            actor,
-                            source: source.clone(),
-                            option_index,
-                            option_count: *option_count,
-                        },
-                        SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
-                    )?;
+                if let Some(pending) = state.engine.pending_land_play.as_ref() {
+                    engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
+                    if pending.controller != *player
+                        || pending.source.0 != source.arena_id
+                        || *option_count != 4
+                    {
+                        return Err(RlContractError(
+                            "land color-choice decision disagrees with its staged source"
+                                .to_string(),
+                        ));
+                    }
+                    let legal_colors = [
+                        ManaColor::W,
+                        ManaColor::U,
+                        ManaColor::B,
+                        ManaColor::R,
+                        ManaColor::G,
+                    ]
+                    .into_iter()
+                    .filter(|color| *color != pending.excluded_color)
+                    .collect::<Vec<_>>();
+                    for (option_index, color) in legal_colors.into_iter().enumerate() {
+                        let option_index =
+                            u16::try_from(option_index).expect("four colors fit u16");
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseEffectColor {
+                                actor,
+                                source: source.clone(),
+                                color,
+                            },
+                            SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
+                        )?;
+                    }
+                } else {
+                    for option_index in 0..*option_count {
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseEffectOption {
+                                actor,
+                                source: source.clone(),
+                                option_index,
+                                option_count: *option_count,
+                            },
+                            SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
+                        )?;
+                    }
                 }
             }
             Decision::ChooseEffectTargets {
@@ -4969,7 +5004,7 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
         EngineDecisionStageV2::PendingOptionalCostSacrifice
     } else if state.engine.pending_spell_copy.is_some() {
         EngineDecisionStageV2::PendingSpellCopy
-    } else if state.engine.pending_effect.is_some() {
+    } else if state.engine.pending_effect.is_some() || state.engine.pending_land_play.is_some() {
         EngineDecisionStageV2::PendingEffect
     } else if !state.engine.pending_triggers.is_empty() {
         EngineDecisionStageV2::PendingTriggers
@@ -5029,12 +5064,25 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
             .as_ref()
             .map(|p| pending_spell_copy_semantic_v2(state, acting_player, p))
             .transpose()?,
-        pending_effect: state
-            .engine
-            .pending_effect
-            .as_ref()
-            .map(|pending| pending_effect_semantic_v4(state, acting_player, pending))
-            .transpose()?,
+        pending_effect: if let Some(pending) = state.engine.pending_effect.as_ref() {
+            Some(pending_effect_semantic_v4(state, acting_player, pending)?)
+        } else if let Some(pending) = state.engine.pending_land_play.as_ref() {
+            engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
+            Some(PendingEffectSemanticV4 {
+                source: Some(card_ref(state, pending.source)?),
+                controller: pending.controller.into(),
+                choice: Some(PendingEffectChoiceSemanticV4::Color {
+                    player: pending.controller.into(),
+                    structural_path: Vec::new(),
+                    legal_colors: ManaColor::ALL
+                        .into_iter()
+                        .filter(|color| *color != pending.excluded_color && *color != ManaColor::C)
+                        .collect(),
+                }),
+            })
+        } else {
+            None
+        },
         pending_triggers: state
             .engine
             .pending_triggers
@@ -5104,15 +5152,20 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
+                                ..
+                            }
                     ) && acting_player != *player;
                     let search_for_chooser = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
@@ -5183,6 +5236,9 @@ fn pending_effect_semantic_v4(
                                 }
                             },
                             crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
                             } => TargetSelectionPurposeV4::SearchResult,
                             crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {

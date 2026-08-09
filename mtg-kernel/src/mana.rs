@@ -195,19 +195,55 @@ pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
         let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
         // `produces_mana` also covers one-shot production such as
         // Burning-Tree Emissary's ETB trigger. The generated
-        // `mana_ability_choices` field is the narrower repeatable tap-source
-        // contract. A creature source also obeys summoning sickness for the
-        // tap symbol in its activation cost.
+        // primary mana-choice contract is the narrower repeatable tap-source
+        // contract, including an incarnation-local chosen color. A creature
+        // source also obeys summoning sickness for the tap symbol in its
+        // activation cost.
         if def.is_automatic_payment_mana_source()
             && !(def.has_type(crate::card_def::CardType::Creature) && obj.summoning_sick)
         {
             sources.push(ManaSource {
                 id,
-                choices: def.mana_ability_choices.to_vec(),
+                choices: def.primary_mana_ability_choices(obj.v4.chosen_color),
             });
         }
     }
     sources
+}
+
+/// Solves a mana cost while reserving permanents for other components of the
+/// same cost. Heap Gate uses this to reserve both itself and the other Gate
+/// that must remain untapped until the complete cost is paid.
+pub fn can_pay_excluding_sources(
+    cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+    excluded: &[ObjectId],
+) -> Option<PaymentPlan> {
+    let sources = gather_sources(player, state)
+        .into_iter()
+        .filter(|source| !excluded.contains(&source.id))
+        .collect::<Vec<_>>();
+    solve(
+        cost,
+        x_value,
+        state.players[player.index()].mana_pool,
+        &sources,
+    )
+    .filter(|plan| plan.life_paid <= state.players[player.index()].life)
+}
+
+/// One-source convenience wrapper for paid mana abilities whose own tap cost
+/// must not also pay their mana component.
+pub fn can_pay_excluding_source(
+    cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+    excluded: ObjectId,
+) -> Option<PaymentPlan> {
+    can_pay_excluding_sources(cost, x_value, player, state, &[excluded])
 }
 
 /// Exact backtracking solve. Colored/hybrid/phyrexian pips are satisfied

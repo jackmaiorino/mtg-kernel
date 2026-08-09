@@ -278,6 +278,16 @@ fn refurbished_familiar_etb_effect() -> EffectOp {
     }
 }
 
+fn squadron_hawk_etb_effect() -> EffectOp {
+    let hawk =
+        crate::card_def::card_id_by_name("Squadron Hawk").expect("Squadron Hawk in CARD_DEFS");
+    EffectOp::SearchLibraryToHandUpTo {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::CardDefinition(hawk),
+        max_targets: 3,
+    }
+}
+
 fn experimental_synthesizer_impulse_effect() -> EffectOp {
     // When Experimental Synthesizer enters or leaves the battlefield, exile
     // the top card of your library. Until end of turn, you may play that
@@ -392,6 +402,14 @@ const REFURBISHED_FAMILIAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     effect: refurbished_familiar_etb_effect,
 }];
 
+const SQUADRON_HAWK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: squadron_hawk_etb_effect,
+}];
+
 /// The pool's implemented triggered abilities, matched by card name (ids are
 /// codegen-assigned from `cards_v1.json`'s array order and not worth
 /// duplicating as constants here -- see `build.rs`'s module doc on id
@@ -423,6 +441,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Faerie Seer" => &FAERIE_SEER_TRIGGERS,
         "Outlaw Medic" => &OUTLAW_MEDIC_TRIGGERS,
         "Refurbished Familiar" => &REFURBISHED_FAMILIAR_TRIGGERS,
+        "Squadron Hawk" => &SQUADRON_HAWK_TRIGGERS,
         _ => &[],
     }
 }

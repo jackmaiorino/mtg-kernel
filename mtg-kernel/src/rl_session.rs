@@ -1731,11 +1731,9 @@ fn flat_validate_origin_decision_v1(
         } => {
             let mut mana_action_count = 0_usize;
             for object in mana_abilities {
-                let state_object = state.objects.try_get(*object).ok_or_else(invalid)?;
-                let definition = crate::card_def::CARD_DEFS
-                    .get(usize::from(state_object.card_def))
-                    .ok_or_else(invalid)?;
-                if definition.mana_ability_choices.is_empty() {
+                let choices =
+                    crate::engine::available_mana_ability_choices(*player, *object, state);
+                if choices.is_empty() {
                     return Err(invalid());
                 }
                 let cost_target_count =
@@ -1744,8 +1742,7 @@ fn flat_validate_origin_decision_v1(
                         .max(1);
                 mana_action_count = mana_action_count
                     .checked_add(
-                        definition
-                            .mana_ability_choices
+                        choices
                             .len()
                             .checked_mul(cost_target_count)
                             .ok_or_else(invalid)?,
@@ -1780,12 +1777,12 @@ fn flat_validate_origin_decision_v1(
                 cursor += 1;
             }
             for object in mana_abilities {
-                let state_object = state.objects.try_get(*object).ok_or_else(invalid)?;
-                let choices = crate::card_def::CARD_DEFS
-                    .get(usize::from(state_object.card_def))
-                    .ok_or_else(invalid)?
-                    .mana_ability_choices;
-                for &choice in choices {
+                let choices =
+                    crate::engine::available_mana_ability_choices(*player, *object, state);
+                if choices.is_empty() {
+                    return Err(invalid());
+                }
+                for &choice in &choices {
                     let cost_targets =
                         crate::engine::mana_ability_cost_targets(*player, *object, state);
                     if cost_targets.is_empty() {
@@ -7722,6 +7719,73 @@ mod tests {
             candidates.len(),
             "source-distinct actions must not collapse semantically"
         );
+    }
+
+    #[test]
+    fn flat_origin_validation_uses_live_state_dependent_mana_choices() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 92);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let citadel = add_battlefield_object(&mut state, PlayerId::P0, "Citadel Gate");
+        state.objects.get_mut(citadel).v4.chosen_color = Some(ManaColor::G);
+        let heap = add_battlefield_object(&mut state, PlayerId::P0, "Heap Gate");
+        let mountain = add_battlefield_object(&mut state, PlayerId::P0, "Mountain");
+
+        let mut session = FastActorSessionV1::reset_with_limits(24, 92, 8, 8);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+
+        let current = session.current.as_ref().expect("priority decision");
+        flat_validate_origin_decision_v1(current, &session.state)
+            .expect("flat validation shares the live mana-choice contract");
+        let mana_actions = current
+            .candidates
+            .iter()
+            .filter_map(
+                |candidate| match (&candidate.semantic, &candidate.policy_action) {
+                    (
+                        ActionSemanticV1::ActivateManaAbility {
+                            source,
+                            mana_choice: Some(color),
+                            cost_target: None,
+                            ..
+                        },
+                        PolicyActionV5::Surface(action),
+                    ) => Some((ObjectId(source.arena_id), *color, action)),
+                    _ => None,
+                },
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mana_actions
+                .iter()
+                .map(|(source, color, _)| (*source, *color))
+                .collect::<Vec<_>>(),
+            vec![
+                (citadel, ManaColor::W),
+                (citadel, ManaColor::G),
+                (heap, ManaColor::C),
+                (heap, ManaColor::W),
+                (heap, ManaColor::U),
+                (heap, ManaColor::B),
+                (heap, ManaColor::R),
+                (heap, ManaColor::G),
+                (mountain, ManaColor::R),
+            ]
+        );
+        assert!(matches!(
+            mana_actions.last().map(|(_, _, action)| *action),
+            Some(crate::surface::SurfaceAction::Action(
+                crate::engine::Action::ActivateManaAbility(source)
+            )) if *source == mountain
+        ));
     }
 
     #[test]

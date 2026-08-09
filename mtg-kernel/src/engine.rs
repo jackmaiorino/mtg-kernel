@@ -41,8 +41,8 @@
 
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
-    Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, PermanentFilter, PermanentFilterDef,
-    TargetSpec,
+    Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, PermanentFilter,
+    PermanentFilterDef, TargetSpec,
 };
 use crate::effect::{self, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, TargetRef};
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
@@ -103,8 +103,8 @@ pub struct EngineState {
     /// or cost-paid.
     pub pending_cast: Option<PendingCast>,
     /// A non-mana ability that has begun activating but isn't fully
-    /// targeted/cost-paid yet (battlefield abilities or hand-zone
-    /// Cycling/typecycling).
+    /// targeted/cost-paid yet (battlefield abilities, hand-zone
+    /// Cycling/typecycling, or graveyard abilities such as Embalm).
     pub pending_activation: Option<PendingActivation>,
     /// A discard obligation -- from a cast/activation's cost, from a
     /// resolving effect (`EffectOp::DiscardCards`), or from cleanup --
@@ -159,10 +159,8 @@ pub struct EngineState {
     /// This turn's combat, reset fresh at every `Step::BeginCombat`.
     pub combat: CombatState,
     /// "Until end of turn" continuous effects, cleared at every
-    /// `Step::Cleanup` (514.2). No card in this increment's pool creates
-    /// one; this is a proven-but-unused shape, same role
-    /// `event::ReplacementEffectKind::PreventNextDamage` plays for the
-    /// replacement pipeline -- see
+    /// `Step::Cleanup` (514.2). Basilisk Gate's resolved pump uses this
+    /// generic shape; see
     /// `tests::until_end_of_turn_effects_are_cleared_at_cleanup`.
     pub until_end_of_turn: Vec<UntilEndOfTurnEffect>,
     /// Bumped every time `Action::ActivateManaAbility` runs. 605.3b: a mana
@@ -241,6 +239,10 @@ pub struct EngineState {
     /// for me", the same distinction `stack_top_is_fresh_own_item` draws
     /// structurally for the stack case.
     pub last_mana_ability_activator: Option<PlayerId>,
+    /// A land play whose as-this-enters color choice must complete before
+    /// the card changes zones. Omitted from legacy snapshots when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_land_play: Option<PendingLandPlay>,
 }
 
 fn next_stack_item_id(state: &mut GameState) -> StackItemId {
@@ -662,6 +664,16 @@ pub struct PendingActivation {
     pub object_cost_chosen: Vec<EffectObjectBinding>,
 }
 
+/// A staged land drop waiting for an as-this-enters color choice.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PendingLandPlay {
+    pub source: ObjectId,
+    pub source_zone_change_count: u32,
+    pub controller: PlayerId,
+    pub origin_zone: Zone,
+    pub excluded_color: ManaColor,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DiscardResume {
     /// Nothing further to do once the discard lands (cleanup's
@@ -862,8 +874,9 @@ pub enum Decision {
         legal_targets: Vec<Target>,
     },
     /// A cost component whose payment requires choosing WHICH objects pay
-    /// it, not merely how many -- permanent sacrifices and Escape's choice
-    /// of other graveyard cards. Fireblast's and Lava Dart's sacrifice
+    /// it, not merely how many -- permanent sacrifices, Escape's choice
+    /// of other graveyard cards, and typed permanent taps such as Heap
+    /// Gate's additional activation cost. Fireblast's and Lava Dart's sacrifice
     /// choices were previously auto-solved silently
     /// by `sacrifice_lowest_id_lands`'s tapped-status heuristic with no
     /// `Decision` at all; the reference logs a real `SELECT_TARGETS`
@@ -1992,6 +2005,66 @@ pub(crate) fn evaluate_dynamic_value(state: &GameState, value: DynamicValueDef) 
     i32::try_from(count).expect("the object arena count fits the engine's signed value range")
 }
 
+fn activation_cost_object_candidates(
+    player: PlayerId,
+    source: ObjectId,
+    subtype: card_def::Subtype,
+    state: &GameState,
+    already_chosen: &[ObjectId],
+) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|candidate| *candidate != source && !already_chosen.contains(candidate))
+        .filter(|&candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && !object.tapped
+                && object
+                    .v4
+                    .effective_subtype_ids
+                    .binary_search(&subtype.stable_id())
+                    .is_ok()
+        })
+        .collect()
+}
+
+fn activation_tap_cost_subtype(components: &[CostComponent]) -> Option<card_def::Subtype> {
+    components.iter().find_map(|component| match component {
+        CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => Some(*subtype),
+        _ => None,
+    })
+}
+
+fn activation_mana_cost(components: &[CostComponent]) -> Option<&Cost> {
+    components.iter().find_map(|component| match component {
+        CostComponent::Mana(cost) => Some(cost),
+        _ => None,
+    })
+}
+
+fn payable_activation_cost_object_candidates(
+    player: PlayerId,
+    source: ObjectId,
+    components: &[CostComponent],
+    state: &GameState,
+) -> Vec<ObjectId> {
+    let Some(subtype) = activation_tap_cost_subtype(components) else {
+        return Vec::new();
+    };
+    activation_cost_object_candidates(player, source, subtype, state, &[])
+        .into_iter()
+        .filter(|candidate| {
+            activation_mana_cost(components).is_none_or(|cost| {
+                mana::can_pay_excluding_sources(cost, 0, player, state, &[source, *candidate])
+                    .is_some()
+            })
+        })
+        .collect()
+}
+
 /// Whether the generic component payer can solve this exact ordered shape.
 /// The current solver deliberately supports one component from each
 /// interactive/resource family and requires mana to precede anything that
@@ -2016,6 +2089,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut pay_life_count = 0;
     let mut tap_count = 0;
     let mut source_departure_count = 0;
+    let mut tap_other_permanent_count = 0;
 
     for component in components {
         match component {
@@ -2072,6 +2146,10 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 }
                 pay_life_count += 1;
             }
+            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
+                tap_other_permanent_count += 1;
+                saw_source_changing_component = true;
+            }
         }
     }
 
@@ -2080,10 +2158,12 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             + sacrifice_controlled_count
             + graveyard_exile_count
             + return_permanent_count
+            + tap_other_permanent_count
             > 1
         || pay_life_count > 1
         || tap_count > 1
         || source_departure_count > 1
+        || tap_other_permanent_count > 1
     {
         return false;
     }
@@ -2096,9 +2176,9 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
         }))
 }
 
-/// Activated abilities stage the one admitted filtered-return family through
-/// `ChooseCostTargets`. Cast-only sacrifice and graveyard-exile selections
-/// still fail closed in this context.
+/// Activated abilities stage the admitted filtered-return and typed
+/// tap-other-permanent families through `ChooseCostTargets`. Cast-only
+/// sacrifice and graveyard-exile selections still fail closed here.
 fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
     component_payment_shape_supported(components)
         && !components.iter().any(|component| {
@@ -2123,25 +2203,18 @@ fn can_pay_activation_components(
         return false;
     }
 
-    // A mana-producing source cannot pay a mana component by tapping itself
-    // and then also pay an explicit `Tap` component. The current deterministic
-    // mana solver has no exclusion/reservation input, so fail closed if its
-    // selected plan overlaps rather than accepting a double-used resource.
+    if activation_tap_cost_subtype(components).is_some() {
+        return !payable_activation_cost_object_candidates(player, source, components, state)
+            .is_empty();
+    }
     if components
         .iter()
         .any(|component| matches!(component, CostComponent::Tap))
+        && activation_mana_cost(components).is_some_and(|cost| {
+            mana::can_pay_excluding_source(cost, 0, player, state, source).is_none()
+        })
     {
-        if let Some(cost) = components.iter().find_map(|component| match component {
-            CostComponent::Mana(cost) => Some(cost),
-            _ => None,
-        }) {
-            let Some(plan) = mana::can_pay(cost, 0, player, state) else {
-                return false;
-            };
-            if plan.taps.iter().any(|(id, _)| *id == source) {
-                return false;
-            }
-        }
+        return false;
     }
     true
 }
@@ -2254,6 +2327,9 @@ fn can_pay_components(
             CostComponent::PayLife(amount) => {
                 state.players[player.index()].life >= i32::from(*amount)
             }
+            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
+                !activation_cost_object_candidates(player, source, *subtype, state, &[]).is_empty()
+            }
         };
         if !ok {
             return false;
@@ -2267,10 +2343,11 @@ fn can_pay_components(
 /// `EngineState::pending_discard`'s doc). `object_cost_chosen` is the
 /// already-decided answer to the one supported interactive object-cost
 /// component (`SacrificeLands`, `ExileOtherCardsFromOwnGraveyard`, or one
-/// filtered returned permanent) in `components`. Casts stage this in
-/// `PendingCast::sacrifice_chosen`; activations use their incarnation-bound
-/// object-cost field. The cast field name is a frozen compatibility alias.
-/// Pass `&[]` for a component list statically known not to contain any family.
+/// filtered returned permanent, or a typed tap-other-permanent cost) in
+/// `components`. Casts stage this in `PendingCast::sacrifice_chosen`;
+/// activations use their incarnation-bound object-cost field. The cast field
+/// name is a frozen compatibility alias. Pass `&[]` for a component list
+/// statically known not to contain any family.
 fn pay_cost_components(
     state: &mut GameState,
     player: PlayerId,
@@ -2380,10 +2457,24 @@ fn pay_cost_components(
         if invalid {
             return false;
         }
-    } else if sacrifice_needed.is_none()
+    }
+    let tap_other_subtype = components.iter().find_map(|component| match component {
+        CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => Some(*subtype),
+        _ => None,
+    });
+    if let Some(subtype) = tap_other_subtype {
+        if object_cost_chosen.len() != 1
+            || !activation_cost_object_candidates(player, source, subtype, state, &[])
+                .contains(&object_cost_chosen[0])
+        {
+            return false;
+        }
+    }
+    if sacrifice_needed.is_none()
         && sacrifice_controlled.is_none()
         && graveyard_exile_needed.is_none()
         && return_filter.is_none()
+        && tap_other_subtype.is_none()
         && !object_cost_chosen.is_empty()
     {
         return false;
@@ -2392,25 +2483,28 @@ fn pay_cost_components(
     // Derive the sole mana plan before applying any state-changing component.
     // This keeps a restored or forward-generated unaffordable shape from
     // partially paying life/discard-adjacent components before failing.
-    let mana_cost = components.iter().find_map(|component| match component {
-        CostComponent::Mana(cost) => Some(cost),
-        _ => None,
+    let mana_cost = activation_mana_cost(components);
+    let mut reserved = Vec::new();
+    if components
+        .iter()
+        .any(|component| matches!(component, CostComponent::Tap))
+    {
+        reserved.push(source);
+    }
+    if tap_other_subtype.is_some() {
+        reserved.extend(object_cost_chosen.iter().copied());
+    }
+    let mana_plan = mana_cost.map(|cost| {
+        if reserved.is_empty() {
+            mana::can_pay(cost, 0, player, state)
+        } else {
+            mana::can_pay_excluding_sources(cost, 0, player, state, &reserved)
+        }
     });
-    let mana_plan = mana_cost.map(|cost| mana::can_pay(cost, 0, player, state));
     if mana_plan.as_ref().is_some_and(Option::is_none) {
         return false;
     }
     let mana_plan = mana_plan.flatten();
-    if components
-        .iter()
-        .any(|component| matches!(component, CostComponent::Tap))
-        && mana_plan
-            .as_ref()
-            .is_some_and(|plan| plan.taps.iter().any(|(id, _)| *id == source))
-    {
-        return false;
-    }
-
     for c in components {
         match c {
             CostComponent::Tap => event::propose_and_commit(state, ProposedEvent::tap(source)),
@@ -2463,6 +2557,9 @@ fn pay_cost_components(
                 ProposedEvent::life_loss(player, i32::from(*amount)),
             ),
             CostComponent::DiscardCards(_) => {}
+            CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
+                event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
+            }
         }
     }
     true
@@ -3048,35 +3145,113 @@ fn available_mana_abilities(player: PlayerId, state: &GameState) -> Vec<ObjectId
         .battlefield
         .iter()
         .copied()
-        .filter(|&id| {
-            let obj = state.objects.get(id);
-            let def = &card_def::CARD_DEFS[obj.card_def as usize];
-            if !def.has_mana_ability() {
-                return false;
-            }
-            let Some(rich) = def.mana_ability_def else {
-                return !obj.tapped && !(def.has_type(CardType::Creature) && obj.summoning_sick);
-            };
-            if rich
-                .max_activations_per_turn
-                .is_some_and(|limit| mana_ability_use_count(state, id, 0) >= u16::from(limit))
-            {
-                return false;
-            }
-            match rich.cost {
-                ManaAbilityCostDef::TapSelf => {
-                    !obj.tapped && !(def.has_type(CardType::Creature) && obj.summoning_sick)
-                }
-                ManaAbilityCostDef::SacrificeSelf
-                | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => true,
-                ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
-                    !obj.tapped
-                        && !(def.has_type(CardType::Creature) && obj.summoning_sick)
-                        && !mana_ability_cost_targets(player, id, state).is_empty()
-                }
-            }
-        })
+        .filter(|&id| !available_mana_ability_choices(player, id, state).is_empty())
         .collect()
+}
+
+fn rich_mana_ability_is_payable(
+    player: PlayerId,
+    source: ObjectId,
+    ability_index: u16,
+    rich: ManaAbilityDef,
+    mana_cost: Option<Cost>,
+    state: &GameState,
+) -> bool {
+    let object = state.objects.get(source);
+    let def = &card_def::CARD_DEFS[object.card_def as usize];
+    if rich.max_activations_per_turn.is_some_and(|limit| {
+        mana_ability_use_count(state, source, ability_index) >= u16::from(limit)
+    }) {
+        return false;
+    }
+    if mana_cost.is_some_and(|cost| {
+        mana::can_pay_excluding_source(&cost, 0, player, state, source).is_none()
+    }) {
+        return false;
+    }
+    match rich.cost {
+        ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
+            !object.tapped && !(def.has_type(CardType::Creature) && object.summoning_sick)
+        }
+        ManaAbilityCostDef::SacrificeSelf | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
+            true
+        }
+        ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
+            !object.tapped
+                && !(def.has_type(CardType::Creature) && object.summoning_sick)
+                && !mana_ability_cost_targets(player, source, state).is_empty()
+        }
+    }
+}
+
+/// Exact currently-payable color choices across every printed mana ability
+/// on `source`. This is shared by engine validation and RL enumeration so an
+/// unaffordable paid mana ability is never surfaced as a legal action.
+pub(crate) fn available_mana_ability_choices(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Vec<ManaColor> {
+    let Some(object) = state.objects.try_get(source) else {
+        return Vec::new();
+    };
+    if object.controller != player
+        || object.zone != Zone::Battlefield
+        || !state.players[player.index()].battlefield.contains(&source)
+    {
+        return Vec::new();
+    }
+    let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
+        return Vec::new();
+    };
+    if !def.has_mana_ability() {
+        return Vec::new();
+    }
+
+    let mut choices = Vec::new();
+    let primary = def.primary_mana_ability_choices(object.v4.chosen_color);
+    let primary_payable = if let Some(rich) = def.mana_ability_def {
+        rich_mana_ability_is_payable(player, source, 0, rich, None, state)
+    } else {
+        !object.tapped && !(def.has_type(CardType::Creature) && object.summoning_sick)
+    };
+    if primary_payable {
+        choices.extend(primary);
+    }
+
+    let primary_ability_count =
+        if def.mana_ability_def.is_some() || def.mana_ability_includes_chosen_color {
+            u16::from(
+                !def.primary_mana_ability_choices(object.v4.chosen_color)
+                    .is_empty(),
+            )
+        } else {
+            match u16::try_from(def.mana_ability_choices.len()) {
+                Ok(count) => count,
+                Err(_) => return Vec::new(),
+            }
+        };
+    for (index, additional) in def.additional_mana_abilities.iter().enumerate() {
+        let Ok(index) = u16::try_from(index) else {
+            return Vec::new();
+        };
+        if rich_mana_ability_is_payable(
+            player,
+            source,
+            primary_ability_count + index,
+            additional.ability,
+            Some(additional.mana_cost),
+            state,
+        ) {
+            for &color in additional.colors {
+                if choices.contains(&color) {
+                    return Vec::new();
+                }
+                choices.push(color);
+            }
+        }
+    }
+    choices
 }
 
 fn mana_ability_use_count(state: &GameState, source: ObjectId, ability_index: u16) -> u16 {
@@ -3148,17 +3323,41 @@ fn activate_mana_ability_for(
     choice: ManaColor,
     cost_target: Option<ObjectId>,
 ) -> Result<(), String> {
-    if !available_mana_abilities(player, state).contains(&source) {
-        return Err(format!(
-            "{source} has no available mana ability for {player:?}"
-        ));
+    let available_choices = available_mana_ability_choices(player, source, state);
+    if !available_choices.contains(&choice) {
+        return Err(format!("{source} cannot currently produce {choice:?}"));
     }
-    let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
+    let card_def = state.objects.get(source).card_def;
+    let chosen_color = state.objects.get(source).v4.chosen_color;
+    let definition = &card_def::CARD_DEFS[card_def as usize];
     let ability_index = definition
-        .mana_ability_index(choice)
+        .mana_ability_index(choice, chosen_color)
         .ok_or_else(|| format!("{source} cannot produce {choice:?}"))?;
     let source_zone_change_count = state.objects.get(source).zone_change_count;
-    if let Some(rich) = definition.mana_ability_def {
+    let primary_choices = definition.primary_mana_ability_choices(chosen_color);
+    let primary_rich = definition.mana_ability_def;
+    let additional = if primary_choices.contains(&choice) {
+        None
+    } else {
+        let mut matches = definition
+            .additional_mana_abilities
+            .iter()
+            .copied()
+            .filter(|ability| ability.colors.contains(&choice));
+        let found = matches.next();
+        if matches.next().is_some() {
+            return Err(
+                "mana choice ambiguously identifies multiple printed abilities".to_string(),
+            );
+        }
+        found
+    };
+    let rich = if primary_choices.contains(&choice) {
+        primary_rich
+    } else {
+        additional.map(|ability| ability.ability)
+    };
+    if let Some(rich) = rich {
         let legal_cost_targets = mana_ability_cost_targets(player, source, state);
         match rich.cost {
             ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
@@ -3176,6 +3375,13 @@ fn activate_mana_ability_for(
             }
             _ => {}
         }
+
+        let mana_plan = additional
+            .map(|ability| {
+                mana::can_pay_excluding_source(&ability.mana_cost, 0, player, state, source)
+                    .ok_or_else(|| "additional mana-ability cost became unpayable".to_string())
+            })
+            .transpose()?;
 
         let amount = match rich.amount {
             ManaAbilityAmountDef::Fixed(amount) => amount,
@@ -3195,6 +3401,10 @@ fn activate_mana_ability_for(
                 .try_into()
                 .map_err(|_| "mana ability amount exceeds u8".to_string())?,
         };
+
+        if let Some(plan) = &mana_plan {
+            pay_plan(state, player, plan);
+        }
 
         match rich.cost {
             ManaAbilityCostDef::TapSelf => {
@@ -3218,6 +3428,13 @@ fn activate_mana_ability_for(
                 *counters = counters
                     .checked_add(1)
                     .ok_or_else(|| "-0/-1 counter count overflow".to_string())?;
+            }
+            ManaAbilityCostDef::TapAndSacrificeSelf => {
+                event::propose_and_commit(state, ProposedEvent::tap(source));
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::zone_change(source, Zone::Graveyard),
+                );
             }
         }
         if amount > 0 {
@@ -3243,7 +3460,7 @@ fn activate_mana_ability_for(
             ));
         }
         let program = definition
-            .mana_ability_program_for(choice)
+            .mana_ability_program_for(choice, chosen_color)
             .expect("validated mana choice has a generated program");
         let ctx = ExecCtx::no_targets(source, player);
         effect::execute(&program, &ctx, state);
@@ -3292,15 +3509,16 @@ fn activate_mana_ability_for(
 
 fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(ObjectId, u8)> {
     let mut out = Vec::new();
-    // Preserve the historical battlefield ordering, then append hand-zone
-    // actions in hand order. A definition's activation zone is checked for
-    // every ability, so mixed-zone cards do not need card-specific routing.
+    // Preserve the historical battlefield and hand ordering, then append
+    // graveyard actions in graveyard order. A definition's activation zone
+    // is checked for every ability, so mixed-zone cards remain data-driven.
     for (zone, objects) in [
         (
             Zone::Battlefield,
             &state.players[player.index()].battlefield,
         ),
         (Zone::Hand, &state.players[player.index()].hand),
+        (Zone::Graveyard, &state.players[player.index()].graveyard),
     ] {
         for &id in objects {
             let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
@@ -3474,6 +3692,24 @@ pub fn advance_until_decision(state: &mut GameState) -> Decision {
         }
         if let Some((mechanic, source)) = state.engine.halted {
             return Decision::Halted { mechanic, source };
+        }
+
+        if let Some(pending) = state.engine.pending_land_play.as_ref() {
+            if validate_pending_land_play(state, pending).is_err() {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.source,
+                ));
+                return Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source: pending.source,
+                };
+            }
+            return Decision::ChooseEffectOption {
+                player: pending.controller,
+                source: pending.source,
+                option_count: 4,
+            };
         }
 
         if let Some(d) = drain_pending_spell_copy_or_decide(state) {
@@ -5165,6 +5401,51 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         }
     }
 
+    if activation_tap_cost_subtype(ability.cost).is_some() {
+        if pending.object_cost_chosen.is_empty() {
+            let candidates = payable_activation_cost_object_candidates(
+                pending.controller,
+                pending.source,
+                ability.cost,
+                state,
+            );
+            if candidates.is_empty() {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.source,
+                ));
+                return Some(Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source: pending.source,
+                });
+            }
+            if candidates.len() == 1 {
+                let chosen = candidates[0];
+                let object = state.objects.get(chosen);
+                let binding = EffectObjectBinding {
+                    object: chosen,
+                    expected_zone: Zone::Battlefield,
+                    expected_zone_change_count: object.zone_change_count,
+                };
+                state
+                    .engine
+                    .pending_activation
+                    .as_mut()
+                    .expect("validated activation remains staged")
+                    .object_cost_chosen
+                    .push(binding);
+                return drain_pending_activation_or_decide(state);
+            }
+            return Some(Decision::ChooseCostTargets {
+                player: pending.controller,
+                source: pending.source,
+                cost_kind: CostKind::TapPermanents,
+                remaining: 1,
+                candidates,
+            });
+        }
+    }
+
     if pending.cost_discard_paid.is_none() {
         let n = discard_count_in(ability.cost).expect(
             "cost_discard_paid is None only when begin_activation saw a DiscardCards component",
@@ -5238,36 +5519,56 @@ pub(crate) fn validate_pending_activation(
         }
     }
 
-    match return_permanent_filter_in(ability.cost) {
-        None if !pending.object_cost_chosen.is_empty() => {
-            return Err("activation without an object cost carries chosen cost objects".to_string())
+    let return_filter = return_permanent_filter_in(ability.cost);
+    let tap_cost_subtype = activation_tap_cost_subtype(ability.cost);
+    if return_filter.is_some() && tap_cost_subtype.is_some() {
+        return Err("activation combines unsupported interactive object costs".to_string());
+    }
+    if return_filter.is_none()
+        && tap_cost_subtype.is_none()
+        && !pending.object_cost_chosen.is_empty()
+    {
+        return Err("activation without an object cost carries chosen cost objects".to_string());
+    }
+    if pending.object_cost_chosen.len() > 1 {
+        return Err("activation carries too many chosen object-cost permanents".to_string());
+    }
+    for &binding in &pending.object_cost_chosen {
+        if binding.expected_zone != Zone::Battlefield {
+            return Err(
+                "activation object-cost binding does not expect the battlefield".to_string(),
+            );
         }
-        None => {}
-        Some(_) if pending.object_cost_chosen.len() > 1 => {
-            return Err("activation carries too many chosen object-cost permanents".to_string())
-        }
-        Some(filter) => {
-            for &binding in &pending.object_cost_chosen {
-                if binding.expected_zone != Zone::Battlefield {
-                    return Err(
-                        "activation object-cost binding does not expect the battlefield"
-                            .to_string(),
-                    );
-                }
-                let live = state.objects.try_get(binding.object).ok_or_else(|| {
-                    "activation object-cost permanent no longer exists".to_string()
-                })?;
-                if live.zone_change_count != binding.expected_zone_change_count
-                    || live.zone != Zone::Battlefield
-                    || live.controller != pending.controller
-                    || !permanent_matches_return_filter(state, binding.object, filter)
-                {
-                    return Err(
-                        "activation object-cost permanent changed incarnation or legality"
-                            .to_string(),
-                    );
-                }
-            }
+        let live = state
+            .objects
+            .try_get(binding.object)
+            .ok_or_else(|| "activation object-cost permanent no longer exists".to_string())?;
+        let matches_cost = return_filter
+            .is_some_and(|filter| permanent_matches_return_filter(state, binding.object, filter))
+            || tap_cost_subtype.is_some_and(|subtype| {
+                binding.object != pending.source
+                    && !live.tapped
+                    && live
+                        .v4
+                        .effective_subtype_ids
+                        .binary_search(&subtype.stable_id())
+                        .is_ok()
+                    && payable_activation_cost_object_candidates(
+                        pending.controller,
+                        pending.source,
+                        ability.cost,
+                        state,
+                    )
+                    .contains(&binding.object)
+            });
+        if live.zone_change_count != binding.expected_zone_change_count
+            || live.zone != Zone::Battlefield
+            || live.controller != pending.controller
+            || !matches_cost
+        {
+            return Err(
+                "activation object-cost permanent changed incarnation or legality".to_string(),
+            );
         }
     }
 
@@ -5284,6 +5585,13 @@ pub(crate) fn validate_pending_activation(
                 && object.zone == Zone::Hand
                 && state.players[pending.controller.index()]
                     .hand
+                    .contains(&pending.source)
+        }
+        Zone::Graveyard => {
+            object.owner == pending.controller
+                && object.zone == Zone::Graveyard
+                && state.players[pending.controller.index()]
+                    .graveyard
                     .contains(&pending.source)
         }
         _ => false,
@@ -5356,7 +5664,7 @@ pub(crate) fn validate_pending_activation(
             || discard_count_in(ability.cost).map(u32::from) != Some(discard.count)
             || pending.cost_discard_paid.is_some()
             || !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len())
-            || (return_permanent_filter_in(ability.cost).is_some()
+            || ((return_filter.is_some() || tap_cost_subtype.is_some())
                 && pending.object_cost_chosen.len() != 1)
         {
             return Err("pending activation discard binding or stage changed".to_string());
@@ -6807,12 +7115,10 @@ fn pending_activation_action_stage(
         }
         return Ok(PendingActivationActionStage::ChooseTarget);
     }
-    let object_cost_needed = return_permanent_filter_in(
-        card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize]
-            .activated_abilities[pending.ability_index as usize]
-            .cost,
-    )
-    .is_some();
+    let ability = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize]
+        .activated_abilities[pending.ability_index as usize];
+    let object_cost_needed = return_permanent_filter_in(ability.cost).is_some()
+        || activation_tap_cost_subtype(ability.cost).is_some();
     if object_cost_needed && pending.object_cost_chosen.is_empty() {
         return Ok(PendingActivationActionStage::ChooseCostTarget);
     }
@@ -6843,6 +7149,12 @@ fn action_matches_pending_activation_stage(
 /// `advance_until_decision`. Returns `Err` for an action that isn't
 /// currently legal (caller bug); never silently no-ops.
 pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if state.engine.pending_land_play.is_some() && !matches!(&action, Action::ChooseEffectOption(_))
+    {
+        return Err(
+            "only the exact color-choice action may answer a pending land play".to_string(),
+        );
+    }
     if let Some(pending) = state.engine.pending_cast.as_ref() {
         let stage = pending_cast_action_stage(state, pending)?;
         if !action_matches_pending_cast_stage(&action, stage) {
@@ -6877,14 +7189,24 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             if !land_drop_candidates(p, state).contains(&id) {
                 return Err(format!("{id} is not a legal land drop for {p:?}"));
             }
-            play_land(state, p, id);
+            let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+            if let Some(excluded_color) = def.as_enters_choose_color_other_than {
+                state.engine.pending_land_play = Some(PendingLandPlay {
+                    source: id,
+                    source_zone_change_count: state.objects.get(id).zone_change_count,
+                    controller: p,
+                    origin_zone: state.objects.get(id).zone,
+                    excluded_color,
+                });
+            } else {
+                play_land(state, p, id, None);
+            }
             Ok(())
         }
         Action::ActivateManaAbility(id) => {
             let p = state.priority_player;
-            let choices = card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
-                .mana_ability_choices;
-            let [choice] = choices else {
+            let choices = available_mana_ability_choices(p, id, state);
+            let [choice] = choices.as_slice() else {
                 return Err(format!(
                     "{id} requires an explicit mana choice from {choices:?}"
                 ));
@@ -6893,8 +7215,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
         Action::ActivateManaAbilityChoice(id, choice) => {
             let p = state.priority_player;
-            let choices = card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
-                .mana_ability_choices;
+            let choices = available_mana_ability_choices(p, id, state);
             if choices.len() < 2 {
                 return Err(format!(
                     "{id} is a single-color source and uses ActivateManaAbility"
@@ -7014,7 +7335,11 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             Ok(())
         }
         Action::ChooseEffectOption(option_index) => {
-            effect::choose_resumable_option(state, option_index)
+            if state.engine.pending_land_play.is_some() {
+                apply_choose_land_color(state, option_index)
+            } else {
+                effect::choose_resumable_option(state, option_index)
+            }
         }
         Action::ChooseEffectTarget(target) => {
             if state.engine.pending_activation.is_some() {
@@ -7227,8 +7552,9 @@ fn finish_optional_activation_targets(state: &mut GameState) -> Result<(), Strin
 /// Answers one `Decision::ChooseCostTargets` pick -- see that decision's
 /// doc. `PendingCast` stages permanent sacrifices and Escape graveyard
 /// exiles; `PendingOptionalCostSacrifice` stages Highway Robbery's
-/// `SacrificeLand` choice. No activated ability in this pool has an
-/// interactive object-selection cost component.
+/// `SacrificeLand` choice. Activated abilities use the same stable action
+/// family for non-target object costs such as Heap Gate tapping another
+/// untapped controlled Gate.
 fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), String> {
     if let Some(pending) = state.engine.pending_cast.clone() {
         validate_pending_cast(state, &pending)?;
@@ -7361,8 +7687,6 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         validate_pending_activation(state, &pending)?;
         let definition = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
         let ability = &definition.activated_abilities[pending.ability_index as usize];
-        let filter = return_permanent_filter_in(ability.cost)
-            .ok_or("pending activation has no interactive permanent cost")?;
         if pending.targets_chosen.len() != usize::from(target_count(pending.target_spec)) {
             return Err(
                 "activation cost target chosen before activation targeting completed".to_string(),
@@ -7371,28 +7695,45 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         if !pending.object_cost_chosen.is_empty() {
             return Err("activation object cost has already been selected".to_string());
         }
-        let candidates = return_permanent_cost_candidates(
-            pending.controller,
-            state,
-            filter,
-            &pending.object_cost_chosen,
-        );
-        if !candidates.iter().any(|binding| binding.object == id) {
-            return Err(format!(
-                "{id} is not a legal activation object-cost candidate"
-            ));
-        }
-        let binding = candidates
+        let binding = if let Some(filter) = return_permanent_filter_in(ability.cost) {
+            return_permanent_cost_candidates(
+                pending.controller,
+                state,
+                filter,
+                &pending.object_cost_chosen,
+            )
             .into_iter()
             .find(|binding| binding.object == id)
-            .expect("candidate membership checked above");
-        state
+            .ok_or_else(|| format!("{id} is not a legal activation object-cost candidate"))?
+        } else if activation_tap_cost_subtype(ability.cost).is_some() {
+            if !payable_activation_cost_object_candidates(
+                pending.controller,
+                pending.source,
+                ability.cost,
+                state,
+            )
+            .contains(&id)
+            {
+                return Err(format!("{id} is not a legal activation-cost candidate"));
+            }
+            let object = state.objects.get(id);
+            EffectObjectBinding {
+                object: id,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: object.zone_change_count,
+            }
+        } else {
+            return Err("pending activation has no interactive object cost".to_string());
+        };
+        let live = state
             .engine
             .pending_activation
             .as_mut()
-            .expect("validated activation remains staged")
-            .object_cost_chosen
-            .push(binding);
+            .expect("validated activation remains staged");
+        if live != &pending {
+            return Err("pending activation changed before object-cost commit".to_string());
+        }
+        live.object_cost_chosen.push(binding);
         return Ok(());
     }
     if let Some(pending) = state.engine.pending_optional_cost_sacrifice.as_ref() {
@@ -8125,7 +8466,79 @@ fn apply_order_triggers(state: &mut GameState, perm: Vec<usize>) -> Result<(), S
     Ok(())
 }
 
-fn play_land(state: &mut GameState, player: PlayerId, id: ObjectId) {
+pub(crate) fn validate_pending_land_play(
+    state: &GameState,
+    pending: &PendingLandPlay,
+) -> Result<(), String> {
+    let object = state
+        .objects
+        .try_get(pending.source)
+        .ok_or("pending land source is missing")?;
+    if object.zone_change_count != pending.source_zone_change_count
+        || object.zone != pending.origin_zone
+        || object.owner != pending.controller
+        || !matches!(pending.origin_zone, Zone::Hand | Zone::Exile)
+    {
+        return Err("pending land source incarnation or ownership changed".to_string());
+    }
+    let def = card_def::CARD_DEFS
+        .get(object.card_def as usize)
+        .ok_or("pending land definition is missing")?;
+    if !def.is_playable_land()
+        || def.as_enters_choose_color_other_than != Some(pending.excluded_color)
+        || pending.excluded_color == ManaColor::C
+    {
+        return Err("pending land color-choice definition changed".to_string());
+    }
+    if !land_drop_candidates(pending.controller, state).contains(&pending.source) {
+        return Err("pending land is no longer a legal land drop".to_string());
+    }
+    if state.engine.pending_cast.is_some()
+        || state.engine.pending_activation.is_some()
+        || state.engine.pending_discard.is_some()
+        || state.engine.pending_optional_cost.is_some()
+        || state.engine.pending_optional_cost_sacrifice.is_some()
+        || state.engine.pending_spell_copy.is_some()
+        || state.engine.pending_effect.is_some()
+        || !state.engine.pending_triggers.is_empty()
+        || state.engine.pending_kicked_source.is_some()
+    {
+        return Err("pending land choice coexists with another staged context".to_string());
+    }
+    Ok(())
+}
+
+fn apply_choose_land_color(state: &mut GameState, option_index: u16) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_land_play
+        .clone()
+        .ok_or("no land color choice is pending")?;
+    validate_pending_land_play(state, &pending)?;
+    let legal_colors = [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ]
+    .into_iter()
+    .filter(|color| *color != pending.excluded_color)
+    .collect::<Vec<_>>();
+    let color = *legal_colors
+        .get(usize::from(option_index))
+        .ok_or("land color-choice option index is outside the printed color set")?;
+    state.engine.pending_land_play = None;
+    play_land(state, pending.controller, pending.source, Some(color));
+    Ok(())
+}
+
+fn play_land(
+    state: &mut GameState,
+    player: PlayerId,
+    id: ObjectId,
+    chosen_color: Option<ManaColor>,
+) {
     let ctx = ExecCtx::no_targets(id, player);
     effect::execute(
         &EffectOp::MoveObject {
@@ -8135,6 +8548,7 @@ fn play_land(state: &mut GameState, player: PlayerId, id: ObjectId) {
         &ctx,
         state,
     );
+    state.objects.get_mut(id).v4.chosen_color = chosen_color;
     state.players[player.index()].lands_played_this_turn += 1;
     collect_and_queue_triggers(state);
     state.engine.priority_passes = [false, false];

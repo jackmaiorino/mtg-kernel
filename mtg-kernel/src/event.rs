@@ -515,7 +515,7 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
         }
         ProposedEvent::CreateToken(t) => {
             let token_def = &crate::card_def::CARD_DEFS[t.token_def as usize];
-            let name = token_def.name.to_string();
+            let name = token_def.object_name.to_string();
             let object = state.objects.push(crate::state::GameObject {
                 card_def: t.token_def,
                 name,

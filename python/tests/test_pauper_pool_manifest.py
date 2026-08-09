@@ -544,10 +544,10 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 97,
+                "full_cards": 103,
                 "partial_cards": 0,
-                "no_effect_cards": 53,
-                "token_dependencies": 6,
+                "no_effect_cards": 47,
+                "token_dependencies": 8,
             },
         )
         expected_copy_totals = [
@@ -558,7 +558,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Spy", "full": 43, "partial": 0, "no_effect": 17, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "CawGates", "full": 23, "partial": 0, "no_effect": 37, "total": 60},
+            {"deck_id": "CawGates", "full": 45, "partial": 0, "no_effect": 15, "total": 60},
             {"deck_id": "Faeries", "full": 38, "partial": 0, "no_effect": 22, "total": 60},
         ]
         self.assertEqual(self.support["deck_mainboard_copy_totals"], expected_copy_totals)
@@ -626,6 +626,23 @@ class PauperPoolManifestTest(unittest.TestCase):
             },
         )
         for row in elves_promoted.values():
+            self.assertEqual(row["support_status"], "full")
+            self.assertEqual(row["blockers"], [])
+        caw_gates_promoted_names = {
+            "Basilisk Gate",
+            "Citadel Gate",
+            "Heap Gate",
+            "Sacred Cat",
+            "Sea Gate",
+            "Squadron Hawk",
+        }
+        caw_gates_promoted = {
+            row["name"]: row
+            for row in self.support["cards"]
+            if row["name"] in caw_gates_promoted_names
+        }
+        self.assertEqual(set(caw_gates_promoted), caw_gates_promoted_names)
+        for row in caw_gates_promoted.values():
             self.assertEqual(row["support_status"], "full")
             self.assertEqual(row["blockers"], [])
         ponder = next(row for row in self.support["cards"] if row["name"] == "Ponder")
@@ -809,6 +826,26 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {
                     "name": "Map Token",
                     "required_by": ["Fanatical Offering"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Sacred Cat Embalmed Token",
+                    "required_by": ["Sacred Cat"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Treasure Token",
+                    "required_by": ["Heap Gate"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],

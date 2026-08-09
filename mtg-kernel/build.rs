@@ -2513,6 +2513,8 @@ enum AbilityCostRecipe {
     DiscardSelf,
     SacrificeSelf,
     ReturnControlledLandWithSubtype(&'static str),
+    ExileSelf,
+    TapOtherUntappedControlledPermanentWithSubtype(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2537,6 +2539,7 @@ enum AbilityEffectRecipe {
     UntapTarget,
     GainLifeBattlefieldSubtypeCount(&'static str),
     PumpTargetBattlefieldSubtypeCount(&'static str),
+    PumpTargetByControlledSubtypeCount(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2802,10 +2805,13 @@ fn keywords_for(card: &CardJson) -> String {
         | "Faerie Miscreant"
         | "Faerie Seer"
         | "Refurbished Familiar"
-        | "Sagu Wildling" => keywords.push("Keywords::FLYING"),
+        | "Sagu Wildling"
+        | "Squadron Hawk" => keywords.push("Keywords::FLYING"),
         "Generous Ent" => keywords.push("Keywords::REACH"),
         "Spinewoods Paladin" => keywords.push("Keywords::TRAMPLE"),
-        "Outlaw Medic" => keywords.push("Keywords::LIFELINK"),
+        "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" => {
+            keywords.push("Keywords::LIFELINK")
+        }
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
     }
@@ -2839,6 +2845,45 @@ fn has_activated_mana_ability(card: &CardJson) -> bool {
             .any(|mechanic| mechanic == "etb_trigger")
 }
 
+/// Fixed colors of the primary printed mana ability. Chosen-color Gates
+/// expose only their fixed white/blue option here; the chosen option is
+/// materialized from object state. Heap Gate's paid any-color ability is an
+/// additional rich definition, leaving its free colorless ability primary.
+fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
+    match card.name.as_str() {
+        "Citadel Gate" => vec!["W"],
+        "Sea Gate" => vec!["U"],
+        "Heap Gate" => vec!["C"],
+        _ => card.produces_mana.iter().map(String::as_str).collect(),
+    }
+}
+
+fn mana_ability_includes_chosen_color(name: &str) -> bool {
+    matches!(name, "Citadel Gate" | "Sea Gate")
+}
+
+fn as_enters_choose_color_other_than(name: &str) -> &'static str {
+    match name {
+        "Citadel Gate" => "Some(ManaColor::W)",
+        "Sea Gate" => "Some(ManaColor::U)",
+        _ => "None",
+    }
+}
+
+fn additional_mana_abilities_for(name: &str) -> &'static str {
+    match name {
+        "Heap Gate" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
+        _ => "&[]",
+    }
+}
+
+fn object_name_for(name: &str) -> &str {
+    match name {
+        "Sacred Cat Embalmed Token" => "Sacred Cat",
+        _ => name,
+    }
+}
+
 /// Source for a single printed mana ability that is not exactly tap-and-add
 /// one. The runtime interprets these definitions generically and the same
 /// source fragment is included in the card-database identity below.
@@ -2851,6 +2896,7 @@ fn mana_ability_def_for(name: &str) -> &'static str {
         "Saruli Caretaker" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Tinder Wall" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
         "Wall of Roots" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) })",
+        "Treasure Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapAndSacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         _ => "None",
     }
 }
@@ -3156,6 +3202,52 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Basilisk Gate" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::Tap,
+            ],
+            effect: AbilityEffectRecipe::PumpTargetByControlledSubtypeCount("Gate"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Heap Gate" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::TapOtherUntappedControlledPermanentWithSubtype("Gate"),
+            ],
+            effect: AbilityEffectRecipe::CreateToken("Treasure Token"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Sacred Cat" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("W"),
+                    generic: 0,
+                },
+                AbilityCostRecipe::ExileSelf,
+            ],
+            effect: AbilityEffectRecipe::CreateToken("Sacred Cat Embalmed Token"),
+            activation_zone: "Graveyard",
+            sorcery_speed_only: true,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         _ => &[],
     }
 }
@@ -3179,6 +3271,11 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => format!(
             "CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::LandWithSubtype(Subtype::{subtype}))"
         ),
+        AbilityCostRecipe::ExileSelf => "CostComponent::ExileSelf".to_string(),
+        AbilityCostRecipe::TapOtherUntappedControlledPermanentWithSubtype(subtype) => format!(
+            "CostComponent::TapOtherUntappedControlledPermanentWithSubtype({})",
+            subtype_variant(subtype)
+        ),
     }
 }
 
@@ -3193,6 +3290,10 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::SacrificeSelf => "sacrifice_self".to_string(),
         AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => {
             format!("return_controlled_land_with_subtype:{subtype}")
+        }
+        AbilityCostRecipe::ExileSelf => "exile_self".to_string(),
+        AbilityCostRecipe::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
+            format!("tap_other_untapped_controlled_subtype:{subtype}")
         }
     }
 }
@@ -3222,6 +3323,9 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount(subtype) => {
             format!("pump_target:battlefield_subtype_count:{subtype}")
         }
+        AbilityEffectRecipe::PumpTargetByControlledSubtypeCount(subtype) => {
+            format!("pump_target_by_controlled_subtype_count:{subtype}")
+        }
     }
 }
 
@@ -3249,6 +3353,12 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::GainLife(amount) => format!("ability_effect_gain_life_{amount}"),
         AbilityEffectRecipe::CreateToken("Samurai Token") => {
             "ability_effect_create_samurai_token".to_string()
+        }
+        AbilityEffectRecipe::CreateToken("Treasure Token") => {
+            "ability_effect_create_treasure_token".to_string()
+        }
+        AbilityEffectRecipe::CreateToken("Sacred Cat Embalmed Token") => {
+            "ability_effect_create_sacred_cat_embalmed_token".to_string()
         }
         AbilityEffectRecipe::CreateToken(name) => {
             panic!("no generated activated-ability token function for {name:?}")
@@ -3284,6 +3394,10 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         ),
         AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount(subtype) => format!(
             "ability_effect_pump_target_battlefield_{}_count",
+            subtype.to_ascii_lowercase()
+        ),
+        AbilityEffectRecipe::PumpTargetByControlledSubtypeCount(subtype) => format!(
+            "ability_effect_pump_target_by_controlled_{}_count",
             subtype.to_ascii_lowercase()
         ),
     }
@@ -3713,6 +3827,14 @@ fn codegen(cards: &[CardJson]) -> String {
             }
             AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount(subtype) => {
                 writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::{subtype}), toughness: DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::{subtype}) }}").unwrap();
+            }
+            AbilityEffectRecipe::PumpTargetByControlledSubtypeCount(subtype) => {
+                writeln!(
+                    out,
+                    "    EffectOp::PumpTargetByControlledSubtypeCount {{ target: ObjectRef::Target(0), subtype: {} }}",
+                    subtype_variant(subtype)
+                )
+                .unwrap();
             }
         }
         writeln!(out, "}}").unwrap();
@@ -4785,12 +4907,12 @@ fn codegen(cards: &[CardJson]) -> String {
         // sources. Multi-color sources expose one action per printed mana
         // ability through `CardDef::mana_ability_choices` below.
         let mana_ability_colors = if executable && has_activated_mana_ability(c) {
-            &c.produces_mana[..]
+            primary_mana_ability_colors(c)
         } else {
-            &[]
+            Vec::new()
         };
         if mana_ability_colors.len() == 1 {
-            let color = mana_ability_colors[0].as_str();
+            let color = mana_ability_colors[0];
             let suffix = color.to_ascii_lowercase();
             color_variant(color);
             mana_ability_src = format!("mana_ability_add_{suffix}");
@@ -4906,6 +5028,33 @@ fn codegen(cards: &[CardJson]) -> String {
         .unwrap();
         writeln!(out, "        omen: {},", omen_for(&c.name)).unwrap();
         writeln!(out, "        mana_value: {},", c.mana_value).unwrap();
+        writeln!(
+            out,
+            "        mana_ability_includes_chosen_color: {},",
+            executable && mana_ability_includes_chosen_color(&c.name)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        as_enters_choose_color_other_than: {},",
+            if executable {
+                as_enters_choose_color_other_than(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        additional_mana_abilities: {},",
+            if executable {
+                additional_mana_abilities_for(&c.name)
+            } else {
+                "&[]"
+            }
+        )
+        .unwrap();
+        writeln!(out, "        object_name: {:?},", object_name_for(&c.name)).unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -4931,7 +5080,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v17\n");
+    let mut canon = String::from("kernel_carddb/v18\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -4980,7 +5129,7 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str("mana_ability_choices=");
         if c.engine_capability != EngineCapabilityJson::NoEffect && has_activated_mana_ability(c) {
-            canon.push_str(&c.produces_mana.join(","));
+            canon.push_str(&primary_mana_ability_colors(c).join(","));
         }
         canon.push('|');
         canon.push_str("enters_battlefield_tapped=");
@@ -4999,6 +5148,34 @@ fn codegen(cards: &[CardJson]) -> String {
         } else {
             "None"
         });
+        canon.push('|');
+        canon.push_str("mana_ability_includes_chosen_color=");
+        canon.push_str(
+            if c.engine_capability != EngineCapabilityJson::NoEffect
+                && mana_ability_includes_chosen_color(&c.name)
+            {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        canon.push('|');
+        canon.push_str("as_enters_choose_color_other_than=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            as_enters_choose_color_other_than(&c.name)
+        } else {
+            "None"
+        });
+        canon.push('|');
+        canon.push_str("additional_mana_abilities=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            additional_mana_abilities_for(&c.name)
+        } else {
+            "&[]"
+        });
+        canon.push('|');
+        canon.push_str("object_name=");
+        canon.push_str(object_name_for(&c.name));
         canon.push('|');
         canon.push_str(alt_cost_for(&c.name));
         canon.push('|');
@@ -5161,6 +5338,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Troll" => "Subtype::Troll",
         "Elemental" => "Subtype::Elemental",
         "Map" => "Subtype::Map",
+        "Treasure" => "Subtype::Treasure",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

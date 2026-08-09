@@ -196,6 +196,8 @@ pub enum Subtype {
     Elemental,
     /// Appended for Map Token. Existing stable ids remain fixed.
     Map,
+    /// Appended for the reusable Treasure token created by Heap Gate.
+    Treasure,
 }
 
 impl Subtype {
@@ -413,6 +415,10 @@ pub enum CostComponent {
     /// cost-target staging before any payment commits. Appended for Quirion
     /// Ranger without changing any existing cost recipe identity.
     ReturnControlledPermanentToOwnersHand(PermanentFilterDef),
+    /// Tap one other untapped permanent the payer controls with the named
+    /// effective subtype. The physical object is chosen during activation
+    /// staging and paid atomically with the remaining components.
+    TapOtherUntappedControlledPermanentWithSubtype(Subtype),
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -433,9 +439,9 @@ pub struct EscapeDef {
 }
 
 /// A non-mana activated ability (605/602 use the stack, unlike a mana
-/// ability). Permanent abilities and hand-zone Cycling/typecycling share the
-/// same no-target, inline-`EffectOp` stack representation (see
-/// `state::StackItem::inline_effect`).
+/// ability). Permanent abilities, hand-zone Cycling/typecycling, and
+/// graveyard abilities such as Embalm share the same no-target,
+/// inline-`EffectOp` stack representation (see `state::StackItem::inline_effect`).
 pub struct ActivatedAbilityDef {
     pub cost: &'static [CostComponent],
     pub target_spec: TargetSpec,
@@ -483,6 +489,9 @@ pub enum ManaAbilityCostDef {
     SacrificeSelf,
     TapSelfAndOtherUntappedControlledCreature,
     PutMinus0Minus1CounterOnSelf,
+    /// Treasure's printed `{T}, Sacrifice this artifact` cost. Keeping the
+    /// combined cost atomic prevents either half from being approximated.
+    TapAndSacrificeSelf,
 }
 
 /// Amount of the chosen color added by a mana ability.
@@ -515,6 +524,17 @@ pub struct ManaAbilityDef {
     pub amount: ManaAbilityAmountDef,
     pub controller_damage: u8,
     pub max_activations_per_turn: Option<u8>,
+}
+
+/// An additional printed mana ability beyond a card's legacy primary
+/// tap-for-one choice set. Its color choices must be disjoint from every
+/// other printed mana ability on the same card so the stable
+/// source-plus-color action identifies exactly one ability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdditionalManaAbilityDef {
+    pub colors: &'static [ManaColor],
+    pub mana_cost: Cost,
+    pub ability: ManaAbilityDef,
 }
 
 /// One alternative mode of a spell, with its own target shape and resolution
@@ -682,6 +702,20 @@ pub struct CardDef {
     /// Printed mana value from the registry. This remains constant even when
     /// Affinity or another reducer changes the amount actually paid.
     pub mana_value: u16,
+    /// True iff the primary printed mana ability can add the color stored in
+    /// `ObjectStateV4::chosen_color` in addition to its fixed choices.
+    pub mana_ability_includes_chosen_color: bool,
+    /// An as-this-enters choice excluding the named color. The engine stages
+    /// the choice before the permanent moves to the battlefield.
+    pub as_enters_choose_color_other_than: Option<ManaColor>,
+    /// Additional printed mana abilities with costs richer than the primary
+    /// legacy tap-for-one shape. Appended so all earlier CardDef fields and
+    /// generated bindings retain their identities.
+    pub additional_mana_abilities: &'static [AdditionalManaAbilityDef],
+    /// Public copiable object name when it differs from the registry's
+    /// unique lookup label. Embalm tokens copy the source card's name while
+    /// retaining a distinct generated definition id.
+    pub object_name: &'static str,
 }
 
 impl CardDef {
@@ -708,7 +742,10 @@ impl CardDef {
     }
 
     pub fn has_mana_ability(&self) -> bool {
-        self.is_executable() && !self.mana_ability_choices.is_empty()
+        self.is_executable()
+            && (!self.mana_ability_choices.is_empty()
+                || self.mana_ability_includes_chosen_color
+                || !self.additional_mana_abilities.is_empty())
     }
 
     /// Automatic spell-cost payment may only tap sources whose entire printed
@@ -717,29 +754,89 @@ impl CardDef {
     /// solver from silently skipping sacrifice, damage, counter, or object
     /// costs.
     pub fn is_automatic_payment_mana_source(&self) -> bool {
-        self.has_mana_ability() && self.mana_ability_def.is_none()
+        self.is_executable()
+            && !self.mana_ability_choices.is_empty()
+            && self.mana_ability_def.is_none()
+    }
+
+    /// Exact colors the primary printed mana ability can currently produce.
+    /// Chosen-color lands remain fail closed until their entry choice has
+    /// populated the incarnation-local object state.
+    pub fn primary_mana_ability_choices(&self, chosen_color: Option<ManaColor>) -> Vec<ManaColor> {
+        let mut choices = self.mana_ability_choices.to_vec();
+        if self.mana_ability_includes_chosen_color {
+            if let Some(color) = chosen_color {
+                if !choices.contains(&color) {
+                    choices.push(color);
+                }
+            }
+        }
+        choices
+    }
+
+    /// Every currently legal color across all printed mana abilities.
+    pub fn all_mana_ability_choices(&self, chosen_color: Option<ManaColor>) -> Vec<ManaColor> {
+        let mut choices = self.primary_mana_ability_choices(chosen_color);
+        for additional in self.additional_mana_abilities {
+            for &color in additional.colors {
+                if !choices.contains(&color) {
+                    choices.push(color);
+                }
+            }
+        }
+        choices
     }
 
     /// Stable printed-ability index used by per-turn limits and public
     /// provenance. A rich definition represents one printed ability even when
     /// that ability offers several colors; legacy dual lands retain one index
     /// per separately printed color ability.
-    pub fn mana_ability_index(&self, choice: ManaColor) -> Option<u16> {
-        let choice_index = self
-            .mana_ability_choices
-            .iter()
-            .position(|candidate| *candidate == choice)?;
-        Some(if self.mana_ability_def.is_some() {
-            0
-        } else {
-            u16::try_from(choice_index).ok()?
-        })
+    pub fn mana_ability_index(
+        &self,
+        choice: ManaColor,
+        chosen_color: Option<ManaColor>,
+    ) -> Option<u16> {
+        let primary = self.primary_mana_ability_choices(chosen_color);
+        if let Some(choice_index) = primary.iter().position(|candidate| *candidate == choice) {
+            return Some(
+                if self.mana_ability_def.is_some() || self.mana_ability_includes_chosen_color {
+                    0
+                } else {
+                    u16::try_from(choice_index).ok()?
+                },
+            );
+        }
+        let primary_ability_count =
+            if self.mana_ability_def.is_some() || self.mana_ability_includes_chosen_color {
+                u16::from(!primary.is_empty())
+            } else {
+                u16::try_from(primary.len()).ok()?
+            };
+        let mut found = None;
+        for (index, additional) in self.additional_mana_abilities.iter().enumerate() {
+            if additional.colors.contains(&choice) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(primary_ability_count + u16::try_from(index).ok()?);
+            }
+        }
+        found
     }
 
     /// Builds the exact tap-and-add program for one printed mana ability.
     /// A dual land has two legal programs, each adding exactly one mana.
-    pub fn mana_ability_program_for(&self, choice: ManaColor) -> Option<EffectOp> {
-        (self.has_mana_ability() && self.mana_ability_choices.contains(&choice)).then(|| {
+    pub fn mana_ability_program_for(
+        &self,
+        choice: ManaColor,
+        chosen_color: Option<ManaColor>,
+    ) -> Option<EffectOp> {
+        (self.is_executable()
+            && self.mana_ability_def.is_none()
+            && self
+                .primary_mana_ability_choices(chosen_color)
+                .contains(&choice))
+        .then(|| {
             EffectOp::Sequence(vec![
                 EffectOp::TapObject {
                     object: ObjectRef::ThisSource,
@@ -846,13 +943,9 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 142 real pool cards + 6 tokens (Blood, created by Voldaren
-        // Epicure's ETB trigger; Human Soldier Token/Samurai Token, created
-        // by Rally at the Hornburg/Experimental Synthesizer; Bird Illusion
-        // Token, created by Murmuring Mystic; Food Token, created by Generous
-        // Ent; Map Token, created by Fanatical Offering -- see
-        // `trigger.rs`/`build.rs`).
-        assert_eq!(CARD_DEFS.len(), 148);
+        // 142 real pool cards + 8 tokens. Sacred Cat's Embalm copy and Heap
+        // Gate's Treasure are appended after Map Token and every earlier id.
+        assert_eq!(CARD_DEFS.len(), 150);
     }
 
     #[test]
@@ -895,10 +988,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v20_is_frozen() {
-        // Version 20 adds Piracy Charm's third printed mode while preserving
-        // every earlier card and token id.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x9068_7933_578d_0434);
+    fn card_db_hash_v21_is_frozen() {
+        // Version 21 composes the Caw-Gates wave after Piracy Charm's third
+        // printed mode while preserving every earlier card and token id.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xbfe2_c254_4934_26f1);
     }
 
     #[test]

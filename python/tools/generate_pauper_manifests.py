@@ -104,6 +104,8 @@ TOKEN_DEPENDENCIES = (
     ("Bird Illusion Token", ("Murmuring Mystic",)),
     ("Food Token", ("Generous Ent",)),
     ("Map Token", ("Fanatical Offering",)),
+    ("Sacred Cat Embalmed Token", ("Sacred Cat",)),
+    ("Treasure Token", ("Heap Gate",)),
 )
 
 EXPECTED_MAINBOARD_SUPPORT = {
@@ -114,7 +116,7 @@ EXPECTED_MAINBOARD_SUPPORT = {
     "Spy": {"full": 43, "partial": 0, "no_effect": 17},
     "Burn": {"full": 60, "partial": 0, "no_effect": 0},
     "Terror": {"full": 60, "partial": 0, "no_effect": 0},
-    "CawGates": {"full": 23, "partial": 0, "no_effect": 37},
+    "CawGates": {"full": 45, "partial": 0, "no_effect": 15},
     "Faeries": {"full": 38, "partial": 0, "no_effect": 22},
 }
 
