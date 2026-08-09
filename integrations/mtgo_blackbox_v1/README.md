@@ -32,7 +32,9 @@ The Rust crate now defines an untrusted structural contract for the later produc
 
 The public checkers deliberately return `CheckedUntrusted...` types. They recompute preview, whole-frame, and anchor hashes, require at least four substantial anchors distributed across all four client quadrants, parse and order real UTC timestamps, and check structural DXGI, identity, layout, freshness, and safety claims. They expose no raw pixels and have no conversion to OCR, mock evidence, policy input, action intent, or input authority.
 
-This structural checker is not proof that a human performed the review or that a producer truthfully evaluated each capture-time assertion. The first trusted review loader should admit only an exact preview whose profile, review, manifest, PNG, and decoded-pixel commitments are pinned in a separately reviewed commit. A production DXGI probe must create a separate opaque live-frame admission type before OCR. Their implementation and synthetic-window tests remain a separate tranche.
+This structural checker is not proof that a human performed the review or that a producer truthfully evaluated each capture-time assertion. The crate now has a narrow reviewed-preview admission seam, but its private production ratification is deliberately `None`. It therefore admits no current artifact. A later separately reviewed commit may pin one domain-separated commitment binding the exact profile, review, manifest, PNG, and decoded BGRA pixels after manual inspection.
+
+An admitted reviewed-preview value is opaque, retains the exact pixels without exposing them, and has only fixed offline-calibration-preview scope. It is not serializable, cloneable, or debuggable and has no conversion to OCR, semantic evidence, policy scoring, a live frame, an action intent, or input authority. Caller-provided review booleans cannot create it. A production DXGI probe still needs a separate opaque live-frame admission type and trusted capture-time evidence before OCR.
 
 ## Current result
 

@@ -13,6 +13,12 @@ const PROFILE_HASH_DOMAIN_V1: &[u8] = b"mtgo-calibration-profile-v1";
 const REVIEW_HASH_DOMAIN_V1: &[u8] = b"mtgo-calibration-review-v1";
 const REAL_FRAME_HASH_DOMAIN_V1: &[u8] = b"mtgo-real-visible-frame-v1";
 const PREVIEW_OUTPUT_IDENTITY_DOMAIN_V1: &[u8] = b"mtgo-preview-output-identity-v1";
+const REVIEWED_PREVIEW_ADMISSION_DOMAIN_V1: &[u8] = b"mtgo-reviewed-preview-admission-v1";
+const REVIEWED_PREVIEW_SCOPE_DOMAIN_V1: &[u8] = b"offline-calibration-preview-only-v1";
+
+// This is the production trust root. It must remain `None` until one exact preview
+// commitment is added by a separately reviewed source commit after manual review.
+const RATIFIED_REVIEWED_PREVIEW_ADMISSION_COMMITMENT_V1: Option<&str> = None;
 const MAX_CLIENT_DIMENSION_V1: u32 = 16_384;
 const MAX_CANONICAL_FRAME_BYTES_V1: usize = 512 * 1_048_576;
 const MAX_CAPTURE_VALIDATION_LAG_SECONDS_V1: i64 = 10;
@@ -122,6 +128,63 @@ impl CheckedUntrustedMtgoCalibrationProfileV1 {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MtgoReviewedPreviewScopeV1 {
+    OfflineCalibrationPreviewOnlyV1,
+}
+
+/// One exact preview admitted by the private production ratification commitment.
+///
+/// This type is intentionally opaque and has no raw-pixel accessor. It grants only
+/// offline calibration-preview identity. It grants no OCR, semantic-evidence,
+/// policy-scoring, live-frame, action, or input authority.
+///
+/// It also intentionally implements neither `Debug` nor `Clone` and cannot be
+/// serialized or deserialized.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::AdmittedMtgoReviewedPreviewV1;
+/// fn requires_debug<T: core::fmt::Debug>() {}
+/// requires_debug::<AdmittedMtgoReviewedPreviewV1>();
+/// ```
+pub struct AdmittedMtgoReviewedPreviewV1 {
+    checked: CheckedUntrustedMtgoCalibrationProfileV1,
+    admission_commitment_sha256: String,
+    // Retain the exact immutable reviewed pixels without exposing them. A later
+    // separately reviewed calibration consumer may add a crate-private access path.
+    _canonical_bgra8: Box<[u8]>,
+}
+
+impl AdmittedMtgoReviewedPreviewV1 {
+    pub fn scope(&self) -> MtgoReviewedPreviewScopeV1 {
+        MtgoReviewedPreviewScopeV1::OfflineCalibrationPreviewOnlyV1
+    }
+
+    pub fn profile_sha256(&self) -> &str {
+        self.checked.profile_sha256()
+    }
+
+    pub fn review_sha256(&self) -> &str {
+        self.checked.review_sha256()
+    }
+
+    pub fn source_preview_manifest_sha256(&self) -> &str {
+        &self.checked.payload.source_preview_manifest_sha256
+    }
+
+    pub fn source_preview_frame_sha256(&self) -> &str {
+        &self.checked.payload.source_preview_frame_sha256
+    }
+
+    pub fn source_preview_canonical_bgra8_sha256(&self) -> &str {
+        &self.checked.payload.source_preview_canonical_bgra8_sha256
+    }
+
+    pub fn admission_commitment_sha256(&self) -> &str {
+        &self.admission_commitment_sha256
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoRealVisibleFrameCandidateV1 {
@@ -226,6 +289,174 @@ pub fn preview_output_identity_commitment_v1(
     hasher.update(bounds.width.to_be_bytes());
     hasher.update(bounds.height.to_be_bytes());
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn reviewed_preview_admission_commitment_v1(
+    profile_sha256: &str,
+    review_sha256: &str,
+    manifest_sha256: &str,
+    frame_png_sha256: &str,
+    canonical_bgra8_sha256: &str,
+) -> Result<String, MtgoContractErrorV1> {
+    for (field, value) in [
+        ("admission_profile_sha256", profile_sha256),
+        ("admission_review_sha256", review_sha256),
+        ("admission_manifest_sha256", manifest_sha256),
+        ("admission_frame_png_sha256", frame_png_sha256),
+        ("admission_canonical_bgra8_sha256", canonical_bgra8_sha256),
+    ] {
+        validate_lower_sha256_v1(field, value)?;
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(REVIEWED_PREVIEW_ADMISSION_DOMAIN_V1);
+    for part in [
+        REVIEWED_PREVIEW_SCOPE_DOMAIN_V1,
+        profile_sha256.as_bytes(),
+        review_sha256.as_bytes(),
+        manifest_sha256.as_bytes(),
+        frame_png_sha256.as_bytes(),
+        canonical_bgra8_sha256.as_bytes(),
+    ] {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+/// Admits only the exact preview pinned by the private production ratification.
+///
+/// Production ratification is currently absent, so this function always fails
+/// closed with `reviewed_preview_not_ratified`. A future source review may replace
+/// the private `None` with one exact commitment. No runtime review record, caller
+/// boolean, or caller-selected trust key can create authority.
+pub fn admit_ratified_reviewed_preview_v1(
+    checked: CheckedUntrustedMtgoCalibrationProfileV1,
+    source_preview_manifest_bytes: &[u8],
+    source_preview_frame_png_bytes: &[u8],
+    source_preview_canonical_bgra8: Box<[u8]>,
+) -> Result<AdmittedMtgoReviewedPreviewV1, MtgoContractErrorV1> {
+    admit_reviewed_preview_against_ratification_v1(
+        checked,
+        source_preview_manifest_bytes,
+        source_preview_frame_png_bytes,
+        source_preview_canonical_bgra8,
+        RATIFIED_REVIEWED_PREVIEW_ADMISSION_COMMITMENT_V1,
+    )
+}
+
+fn admit_reviewed_preview_against_ratification_v1(
+    checked: CheckedUntrustedMtgoCalibrationProfileV1,
+    source_preview_manifest_bytes: &[u8],
+    source_preview_frame_png_bytes: &[u8],
+    source_preview_canonical_bgra8: Box<[u8]>,
+    ratified_admission_commitment: Option<&str>,
+) -> Result<AdmittedMtgoReviewedPreviewV1, MtgoContractErrorV1> {
+    let ratified_admission_commitment = ratified_admission_commitment.ok_or_else(|| {
+        capture_error_v1(
+            "reviewed_preview_not_ratified",
+            "production contains no ratified reviewed-preview commitment",
+        )
+    })?;
+    validate_lower_sha256_v1(
+        "ratified_reviewed_preview_admission_commitment",
+        ratified_admission_commitment,
+    )?;
+
+    let canonical_profile_sha256 = calibration_profile_commitment_v1(&checked.payload)?;
+    if canonical_profile_sha256 != checked.profile_sha256 {
+        return Err(capture_error_v1(
+            "reviewed_preview_profile_commitment",
+            "checked profile no longer matches its canonical commitment",
+        ));
+    }
+
+    let actual_manifest_sha256 = sha256_bytes_v1(source_preview_manifest_bytes);
+    let actual_frame_png_sha256 = sha256_bytes_v1(source_preview_frame_png_bytes);
+    let actual_canonical_bgra8_sha256 = sha256_bytes_v1(&source_preview_canonical_bgra8);
+    for (code, detail, actual, expected) in [
+        (
+            "reviewed_preview_manifest_hash",
+            "reviewed preview manifest bytes differ from the checked profile",
+            actual_manifest_sha256.as_str(),
+            checked.payload.source_preview_manifest_sha256.as_str(),
+        ),
+        (
+            "reviewed_preview_frame_png_hash",
+            "reviewed preview PNG bytes differ from the checked profile",
+            actual_frame_png_sha256.as_str(),
+            checked.payload.source_preview_frame_sha256.as_str(),
+        ),
+        (
+            "reviewed_preview_canonical_bgra8_hash",
+            "reviewed preview canonical pixels differ from the checked profile",
+            actual_canonical_bgra8_sha256.as_str(),
+            checked
+                .payload
+                .source_preview_canonical_bgra8_sha256
+                .as_str(),
+        ),
+    ] {
+        if actual != expected {
+            return Err(capture_error_v1(code, detail));
+        }
+    }
+
+    let expected_len = canonical_byte_len_v1(&checked.payload.client_size_px)?;
+    if source_preview_canonical_bgra8.len() != expected_len {
+        return Err(capture_error_v1(
+            "reviewed_preview_canonical_bgra8_length",
+            "reviewed preview canonical pixels do not match the checked client size",
+        ));
+    }
+    let decoded_bgra8 = decode_preview_png_to_canonical_bgra8_v1(
+        source_preview_frame_png_bytes,
+        &checked.payload.client_size_px,
+        expected_len,
+    )?;
+    if decoded_bgra8.as_slice() != source_preview_canonical_bgra8.as_ref() {
+        return Err(capture_error_v1(
+            "reviewed_preview_png_pixel_mismatch",
+            "reviewed preview PNG is not the source of the supplied canonical pixels",
+        ));
+    }
+
+    let admission_commitment_sha256 = reviewed_preview_admission_commitment_v1(
+        &checked.profile_sha256,
+        &checked.review_sha256,
+        &actual_manifest_sha256,
+        &actual_frame_png_sha256,
+        &actual_canonical_bgra8_sha256,
+    )?;
+    if admission_commitment_sha256 != ratified_admission_commitment {
+        return Err(capture_error_v1(
+            "reviewed_preview_not_ratified",
+            "reviewed preview does not match the ratified production commitment",
+        ));
+    }
+
+    Ok(AdmittedMtgoReviewedPreviewV1 {
+        checked,
+        admission_commitment_sha256,
+        _canonical_bgra8: source_preview_canonical_bgra8,
+    })
+}
+
+#[cfg(test)]
+fn admit_reviewed_preview_for_test_v1(
+    checked: CheckedUntrustedMtgoCalibrationProfileV1,
+    source_preview_manifest_bytes: &[u8],
+    source_preview_frame_png_bytes: &[u8],
+    source_preview_canonical_bgra8: Box<[u8]>,
+    ratified_admission_commitment: &str,
+) -> Result<AdmittedMtgoReviewedPreviewV1, MtgoContractErrorV1> {
+    admit_reviewed_preview_against_ratification_v1(
+        checked,
+        source_preview_manifest_bytes,
+        source_preview_frame_png_bytes,
+        source_preview_canonical_bgra8,
+        Some(ratified_admission_commitment),
+    )
 }
 
 pub fn check_untrusted_calibration_profile_v1(
@@ -1519,4 +1750,98 @@ fn sha256_bytes_v1(bytes: &[u8]) -> String {
 
 fn capture_error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV1 {
     MtgoContractErrorV1::new(code, detail)
+}
+
+#[cfg(test)]
+mod reviewed_preview_admission_tests_v1 {
+    use super::*;
+
+    fn private_ratified_fixture_v1() -> (
+        CheckedUntrustedMtgoCalibrationProfileV1,
+        Vec<u8>,
+        Vec<u8>,
+        Box<[u8]>,
+        String,
+    ) {
+        let canonical_bgra8 = vec![30, 20, 10, 255].into_boxed_slice();
+        let mut frame_png = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut frame_png, 1, 1);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(&[10, 20, 30, 255]).unwrap();
+        }
+        let manifest = b"private-reviewed-preview-fixture-v1".to_vec();
+        let payload = MtgoCalibrationProfilePayloadV1 {
+            schema_version: MTGO_CALIBRATION_PROFILE_SCHEMA_V1,
+            profile_id: "private-reviewed-preview-fixture-v1".to_owned(),
+            source_preview_manifest_sha256: sha256_bytes_v1(&manifest),
+            source_preview_frame_sha256: sha256_bytes_v1(&frame_png),
+            source_preview_canonical_bgra8_sha256: sha256_bytes_v1(&canonical_bgra8),
+            product_version: "test".to_owned(),
+            file_version: "test".to_owned(),
+            executable_sha256: "1".repeat(64),
+            signer_thumbprint: "2".repeat(40),
+            signer_subject_sha256: "3".repeat(64),
+            window_title_sha256: "4".repeat(64),
+            dpi: 96,
+            client_size_px: MtgoSizePxV1 {
+                width: 1,
+                height: 1,
+            },
+            output_identity_sha256: "5".repeat(64),
+            output_device_name_sha256: "6".repeat(64),
+            output_bounds_desktop_px: MtgoSignedRectDesktopPxV1 {
+                left: 0,
+                top: 0,
+                width: 1,
+                height: 1,
+            },
+            canonical_pixel_format: MtgoCanonicalPixelFormatV1::Bgra8UnormTopDownTightlyPackedV1,
+            anchors: Vec::new(),
+        };
+        let profile_sha256 = calibration_profile_commitment_v1(&payload).unwrap();
+        let review_sha256 = sha256_bytes_v1(b"private-reviewed-review-fixture-v1");
+        let admission_commitment = reviewed_preview_admission_commitment_v1(
+            &profile_sha256,
+            &review_sha256,
+            &payload.source_preview_manifest_sha256,
+            &payload.source_preview_frame_sha256,
+            &payload.source_preview_canonical_bgra8_sha256,
+        )
+        .unwrap();
+        let checked = CheckedUntrustedMtgoCalibrationProfileV1 {
+            payload,
+            profile_sha256,
+            review_sha256,
+            reviewed_at_epoch_seconds: 0,
+        };
+        (
+            checked,
+            manifest,
+            frame_png,
+            canonical_bgra8,
+            admission_commitment,
+        )
+    }
+
+    #[test]
+    fn private_test_ratification_admits_only_preview_scope() {
+        let (checked, manifest, frame_png, canonical_bgra8, ratification) =
+            private_ratified_fixture_v1();
+        let admitted = admit_reviewed_preview_for_test_v1(
+            checked,
+            &manifest,
+            &frame_png,
+            canonical_bgra8,
+            &ratification,
+        )
+        .unwrap();
+        assert_eq!(
+            admitted.scope(),
+            MtgoReviewedPreviewScopeV1::OfflineCalibrationPreviewOnlyV1
+        );
+        assert_eq!(admitted.admission_commitment_sha256(), ratification);
+    }
 }

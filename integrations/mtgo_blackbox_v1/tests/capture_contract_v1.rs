@@ -1,11 +1,11 @@
 use mtgo_blackbox_v1::{
-    calibration_profile_commitment_v1, check_untrusted_calibration_profile_v1,
-    check_untrusted_real_visible_frame_v1, preview_output_identity_commitment_v1,
-    CheckedUntrustedMtgoCalibrationProfileV1, MtgoCalibrationAnchorV1,
-    MtgoCalibrationProfilePayloadV1, MtgoCalibrationReviewV1, MtgoCanonicalPixelFormatV1,
-    MtgoCaptureBackendV1, MtgoRealVisibleFrameCandidateV1, MtgoRectPxV1, MtgoSignedRectDesktopPxV1,
-    MtgoSizePxV1, MTGO_CALIBRATION_PROFILE_SCHEMA_V1, MTGO_CALIBRATION_REVIEW_SCHEMA_V1,
-    MTGO_REAL_VISIBLE_FRAME_SCHEMA_V1,
+    admit_ratified_reviewed_preview_v1, calibration_profile_commitment_v1,
+    check_untrusted_calibration_profile_v1, check_untrusted_real_visible_frame_v1,
+    preview_output_identity_commitment_v1, CheckedUntrustedMtgoCalibrationProfileV1,
+    MtgoCalibrationAnchorV1, MtgoCalibrationProfilePayloadV1, MtgoCalibrationReviewV1,
+    MtgoCanonicalPixelFormatV1, MtgoCaptureBackendV1, MtgoRealVisibleFrameCandidateV1,
+    MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MTGO_CALIBRATION_PROFILE_SCHEMA_V1,
+    MTGO_CALIBRATION_REVIEW_SCHEMA_V1, MTGO_REAL_VISIBLE_FRAME_SCHEMA_V1,
 };
 use sha2::{Digest, Sha256};
 
@@ -336,6 +336,22 @@ fn validated_fixture() -> (CheckedUntrustedMtgoCalibrationProfileV1, Box<[u8]>) 
     let review = sample_review(&payload);
     let validated = check_profile(payload, review, &pixels).unwrap();
     (validated, pixels)
+}
+
+#[test]
+fn production_has_no_ratified_reviewed_preview() {
+    let pixels = sample_pixels();
+    let payload = sample_profile(&pixels);
+    let review = sample_review(&payload);
+    let (manifest, frame) = sample_preview_artifacts(&pixels);
+    let checked =
+        check_untrusted_calibration_profile_v1(payload, review, &manifest, &frame, &pixels)
+            .unwrap();
+    let error = match admit_ratified_reviewed_preview_v1(checked, &manifest, &frame, pixels) {
+        Ok(_) => panic!("production must not admit a reviewed preview without ratification"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "reviewed_preview_not_ratified");
 }
 
 #[test]
