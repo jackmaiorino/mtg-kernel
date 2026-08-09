@@ -124,6 +124,7 @@ fn execute_pending_trigger(state: &mut GameState, pending: &PendingTrigger) {
             optional_additional_cost_paid: None,
             hidden_ability_source: None,
             kicked: pending.kicked,
+            x_value: 0,
         },
         state,
     );
@@ -137,7 +138,7 @@ fn generated_registry_and_recipes_match_current_mage_authority() {
     assert_eq!(card_id("Hunter's Blowgun"), 56);
     assert_eq!(card_id("Unexpected Fangs"), 124);
     assert_eq!(card_id("Hero Token"), 159);
-    assert_eq!(CARD_DEFS.len(), 161);
+    assert_eq!(CARD_DEFS.len(), 162);
 
     let rod = &CARD_DEFS[card_id("Black Mage's Rod") as usize];
     assert_eq!(rod.capability, CardCapability::Full);
@@ -598,6 +599,7 @@ fn unexpected_fangs_counters_are_permanent_lifelink_and_incarnation_bound() {
             optional_additional_cost_paid: None,
             hidden_ability_source: None,
             kicked: false,
+            x_value: 0,
         },
         &mut stale,
     );
@@ -720,6 +722,7 @@ fn attach_effect_rejects_a_stale_target_incarnation_without_mutation() {
             optional_additional_cost_paid: None,
             hidden_ability_source: None,
             kicked: false,
+            x_value: 0,
         },
         &mut state,
     );

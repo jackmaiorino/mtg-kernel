@@ -127,6 +127,12 @@ pub struct ObjectStateV4 {
     /// (or vice versa) by changing only redundant stack fields. Every
     /// ordinary zone change clears it through `reset_for_zone_change`.
     pub spell_cast_origin: Option<SpellCastOriginV4>,
+    /// Independently owned dynamic choices frozen only after a physical
+    /// spell's costs commit. The stack item carries the same X and chosen
+    /// creature reference; keeping this copy on the source incarnation lets
+    /// restored state reject a unilateral rewrite of either value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
 }
 
 impl ObjectStateV4 {
@@ -167,6 +173,7 @@ impl ObjectStateV4 {
             minimum_blockers_override: None,
             landwalk_mask: 0,
             spell_cast_origin: None,
+            finalized_cast_binding: None,
         }
     }
 
@@ -272,6 +279,73 @@ pub struct DungeonStateV4 {
     pub room_id: Option<u16>,
     /// Sorted, unique stable dungeon ids.
     pub completed_dungeons: Vec<u16>,
+}
+
+pub const UNDERCITY_DUNGEON_ID_V1: u16 = 1;
+
+/// Stable room identity for the one exact dungeon currently supported by
+/// the Pauper pool. The numeric ids are also stored in `DungeonStateV4`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum UndercityRoomV1 {
+    SecretEntrance,
+    Forge,
+    LostWell,
+    Trap,
+    Arena,
+    Stash,
+    Archives,
+    Catacombs,
+    ThroneOfTheDeadThree,
+}
+
+impl UndercityRoomV1 {
+    pub const fn stable_id(self) -> u16 {
+        match self {
+            UndercityRoomV1::SecretEntrance => 1,
+            UndercityRoomV1::Forge => 2,
+            UndercityRoomV1::LostWell => 3,
+            UndercityRoomV1::Trap => 4,
+            UndercityRoomV1::Arena => 5,
+            UndercityRoomV1::Stash => 6,
+            UndercityRoomV1::Archives => 7,
+            UndercityRoomV1::Catacombs => 8,
+            UndercityRoomV1::ThroneOfTheDeadThree => 9,
+        }
+    }
+
+    pub fn from_stable_id(id: u16) -> Option<Self> {
+        Some(match id {
+            1 => UndercityRoomV1::SecretEntrance,
+            2 => UndercityRoomV1::Forge,
+            3 => UndercityRoomV1::LostWell,
+            4 => UndercityRoomV1::Trap,
+            5 => UndercityRoomV1::Arena,
+            6 => UndercityRoomV1::Stash,
+            7 => UndercityRoomV1::Archives,
+            8 => UndercityRoomV1::Catacombs,
+            9 => UndercityRoomV1::ThroneOfTheDeadThree,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum InitiativeTriggerKindV1 {
+    CombatTransfer,
+    VentureAfterTaking,
+    VentureAtUpkeep,
+    UndercityRoom(UndercityRoomV1),
+}
+
+/// Self-indexed provenance for one global Initiative or Undercity trigger.
+/// The matching committed marker and historical designation source must both
+/// survive snapshot/restore unchanged before this binding can reach a stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct InitiativeTriggerBindingV1 {
+    pub history_index: u32,
+    pub player: PlayerId,
+    pub source: AbilitySourceContractV4,
+    pub kind: InitiativeTriggerKindV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -439,6 +513,10 @@ pub struct StackSourceContractV4 {
     pub spell_copy_origin: Option<SpellCopyOriginV4>,
     pub spell_cast_origin: Option<SpellCastOriginV4>,
     pub cast_method: CastMethodV4,
+    /// Duplicate of the source object's finalized dynamic cast choices.
+    /// Pending placeholders and virtual copies retain `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
 }
 
 impl StackSourceContractV4 {
@@ -458,6 +536,7 @@ impl StackSourceContractV4 {
             spell_copy_origin: object.spell_copy_origin,
             spell_cast_origin: object.v4.spell_cast_origin,
             cast_method,
+            finalized_cast_binding: object.v4.finalized_cast_binding,
         }
     }
 }
@@ -556,6 +635,24 @@ pub struct PaidCostRefV4 {
     /// visible to both seats; hidden destinations retain only observers who
     /// actually knew that exact incarnation.
     pub visible_to_mask: u8,
+    /// Last-known effective power for a cost that explicitly binds a chosen
+    /// creature. Battlefield bindings are refreshed immediately before that
+    /// exact incarnation leaves; hand-card bindings retain printed power.
+    /// Other costs leave this absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_lki: Option<i32>,
+}
+
+/// Dynamic cast choices whose exact values must remain independently bound
+/// to a physical spell's source incarnation. The optional creature reference
+/// is used by additional costs that choose a controlled creature or reveal a
+/// creature card from hand; its power is refreshed as LKI immediately before
+/// that exact battlefield incarnation leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FinalizedCastBindingV1 {
+    pub x_value: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen_creature_cost: Option<PaidCostRefV4>,
 }
 
 /// Historical contract for one announced stack target. Unlike the live
@@ -1169,6 +1266,7 @@ impl PaidCostRefV4 {
             zone: object.zone,
             zone_change_count: object.zone_change_count,
             visible_to_mask,
+            power_lki: None,
         }
     }
 
@@ -1402,6 +1500,17 @@ impl GameState {
                 .is_some_and(|link| link.object == object)
             {
                 candidate.v4.attached_to = None;
+                let definition = &crate::card_def::CARD_DEFS[candidate.card_def as usize];
+                if definition.bestow.is_some() {
+                    let mut subtype_ids = definition
+                        .subtypes
+                        .iter()
+                        .map(|subtype| subtype.stable_id())
+                        .collect::<Vec<_>>();
+                    subtype_ids.sort_unstable();
+                    subtype_ids.dedup();
+                    candidate.v4.effective_subtype_ids = subtype_ids;
+                }
             }
             if candidate
                 .v4
@@ -3258,6 +3367,9 @@ mod tests {
             optional_additional_cost_paid: Some(false),
             optional_additional_cost_chosen: Vec::new(),
             optional_additional_cost_selection_finished: false,
+            x_value: Some(0),
+            chosen_creature_cost_zone: None,
+            chosen_creature_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();
         state

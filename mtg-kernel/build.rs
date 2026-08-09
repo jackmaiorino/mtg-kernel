@@ -2360,6 +2360,13 @@ enum Special {
     /// Gain three life. The card's CastSelf Storm trigger is defined in the
     /// shared trigger table.
     WeatherTheStorm,
+    /// Deal damage to target creature equal to the resolution-time power,
+    /// or last known battlefield power, of the creature chosen or revealed
+    /// for the spell's mandatory additional cost.
+    MonstrousEmergence,
+    /// An X creature that enters with X counters. Bestow is modeled by the
+    /// independently generated `CardDef::bestow` characteristics.
+    NyxbornHydra,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2574,6 +2581,10 @@ impl Special {
                 "toxin_analysis:deathtouch_lifelink_eot_investigate".to_string()
             }
             Special::WeatherTheStorm => "weather_the_storm:gain_three:storm".to_string(),
+            Special::MonstrousEmergence => {
+                "monstrous_emergence:chosen_creature_power_damage".to_string()
+            }
+            Special::NyxbornHydra => "nyxborn_hydra:x_counters_bestow".to_string(),
         }
     }
 }
@@ -2784,6 +2795,8 @@ fn special_for(name: &str) -> Special {
         "Duress" => Special::Duress,
         "Toxin Analysis" => Special::ToxinAnalysis,
         "Weather the Storm" => Special::WeatherTheStorm,
+        "Monstrous Emergence" => Special::MonstrousEmergence,
+        "Nyxborn Hydra" => Special::NyxbornHydra,
         _ => Special::None,
     }
 }
@@ -2940,6 +2953,8 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::WeatherTheStorm => {
             "target=None;spell=GainLife(Controller,3);trigger=CastSelf:Storm;mana=None".to_string()
         }
+        Special::MonstrousEmergence => "target=Creature;spell=DealDamageToTargetEqualToChosenCostCreaturePower;mana=None".to_string(),
+        Special::NyxbornHydra => "target=None;spell=PutSourceOntoBattlefieldWithXPlusOneCounters;bestow=Creature:XGG;mana=None".to_string(),
     }
 }
 
@@ -2979,13 +2994,20 @@ fn keywords_for(card: &CardJson) -> String {
         "Generous Ent" | "Writhing Chrysalis" | "Vitu-Ghazi Inspector" => {
             keywords.push("Keywords::REACH")
         }
-        "Spinewoods Paladin" => keywords.push("Keywords::TRAMPLE"),
+        "Spinewoods Paladin" | "Avenging Hunter" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" => {
             keywords.push("Keywords::LIFELINK")
         }
         "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
+    }
+    if card.name == "Nyxborn Hydra" {
+        keywords.push("Keywords::REACH");
+        keywords.push("Keywords::TRAMPLE");
+    }
+    if card.name == "Skeleton Token" {
+        keywords.push("Keywords::MENACE");
     }
     if matches!(
         card.name.as_str(),
@@ -3141,7 +3163,23 @@ fn additional_cost_for(name: &str) -> &'static str {
         "Fanatical Offering" | "Reckoner's Bargain" | "Eviscerator's Insight" => {
             "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::ArtifactOrCreature }])"
         }
+        "Monstrous Emergence" => {
+            "Some(&[CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand])"
+        }
         _ => "None",
+    }
+}
+
+fn bestow_for(name: &str) -> String {
+    match name {
+        "Nyxborn Hydra" => {
+            let (pips, generic, x_count) = parse_cost("{X}{G}{G}");
+            format!(
+                "Some(BestowDef {{ cost: Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}, target_spec: TargetSpec::Creature }})",
+                pips.join(", ")
+            )
+        }
+        _ => "None".to_string(),
     }
 }
 
@@ -4267,6 +4305,7 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Vitu-Ghazi Inspector" => {
             "etb_if_collect_evidence_6:target_creature:plus_one_counter:gain_life_2"
         }
+        "Avenging Hunter" => "etb:take_initiative:undercity",
         _ => "none",
     }
 }
@@ -5686,6 +5725,38 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::MonstrousEmergence))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_monstrous_emergence() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::DealDamageToTargetEqualToChosenCostCreaturePower {{ target: TargetRef::Target(0) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::NyxbornHydra))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_nyxborn_hydra() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    Some(EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters)"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     if cards.iter().any(|card| {
         card.name == "The Modern Age" && card.engine_capability != EngineCapabilityJson::NoEffect
     }) {
@@ -6021,6 +6092,16 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_weather_the_storm".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::MonstrousEmergence => (
+                "TargetSpec::Creature",
+                "spell_effect_monstrous_emergence".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::NyxbornHydra => (
+                "TargetSpec::None",
+                "spell_effect_nyxborn_hydra".to_string(),
+                "no_effect".to_string(),
+            ),
         };
 
         let executable = c.engine_capability != EngineCapabilityJson::NoEffect;
@@ -6228,6 +6309,16 @@ fn codegen(cards: &[CardJson]) -> String {
             executable && changeling_for(&c.name)
         )
         .unwrap();
+        writeln!(
+            out,
+            "        bestow: {},",
+            if executable {
+                bestow_for(&c.name)
+            } else {
+                "None".to_string()
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -6254,7 +6345,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // typed battlefield searches, Storm, and Clue remain bound too.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v31\n");
+    let mut canon = String::from("kernel_carddb/v32\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -6393,6 +6484,14 @@ fn codegen(cards: &[CardJson]) -> String {
                 "false"
             },
         );
+        canon.push('|');
+        canon.push_str("bestow=");
+        let bestow = if c.engine_capability != EngineCapabilityJson::NoEffect {
+            bestow_for(&c.name)
+        } else {
+            "None".to_string()
+        };
+        canon.push_str(&bestow);
         canon.push('|');
         canon.push_str("trigger=");
         canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
@@ -6569,6 +6668,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Horror" => "Subtype::Horror",
         "Nightmare" => "Subtype::Nightmare",
         "Clue" => "Subtype::Clue",
+        "Skeleton" => "Subtype::Skeleton",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

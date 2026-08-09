@@ -2512,6 +2512,9 @@ fn core_surface_action_candidates_v1(
             Decision::DeclareAttackers { player, eligible } => {
                 let actor = (*player).into();
                 for attackers in subsets(eligible)? {
+                    if engine::validate_declare_attackers(state, &attackers).is_err() {
+                        continue;
+                    }
                     let attacker_refs = attackers
                         .iter()
                         .map(|&id| card_ref(state, id))
@@ -5591,6 +5594,9 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::DuressDiscard {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::UndercityThroneCreature {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
                             crate::effect::EffectTargetSelectionPurpose::SacrificeCreature {

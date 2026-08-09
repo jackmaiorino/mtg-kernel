@@ -4137,6 +4137,9 @@ mod tests {
             optional_additional_cost_paid: Some(false),
             optional_additional_cost_chosen: Vec::new(),
             optional_additional_cost_selection_finished: false,
+            x_value: Some(0),
+            chosen_creature_cost_zone: None,
+            chosen_creature_cost: None,
         });
 
         let rec = decision_record_ex(

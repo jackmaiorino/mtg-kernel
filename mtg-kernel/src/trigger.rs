@@ -15,7 +15,8 @@ use crate::effect::{EffectCond, EffectObjectBinding, EffectOp, ObjectRef, Player
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{
-    AbilitySourceContractV4, GameState, PaidCostRefV4, StackTargetContractV4, Target, Zone,
+    AbilitySourceContractV4, GameState, InitiativeTriggerKindV1, PaidCostRefV4,
+    StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
 
@@ -610,6 +611,12 @@ fn vitu_ghazi_inspector_etb_effect() -> EffectOp {
     }
 }
 
+fn avenging_hunter_etb_effect() -> EffectOp {
+    EffectOp::TakeInitiative {
+        player: PlayerRef::Controller,
+    }
+}
+
 fn experimental_synthesizer_impulse_effect() -> EffectOp {
     // When Experimental Synthesizer enters or leaves the battlefield, exile
     // the top card of your library. Until end of turn, you may play that
@@ -885,6 +892,14 @@ const VITU_GHAZI_INSPECTOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilit
     effect: vitu_ghazi_inspector_etb_effect,
 }];
 
+const AVENGING_HUNTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: avenging_hunter_etb_effect,
+}];
+
 /// The pool's implemented triggered abilities, matched by card name (ids are
 /// codegen-assigned from `cards_v1.json`'s array order and not worth
 /// duplicating as constants here -- see `build.rs`'s module doc on id
@@ -940,6 +955,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Masked Vandal" => &MASKED_VANDAL_TRIGGERS,
         "Troublemaker Ouphe" => &TROUBLEMAKER_OUPHE_TRIGGERS,
         "Vitu-Ghazi Inspector" => &VITU_GHAZI_INSPECTOR_TRIGGERS,
+        "Avenging Hunter" => &AVENGING_HUNTER_TRIGGERS,
         _ => &[],
     }
 }
@@ -1009,6 +1025,10 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
     if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }
+    if card.name == "Avenging Hunter" && matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+    {
+        return true;
+    }
     triggers_for(card_def)
         .iter()
         .any(|definition| (definition.effect)() == *effect)
@@ -1029,6 +1049,20 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource
+        } else if card.name == "Avenging Hunter" {
+            match effect {
+                EffectOp::ResolveInitiativeTrigger { binding } => match binding.kind {
+                    InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::Forge)
+                    | InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::Arena) => {
+                        TargetSpec::Creature
+                    }
+                    InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::Trap) => {
+                        TargetSpec::AnyPlayer
+                    }
+                    _ => TargetSpec::None,
+                },
+                _ => trigger_target_spec(card_def),
+            }
         } else {
             trigger_target_spec(card_def)
         },
@@ -1639,6 +1673,31 @@ fn triggers_from_events(
                 });
             }
         }
+    }
+
+    for event in events {
+        let CommittedEvent::InitiativeTrigger { binding } = event else {
+            continue;
+        };
+        let binding = *binding;
+        let effect = EffectOp::ResolveInitiativeTrigger { binding };
+        let target_spec =
+            target_spec_for_trigger(binding.source.card_def, &effect).unwrap_or(TargetSpec::None);
+        new_triggers.push(PendingTrigger {
+            controller: binding.player,
+            source: binding.source.source,
+            effect,
+            is_madness_offer: false,
+            kicked: false,
+            target_spec,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: Some(binding.source),
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
     }
 
     new_triggers

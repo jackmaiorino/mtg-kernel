@@ -44,6 +44,7 @@
     },
     {
       "name": "Avenging Hunter",
+      "engine_capability": "full",
       "mana_cost": "{4}{G}",
       "mana_value": 5,
       "colors": [
@@ -2306,6 +2307,7 @@
     },
     {
       "name": "Monstrous Emergence",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -2520,6 +2522,7 @@
     },
     {
       "name": "Nyxborn Hydra",
+      "engine_capability": "full",
       "mana_cost": "{X}{G}",
       "mana_value": 1,
       "colors": [
@@ -5022,6 +5025,35 @@
         "draw_card"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/ClueArtifactToken.java"
+    },
+    {
+      "name": "Skeleton Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Skeleton"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "menace"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SkeletonMenaceToken.java"
     }
   ],
   "unresolved": []

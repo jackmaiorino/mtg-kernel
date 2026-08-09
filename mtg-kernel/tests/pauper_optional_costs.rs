@@ -145,7 +145,7 @@ fn definitions_ids_and_append_only_grammar_match_checked_in_mage() {
     assert_eq!(card_id("Masked Vandal"), 71);
     assert_eq!(card_id("Troublemaker Ouphe"), 122);
     assert_eq!(card_id("Vitu-Ghazi Inspector"), 126);
-    assert_eq!(CARD_DEFS.len(), 161);
+    assert_eq!(CARD_DEFS.len(), 162);
     assert_eq!(
         TargetSpec::OpponentArtifactOrEnchantmentPermanent.stable_id(),
         35

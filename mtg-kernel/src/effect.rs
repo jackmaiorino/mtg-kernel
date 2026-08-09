@@ -20,8 +20,9 @@ use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
 use crate::state::{
-    AbilitySourceContractV4, GameState, LinkedExileRecordV4, ObjectLinkV4, PaidCostRefV4,
-    StackItem, StackSourceContractV4, StackTargetContractV4, Target, Zone,
+    AbilitySourceContractV4, GameState, InitiativeTriggerBindingV1, InitiativeTriggerKindV1,
+    LinkedExileRecordV4, ObjectLinkV4, PaidCostRefV4, StackItem, StackSourceContractV4,
+    StackTargetContractV4, Target, UndercityRoomV1, Zone,
 };
 use serde::{Deserialize, Serialize};
 
@@ -777,6 +778,51 @@ pub enum EffectOp {
     PutPlusOnePlusOneCounter {
         object: ObjectRef,
     },
+    /// Move the resolving permanent spell to the battlefield and put its
+    /// announced X +1/+1 counters on that exact new incarnation.
+    PutSourceOntoBattlefieldWithXPlusOneCounters,
+    /// Bestow's successful resolution: move the source to the battlefield,
+    /// install X counters, and attach it to the exact creature target.
+    PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters {
+        target: ObjectRef,
+    },
+    /// Deal damage to the target creature equal to the power of the exact
+    /// creature chosen for the resolving spell's additional cost. A live
+    /// unchanged battlefield permanent is sampled at resolution; otherwise
+    /// the payment-time LKI is used.
+    DealDamageToTargetEqualToChosenCostCreaturePower {
+        target: TargetRef,
+    },
+    /// Change the global Initiative designation to the selected player and
+    /// emit the designation's venture trigger marker. Avenging Hunter's ETB
+    /// is the definition-owned producer.
+    TakeInitiative {
+        player: PlayerRef,
+    },
+    /// Runtime-bound global Initiative or Undercity trigger. The event-history
+    /// index and historical designation source are validated before dispatch.
+    ResolveInitiativeTrigger {
+        binding: InitiativeTriggerBindingV1,
+    },
+    /// Interpreter-owned route marker for an exact next Undercity room.
+    EnterUndercityRoom {
+        binding: InitiativeTriggerBindingV1,
+        from_room: Option<UndercityRoomV1>,
+        room: UndercityRoomV1,
+    },
+    AddPlusOnePlusOneCounters {
+        object: ObjectRef,
+        count: u8,
+    },
+    GoadTargetUntilSourcesNextTurn {
+        object: ObjectRef,
+    },
+    /// Publicly reveal the top ten, choose a creature if needed, move it with
+    /// three counters and hexproof until the room controller's next turn,
+    /// then shuffle.
+    ResolveUndercityThrone {
+        binding: InitiativeTriggerBindingV1,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1036,6 +1082,23 @@ pub enum EffectFrame {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    EnterUndercityRoom {
+        binding: InitiativeTriggerBindingV1,
+        from_room: Option<UndercityRoomV1>,
+        room: UndercityRoomV1,
+        path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
+    ResolveUndercityThrone {
+        binding: InitiativeTriggerBindingV1,
+        original_library: Vec<EffectObjectBinding>,
+        revealed_prefix: Vec<EffectObjectBinding>,
+        candidates: Vec<EffectObjectBinding>,
+        chosen: EffectObjectBinding,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -1238,6 +1301,14 @@ pub enum EffectTargetSelectionPurpose {
         source: AbilitySourceContractV4,
         canonical_path: Vec<u16>,
     },
+    /// Public exact-one creature selection from Throne's revealed top ten.
+    UndercityThroneCreature {
+        binding: InitiativeTriggerBindingV1,
+        original_library: Vec<EffectObjectBinding>,
+        revealed_prefix: Vec<EffectObjectBinding>,
+        candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1327,6 +1398,13 @@ pub enum EffectOptionChoicePurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    UndercityRoute {
+        binding: InitiativeTriggerBindingV1,
+        from_room: Option<UndercityRoomV1>,
+        legal_rooms: Vec<UndercityRoomV1>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -1402,6 +1480,8 @@ pub enum EffectAnsweredChoiceGuard {
     PayManaThen { frame: Box<EffectFrame> },
     LinkedExileFromRevealedHand { frame: Box<EffectFrame> },
     SearchLibraryToBattlefieldTapped { frame: Box<EffectFrame> },
+    UndercityRoute { frame: Box<EffectFrame> },
+    UndercityThrone { frame: Box<EffectFrame> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1459,6 +1539,14 @@ pub struct ExecCtx {
     /// ETB trigger when that trigger has an intervening-if dependency.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optional_additional_cost_paid: Option<OptionalAdditionalCostDef>,
+    /// X announced for the resolving spell. Non-X spells and direct unit
+    /// contexts retain zero.
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub x_value: u16,
+}
+
+fn is_zero_u16(value: &u16) -> bool {
+    *value == 0
 }
 
 impl std::hash::Hash for ExecCtx {
@@ -1472,6 +1560,10 @@ impl std::hash::Hash for ExecCtx {
         std::hash::Hash::hash(&self.target_contracts, state);
         std::hash::Hash::hash(&self.discarded, state);
         std::hash::Hash::hash(&self.kicked, state);
+        if self.x_value != 0 {
+            std::hash::Hash::hash(&0x785f_7661_6c75_655f_u64, state);
+            std::hash::Hash::hash(&self.x_value, state);
+        }
         if !self.paid_cost_refs.is_empty() {
             std::hash::Hash::hash(&0x7061_6964_5f72_6566_u64, state);
             std::hash::Hash::hash(&self.paid_cost_refs, state);
@@ -1532,7 +1624,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
-        | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. } => true,
+        | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. }
+        | EffectOp::ResolveInitiativeTrigger { .. }
+        | EffectOp::ResolveUndercityThrone { .. } => true,
         _ => false,
     }
 }
@@ -1632,7 +1726,7 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                         owner,
                         placement,
                         option_index,
-                        path,
+                        path: path.clone(),
                         canonical_path,
                         expected_remaining_frames,
                     };
@@ -1672,6 +1766,42 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                     continuation
                         .frames
                         .push(EffectFrame::Program { op: selected, path });
+                }
+                EffectOptionChoicePurpose::UndercityRoute {
+                    binding,
+                    from_room,
+                    legal_rooms,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    let Some(&room) = legal_rooms.get(index) else {
+                        return Err("validated Undercity route lost its printed index".to_string());
+                    };
+                    if player != binding.player
+                        || path != canonical_path
+                        || continuation.frames != expected_remaining_frames
+                        || selected
+                            != (EffectOp::EnterUndercityRoom {
+                                binding,
+                                from_room,
+                                room,
+                            })
+                    {
+                        return Err("Undercity route metadata changed before answer".to_string());
+                    }
+                    path.push(option_index);
+                    let frame = EffectFrame::EnterUndercityRoom {
+                        binding,
+                        from_room,
+                        room,
+                        path,
+                        expected_remaining_frames,
+                    };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::UndercityRoute {
+                            frame: Box::new(frame.clone()),
+                        });
+                    continuation.frames.push(frame);
                 }
             }
             Ok(())
@@ -1728,6 +1858,14 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     }
     | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
         player: search_player,
+        ..
+    }
+    | EffectTargetSelectionPurpose::UndercityThroneCreature {
+        binding:
+            InitiativeTriggerBindingV1 {
+                player: search_player,
+                ..
+            },
         ..
     } = purpose
     {
@@ -1800,6 +1938,14 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             }
             | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
                 player: search_player,
+                ..
+            }
+            | EffectTargetSelectionPurpose::UndercityThroneCreature {
+                binding:
+                    InitiativeTriggerBindingV1 {
+                        player: search_player,
+                        ..
+                    },
                 ..
             },
         ..
@@ -2632,6 +2778,32 @@ fn complete_resumable_target_selection(
                 Some(EffectAnsweredChoiceGuard::LinkedExileFromRevealedHand {
                     frame: Box::new(frame.clone()),
                 });
+            continuation.frames.push(frame);
+        }
+        EffectTargetSelectionPurpose::UndercityThroneCreature {
+            binding,
+            original_library,
+            revealed_prefix,
+            candidates,
+            canonical_path,
+        } => {
+            if path != canonical_path || objects.len() != 1 || !candidates.contains(&objects[0]) {
+                return Err("Undercity Throne choice changed path or candidate".to_string());
+            }
+            let expected_remaining_frames = continuation.frames.clone();
+            let frame = EffectFrame::ResolveUndercityThrone {
+                binding,
+                original_library,
+                revealed_prefix,
+                candidates,
+                chosen: objects[0],
+                path: canonical_path.clone(),
+                canonical_path,
+                expected_remaining_frames,
+            };
+            continuation.answered_choice_guard = Some(EffectAnsweredChoiceGuard::UndercityThrone {
+                frame: Box::new(frame.clone()),
+            });
             continuation.frames.push(frame);
         }
     }
@@ -3494,6 +3666,524 @@ fn validate_begin_search_library_to_battlefield_frame(
     validate_search_library_to_battlefield_origin(state, pending, *player, *filter, canonical_path)
 }
 
+pub(crate) fn validate_initiative_trigger_binding(
+    state: &GameState,
+    binding: InitiativeTriggerBindingV1,
+) -> Result<(), String> {
+    let history_index = usize::try_from(binding.history_index)
+        .map_err(|_| "Initiative history index exceeds usize".to_string())?;
+    if state.engine.event_history.get(history_index)
+        != Some(&event::CommittedEvent::InitiativeTrigger { binding })
+    {
+        return Err("Initiative trigger lost its exact committed marker".to_string());
+    }
+    let source = state
+        .objects
+        .try_get(binding.source.source)
+        .ok_or("Initiative trigger source object is missing")?;
+    let definition = crate::card_def::CARD_DEFS
+        .get(binding.source.card_def as usize)
+        .ok_or("Initiative trigger source definition is missing")?;
+    if binding.source.controller != binding.player
+        || binding.source.zone != Zone::Battlefield
+        || binding.source.attached_to.is_some()
+        || definition.name != "Avenging Hunter"
+        || !definition.is_executable()
+        || source.card_def != binding.source.card_def
+        || source.owner != binding.source.owner
+        || source.zone_change_count < binding.source.zone_change_count
+        || (source.zone_change_count == binding.source.zone_change_count
+            && (source.zone != binding.source.zone
+                || source.v4.attached_to != binding.source.attached_to))
+    {
+        return Err("Initiative trigger source provenance is malformed".to_string());
+    }
+    Ok(())
+}
+
+fn validate_initiative_continuation_root(
+    state: &GameState,
+    pending: &EffectContinuation,
+    binding: InitiativeTriggerBindingV1,
+) -> Result<(), String> {
+    validate_initiative_trigger_binding(state, binding)?;
+    if pending.resolving_item.inline_effect.as_ref()
+        != Some(&EffectOp::ResolveInitiativeTrigger { binding })
+        || pending.ctx.source != binding.source.source
+        || pending.ctx.controller != binding.player
+        || pending.ctx.ability_source_contract != Some(binding.source)
+        || pending.resolving_item.v4.ability_source_contract != Some(binding.source)
+    {
+        return Err("Initiative continuation no longer matches its bound trigger".to_string());
+    }
+    Ok(())
+}
+
+fn undercity_next_rooms(
+    state: &GameState,
+    player: PlayerId,
+) -> Result<(Option<UndercityRoomV1>, Vec<UndercityRoomV1>), String> {
+    let dungeon = &state.players[player.index()].dungeon;
+    match (dungeon.dungeon_id, dungeon.room_id) {
+        (None, None) => Ok((None, vec![UndercityRoomV1::SecretEntrance])),
+        (Some(crate::state::UNDERCITY_DUNGEON_ID_V1), Some(room_id)) => {
+            let room = UndercityRoomV1::from_stable_id(room_id)
+                .ok_or("Undercity state carries an unknown room id")?;
+            let next = match room {
+                UndercityRoomV1::SecretEntrance => {
+                    vec![UndercityRoomV1::Forge, UndercityRoomV1::LostWell]
+                }
+                UndercityRoomV1::Forge => {
+                    vec![UndercityRoomV1::Trap, UndercityRoomV1::Arena]
+                }
+                UndercityRoomV1::LostWell => {
+                    vec![UndercityRoomV1::Arena, UndercityRoomV1::Stash]
+                }
+                UndercityRoomV1::Trap => vec![UndercityRoomV1::Archives],
+                UndercityRoomV1::Arena => {
+                    vec![UndercityRoomV1::Archives, UndercityRoomV1::Catacombs]
+                }
+                UndercityRoomV1::Stash => vec![UndercityRoomV1::Catacombs],
+                UndercityRoomV1::Archives | UndercityRoomV1::Catacombs => {
+                    vec![UndercityRoomV1::ThroneOfTheDeadThree]
+                }
+                UndercityRoomV1::ThroneOfTheDeadThree => {
+                    return Err("completed Undercity remains active".to_string())
+                }
+            };
+            Ok((Some(room), next))
+        }
+        _ => Err("dungeon id and room id are not a coherent Undercity state".to_string()),
+    }
+}
+
+fn validate_undercity_route_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::EnterUndercityRoom {
+        binding,
+        from_room,
+        room,
+        path,
+        expected_remaining_frames,
+    } = frame
+    else {
+        return Err("Undercity route guard changed frame kind".to_string());
+    };
+    validate_initiative_continuation_root(state, pending, *binding)?;
+    if !matches!(
+        binding.kind,
+        InitiativeTriggerKindV1::VentureAfterTaking | InitiativeTriggerKindV1::VentureAtUpkeep
+    ) {
+        return Err("Undercity route is not owned by a venture trigger".to_string());
+    }
+    let (expected_from, legal_rooms) = undercity_next_rooms(state, binding.player)?;
+    let Some(option_index) = legal_rooms.iter().position(|candidate| candidate == room) else {
+        return Err("Undercity route selected a nonadjacent room".to_string());
+    };
+    let mut expected_path = Vec::new();
+    expected_path.push(
+        u16::try_from(option_index).map_err(|_| "Undercity route index exceeds u16".to_string())?,
+    );
+    if *from_room != expected_from
+        || !expected_remaining_frames.is_empty()
+        || path != &expected_path
+    {
+        return Err("Undercity route path or origin changed".to_string());
+    }
+    Ok(())
+}
+
+fn validate_undercity_throne_metadata(
+    state: &GameState,
+    pending: &EffectContinuation,
+    binding: InitiativeTriggerBindingV1,
+    original_library: &[EffectObjectBinding],
+    revealed_prefix: &[EffectObjectBinding],
+    candidates: &[EffectObjectBinding],
+    chosen: Option<EffectObjectBinding>,
+) -> Result<(), String> {
+    validate_initiative_continuation_root(state, pending, binding)?;
+    if binding.kind != InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::ThroneOfTheDeadThree)
+    {
+        return Err("Throne continuation is not owned by the Throne room".to_string());
+    }
+    let current = bind_library_exact(state, binding.player);
+    if current != original_library {
+        return Err("Throne library order or incarnation changed".to_string());
+    }
+    let prefix_len = original_library.len().min(10);
+    if revealed_prefix != &original_library[..prefix_len] {
+        return Err("Throne revealed prefix changed".to_string());
+    }
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        for (position, revealed) in revealed_prefix.iter().enumerate() {
+            if !state
+                .known_library_cards(observer, binding.player)
+                .iter()
+                .any(|entry| {
+                    entry.position as usize == position
+                        && entry.object == revealed.object
+                        && entry.zone_change_count == revealed.expected_zone_change_count
+                })
+            {
+                return Err("Throne continuation lost its public reveal".to_string());
+            }
+        }
+    }
+    let expected_candidates = revealed_prefix
+        .iter()
+        .copied()
+        .filter(|candidate| {
+            crate::card_def::CARD_DEFS[state.objects.get(candidate.object).card_def as usize]
+                .has_type(CardType::Creature)
+        })
+        .collect::<Vec<_>>();
+    if candidates != expected_candidates {
+        return Err("Throne creature candidates changed".to_string());
+    }
+    if chosen.is_some_and(|selected| !candidates.contains(&selected)) {
+        return Err("Throne selected a noncandidate".to_string());
+    }
+    Ok(())
+}
+
+fn validate_undercity_throne_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::ResolveUndercityThrone {
+        binding,
+        original_library,
+        revealed_prefix,
+        candidates,
+        chosen,
+        path,
+        canonical_path,
+        expected_remaining_frames,
+    } = frame
+    else {
+        return Err("Throne answer guard changed frame kind".to_string());
+    };
+    if !canonical_path.is_empty()
+        || path != canonical_path
+        || !expected_remaining_frames.is_empty()
+        || candidates.len() < 2
+    {
+        return Err("Throne answered frame has noncanonical progress".to_string());
+    }
+    validate_undercity_throne_metadata(
+        state,
+        pending,
+        *binding,
+        original_library,
+        revealed_prefix,
+        candidates,
+        Some(*chosen),
+    )
+}
+
+fn enter_undercity_room(
+    state: &mut GameState,
+    binding: InitiativeTriggerBindingV1,
+    from_room: Option<UndercityRoomV1>,
+    room: UndercityRoomV1,
+) -> Result<(), String> {
+    let (expected_from, legal_rooms) = undercity_next_rooms(state, binding.player)?;
+    if from_room != expected_from || !legal_rooms.contains(&room) {
+        return Err("Undercity entry no longer follows the exact room graph".to_string());
+    }
+    let dungeon = &mut state.players[binding.player.index()].dungeon;
+    if room == UndercityRoomV1::ThroneOfTheDeadThree {
+        match dungeon
+            .completed_dungeons
+            .binary_search(&crate::state::UNDERCITY_DUNGEON_ID_V1)
+        {
+            Ok(_) => {}
+            Err(index) => dungeon
+                .completed_dungeons
+                .insert(index, crate::state::UNDERCITY_DUNGEON_ID_V1),
+        }
+        dungeon.dungeon_id = None;
+        dungeon.room_id = None;
+    } else {
+        dungeon.dungeon_id = Some(crate::state::UNDERCITY_DUNGEON_ID_V1);
+        dungeon.room_id = Some(room.stable_id());
+    }
+    event::log_initiative_trigger(
+        state,
+        binding.player,
+        binding.source,
+        InitiativeTriggerKindV1::UndercityRoom(room),
+    )?;
+    Ok(())
+}
+
+fn until_players_next_turn_expiry(state: &GameState, player: PlayerId) -> Result<u32, String> {
+    if state.active_player == player {
+        state
+            .turn
+            .checked_add(1)
+            .ok_or("turn counter overflow while scheduling next-turn expiry".to_string())
+    } else {
+        Ok(state.turn)
+    }
+}
+
+fn apply_undercity_throne_result(
+    state: &mut GameState,
+    binding: InitiativeTriggerBindingV1,
+    chosen: Option<EffectObjectBinding>,
+) -> Result<(), String> {
+    let shuffle_token = state
+        .preflight_library_shuffle(binding.player)
+        .map_err(|error| error.to_string())?;
+    if let Some(chosen) = chosen {
+        let old_generation = chosen.expected_zone_change_count;
+        event::propose_and_commit(
+            state,
+            event::ProposedEvent::zone_change(chosen.object, Zone::Battlefield),
+        );
+        let permanent = state.objects.get(chosen.object);
+        if permanent.zone != Zone::Battlefield
+            || permanent.owner != binding.player
+            || permanent.zone_change_count != old_generation.saturating_add(1)
+        {
+            return Err("Throne chosen creature did not enter as its next incarnation".to_string());
+        }
+        let generation = permanent.zone_change_count;
+        let counters = &mut state.objects.get_mut(chosen.object).counters.plus1_plus1;
+        *counters = counters
+            .checked_add(3)
+            .ok_or("Throne +1/+1 counter overflow")?;
+        let expires_at_turn = until_players_next_turn_expiry(state, binding.player)?;
+        state
+            .engine
+            .until_next_turn_keywords
+            .push(crate::engine::UntilNextTurnKeywordEffectV1 {
+                object_id: chosen.object,
+                object_zone_change_count: generation,
+                holder: binding.player,
+                expires_at_turn,
+                keywords: Keywords::HEXPROOF,
+            });
+        state.engine.until_next_turn_keywords.sort_by_key(|effect| {
+            (
+                effect.holder,
+                effect.expires_at_turn,
+                effect.object_id,
+                effect.object_zone_change_count,
+                effect.keywords.0,
+            )
+        });
+    }
+    state
+        .commit_library_shuffle(binding.player, shuffle_token)
+        .map_err(|error| error.to_string())
+}
+
+fn take_initiative(
+    state: &mut GameState,
+    player: PlayerId,
+    mut source: AbilitySourceContractV4,
+) -> Result<(), String> {
+    source.controller = player;
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("Initiative source object is missing")?;
+    if source.zone != Zone::Battlefield
+        || source.attached_to.is_some()
+        || live.card_def != source.card_def
+        || live.owner != source.owner
+        || live.zone_change_count < source.zone_change_count
+        || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
+        || crate::card_def::CARD_DEFS
+            .get(source.card_def as usize)
+            .is_none_or(|definition| definition.name != "Avenging Hunter")
+    {
+        return Err("Initiative source contract is malformed".to_string());
+    }
+    state.initiative = Some(player);
+    state.engine.initiative_source = Some(source);
+    event::log_initiative_trigger(
+        state,
+        player,
+        source,
+        InitiativeTriggerKindV1::VentureAfterTaking,
+    )?;
+    Ok(())
+}
+
+fn stage_undercity_venture(
+    state: &GameState,
+    continuation: &mut EffectContinuation,
+    binding: InitiativeTriggerBindingV1,
+    path: Vec<u16>,
+) -> Result<bool, String> {
+    if !path.is_empty() || !continuation.frames.is_empty() {
+        return Err("venture trigger is not a root-only effect".to_string());
+    }
+    let (from_room, legal_rooms) = undercity_next_rooms(state, binding.player)?;
+    match legal_rooms.as_slice() {
+        [] => Err("Undercity route has no next room".to_string()),
+        [room] => {
+            continuation.frames.push(EffectFrame::EnterUndercityRoom {
+                binding,
+                from_room,
+                room: *room,
+                path: vec![0],
+                expected_remaining_frames: Vec::new(),
+            });
+            Ok(false)
+        }
+        _ => {
+            let options = legal_rooms
+                .iter()
+                .copied()
+                .map(|room| EffectOp::EnterUndercityRoom {
+                    binding,
+                    from_room,
+                    room,
+                })
+                .collect();
+            continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                player: binding.player,
+                path: path.clone(),
+                options,
+                purpose: EffectOptionChoicePurpose::UndercityRoute {
+                    binding,
+                    from_room,
+                    legal_rooms,
+                    canonical_path: path,
+                    expected_remaining_frames: Vec::new(),
+                },
+            });
+            Ok(true)
+        }
+    }
+}
+
+fn undercity_room_program(
+    binding: InitiativeTriggerBindingV1,
+    room: UndercityRoomV1,
+) -> Result<EffectOp, String> {
+    Ok(match room {
+        UndercityRoomV1::SecretEntrance => EffectOp::SearchLibraryToHand {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::BasicLand,
+        },
+        UndercityRoomV1::Forge => EffectOp::AddPlusOnePlusOneCounters {
+            object: ObjectRef::Target(0),
+            count: 2,
+        },
+        UndercityRoomV1::LostWell => EffectOp::Scry {
+            player: PlayerRef::Controller,
+            count: 2,
+        },
+        UndercityRoomV1::Trap => EffectOp::LoseLife {
+            player: PlayerRef::Target(0),
+            amount: 5,
+        },
+        UndercityRoomV1::Arena => EffectOp::GoadTargetUntilSourcesNextTurn {
+            object: ObjectRef::Target(0),
+        },
+        UndercityRoomV1::Stash => EffectOp::CreateToken {
+            token_def: crate::card_def::card_id_by_name("Treasure Token")
+                .ok_or("Treasure Token definition is missing")?,
+            controller: PlayerRef::Controller,
+        },
+        UndercityRoomV1::Archives => EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        UndercityRoomV1::Catacombs => EffectOp::CreateToken {
+            token_def: crate::card_def::card_id_by_name("Skeleton Token")
+                .ok_or("Skeleton Token definition is missing")?,
+            controller: PlayerRef::Controller,
+        },
+        UndercityRoomV1::ThroneOfTheDeadThree => EffectOp::ResolveUndercityThrone { binding },
+    })
+}
+
+fn stage_or_apply_undercity_throne(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    binding: InitiativeTriggerBindingV1,
+    path: Vec<u16>,
+) -> Result<bool, String> {
+    if !path.is_empty() || !continuation.frames.is_empty() {
+        return Err("Throne room effect is not a root-only operation".to_string());
+    }
+    validate_initiative_continuation_root(state, continuation, binding)?;
+    let original_library = bind_library_exact(state, binding.player);
+    let revealed_prefix = original_library[..original_library.len().min(10)].to_vec();
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        state.reveal_library_top(observer, binding.player, revealed_prefix.len());
+    }
+    let candidates = revealed_prefix
+        .iter()
+        .copied()
+        .filter(|candidate| {
+            crate::card_def::CARD_DEFS[state.objects.get(candidate.object).card_def as usize]
+                .has_type(CardType::Creature)
+        })
+        .collect::<Vec<_>>();
+    validate_undercity_throne_metadata(
+        state,
+        continuation,
+        binding,
+        &original_library,
+        &revealed_prefix,
+        &candidates,
+        None,
+    )?;
+    match candidates.as_slice() {
+        [] => {
+            apply_undercity_throne_result(state, binding, None)?;
+            Ok(false)
+        }
+        [chosen] => {
+            apply_undercity_throne_result(state, binding, Some(*chosen))?;
+            Ok(false)
+        }
+        _ => {
+            let token = state
+                .preflight_library_shuffle(binding.player)
+                .map_err(|error| error.to_string())?;
+            drop(token);
+            let legal = candidates
+                .iter()
+                .copied()
+                .map(|candidate| EffectTargetCandidate {
+                    target: Target::Object(candidate.object),
+                    expected_object: Some(candidate),
+                })
+                .collect();
+            continuation.choice = Some(PendingEffectChoice::SelectTargets {
+                player: binding.player,
+                path: path.clone(),
+                selected: Vec::new(),
+                legal,
+                min_targets: 1,
+                max_targets: 1,
+                ordered: true,
+                purpose: EffectTargetSelectionPurpose::UndercityThroneCreature {
+                    binding,
+                    original_library,
+                    revealed_prefix,
+                    candidates,
+                    canonical_path: path,
+                },
+            });
+            Ok(true)
+        }
+    }
+}
+
 fn validate_answered_choice_guard(
     state: &GameState,
     pending: &EffectContinuation,
@@ -3517,6 +4207,8 @@ fn validate_answered_choice_guard(
                         | EffectFrame::PayManaThen { .. }
                         | EffectFrame::LinkedExileChosenHandCard { .. }
                         | EffectFrame::BeginSearchLibraryToBattlefieldTapped { .. }
+                        | EffectFrame::EnterUndercityRoom { .. }
+                        | EffectFrame::ResolveUndercityThrone { .. }
                 )
             }) {
                 return Err("typed answered-choice frame has no matching guard".to_string());
@@ -3685,6 +4377,42 @@ fn validate_answered_choice_guard(
                 );
             }
             validate_begin_search_library_to_battlefield_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::UndercityRoute { frame }) => {
+            if pending.choice.is_some() {
+                return Err("answered Undercity route still carries a live choice".to_string());
+            }
+            let EffectFrame::EnterUndercityRoom {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("Undercity route guard changed frame kind".to_string());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.frames != expected {
+                return Err("Undercity route continuation frame stack changed".to_string());
+            }
+            validate_undercity_route_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::UndercityThrone { frame }) => {
+            if pending.choice.is_some() {
+                return Err("answered Throne choice still carries a live choice".to_string());
+            }
+            let EffectFrame::ResolveUndercityThrone {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("Throne answer guard changed frame kind".to_string());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.frames != expected {
+                return Err("Throne answered continuation frame stack changed".to_string());
+            }
+            validate_undercity_throne_frame(state, pending, frame)?;
         }
     }
     Ok(())
@@ -4522,6 +5250,45 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                             .to_string());
                     }
                 }
+                EffectTargetSelectionPurpose::UndercityThroneCreature {
+                    binding,
+                    original_library,
+                    revealed_prefix,
+                    candidates,
+                    canonical_path,
+                } => {
+                    if chooser != &binding.player
+                        || path != canonical_path
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || !*ordered
+                        || !selected.is_empty()
+                        || candidates.len() < 2
+                        || !pending.frames.is_empty()
+                    {
+                        return Err("Throne prompt has a noncanonical shape".to_string());
+                    }
+                    validate_undercity_throne_metadata(
+                        state,
+                        pending,
+                        *binding,
+                        original_library,
+                        revealed_prefix,
+                        candidates,
+                        None,
+                    )?;
+                    let actual = legal
+                        .iter()
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "Throne target lacks a library incarnation binding".to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    if &actual != candidates {
+                        return Err("Throne prompt candidates changed".to_string());
+                    }
+                }
                 EffectTargetSelectionPurpose::OrderIntoGraveyard { .. } => {}
             }
         }
@@ -4803,6 +5570,43 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     return Err("color choice options changed from WUBRG order".to_string());
                 }
             }
+            EffectOptionChoicePurpose::UndercityRoute {
+                binding,
+                from_room,
+                legal_rooms,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                validate_initiative_continuation_root(state, pending, *binding)?;
+                if !matches!(
+                    binding.kind,
+                    InitiativeTriggerKindV1::VentureAfterTaking
+                        | InitiativeTriggerKindV1::VentureAtUpkeep
+                ) || player != &binding.player
+                    || path != canonical_path
+                    || !canonical_path.is_empty()
+                    || &pending.frames != expected_remaining_frames
+                    || !expected_remaining_frames.is_empty()
+                {
+                    return Err("Undercity route prompt has noncanonical metadata".to_string());
+                }
+                let (expected_from, expected_rooms) = undercity_next_rooms(state, binding.player)?;
+                if *from_room != expected_from || legal_rooms != &expected_rooms {
+                    return Err("Undercity route graph changed".to_string());
+                }
+                let expected_options = legal_rooms
+                    .iter()
+                    .copied()
+                    .map(|room| EffectOp::EnterUndercityRoom {
+                        binding: *binding,
+                        from_room: *from_room,
+                        room,
+                    })
+                    .collect::<Vec<_>>();
+                if options != &expected_options {
+                    return Err("Undercity route options changed".to_string());
+                }
+            }
         },
     }
     Ok(())
@@ -4838,6 +5642,9 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
             return Err(
                 "generated programs cannot contain an already-bound owner-library move".to_string(),
             );
+        }
+        EffectOp::EnterUndercityRoom { .. } | EffectOp::ResolveUndercityThrone { .. } => {
+            return Err("generated programs cannot contain bound Undercity operations".to_string());
         }
         _ => {}
     }
@@ -6020,6 +6827,79 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         event::ProposedEvent::public_library_insert(object.object, placement),
                     );
                 }
+                EffectFrame::EnterUndercityRoom {
+                    binding,
+                    from_room,
+                    room,
+                    path,
+                    expected_remaining_frames,
+                } => {
+                    let answered_frame = EffectFrame::EnterUndercityRoom {
+                        binding,
+                        from_room,
+                        room,
+                        path: path.clone(),
+                        expected_remaining_frames: expected_remaining_frames.clone(),
+                    };
+                    if continuation.frames != expected_remaining_frames {
+                        return Err("Undercity route continuation remainder changed".to_string());
+                    }
+                    if let Some(guard) = continuation.answered_choice_guard.as_ref() {
+                        if guard
+                            != &(EffectAnsweredChoiceGuard::UndercityRoute {
+                                frame: Box::new(answered_frame.clone()),
+                            })
+                        {
+                            return Err("Undercity route frame/guard mismatch".to_string());
+                        }
+                        validate_undercity_route_frame(state, &continuation, &answered_frame)?;
+                        continuation.answered_choice_guard = None;
+                    } else {
+                        validate_initiative_continuation_root(state, &continuation, binding)?;
+                        let (expected_from, legal_rooms) =
+                            undercity_next_rooms(state, binding.player)?;
+                        if from_room != expected_from
+                            || legal_rooms.as_slice() != [room]
+                            || path.as_slice() != [0]
+                            || !expected_remaining_frames.is_empty()
+                        {
+                            return Err("automatic Undercity route changed".to_string());
+                        }
+                    }
+                    enter_undercity_room(state, binding, from_room, room)?;
+                }
+                EffectFrame::ResolveUndercityThrone {
+                    binding,
+                    original_library,
+                    revealed_prefix,
+                    candidates,
+                    chosen,
+                    path,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    let answered_frame = EffectFrame::ResolveUndercityThrone {
+                        binding,
+                        original_library,
+                        revealed_prefix,
+                        candidates,
+                        chosen,
+                        path,
+                        canonical_path,
+                        expected_remaining_frames: expected_remaining_frames.clone(),
+                    };
+                    if continuation.frames != expected_remaining_frames
+                        || continuation.answered_choice_guard.as_ref()
+                            != Some(&EffectAnsweredChoiceGuard::UndercityThrone {
+                                frame: Box::new(answered_frame.clone()),
+                            })
+                    {
+                        return Err("Throne answered frame/guard mismatch".to_string());
+                    }
+                    validate_undercity_throne_frame(state, &continuation, &answered_frame)?;
+                    continuation.answered_choice_guard = None;
+                    apply_undercity_throne_result(state, binding, Some(chosen))?;
+                }
                 EffectFrame::Program { .. } => unreachable!(),
             }
             continue;
@@ -6073,6 +6953,52 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     return Ok(ResumableProgress::Suspended);
                 }
             },
+            EffectOp::ResolveInitiativeTrigger { binding } => {
+                validate_initiative_continuation_root(state, &continuation, binding)?;
+                match binding.kind {
+                    InitiativeTriggerKindV1::CombatTransfer => {
+                        if !path.is_empty() || !continuation.frames.is_empty() {
+                            return Err("Initiative transfer is not a root-only effect".to_string());
+                        }
+                        take_initiative(state, binding.player, binding.source)?;
+                    }
+                    InitiativeTriggerKindV1::VentureAfterTaking
+                    | InitiativeTriggerKindV1::VentureAtUpkeep => {
+                        if stage_undercity_venture(state, &mut continuation, binding, path)? {
+                            state.engine.pending_effect = Some(continuation);
+                            return Ok(ResumableProgress::Suspended);
+                        }
+                    }
+                    InitiativeTriggerKindV1::UndercityRoom(room) => {
+                        if !path.is_empty() || !continuation.frames.is_empty() {
+                            return Err(
+                                "Undercity room ability is not a root-only effect".to_string()
+                            );
+                        }
+                        if room == UndercityRoomV1::ThroneOfTheDeadThree {
+                            if stage_or_apply_undercity_throne(
+                                state,
+                                &mut continuation,
+                                binding,
+                                path,
+                            )? {
+                                state.engine.pending_effect = Some(continuation);
+                                return Ok(ResumableProgress::Suspended);
+                            }
+                        } else {
+                            continuation.frames.push(EffectFrame::Program {
+                                op: undercity_room_program(binding, room)?,
+                                path: vec![0],
+                            });
+                        }
+                    }
+                }
+            }
+            EffectOp::EnterUndercityRoom { .. } | EffectOp::ResolveUndercityThrone { .. } => {
+                return Err(
+                    "bound Undercity operation escaped its typed interpreter frame".to_string(),
+                );
+            }
             EffectOp::CounterUnlessPaysGeneric {
                 ward_target,
                 targeting_stack_item,
@@ -6968,6 +7894,7 @@ impl ExecCtx {
             ability_source_contract: None,
             kicked: false,
             optional_additional_cost_paid: None,
+            x_value: 0,
         }
     }
 
@@ -9773,6 +10700,212 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::transformed_battlefield_return(ctx.source, 1, ctx.controller),
             );
         }
+        EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters => {
+            if state.objects.get(ctx.source).zone != Zone::Stack {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+            );
+            let Ok(amount) = i16::try_from(ctx.x_value) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            state.objects.get_mut(ctx.source).counters.plus1_plus1 = amount;
+        }
+        EffectOp::PutSourceOntoBattlefieldAttachedToTargetWithXPlusOneCounters { target } => {
+            let ObjectRef::Target(target_index) = target else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let target = ctx.resolve_object(*target);
+            if state.objects.get(ctx.source).zone != Zone::Stack
+                || !ctx.target_incarnation_matches(usize::from(*target_index), state)
+                || state.objects.get(target).zone != Zone::Battlefield
+                || !crate::engine::object_has_type(state, target, CardType::Creature)
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+            );
+            let Ok(amount) = i16::try_from(ctx.x_value) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            state.objects.get_mut(ctx.source).counters.plus1_plus1 = amount;
+            let link = ObjectLinkV4 {
+                object: target,
+                zone_change_count: state.objects.get(target).zone_change_count,
+            };
+            state.objects.get_mut(ctx.source).v4.attached_to = Some(link);
+            state.objects.get_mut(ctx.source).v4.effective_subtype_ids =
+                vec![crate::card_def::Subtype::Aura.stable_id()];
+            if !state.objects.get(target).attachments.contains(&ctx.source) {
+                state.objects.get_mut(target).attachments.push(ctx.source);
+            }
+        }
+        EffectOp::DealDamageToTargetEqualToChosenCostCreaturePower { target } => {
+            let [reference] = ctx.paid_cost_refs.as_slice() else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let Some(last_known_power) = reference.power_lki else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let Some(definition) = crate::card_def::CARD_DEFS.get(reference.card_def as usize)
+            else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            if !definition.has_type(CardType::Creature) {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            let live = state.objects.try_get(reference.object);
+            let amount = match live {
+                Some(live)
+                    if live.card_def == reference.card_def
+                        && live.owner == reference.owner
+                        && live.zone_change_count == reference.zone_change_count
+                        && live.zone == reference.zone =>
+                {
+                    match live.zone {
+                        Zone::Battlefield => {
+                            crate::engine::effective_power(state, reference.object)
+                        }
+                        Zone::Hand => definition.power.map(i32::from).unwrap_or(0),
+                        _ => last_known_power,
+                    }
+                }
+                Some(live)
+                    if live.card_def == reference.card_def
+                        && live.owner == reference.owner
+                        && live.zone_change_count > reference.zone_change_count =>
+                {
+                    last_known_power
+                }
+                _ => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            };
+            if amount > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::damage(ctx.source, ctx.resolve_target(*target), amount),
+                );
+            }
+        }
+        EffectOp::TakeInitiative { player } => {
+            let player = ctx.resolve_player(*player, state);
+            let Some(source) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            if take_initiative(state, player, source).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::AddPlusOnePlusOneCounters { object, count } => {
+            let object = ctx.resolve_object(*object);
+            if *count == 0
+                || state.objects.try_get(object).is_none_or(|live| {
+                    live.zone != Zone::Battlefield
+                        || !crate::engine::object_has_type(state, object, CardType::Creature)
+                })
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            let count = i16::from(*count);
+            let counters = &mut state.objects.get_mut(object).counters.plus1_plus1;
+            let Some(total) = counters.checked_add(count) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            *counters = total;
+        }
+        EffectOp::GoadTargetUntilSourcesNextTurn { object } => {
+            let object = ctx.resolve_object(*object);
+            if state.objects.try_get(object).is_none_or(|live| {
+                live.zone != Zone::Battlefield
+                    || !crate::engine::object_has_type(state, object, CardType::Creature)
+            }) {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            let Ok(expires_at_turn) = until_players_next_turn_expiry(state, ctx.controller) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let goads = &mut state.objects.get_mut(object).v4.goaded_by;
+            if let Some(existing) = goads
+                .iter_mut()
+                .find(|existing| existing.player == ctx.controller)
+            {
+                existing.expires_at_turn = existing.expires_at_turn.max(expires_at_turn);
+            } else {
+                goads.push(crate::state::GoadStateV4 {
+                    player: ctx.controller,
+                    expires_at_turn,
+                });
+            }
+            goads.sort_by_key(|goad| (goad.player, goad.expires_at_turn));
+        }
         EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }
         | EffectOp::PutCardsFromHandOnLibraryTop { .. }
@@ -9793,7 +10926,10 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::SearchLibraryToBattlefieldTapped { .. }
         | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
-        | EffectOp::ReturnLinkedExiledCardToOwnersHand => {
+        | EffectOp::ReturnLinkedExiledCardToOwnersHand
+        | EffectOp::ResolveInitiativeTrigger { .. }
+        | EffectOp::EnterUndercityRoom { .. }
+        | EffectOp::ResolveUndercityThrone { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
         EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. } => {
@@ -9976,6 +11112,7 @@ mod tests {
             ability_source_contract: None,
             kicked: false,
             optional_additional_cost_paid: None,
+            x_value: 0,
         };
         execute(
             &EffectOp::DealDamage {
@@ -10013,6 +11150,7 @@ mod tests {
             ability_source_contract: None,
             kicked: false,
             optional_additional_cost_paid: None,
+            x_value: 0,
         };
         execute(
             &EffectOp::DealDamage {

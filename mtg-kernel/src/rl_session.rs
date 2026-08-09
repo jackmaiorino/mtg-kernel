@@ -629,6 +629,7 @@ fn flat_cost_kind_v1(kind: CostKind) -> u8 {
         CostKind::PayLife => 9,
         CostKind::RemoveCounters => 10,
         CostKind::PutCounters => 11,
+        CostKind::ChooseCreatureOrRevealCreature => 12,
     }
 }
 
@@ -10643,6 +10644,7 @@ mod tests {
             (CostKind::PayLife, 9),
             (CostKind::RemoveCounters, 10),
             (CostKind::PutCounters, 11),
+            (CostKind::ChooseCreatureOrRevealCreature, 12),
         ] {
             let core = flat_test_core(
                 &ActionSemanticV1::ChooseCostTarget {

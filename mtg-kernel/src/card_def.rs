@@ -211,6 +211,9 @@ pub enum Subtype {
     /// Appended for the reusable Clue token created by Investigate.
     /// Existing stable subtype ids remain unchanged.
     Clue,
+    /// Appended for the 4/1 black Skeleton token created by Undercity's
+    /// Catacombs room. Existing stable ids remain fixed.
+    Skeleton,
 }
 
 impl Subtype {
@@ -688,6 +691,10 @@ pub enum CostComponent {
     /// timing gate, so hand-zone abilities using it cannot be offered in an
     /// ordinary priority window.
     ReturnControlledUnblockedAttackerToOwnersHand,
+    /// As an additional casting cost, choose either one creature the caster
+    /// controls or one creature card in their hand. A hand choice is
+    /// publicly revealed and the exact incarnation is frozen on the spell.
+    ChooseControlledCreatureOrRevealCreatureCardFromHand,
 }
 
 /// Optional additional costs chosen while announcing a spell. The selected
@@ -856,6 +863,14 @@ pub struct OmenDef {
     pub types: &'static [CardType],
     pub target_spec: TargetSpec,
     pub effect: fn() -> EffectOp,
+}
+
+/// Bestow's alternative spell characteristics. Form zero remains the
+/// ordinary creature spell; this form is an Aura spell with its own X cost
+/// and creature target.
+pub struct BestowDef {
+    pub cost: Cost,
+    pub target_spec: TargetSpec,
 }
 
 /// A deterministic value sampled while deriving a spell's total generic
@@ -1078,6 +1093,9 @@ pub struct CardDef {
     /// in the closed subtype registry. Appended independently from ordinary
     /// printed subtypes so Shapeshifter remains visible as printed metadata.
     pub changeling: bool,
+    /// Alternative Bestow spell characteristics. Appended so every earlier
+    /// generated field identity remains stable.
+    pub bestow: Option<BestowDef>,
 }
 
 impl CardDef {
@@ -1359,9 +1377,9 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // Hero Token remains id 159 after the four Spy sideboard records;
-        // Clue Token is appended as id 160 without renumbering earlier ids.
-        assert_eq!(CARD_DEFS.len(), 161);
+        // Hero Token remains id 159 and Clue Token remains id 160. Skeleton
+        // Token is appended as id 161 without renumbering earlier ids.
+        assert_eq!(CARD_DEFS.len(), 162);
     }
 
     #[test]
@@ -1424,10 +1442,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v31_is_frozen() {
-        // Version 31 composes the optional-cost green/black wave after the
-        // combined Caw, artifact, and Wildfire roots without renumbering.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x5da6_ab41_0e1a_7686);
+    fn card_db_hash_v32_is_frozen() {
+        // Version 32 appends the final pool trio and Skeleton token after the
+        // combined optional-cost root without renumbering prior definitions.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
     }
 
     #[test]
@@ -1627,7 +1645,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 141, "132 pool cards plus nine required tokens");
+        assert_eq!(full, 162, "150 pool cards plus twelve required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -1645,19 +1663,22 @@ mod tests {
             card_id_by_name("Tolarian Terror").unwrap(),
         ])
         .is_ok());
-        let unsupported = ["Island", "Avenging Hunter"]
-            .map(|name| card_id_by_name(name).expect("card in registry"));
-        let err = preflight_fully_supported_deck(&unsupported)
-            .expect_err("Avenging Hunter is still deferred");
-        assert!(matches!(
-            err,
-            DeckPreflightError::NotFullySupported {
-                index: 1,
-                name: "Avenging Hunter",
-                capability: CardCapability::NoEffect,
-                ..
-            }
-        ));
+        if let Some(unsupported_id) = CARD_DEFS
+            .iter()
+            .position(|def| !def.is_token && def.capability == CardCapability::NoEffect)
+        {
+            let unsupported = [card_id_by_name("Island").unwrap(), unsupported_id as u16];
+            let err = preflight_fully_supported_deck(&unsupported)
+                .expect_err("a no-effect card must remain fail closed");
+            assert!(matches!(
+                err,
+                DeckPreflightError::NotFullySupported {
+                    index: 1,
+                    capability: CardCapability::NoEffect,
+                    ..
+                }
+            ));
+        }
         assert!(preflight_fully_supported_deck(&[
             card_id_by_name("Island").unwrap(),
             card_id_by_name("Mountain").unwrap(),
@@ -1728,12 +1749,19 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_permanents_and_nonbasic_mana_metadata_remain_inert() {
+    fn supported_hunter_and_nonbasic_mana_metadata_are_exact() {
         let hunter = &CARD_DEFS[card_id_by_name("Avenging Hunter").unwrap() as usize];
         assert!(hunter.has_type(CardType::Creature));
-        assert!(!hunter.is_executable());
-        assert!(!hunter.is_castable());
-        assert!((hunter.spell_effect)().is_none());
+        assert!(hunter.is_executable());
+        assert!(hunter.is_castable());
+        assert!(hunter.keywords.has(Keywords::TRAMPLE));
+        assert_eq!(
+            (hunter.spell_effect)(),
+            Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        );
 
         for name in [
             "Burning-Tree Emissary",

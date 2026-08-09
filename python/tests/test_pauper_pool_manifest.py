@@ -449,6 +449,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             "Sacred Cat Embalmed Token",
             "Treasure Token",
             "Eldrazi Spawn Token",
+            "Skeleton Token",
         ):
             self.assertTrue(registry_cards[token_name]["is_token"])
             self.assertEqual(registry_cards[token_name]["decks"], [])
@@ -537,17 +538,17 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 147,
+                "full_cards": 150,
                 "partial_cards": 0,
-                "no_effect_cards": 3,
-                "token_dependencies": 11,
+                "no_effect_cards": 0,
+                "token_dependencies": 12,
             },
         )
         expected_copy_totals = [
-            {"deck_id": "Wildfire", "full": 59, "partial": 0, "no_effect": 1, "total": 60},
+            {"deck_id": "Wildfire", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Affinity", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Elves", "full": 52, "partial": 0, "no_effect": 8, "total": 60},
+            {"deck_id": "Elves", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Spy", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
@@ -884,6 +885,16 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {
                     "name": "Clue Token",
                     "required_by": ["Toxin Analysis"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Skeleton Token",
+                    "required_by": ["Avenging Hunter"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],

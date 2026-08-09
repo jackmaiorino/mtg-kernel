@@ -5,21 +5,21 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "c02fb3b1a7c9cac18248de11221a93fc26a818fad542bc529bc78ae563c4b0b5"
+    "registry_raw_sha256": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 147,
+    "full_cards": 150,
     "partial_cards": 0,
-    "no_effect_cards": 3,
-    "token_dependencies": 11
+    "no_effect_cards": 0,
+    "token_dependencies": 12
   },
   "deck_mainboard_copy_totals": [
     {
       "deck_id": "Wildfire",
-      "full": 59,
+      "full": 60,
       "partial": 0,
-      "no_effect": 1,
+      "no_effect": 0,
       "total": 60
     },
     {
@@ -38,9 +38,9 @@
     },
     {
       "deck_id": "Elves",
-      "full": 52,
+      "full": 60,
       "partial": 0,
-      "no_effect": 8,
+      "no_effect": 0,
       "total": 60
     },
     {
@@ -213,6 +213,18 @@
       "registry_membership_matches": true,
       "support_status": "full",
       "blockers": []
+    },
+    {
+      "name": "Skeleton Token",
+      "required_by": [
+        "Avenging Hunter"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     }
   ],
   "cards": [
@@ -259,10 +271,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Azorius Guildgate",
@@ -2160,10 +2170,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Moon-Circuit Hacker",
@@ -2326,10 +2334,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Of One Mind",

@@ -418,6 +418,12 @@ pub enum CommittedEvent {
         kind: crate::card_def::OptionalAdditionalCostDef,
         paid_cost_refs: Vec<PaidCostRefV4>,
     },
+    /// Nonreplaceable marker for one global Initiative or Undercity trigger.
+    /// `history_index` is self-authenticating against the permanent event
+    /// history before the resulting ability may be placed on the stack.
+    InitiativeTrigger {
+        binding: crate::state::InitiativeTriggerBindingV1,
+    },
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -878,6 +884,41 @@ pub fn log_saga_chapter(state: &mut GameState, source: ObjectId, chapter: u8) {
     state.engine.event_history.push(committed);
 }
 
+pub fn log_initiative_trigger(
+    state: &mut GameState,
+    player: PlayerId,
+    mut source: crate::state::AbilitySourceContractV4,
+    kind: crate::state::InitiativeTriggerKindV1,
+) -> Result<crate::state::InitiativeTriggerBindingV1, String> {
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("Initiative designation source no longer exists")?;
+    if live.card_def != source.card_def
+        || live.owner != source.owner
+        || live.zone_change_count < source.zone_change_count
+        || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
+        || crate::card_def::CARD_DEFS
+            .get(source.card_def as usize)
+            .is_none_or(|definition| definition.name != "Avenging Hunter")
+    {
+        return Err("Initiative designation source contract is malformed".to_string());
+    }
+    source.controller = player;
+    let history_index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Initiative event history exceeds u32".to_string())?;
+    let binding = crate::state::InitiativeTriggerBindingV1 {
+        history_index,
+        player,
+        source,
+        kind,
+    };
+    let committed = CommittedEvent::InitiativeTrigger { binding };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+    Ok(binding)
+}
+
 fn permanent_enters_battlefield_tapped(
     state: &GameState,
     object: ObjectId,
@@ -926,6 +967,7 @@ fn commit_zone_change(
 ) {
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    refresh_paid_creature_power_lki(state, id, from_zone);
     let informed_observer_mask =
         if preserve_known_identity && from_zone == Zone::Library && to_zone == Zone::Hand {
             let position = state.players[owner.index()]
@@ -1079,6 +1121,62 @@ fn commit_zone_change(
                     .expect("known library object just moved into its owner's hand");
             }
         }
+    }
+}
+
+/// Monstrous Emergence keeps the chosen battlefield creature's last-known
+/// power, not merely its power when the casting cost was announced. Capture
+/// that value immediately before the exact paid-cost incarnation leaves.
+fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+    if from_zone != Zone::Battlefield {
+        return;
+    }
+    let Some(object) = state.objects.try_get(id) else {
+        return;
+    };
+    let generation = object.zone_change_count;
+    let power = crate::engine::effective_power(state, id);
+    let refresh = |references: &mut Vec<crate::state::PaidCostRefV4>| {
+        for reference in references {
+            if reference.object == id
+                && reference.zone == Zone::Battlefield
+                && reference.zone_change_count == generation
+                && reference.power_lki.is_some()
+            {
+                reference.power_lki = Some(power);
+            }
+        }
+    };
+    let refresh_binding = |binding: &mut Option<crate::state::FinalizedCastBindingV1>| {
+        let Some(reference) = binding
+            .as_mut()
+            .and_then(|binding| binding.chosen_creature_cost.as_mut())
+        else {
+            return;
+        };
+        if reference.object == id
+            && reference.zone == Zone::Battlefield
+            && reference.zone_change_count == generation
+            && reference.power_lki.is_some()
+        {
+            reference.power_lki = Some(power);
+        }
+    };
+    for item in &mut state.stack {
+        refresh(&mut item.v4.paid_cost_refs);
+        if let Some(contract) = item.v4.source_contract.as_mut() {
+            refresh_binding(&mut contract.finalized_cast_binding);
+        }
+    }
+    if let Some(pending) = state.engine.pending_effect.as_mut() {
+        refresh(&mut pending.resolving_item.v4.paid_cost_refs);
+        if let Some(contract) = pending.resolving_item.v4.source_contract.as_mut() {
+            refresh_binding(&mut contract.finalized_cast_binding);
+        }
+        refresh(&mut pending.ctx.paid_cost_refs);
+    }
+    for (_, object) in state.objects.iter_mut() {
+        refresh_binding(&mut object.v4.finalized_cast_binding);
     }
 }
 
