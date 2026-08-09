@@ -2211,12 +2211,9 @@ fn parse_runtime_deck_hash(deck_id: &str, value: &str) -> u64 {
         .unwrap_or_else(|_| panic!("runtime_decks_v1.json: deck {deck_id:?} hash is invalid"))
 }
 
-/// The Mono-Red Burn cards that get a real effect program. Relic of
-/// Progenitus is the sole remaining deferred card -- present in `CARD_DEFS`
-/// with correct metadata, not castable, per the kernel's fail-closed
-/// invariant -- graveyard-card targeting doesn't fit any `TargetSpec` shape
-/// built so far and it's sideboard-only, so it's lower priority than the 5
-/// cards this increment adds.
+/// Generated special-case recipes shared by the fully supported nine-deck
+/// Pauper pool. Cards without a special recipe are still admitted only through
+/// their explicit full-capability registry metadata and generated definitions.
 #[derive(Clone, Copy)]
 enum Special {
     None,

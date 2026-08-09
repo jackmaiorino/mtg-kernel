@@ -4,17 +4,11 @@
 //! validation (duplicate names / empty deck coverage / schema-version
 //! mismatch all fail the build).
 //!
-//! Mono-Red Burn's 21 cards all carry a real `spell_effect`/`mana_ability`
-//! program as of this increment: basic Mountain, the 4 "N damage to any
-//! target" burn spells (Lightning Bolt, Fiery Temper, Fireblast, Lava
-//! Dart), the 4 creatures as vanilla bodies (Guttersnipe, Masked Meower,
-//! Voldaren Epicure, Sneaky Snacker -- keyword abilities/triggers ignored,
-//! they're just a castable body), Faithless Looting, Grab the Prize,
-//! Highway Robbery (+ Plot), Fiery Temper's Madness, Searing Blaze
-//! (landfall + 2 related targets), and the four elemental/hydro/pyro Blasts
-//! (modal, color-checked counter/destroy). Relic of Progenitus now uses
-//! effect-level graveyard selection for its targeted single-card exile and
-//! implements both activated abilities.
+//! Every card in the pinned nine-deck Pauper pool carries a complete engine
+//! program. Burn includes its alternate costs, Madness, Plot, landfall,
+//! modal Blasts, creature abilities, and graveyard interaction. Relic of
+//! Progenitus uses effect-level graveyard selection for its targeted
+//! single-card exile and implements both activated abilities.
 //! Definitions without an explicit registry `engine_capability` remain
 //! `NoEffect`. Supported ordinary permanents and intrinsic basic-land mana
 //! are generated from metadata only after that capability gate, so registry
@@ -22,7 +16,7 @@
 //!
 //! Mono Red Rally's 18 cards (6 shared with Burn: Lightning Bolt, Mountain,
 //! Red Elemental Blast, Relic of Progenitus, Searing Blaze, Voldaren
-//! Epicure) are implemented as of the Rally increment: Burning-Tree
+//! Epicure) are implemented: Burning-Tree
 //! Emissary (ETB mana), Chain Lightning (mandatory damage plus the complete
 //! recursive pay/copy/retarget loop -- see `effect::EffectOp::
 //! OfferAffectedPlayerSpellCopy` and `engine::PendingSpellCopy`), Clockwork
@@ -33,10 +27,8 @@
 //! Blast (Metalcraft), Goblin Bushwhacker (Kicker-gated team pump/haste),
 //! Goblin Tomb Raider (static self-boost), Great Furnace (a second Mountain),
 //! Rally at the Hornburg (tokens + Human haste), and Reckless Impulse
-//! (impulse draw). Cast into the Fire remains deferred (sideboard-only,
-//! modal with a 0-2 variable-count target mode this kernel's `TargetSpec`
-//! shape doesn't support) -- see `local-training/kernel_oracle/rally/
-//! coverage_ledger.md` for the full per-card ledger.
+//! (impulse draw). Cast into the Fire implements both modes, including its
+//! up-to-two artifact exile selection.
 
 use crate::effect::{
     CreatureFilter, CreatureSacrificeFilter, EffectCond, EffectOp, ImpulseDuration,
