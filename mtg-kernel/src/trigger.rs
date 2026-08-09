@@ -8,8 +8,8 @@
 //! `engine.rs` to place on the stack (or, if 2+ share a controller, to ask
 //! that controller to order via `engine::Decision::OrderTriggers`).
 
-use crate::card_def::{CardType, DynamicValueDef, TargetSpec};
-use crate::effect::{EffectCond, EffectOp, PlayerRef, TargetRef};
+use crate::card_def::{CardType, DynamicValueDef, Subtype, TargetSpec};
+use crate::effect::{EffectCond, EffectObjectBinding, EffectOp, PlayerRef, TargetRef};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{GameState, StackTargetContractV4, Target, Zone};
@@ -20,6 +20,10 @@ use serde::{Deserialize, Serialize};
 pub enum TriggerCondition {
     /// The permanent itself enters the battlefield (Voldaren Epicure).
     Etb,
+    /// The permanent itself enters while its controller controls the named
+    /// number of other permanents with the effective subtype. This is the
+    /// trigger-time half of an intervening-if condition.
+    EtbControlsOtherSubtypeCount { subtype: Subtype, minimum_count: u8 },
     /// The permanent itself deals damage. Unused by any Burn 16 card this
     /// increment (kept from increment 2's shape -- see `trigger_matches`).
     DealsDamage,
@@ -29,6 +33,9 @@ pub enum TriggerCondition {
     /// instant or sorcery spell"). Matched against
     /// `CommittedEvent::SpellCast`, logged by `engine::finalize_cast`.
     CastInstantOrSorcery,
+    /// This exact source spell is cast. Creature cast triggers function
+    /// while their source is on the stack.
+    CastSelf,
     /// The controller draws their `n`th card since the current turn began
     /// (Sneaky Snacker: "whenever you draw your third card in a turn").
     /// This ability functions from the graveyard (`home_zone: Graveyard`
@@ -51,6 +58,9 @@ pub enum TriggerCondition {
     /// This permanent leaves the battlefield for any destination. Unlike a
     /// dies trigger, this includes exile, hand, and library moves.
     LeftBattlefield,
+    /// This permanent's controller sacrifices another permanent that had
+    /// the named effective subtype immediately before leaving.
+    SacrificeAnotherWithSubtype(Subtype),
 }
 
 pub struct TriggeredAbilityDef {
@@ -69,6 +79,26 @@ pub struct TriggeredAbilityDef {
     /// matching resolution-time gate lives in `EffectCond`.
     pub intervening_if_controls_another_source_card: bool,
     pub effect: fn() -> EffectOp,
+}
+
+pub(crate) fn materialize_trigger_effect(
+    trigger: &TriggeredAbilityDef,
+    source: ObjectId,
+    state: &GameState,
+) -> EffectOp {
+    match (trigger.effect)() {
+        EffectOp::BindPlusOnePlusOneCounterToTriggerSource => {
+            let live = state.objects.get(source);
+            EffectOp::PutPlusOnePlusOneCounterOnBoundObject {
+                object: EffectObjectBinding {
+                    object: source,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                },
+            }
+        }
+        effect => effect,
+    }
 }
 
 fn guttersnipe_effect() -> EffectOp {
@@ -113,6 +143,40 @@ fn generous_ent_effect() -> EffectOp {
         token_def: food,
         controller: PlayerRef::Controller,
     }
+}
+
+fn gingerbread_cabin_effect() -> EffectOp {
+    let food = crate::card_def::card_id_by_name("Food Token").expect("Food Token in CARD_DEFS");
+    EffectOp::Conditional {
+        cond: EffectCond::ControlsOtherSubtypeCount {
+            subtype: Subtype::Forest,
+            minimum_count: 3,
+        },
+        then: Box::new(EffectOp::CreateToken {
+            token_def: food,
+            controller: PlayerRef::Controller,
+        }),
+        else_: Box::new(EffectOp::Sequence(Vec::new())),
+    }
+}
+
+fn writhing_chrysalis_cast_effect() -> EffectOp {
+    let spawn = crate::card_def::card_id_by_name("Eldrazi Spawn Token")
+        .expect("Eldrazi Spawn Token in CARD_DEFS");
+    EffectOp::Sequence(vec![
+        EffectOp::CreateToken {
+            token_def: spawn,
+            controller: PlayerRef::Controller,
+        },
+        EffectOp::CreateToken {
+            token_def: spawn,
+            controller: PlayerRef::Controller,
+        },
+    ])
+}
+
+fn writhing_chrysalis_counter_marker_effect() -> EffectOp {
+    EffectOp::BindPlusOnePlusOneCounterToTriggerSource
 }
 
 fn blood_fountain_effect() -> EffectOp {
@@ -192,6 +256,32 @@ const GENEROUS_ENT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     intervening_if_controls_another_source_card: false,
     effect: generous_ent_effect,
 }];
+const GINGERBREAD_CABIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::EtbControlsOtherSubtypeCount {
+        subtype: Subtype::Forest,
+        minimum_count: 3,
+    },
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: gingerbread_cabin_effect,
+}];
+const WRITHING_CHRYSALIS_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::CastSelf,
+        home_zone: Zone::Stack,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: writhing_chrysalis_cast_effect,
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::SacrificeAnotherWithSubtype(Subtype::Eldrazi),
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: writhing_chrysalis_counter_marker_effect,
+    },
+];
 const BLOOD_FOUNTAIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
@@ -475,6 +565,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Murmuring Mystic" => &MURMURING_MYSTIC_TRIGGERS,
         "Voldaren Epicure" => &VOLDAREN_EPICURE_TRIGGERS,
         "Generous Ent" => &GENEROUS_ENT_TRIGGERS,
+        "Gingerbread Cabin" => &GINGERBREAD_CABIN_TRIGGERS,
+        "Writhing Chrysalis" => &WRITHING_CHRYSALIS_TRIGGERS,
         "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
@@ -722,7 +814,7 @@ fn triggers_from_events(
                             continue;
                         }
                     }
-                    let effect = (def.effect)();
+                    let effect = materialize_trigger_effect(def, id, state);
                     let target_spec = match card.name {
                         "Balustrade Spy" => TargetSpec::AnyPlayer,
                         "Lotleth Giant" => TargetSpec::TargetOpponent,
@@ -861,6 +953,38 @@ fn trigger_matches(
                 ..
             },
         ) => *object == source,
+        (
+            TriggerCondition::EtbControlsOtherSubtypeCount {
+                subtype,
+                minimum_count,
+            },
+            CommittedEvent::ZoneChange {
+                object,
+                to: Zone::Battlefield,
+                ..
+            },
+        ) => {
+            if *object != source {
+                return false;
+            }
+            let subtype_id = subtype.stable_id();
+            let count = state.players[controller.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|candidate| *candidate != source)
+                .filter(|candidate| {
+                    state
+                        .objects
+                        .get(*candidate)
+                        .v4
+                        .effective_subtype_ids
+                        .binary_search(&subtype_id)
+                        .is_ok()
+                })
+                .count();
+            count >= usize::from(minimum_count)
+        }
         (TriggerCondition::DealsDamage, CommittedEvent::Damage { source: s, .. }) => *s == source,
         (
             TriggerCondition::CastInstantOrSorcery,
@@ -887,6 +1011,13 @@ fn trigger_matches(
             }
         }
         (
+            TriggerCondition::CastSelf,
+            CommittedEvent::SpellCast {
+                spell,
+                controller: caster,
+            },
+        ) => *spell == source && *caster == controller,
+        (
             TriggerCondition::DrawNth(n),
             CommittedEvent::Draw {
                 player,
@@ -910,6 +1041,20 @@ fn trigger_matches(
                 ..
             },
         ) => *object == source,
+        (
+            TriggerCondition::SacrificeAnotherWithSubtype(subtype),
+            CommittedEvent::Sacrificed {
+                object,
+                controller_before,
+                effective_subtype_ids_before,
+            },
+        ) => {
+            *object != source
+                && *controller_before == controller
+                && effective_subtype_ids_before
+                    .binary_search(&subtype.stable_id())
+                    .is_ok()
+        }
         _ => false,
     }
 }

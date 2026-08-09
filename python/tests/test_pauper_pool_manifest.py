@@ -542,14 +542,14 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 114,
+                "full_cards": 116,
                 "partial_cards": 0,
-                "no_effect_cards": 36,
-                "token_dependencies": 8,
+                "no_effect_cards": 34,
+                "token_dependencies": 9,
             },
         )
         expected_copy_totals = [
-            {"deck_id": "Wildfire", "full": 42, "partial": 0, "no_effect": 18, "total": 60},
+            {"deck_id": "Wildfire", "full": 46, "partial": 0, "no_effect": 14, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Affinity", "full": 53, "partial": 0, "no_effect": 7, "total": 60},
             {"deck_id": "Elves", "full": 48, "partial": 0, "no_effect": 12, "total": 60},
@@ -828,7 +828,7 @@ class PauperPoolManifestTest(unittest.TestCase):
                 },
                 {
                     "name": "Food Token",
-                    "required_by": ["Generous Ent"],
+                    "required_by": ["Generous Ent", "Gingerbread Cabin"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],
@@ -859,6 +859,16 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {
                     "name": "Treasure Token",
                     "required_by": ["Heap Gate"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Eldrazi Spawn Token",
+                    "required_by": ["Writhing Chrysalis"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],

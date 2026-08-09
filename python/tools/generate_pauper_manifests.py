@@ -102,14 +102,15 @@ TOKEN_DEPENDENCIES = (
     ("Human Soldier Token", ("Rally at the Hornburg",)),
     ("Samurai Token", ("Experimental Synthesizer",)),
     ("Bird Illusion Token", ("Murmuring Mystic",)),
-    ("Food Token", ("Generous Ent",)),
+    ("Food Token", ("Generous Ent", "Gingerbread Cabin")),
     ("Map Token", ("Fanatical Offering",)),
     ("Sacred Cat Embalmed Token", ("Sacred Cat",)),
     ("Treasure Token", ("Heap Gate",)),
+    ("Eldrazi Spawn Token", ("Writhing Chrysalis",)),
 )
 
 EXPECTED_MAINBOARD_SUPPORT = {
-    "Wildfire": {"full": 42, "partial": 0, "no_effect": 18},
+    "Wildfire": {"full": 46, "partial": 0, "no_effect": 14},
     "Rally": {"full": 60, "partial": 0, "no_effect": 0},
     "Affinity": {"full": 53, "partial": 0, "no_effect": 7},
     "Elves": {"full": 48, "partial": 0, "no_effect": 12},

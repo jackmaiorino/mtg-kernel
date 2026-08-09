@@ -152,6 +152,14 @@ pub enum EffectCond {
     /// anywhere -- recomputed fresh every time it's checked, same as
     /// `LandfallThisTurn`.
     ControlsArtifactCount(u8),
+    /// True iff `ctx.controller` currently controls at least `minimum_count`
+    /// battlefield permanents with `subtype`, excluding this effect's exact
+    /// source object. Gingerbread Cabin uses this for the resolution half of
+    /// its intervening-if clause.
+    ControlsOtherSubtypeCount {
+        subtype: Subtype,
+        minimum_count: u8,
+    },
     /// True iff `ctx.controller` currently controls a battlefield object
     /// with the same card definition as this effect's source, excluding the
     /// exact source object. Faerie Miscreant uses this for the resolution
@@ -594,6 +602,15 @@ pub enum EffectOp {
     DealDamageDynamic {
         target: TargetRef,
         amount: DynamicValueDef,
+    },
+    /// Trigger-definition marker materialized into the bound variant below
+    /// when the trigger is created. It must never reach resolution directly.
+    BindPlusOnePlusOneCounterToTriggerSource,
+    /// Put one +1/+1 counter on an exact battlefield incarnation. A stale
+    /// binding is a rules-correct no-op, as the referenced permanent is no
+    /// longer the object named by the resolving ability.
+    PutPlusOnePlusOneCounterOnBoundObject {
+        object: EffectObjectBinding,
     },
 }
 
@@ -2401,7 +2418,13 @@ fn validated_definition_owned_root_effect<'a>(
         let card_def = state.objects.get(pending.resolving_item.source).card_def;
         if !crate::trigger::triggers_for(card_def)
             .iter()
-            .any(|trigger| (trigger.effect)() == *root)
+            .any(|trigger| {
+                crate::trigger::materialize_trigger_effect(
+                    trigger,
+                    pending.resolving_item.source,
+                    state,
+                ) == *root
+            })
         {
             return Err(
                 "answered trigger effect no longer matches its card definition".to_string(),
@@ -6125,6 +6148,28 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::damage(ctx.source, target, amount),
             );
         }
+        EffectOp::BindPlusOnePlusOneCounterToTriggerSource => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object } => {
+            if validate_effect_object_binding(state, *object).is_err()
+                || object.expected_zone != Zone::Battlefield
+            {
+                return;
+            }
+            let counters = &mut state.objects.get_mut(object.object).counters.plus1_plus1;
+            let Some(next) = counters.checked_add(1) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            *counters = next;
+        }
         EffectOp::GainLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
             event::propose_and_commit(state, event::ProposedEvent::life_gain(player, *amount));
@@ -6783,6 +6828,28 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 })
                 .count();
             count >= *n as usize
+        }
+        EffectCond::ControlsOtherSubtypeCount {
+            subtype,
+            minimum_count,
+        } => {
+            let subtype_id = subtype.stable_id();
+            let count = state.players[ctx.controller.index()]
+                .battlefield
+                .iter()
+                .copied()
+                .filter(|id| *id != ctx.source)
+                .filter(|id| {
+                    state
+                        .objects
+                        .get(*id)
+                        .v4
+                        .effective_subtype_ids
+                        .binary_search(&subtype_id)
+                        .is_ok()
+                })
+                .count();
+            count >= usize::from(*minimum_count)
         }
         EffectCond::ControlsAnotherSourceCard => {
             let source_def = state.objects.get(ctx.source).card_def;

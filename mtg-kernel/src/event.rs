@@ -324,6 +324,14 @@ pub enum CommittedEvent {
         targeting_stack_item: StackItemId,
         targeting_controller: PlayerId,
     },
+    /// A permanent was sacrificed by its current controller. The effective
+    /// subtype set is captured as last-known information before the ensuing
+    /// zone change resets the object incarnation.
+    Sacrificed {
+        object: ObjectId,
+        controller_before: PlayerId,
+        effective_subtype_ids_before: Vec<u16>,
+    },
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -522,7 +530,7 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 owner: t.controller,
                 controller: t.controller,
                 zone: Zone::Battlefield,
-                tapped: token_def.enters_battlefield_tapped,
+                tapped: false,
                 // A token entering the battlefield is exactly as summoning-
                 // sick as any other permanent that just entered (see
                 // `commit_zone_change`'s identical `= true` a few lines
@@ -547,6 +555,8 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 zone_change_count: 0,
             });
             state.players[t.controller.index()].battlefield.push(object);
+            let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller);
+            state.objects.get_mut(object).tapped = enters_tapped;
             CommittedEvent::CreateToken {
                 object,
                 token_def: t.token_def,
@@ -617,6 +627,51 @@ pub fn log_targeted(
     state.engine.event_history.push(committed);
 }
 
+/// Records the rules action separately from its ensuing replaceable zone
+/// change. Sacrifice triggers consume this marker instead of guessing from
+/// an ordinary battlefield-to-graveyard move.
+pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
+    let live = state.objects.get(object);
+    let committed = CommittedEvent::Sacrificed {
+        object,
+        controller_before: live.controller,
+        effective_subtype_ids_before: live.v4.effective_subtype_ids.clone(),
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+fn permanent_enters_battlefield_tapped(
+    state: &GameState,
+    object: ObjectId,
+    controller: PlayerId,
+) -> bool {
+    let def = &crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
+    if def.enters_battlefield_tapped {
+        return true;
+    }
+    let Some(rule) = def.enters_battlefield_tapped_unless else {
+        return false;
+    };
+    let controlled_other_count = state.players[controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|candidate| *candidate != object)
+        .filter(|candidate| {
+            let candidate = state.objects.get(*candidate);
+            candidate.zone == Zone::Battlefield
+                && candidate.controller == controller
+                && candidate
+                    .v4
+                    .effective_subtype_ids
+                    .binary_search(&rule.controller_controls_other_subtype.stable_id())
+                    .is_ok()
+        })
+        .count();
+    controlled_other_count < usize::from(rule.minimum_count)
+}
+
 /// Zone bookkeeping shared by every `MoveObject` effect leaf. "Hand ->
 /// Stack" (casting) is deliberately not reachable here: putting a spell on
 /// the stack is an engine action (see `engine::begin_cast`), never
@@ -685,9 +740,8 @@ fn commit_zone_change(
     }
 
     let turn = state.turn;
-    let enters_battlefield_tapped = to_zone == Zone::Battlefield
-        && crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize]
-            .enters_battlefield_tapped;
+    let enters_battlefield_tapped =
+        to_zone == Zone::Battlefield && permanent_enters_battlefield_tapped(state, id, owner);
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;

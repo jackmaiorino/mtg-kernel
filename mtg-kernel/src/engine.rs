@@ -1475,23 +1475,19 @@ fn validate_spell_source_contract_fields(
     item: &StackItem,
 ) -> Result<(), String> {
     if item.kind != StackItemKind::Spell {
-        if item.v4.source_contract.is_some()
-            || item.v4.cast_method.is_some()
-            || item.is_copy
-            || item.is_flashback
-        {
+        if let Some(contract) = item.v4.source_contract {
+            return validate_spell_sourced_trigger(state, item, contract);
+        }
+        if item.v4.cast_method.is_some() || item.is_copy || item.is_flashback {
             return Err("nonspell stack item carries spell source provenance".to_string());
         }
         let source = state
             .objects
             .try_get(item.source)
             .ok_or("nonspell stack source object no longer exists")?;
-        // No currently supported ability is sourced by a live object that
-        // remains in Zone::Stack. Failing closed here prevents a physical
-        // spell from being retyped into a definition-shaped activation or
-        // trigger and resolving without its spell departure. A future
-        // spell-sourced trigger must introduce and validate explicit producer
-        // provenance rather than weakening this boundary.
+        // A spell-sourced trigger must carry the producer's exact contract.
+        // Without it, keep rejecting a physical spell retyped into an
+        // ability so it cannot resolve while bypassing spell departure.
         if source.zone == Zone::Stack
             || source.spell_copy_origin.is_some()
             || source.v4.spell_cast_origin.is_some()
@@ -1588,6 +1584,70 @@ fn validate_spell_source_contract_fields(
     Ok(())
 }
 
+/// Authenticates the one supported nonspell shape whose physical source is
+/// still on the stack: a definition-owned cast trigger. The trigger carries
+/// the exact contract of its unique producing spell, and its inline program
+/// must be one of that card's abilities that functions from the stack.
+fn validate_spell_sourced_trigger(
+    state: &GameState,
+    item: &StackItem,
+    contract: StackSourceContractV4,
+) -> Result<(), String> {
+    if item.kind != StackItemKind::TriggeredAbility
+        || item.madness_offer
+        || item.is_copy
+        || item.is_flashback
+        || item.kicked
+        || item.inline_effect.is_none()
+        || item.v4.cast_method.is_some()
+        || item.v4.madness_source_contract.is_some()
+        || item.v4.face_index != 0
+        || item.v4.x_value != 0
+        || !item.v4.paid_cost_refs.is_empty()
+        || item.v4.activated_ability_index.is_some()
+    {
+        return Err("spell-sourced trigger carries incompatible producer metadata".to_string());
+    }
+    let source = state
+        .objects
+        .try_get(item.source)
+        .ok_or("spell-sourced trigger source object is missing")?;
+    if contract.source != item.source
+        || contract.card_def != source.card_def
+        || contract.owner != source.owner
+        || contract.controller != source.controller
+        || contract.controller != item.controller
+        || contract.zone != Zone::Stack
+        || source.zone != Zone::Stack
+        || contract.zone_change_count != source.zone_change_count
+        || contract.spell_copy_origin != source.spell_copy_origin
+        || contract.spell_cast_origin != source.v4.spell_cast_origin
+    {
+        return Err("spell-sourced trigger contract no longer matches its producer".to_string());
+    }
+    let mut producers = state.stack.iter().filter(|candidate| {
+        candidate.kind == StackItemKind::Spell && candidate.source == item.source
+    });
+    let producer = producers
+        .next()
+        .ok_or("spell-sourced trigger has no live producing spell")?;
+    if producers.next().is_some() || producer.v4.source_contract != Some(contract) {
+        return Err("spell-sourced trigger lacks one exact producing spell".to_string());
+    }
+    validate_spell_source_contract_fields(state, producer)?;
+    let definition_matches = crate::trigger::triggers_for(source.card_def)
+        .iter()
+        .filter(|trigger| trigger.home_zone == Zone::Stack)
+        .any(|trigger| {
+            crate::trigger::materialize_trigger_effect(trigger, item.source, state)
+                == *item.inline_effect.as_ref().expect("checked Some above")
+        });
+    if !definition_matches {
+        return Err("spell-sourced trigger no longer matches its card definition".to_string());
+    }
+    Ok(())
+}
+
 /// Validates a spell source at a live stack/RL boundary, including exact and
 /// unique stack membership. Passing a detached clone, duplicate source, or a
 /// source whose redundant flags were altered is malformed state.
@@ -1610,10 +1670,9 @@ pub(crate) fn validate_spell_stack_source(
     if appears_outside_stack {
         return Err("spell source is also indexed in an ordinary zone".to_string());
     }
-    let mut matches = state
-        .stack
-        .iter()
-        .filter(|candidate| candidate.source == item.source);
+    let mut matches = state.stack.iter().filter(|candidate| {
+        candidate.kind == StackItemKind::Spell && candidate.source == item.source
+    });
     let live = matches
         .next()
         .ok_or("spell source has no live stack membership")?;
@@ -1622,6 +1681,11 @@ pub(crate) fn validate_spell_stack_source(
     }
     if live != item {
         return Err("spell source contract belongs to a different stack item".to_string());
+    }
+    for produced in state.stack.iter().filter(|candidate| {
+        candidate.source == item.source && candidate.kind != StackItemKind::Spell
+    }) {
+        validate_spell_source_contract_fields(state, produced)?;
     }
     Ok(())
 }
@@ -2674,10 +2738,7 @@ fn pay_cost_components(
     for c in components {
         match c {
             CostComponent::Tap => event::propose_and_commit(state, ProposedEvent::tap(source)),
-            CostComponent::SacrificeSelf => event::propose_and_commit(
-                state,
-                ProposedEvent::zone_change(source, Zone::Graveyard),
-            ),
+            CostComponent::SacrificeSelf => commit_sacrifice(state, &[source]),
             CostComponent::ExileSelf => {
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
             }
@@ -2746,6 +2807,7 @@ fn pay_cost_components(
 /// has already decided *which* permanents (`PendingCast::sacrifice_chosen`).
 fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
     for &id in chosen {
+        event::log_sacrifice(state, id);
         event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
     }
 }
@@ -3661,10 +3723,7 @@ fn activate_mana_ability_for(
                 event::propose_and_commit(state, ProposedEvent::tap(source));
             }
             ManaAbilityCostDef::SacrificeSelf => {
-                event::propose_and_commit(
-                    state,
-                    ProposedEvent::zone_change(source, Zone::Graveyard),
-                );
+                commit_sacrifice(state, &[source]);
             }
             ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
@@ -3681,10 +3740,7 @@ fn activate_mana_ability_for(
             }
             ManaAbilityCostDef::TapAndSacrificeSelf => {
                 event::propose_and_commit(state, ProposedEvent::tap(source));
-                event::propose_and_commit(
-                    state,
-                    ProposedEvent::zone_change(source, Zone::Graveyard),
-                );
+                commit_sacrifice(state, &[source]);
             }
         }
         if amount > 0 {
@@ -6203,6 +6259,18 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) {
     let madness_source_contract = t
         .is_madness_offer
         .then(|| MadnessOfferSourceContractV4::capture(state, t.source));
+    let spell_source_contract = (!t.is_madness_offer
+        && state.objects.get(t.source).zone == Zone::Stack)
+        .then(|| {
+            state
+                .stack
+                .iter()
+                .find(|candidate| {
+                    candidate.kind == StackItemKind::Spell && candidate.source == t.source
+                })
+                .and_then(|producer| producer.v4.source_contract)
+        })
+        .flatten();
     let stack_item_id = next_stack_item_id(state);
     state.stack.push(StackItem {
         kind: if t.is_madness_offer {
@@ -6234,6 +6302,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) {
         kicked: t.kicked,
         v4: StackStateV4 {
             stack_item_id,
+            source_contract: spell_source_contract,
             madness_source_contract,
             target_spec: (t.target_spec != TargetSpec::None).then_some(t.target_spec),
             target_contracts: t.target_contracts,

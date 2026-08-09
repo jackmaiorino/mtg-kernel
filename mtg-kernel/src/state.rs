@@ -398,9 +398,11 @@ pub struct SpellCopyOriginV4 {
     pub parent_was_copy: bool,
 }
 
-/// Exact source identity owned by a spell stack item. Abilities and triggers
-/// carry `None`; every spell, including a transient cast placeholder and a
-/// virtual copy, carries `Some` captured after its source entered the stack.
+/// Exact source identity owned by a spell stack item. A triggered ability
+/// created by that spell while it remains on the stack carries the same
+/// contract as producer provenance; other abilities carry `None`. Every
+/// spell, including a transient cast placeholder and a virtual copy, carries
+/// `Some` captured after its source entered the stack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StackSourceContractV4 {
     pub source: ObjectId,
@@ -663,9 +665,10 @@ pub struct StackStateV4 {
     pub face_index: u8,
     pub x_value: u16,
     pub paid_cost_refs: Vec<PaidCostRefV4>,
-    /// Exact source incarnation for a spell stack item. This is internal
-    /// full-state provenance and intentionally does not alter public stack,
-    /// observation, action, or policy schemas.
+    /// Exact source incarnation for a spell stack item, also copied onto a
+    /// triggered ability produced by that spell before it leaves the stack.
+    /// This is internal full-state provenance and intentionally does not
+    /// alter public stack, observation, action, or policy schemas.
     #[serde(default)]
     pub source_contract: Option<StackSourceContractV4>,
     /// Exact exiled source incarnation for a Madness-offer triggered ability.

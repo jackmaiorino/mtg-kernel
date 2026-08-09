@@ -199,6 +199,9 @@ pub enum Subtype {
     Treasure,
     /// Appended for Lotleth Giant. Existing stable ids remain fixed.
     Giant,
+    /// Appended for the reusable Eldrazi Spawn token created by Writhing
+    /// Chrysalis. Existing subtype ids remain unchanged.
+    Spawn,
 }
 
 impl Subtype {
@@ -577,6 +580,15 @@ pub struct AdditionalManaAbilityDef {
     pub ability: ManaAbilityDef,
 }
 
+/// A data-owned conditional entry rule layered on top of the ordinary
+/// `enters_battlefield_tapped` flag. The entering permanent itself is
+/// excluded from the count, matching "other" in the printed condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntersBattlefieldTappedUnlessDef {
+    pub controller_controls_other_subtype: Subtype,
+    pub minimum_count: u8,
+}
+
 /// One alternative mode of a spell, with its own target shape and resolution
 /// program. `engine::Decision::ChooseSpellMode` selects the printed index
 /// before targeting begins.
@@ -756,6 +768,9 @@ pub struct CardDef {
     /// unique lookup label. Embalm tokens copy the source card's name while
     /// retaining a distinct generated definition id.
     pub object_name: &'static str,
+    /// A conditional replacement for unconditional tapped entry. `None`
+    /// preserves the existing `enters_battlefield_tapped` behavior.
+    pub enters_battlefield_tapped_unless: Option<EntersBattlefieldTappedUnlessDef>,
 }
 
 impl CardDef {
@@ -983,9 +998,9 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 146 real pool cards + 8 tokens. The Spy combo core appends four
-        // pool definitions after Sacred Cat's Embalm and Heap Gate tokens.
-        assert_eq!(CARD_DEFS.len(), 154);
+        // 146 real pool cards + 9 tokens. Eldrazi Spawn is appended after
+        // the Spy combo core and every earlier definition id remains stable.
+        assert_eq!(CARD_DEFS.len(), 155);
     }
 
     #[test]
@@ -1034,10 +1049,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v24_is_frozen() {
-        // Version 24 appends the Spy combo core while preserving every earlier
-        // card and token id.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x9973_8f29_7e5b_e382);
+    fn card_db_hash_v25_is_frozen() {
+        // Version 25 appends Eldrazi Spawn after the Spy combo core and
+        // promotes exact Gingerbread Cabin and Writhing Chrysalis behavior.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x3645_63d1_395d_951b);
     }
 
     #[test]
@@ -1237,7 +1252,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 122, "114 pool cards plus eight required tokens");
+        assert_eq!(full, 125, "116 pool cards plus nine required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

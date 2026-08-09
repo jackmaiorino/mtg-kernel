@@ -1326,6 +1326,7 @@
     },
     {
       "name": "Gingerbread Cabin",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -4031,12 +4032,10 @@
     },
     {
       "name": "Writhing Chrysalis",
+      "engine_capability": "full",
       "mana_cost": "{2}{R}{G}",
       "mana_value": 4,
-      "colors": [
-        "R",
-        "G"
-      ],
+      "colors": [],
       "types": [
         "Creature"
       ],
@@ -4775,6 +4774,38 @@
         "damage"
       ],
       "java_file": "Mage.Sets/src/mage/cards/l/LotlethGiant.java"
+    },
+    {
+      "name": "Eldrazi Spawn Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Eldrazi",
+        "Spawn"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "mana_ability",
+        "sacrifice_cost",
+        "colorless_mana"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/EldraziSpawnToken.java"
     }
   ],
   "unresolved": [

@@ -2867,7 +2867,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Sagu Wildling"
         | "Squadron Hawk"
         | "Balustrade Spy" => keywords.push("Keywords::FLYING"),
-        "Generous Ent" => keywords.push("Keywords::REACH"),
+        "Generous Ent" | "Writhing Chrysalis" => keywords.push("Keywords::REACH"),
         "Spinewoods Paladin" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" => {
             keywords.push("Keywords::LIFELINK")
@@ -2899,10 +2899,10 @@ fn has_activated_mana_ability(card: &CardJson) -> bool {
     card.mechanics
         .iter()
         .any(|mechanic| mechanic == "mana_ability")
-        && !card
-            .mechanics
-            .iter()
-            .any(|mechanic| mechanic == "etb_trigger")
+        // Burning-Tree Emissary's produced mana belongs to its ETB trigger,
+        // not an activated mana ability. Other permanents can legitimately
+        // have both an ETB trigger and a printed mana ability.
+        && card.name != "Burning-Tree Emissary"
 }
 
 /// Fixed colors of the primary printed mana ability. Chosen-color Gates
@@ -2957,6 +2957,7 @@ fn mana_ability_def_for(name: &str) -> &'static str {
         "Tinder Wall" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
         "Wall of Roots" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) })",
         "Treasure Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapAndSacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
+        "Eldrazi Spawn Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         _ => "None",
     }
 }
@@ -2965,6 +2966,14 @@ fn enters_battlefield_tapped(card: &CardJson) -> bool {
     card.mechanics
         .iter()
         .any(|mechanic| mechanic == "enters_tapped")
+        && card.name != "Gingerbread Cabin"
+}
+
+fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
+    match name {
+        "Gingerbread Cabin" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Forest, minimum_count: 3 })",
+        _ => "None",
+    }
 }
 
 /// `Some` Kicker cost source text (`CardDef::kicker_cost`), verified against
@@ -5417,6 +5426,16 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        object_name: {:?},", object_name_for(&c.name)).unwrap();
+        writeln!(
+            out,
+            "        enters_battlefield_tapped_unless: {},",
+            if executable {
+                enters_battlefield_tapped_unless_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -5442,7 +5461,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v21\n");
+    let mut canon = String::from("kernel_carddb/v22\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -5538,6 +5557,13 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str("object_name=");
         canon.push_str(object_name_for(&c.name));
+        canon.push('|');
+        canon.push_str("enters_battlefield_tapped_unless=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            enters_battlefield_tapped_unless_for(&c.name)
+        } else {
+            "None"
+        });
         canon.push('|');
         canon.push_str(alt_cost_for(&c.name));
         canon.push('|');
@@ -5702,6 +5728,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Map" => "Subtype::Map",
         "Treasure" => "Subtype::Treasure",
         "Giant" => "Subtype::Giant",
+        "Spawn" => "Subtype::Spawn",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }
