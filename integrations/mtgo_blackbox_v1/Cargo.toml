@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 mtg-kernel = { path = "../../mtg-kernel" }
+png = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = "0.10"

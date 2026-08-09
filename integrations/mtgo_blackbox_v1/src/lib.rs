@@ -5,10 +5,12 @@
 
 #![forbid(unsafe_code)]
 
+mod capture_contract;
 mod contract;
 mod mock;
 mod validation;
 
+pub use capture_contract::*;
 pub use contract::*;
 pub use mock::*;
 pub use validation::*;

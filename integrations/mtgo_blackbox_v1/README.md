@@ -26,6 +26,14 @@ Example after independently verifying the current identity values and placing MT
   -ExpectedDpi 120
 ```
 
+## Reviewed capture contract
+
+The Rust crate now defines an untrusted structural contract for the later production capture backend without implementing that backend. A calibration profile binds the exact bytes and decoded pixels of one manually reviewed preview, exact client identity, DPI, client size, monitor-output identity, canonical BGRA8 format, and stable pixel anchors. A separate review record must bind the profile and source preview and explicitly confirm that the preview is client-only, unobscured, cursor-free, identity-matched, and anchor-reviewed.
+
+The public checkers deliberately return `CheckedUntrusted...` types. They recompute preview, whole-frame, and anchor hashes, require at least four substantial anchors distributed across all four client quadrants, parse and order real UTC timestamps, and check structural DXGI, identity, layout, freshness, and safety claims. They expose no raw pixels and have no conversion to OCR, mock evidence, policy input, action intent, or input authority.
+
+This structural checker is not proof that a human performed the review or that a producer truthfully evaluated each capture-time assertion. The first trusted review loader should admit only an exact preview whose profile, review, manifest, PNG, and decoded-pixel commitments are pinned in a separately reviewed commit. A production DXGI probe must create a separate opaque live-frame admission type before OCR. Their implementation and synthetic-window tests remain a separate tranche.
+
 ## Current result
 
 The crate accepts a proposed MTGO decision only when all of these conditions hold:
