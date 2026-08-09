@@ -583,10 +583,18 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
     let committed = match event {
         ProposedEvent::Damage(d) => {
+            let source_has_deathtouch = d.amount > 0
+                && state.objects.try_get(d.source).is_some()
+                && crate::engine::has_effective_keyword(
+                    state,
+                    d.source,
+                    crate::card_def::Keywords::DEATHTOUCH,
+                );
             match d.target {
                 Target::Object(id) => {
                     let obj = state.objects.get_mut(id);
                     obj.damage = obj.damage.saturating_add(d.amount.max(0) as u16);
+                    obj.v4.deathtouch_damage |= source_has_deathtouch;
                 }
                 Target::Player(p) => {
                     state.players[p.index()].life -= d.amount;
@@ -798,7 +806,7 @@ pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
     let committed = CommittedEvent::Sacrificed {
         object,
         controller_before: live.controller,
-        effective_subtype_ids_before: live.v4.effective_subtype_ids.clone(),
+        effective_subtype_ids_before: crate::engine::effective_subtype_ids(state, object),
     };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
@@ -857,14 +865,14 @@ fn permanent_enters_battlefield_tapped(
         .copied()
         .filter(|candidate| *candidate != object)
         .filter(|candidate| {
-            let candidate = state.objects.get(*candidate);
-            candidate.zone == Zone::Battlefield
-                && candidate.controller == controller
-                && candidate
-                    .v4
-                    .effective_subtype_ids
-                    .binary_search(&rule.controller_controls_other_subtype.stable_id())
-                    .is_ok()
+            let live = state.objects.get(*candidate);
+            live.zone == Zone::Battlefield
+                && live.controller == controller
+                && crate::engine::has_effective_subtype(
+                    state,
+                    *candidate,
+                    rule.controller_controls_other_subtype,
+                )
         })
         .count();
     controlled_other_count < usize::from(rule.minimum_count)
@@ -970,6 +978,9 @@ fn commit_zone_change(
         obj.name = crate::card_def::CARD_DEFS[obj.card_def as usize]
             .object_name
             .to_string();
+        obj.damage = 0;
+        obj.counters = Default::default();
+        obj.attachments.clear();
         if to_zone == Zone::Battlefield {
             if let Some(face_index) = battlefield_face_index {
                 let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
@@ -992,9 +1003,9 @@ fn commit_zone_change(
             }
             obj.tapped = enters_battlefield_tapped;
             obj.summoning_sick = true;
-            obj.damage = 0;
-            obj.counters = Default::default();
-            obj.attachments.clear();
+        } else {
+            obj.tapped = false;
+            obj.summoning_sick = false;
         }
     }
     if to_zone == Zone::Library {

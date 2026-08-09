@@ -170,6 +170,7 @@
     },
     {
       "name": "Black Mage's Rod",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -576,6 +577,7 @@
     },
     {
       "name": "Cryogen Relic",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -1423,6 +1425,7 @@
     },
     {
       "name": "Gorilla Shaman",
+      "engine_capability": "full",
       "mana_cost": "{R}",
       "mana_value": 1,
       "colors": [
@@ -1738,6 +1741,7 @@
     },
     {
       "name": "Hunter's Blowgun",
+      "engine_capability": "full",
       "mana_cost": "{1}",
       "mana_value": 1,
       "colors": [],
@@ -3835,6 +3839,7 @@
     },
     {
       "name": "Unexpected Fangs",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -4952,6 +4957,33 @@
         "return_to_hand"
       ],
       "java_file": "Mage.Sets/src/mage/cards/m/MesmericFiend.java"
+    },
+    {
+      "name": "Hero Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Hero"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "job_select"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/HeroToken.java"
     }
   ],
   "unresolved": []

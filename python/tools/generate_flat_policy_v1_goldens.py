@@ -2344,7 +2344,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "episode_id": 90001,
             "decision_index": 0,
             "counts": [7, 0, 0, 0, 0, 0, 0, 0, 3, 2, 2],
-            "model_typed_debug_sha256": "f2c09d7dfb3b25726b4e3eb8eba7ecf036b20e4864df1404b321cf1b89165a51",
+            "model_typed_debug_sha256": "feb5ae9b59a0f88797381998bdad3834f3d0bee5b113e8965c6a23112be3a4ce",
             "action_objects_operational_debug_sha256": "caea06d6b76d7d8238d5fc4a426b81b10cef34afe2177821fcc4c7486725c9c7",
         },
         {
@@ -2354,7 +2354,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "episode_id": 90002,
             "decision_index": 0,
             "counts": [7, 0, 0, 0, 0, 0, 0, 0, 5, 4, 4],
-            "model_typed_debug_sha256": "bf58fd5965dbc2e26b5086184487324e9f9ee2bb52a2ca273c262f33c73978d4",
+            "model_typed_debug_sha256": "5097f5f28f4870846f16a45b933ea5d2ce3dcf958864676804eabe215164f81f",
             "action_objects_operational_debug_sha256": "56e018d1a0e72785d71fc253b172c141005cb2c2e1aae017976d7079b231c42c",
         },
         {
@@ -2364,7 +2364,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "episode_id": 90003,
             "decision_index": 0,
             "counts": [7, 0, 0, 0, 0, 0, 0, 0, 4, 3, 3],
-            "model_typed_debug_sha256": "4576d3515b20e12cea003536134255dd3799153f85d879f739ecdd3b55b11f0a",
+            "model_typed_debug_sha256": "72ff3d27ed3cd1486fb433daf689892c7f5b0eaf33a47ac8cf279108d2be5127",
             "action_objects_operational_debug_sha256": "5ead8f61d3257c0d290675d820fe494e60d9745a63225907b37dd4a11d3c2963",
         },
         {
@@ -2375,7 +2375,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "decision_index": 6,
             "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1",
             "counts": [12, 7, 5, 0, 0, 0, 0, 0, 6, 6, 6],
-            "model_typed_debug_sha256": "00a40a459fc78c8633caef808eff388d39b1774d949bb9be5dc9b10dbd65aec6",
+            "model_typed_debug_sha256": "a523d8c22f3fc9e6b96c5e3831e6bf93679a1210796aa3345ccc55e84a9831a4",
         },
         {
             "name": "rally_seed_81702_first_relation",
@@ -2385,7 +2385,7 @@ def _goldens(inventory: dict[str, Any]) -> dict[str, Any]:
             "decision_index": 4,
             "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1",
             "counts": [9, 2, 1, 0, 0, 0, 0, 0, 2, 2, 1],
-            "model_typed_debug_sha256": "f7ea901187b886ae2244fd5f6d6802301fddb0a08cd936adc58d515b21167f2a",
+            "model_typed_debug_sha256": "e5e849a6b22a652e9df9e6e7dd6ff10be96ab338b8c6a9caedfda9eea82cae57",
         },
     ]
     payload: dict[str, Any] = {

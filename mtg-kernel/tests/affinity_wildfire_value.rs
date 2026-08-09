@@ -129,7 +129,7 @@ fn registry_and_generated_definitions_match_current_mage_cards() {
     assert_eq!(card_id("Fanatical Offering"), 35);
     assert_eq!(card_id("Reckoner's Bargain"), 94);
     assert_eq!(card_id("Map Token"), 147);
-    assert_eq!(CARD_DEFS.len(), 159);
+    assert_eq!(CARD_DEFS.len(), 160);
     assert_eq!(Subtype::Map.stable_id(), 61);
 
     let sacrifice = [CostComponent::SacrificeControlled {

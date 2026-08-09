@@ -11,6 +11,14 @@ use std::hash::{Hash, Hasher};
 
 pub const STARTING_LIFE: i32 = 20;
 
+fn i16_is_zero(value: &i16) -> bool {
+    *value == 0
+}
+
+fn bool_is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// Exact diagnostic full-state hash contract written into privileged audit
 /// artifacts. The algorithm is FNV-1a-64 over the compact UTF-8 JSON bytes of
 /// `DiagnosticStateHashEnvelopeV7` below.
@@ -94,6 +102,14 @@ pub struct ObjectStateV4 {
     /// this marker; only a zone change or the affected controller's next
     /// untap step consumes it.
     pub skip_next_untap: bool,
+    /// Whether any currently marked damage was dealt by a source with
+    /// deathtouch. This is cleared at cleanup and on every zone change.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub deathtouch_damage: bool,
+    /// Incarnation-local Lifelink keyword counters. This remains private v4
+    /// state so the frozen public `Counters` shape does not change.
+    #[serde(default, skip_serializing_if = "i16_is_zero")]
+    pub lifelink_keyword_counters: i16,
     /// Sorted by `(player, expires_at_turn)`.
     pub goaded_by: Vec<GoadStateV4>,
     pub attached_to: Option<ObjectLinkV4>,
@@ -132,6 +148,8 @@ impl ObjectStateV4 {
             entered_battlefield_turn: None,
             ability_uses_this_turn: Vec::new(),
             skip_next_untap: false,
+            deathtouch_damage: false,
+            lifelink_keyword_counters: 0,
             goaded_by: Vec::new(),
             attached_to: None,
             exiled_by: None,
@@ -628,7 +646,9 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::ArtifactPermanent
                 | TargetSpec::EnchantmentPermanent
                 | TargetSpec::ControlledCreature
-                | TargetSpec::OpponentControlledCreature,
+                | TargetSpec::OpponentControlledCreature
+                | TargetSpec::UpToOneTappedCreature
+                | TargetSpec::NoncreatureArtifactPermanent,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -756,10 +776,13 @@ pub struct StackStateV4 {
     pub hidden_ability_source: Option<ObjectLinkV4>,
     /// Historical source incarnation for a definition-owned triggered or
     /// activated ability. Unlike a spell source, it need not remain live in
-    /// its captured zone while the ability waits or resolves. Spells,
-    /// Madness offers, and hidden-zone activations retain `None`.
+    /// its captured zone while the ability waits or resolves.
     #[serde(default)]
     pub ability_source_contract: Option<AbilitySourceContractV4>,
+    /// Exact Equipment incarnation that granted a triggered ability to this
+    /// stack item's source creature. Only attachment-granted triggers use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_by: Option<AbilitySourceContractV4>,
 }
 
 impl StackStateV4 {
@@ -1377,6 +1400,96 @@ impl GameState {
         moving.attachments.clear();
         moving.v4.attached_to = None;
         moving.v4.exiled_by = None;
+    }
+
+    /// Checks the exact two-way attachment graph. Restored state must never
+    /// accept a dangling, stale, duplicate, or asymmetric relation.
+    pub fn validate_attachment_relations(&self) -> Result<(), ObjectId> {
+        for (id, object) in self.objects.iter() {
+            if object.zone != Zone::Battlefield
+                && (object.v4.attached_to.is_some() || !object.attachments.is_empty())
+            {
+                return Err(id);
+            }
+            if let Some(link) = object.v4.attached_to {
+                let Some(host) = self.objects.try_get(link.object) else {
+                    return Err(id);
+                };
+                if object.zone != Zone::Battlefield
+                    || host.zone != Zone::Battlefield
+                    || host.zone_change_count != link.zone_change_count
+                    || host
+                        .attachments
+                        .iter()
+                        .filter(|&&source| source == id)
+                        .count()
+                        != 1
+                {
+                    return Err(id);
+                }
+            }
+            for (index, &source) in object.attachments.iter().enumerate() {
+                if object.attachments[..index].contains(&source) {
+                    return Err(id);
+                }
+                let Some(attachment) = self.objects.try_get(source) else {
+                    return Err(id);
+                };
+                if object.zone != Zone::Battlefield
+                    || attachment.zone != Zone::Battlefield
+                    || attachment.v4.attached_to
+                        != Some(ObjectLinkV4 {
+                            object: id,
+                            zone_change_count: object.zone_change_count,
+                        })
+                {
+                    return Err(source);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Reattaches one exact source incarnation to one exact host incarnation.
+    /// The caller owns target legality; this helper owns only the generic
+    /// two-way attachment contract.
+    pub(crate) fn attach_object_exact(
+        &mut self,
+        source: ObjectId,
+        source_zone_change_count: u32,
+        target: ObjectId,
+        target_zone_change_count: u32,
+    ) -> Result<(), ObjectId> {
+        self.validate_attachment_relations()?;
+        if source == target {
+            return Err(source);
+        }
+        let Some(source_live) = self.objects.try_get(source) else {
+            return Err(source);
+        };
+        let Some(target_live) = self.objects.try_get(target) else {
+            return Err(target);
+        };
+        if source_live.zone != Zone::Battlefield
+            || source_live.zone_change_count != source_zone_change_count
+            || target_live.zone != Zone::Battlefield
+            || target_live.zone_change_count != target_zone_change_count
+        {
+            return Err(source);
+        }
+        for (_, candidate) in self.objects.iter_mut() {
+            candidate.attachments.retain(|&attached| attached != source);
+        }
+        self.objects.get_mut(source).v4.attached_to = None;
+        self.objects.get_mut(source).v4.attached_to = Some(ObjectLinkV4 {
+            object: target,
+            zone_change_count: target_zone_change_count,
+        });
+        let attachments = &mut self.objects.get_mut(target).attachments;
+        attachments.push(source);
+        attachments.sort_unstable();
+        attachments.dedup();
+        self.validate_attachment_relations()
     }
 
     /// Returns the acting observer's currently valid, position-sorted facts

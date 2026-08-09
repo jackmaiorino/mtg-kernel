@@ -4758,7 +4758,7 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
         effective_power: has_pt.then(|| engine::effective_power(state, id)),
         effective_toughness: has_pt.then(|| engine::effective_toughness(state, id)),
         effective_color_mask: object.v4.effective_color_mask,
-        effective_subtype_ids: object.v4.effective_subtype_ids.clone(),
+        effective_subtype_ids: engine::effective_subtype_ids(state, id),
         effective_keywords: KeywordFlagsV2 {
             flying: engine::has_effective_keyword(state, id, Keywords::FLYING),
             reach: engine::has_effective_keyword(state, id, Keywords::REACH),
@@ -4838,6 +4838,12 @@ fn object_relations_public_v4(
     acting_player: PlayerId,
 ) -> Result<Vec<ObjectRelationPublicV4>> {
     validate_linked_exile_records_public_v4(state)?;
+    state.validate_attachment_relations().map_err(|object| {
+        RlContractError(format!(
+            "invalid attachment relation at object {}",
+            object.0
+        ))
+    })?;
     let mut out = Vec::new();
     for (id, object) in state.objects.iter() {
         let Some(source) = visible_card_ref(state, id, acting_player)? else {
@@ -5001,7 +5007,64 @@ fn continuous_effects_public_v2(
     state: &GameState,
     acting_player: PlayerId,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
+    state.validate_attachment_relations().map_err(|object| {
+        RlContractError(format!(
+            "invalid attachment relation at object {}",
+            object.0
+        ))
+    })?;
     let mut out = Vec::new();
+    for (host_id, host) in state.objects.iter() {
+        if host.zone != Zone::Battlefield {
+            continue;
+        }
+        for (equipment_id, equipment) in engine::attached_equipment_profiles(state, host_id) {
+            let equipment_object = state.objects.get(equipment_id);
+            let keywords = if state.active_player == equipment_object.controller {
+                equipment.controller_turn_keywords
+            } else {
+                equipment.other_turn_keywords
+            };
+            let mut layers = engine::Layers::POWER_TOUGHNESS.0;
+            if equipment.add_subtype.is_some() {
+                layers |= engine::Layers::TYPE_CHANGING.0;
+            }
+            if keywords != Keywords::NONE {
+                layers |= engine::Layers::ABILITY_ADDING.0;
+            }
+            out.push(ContinuousEffectPublicV2 {
+                source: Some(card_ref(state, equipment_id)?),
+                controller: Some(equipment_object.controller.into()),
+                affected_objects: vec![card_ref(state, host_id)?],
+                affected_players: Vec::new(),
+                global: false,
+                layers,
+                timestamp: (u64::from(equipment_id.0) << 32)
+                    | u64::from(equipment_object.zone_change_count),
+                duration: EffectDurationV2::WhileAttached,
+                power_delta: i32::from(equipment.power_delta),
+                toughness_delta: i32::from(equipment.toughness_delta),
+                grants_haste: keywords.has(Keywords::HASTE),
+                set_power: None,
+                set_toughness: None,
+                add_color_mask: 0,
+                remove_color_mask: 0,
+                add_subtype_ids: equipment
+                    .add_subtype
+                    .map(|subtype| vec![subtype.stable_id()])
+                    .unwrap_or_default(),
+                remove_subtype_ids: Vec::new(),
+                add_keyword_mask: keywords.0,
+                remove_keyword_mask: 0,
+                ward_generic_delta: 0,
+                minimum_blockers: None,
+                add_landwalk_mask: 0,
+                remove_landwalk_mask: 0,
+                prevent_damage_from_color_mask: 0,
+                damage_cannot_be_prevented: false,
+            });
+        }
+    }
     for effect in &state.engine.until_end_of_turn {
         match effect {
             UntilEndOfTurnEffect::SyntheticMarker(_) => {}

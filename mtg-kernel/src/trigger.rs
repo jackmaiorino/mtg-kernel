@@ -387,6 +387,11 @@ fn ichor_wellspring_draw_effect() -> EffectOp {
     }
 }
 
+fn job_select_effect() -> EffectOp {
+    let hero = crate::card_def::card_id_by_name("Hero Token").expect("Hero Token in CARD_DEFS");
+    EffectOp::CreateTokenAndAttachSource { token_def: hero }
+}
+
 fn nihil_spellbomb_graveyard_effect() -> EffectOp {
     EffectOp::MayPayManaThen {
         player: PlayerRef::Controller,
@@ -591,6 +596,29 @@ const ICHOR_WELLSPRING_TRIGGERS: [TriggeredAbilityDef; 2] = [
         effect: ichor_wellspring_draw_effect,
     },
 ];
+const CRYOGEN_RELIC_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Etb,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: ichor_wellspring_draw_effect,
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefield,
+        home_zone: Zone::Graveyard,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: ichor_wellspring_draw_effect,
+    },
+];
+const JOB_SELECT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: job_select_effect,
+}];
 const NIHIL_SPELLBOMB_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::LeftBattlefieldToGraveyard,
     home_zone: Zone::Graveyard,
@@ -751,6 +779,9 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
     if !card.is_executable() {
         return &[];
     }
+    if card.equipment.is_some_and(|equipment| equipment.job_select) {
+        return &JOB_SELECT_TRIGGERS;
+    }
     match card.name {
         "Guttersnipe" => &GUTTERSNIPE_TRIGGERS,
         "Murmuring Mystic" => &MURMURING_MYSTIC_TRIGGERS,
@@ -769,6 +800,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Burning-Tree Emissary" => &BURNING_TREE_EMISSARY_TRIGGERS,
         "Clockwork Percussionist" => &CLOCKWORK_PERCUSSIONIST_TRIGGERS,
         "Ichor Wellspring" => &ICHOR_WELLSPRING_TRIGGERS,
+        "Cryogen Relic" => &CRYOGEN_RELIC_TRIGGERS,
         "Nihil Spellbomb" => &NIHIL_SPELLBOMB_TRIGGERS,
         "Experimental Synthesizer" => &EXPERIMENTAL_SYNTHESIZER_TRIGGERS,
         "Goblin Bushwhacker" => &GOBLIN_BUSHWHACKER_TRIGGERS,
@@ -898,14 +930,20 @@ pub struct PendingTrigger {
     /// across later zone changes of the same physical card.
     #[serde(default)]
     pub source_contract: Option<AbilitySourceContractV4>,
+    /// Exact Equipment incarnation that granted this trigger to `source`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_by: Option<AbilitySourceContractV4>,
 }
 
 fn creature_dies_to_state_based_actions(
     toughness: i32,
     marked_damage: i32,
+    deathtouch_damage: bool,
     indestructible: bool,
 ) -> bool {
-    toughness <= 0 || (marked_damage >= toughness && !indestructible)
+    toughness <= 0
+        || ((marked_damage >= toughness || (marked_damage > 0 && deathtouch_damage))
+            && !indestructible)
 }
 
 /// Runs state-based actions to a fixed point: repeat the full SBA sweep
@@ -985,7 +1023,12 @@ fn sba_fixed_point_with_protected_triggers(
             // 704.5g is a put-into-graveyard action and ignores
             // indestructible. 704.5h destroys for lethal damage, so
             // indestructible prevents only that branch.
-            if creature_dies_to_state_based_actions(toughness, obj.damage as i32, indestructible) {
+            if creature_dies_to_state_based_actions(
+                toughness,
+                obj.damage as i32,
+                obj.v4.deathtouch_damage,
+                indestructible,
+            ) {
                 dying.push(id);
             }
         }
@@ -1206,6 +1249,7 @@ fn triggers_from_events(
                         zone_change_count: *source_zone_change_count,
                         attached_to: None,
                     }),
+                    granted_by: None,
                 });
             }
         }
@@ -1294,6 +1338,7 @@ fn triggers_from_events(
                     new_triggers.push(PendingTrigger {
                         controller: event_controller,
                         source: id,
+                        granted_by: None,
                         effect,
                         is_madness_offer: false,
                         kicked,
@@ -1331,6 +1376,7 @@ fn triggers_from_events(
                     new_triggers.push(PendingTrigger {
                         controller: obj.controller,
                         source: id,
+                        granted_by: None,
                         effect: EffectOp::CounterUnlessPaysGeneric {
                             ward_target,
                             targeting_stack_item: *targeting_stack_item,
@@ -1349,7 +1395,83 @@ fn triggers_from_events(
         }
     }
 
+    // Attachment-granted abilities belong to the equipped creature. Each
+    // Equipment grants a separate trigger, and its exact incarnation is
+    // carried independently as provenance.
+    for event in events {
+        let CommittedEvent::SpellCast {
+            spell,
+            controller: caster,
+        } = event
+        else {
+            continue;
+        };
+        if selected_spell_types(state, *spell).contains(&CardType::Creature) {
+            continue;
+        }
+        for (host, host_live) in state.objects.iter() {
+            if host_live.controller != *caster
+                || host_live.zone != Zone::Battlefield
+                || !crate::card_def::CARD_DEFS[host_live.card_def as usize]
+                    .has_type(CardType::Creature)
+            {
+                continue;
+            }
+            for &equipment in &host_live.attachments {
+                let equipment_live = state.objects.get(equipment);
+                let exact_relation = equipment_live.v4.attached_to.is_some_and(|link| {
+                    link.object == host
+                        && link.zone_change_count == host_live.zone_change_count
+                        && equipment_live.zone == Zone::Battlefield
+                });
+                let Some(profile) =
+                    crate::card_def::CARD_DEFS[equipment_live.card_def as usize].equipment
+                else {
+                    continue;
+                };
+                if !exact_relation || profile.noncreature_spell_damage_to_each_opponent == 0 {
+                    continue;
+                }
+                new_triggers.push(PendingTrigger {
+                    controller: *caster,
+                    source: host,
+                    source_contract: Some(AbilitySourceContractV4::capture(state, host)),
+                    granted_by: Some(AbilitySourceContractV4::capture(state, equipment)),
+                    effect: EffectOp::DealDamage {
+                        target: TargetRef::Opponent,
+                        amount: i32::from(profile.noncreature_spell_damage_to_each_opponent),
+                    },
+                    is_madness_offer: false,
+                    kicked: false,
+                    target_spec: TargetSpec::None,
+                    targets: Vec::new(),
+                    target_contracts: Vec::new(),
+                    placement_ordered: false,
+                });
+            }
+        }
+    }
+
     new_triggers
+}
+
+fn selected_spell_types(state: &GameState, spell: ObjectId) -> &'static [CardType] {
+    let object = state.objects.get(spell);
+    let definition = &crate::card_def::CARD_DEFS[object.card_def as usize];
+    if object
+        .v4
+        .spell_cast_origin
+        .and_then(|origin| origin.finalized_method)
+        == Some(crate::state::CastMethodV4::Omen)
+    {
+        definition
+            .omen
+            .as_ref()
+            .map(|omen| omen.types)
+            .unwrap_or(&[])
+    } else {
+        definition.types
+    }
 }
 
 /// For each event in `events` (already committed, in commit order), the
@@ -1447,11 +1569,7 @@ fn trigger_matches(
                 .copied()
                 .filter(|candidate| *candidate != source)
                 .filter(|candidate| {
-                    state
-                        .objects
-                        .get(*candidate)
-                        .v4
-                        .effective_subtype_ids
+                    crate::engine::effective_subtype_ids(state, *candidate)
                         .binary_search(&subtype_id)
                         .is_ok()
                 })
@@ -1478,18 +1596,7 @@ fn trigger_matches(
             },
         ) => {
             *caster == controller && {
-                let object = state.objects.get(*spell);
-                let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
-                let types = if object
-                    .v4
-                    .spell_cast_origin
-                    .and_then(|origin| origin.finalized_method)
-                    == Some(crate::state::CastMethodV4::Omen)
-                {
-                    def.omen.as_ref().map(|omen| omen.types).unwrap_or(&[])
-                } else {
-                    def.types
-                };
+                let types = selected_spell_types(state, *spell);
                 types.contains(&crate::card_def::CardType::Instant)
                     || types.contains(&crate::card_def::CardType::Sorcery)
             }
@@ -1584,9 +1691,11 @@ mod tests {
 
     #[test]
     fn indestructible_prevents_lethal_destruction_but_not_zero_toughness() {
-        assert!(!creature_dies_to_state_based_actions(3, 3, true));
-        assert!(creature_dies_to_state_based_actions(3, 3, false));
-        assert!(creature_dies_to_state_based_actions(0, 0, true));
+        assert!(!creature_dies_to_state_based_actions(3, 3, false, true));
+        assert!(creature_dies_to_state_based_actions(3, 3, false, false));
+        assert!(creature_dies_to_state_based_actions(0, 0, false, true));
+        assert!(creature_dies_to_state_based_actions(3, 1, true, false));
+        assert!(!creature_dies_to_state_based_actions(3, 1, true, true));
     }
 
     #[test]
@@ -1594,6 +1703,7 @@ mod tests {
         let a = PendingTrigger {
             controller: PlayerId::P1,
             source: ObjectId(1),
+            granted_by: None,
             effect: EffectOp::Sequence(vec![]),
             is_madness_offer: false,
             kicked: false,
@@ -1606,6 +1716,7 @@ mod tests {
         let b = PendingTrigger {
             controller: PlayerId::P0,
             source: ObjectId(2),
+            granted_by: None,
             effect: EffectOp::Sequence(vec![]),
             is_madness_offer: false,
             kicked: false,

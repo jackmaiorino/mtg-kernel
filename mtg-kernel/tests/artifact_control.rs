@@ -123,7 +123,7 @@ fn generated_definitions_match_the_four_current_mage_cards() {
     assert_eq!(card_id("Makeshift Munitions"), 69);
     assert_eq!(card_id("Nihil Spellbomb"), 79);
     assert_eq!(card_id("Relic of Progenitus"), 97);
-    assert_eq!(CARD_DEFS.len(), 159);
+    assert_eq!(CARD_DEFS.len(), 160);
 
     for name in [
         "Krark-Clan Shaman",

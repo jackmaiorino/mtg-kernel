@@ -3,6 +3,7 @@ use mtg_kernel::card_def::{
     ManaAbilityAmountDef, ManaAbilityCostDef, Subtype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision};
+use mtg_kernel::event::CommittedEvent;
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::{self, ManaColor};
 use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1, LegalActionCandidateV1};
@@ -489,7 +490,6 @@ fn tinder_wall_damage_ability_only_targets_a_creature_it_is_blocking() {
     assert_eq!(state.objects.get(tinder).zone, Zone::Graveyard);
     assert_eq!(state.players[0].mana_pool[ManaColor::R.pool_index()], 0);
     assert_eq!(state.stack.len(), 1);
-
     for _ in 0..4 {
         if state.stack.is_empty() {
             break;
@@ -500,7 +500,16 @@ fn tinder_wall_damage_ability_only_targets_a_creature_it_is_blocking() {
         }
     }
     assert!(state.stack.is_empty());
-    assert_eq!(state.objects.get(attacker).damage, 2);
+    assert_eq!(state.objects.get(attacker).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(attacker).damage, 0);
+    assert!(state.engine.event_history.iter().any(|event| matches!(
+        event,
+        CommittedEvent::Damage {
+            source,
+            target: mtg_kernel::state::Target::Object(object),
+            amount: 2,
+        } if *source == tinder && *object == attacker
+    )));
     assert_eq!(state.objects.get(bystander).damage, 0);
 
     let mut not_blocking = ready_main1();

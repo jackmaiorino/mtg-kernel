@@ -263,6 +263,25 @@ pub enum EffectOp {
     SkipNextUntap {
         object: ObjectRef,
     },
+    /// Attach the exact resolving ability source incarnation to a target
+    /// permanent through the generic two-way attachment graph.
+    AttachSourceToTarget {
+        object: ObjectRef,
+    },
+    /// Add public permanent counters atomically to one selected creature.
+    /// `optional` permits an absent target slot, as on Cryogen Relic.
+    AddCountersToTarget {
+        target_index: u8,
+        optional: bool,
+        plus1_plus1: i16,
+        lifelink: i16,
+        stun: i16,
+    },
+    /// Job Select creates the token even if the Equipment later left, then
+    /// attaches only when the original source incarnation remains live.
+    CreateTokenAndAttachSource {
+        token_def: u16,
+    },
     AddMana {
         player: PlayerRef,
         colors: Vec<ManaColor>,
@@ -2934,7 +2953,6 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         || pending.ctx.discarded != pending.resolving_item.discarded
         || pending.ctx.paid_cost_refs != pending.resolving_item.v4.paid_cost_refs
         || pending.ctx.hidden_ability_source != pending.resolving_item.v4.hidden_ability_source
-        || pending.ctx.ability_source_contract != pending.resolving_item.v4.ability_source_contract
         || pending.ctx.kicked != pending.resolving_item.kicked
         || pending.ctx.ability_source_contract != pending.resolving_item.v4.ability_source_contract
     {
@@ -7258,9 +7276,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     let object = state.objects.get(id);
                     let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
                     (def.has_type(crate::card_def::CardType::Creature)
-                        && object
-                            .v4
-                            .effective_subtype_ids
+                        && crate::engine::effective_subtype_ids(state, id)
                             .binary_search(&excluded_subtype.stable_id())
                             .is_err())
                     .then(|| event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount))
@@ -7303,6 +7319,171 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         EffectOp::SkipNextUntap { object } => {
             let object = ctx.resolve_object(*object);
             state.objects.get_mut(object).v4.skip_next_untap = true;
+        }
+        EffectOp::AttachSourceToTarget { object } => {
+            let Some(source) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let ObjectRef::Target(target_index) = object else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let target_index = usize::from(*target_index);
+            if source.source != ctx.source || !ctx.target_incarnation_matches(target_index, state) {
+                return;
+            }
+            let target = ctx.resolve_object(*object);
+            let target_live = state.objects.get(target);
+            let target_zone_change_count = target_live.zone_change_count;
+            let target_is_creature = target_live.zone == Zone::Battlefield
+                && crate::card_def::CARD_DEFS[target_live.card_def as usize]
+                    .has_type(CardType::Creature);
+            let source_is_equipment = state.objects.try_get(ctx.source).is_some_and(|live| {
+                live.card_def == source.card_def
+                    && live.owner == source.owner
+                    && live.zone == Zone::Battlefield
+                    && live.zone_change_count == source.zone_change_count
+                    && crate::card_def::CARD_DEFS[live.card_def as usize]
+                        .equipment
+                        .is_some()
+            });
+            if !target_is_creature || !source_is_equipment {
+                return;
+            }
+            if state
+                .attach_object_exact(
+                    ctx.source,
+                    source.zone_change_count,
+                    target,
+                    target_zone_change_count,
+                )
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
+        EffectOp::AddCountersToTarget {
+            target_index,
+            optional,
+            plus1_plus1,
+            lifelink,
+            stun,
+        } => {
+            let index = usize::from(*target_index);
+            let Some(Target::Object(object)) = ctx.targets.get(index).copied() else {
+                if !*optional {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                }
+                return;
+            };
+            if !ctx.target_incarnation_matches(index, state) {
+                return;
+            }
+            let live = state.objects.get(object);
+            if live.zone != Zone::Battlefield
+                || !crate::card_def::CARD_DEFS[live.card_def as usize].has_type(CardType::Creature)
+                || *plus1_plus1 < 0
+                || *lifelink < 0
+                || *stun < 0
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            let next = (
+                live.counters.plus1_plus1.checked_add(*plus1_plus1),
+                live.v4.lifelink_keyword_counters.checked_add(*lifelink),
+                live.counters.stun.checked_add(*stun),
+            );
+            let (Some(next_plus), Some(next_lifelink), Some(next_stun)) = next else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let object = state.objects.get_mut(object);
+            object.counters.plus1_plus1 = next_plus;
+            object.v4.lifelink_keyword_counters = next_lifelink;
+            object.counters.stun = next_stun;
+        }
+        EffectOp::CreateTokenAndAttachSource { token_def } => {
+            let Some(token) = crate::card_def::CARD_DEFS.get(*token_def as usize) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            if !token.is_token || !token.has_full_support() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::create_token(*token_def, ctx.controller),
+            );
+            let Some(crate::event::CommittedEvent::CreateToken { object, .. }) =
+                state.engine.event_log.last().cloned()
+            else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let Some(source) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let source_is_live = state.objects.try_get(ctx.source).is_some_and(|live| {
+                live.card_def == source.card_def
+                    && live.owner == source.owner
+                    && live.zone == Zone::Battlefield
+                    && live.zone_change_count == source.zone_change_count
+                    && crate::card_def::CARD_DEFS[live.card_def as usize]
+                        .equipment
+                        .is_some_and(|equipment| equipment.job_select)
+            });
+            if !source_is_live {
+                return;
+            }
+            let token_generation = state.objects.get(object).zone_change_count;
+            if state
+                .attach_object_exact(
+                    ctx.source,
+                    source.zone_change_count,
+                    object,
+                    token_generation,
+                )
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
         }
         EffectOp::AddMana { player, colors } => {
             let player = ctx.resolve_player(*player, state);
@@ -7601,11 +7782,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     .battlefield
                     .iter()
                     .filter(|&&id| {
-                        state
-                            .objects
-                            .get(id)
-                            .v4
-                            .effective_subtype_ids
+                        crate::engine::effective_subtype_ids(state, id)
                             .binary_search(&subtype.stable_id())
                             .is_ok()
                     })
@@ -7988,11 +8165,7 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 .copied()
                 .filter(|id| *id != ctx.source)
                 .filter(|id| {
-                    state
-                        .objects
-                        .get(*id)
-                        .v4
-                        .effective_subtype_ids
+                    crate::engine::effective_subtype_ids(state, *id)
                         .binary_search(&subtype_id)
                         .is_ok()
                 })

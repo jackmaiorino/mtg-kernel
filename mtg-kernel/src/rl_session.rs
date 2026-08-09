@@ -9299,6 +9299,7 @@ mod tests {
             .map(|source| PendingTrigger {
                 controller: actor_id,
                 source: *source,
+                granted_by: None,
                 effect: EffectOp::Sequence(Vec::new()),
                 is_madness_offer: false,
                 kicked: false,

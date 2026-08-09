@@ -275,6 +275,8 @@ pub struct Layers(pub u8);
 
 impl Layers {
     pub const NONE: Layers = Layers(0);
+    /// 613.1, layer 4.
+    pub const TYPE_CHANGING: Layers = Layers(1 << 2);
     /// 613.1, layer 6.
     pub const ABILITY_ADDING: Layers = Layers(1 << 0);
     /// 613.1, layer 7c.
@@ -1234,6 +1236,8 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::TargetOpponent
         | TargetSpec::OpponentControlledCreature
         | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
+        | TargetSpec::UpToOneTappedCreature
+        | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::CreatureOtherThanSource => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
@@ -1249,7 +1253,8 @@ fn target_min_count(spec: TargetSpec) -> u8 {
         TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::UpToTwoPlayers
-        | TargetSpec::UpToTwoCardsInGraveyards => 0,
+        | TargetSpec::UpToTwoCardsInGraveyards
+        | TargetSpec::UpToOneTappedCreature => 0,
         _ => target_count(spec),
     }
 }
@@ -1536,8 +1541,11 @@ fn validate_spell_source_contract_fields(
         }
         return Ok(());
     }
-    if item.v4.madness_source_contract.is_some() {
-        return Err("spell stack item carries Madness-offer source provenance".to_string());
+    if item.v4.madness_source_contract.is_some()
+        || item.v4.ability_source_contract.is_some()
+        || item.v4.granted_by.is_some()
+    {
+        return Err("spell stack item carries nonspell source provenance".to_string());
     }
     if item.v4.hidden_ability_source.is_some() {
         return Err("spell stack item carries activated-ability source provenance".to_string());
@@ -1630,6 +1638,75 @@ fn validate_spell_source_contract_fields(
     Ok(())
 }
 
+fn validated_ability_source_contract(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<AbilitySourceContractV4, String> {
+    let contract = item
+        .v4
+        .ability_source_contract
+        .ok_or("ability stack item lost its exact source contract")?;
+    validate_historical_ability_source_contract(state, contract)?;
+    if contract.source != item.source || contract.controller != item.controller {
+        return Err("ability source contract disagrees with its stack item".to_string());
+    }
+    Ok(contract)
+}
+
+fn validate_historical_ability_source_contract(
+    state: &GameState,
+    contract: AbilitySourceContractV4,
+) -> Result<(), String> {
+    let live = state
+        .objects
+        .try_get(contract.source)
+        .ok_or("ability source object no longer exists")?;
+    if contract.card_def != live.card_def
+        || contract.owner != live.owner
+        || live.zone_change_count < contract.zone_change_count
+        || (live.zone_change_count == contract.zone_change_count && live.zone != contract.zone)
+        || live.spell_copy_origin.is_some()
+    {
+        return Err("ability source contract is structurally inconsistent".to_string());
+    }
+    Ok(())
+}
+
+fn validate_equipment_granted_trigger_contract(
+    state: &GameState,
+    host: AbilitySourceContractV4,
+    equipment: AbilitySourceContractV4,
+    controller: PlayerId,
+    effect: &EffectOp,
+) -> Result<(), String> {
+    validate_historical_ability_source_contract(state, host)?;
+    validate_historical_ability_source_contract(state, equipment)?;
+    if host.source == equipment.source
+        || host.controller != controller
+        || host.zone != Zone::Battlefield
+        || equipment.zone != Zone::Battlefield
+        || equipment.attached_to
+            != Some(ObjectLinkV4 {
+                object: host.source,
+                zone_change_count: host.zone_change_count,
+            })
+    {
+        return Err("attachment-granted trigger source contract is inconsistent".to_string());
+    }
+    let profile = card_def::CARD_DEFS
+        .get(equipment.card_def as usize)
+        .and_then(|definition| definition.equipment)
+        .ok_or("attachment-granted trigger producer is not Equipment")?;
+    let expected = EffectOp::DealDamage {
+        target: TargetRef::Opponent,
+        amount: i32::from(profile.noncreature_spell_damage_to_each_opponent),
+    };
+    if profile.noncreature_spell_damage_to_each_opponent == 0 || *effect != expected {
+        return Err("attachment-granted trigger no longer matches its producer".to_string());
+    }
+    Ok(())
+}
+
 /// Authenticates the one supported nonspell shape whose physical source is
 /// still on the stack: a definition-owned cast trigger. The trigger carries
 /// the exact contract of its unique producing spell, and its inline program
@@ -1647,6 +1724,8 @@ fn validate_spell_sourced_trigger(
         || item.inline_effect.is_none()
         || item.v4.cast_method.is_some()
         || item.v4.madness_source_contract.is_some()
+        || item.v4.ability_source_contract.is_some()
+        || item.v4.granted_by.is_some()
         || item.v4.face_index != 0
         || item.v4.x_value != 0
         || !item.v4.paid_cost_refs.is_empty()
@@ -2023,15 +2102,21 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
-        TargetSpec::ControlledCreature => state.players[controller.index()]
-            .battlefield
+        TargetSpec::ControlledCreature => state
+            .objects
             .iter()
-            .copied()
+            .filter_map(|(id, object)| {
+                (object.controller == controller
+                    && object.zone == Zone::Battlefield
+                    && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature))
+                .then_some(id)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::UpToOneTappedCreature => battlefield_objects(state)
             .filter(|&id| {
                 let object = state.objects.get(id);
-                object.controller == controller
-                    && object.zone == Zone::Battlefield
-                    && object_has_type(state, id, CardType::Creature)
+                object.tapped && object_has_type(state, id, CardType::Creature)
             })
             .map(Target::Object)
             .collect(),
@@ -2043,7 +2128,7 @@ fn legal_targets_for_controller_from_source(
                 let object = state.objects.get(id);
                 object.controller == controller.opponent()
                     && object.zone == Zone::Battlefield
-                    && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+                    && object_has_type(state, id, CardType::Creature)
             })
             .map(Target::Object)
             .collect(),
@@ -2086,6 +2171,13 @@ fn legal_targets_for_controller_from_source(
                 .map(|item| Target::Object(item.source))
                 .collect()
         }
+        TargetSpec::NoncreatureArtifactPermanent => battlefield_objects(state)
+            .filter(|&id| {
+                let definition = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+                definition.has_type(CardType::Artifact) && !definition.has_type(CardType::Creature)
+            })
+            .map(Target::Object)
+            .collect(),
         TargetSpec::UpToTwoCreatureCardsInOwnGraveyard => state.players[controller.index()]
             .graveyard
             .iter()
@@ -2295,6 +2387,60 @@ fn activation_legal_targets_for(
     .collect()
 }
 
+fn payable_activation_legal_targets_for(
+    source: ObjectId,
+    ability: &ActivatedAbilityDef,
+    targets_chosen: &[Target],
+    state: &GameState,
+) -> Vec<Target> {
+    let controller = state.objects.get(source).controller;
+    activation_legal_targets_for(source, ability, targets_chosen, state)
+        .into_iter()
+        .filter(|target| {
+            let Some(cost) = activation_mana_cost(ability.cost) else {
+                return true;
+            };
+            if cost.x_count == 0 {
+                return true;
+            }
+            let Target::Object(object) = target else {
+                return false;
+            };
+            let Ok(x_value) = u8::try_from(
+                card_def::CARD_DEFS[state.objects.get(*object).card_def as usize].mana_value,
+            ) else {
+                return false;
+            };
+            can_pay_activation_components_with_x(ability.cost, controller, source, state, x_value)
+        })
+        .collect()
+}
+
+fn activation_x_value(
+    ability: &ActivatedAbilityDef,
+    targets: &[Target],
+    state: &GameState,
+) -> Result<u8, String> {
+    let Some(cost) = activation_mana_cost(ability.cost) else {
+        return Ok(0);
+    };
+    if cost.x_count == 0 {
+        return Ok(0);
+    }
+    if ability.target_spec != TargetSpec::NoncreatureArtifactPermanent {
+        return Err("variable activation cost is not bound to an artifact target".to_string());
+    }
+    let Some(Target::Object(target)) = targets.first().copied() else {
+        return Err("variable activation cost lost its target".to_string());
+    };
+    let live = state
+        .objects
+        .try_get(target)
+        .ok_or("variable activation target is missing")?;
+    u8::try_from(card_def::CARD_DEFS[live.card_def as usize].mana_value)
+        .map_err(|_| "variable activation target mana value exceeds the payment range".to_string())
+}
+
 fn activation_target_prefix_can_complete(
     source: ObjectId,
     ability: &ActivatedAbilityDef,
@@ -2307,7 +2453,7 @@ fn activation_target_prefix_can_complete(
     }
     let mut validated_prefix = Vec::with_capacity(targets_chosen.len());
     for &target in targets_chosen {
-        if !activation_legal_targets_for(source, ability, &validated_prefix, state)
+        if !payable_activation_legal_targets_for(source, ability, &validated_prefix, state)
             .contains(&target)
         {
             return false;
@@ -2317,7 +2463,7 @@ fn activation_target_prefix_can_complete(
     if targets_chosen.len() >= usize::from(target_min_count(ability.target_spec)) {
         return true;
     }
-    activation_legal_targets_for(source, ability, targets_chosen, state)
+    payable_activation_legal_targets_for(source, ability, targets_chosen, state)
         .into_iter()
         .any(|candidate| {
             let mut next = targets_chosen.to_vec();
@@ -2332,7 +2478,7 @@ fn completable_next_activation_targets_for(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
-    activation_legal_targets_for(source, ability, targets_chosen, state)
+    payable_activation_legal_targets_for(source, ability, targets_chosen, state)
         .into_iter()
         .filter(|candidate| {
             let mut next = targets_chosen.to_vec();
@@ -2426,13 +2572,8 @@ pub(crate) fn evaluate_dynamic_value(
         DynamicValueDef::BattlefieldPermanentsWithSubtype(subtype) => state
             .objects
             .iter()
-            .filter(|(_, object)| {
-                object.zone == Zone::Battlefield
-                    && object
-                        .v4
-                        .effective_subtype_ids
-                        .binary_search(&subtype.stable_id())
-                        .is_ok()
+            .filter(|(id, object)| {
+                object.zone == Zone::Battlefield && has_effective_subtype(state, *id, subtype)
             })
             .count(),
         DynamicValueDef::ControllerGraveyardCardsWithType(card_type) => state.players
@@ -2468,11 +2609,7 @@ fn activation_cost_object_candidates(
             object.controller == player
                 && object.zone == Zone::Battlefield
                 && !object.tapped
-                && object
-                    .v4
-                    .effective_subtype_ids
-                    .binary_search(&subtype.stable_id())
-                    .is_ok()
+                && has_effective_subtype(state, candidate, subtype)
         })
         .collect()
 }
@@ -2755,6 +2892,16 @@ fn can_pay_activation_components(
     source: ObjectId,
     state: &GameState,
 ) -> bool {
+    can_pay_activation_components_with_x(components, player, source, state, 0)
+}
+
+fn can_pay_activation_components_with_x(
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    x_value: u8,
+) -> bool {
     if !activation_payment_shape_supported(components)
         || !can_pay_components(components, player, source, state)
     {
@@ -2768,14 +2915,18 @@ fn can_pay_activation_components(
     if has_unblocked_attacker_return_cost(components) {
         return !unblocked_attacker_return_candidates(player, state, &[]).is_empty();
     }
-    if components
-        .iter()
-        .any(|component| matches!(component, CostComponent::Tap))
-        && activation_mana_cost(components).is_some_and(|cost| {
-            mana::can_pay_excluding_source(cost, 0, player, state, source).is_none()
-        })
-    {
-        return false;
+    if let Some(cost) = activation_mana_cost(components) {
+        let plan = if components
+            .iter()
+            .any(|component| matches!(component, CostComponent::Tap))
+        {
+            mana::can_pay_excluding_source(cost, x_value, player, state, source)
+        } else {
+            mana::can_pay(cost, x_value, player, state)
+        };
+        if plan.is_none() {
+            return false;
+        }
     }
     true
 }
@@ -2800,12 +2951,7 @@ fn permanent_matches_return_filter(
     };
     match filter {
         PermanentFilterDef::LandWithSubtype(subtype) => {
-            definition.has_type(CardType::Land)
-                && object
-                    .v4
-                    .effective_subtype_ids
-                    .binary_search(&subtype.stable_id())
-                    .is_ok()
+            definition.has_type(CardType::Land) && has_effective_subtype(state, object_id, subtype)
         }
         PermanentFilterDef::CreatureWithColor(color) => {
             definition.has_type(CardType::Creature)
@@ -2960,6 +3106,17 @@ fn pay_cost_components(
     source: ObjectId,
     components: &[CostComponent],
     object_cost_chosen: &[ObjectId],
+) -> bool {
+    pay_cost_components_with_x(state, player, source, components, object_cost_chosen, 0)
+}
+
+fn pay_cost_components_with_x(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    components: &[CostComponent],
+    object_cost_chosen: &[ObjectId],
+    x_value: u8,
 ) -> bool {
     if !component_payment_shape_supported(components) {
         return false;
@@ -3141,9 +3298,9 @@ fn pay_cost_components(
     }
     let mana_plan = mana_cost.map(|cost| {
         if reserved.is_empty() {
-            mana::can_pay(cost, 0, player, state)
+            mana::can_pay(cost, x_value, player, state)
         } else {
-            mana::can_pay_excluding_sources(cost, 0, player, state, &reserved)
+            mana::can_pay_excluding_sources(cost, x_value, player, state, &reserved)
         }
     });
     if mana_plan.as_ref().is_some_and(Option::is_none) {
@@ -3535,11 +3692,10 @@ fn effective_normal_cast_cost(
             state.players[player.index()].draws_this_turn
         }
         card_def::DynamicCountDef::ControllerHasCreatureWithAndWithoutSubtype(subtype) => {
-            let subtype_id = subtype.stable_id();
             let mut has_subtype = false;
             let mut lacks_subtype = false;
-            for &object in &state.players[player.index()].battlefield {
-                let object = state.objects.get(object);
+            for &object_id in &state.players[player.index()].battlefield {
+                let object = state.objects.get(object_id);
                 let def = &card_def::CARD_DEFS[object.card_def as usize];
                 if object.zone != Zone::Battlefield
                     || object.controller != player
@@ -3547,12 +3703,7 @@ fn effective_normal_cast_cost(
                 {
                     continue;
                 }
-                if object
-                    .v4
-                    .effective_subtype_ids
-                    .binary_search(&subtype_id)
-                    .is_ok()
-                {
+                if has_effective_subtype(state, object_id, subtype) {
                     has_subtype = true;
                 } else {
                     lacks_subtype = true;
@@ -4405,11 +4556,7 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             let object = state.objects.get(id);
             let definition = &card_def::CARD_DEFS[object.card_def as usize];
             definition.has_type(CardType::Land)
-                && object
-                    .v4
-                    .effective_subtype_ids
-                    .binary_search(&card_def::Subtype::Island.stable_id())
-                    .is_ok()
+                && has_effective_subtype(state, id, card_def::Subtype::Island)
         });
     if defender_controls_island && has_effective_keyword(state, attacker, Keywords::ISLANDWALK) {
         return Vec::new();
@@ -4470,6 +4617,9 @@ fn check_game_over(state: &GameState) -> Option<Decision> {
 /// comprehensive rules would actually grant.
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
     loop {
+        if let Err(source) = state.validate_attachment_relations() {
+            state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
+        }
         if let Some(d) = check_game_over(state) {
             return d;
         }
@@ -5036,6 +5186,8 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             state.engine.pending_triggers.push(PendingTrigger {
                 controller: owner,
                 source: id,
+                source_contract: None,
+                granted_by: None,
                 effect: EffectOp::Sequence(vec![]),
                 is_madness_offer: true,
                 kicked: false,
@@ -5043,7 +5195,6 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
-                source_contract: Some(AbilitySourceContractV4::capture(state, id)),
             });
         } else {
             event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
@@ -6948,6 +7099,7 @@ fn validate_pending_trigger_for_stack(
             target_spec: (pending.target_spec != TargetSpec::None).then_some(pending.target_spec),
             target_contracts: pending.target_contracts.clone(),
             ability_source_contract: pending.source_contract,
+            granted_by: pending.granted_by,
             ..StackStateV4::default()
         },
     };
@@ -6976,6 +7128,7 @@ fn validate_pending_trigger_identity(
         if pending.target_spec != TargetSpec::None
             || !pending.targets.is_empty()
             || pending.effect != EffectOp::Sequence(Vec::new())
+            || pending.granted_by.is_some()
             || source_contract.source != pending.source
             || source_contract.card_def != source.card_def
             || source_contract.owner != source.owner
@@ -7010,6 +7163,7 @@ fn validate_pending_trigger_identity(
             target_spec: (pending.target_spec != TargetSpec::None).then_some(pending.target_spec),
             target_contracts: pending.target_contracts.clone(),
             ability_source_contract: pending.source_contract,
+            granted_by: pending.granted_by,
             ..StackStateV4::default()
         },
     };
@@ -7067,6 +7221,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
                         .expect("validated nonspell trigger source contract")
                 },
             ),
+            granted_by: (!t.is_madness_offer).then_some(t.granted_by).flatten(),
             ..StackStateV4::default()
         },
     });
@@ -7121,6 +7276,9 @@ fn validate_madness_offer_stack_item(state: &GameState, item: &StackItem) -> Res
         || item.v4.target_spec.is_some()
         || !item.v4.target_contracts.is_empty()
         || item.v4.activated_ability_index.is_some()
+        || item.v4.hidden_ability_source.is_some()
+        || item.v4.ability_source_contract.is_some()
+        || item.v4.granted_by.is_some()
     {
         return Err("Madness offer carries incompatible producer metadata".to_string());
     }
@@ -7245,43 +7403,63 @@ fn triggered_stack_item_expected_target_spec(
     if !source_def.is_executable() {
         return Err("triggered stack item source definition is not executable".to_string());
     }
+    let equipment_granted_trigger = match (ability_source_contract, item.v4.granted_by) {
+        (Some(host), Some(equipment)) => {
+            validate_equipment_granted_trigger_contract(
+                state,
+                host,
+                equipment,
+                item.controller,
+                inline_effect,
+            )?;
+            true
+        }
+        (None, Some(_)) => {
+            return Err("attachment-granted trigger lost its host contract".to_string())
+        }
+        (_, None) => false,
+    };
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
-    let definition_trigger = definition_target_spec.is_some();
-    let ward_trigger = if let Some(source_contract) = ability_source_contract {
-        match inline_effect {
-            EffectOp::CounterUnlessPaysGeneric {
-                ward_target,
-                targeting_stack_item,
-                generic,
-            } => {
-                let source_contract_is_consistent = matches!(
-                    *ward_target,
-                    StackTargetContractV4::Object {
-                        object,
-                        card_def,
-                        owner,
-                        controller,
-                        zone: Zone::Battlefield,
-                        zone_change_count,
-                        spell_copy_origin: None,
-                    } if object == item.source
-                        && card_def == source_contract.card_def
-                        && owner == source_contract.owner
-                        && controller == item.controller
-                        && source.zone_change_count >= zone_change_count
-                        && (source.zone_change_count != zone_change_count
-                            || source.zone == Zone::Battlefield)
-                );
-                source_def.ward_cost == Some(crate::card_def::WardCostDef::Generic(*generic))
-                    && *targeting_stack_item != StackItemId::default()
-                    && source_contract_is_consistent
+    let definition_trigger = item.v4.granted_by.is_none() && definition_target_spec.is_some();
+    let ward_trigger = if item.v4.granted_by.is_none() {
+        if let Some(source_contract) = ability_source_contract {
+            match inline_effect {
+                EffectOp::CounterUnlessPaysGeneric {
+                    ward_target,
+                    targeting_stack_item,
+                    generic,
+                } => {
+                    let source_contract_is_consistent = matches!(
+                        *ward_target,
+                        StackTargetContractV4::Object {
+                            object,
+                            card_def,
+                            owner,
+                            controller,
+                            zone: Zone::Battlefield,
+                            zone_change_count,
+                            spell_copy_origin: None,
+                        } if object == item.source
+                            && card_def == source_contract.card_def
+                            && owner == source_contract.owner
+                            && controller == item.controller
+                            && source.zone_change_count >= zone_change_count
+                            && (source.zone_change_count != zone_change_count
+                                || source.zone == Zone::Battlefield)
+                    );
+                    source_def.ward_cost == Some(crate::card_def::WardCostDef::Generic(*generic))
+                        && *targeting_stack_item != StackItemId::default()
+                        && source_contract_is_consistent
+                }
+                _ => false,
             }
-            _ => false,
+        } else {
+            false
         }
     } else {
         false
     };
-    if !definition_trigger && !ward_trigger {
+    if !definition_trigger && !ward_trigger && !equipment_granted_trigger {
         return Err("triggered stack item effect is not definition-owned".to_string());
     }
     let spec = definition_target_spec.unwrap_or(TargetSpec::None);
@@ -7356,7 +7534,10 @@ pub(crate) fn validated_stack_item_target_spec(
             }
         }
         StackItemKind::ActivatedAbility => {
-            if item.inline_effect.is_none() || item.v4.madness_source_contract.is_some() {
+            if item.inline_effect.is_none()
+                || item.v4.madness_source_contract.is_some()
+                || item.v4.granted_by.is_some()
+            {
                 return Err(
                     "activated stack item carries incompatible producer metadata".to_string(),
                 );
@@ -7365,10 +7546,7 @@ pub(crate) fn validated_stack_item_target_spec(
                 .v4
                 .activated_ability_index
                 .ok_or("activated stack item lost its definition-owned ability index")?;
-            let source_contract = item
-                .v4
-                .ability_source_contract
-                .ok_or("activated stack item lost its source incarnation")?;
+            let source_contract = validated_ability_source_contract(state, item)?;
             let def = card_def::CARD_DEFS
                 .get(source_contract.card_def as usize)
                 .ok_or("activated stack item source definition is missing")?;
@@ -7395,6 +7573,13 @@ pub(crate) fn validated_stack_item_target_spec(
                 }
             } else if item.v4.hidden_ability_source.is_some() {
                 return Err("non-ninjutsu activation carries hidden source provenance".to_string());
+            }
+            let expected_x = activation_x_value(ability, &item.targets, state)?;
+            if item.v4.x_value != u16::from(expected_x) {
+                return Err("activated stack item X value changed".to_string());
+            }
+            if source_contract.zone != ability.activation_zone {
+                return Err("activated stack item source contract has the wrong zone".to_string());
             }
             Some(ability.target_spec)
         }
@@ -7509,10 +7694,7 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     .v4
                     .activated_ability_index
                     .ok_or("activated stack item lost its definition-owned ability index")?;
-                let source_contract = item
-                    .v4
-                    .ability_source_contract
-                    .ok_or("activated stack item lost its source incarnation")?;
+                let source_contract = validated_ability_source_contract(state, item)?;
                 let def = card_def::CARD_DEFS
                     .get(source_contract.card_def as usize)
                     .ok_or("activated stack item source definition is missing")?;
@@ -8055,7 +8237,11 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 if obj.v4.skip_next_untap {
                     obj.v4.skip_next_untap = false;
                 } else if !prevented_by_attachment {
-                    obj.tapped = false;
+                    if obj.tapped && obj.counters.stun > 0 {
+                        obj.counters.stun -= 1;
+                    } else {
+                        obj.tapped = false;
+                    }
                 }
                 obj.summoning_sick = false;
             }
@@ -8148,6 +8334,7 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
             // land-drop counter for the player whose turn just ended.
             for (_, obj) in state.objects.iter_mut() {
                 obj.damage = 0;
+                obj.v4.deathtouch_damage = false;
             }
             state.engine.until_end_of_turn.clear();
             state.engine.active_replacements.retain(|replacement| {
@@ -8281,6 +8468,9 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
             }
         }
     }
+    for (_, equipment) in attached_equipment_profiles(state, id) {
+        power += i32::from(equipment.power_delta);
+    }
     for eff in &state.engine.until_end_of_turn {
         match eff {
             UntilEndOfTurnEffect::ResolvedSetEffect {
@@ -8325,6 +8515,9 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
             }
         }
     }
+    for (_, equipment) in attached_equipment_profiles(state, id) {
+        toughness += i32::from(equipment.toughness_delta);
+    }
     for eff in &state.engine.until_end_of_turn {
         match eff {
             UntilEndOfTurnEffect::ResolvedSetEffect {
@@ -8366,6 +8559,23 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         return false;
     }
     if def.keywords_for_face(obj.v4.face_index).has(kw) {
+        return true;
+    }
+    if kw.has(Keywords::LIFELINK) && obj.v4.lifelink_keyword_counters > 0 {
+        return true;
+    }
+    if attached_equipment_profiles(state, id)
+        .into_iter()
+        .any(|(equipment_id, equipment)| {
+            let equipment_controller = state.objects.get(equipment_id).controller;
+            let keywords = if state.active_player == equipment_controller {
+                equipment.controller_turn_keywords
+            } else {
+                equipment.other_turn_keywords
+            };
+            keywords.has(kw)
+        })
+    {
         return true;
     }
     if state.engine.until_end_of_turn.iter().any(|effect| {
@@ -8418,6 +8628,69 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
         }
     }
     false
+}
+
+pub(crate) fn attached_equipment_profiles(
+    state: &GameState,
+    host: ObjectId,
+) -> impl Iterator<Item = (ObjectId, card_def::EquipmentDef)> + '_ {
+    let host_link = state
+        .objects
+        .try_get(host)
+        .filter(|host_object| host_object.zone == Zone::Battlefield)
+        .map(|host_object| crate::state::ObjectLinkV4 {
+            object: host,
+            zone_change_count: host_object.zone_change_count,
+        });
+    state
+        .objects
+        .try_get(host)
+        .into_iter()
+        .filter(|host_object| host_object.zone == Zone::Battlefield)
+        .flat_map(|host_object| host_object.attachments.iter().copied())
+        .filter_map(move |equipment_id| {
+            let equipment_object = state.objects.try_get(equipment_id)?;
+            if equipment_object.zone != Zone::Battlefield
+                || equipment_object.v4.attached_to != host_link
+            {
+                return None;
+            }
+            let definition = card_def::CARD_DEFS.get(equipment_object.card_def as usize)?;
+            definition
+                .equipment
+                .map(|equipment| (equipment_id, equipment))
+        })
+}
+
+pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
+    let Some(object) = state.objects.try_get(id) else {
+        return Vec::new();
+    };
+    let mut subtype_ids = object.v4.effective_subtype_ids.clone();
+    subtype_ids.extend(
+        attached_equipment_profiles(state, id)
+            .into_iter()
+            .filter_map(|(_, equipment)| equipment.add_subtype.map(|subtype| subtype.stable_id())),
+    );
+    subtype_ids.sort_unstable();
+    subtype_ids.dedup();
+    subtype_ids
+}
+
+pub fn has_effective_subtype(state: &GameState, id: ObjectId, subtype: card_def::Subtype) -> bool {
+    let Some(object) = state.objects.try_get(id) else {
+        return false;
+    };
+    if object
+        .v4
+        .effective_subtype_ids
+        .binary_search(&subtype.stable_id())
+        .is_ok()
+    {
+        return true;
+    }
+    attached_equipment_profiles(state, id)
+        .any(|(_, equipment)| equipment.add_subtype == Some(subtype))
 }
 
 fn participates_in_wave(state: &GameState, id: ObjectId, first_strike_wave: bool) -> bool {
@@ -8631,9 +8904,13 @@ fn assign_attacker_damage_to_blockers(
         let assign = if is_last {
             remaining
         } else {
-            let toughness = effective_toughness(state, blocker);
-            let already = state.objects.get(blocker).damage as i32;
-            let lethal_needed = (toughness - already).max(0);
+            let lethal_needed = if has_effective_keyword(state, attacker, Keywords::DEATHTOUCH) {
+                1
+            } else {
+                let toughness = effective_toughness(state, blocker);
+                let already = state.objects.get(blocker).damage as i32;
+                (toughness - already).max(0)
+            };
             remaining.min(lethal_needed)
         };
         if assign > 0 {
@@ -11022,12 +11299,23 @@ fn finalize_activation(state: &mut GameState) {
         .iter()
         .map(|binding| binding.object)
         .collect::<Vec<_>>();
-    let paid = pay_cost_components(
+    let x_value = match activation_x_value(ability, &pending.targets_chosen, state) {
+        Ok(value) => value,
+        Err(_) => {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return;
+        }
+    };
+    let paid = pay_cost_components_with_x(
         state,
         pending.controller,
         pending.source,
         ability.cost,
         &object_cost_ids,
+        x_value,
     );
     if !paid {
         // Fail closed for a malformed/restored pending activation rather
@@ -11052,6 +11340,20 @@ fn push_paid_activation(
 ) {
     let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
     let ability = &def.activated_abilities[pending.ability_index as usize];
+    let source = state.objects.get(pending.source);
+    let ability_source_contract = AbilitySourceContractV4 {
+        source: pending.source,
+        card_def: source.card_def,
+        owner: source.owner,
+        controller: pending.controller,
+        zone: ability.activation_zone,
+        zone_change_count: pending.source_zone_change_count,
+        attached_to: if source.zone_change_count == pending.source_zone_change_count {
+            source.v4.attached_to
+        } else {
+            None
+        },
+    };
     let mut paid_cost_objects = discarded.clone();
     paid_cost_objects.extend(
         pending
@@ -11089,6 +11391,8 @@ fn push_paid_activation(
             }
         }
     }
+    let x_value = activation_x_value(ability, &pending.targets_chosen, state)
+        .expect("validated paid activation retains its target-bound X value");
     let stack_item_id = next_stack_item_id(state);
     state.stack.push(StackItem {
         kind: StackItemKind::ActivatedAbility,
@@ -11104,25 +11408,18 @@ fn push_paid_activation(
         kicked: false, // no activated ability in this pool has Kicker
         v4: StackStateV4 {
             stack_item_id,
+            x_value: u16::from(x_value),
             paid_cost_refs,
+            ability_source_contract: Some(ability_source_contract),
             target_spec: Some(pending.target_spec),
             target_contracts: pending.target_contracts,
             activated_ability_index: Some(pending.ability_index),
             hidden_ability_source: has_unblocked_attacker_return_cost(ability.cost).then_some(
-                crate::state::ObjectLinkV4 {
+                ObjectLinkV4 {
                     object: pending.source,
                     zone_change_count: pending.source_zone_change_count,
                 },
             ),
-            ability_source_contract: Some(AbilitySourceContractV4 {
-                source: pending.source,
-                card_def: state.objects.get(pending.source).card_def,
-                owner: state.objects.get(pending.source).owner,
-                controller: pending.controller,
-                zone: ability.activation_zone,
-                zone_change_count: pending.source_zone_change_count,
-                attached_to: None,
-            }),
             ..StackStateV4::default()
         },
     });
@@ -11964,6 +12261,7 @@ mod tests {
         state.engine.pending_triggers.push(PendingTrigger {
             controller: PlayerId::P0,
             source: ObjectId(0),
+            granted_by: None,
             effect: EffectOp::Sequence(vec![]),
             is_madness_offer: false,
             kicked: false,
@@ -11976,6 +12274,7 @@ mod tests {
         state.engine.pending_triggers.push(PendingTrigger {
             controller: PlayerId::P0,
             source: ObjectId(1),
+            granted_by: None,
             effect: EffectOp::Sequence(vec![]),
             is_madness_offer: false,
             kicked: false,
@@ -12001,6 +12300,30 @@ mod tests {
         assert_eq!(state.objects.get(guttersnipe).zone, Zone::Graveyard);
         assert!(!state.players[0].battlefield.contains(&guttersnipe));
         assert!(state.players[0].graveyard.contains(&guttersnipe));
+    }
+
+    #[test]
+    fn stun_counter_replaces_one_real_untap_attempt_and_respects_skip_untap() {
+        let mut state = empty_game();
+        let creature = put_on_battlefield(&mut state, PlayerId::P0, "Guttersnipe");
+        state.active_player = PlayerId::P0;
+        let object = state.objects.get_mut(creature);
+        object.tapped = true;
+        object.counters.stun = 2;
+        object.v4.skip_next_untap = true;
+
+        run_step_entry_action(&mut state, Step::Untap);
+        assert!(state.objects.get(creature).tapped);
+        assert_eq!(state.objects.get(creature).counters.stun, 2);
+        assert!(!state.objects.get(creature).v4.skip_next_untap);
+
+        run_step_entry_action(&mut state, Step::Untap);
+        assert!(state.objects.get(creature).tapped);
+        assert_eq!(state.objects.get(creature).counters.stun, 1);
+
+        state.objects.get_mut(creature).tapped = false;
+        run_step_entry_action(&mut state, Step::Untap);
+        assert_eq!(state.objects.get(creature).counters.stun, 1);
     }
 
     #[test]

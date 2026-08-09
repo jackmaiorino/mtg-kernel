@@ -2331,6 +2331,9 @@ enum Special {
     /// into hand, then shuffle. Land Grant's conditional hand-reveal
     /// alternative cost is modeled independently.
     SearchForestToHand,
+    /// Put one +1/+1 counter and one lifelink keyword counter on target
+    /// creature. Unexpected Fangs is the first consumer.
+    AddPlusOnePlusOneAndLifelinkCounters,
     /// Aura permanent spell that enters attached to its creature target.
     BindTheMonster,
     /// Return target creature, then choose up to two controlled lands to
@@ -2535,6 +2538,9 @@ impl Special {
                 "return_own_graveyard_creature_to_battlefield".to_string()
             }
             Special::SearchForestToHand => "search_forest_to_hand".to_string(),
+            Special::AddPlusOnePlusOneAndLifelinkCounters => {
+                "add_plus_one_plus_one_and_lifelink_counters".to_string()
+            }
             Special::BindTheMonster => "bind_the_monster:aura_creature".to_string(),
             Special::Snap => "snap:bounce_then_untap_up_to_two_lands".to_string(),
             Special::DamageCannotBePreventedThisTurn => {
@@ -2552,6 +2558,10 @@ enum AbilityCostRecipe {
     Mana {
         colored: Option<&'static str>,
         generic: u8,
+    },
+    VariableMana {
+        generic: u8,
+        x_count: u8,
     },
     Tap,
     DiscardCards(u8),
@@ -2598,6 +2608,9 @@ enum AbilityEffectRecipe {
     GainLifeBattlefieldSubtypeCount(&'static str),
     PumpTargetBattlefieldSubtypeCount(&'static str),
     PumpTargetByControlledSubtypeCount(&'static str),
+    AttachSourceToTarget,
+    AddStunCounterToOptionalTarget,
+    DestroyTarget,
     DrawThenDiscard {
         draw: u8,
         discard: u8,
@@ -2728,6 +2741,7 @@ fn special_for(name: &str) -> Special {
         },
         "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
         "Land Grant" => Special::SearchForestToHand,
+        "Unexpected Fangs" => Special::AddPlusOnePlusOneAndLifelinkCounters,
         "Bind the Monster" => Special::BindTheMonster,
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
@@ -2865,6 +2879,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
         }
         Special::ReturnOwnGraveyardCreatureToBattlefield => "target=CreatureCardInOwnGraveyard;spell=MoveObject(Target0,Battlefield);mana=None".to_string(),
         Special::SearchForestToHand => "target=None;spell=SearchLibraryToHand(Controller,LandWithSubtype(Forest));mana=None".to_string(),
+        Special::AddPlusOnePlusOneAndLifelinkCounters => "target=Creature;spell=AddCounters(Target0,+1/+1=1,lifelink=1);mana=None".to_string(),
         Special::BindTheMonster => {
             "target=Creature;spell=PutSourceOntoBattlefieldAttachedToTarget(Target0);mana=None"
                 .to_string()
@@ -3483,6 +3498,57 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Black Mage's Rod" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 3,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Hunter's Blowgun" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Cryogen Relic" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("U"),
+                    generic: 1,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::AddStunCounterToOptionalTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "UpToOneTappedCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Gorilla Shaman" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::VariableMana {
+                generic: 1,
+                x_count: 2,
+            }],
+            effect: AbilityEffectRecipe::DestroyTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "NoncreatureArtifactPermanent",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Harrier Strix" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::Mana {
                 colored: Some("U"),
@@ -3542,6 +3608,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
                 "CostComponent::Mana(Cost {{ pips: &[{pips}], generic: {generic}, x_count: 0 }})"
             )
         }
+        AbilityCostRecipe::VariableMana { generic, x_count } => format!(
+            "CostComponent::Mana(Cost {{ pips: &[], generic: {generic}, x_count: {x_count} }})"
+        ),
         AbilityCostRecipe::Tap => "CostComponent::Tap".to_string(),
         AbilityCostRecipe::DiscardCards(count) => {
             format!("CostComponent::DiscardCards({count})")
@@ -3570,6 +3639,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
     match cost {
         AbilityCostRecipe::Mana { colored, generic } => {
             format!("mana:{}:{generic}:0", colored.unwrap_or("-"))
+        }
+        AbilityCostRecipe::VariableMana { generic, x_count } => {
+            format!("mana:-:{generic}:{x_count}")
         }
         AbilityCostRecipe::Tap => "tap".to_string(),
         AbilityCostRecipe::DiscardCards(count) => format!("discard_cards:{count}"),
@@ -3652,6 +3724,11 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::PumpTargetByControlledSubtypeCount(subtype) => {
             format!("pump_target_by_controlled_subtype_count:{subtype}")
         }
+        AbilityEffectRecipe::AttachSourceToTarget => "attach_source_to_target".to_string(),
+        AbilityEffectRecipe::AddStunCounterToOptionalTarget => {
+            "add_stun_counter_to_optional_target".to_string()
+        }
+        AbilityEffectRecipe::DestroyTarget => "destroy_target".to_string(),
         AbilityEffectRecipe::DrawThenDiscard { draw, discard } => {
             format!("draw_then_discard:{draw}:{discard}")
         }
@@ -3766,6 +3843,13 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             "ability_effect_pump_target_by_controlled_{}_count",
             subtype.to_ascii_lowercase()
         ),
+        AbilityEffectRecipe::AttachSourceToTarget => {
+            "ability_effect_attach_source_to_target".to_string()
+        }
+        AbilityEffectRecipe::AddStunCounterToOptionalTarget => {
+            "ability_effect_add_stun_counter_to_optional_target".to_string()
+        }
+        AbilityEffectRecipe::DestroyTarget => "ability_effect_destroy_target".to_string(),
         AbilityEffectRecipe::DrawThenDiscard { draw, discard } => {
             format!("ability_effect_draw_{draw}_then_discard_{discard}")
         }
@@ -3972,6 +4056,14 @@ fn ward_cost_for(name: &str) -> &'static str {
     }
 }
 
+fn equipment_for(name: &str) -> &'static str {
+    match name {
+        "Black Mage's Rod" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 1, job_select: true })",
+        "Hunter's Blowgun" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::DEATHTOUCH, other_turn_keywords: Keywords::REACH, noncreature_spell_damage_to_each_opponent: 0, job_select: false })",
+        _ => "None",
+    }
+}
+
 fn attachment_for(name: &str) -> &'static str {
     match name {
         "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
@@ -4121,6 +4213,22 @@ fn codegen(cards: &[CardJson]) -> String {
             }
             _ => {}
         }
+    }
+
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::AddPlusOnePlusOneAndLifelinkCounters
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_add_plus_one_plus_one_and_lifelink_counters() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: 1, lifelink: 1, stun: 0 }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
     }
 
     // Shared/one-off effect-program functions. Function *pointers* (not
@@ -4321,6 +4429,23 @@ fn codegen(cards: &[CardJson]) -> String {
                     out,
                     "    EffectOp::PumpTargetByControlledSubtypeCount {{ target: ObjectRef::Target(0), subtype: {} }}",
                     subtype_variant(subtype)
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::AttachSourceToTarget => {
+                writeln!(
+                    out,
+                    "    EffectOp::AttachSourceToTarget {{ object: ObjectRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::AddStunCounterToOptionalTarget => {
+                writeln!(out, "    EffectOp::AddCountersToTarget {{ target_index: 0, optional: true, plus1_plus1: 0, lifelink: 0, stun: 1 }}").unwrap();
+            }
+            AbilityEffectRecipe::DestroyTarget => {
+                writeln!(
+                    out,
+                    "    EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
             }
@@ -5593,6 +5718,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_search_forest_to_hand".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::AddPlusOnePlusOneAndLifelinkCounters => (
+                "TargetSpec::Creature",
+                "spell_effect_add_plus_one_plus_one_and_lifelink_counters".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::BindTheMonster => (
                 "TargetSpec::Creature",
                 "spell_effect_bind_the_monster".to_string(),
@@ -5678,6 +5808,7 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        ward_cost: {},", ward_cost_for(&c.name)).unwrap();
+        writeln!(out, "        equipment: {},", equipment_for(&c.name)).unwrap();
         writeln!(out, "        types: &[{types_src}],").unwrap();
         writeln!(out, "        subtypes: &[{subtypes_src}],").unwrap();
         writeln!(out, "        supertypes: &[{supertypes_src}],").unwrap();
@@ -5820,7 +5951,7 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out).unwrap();
 
     // ---- content + executable-recipe hash ------------------------------
-    // v23 hashes every generated CardDef selector plus semantic tokens from
+    // v29 hashes every generated CardDef selector plus semantic tokens from
     // the same `Special` and structured activated-ability recipes that emit
     // executable definitions. Lorien's Draw3/search and Deep Analysis's
     // target-player draw/ordered flashback and Sleep's ordered Escape cost
@@ -5828,7 +5959,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v28\n");
+    let mut canon = String::from("kernel_carddb/v29\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -5868,6 +5999,9 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push_str(generic_cost_reduction_for(&c.name));
         canon.push('|');
         canon.push_str(ward_cost_for(&c.name));
+        canon.push('|');
+        canon.push_str("equipment=");
+        canon.push_str(equipment_for(&c.name));
         canon.push('|');
         // Reuse the exact generated source fragments plus the stable spell
         // recipe token. This covers every field selected by the generator for

@@ -186,7 +186,7 @@ pub fn can_pay_combined(
     let pool = state.players[player.index()].mana_pool;
     let combined_pips: Vec<Pip> = costs.iter().flat_map(|c| c.pips.iter().copied()).collect();
     let generic: u32 = costs.iter().map(|c| c.generic as u32).sum();
-    let extra_x: u32 = costs.iter().map(|c| c.x_count as u32).sum();
+    let x_count: u32 = costs.iter().map(|c| c.x_count as u32).sum();
 
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
@@ -202,7 +202,7 @@ pub fn can_pay_combined(
         return None;
     }
     if !pay_generic(
-        generic + extra_x + x_value as u32,
+        generic + x_count * u32::from(x_value),
         &sources,
         &mut used,
         &mut pool_remaining,
@@ -302,7 +302,7 @@ pub fn solve(
         return None;
     }
 
-    let generic_needed = cost.generic as u32 + x_value as u32;
+    let generic_needed = u32::from(cost.generic) + u32::from(cost.x_count) * u32::from(x_value);
     if !pay_generic(
         generic_needed,
         sources,
@@ -552,6 +552,20 @@ mod tests {
             x_count: 1,
         };
         let sources = vec![src(0, &[ManaColor::R]), src(1, &[ManaColor::R])];
+        assert!(solve(&cost, 2, [0; 6], &sources).is_some());
+        assert!(solve(&cost, 3, [0; 6], &sources).is_none());
+    }
+
+    #[test]
+    fn repeated_x_symbols_each_add_the_chosen_value() {
+        let cost = Cost {
+            pips: &[],
+            generic: 1,
+            x_count: 2,
+        };
+        let sources = (0..5)
+            .map(|id| src(id, &[ManaColor::R]))
+            .collect::<Vec<_>>();
         assert!(solve(&cost, 2, [0; 6], &sources).is_some());
         assert!(solve(&cost, 3, [0; 6], &sources).is_none());
     }

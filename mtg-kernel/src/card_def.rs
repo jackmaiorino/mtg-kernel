@@ -340,6 +340,12 @@ pub enum TargetSpec {
     /// consumer. The source-relative exclusion is applied by the caller so
     /// the stable target vocabulary remains card-name-neutral.
     CreatureOtherThanSource,
+    /// Zero or one tapped creature on either battlefield. Cryogen Relic may
+    /// activate without a target, but any selected target must be tapped.
+    UpToOneTappedCreature,
+    /// Exactly one noncreature artifact permanent. Gorilla Shaman derives X
+    /// from this target's printed mana value.
+    NoncreatureArtifactPermanent,
 }
 
 impl Default for TargetSpec {
@@ -386,6 +392,8 @@ impl TargetSpec {
             TargetSpec::SpellManaValueAtMostControlledSubtypes { .. } => 29,
             TargetSpec::UpToTwoCardsInGraveyards => 30,
             TargetSpec::CreatureOtherThanSource => 31,
+            TargetSpec::UpToOneTappedCreature => 32,
+            TargetSpec::NoncreatureArtifactPermanent => 33,
         }
     }
 }
@@ -757,6 +765,20 @@ pub struct SagaDef {
     pub chapter_effects: &'static [fn() -> EffectOp],
 }
 
+/// Reusable static and triggered grants produced by an attached Equipment.
+/// The attachment relation itself is incarnation-bound in `state.rs`; this
+/// definition contains only printed characteristics and granted abilities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EquipmentDef {
+    pub power_delta: i16,
+    pub toughness_delta: i16,
+    pub add_subtype: Option<Subtype>,
+    pub controller_turn_keywords: Keywords,
+    pub other_turn_keywords: Keywords,
+    pub noncreature_spell_damage_to_each_opponent: u8,
+    pub job_select: bool,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -767,6 +789,9 @@ pub struct CardDef {
     /// Static Ward cost materialized when an opposing spell or ability
     /// finishes targeting this permanent. `None` means no implemented Ward.
     pub ward_cost: Option<WardCostDef>,
+    /// Printed Equipment behavior shared by attachments, effective
+    /// characteristics, cast triggers, and RL continuous-effect projection.
+    pub equipment: Option<EquipmentDef>,
     pub types: &'static [CardType],
     /// This card's creature/land/artifact subtypes (105.1's subtype line),
     /// e.g. `[Subtype::Human, Subtype::Shaman]` for Burning-Tree Emissary --
@@ -1178,9 +1203,9 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 146 real pool cards + 9 tokens. Eldrazi Spawn is appended after
-        // the Spy combo core and every earlier definition id remains stable.
-        assert_eq!(CARD_DEFS.len(), 159);
+        // Hero Token is appended as id 159 after the four Spy sideboard
+        // records, preserving every earlier definition id.
+        assert_eq!(CARD_DEFS.len(), 160);
     }
 
     #[test]
@@ -1224,6 +1249,8 @@ mod tests {
             ),
             (TargetSpec::UpToTwoCardsInGraveyards, 30),
             (TargetSpec::CreatureOtherThanSource, 31),
+            (TargetSpec::UpToOneTappedCreature, 32),
+            (TargetSpec::NoncreatureArtifactPermanent, 33),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1239,10 +1266,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v28_is_frozen() {
-        // Version 28 composes the remaining Caw-Gates mechanics after the
-        // green-value, Faeries, and Spy waves without renumbering prior ids.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xa3fc_e98a_cfb5_64d7);
+    fn card_db_hash_v29_is_frozen() {
+        // Version 29 appends Hero Token and composes the artifact/equipment
+        // mechanics without renumbering combined-pool ids.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xf5d4_55dd_4a3a_d03b);
     }
 
     #[test]

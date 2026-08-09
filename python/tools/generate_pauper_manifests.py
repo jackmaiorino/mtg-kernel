@@ -107,12 +107,13 @@ TOKEN_DEPENDENCIES = (
     ("Sacred Cat Embalmed Token", ("Sacred Cat",)),
     ("Treasure Token", ("Heap Gate",)),
     ("Eldrazi Spawn Token", ("Writhing Chrysalis",)),
+    ("Hero Token", ("Black Mage's Rod",)),
 )
 
 EXPECTED_MAINBOARD_SUPPORT = {
     "Wildfire": {"full": 46, "partial": 0, "no_effect": 14},
     "Rally": {"full": 60, "partial": 0, "no_effect": 0},
-    "Affinity": {"full": 53, "partial": 0, "no_effect": 7},
+    "Affinity": {"full": 58, "partial": 0, "no_effect": 2},
     "Elves": {"full": 48, "partial": 0, "no_effect": 12},
     "Spy": {"full": 57, "partial": 0, "no_effect": 3},
     "Burn": {"full": 60, "partial": 0, "no_effect": 0},
