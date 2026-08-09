@@ -117,26 +117,19 @@ fn executable_registration_rejects_unknown_token_and_unsupported_cards() {
 
 #[test]
 fn checked_in_pool_is_wired_to_the_executable_bo3_admission_gate() {
-    match checked_in_pauper_registered_decks_v1() {
-        Ok(decks) => {
-            assert_eq!(decks.len(), 9);
-            assert!(decks.iter().all(|deck| {
-                deck.registered_configuration().mainboard().len() == 60
-                    && deck.registered_configuration().sideboard().len() == 15
-            }));
-        }
-        Err(SideboardErrorV1::CardNotFullySupported { .. })
-        | Err(SideboardErrorV1::UnregisteredPoolCard { .. }) => {
-            // This is the intended current outcome until the remaining pool
-            // cards are promoted. No structural or policy error is accepted.
-        }
-        Err(other) => panic!("unexpected checked-in pool admission error: {other}"),
-    }
+    let decks = checked_in_pauper_registered_decks_v1().unwrap();
+    assert_eq!(decks.len(), 9);
+    assert!(decks.iter().all(|deck| {
+        deck.registered_configuration().mainboard().len() == 60
+            && deck.registered_configuration().sideboard().len() == 15
+    }));
 }
 
 #[test]
 fn completed_checked_in_decks_are_individually_admitted_for_bo3() {
-    for deck_id in ["Rally", "Burn", "Terror"] {
+    for deck_id in [
+        "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "Terror", "CawGates", "Faeries",
+    ] {
         let deck = checked_in_pauper_registered_deck_by_id_v1(deck_id).unwrap();
         assert_eq!(deck.deck_id(), deck_id);
         assert_eq!(deck.registered_configuration().mainboard().len(), 60);

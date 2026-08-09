@@ -1,6 +1,7 @@
 use mtg_kernel::bo3_match::{GameOutcomeV1, MatchPhaseV1, MatchTransitionV1, PlayDrawChoiceV1};
 use mtg_kernel::bo3_session::{BestOfThreeDeckMatchV1, Bo3SessionErrorV1};
 use mtg_kernel::ids::PlayerId;
+use mtg_kernel::runtime_decks::RUNTIME_DECKS;
 use mtg_kernel::sideboard::{
     CardCountV1, DeterministicSideboardPolicyV1, RegisteredDeckV1, SideboardDefaultPlanV1,
     SideboardErrorV1, SideboardPlanV1, SideboardZoneV1,
@@ -259,6 +260,38 @@ fn completed_checked_in_decks_create_an_executable_postboard_session() {
         );
         assert!(game_two.sideboard_receipt(player).is_some());
     }
+}
+
+#[test]
+fn all_81_ordered_runtime_deck_pairs_construct_game_one() {
+    let mut pair_count = 0;
+    for p0 in RUNTIME_DECKS {
+        for p1 in RUNTIME_DECKS {
+            let mut session =
+                BestOfThreeDeckMatchV1::checked_in_pauper_v1(p0.id, p1.id, PlayerId::P0).unwrap();
+            let game_one = session
+                .prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Play)
+                .unwrap();
+            for player in [PlayerId::P0, PlayerId::P1] {
+                assert_eq!(
+                    game_one.configuration(player).unwrap().mainboard().len(),
+                    60,
+                    "{} vs {} seat {player:?}",
+                    p0.id,
+                    p1.id
+                );
+                assert_eq!(
+                    game_one.configuration(player).unwrap().sideboard().len(),
+                    15,
+                    "{} vs {} seat {player:?}",
+                    p0.id,
+                    p1.id
+                );
+            }
+            pair_count += 1;
+        }
+    }
+    assert_eq!(pair_count, 81);
 }
 
 #[test]

@@ -1850,20 +1850,78 @@ fn runtime_decks_codegen(
     const EXPECTED_MATERIALIZATION: &str = "xmage_xml_row_then_copy_ordinal/v1";
     const EXPECTED_CARD_ID_ASSIGNMENT: &str = "zero_based_data_cards_v1_json_cards_array_index/v1";
     const EXPECTED_DECK_HASH_ALGORITHM: &str = "fnv1a64-serde-json-u16-array/v1";
-    const EXPECTED_DECKS: [(&str, u32, &str, &str, u64); 2] = [
+    const EXPECTED_DECKS: [(&str, u32, &str, &str, usize, u64); 9] = [
+        (
+            "Wildfire",
+            1,
+            "oracle/xmage/decks/Pauper/Deck - Jund Wildfire.dek",
+            "cff35798ff724888a9e5a4520dd55e70b0c628a55908697aa116089d8fd980a5",
+            22,
+            0x552acb5fc9631d3b,
+        ),
         (
             "Rally",
             2,
             "oracle/xmage/decks/Pauper/Deck - Mono Red Rally.dek",
             "4b5019bd08f9387aeabebdca0d90aaa10dfd75fc75ed3a87c95a2fabf4dba834",
+            14,
             0x0c9f01c2544412bf,
+        ),
+        (
+            "Affinity",
+            3,
+            "oracle/xmage/decks/Pauper/Deck - Grixis Affinity.dek",
+            "4a41135ac6d14960e75ddce8e9980c0505c0b71a9c08a2e10578a10d2fcf8801",
+            22,
+            0xff4bf00deadf8821,
+        ),
+        (
+            "Elves",
+            4,
+            "oracle/xmage/decks/Pauper/Deck - Elves.dek",
+            "6b040933c9b3506536e7dc71c94dcaf5f16c7ade43a3d0f7f9b240be6deb0d87",
+            14,
+            0x6a187257d6d37346,
+        ),
+        (
+            "Spy",
+            5,
+            "oracle/xmage/decks/Pauper/Deck - Spy Combo.dek",
+            "f08177d5ed133b18312f59649d1155e15b5074ababeaabcdf3f31ded650308ba",
+            21,
+            0xcd2afdfee3573675,
         ),
         (
             "Burn",
             6,
             "oracle/xmage/decks/Pauper/Deck - Mono-Red Burn.dek",
             "4ebba6b42bb27a0ea55001cee133aada81f0dffd8661b46b012fc5026675aa32",
+            12,
             0x5fdb7b92986b6fc1,
+        ),
+        (
+            "Terror",
+            7,
+            "oracle/xmage/decks/Pauper/Deck - Mono-Blue Terror.dek",
+            "8ba22b67b843bc49a421e1c2814c4dd24a04ab2b45131ec7876a8312115a9fda",
+            14,
+            0xfd6f1a4aceaa157b,
+        ),
+        (
+            "CawGates",
+            8,
+            "oracle/xmage/decks/Pauper/Deck - Caw-Gates.dek",
+            "72c2bbf76a7fd219349a0ad81c44dc6166b4a797a1f66fe9b5a5de79aa6cdc14",
+            20,
+            0x25c1916a4d20c08e,
+        ),
+        (
+            "Faeries",
+            9,
+            "oracle/xmage/decks/Pauper/Deck - Mono-Blue Faeries.dek",
+            "8cb962c4ccee6a5f8c0c70fc27c17d13323d13606c82b9b12b8985aa87e0f344",
+            14,
+            0xd7a47ab2fa78dbaa,
         ),
     ];
 
@@ -1914,8 +1972,17 @@ fn runtime_decks_codegen(
 
     let mut generated_decks = Vec::with_capacity(catalog.decks.len());
     let mut seen_ids = HashSet::new();
-    for (deck, &(expected_id, expected_pool_order, expected_path, expected_sha, expected_hash)) in
-        catalog.decks.iter().zip(EXPECTED_DECKS.iter())
+    for (
+        deck,
+        &(
+            expected_id,
+            expected_pool_order,
+            expected_path,
+            expected_sha,
+            expected_unique_count,
+            expected_hash,
+        ),
+    ) in catalog.decks.iter().zip(EXPECTED_DECKS.iter())
     {
         if !seen_ids.insert(deck.id.as_str()) {
             panic!("runtime_decks_v1.json: duplicate deck id {:?}", deck.id);
@@ -2018,10 +2085,13 @@ fn runtime_decks_codegen(
             unique_names.insert(copy.name.as_str());
             card_ids.push(copy.card_id);
         }
-        if unique_names.len() != deck.unique_mainboard_cards {
+        if deck.unique_mainboard_cards != expected_unique_count
+            || unique_names.len() != expected_unique_count
+        {
             panic!(
-                "runtime_decks_v1.json: deck {:?} declares {} unique mainboard cards, materialization has {}",
+                "runtime_decks_v1.json: deck {:?} must have exactly {} unique mainboard cards, declared {}, materialization has {}",
                 deck.id,
+                expected_unique_count,
                 deck.unique_mainboard_cards,
                 unique_names.len()
             );

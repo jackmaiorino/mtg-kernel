@@ -90,10 +90,27 @@ DECK_SPECS = (
 
 # Runnable deck admission is deliberate rather than inferred from the current
 # support totals. Filtering DECK_SPECS preserves the canonical pool order.
-RUNTIME_DECK_IDS = ("Rally", "Burn")
+RUNTIME_DECK_IDS = (
+    "Wildfire",
+    "Rally",
+    "Affinity",
+    "Elves",
+    "Spy",
+    "Burn",
+    "Terror",
+    "CawGates",
+    "Faeries",
+)
 EXPECTED_RUNTIME_DECK_HASHES = {
+    "Wildfire": "0x552acb5fc9631d3b",
     "Rally": "0x0c9f01c2544412bf",
+    "Affinity": "0xff4bf00deadf8821",
+    "Elves": "0x6a187257d6d37346",
+    "Spy": "0xcd2afdfee3573675",
     "Burn": "0x5fdb7b92986b6fc1",
+    "Terror": "0xfd6f1a4aceaa157b",
+    "CawGates": "0x25c1916a4d20c08e",
+    "Faeries": "0xd7a47ab2fa78dbaa",
 }
 
 

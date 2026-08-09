@@ -3,9 +3,10 @@
 //! This module owns the reset/step state machine used by both the JSONL
 //! process wrapper and the batch rollout recorder, so action validation and
 //! terminal classification cannot drift between interactive and offline use.
-//! Schema v5 carries ordered physical-seat deck identity on the wire. Exact
-//! canonical `Burn` and `Rally` ids may be combined in any ordered pair; every
-//! other id fails before an active session is created or replaced.
+//! Schema v5 carries ordered physical-seat deck identity on the wire. Every
+//! exact canonical id in the runtime deck catalog may be combined in any
+//! ordered pair; every other id fails before an active session is created or
+//! replaced.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::engine::{CastMode, CostKind, Decision, OptionalCostChoice};
@@ -25,7 +26,7 @@ use crate::rl::{
     LegalActionV5, ObservationV5, PlayerSeatV1, PolicyLegalActionCandidateV5, RlContractError,
     TargetRefV1, TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2,
 };
-use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
+use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition, RUNTIME_DECKS};
 use crate::state::{Target, Zone};
 use crate::surface_v2::{SuppressionAuditMode, SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
@@ -6835,8 +6836,8 @@ fn build_session_deck_pair_state(
 
 /// Exhaustive typed mapping of the v2 deck-pair builder failure vocabulary
 /// into session errors, shared by both new constructors. Deck admission
-/// failures keep the exact legacy message; sealed KDF failures keep the
-/// builder error's complete Display text under the distinct
+/// failures keep the exact catalog-derived message; sealed KDF failures keep
+/// the builder error's complete Display text under the distinct
 /// EnvironmentRandomization code.
 fn map_deck_pair_build_error_v2(error: crate::rl::DeckPairBuildErrorV2) -> RlSessionError {
     match &error {
@@ -6860,7 +6861,8 @@ fn resolve_runtime_decks(
             return Err(session_error(
                 RlSessionErrorCode::UnsupportedDeck,
                 &format!(
-                    "unsupported deck_id for seat {seat}; supported exact canonical ids are {CANONICAL_BURN_DECK_ID:?} and {CANONICAL_RALLY_DECK_ID:?}"
+                    "unsupported deck_id for seat {seat}; supported exact canonical ids are {}",
+                    supported_runtime_deck_ids()
                 ),
             ));
         };
@@ -6870,6 +6872,14 @@ fn resolve_runtime_decks(
         resolved[0].expect("both deck seats resolve"),
         resolved[1].expect("both deck seats resolve"),
     ])
+}
+
+fn supported_runtime_deck_ids() -> String {
+    RUNTIME_DECKS
+        .iter()
+        .map(|deck| format!("{:?}", deck.id))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn terminal_from_winner(
@@ -12052,9 +12062,9 @@ mod tests {
     #[test]
     fn v2_reset_error_boundaries_are_typed_and_seat_exact() {
         const SEAT_0_MESSAGE: &str =
-            "unsupported deck_id for seat 0; supported exact canonical ids are \"Burn\" and \"Rally\"";
+            "unsupported deck_id for seat 0; supported exact canonical ids are \"Wildfire\", \"Rally\", \"Affinity\", \"Elves\", \"Spy\", \"Burn\", \"Terror\", \"CawGates\", \"Faeries\"";
         const SEAT_1_MESSAGE: &str =
-            "unsupported deck_id for seat 1; supported exact canonical ids are \"Burn\" and \"Rally\"";
+            "unsupported deck_id for seat 1; supported exact canonical ids are \"Wildfire\", \"Rally\", \"Affinity\", \"Elves\", \"Spy\", \"Burn\", \"Terror\", \"CawGates\", \"Faeries\"";
         let both_bad: SessionDeckIdsV1 = ["NotADeck".to_string(), "AlsoNotADeck".to_string()];
         let error = match RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
             1,
@@ -12954,7 +12964,7 @@ mod tests {
     #[test]
     fn jsonl_v6_failed_reset_preserves_state_and_version() {
         const SEAT_0_DECK_MESSAGE: &str =
-            "unsupported deck_id for seat 0; supported exact canonical ids are \"Burn\" and \"Rally\"";
+            "unsupported deck_id for seat 0; supported exact canonical ids are \"Wildfire\", \"Rally\", \"Affinity\", \"Elves\", \"Spy\", \"Burn\", \"Terror\", \"CawGates\", \"Faeries\"";
         let failing_v6 = "{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"f1\",\"deck_ids\":[\"NotADeck\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
         let failing_v5 = "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"f2\",\"deck_ids\":[\"NotADeck\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
 

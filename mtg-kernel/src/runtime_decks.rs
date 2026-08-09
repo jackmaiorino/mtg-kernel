@@ -41,7 +41,7 @@ mod tests {
         assert_eq!(RUNTIME_DECK_PROTOCOL, "canonical-mainboard-bo1/v1");
         assert_eq!(
             RUNTIME_DECK_CATALOG_FILE_SHA256,
-            "5ea19e8a08f0e9c9657e9a6a90382329785f27eeabbbe066e80e7025e8ee62c0"
+            "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851"
         );
         assert_eq!(
             RUNTIME_DECK_MATERIALIZATION_PROTOCOL,
@@ -53,7 +53,10 @@ mod tests {
         );
         assert_eq!(
             RUNTIME_DECKS.iter().map(|deck| deck.id).collect::<Vec<_>>(),
-            ["Rally", "Burn"]
+            [
+                "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "Terror", "CawGates",
+                "Faeries",
+            ]
         );
 
         for deck in RUNTIME_DECKS {
@@ -67,15 +70,26 @@ mod tests {
 
     #[test]
     fn lookup_is_exact_case_and_hashes_are_frozen() {
-        assert_eq!(
-            runtime_deck_by_id("Burn").unwrap().runtime_deck_hash,
-            0x5fdb_7b92_986b_6fc1
-        );
-        assert_eq!(
-            runtime_deck_by_id("Rally").unwrap().runtime_deck_hash,
-            0x0c9f_01c2_5444_12bf
-        );
-        for unsupported in ["burn", "BURN", "rally", "RALLY", "Terror", ""] {
+        for (deck_id, expected_hash) in [
+            ("Wildfire", 0x552a_cb5f_c963_1d3b),
+            ("Rally", 0x0c9f_01c2_5444_12bf),
+            ("Affinity", 0xff4b_f00d_eadf_8821),
+            ("Elves", 0x6a18_7257_d6d3_7346),
+            ("Spy", 0xcd2a_fdfe_e357_3675),
+            ("Burn", 0x5fdb_7b92_986b_6fc1),
+            ("Terror", 0xfd6f_1a4a_ceaa_157b),
+            ("CawGates", 0x25c1_916a_4d20_c08e),
+            ("Faeries", 0xd7a4_7ab2_fa78_dbaa),
+        ] {
+            assert_eq!(
+                runtime_deck_by_id(deck_id).unwrap().runtime_deck_hash,
+                expected_hash,
+                "{deck_id}"
+            );
+        }
+        for unsupported in [
+            "wildfire", "WILDFIRE", "burn", "BURN", "rally", "RALLY", "terror", "TERROR", "",
+        ] {
             assert!(runtime_deck_by_id(unsupported).is_none(), "{unsupported:?}");
         }
     }

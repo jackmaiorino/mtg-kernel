@@ -219,15 +219,35 @@ class PauperPoolManifestTest(unittest.TestCase):
         ]
         self.assertEqual(
             [(order, spec.deck_id) for order, spec in runtime_specs],
-            [(2, "Rally"), (6, "Burn")],
+            [
+                (1, "Wildfire"),
+                (2, "Rally"),
+                (3, "Affinity"),
+                (4, "Elves"),
+                (5, "Spy"),
+                (6, "Burn"),
+                (7, "Terror"),
+                (8, "CawGates"),
+                (9, "Faeries"),
+            ],
         )
         self.assertEqual(
             [deck["id"] for deck in self.runtime_decks["decks"]],
-            ["Rally", "Burn"],
+            [
+                "Wildfire",
+                "Rally",
+                "Affinity",
+                "Elves",
+                "Spy",
+                "Burn",
+                "Terror",
+                "CawGates",
+                "Faeries",
+            ],
         )
         self.assertEqual(
             [deck["canonical_pool_order"] for deck in self.runtime_decks["decks"]],
-            [2, 6],
+            list(range(1, 10)),
         )
 
         registry_ids = {
@@ -235,10 +255,27 @@ class PauperPoolManifestTest(unittest.TestCase):
             for card_id, card in enumerate(self.registry["cards"])
         }
         expected_hashes = {
+            "Wildfire": "0x552acb5fc9631d3b",
             "Rally": "0x0c9f01c2544412bf",
+            "Affinity": "0xff4bf00deadf8821",
+            "Elves": "0x6a187257d6d37346",
+            "Spy": "0xcd2afdfee3573675",
             "Burn": "0x5fdb7b92986b6fc1",
+            "Terror": "0xfd6f1a4aceaa157b",
+            "CawGates": "0x25c1916a4d20c08e",
+            "Faeries": "0xd7a47ab2fa78dbaa",
         }
-        expected_unique = {"Rally": 14, "Burn": 12}
+        expected_unique = {
+            "Wildfire": 22,
+            "Rally": 14,
+            "Affinity": 22,
+            "Elves": 14,
+            "Spy": 21,
+            "Burn": 12,
+            "Terror": 14,
+            "CawGates": 20,
+            "Faeries": 14,
+        }
         for deck, (canonical_pool_order, spec) in zip(
             self.runtime_decks["decks"], runtime_specs, strict=True
         ):
