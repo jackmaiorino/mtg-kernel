@@ -215,6 +215,33 @@ impl RegisteredDeckV1 {
 /// in the registry and has full rules support, making completion of the card
 /// pool an executable BO3 admission gate rather than a documentation claim.
 pub fn checked_in_pauper_registered_decks_v1() -> Result<Vec<RegisteredDeckV1>, SideboardErrorV1> {
+    let document = checked_in_pauper_pool_document_v1()?;
+    document
+        .decks
+        .into_iter()
+        .map(register_pauper_pool_deck_v1)
+        .collect()
+}
+
+/// Loads one checked-in 60/15 registration by id and admits it as soon as
+/// that exact deck is fully executable. This lets completed decks enter BO3
+/// sessions without weakening the all-nine admission gate above.
+pub fn checked_in_pauper_registered_deck_by_id_v1(
+    deck_id: &str,
+) -> Result<RegisteredDeckV1, SideboardErrorV1> {
+    validate_identifier_v1("pool deck id", deck_id)?;
+    let document = checked_in_pauper_pool_document_v1()?;
+    let deck = document
+        .decks
+        .into_iter()
+        .find(|deck| deck.id == deck_id)
+        .ok_or_else(|| SideboardErrorV1::UnknownPoolDeckId {
+            deck_id: deck_id.to_owned(),
+        })?;
+    register_pauper_pool_deck_v1(deck)
+}
+
+fn checked_in_pauper_pool_document_v1() -> Result<PauperPoolDocumentV1, SideboardErrorV1> {
     let document: PauperPoolDocumentV1 = serde_json::from_str(PAUPER_POOL_JSON_V1)
         .map_err(|error| SideboardErrorV1::PoolJson(error.to_string()))?;
     if document.schema != PAUPER_POOL_SCHEMA_V1 {
@@ -249,23 +276,23 @@ pub fn checked_in_pauper_registered_decks_v1() -> Result<Vec<RegisteredDeckV1>, 
         return Err(SideboardErrorV1::PoolPolicyDeckSetMismatch);
     }
 
-    document
-        .decks
-        .into_iter()
-        .map(|deck| {
-            let mainboard = expand_pool_zone_v1(
-                &deck.id,
-                SideboardZoneV1::RegisteredMainboard,
-                deck.mainboard,
-            )?;
-            let sideboard = expand_pool_zone_v1(
-                &deck.id,
-                SideboardZoneV1::RegisteredSideboard,
-                deck.sideboard,
-            )?;
-            RegisteredDeckV1::new_fully_supported_v1(deck.id, mainboard, sideboard)
-        })
-        .collect()
+    Ok(document)
+}
+
+fn register_pauper_pool_deck_v1(
+    deck: PauperPoolDeckDocumentV1,
+) -> Result<RegisteredDeckV1, SideboardErrorV1> {
+    let mainboard = expand_pool_zone_v1(
+        &deck.id,
+        SideboardZoneV1::RegisteredMainboard,
+        deck.mainboard,
+    )?;
+    let sideboard = expand_pool_zone_v1(
+        &deck.id,
+        SideboardZoneV1::RegisteredSideboard,
+        deck.sideboard,
+    )?;
+    RegisteredDeckV1::new_fully_supported_v1(deck.id, mainboard, sideboard)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -715,6 +742,9 @@ pub enum SideboardErrorV1 {
     DuplicatePoolDeckId {
         deck_id: String,
     },
+    UnknownPoolDeckId {
+        deck_id: String,
+    },
     PoolPolicyDeckSetMismatch,
     PoolCopyCountMismatch {
         deck_id: String,
@@ -838,6 +868,9 @@ impl fmt::Display for SideboardErrorV1 {
             }
             Self::DuplicatePoolDeckId { deck_id } => {
                 write!(formatter, "duplicate Pauper pool deck id {deck_id:?}")
+            }
+            Self::UnknownPoolDeckId { deck_id } => {
+                write!(formatter, "unknown Pauper pool deck id {deck_id:?}")
             }
             Self::PoolPolicyDeckSetMismatch => {
                 formatter.write_str("Pauper pool and sideboard policy deck sets differ")

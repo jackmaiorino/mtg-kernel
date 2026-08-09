@@ -1,8 +1,8 @@
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::sideboard::{
-    checked_in_pauper_registered_decks_v1, CardCountV1, DeterministicSideboardPolicyV1,
-    RegisteredDeckV1, SideboardDefaultPlanV1, SideboardErrorV1, SideboardPlanV1, SideboardZoneV1,
-    REGISTERED_DECK_SIZE_V1,
+    checked_in_pauper_registered_deck_by_id_v1, checked_in_pauper_registered_decks_v1, CardCountV1,
+    DeterministicSideboardPolicyV1, RegisteredDeckV1, SideboardDefaultPlanV1, SideboardErrorV1,
+    SideboardPlanV1, SideboardZoneV1, REGISTERED_DECK_SIZE_V1,
 };
 
 fn card_id(name: &str) -> u16 {
@@ -132,6 +132,21 @@ fn checked_in_pool_is_wired_to_the_executable_bo3_admission_gate() {
         }
         Err(other) => panic!("unexpected checked-in pool admission error: {other}"),
     }
+}
+
+#[test]
+fn completed_checked_in_decks_are_individually_admitted_for_bo3() {
+    let deck = checked_in_pauper_registered_deck_by_id_v1("Terror").unwrap();
+    assert_eq!(deck.deck_id(), "Terror");
+    assert_eq!(deck.registered_configuration().mainboard().len(), 60);
+    assert_eq!(deck.registered_configuration().sideboard().len(), 15);
+
+    assert_eq!(
+        checked_in_pauper_registered_deck_by_id_v1("Missing"),
+        Err(SideboardErrorV1::UnknownPoolDeckId {
+            deck_id: "Missing".to_owned(),
+        })
+    );
 }
 
 #[test]

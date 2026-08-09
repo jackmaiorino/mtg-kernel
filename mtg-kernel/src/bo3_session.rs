@@ -12,8 +12,8 @@ use crate::bo3_match::{
 };
 use crate::ids::PlayerId;
 use crate::sideboard::{
-    AppliedSideboardReceiptV1, DeckConfigurationV1, DeterministicSideboardPolicyV1,
-    RegisteredDeckV1, SideboardErrorV1,
+    checked_in_pauper_registered_deck_by_id_v1, AppliedSideboardReceiptV1, DeckConfigurationV1,
+    DeterministicSideboardPolicyV1, RegisteredDeckV1, SideboardErrorV1,
 };
 use std::error::Error;
 use std::fmt;
@@ -49,6 +49,19 @@ pub struct BestOfThreeDeckMatchV1 {
 }
 
 impl BestOfThreeDeckMatchV1 {
+    /// Creates an executable match from two completed checked-in Pauper
+    /// registrations and the versioned checked-in sideboard policy.
+    pub fn checked_in_pauper_v1(
+        p0_deck_id: &str,
+        p1_deck_id: &str,
+        game_one_chooser: PlayerId,
+    ) -> Result<Self, Bo3SessionErrorV1> {
+        let p0 = checked_in_pauper_registered_deck_by_id_v1(p0_deck_id)?;
+        let p1 = checked_in_pauper_registered_deck_by_id_v1(p1_deck_id)?;
+        let policy = DeterministicSideboardPolicyV1::checked_in_pauper_v1()?;
+        Self::new_v1(p0, p1, policy, game_one_chooser)
+    }
+
     pub fn new_v1(
         p0: RegisteredDeckV1,
         p1: RegisteredDeckV1,

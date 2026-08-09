@@ -216,3 +216,47 @@ fn identical_inputs_prepare_identical_games_and_receipts() {
     }
     assert_eq!(run(), run());
 }
+
+#[test]
+fn completed_checked_in_decks_create_an_executable_postboard_session() {
+    let mut session =
+        BestOfThreeDeckMatchV1::checked_in_pauper_v1("Terror", "Terror", PlayerId::P0).unwrap();
+    let game_one = session
+        .prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Play)
+        .unwrap();
+    assert_eq!(
+        game_one
+            .configuration(PlayerId::P0)
+            .unwrap()
+            .mainboard()
+            .len(),
+        60
+    );
+    assert!(game_one.sideboard_receipt(PlayerId::P0).is_none());
+
+    assert_eq!(
+        session
+            .record_game_result_v1(GameOutcomeV1::Win {
+                winner: PlayerId::P0,
+            })
+            .unwrap(),
+        MatchTransitionV1::NextGameChoice {
+            game_index: 2,
+            chooser: PlayerId::P1,
+        }
+    );
+    let game_two = session
+        .prepare_game_v1(PlayerId::P1, PlayDrawChoiceV1::Play)
+        .unwrap();
+    for player in [PlayerId::P0, PlayerId::P1] {
+        assert_eq!(
+            game_two.configuration(player).unwrap().mainboard().len(),
+            60
+        );
+        assert_eq!(
+            game_two.configuration(player).unwrap().sideboard().len(),
+            15
+        );
+        assert!(game_two.sideboard_receipt(player).is_some());
+    }
+}
