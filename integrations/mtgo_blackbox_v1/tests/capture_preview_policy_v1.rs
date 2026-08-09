@@ -82,6 +82,9 @@ fn gameplay_preview_selects_only_a_visible_foreground_mtgo_duel() {
         "visible_mtgo_top_level_window_count",
         "visible_mtgo_top_level_window_set_sha256",
         "capture_role = $captureRole",
+        "game_window_title_identity",
+        "participants_and_match_game_ids",
+        "participants_only",
         "mtgo_visible_spectator_gameplay_calibration_preview_v1",
     ] {
         assert!(
@@ -91,6 +94,7 @@ fn gameplay_preview_selects_only_a_visible_foreground_mtgo_duel() {
     }
 
     assert!(PREVIEW_SCRIPT.contains("^\\(1-on-1\\): {0}: Vs\\."));
+    assert!(PREVIEW_SCRIPT.contains("[^,#\\r\\n]+$"));
     assert!(PREVIEW_SCRIPT.contains("Match #\\s*\\d+"));
     assert!(PREVIEW_SCRIPT.contains("Game #\\s*\\d+"));
 }
