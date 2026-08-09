@@ -5774,7 +5774,7 @@ mod tests {
         );
         assert_eq!(
             digest,
-            "e1aa12d2736f4c52fed56fc89defb9f16bcda852631b2eee8c2e8bb707943981"
+            "d44958bd7089fef5f7b87fead755ef8b05139e264e2187afdb8d84501898946e"
         );
     }
 

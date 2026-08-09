@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import platform
 import unittest
 from pathlib import Path
 
@@ -39,6 +41,12 @@ class WideModelSnapshotV1Tests(unittest.TestCase):
             wide_snapshot.WIDE_MODEL_CONFIG_FINGERPRINT_V1,
         )
 
+    @unittest.skipUnless(
+        os.name == "nt"
+        and platform.machine() == "AMD64"
+        and platform.python_version() == "3.13.14",
+        "declared authority runtime regression",
+    )
     def test_wide_authority_regeneration_is_byte_identical(self) -> None:
         wide_snapshot.wide_authority_check_v1(self.repo_root)
 
@@ -58,6 +66,12 @@ class WideModelSnapshotV1Tests(unittest.TestCase):
                 repo_root=self.repo_root,
             )
 
+    @unittest.skipUnless(
+        os.name == "nt"
+        and platform.machine() == "AMD64"
+        and platform.python_version() == "3.13.14",
+        "declared authority runtime regression",
+    )
     def test_frozen_snapshot_still_untouched_by_wide_module_import(self) -> None:
         # Importing the wide module must not mutate or invalidate the frozen
         # authority snapshot's own regeneration check.

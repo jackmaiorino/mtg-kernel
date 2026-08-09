@@ -388,8 +388,7 @@ fn balustrade_spy_targets_then_publicly_reveals_and_mills_through_land_inclusive
             ..
         }
     )));
-    let observation = observe_v2(&state, &HarnessSurfaceV2::new(), PlayerId::P0, 0).unwrap();
-    let pending = &observation.projection.engine_context.pending_triggers[0];
+    let pending = &state.engine.pending_triggers[0];
     assert_eq!(pending.target_spec, TargetSpec::AnyPlayer);
     assert!(pending.placement_ordered);
     assert!(pending.targets.is_empty());

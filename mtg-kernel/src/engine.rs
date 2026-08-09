@@ -5971,7 +5971,7 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             state.engine.pending_triggers.push(PendingTrigger {
                 controller: owner,
                 source: id,
-                source_contract: None,
+                source_contract: Some(AbilitySourceContractV4::capture(state, id)),
                 granted_by: None,
                 effect: EffectOp::Sequence(vec![]),
                 is_madness_offer: true,
@@ -13760,72 +13760,60 @@ mod tests {
         obj_id
     }
 
-    #[test]
-    fn resumable_effect_choice_preserves_order_stack_and_snapshot_state() {
-        let mut state = empty_game();
-        state.step = Step::Main1;
-        let source = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
-        let program = EffectOp::Sequence(vec![
-            EffectOp::LoseLife {
-                player: PlayerRef::Controller,
-                amount: 1,
-            },
-            EffectOp::Choice {
-                controller: PlayerRef::Controller,
-                options: vec![
-                    EffectOp::GainLife {
-                        player: PlayerRef::Controller,
-                        amount: 2,
-                    },
-                    EffectOp::LoseLife {
-                        player: PlayerRef::Controller,
-                        amount: 3,
-                    },
-                ],
-            },
-            EffectOp::GainLife {
-                player: PlayerRef::Controller,
-                amount: 5,
-            },
-        ]);
-        let resolving = StackItem {
+    fn push_ninja_of_the_deep_hours_choice_trigger(state: &mut GameState) -> (ObjectId, StackItem) {
+        let source = put_on_battlefield(state, PlayerId::P0, "Ninja of the Deep Hours");
+        let source_contract = AbilitySourceContractV4::capture(state, source);
+        let effect = (trigger::triggers_for(state.objects.get(source).card_def)[0].effect)();
+        let stack_item_id = next_stack_item_id(state);
+        let item = StackItem {
             kind: StackItemKind::TriggeredAbility,
             source,
             controller: PlayerId::P0,
             targets: vec![],
             is_copy: false,
-            inline_effect: Some(program),
+            inline_effect: Some(effect),
             discarded: vec![],
             is_flashback: false,
             mode_chosen: 0,
             madness_offer: false,
             kicked: false,
-            v4: StackStateV4::default(),
+            v4: StackStateV4 {
+                stack_item_id,
+                ability_source_contract: Some(source_contract),
+                ..StackStateV4::default()
+            },
         };
-        state.stack.push(resolving.clone());
+        state.stack.push(item.clone());
         state.engine.priority_passes = [true, true];
+        (source, item)
+    }
+
+    #[test]
+    fn resumable_effect_choice_preserves_order_stack_and_snapshot_state() {
+        let (mut state, source) = stage_may_shuffle_choice(one_card_p0_library(1));
+        let resolving = state.stack[0].clone();
+        let drawn = state.players[0].library[0];
 
         let decision = advance_until_decision(&mut state);
-        assert_eq!(
-            state.players[0].life, 19,
-            "nothing after the choice ran early"
-        );
+        assert_eq!(state.players[0].library, vec![drawn]);
+        assert!(state.players[0].hand.is_empty());
         assert_eq!(state.stack, vec![resolving]);
         assert!(matches!(
             decision,
-            Decision::ChooseEffectOption {
+            Decision::ChooseEffectBoolean {
                 player: PlayerId::P0,
                 source: decision_source,
-                option_count: 2,
+                ..
             } if decision_source == source
         ));
 
         let snapshot = state.snapshot();
         let pending_hash = state.state_hash();
-        step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+        step(&mut state, Action::ChooseEffectBoolean(false)).unwrap();
         let after_first = advance_until_decision(&mut state);
         let completed_hash = state.state_hash();
-        assert_eq!(state.players[0].life, 26);
+        assert!(state.players[0].library.is_empty());
+        assert_eq!(state.players[0].hand, vec![drawn]);
         assert!(state.stack.is_empty());
         assert!(state.engine.pending_effect.is_none());
         assert!(matches!(after_first, Decision::CastSpellOrPass { .. }));
@@ -13834,12 +13822,9 @@ mod tests {
         assert_eq!(state.state_hash(), pending_hash);
         assert!(matches!(
             advance_until_decision(&mut state),
-            Decision::ChooseEffectOption {
-                option_count: 2,
-                ..
-            }
+            Decision::ChooseEffectBoolean { .. }
         ));
-        step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+        step(&mut state, Action::ChooseEffectBoolean(false)).unwrap();
         let after_restore = advance_until_decision(&mut state);
         assert_eq!(state.state_hash(), completed_hash);
         assert_eq!(after_restore, after_first);
@@ -13848,26 +13833,7 @@ mod tests {
     #[test]
     fn invalid_resumable_choice_answer_is_nonmutating() {
         let mut state = empty_game();
-        let source = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
-        let item = StackItem {
-            kind: StackItemKind::TriggeredAbility,
-            source,
-            controller: PlayerId::P0,
-            targets: vec![],
-            is_copy: false,
-            inline_effect: Some(EffectOp::Choice {
-                controller: PlayerRef::Controller,
-                options: vec![EffectOp::Sequence(vec![]), EffectOp::Sequence(vec![])],
-            }),
-            discarded: vec![],
-            is_flashback: false,
-            mode_chosen: 0,
-            madness_offer: false,
-            kicked: false,
-            v4: StackStateV4::default(),
-        };
-        state.stack.push(item);
-        state.engine.priority_passes = [true, true];
+        push_ninja_of_the_deep_hours_choice_trigger(&mut state);
         assert!(matches!(
             advance_until_decision(&mut state),
             Decision::ChooseEffectOption { .. }
@@ -14587,6 +14553,7 @@ mod tests {
             zone_change_count: 1,
         });
         let source_contract = StackSourceContractV4::capture(state, obj_id, cast_method);
+        let stack_item_id = next_stack_item_id(state);
         state.stack.push(StackItem {
             kind: StackItemKind::Spell,
             source: obj_id,
@@ -14600,7 +14567,9 @@ mod tests {
             madness_offer: false,
             kicked: false,
             v4: StackStateV4 {
+                stack_item_id,
                 source_contract: Some(source_contract),
+                target_spec: Some(card_def::CARD_DEFS[card_id as usize].target_spec),
                 ..StackStateV4::spell(cast_method)
             },
         });
@@ -14670,6 +14639,7 @@ mod tests {
         copy_item.source = copy;
         copy_item.is_copy = true;
         copy_item.is_flashback = false;
+        copy_item.v4.stack_item_id = next_stack_item_id(state);
         copy_item.v4.cast_method = Some(CastMethodV4::Normal);
         copy_item.v4.source_contract = Some(StackSourceContractV4::capture(
             state,
@@ -15337,7 +15307,7 @@ mod tests {
     fn searing_blaze_landfall_triples_damage_to_player_and_creature() {
         let mut state = ready_game_in_main1(2);
         let blaze = put_in_hand(&mut state, PlayerId::P0, "Searing Blaze");
-        let victim = put_on_battlefield(&mut state, PlayerId::P1, "Voldaren Epicure"); // 2/1
+        let victim = put_on_battlefield(&mut state, PlayerId::P1, "Myr Enforcer"); // 4/4
         state.players[0].lands_played_this_turn = 1; // landfall satisfied
 
         step(&mut state, Action::CastSpell(blaze)).unwrap();
@@ -15373,7 +15343,7 @@ mod tests {
     fn searing_blaze_deals_only_1_without_landfall() {
         let mut state = ready_game_in_main1(2);
         let blaze = put_in_hand(&mut state, PlayerId::P0, "Searing Blaze");
-        let victim = put_on_battlefield(&mut state, PlayerId::P1, "Voldaren Epicure");
+        let victim = put_on_battlefield(&mut state, PlayerId::P1, "Myr Enforcer");
 
         step(&mut state, Action::CastSpell(blaze)).unwrap();
         step(
@@ -16494,7 +16464,12 @@ mod tests {
         pass_until_stack_resolves(&mut state);
 
         assert_eq!(state.players[1].life, 19);
-        assert_eq!(state.objects.get(p1_a).damage, 1);
+        assert_eq!(
+            state.objects.get(p1_a).zone,
+            Zone::Graveyard,
+            "the 1-toughness creature dies after taking 1 damage"
+        );
+        assert!(state.players[1].graveyard.contains(&p1_a));
         assert_eq!(state.objects.get(p1_b).damage, 1);
         assert_eq!(
             state.objects.get(p0_creature).damage,
@@ -18695,56 +18670,53 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_exiled_land_stays_unplayable_even_with_a_forged_permission() {
+    fn exiled_nonland_stays_unplayable_even_with_a_forged_play_permission() {
         let mut state = ready_game_in_main1(0);
-        let landscape = put_in_hand(&mut state, PlayerId::P0, "Twisted Landscape");
-        event::propose_and_commit(
-            &mut state,
-            ProposedEvent::zone_change(landscape, Zone::Exile),
-        );
+        let clue = put_in_hand(&mut state, PlayerId::P0, "Clue Token");
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(clue, Zone::Exile));
         state.engine.exile_play_permissions.push(PlayPermission {
-            object: landscape,
+            object: clue,
             holder: PlayerId::P0,
-            zone_change_generation: state.objects.get(landscape).zone_change_count,
+            zone_change_generation: state.objects.get(clue).zone_change_count,
             play_or_cast: PlayOrCast::Play,
             expiry: PlayPermissionExpiry::EndOfTurn,
         });
 
-        assert!(active_permission_for(PlayerId::P0, landscape, &state).is_some());
-        assert!(!land_drop_candidates(PlayerId::P0, &state).contains(&landscape));
-        assert!(step(&mut state, Action::PlayLand(landscape)).is_err());
-        assert_eq!(state.objects.get(landscape).zone, Zone::Exile);
+        assert!(active_permission_for(PlayerId::P0, clue, &state).is_some());
+        assert!(!land_drop_candidates(PlayerId::P0, &state).contains(&clue));
+        assert!(step(&mut state, Action::PlayLand(clue)).is_err());
+        assert_eq!(state.objects.get(clue).zone, Zone::Exile);
     }
 
-    /// Stages a pending MayShuffleLibrary Boolean choice for P0 on the given
-    /// state through the real resolution path, returning the state and the
-    /// source object id.
+    fn one_card_p0_library(seed: u64) -> GameState {
+        let island = card_id_by_name("Island").expect("Island in CARD_DEFS");
+        GameState::new_from_libraries(
+            &[island],
+            &[],
+            |card_def| card_def::CARD_DEFS[card_def as usize].name.to_string(),
+            seed,
+        )
+    }
+
+    /// Stages Ponder's pending MayShuffleLibrary Boolean choice for P0 through
+    /// the real spell-resolution path, returning the state and source id. The
+    /// caller supplies a one-card library so Ponder's preceding reorder is
+    /// forced and yields no separate policy decision.
     fn stage_may_shuffle_choice(mut state: GameState) -> (GameState, ObjectId) {
-        let source = put_on_battlefield(&mut state, PlayerId::P0, "Mountain");
-        state.stack.push(StackItem {
-            kind: StackItemKind::TriggeredAbility,
-            source,
-            controller: PlayerId::P0,
-            targets: vec![],
-            is_copy: false,
-            inline_effect: Some(EffectOp::MayShuffleLibrary {
-                player: PlayerRef::Controller,
-            }),
-            discarded: vec![],
-            is_flashback: false,
-            mode_chosen: 0,
-            madness_offer: false,
-            kicked: false,
-            v4: StackStateV4::default(),
-        });
+        assert_eq!(state.players[PlayerId::P0.index()].library.len(), 1);
+        let source = put_on_stack(&mut state, PlayerId::P0, "Ponder");
         state.engine.priority_passes = [true, true];
-        assert!(matches!(
-            advance_until_decision(&mut state),
-            Decision::ChooseEffectBoolean {
-                player: PlayerId::P0,
-                ..
-            }
-        ));
+        let decision = advance_until_decision(&mut state);
+        assert!(
+            matches!(
+                decision,
+                Decision::ChooseEffectBoolean {
+                    player: PlayerId::P0,
+                    ..
+                }
+            ),
+            "expected Ponder's shuffle choice, got {decision:?}"
+        );
         (state, source)
     }
 
@@ -18767,7 +18739,7 @@ mod tests {
     #[test]
     fn may_shuffle_true_preflights_v2_ordinal_before_any_choice_mutation() {
         use crate::environment_randomization_v2::PhysicalOwnerV2;
-        let (staged, _source) = stage_may_shuffle_choice(empty_game());
+        let (staged, _source) = stage_may_shuffle_choice(one_card_p0_library(1));
         let mut exhausted = into_environment_v2(&staged, EXHAUSTED_V2_FRAGMENT);
         let before_json = serde_json::to_string(&exhausted).expect("serializes");
         let before_hot = exhausted.state_hash();
@@ -18803,7 +18775,7 @@ mod tests {
     #[test]
     fn may_shuffle_true_commits_exactly_one_ordinal_at_the_frame() {
         use crate::environment_randomization_v2::PhysicalOwnerV2;
-        let (staged, _source) = stage_may_shuffle_choice(empty_game());
+        let (staged, _source) = stage_may_shuffle_choice(one_card_p0_library(1));
         let mut healthy = into_environment_v2(&staged, HEALTHY_V2_FRAGMENT);
         step(&mut healthy, Action::ChooseEffectBoolean(true)).expect("accepting is legal");
         assert_eq!(
@@ -18833,9 +18805,8 @@ mod tests {
         // Nonempty sentinels: a real P0 library and both-observer knowledge
         // rows, so the post-halt equality assertions prove preservation
         // rather than comparing empty structures.
-        let mut base =
-            GameState::new_from_libraries(&[21, 22, 23], &[], |c| format!("card-{c}"), 1);
-        base.reveal_library_top(PlayerId::P0, PlayerId::P0, 2);
+        let mut base = one_card_p0_library(1);
+        base.reveal_library_top(PlayerId::P0, PlayerId::P0, 1);
         base.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
         let (staged, source) = stage_may_shuffle_choice(base);
         let mut accepted = into_environment_v2(&staged, HEALTHY_V2_FRAGMENT);
@@ -18850,7 +18821,7 @@ mod tests {
         let library_before = sabotaged.players[PlayerId::P0.index()].library.clone();
         let stack_before = sabotaged.stack.clone();
         let library_knowledge_before = sabotaged.library_knowledge.clone();
-        assert_eq!(library_before.len(), 3, "library sentinel must be nonempty");
+        assert_eq!(library_before.len(), 1, "library sentinel must be nonempty");
         for observer in [PlayerId::P0, PlayerId::P1] {
             assert!(
                 !library_knowledge_before[observer.index()][PlayerId::P0.index()].is_empty(),
@@ -18884,18 +18855,18 @@ mod tests {
 
     #[test]
     fn may_shuffle_legacy_path_is_byte_exact() {
-        let base =
-            GameState::new_from_libraries(&[11, 12, 13, 14], &[], |c| format!("card-{c}"), 5);
+        let base = one_card_p0_library(5);
         let (mut legacy, _source) = stage_may_shuffle_choice(base);
         let rng_at_answer = *legacy.legacy_rng().expect("legacy state");
-        let (expected_library, expected_rng) = {
+        let (expected_library, expected_drawn, expected_rng) = {
             let mut rng = rng_at_answer;
             let mut library = legacy.players[PlayerId::P0.index()].library.clone();
             for i in (1..library.len()).rev() {
                 let j = (rng.next_u64() % (i as u64 + 1)) as usize;
                 library.swap(i, j);
             }
-            (library, rng)
+            let drawn = library.remove(0);
+            (library, drawn, rng)
         };
         step(&mut legacy, Action::ChooseEffectBoolean(true)).expect("accept");
         assert_eq!(
@@ -18910,6 +18881,11 @@ mod tests {
         assert_eq!(
             legacy.players[PlayerId::P0.index()].library,
             expected_library
+        );
+        assert_eq!(
+            legacy.players[PlayerId::P0.index()].hand,
+            vec![expected_drawn],
+            "Ponder draws the sole card after the accepted shuffle"
         );
         assert_eq!(
             *legacy.legacy_rng().expect("legacy state"),

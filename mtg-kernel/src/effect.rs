@@ -11397,10 +11397,10 @@ mod tests {
     }
 
     #[test]
-    fn impulse_draw_exiles_but_does_not_authorize_an_unsupported_card() {
-        let landscape = crate::card_def::card_id_by_name("Twisted Landscape").unwrap();
+    fn impulse_draw_exiles_but_does_not_authorize_a_nonplayable_token() {
+        let clue = crate::card_def::card_id_by_name("Clue Token").unwrap();
         let mut state = GameState::new_from_libraries(
-            &[landscape],
+            &[clue],
             &[],
             |card_def| {
                 crate::card_def::CARD_DEFS[card_def as usize]

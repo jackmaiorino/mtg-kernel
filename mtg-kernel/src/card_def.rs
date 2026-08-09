@@ -1755,11 +1755,7 @@ mod tests {
             })
         );
 
-        for name in [
-            "Burning-Tree Emissary",
-            "Azorius Guildgate",
-            "Twisted Landscape",
-        ] {
+        for name in ["Burning-Tree Emissary", "Azorius Guildgate"] {
             let def = &CARD_DEFS[card_id_by_name(name).unwrap() as usize];
             assert!(
                 !def.produces_mana.is_empty(),
@@ -1770,6 +1766,21 @@ mod tests {
                 "metadata alone must not grant {name} a tappable mana ability"
             );
         }
+
+        let landscape = &CARD_DEFS[card_id_by_name("Twisted Landscape").unwrap() as usize];
+        assert_eq!(landscape.produces_mana, &[ManaColor::C]);
+        assert_eq!(
+            landscape.mana_ability_program(),
+            Some(EffectOp::Sequence(vec![
+                EffectOp::TapObject {
+                    object: ObjectRef::ThisSource,
+                },
+                EffectOp::AddMana {
+                    player: PlayerRef::Controller,
+                    colors: vec![ManaColor::C],
+                },
+            ]))
+        );
     }
 
     #[test]
