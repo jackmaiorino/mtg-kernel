@@ -118,7 +118,6 @@ fn v2_config(
         environment_seed: ENVIRONMENT_SEED,
         opponent_policy_seed: OPPONENT_POLICY_SEED,
         learner_policy_seed: LEARNER_POLICY_SEED,
-        starting_player: None,
         max_physical_decisions: 4_096,
         max_policy_steps: 524_288,
         worker_count: args.workers,
