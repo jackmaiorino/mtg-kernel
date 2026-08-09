@@ -252,7 +252,7 @@ const fn response_exploiter_runtime_requirements_satisfied_v1(
     ladder_enabled
         && environment_randomization_v2
         && (ladder_init_present != denovo_enabled)
-        && (updates == 256 || (denovo_enabled && updates == 512))
+        && (updates == 256 || (denovo_enabled && (updates == 512 || updates == 1024)))
         && !population_authority_enabled
 }
 
@@ -1875,7 +1875,9 @@ mod windows_science_loop_tests {
                                     stop_after_generation.is_none(),
                                     "denovo-screen does not support an early stop generation"
                                 );
-                                if updates == 512 {
+                                if updates == 1024 {
+                                    "denovo-screen-1024"
+                                } else if updates == 512 {
                                     "denovo-screen-512"
                                 } else {
                                     "denovo-screen"
@@ -2941,7 +2943,7 @@ mod windows_science_loop_tests {
             assert!(
                 matches!(
                     candidate_gen,
-                    0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256 | 320 | 384 | 448 | 512
+                    0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256 | 320 | 384 | 448 | 512 | 640 | 768 | 896 | 1024
                 ),
                 "diagnostic mixture arm must use the shared genesis control or a retained checkpoint"
             );
