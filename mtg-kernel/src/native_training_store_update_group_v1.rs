@@ -7,6 +7,7 @@
 //! is not the Store continuation file cap or representability authority.
 
 use crate::async_flat_scored_rollout_v2::ASYNC_FLAT_SCORED_MEMBERSHIP_DIGEST_IDENTITY_V1;
+use crate::bounded_staleness_async_v1::{check_staleness_bound_v1, StalenessLedgerEntryV1};
 use crate::canonical_json_v1::{
     from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonClosedMaxErrorV1,
     CanonicalJsonClosedMaxV1, CanonicalJsonErrorKindV1, CanonicalJsonErrorV1,
@@ -1995,20 +1996,34 @@ fn validate_episodes_v1(run: &ValidatedTrainRunV2, evidence: &UpdateEvidenceWire
         }
         // Bounded-staleness async provenance: present together or not at
         // all (a synchronous run, or any record predating this field,
-        // leaves both absent), and when present the pair must obey the same
-        // causality rule `check_staleness_bound_v1` enforces at the
-        // scheduler: an episode can never be scored by weights newer than
-        // the update consuming it.
+        // leaves both absent). When present, the Store has no independent
+        // notion of the run's declared staleness bound K (only the
+        // scheduler does), so it cannot reject on boundedness -- but it can
+        // and does reject the causality invariant no K ever admits: an
+        // episode can never be scored by weights newer than the update
+        // consuming it. This calls the scheduler's own
+        // `check_staleness_bound_v1` directly (rather than restating the
+        // `scoring_weight_version > consuming_update_version` comparison
+        // here) with `max_staleness_updates: u32::MAX`, a bound wide enough
+        // that it can never itself be the reason for rejection, so the only
+        // way this call returns `Err` is the causality check inside it --
+        // the two call sites are provably checking the identical rule, not
+        // just similar-looking duplicated logic.
         match (
             episode.scoring_weight_version,
             episode.consuming_update_version,
         ) {
             (None, None) => {}
             (Some(scoring_weight_version), Some(consuming_update_version)) => {
-                if scoring_weight_version > consuming_update_version
-                    || !is_u63_v1(scoring_weight_version)
-                    || !is_u63_v1(consuming_update_version)
-                {
+                if !is_u63_v1(scoring_weight_version) || !is_u63_v1(consuming_update_version) {
+                    return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+                }
+                let entry = StalenessLedgerEntryV1 {
+                    episode_id: expected_index,
+                    scoring_weight_version,
+                    consuming_update_version,
+                };
+                if check_staleness_bound_v1(entry, u32::MAX).is_err() {
                     return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
                 }
             }
@@ -3993,19 +4008,22 @@ mod tests {
         );
     }
 
-    /// Exercises the bounded-staleness async provenance fields exactly the
-    /// way `bounded_staleness_async_production_v1::stamp_episode_
-    /// provenance_v1` stamps a real dispatched batch: after
-    /// `prepare_update_v2` returns and before the guard is handed to
-    /// `build_update_group_v1`, using the crate-private `observation_mut`
-    /// accessor added for this integration. Confirms the stamped fields
-    /// reach the written record and the whole group still round-trips byte
-    /// for byte. Uses equal scoring/consuming versions (the boundary-legal
-    /// zero-staleness case: scored by the exact weight version consuming
-    /// it) so this same real, self-consistent group also covers that
-    /// boundary; the strictly-nonzero-but-within-bound and the
-    /// causality-violation cases are covered by the mutation tests below
-    /// against the same underlying `validate_episodes_v1` branch.
+    /// Exercises the bounded-staleness async provenance fields the way a
+    /// future executor-integrated caller will: after `prepare_update_v2`
+    /// returns and before the guard is handed to `build_update_group_v1`,
+    /// using the crate-private, scope-narrowed `stamp_episode_provenance_v1`
+    /// setter added for this integration (today's actual production
+    /// integration, `bounded_staleness_async_production_v1::stamp_episode_
+    /// provenance_v1`, stamps a freestanding `NativeTrainerUpdateEvidenceV2`
+    /// directly and does not yet drive this executor guard at all -- see
+    /// that module's doc). Confirms the stamped fields reach the written
+    /// record and the whole group still round-trips byte for byte. Uses
+    /// equal scoring/consuming versions (the boundary-legal zero-staleness
+    /// case: scored by the exact weight version consuming it) so this same
+    /// real, self-consistent group also covers that boundary; the
+    /// strictly-nonzero-but-within-bound and the causality-violation cases
+    /// are covered by the mutation tests below against the same underlying
+    /// `validate_episodes_v1` branch.
     #[test]
     fn bounded_staleness_provenance_round_trips_through_the_written_record() {
         let run_bytes = test_fixture_bytes_v2();
@@ -4023,10 +4041,7 @@ mod tests {
         let genesis = build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
         let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
         let mut prepared = executor.prepare_update_v2().unwrap();
-        for episode in &mut prepared.observation_mut().episodes {
-            episode.scoring_weight_version = Some(2);
-            episode.consuming_update_version = Some(2);
-        }
+        prepared.stamp_episode_provenance_v1(2, 2);
         let (group, _advanced_context) = build_update_group_v1(&run, context, &prepared)
             .unwrap()
             .into_parts();
@@ -4184,6 +4199,54 @@ mod tests {
             decode_value_error_v1(&violation),
             UpdateGroupV1ErrorKind::EpisodeBinding
         );
+    }
+
+    /// Proves the Store's causality gate inside `validate_episodes_v1` and
+    /// the scheduler's own `check_staleness_bound_v1` (called there with
+    /// `max_staleness_updates: u32::MAX`, see the comment at that call
+    /// site) are the same rule, not just similar-looking duplicated logic:
+    /// for a table of (scoring, consuming) pairs spanning both sides of the
+    /// causality boundary, `check_staleness_bound_v1`'s own verdict is
+    /// cross-checked against whether the Store's `EpisodeBinding` causality
+    /// gate rejects. A mutated copy of the shared fixture can trip an
+    /// unrelated chain-hash mismatch further down the decode pipeline even
+    /// when the causality gate itself is satisfied (the fixture's other
+    /// embedded hashes were computed over the original, unmutated episode),
+    /// so this checks specifically whether `EpisodeBinding` was the
+    /// rejection reason, not merely whether the whole decode succeeded --
+    /// `staleness_provenance_causality_violation_is_rejected` and
+    /// `staleness_provenance_present_only_singly_is_rejected` above already
+    /// prove the true end-to-end rejection case; this test generalizes the
+    /// specific causality comparison across more pairs and pins it against
+    /// the scheduler's own function.
+    #[test]
+    fn staleness_provenance_causality_check_matches_check_staleness_bound_v1() {
+        let cases: [(u64, u64); 5] = [(0, 0), (3, 5), (5, 5), (5, 3), (U63_MAX_V1, U63_MAX_V1)];
+        for (scoring, consuming) in cases {
+            let entry = StalenessLedgerEntryV1 {
+                episode_id: 0,
+                scoring_weight_version: scoring,
+                consuming_update_version: consuming,
+            };
+            let scheduler_ok = check_staleness_bound_v1(entry, u32::MAX).is_ok();
+
+            let mut mutated = group_value_v1();
+            mutated["evidence"]["episodes"][0]["scoring_weight_version"] = Value::from(scoring);
+            mutated["evidence"]["episodes"][0]["consuming_update_version"] = Value::from(consuming);
+            let (run, context) = run_and_context_v1();
+            let outcome =
+                decode_update_group_v1(&run, context, &canonical_group_value_v1(&mutated));
+            let store_rejected_via_causality_gate = matches!(
+                outcome.as_ref().err().map(|error| error.kind()),
+                Some(UpdateGroupV1ErrorKind::EpisodeBinding)
+            );
+
+            assert_eq!(
+                !scheduler_ok, store_rejected_via_causality_gate,
+                "scoring={scoring} consuming={consuming}: the Store's EpisodeBinding causality \
+                 gate must reject exactly when check_staleness_bound_v1(entry, u32::MAX) rejects"
+            );
+        }
     }
 
     /// Mutation-rejection: a staleness-provenance value above the u63 domain
