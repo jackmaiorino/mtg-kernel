@@ -206,9 +206,11 @@ pub const FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V2: u32 = 2;
 pub const FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V2: u32 = 2;
 
 /// Schema-v5 action-kind vocabulary used by the scalar mapper. The current
-/// executable flat session subset deliberately rejects `ChooseEffectColor`,
-/// `ChooseEffectNumber`, and `FinishTargetSelection`: schema-v5 reserves those
-/// semantic rows, but policy-v5 has no executable `Action` for them yet.
+/// executable flat session subset deliberately rejects `ChooseEffectColor`
+/// and `ChooseEffectNumber`: schema-v5 reserves those semantic rows, but
+/// policy-v5 has no executable `Action` for them yet. Variable spell targets
+/// reuse the existing `FinishEffectSelection` engine action behind the
+/// reserved `FinishTargetSelection` semantic row.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FlatActionKindV1 {
@@ -1934,22 +1936,58 @@ fn flat_validate_origin_decision_v1(
             spell,
             remaining,
             legal_targets,
+            can_finish,
         } => {
-            if current.actor != *player || candidates.len() != legal_targets.len() {
+            if current.actor != *player
+                || candidates.len() != legal_targets.len() + usize::from(*can_finish)
+            {
                 return Err(invalid());
             }
-            for (candidate, target) in candidates.iter().zip(legal_targets) {
+            for (candidate, target) in candidates
+                .iter()
+                .take(legal_targets.len())
+                .zip(legal_targets)
+            {
                 if !matches!(
-                    &candidate.semantic,
-                    ActionSemanticV1::ChooseTarget {
-                        actor,
-                        source,
-                        remaining: semantic_remaining,
-                        target: semantic_target,
-                    } if actor_matches(*actor, *player)
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::ChooseTarget {
+                            actor,
+                            source,
+                            remaining: semantic_remaining,
+                            target: semantic_target,
+                        },
+                        PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseTarget(action_target))),
+                    ) if actor_matches(*actor, *player)
                         && flat_ref_matches_object_v1(source, *spell)
                         && semantic_remaining == remaining
                         && flat_target_matches_v1(semantic_target, *target)
+                        && action_target == target
+                ) {
+                    return Err(invalid());
+                }
+            }
+            if *can_finish {
+                let selected_count = state
+                    .engine
+                    .pending_cast
+                    .as_ref()
+                    .filter(|pending| pending.spell == *spell)
+                    .map(|pending| pending.targets_chosen.len() as u16)
+                    .ok_or_else(invalid)?;
+                let candidate = candidates.last().ok_or_else(invalid)?;
+                if !matches!(
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::FinishTargetSelection {
+                            actor,
+                            source,
+                            selected_count: semantic_selected_count,
+                        },
+                        PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
+                    ) if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *spell)
+                        && *semantic_selected_count == selected_count
                 ) {
                     return Err(invalid());
                 }
@@ -2027,11 +2065,17 @@ fn flat_validate_origin_decision_v1(
             player,
             spell,
             mode_count,
+            legal_modes,
         } => {
-            if current.actor != *player || candidates.len() != usize::from(*mode_count) {
+            if current.actor != *player
+                || candidates.len() != legal_modes.len()
+                || legal_modes.is_empty()
+                || legal_modes.iter().any(|mode| *mode >= *mode_count)
+                || !legal_modes.windows(2).all(|pair| pair[0] < pair[1])
+            {
                 return Err(invalid());
             }
-            for (index, candidate) in candidates.iter().enumerate() {
+            for (candidate, legal_mode) in candidates.iter().zip(legal_modes) {
                 if !matches!(
                     &candidate.semantic,
                     ActionSemanticV1::ChooseSpellMode {
@@ -2041,7 +2085,7 @@ fn flat_validate_origin_decision_v1(
                         mode_count: semantic_mode_count,
                     } if actor_matches(*actor, *player)
                         && flat_ref_matches_object_v1(source, *spell)
-                        && usize::from(*mode_index) == index
+                        && mode_index == legal_mode
                         && semantic_mode_count == mode_count
                 ) {
                     return Err(invalid());
@@ -2477,9 +2521,12 @@ fn flat_validate_semantic_policy_pair_v1(
             PolicyActionV5::Surface(SurfaceAction::Action(Action::OrderTriggers(actual))),
         ) => order == actual,
         (
+            ActionSemanticV1::FinishTargetSelection { .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
+        ) => true,
+        (
             ActionSemanticV1::ChooseEffectColor { .. }
-            | ActionSemanticV1::ChooseEffectNumber { .. }
-            | ActionSemanticV1::FinishTargetSelection { .. },
+            | ActionSemanticV1::ChooseEffectNumber { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (
@@ -4857,9 +4904,8 @@ impl FastActorSessionV1 {
     /// Encodes only the exact current executable action binding and ordered
     /// action semantics. Full state globals, object features, relations, and
     /// scorer inputs are deliberately outside this partial contract. The
-    /// schema-only `ChooseEffectColor`, `ChooseEffectNumber`, and
-    /// `FinishTargetSelection` rows fail closed until policy-v5 has matching
-    /// executable actions.
+    /// schema-only `ChooseEffectColor` and `ChooseEffectNumber` rows fail
+    /// closed until policy-v5 has matching executable actions.
     pub fn encode_current_flat_action_slice_v1(
         &self,
         expected: FastActorDecisionV1,
@@ -9127,6 +9173,7 @@ mod tests {
                 spell: hand[0],
                 remaining: 1,
                 legal_targets: vec![Target::Player(opponent)],
+                can_finish: false,
             })),
         );
         let mut wrong_target_source = target_base.clone();
@@ -9294,6 +9341,7 @@ mod tests {
                 player: actor,
                 spell,
                 mode_count: 2,
+                legal_modes: vec![0, 1],
             })),
         );
         let mut actions = [poison_flat_action(); 8];

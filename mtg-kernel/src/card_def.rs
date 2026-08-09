@@ -290,6 +290,18 @@ pub enum TargetSpec {
     /// Zero, one, or two creature cards in the activating player's own
     /// graveyard. Blood Fountain may legally announce none.
     UpToTwoCreatureCardsInOwnGraveyard,
+    /// Zero, one, or two distinct battlefield creatures. Cast into the
+    /// Fire's damage mode is the first consumer.
+    UpToTwoCreatures,
+    /// Exactly two distinct artifact permanents. Dust to Dust requires both
+    /// targets to be announced even though either may later become illegal.
+    ExactlyTwoArtifactPermanents,
+    /// Exactly one enchantment permanent. Thraben Charm's second mode is the
+    /// first consumer.
+    EnchantmentPermanent,
+    /// Zero, one, or two distinct players. The kernel is strictly two-player,
+    /// so this is the complete bounded form of "any number of target players."
+    UpToTwoPlayers,
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -975,6 +987,10 @@ mod tests {
             (TargetSpec::CreatureOrLandCardInGraveyard, 19),
             (TargetSpec::ControlledCreature, 20),
             (TargetSpec::UpToTwoCreatureCardsInOwnGraveyard, 21),
+            (TargetSpec::UpToTwoCreatures, 22),
+            (TargetSpec::ExactlyTwoArtifactPermanents, 23),
+            (TargetSpec::EnchantmentPermanent, 24),
+            (TargetSpec::UpToTwoPlayers, 25),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec as u8, ordinal);
@@ -990,10 +1006,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v22_is_frozen() {
-        // Version 22 composes artifact control with Caw-Gates and Piracy
-        // Charm while preserving all 150 card and token ids.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x1aa4_9b91_2b7b_bc7b);
+    fn card_db_hash_v23_is_frozen() {
+        // Version 23 adds the exact variable-target modal hate wave while
+        // preserving all 150 card and token ids.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xc479_c219_d34a_37b0);
     }
 
     #[test]

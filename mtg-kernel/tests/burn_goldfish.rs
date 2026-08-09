@@ -178,6 +178,7 @@ fn run_goldfish(state: &mut GameState) -> (Vec<Kind>, Vec<i32>) {
                 spell: _,
                 remaining,
                 legal_targets,
+                ..
             } => {
                 assert_eq!(player, PlayerId::P0);
                 assert_eq!(remaining, 1);

@@ -563,6 +563,23 @@ pub enum EffectOp {
         generic: u8,
         then: Box<EffectOp>,
     },
+    /// Deals one simultaneous damage batch to every still-valid announced
+    /// object target. Each target is incarnation-checked independently.
+    DamageAllTargets {
+        amount: i32,
+    },
+    /// Exiles every still-valid announced artifact-permanent target in one
+    /// batch. Each target is checked independently at resolution.
+    ExileAllArtifactTargets,
+    /// Deals damage to one target equal to `multiplier` times the number of
+    /// creatures the effect controller controls at resolution.
+    DealDamageByControlledCreatureCount {
+        target: TargetRef,
+        multiplier: i32,
+    },
+    /// Exiles every card in each distinctly targeted player's graveyard as
+    /// one simultaneous batch. The two-player kernel bounds this at two.
+    ExileTargetPlayersGraveyards,
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -6233,6 +6250,86 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         }
         EffectOp::ExileAllGraveyards => {
             let events = [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
+                .map(|object| event::ProposedEvent::zone_change(object, Zone::Exile))
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::DamageAllTargets { amount } => {
+            let events = ctx
+                .targets
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(index, target)| {
+                    let Target::Object(object) = target else {
+                        return None;
+                    };
+                    let live = state.objects.try_get(object)?;
+                    (ctx.target_incarnation_matches(index, state)
+                        && live.zone == Zone::Battlefield
+                        && crate::card_def::CARD_DEFS[live.card_def as usize]
+                            .has_type(crate::card_def::CardType::Creature))
+                    .then(|| event::ProposedEvent::damage(ctx.source, target, *amount))
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::ExileAllArtifactTargets => {
+            let events = ctx
+                .targets
+                .iter()
+                .copied()
+                .enumerate()
+                .filter_map(|(index, target)| {
+                    let Target::Object(object) = target else {
+                        return None;
+                    };
+                    let live = state.objects.try_get(object)?;
+                    (ctx.target_incarnation_matches(index, state)
+                        && live.zone == Zone::Battlefield
+                        && crate::card_def::CARD_DEFS[live.card_def as usize]
+                            .has_type(crate::card_def::CardType::Artifact))
+                    .then(|| {
+                        event::ProposedEvent::zone_change_preserving_known_identity(
+                            object,
+                            Zone::Exile,
+                        )
+                    })
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::DealDamageByControlledCreatureCount { target, multiplier } => {
+            let amount = state.players[ctx.controller.index()]
+                .battlefield
+                .iter()
+                .filter(|&&object| {
+                    crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize]
+                        .has_type(crate::card_def::CardType::Creature)
+                })
+                .count()
+                .try_into()
+                .unwrap_or(i32::MAX);
+            let amount = amount.saturating_mul(*multiplier);
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::damage(ctx.source, ctx.resolve_target(*target), amount),
+            );
+        }
+        EffectOp::ExileTargetPlayersGraveyards => {
+            let mut players = ctx
+                .targets
+                .iter()
+                .filter_map(|target| match target {
+                    Target::Player(player) => Some(*player),
+                    Target::Object(_) => None,
+                })
+                .collect::<Vec<_>>();
+            players.sort_unstable();
+            players.dedup();
+            let events = players
                 .into_iter()
                 .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
                 .map(|object| event::ProposedEvent::zone_change(object, Zone::Exile))

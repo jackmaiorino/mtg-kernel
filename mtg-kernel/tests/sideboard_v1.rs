@@ -136,10 +136,12 @@ fn checked_in_pool_is_wired_to_the_executable_bo3_admission_gate() {
 
 #[test]
 fn completed_checked_in_decks_are_individually_admitted_for_bo3() {
-    let deck = checked_in_pauper_registered_deck_by_id_v1("Terror").unwrap();
-    assert_eq!(deck.deck_id(), "Terror");
-    assert_eq!(deck.registered_configuration().mainboard().len(), 60);
-    assert_eq!(deck.registered_configuration().sideboard().len(), 15);
+    for deck_id in ["Rally", "Burn", "Terror"] {
+        let deck = checked_in_pauper_registered_deck_by_id_v1(deck_id).unwrap();
+        assert_eq!(deck.deck_id(), deck_id);
+        assert_eq!(deck.registered_configuration().mainboard().len(), 60);
+        assert_eq!(deck.registered_configuration().sideboard().len(), 15);
+    }
 
     assert_eq!(
         checked_in_pauper_registered_deck_by_id_v1("Missing"),

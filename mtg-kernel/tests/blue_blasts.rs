@@ -240,6 +240,7 @@ fn cast_for_mode(state: &mut GameState, blast: ObjectId, mode: u8) -> Decision {
             player: PlayerId::P0,
             spell,
             mode_count: 2,
+            ..
         } if spell == blast => {
             engine::step(state, Action::ChooseSpellMode(mode)).unwrap();
             engine::advance_until_decision(state)

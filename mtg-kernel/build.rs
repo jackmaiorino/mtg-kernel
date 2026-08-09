@@ -2216,6 +2216,14 @@ enum Special {
     /// Choose one: grant target creature islandwalk; give target creature
     /// +2/-1; or have target player discard a card.
     PiracyCharm,
+    /// Choose one: deal one damage to each of up to two target creatures, or
+    /// exile target artifact.
+    CastIntoTheFire,
+    /// Exile exactly two target artifact permanents.
+    DustToDust,
+    /// Choose one: dynamic creature-count damage, destroy an enchantment, or
+    /// exile any number of target players' graveyards.
+    ThrabenCharm,
     /// Symmetric Elemental Blast recipe. `checked_color` is the color the
     /// target must have; `filter_timing` distinguishes the Elemental Blasts'
     /// targeting restriction from Pyroblast/Hydroblast's resolution-time
@@ -2454,6 +2462,13 @@ impl Special {
             ),
             Special::SteelSabotage => "steel_sabotage:counter_or_bounce_artifact".to_string(),
             Special::PiracyCharm => "piracy_charm:islandwalk_or_pump_or_discard".to_string(),
+            Special::CastIntoTheFire => {
+                "cast_into_the_fire:damage_up_to_two_creatures_or_exile_artifact".to_string()
+            }
+            Special::DustToDust => "dust_to_dust:exile_exactly_two_artifacts".to_string(),
+            Special::ThrabenCharm => {
+                "thraben_charm:creature_count_damage_or_destroy_enchantment_or_exile_target_graveyards".to_string()
+            }
             Special::ColorBlast {
                 checked_color,
                 filter_timing,
@@ -2624,6 +2639,9 @@ fn special_for(name: &str) -> Special {
         },
         "Steel Sabotage" => Special::SteelSabotage,
         "Piracy Charm" => Special::PiracyCharm,
+        "Cast into the Fire" => Special::CastIntoTheFire,
+        "Dust to Dust" => Special::DustToDust,
+        "Thraben Charm" => Special::ThrabenCharm,
         "Blue Elemental Blast" => Special::ColorBlast {
             checked_color: BlastColor::Red,
             filter_timing: BlastFilterTiming::Targeting,
@@ -2733,6 +2751,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
             "target=ArtifactSpellOnStack;spell=CounterTarget;mode2=ReturnArtifactPermanentToOwnersHand;mana=None".to_string()
         }
         Special::PiracyCharm => "target=Creature;spell=GrantIslandwalk;mode2=PumpTarget(2,-1);mode3=DiscardCards(Target0,1);mana=None".to_string(),
+        Special::CastIntoTheFire => "target=UpToTwoCreatures;spell=DamageAllTargets(1);mode2=MoveAllTargets(Exile);mana=None".to_string(),
+        Special::DustToDust => "target=ExactlyTwoArtifactPermanents;spell=ExileAllArtifactTargets;mana=None".to_string(),
+        Special::ThrabenCharm => "target=Creature;spell=DealDamageByControlledCreatureCount(2);mode2=DestroyEnchantment;mode3=ExileTargetPlayersGraveyards;mana=None".to_string(),
         Special::ColorBlast {
             checked_color,
             filter_timing: BlastFilterTiming::Targeting,
@@ -3666,6 +3687,8 @@ fn mode2_for(name: &str) -> String {
         ),
         Special::SteelSabotage => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_return_target_permanent_to_owners_hand })".to_string(),
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
+        Special::CastIntoTheFire => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_cast_into_the_fire_exile_artifact })".to_string(),
+        Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: mode2_effect_thraben_charm_destroy_enchantment })".to_string(),
         _ => "None".to_string(),
     }
 }
@@ -3675,6 +3698,7 @@ fn mode2_for(name: &str) -> String {
 fn mode3_for(name: &str) -> String {
     match special_for(name) {
         Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::AnyPlayer, effect: mode3_effect_piracy_charm_discard })".to_string(),
+        Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::UpToTwoPlayers, effect: mode3_effect_thraben_charm_exile_graveyards })".to_string(),
         _ => "None".to_string(),
     }
 }
@@ -4722,6 +4746,79 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::CastIntoTheFire))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_cast_into_the_fire_damage() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::DamageAllTargets {{ amount: 1 }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(
+            out,
+            "fn mode2_effect_cast_into_the_fire_exile_artifact() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    EffectOp::MoveAllTargets {{ to_zone: Zone::Exile }}"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::DustToDust))
+    {
+        writeln!(out, "fn spell_effect_dust_to_dust() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::ExileAllArtifactTargets)").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::ThrabenCharm))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_thraben_charm_damage() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::DealDamageByControlledCreatureCount {{ target: TargetRef::Target(0), multiplier: 2 }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(
+            out,
+            "fn mode2_effect_thraben_charm_destroy_enchantment() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(
+            out,
+            "fn mode3_effect_thraben_charm_exile_graveyards() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(out, "    EffectOp::ExileTargetPlayersGraveyards").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|c| matches!(special_for(&c.name), Special::ColorBlast { .. }))
     {
         // The "if it's [color]" half used by Pyroblast/Hydroblast. Color is
@@ -4962,6 +5059,21 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::PiracyCharm => (
                 "TargetSpec::Creature",
                 "spell_effect_piracy_charm_islandwalk".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::CastIntoTheFire => (
+                "TargetSpec::UpToTwoCreatures",
+                "spell_effect_cast_into_the_fire_damage".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::DustToDust => (
+                "TargetSpec::ExactlyTwoArtifactPermanents",
+                "spell_effect_dust_to_dust".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::ThrabenCharm => (
+                "TargetSpec::Creature",
+                "spell_effect_thraben_charm_damage".to_string(),
                 "no_effect".to_string(),
             ),
             Special::CounterUnlessPaysGeneric { filter, generic } => (
@@ -5272,7 +5384,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v19\n");
+    let mut canon = String::from("kernel_carddb/v20\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');

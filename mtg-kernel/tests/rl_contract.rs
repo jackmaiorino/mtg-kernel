@@ -1797,6 +1797,7 @@ fn rl_contract_engine_pending_cast_context_changes_hash() {
         target_contracts: vec![mtg_kernel::state::StackTargetContractV4::Player(
             PlayerId::P1,
         )],
+        target_selection_finished: false,
         is_flashback: false,
         cast_mode: Some(CastMode::Normal),
         additional_cost_discarded: Some(Vec::new()),

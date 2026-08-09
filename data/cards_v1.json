@@ -389,6 +389,7 @@
     },
     {
       "name": "Cast into the Fire",
+      "engine_capability": "full",
       "mana_cost": "{1}{R}",
       "mana_value": 2,
       "colors": [
@@ -779,6 +780,7 @@
     },
     {
       "name": "Dust to Dust",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}{W}",
       "mana_value": 3,
       "colors": [
@@ -3635,6 +3637,7 @@
     },
     {
       "name": "Thraben Charm",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [

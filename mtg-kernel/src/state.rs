@@ -553,6 +553,10 @@ pub fn stack_target_contract_is_structurally_valid(
             0,
             StackTargetContractV4::Player(_),
         ) | (
+            TargetSpec::UpToTwoPlayers,
+            0 | 1,
+            StackTargetContractV4::Player(_),
+        ) | (
             TargetSpec::PlayerThenTheirCreature,
             1,
             StackTargetContractV4::Object {
@@ -568,8 +572,16 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::Creature
                 | TargetSpec::NonlegendaryCreature
                 | TargetSpec::ArtifactPermanent
+                | TargetSpec::EnchantmentPermanent
                 | TargetSpec::ControlledCreature,
             0,
+            StackTargetContractV4::Object {
+                zone: Zone::Battlefield,
+                ..
+            },
+        ) | (
+            TargetSpec::UpToTwoCreatures | TargetSpec::ExactlyTwoArtifactPermanents,
+            0 | 1,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
                 ..
@@ -3031,6 +3043,7 @@ mod tests {
             target_spec: crate::card_def::TargetSpec::None,
             targets_chosen: Vec::new(),
             target_contracts: Vec::new(),
+            target_selection_finished: false,
             is_flashback: false,
             cast_mode: Some(crate::engine::CastMode::Normal),
             additional_cost_discarded: Some(Vec::new()),

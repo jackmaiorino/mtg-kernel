@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "e37a34b507a72793fad1910fdcad7e2b54a2a30efc0644514530eccadc578c53"
+    "registry_raw_sha256": "cc8b43683e7e1fac5609958dd70e75287ed030d66faa24ce7513db8489f315ed"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 107,
+    "full_cards": 110,
     "partial_cards": 0,
-    "no_effect_cards": 43,
+    "no_effect_cards": 40,
     "token_dependencies": 8
   },
   "deck_mainboard_copy_totals": [
@@ -66,9 +66,9 @@
     },
     {
       "deck_id": "CawGates",
-      "full": 45,
+      "full": 47,
       "partial": 0,
-      "no_effect": 15,
+      "no_effect": 13,
       "total": 60
     },
     {
@@ -505,10 +505,8 @@
         "Deck - Mono Red Rally.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Chain Lightning",
@@ -829,10 +827,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Elves of Deep Shadow",
@@ -3225,10 +3221,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Timberwatch Elf",

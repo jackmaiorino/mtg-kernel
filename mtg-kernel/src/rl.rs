@@ -2138,6 +2138,7 @@ fn core_surface_action_candidates_v1(
                 spell,
                 remaining,
                 legal_targets,
+                can_finish,
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *spell)?;
@@ -2151,6 +2152,28 @@ fn core_surface_action_candidates_v1(
                             target: target_ref(state, target)?,
                         },
                         SurfaceAction::Action(Action::ChooseTarget(target)),
+                    )?;
+                }
+                if *can_finish {
+                    let selected_count = state
+                        .engine
+                        .pending_cast
+                        .as_ref()
+                        .filter(|pending| pending.spell == *spell)
+                        .map(|pending| pending.targets_chosen.len() as u16)
+                        .ok_or_else(|| {
+                            RlContractError(
+                                "optional cast target decision lost its pending cast".to_string(),
+                            )
+                        })?;
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::FinishTargetSelection {
+                            actor,
+                            source,
+                            selected_count,
+                        },
+                        SurfaceAction::Action(Action::FinishEffectSelection),
                     )?;
                 }
             }
@@ -2215,10 +2238,11 @@ fn core_surface_action_candidates_v1(
                 player,
                 spell,
                 mode_count,
+                legal_modes,
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *spell)?;
-                for mode_index in 0..*mode_count {
+                for &mode_index in legal_modes {
                     push_action(
                         &mut out,
                         ActionSemanticV1::ChooseSpellMode {

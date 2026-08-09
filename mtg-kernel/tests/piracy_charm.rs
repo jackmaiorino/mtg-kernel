@@ -64,6 +64,7 @@ fn begin_mode(state: &mut GameState, charm: ObjectId, mode: u8) -> Decision {
             player: PlayerId::P0,
             spell,
             mode_count: 3,
+            ..
         } if spell == charm
     ));
     engine::step(state, Action::ChooseSpellMode(mode)).unwrap();

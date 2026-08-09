@@ -122,6 +122,7 @@ fn cast_and_target(state: &mut GameState, deep: ObjectId, target: PlayerId) -> D
             spell,
             remaining: 1,
             ref legal_targets,
+            ..
         } if spell == deep
             && legal_targets == &vec![
                 Target::Player(PlayerId::P0),

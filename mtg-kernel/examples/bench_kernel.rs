@@ -259,12 +259,18 @@ fn random_action_for_decision(
             let i = rng_below(rng, candidates.len());
             candidates.swap_remove(i)
         }
-        Decision::ChooseTargets { legal_targets, .. } => {
-            assert!(
-                !legal_targets.is_empty(),
-                "a real ChooseTargets window must have at least one legal target"
-            );
-            Action::ChooseTarget(legal_targets[rng_below(rng, legal_targets.len())])
+        Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } => {
+            let choice_count = legal_targets.len() + usize::from(*can_finish);
+            let choice = rng_below(rng, choice_count);
+            if let Some(&target) = legal_targets.get(choice) {
+                Action::ChooseTarget(target)
+            } else {
+                Action::FinishEffectSelection
+            }
         }
         Decision::ChooseCostTargets { candidates, .. } => {
             Action::ChooseCostTarget(candidates[rng_below(rng, candidates.len())])
@@ -273,8 +279,8 @@ fn random_action_for_decision(
             Action::ChooseCastMode(options[rng_below(rng, options.len())])
         }
         Decision::ChooseKicker { .. } => Action::ChooseKicker(rng_chance(rng, 1, 2)),
-        Decision::ChooseSpellMode { mode_count, .. } => {
-            Action::ChooseSpellMode(rng_below(rng, *mode_count as usize) as u8)
+        Decision::ChooseSpellMode { legal_modes, .. } => {
+            Action::ChooseSpellMode(legal_modes[rng_below(rng, legal_modes.len())])
         }
         Decision::ChooseEffectOption { option_count, .. } => {
             Action::ChooseEffectOption(rng_below(rng, *option_count as usize) as u16)

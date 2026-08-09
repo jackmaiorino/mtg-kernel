@@ -589,6 +589,12 @@ pub struct PendingCast {
     /// one of those objects. Parallel to `targets_chosen`.
     #[serde(default)]
     pub target_contracts: Vec<StackTargetContractV4>,
+    /// True once the caster explicitly finishes a variable-cardinality
+    /// target announcement before reaching its maximum. Fixed-cardinality
+    /// spells and variable selections that reach their maximum keep this
+    /// false and complete by derivation.
+    #[serde(default)]
+    pub target_selection_finished: bool,
     /// True iff `spell` is being cast from the graveyard via flashback
     /// (`CardDef::flashback`), which uses a wholly different cost (never
     /// the printed mana cost) and exiles instead of going to the
@@ -874,6 +880,10 @@ pub enum Decision {
         spell: ObjectId,
         remaining: u8,
         legal_targets: Vec<Target>,
+        /// Whether the active cast may legally stop before selecting its
+        /// maximum number of targets. Mandatory targeting and spell-copy
+        /// retargeting always set this false.
+        can_finish: bool,
     },
     /// A cost component whose payment requires choosing WHICH objects pay
     /// it, not merely how many -- permanent sacrifices, Escape's choice
@@ -925,7 +935,12 @@ pub enum Decision {
     ChooseSpellMode {
         player: PlayerId,
         spell: ObjectId,
+        /// Total number of printed modes, preserving each mode's stable
+        /// printed index even when only a sparse subset is currently legal.
         mode_count: u8,
+        /// Exact printed mode indices whose targeting and payment can be
+        /// completed in the live state.
+        legal_modes: Vec<u8>,
     },
     /// A generic resumable effect program yielded a branch choice during
     /// resolution. `option_count` preserves the printed/program order; one
@@ -1197,21 +1212,38 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ArtifactSpellOnStack
         | TargetSpec::ArtifactPermanent
         | TargetSpec::CreatureOrLandCardInGraveyard
-        | TargetSpec::ControlledCreature => 1,
-        TargetSpec::PlayerThenTheirCreature => 2,
-        TargetSpec::UpToTwoCreatureCardsInOwnGraveyard => 2,
+        | TargetSpec::ControlledCreature
+        | TargetSpec::EnchantmentPermanent => 1,
+        TargetSpec::PlayerThenTheirCreature
+        | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
+        | TargetSpec::UpToTwoCreatures
+        | TargetSpec::ExactlyTwoArtifactPermanents
+        | TargetSpec::UpToTwoPlayers => 2,
     }
 }
 
 fn target_min_count(spec: TargetSpec) -> u8 {
     match spec {
-        TargetSpec::UpToTwoCreatureCardsInOwnGraveyard => 0,
+        TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
+        | TargetSpec::UpToTwoCreatures
+        | TargetSpec::UpToTwoPlayers => 0,
         _ => target_count(spec),
     }
 }
 
 fn target_cardinality_is_complete(spec: TargetSpec, count: usize) -> bool {
     count >= usize::from(target_min_count(spec)) && count <= usize::from(target_count(spec))
+}
+
+fn pending_cast_targeting_is_complete(pending: &PendingCast, spec: TargetSpec) -> bool {
+    let count = pending.targets_chosen.len();
+    let min = usize::from(target_min_count(spec));
+    let max = usize::from(target_count(spec));
+    if min == max {
+        count == max && !pending.target_selection_finished
+    } else {
+        count == max || (pending.target_selection_finished && count >= min && count < max)
+    }
 }
 
 fn is_color(state: &GameState, id: ObjectId, color: mana::ManaColor) -> bool {
@@ -1683,6 +1715,11 @@ fn legal_targets_for_controller(
         TargetSpec::AnyPlayer => {
             vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)]
         }
+        TargetSpec::UpToTwoPlayers => [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .map(Target::Player)
+            .filter(|target| !targets_chosen.contains(target))
+            .collect(),
         TargetSpec::AnyTarget => {
             let mut out = vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)];
             for p in [PlayerId::P0, PlayerId::P1] {
@@ -1757,11 +1794,12 @@ fn legal_targets_for_controller(
             })
             .map(Target::Object)
             .collect(),
-        TargetSpec::Creature => battlefield_objects(state)
+        TargetSpec::Creature | TargetSpec::UpToTwoCreatures => battlefield_objects(state)
             .filter(|&id| {
                 let def_idx = state.objects.get(id).card_def;
                 card_def::CARD_DEFS[def_idx as usize].has_type(CardType::Creature)
             })
+            .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
             .map(Target::Object)
             .collect(),
         TargetSpec::NonlegendaryCreature => battlefield_objects(state)
@@ -1774,6 +1812,15 @@ fn legal_targets_for_controller(
             .map(Target::Object)
             .collect(),
         TargetSpec::ArtifactPermanent => permanent_targets_with_type(state, CardType::Artifact),
+        TargetSpec::ExactlyTwoArtifactPermanents => {
+            permanent_targets_with_type(state, CardType::Artifact)
+                .into_iter()
+                .filter(|target| !targets_chosen.contains(target))
+                .collect()
+        }
+        TargetSpec::EnchantmentPermanent => {
+            permanent_targets_with_type(state, CardType::Enchantment)
+        }
         TargetSpec::CreatureOrLandCardInGraveyard => [PlayerId::P0, PlayerId::P1]
             .into_iter()
             .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
@@ -2938,6 +2985,16 @@ fn supported_omen(def: &card_def::CardDef) -> Option<&card_def::OmenDef> {
 
 fn has_spell_form_choice(def: &card_def::CardDef) -> bool {
     def.mode2.is_some() || def.mode3.is_some() || supported_omen(def).is_some()
+}
+
+fn printed_spell_form_count(def: &card_def::CardDef) -> u8 {
+    if def.mode3.is_some() {
+        3
+    } else if def.mode2.is_some() || supported_omen(def).is_some() {
+        2
+    } else {
+        1
+    }
 }
 
 fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpec> {
@@ -4503,6 +4560,7 @@ fn drain_pending_spell_copy_or_decide(state: &mut GameState) -> Option<Decision>
                 spell: copy,
                 remaining: 1,
                 legal_targets: legal_targets_for(TargetSpec::AnyTarget, &[], state),
+                can_finish: false,
             })
         }
     }
@@ -4901,8 +4959,12 @@ pub(crate) fn validate_pending_cast(
     if !mode_shape_valid {
         return Err("pending cast mode selection is noncanonical".to_string());
     }
-    if pending.mode_chosen.is_none() && !pending.targets_chosen.is_empty() {
-        return Err("pending cast chose targets before choosing its spell mode".to_string());
+    if pending.mode_chosen.is_none()
+        && (!pending.targets_chosen.is_empty() || pending.target_selection_finished)
+    {
+        return Err(
+            "pending cast chose or finished targets before choosing its spell mode".to_string(),
+        );
     }
     let active_spec = pending
         .mode_chosen
@@ -4920,6 +4982,16 @@ pub(crate) fn validate_pending_cast(
         )
     {
         return Err("pending cast target prefix or contracts are malformed".to_string());
+    }
+    if pending.target_selection_finished {
+        let spec = active_spec.ok_or("pending cast finished targets without an active form")?;
+        let min = usize::from(target_min_count(spec));
+        if min == required_targets
+            || pending.targets_chosen.len() < min
+            || pending.targets_chosen.len() >= required_targets
+        {
+            return Err("pending cast target-finish marker is noncanonical".to_string());
+        }
     }
     if let Some(spec) = active_spec {
         let mut prefix = Vec::new();
@@ -5006,7 +5078,7 @@ pub(crate) fn validate_pending_cast(
     }
     if !pending.sacrifice_chosen.is_empty()
         && (pending.cast_mode.is_none()
-            || pending.targets_chosen.len() != required_targets
+            || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
             || pending.kicked.is_none())
     {
         return Err("pending cast chose object costs before prior stages completed".to_string());
@@ -5038,18 +5110,21 @@ pub(crate) fn validate_pending_cast(
     if pending.kicked.is_none()
         && (pending.mode_chosen != seeded_mode
             || !pending.targets_chosen.is_empty()
+            || pending.target_selection_finished
             || !later_fields_are_seeded(true))
     {
         return Err("pending cast advanced past an unresolved kicker choice".to_string());
     }
     if has_spell_form_choice(def)
         && pending.mode_chosen.is_none()
-        && (!pending.targets_chosen.is_empty() || !later_fields_are_seeded(true))
+        && (!pending.targets_chosen.is_empty()
+            || pending.target_selection_finished
+            || !later_fields_are_seeded(true))
     {
         return Err("pending cast advanced past an unresolved spell-mode choice".to_string());
     }
     if pending.mode_chosen.is_some()
-        && pending.targets_chosen.len() < required_targets
+        && active_spec.is_some_and(|spec| !pending_cast_targeting_is_complete(pending, spec))
         && !later_fields_are_seeded(true)
     {
         return Err("pending cast advanced past incomplete targeting".to_string());
@@ -5059,7 +5134,7 @@ pub(crate) fn validate_pending_cast(
         && pending.cast_mode.is_some()
         && (pending.kicked.is_none()
             || pending.mode_chosen.is_none()
-            || pending.targets_chosen.len() != required_targets)
+            || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec)))
     {
         return Err("pending cast chose a cast mode before prior stages completed".to_string());
     }
@@ -5120,7 +5195,7 @@ pub(crate) fn validate_pending_cast(
             || controller != pending.controller
             || discard.player != pending.controller
             || discard.count != u32::from(expected_count)
-            || pending.targets_chosen.len() != required_targets
+            || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
             || pending.cast_mode.is_none()
             || pending.kicked.is_none()
             || pending.sacrifice_chosen.len() != usize::from(interactive_object_cost_needed)
@@ -5210,8 +5285,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         return Some(Decision::ChooseSpellMode {
             player: pending.controller,
             spell: pending.spell,
-            mode_count: u8::try_from(viable_modes.len())
-                .expect("the bounded printed mode count fits u8"),
+            mode_count: printed_spell_form_count(def),
+            legal_modes: viable_modes,
         });
     }
     let active_target_spec = spell_form_target_spec(
@@ -5223,7 +5298,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     .expect("mode shape validated at drain entry");
 
     let need = target_count(active_target_spec);
-    if (pending.targets_chosen.len() as u8) < need {
+    if !pending_cast_targeting_is_complete(&pending, active_target_spec) {
         return Some(Decision::ChooseTargets {
             player: pending.controller,
             spell: pending.spell,
@@ -5233,6 +5308,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 &pending.targets_chosen,
                 state,
             ),
+            can_finish: pending.targets_chosen.len()
+                >= usize::from(target_min_count(active_target_spec)),
         });
     }
 
@@ -5459,6 +5536,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 spell: pending.source,
                 remaining: max_targets - pending.targets_chosen.len() as u8,
                 legal_targets,
+                can_finish: false,
             });
         }
     }
@@ -7197,6 +7275,7 @@ enum PendingCastActionStage {
     ChooseKicker,
     ChooseSpellMode,
     ChooseTarget,
+    ChooseOptionalTarget,
     ChooseCastMode,
     ChooseCostTarget,
     Discard,
@@ -7239,8 +7318,14 @@ fn pending_cast_action_stage(
             .expect("handled unresolved spell-form choice above"),
     )
     .ok_or("pending cast selected a nonexistent spell form")?;
-    if pending.targets_chosen.len() < usize::from(target_count(active_target_spec)) {
-        return Ok(PendingCastActionStage::ChooseTarget);
+    if !pending_cast_targeting_is_complete(pending, active_target_spec) {
+        return Ok(
+            if target_min_count(active_target_spec) < target_count(active_target_spec) {
+                PendingCastActionStage::ChooseOptionalTarget
+            } else {
+                PendingCastActionStage::ChooseTarget
+            },
+        );
     }
     if pending.cast_mode.is_none() {
         return Ok(PendingCastActionStage::ChooseCastMode);
@@ -7271,6 +7356,9 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
         ) | (
             PendingCastActionStage::ChooseTarget,
             Action::ChooseTarget(_)
+        ) | (
+            PendingCastActionStage::ChooseOptionalTarget,
+            Action::ChooseTarget(_) | Action::FinishEffectSelection
         ) | (
             PendingCastActionStage::ChooseCastMode,
             Action::ChooseCastMode(_)
@@ -7533,7 +7621,9 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             }
         }
         Action::FinishEffectSelection => {
-            if state.engine.pending_activation.is_some() {
+            if state.engine.pending_cast.is_some() {
+                finish_optional_cast_targets(state)
+            } else if state.engine.pending_activation.is_some() {
                 finish_optional_activation_targets(state)
             } else {
                 effect::finish_resumable_target_selection(state)
@@ -7583,7 +7673,7 @@ fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, Stri
                 let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
                 let spec = spell_form_target_spec(def, mode)
                     .ok_or("pending cast selected a nonexistent spell form")?;
-                if pending.targets_chosen.len() < usize::from(target_count(spec)) {
+                if !pending_cast_targeting_is_complete(pending, spec) {
                     producers.push(TargetingProducer::Cast {
                         pending: pending.clone(),
                         spec,
@@ -7667,6 +7757,39 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
             apply_choose_spell_copy_target(state, target)
         }
     }
+}
+
+fn finish_optional_cast_targets(state: &mut GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .clone()
+        .ok_or("no cast is selecting optional targets")?;
+    validate_pending_cast(state, &pending)?;
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let spec = spell_form_target_spec(
+        def,
+        pending
+            .mode_chosen
+            .ok_or("cast target selection finished before choosing a spell form")?,
+    )
+    .ok_or("pending cast selected a nonexistent spell form")?;
+    let min = usize::from(target_min_count(spec));
+    let max = usize::from(target_count(spec));
+    if min >= max
+        || pending.target_selection_finished
+        || pending.targets_chosen.len() < min
+        || pending.targets_chosen.len() >= max
+    {
+        return Err("the pending cast target selection cannot finish".to_string());
+    }
+    state
+        .engine
+        .pending_cast
+        .as_mut()
+        .expect("validated optional cast targeting remains staged")
+        .target_selection_finished = true;
+    Ok(())
 }
 
 fn apply_choose_optional_activation_target(
@@ -7753,7 +7876,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
             )
             .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
-                || pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
+                || !pending_cast_targeting_is_complete(&pending, active_target_spec)
                 || pending.cast_mode.is_none()
             {
                 return Err(
@@ -7788,7 +7911,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
             )
             .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
-                || pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
+                || !pending_cast_targeting_is_complete(&pending, active_target_spec)
                 || pending.cast_mode.is_none()
             {
                 return Err(
@@ -7831,7 +7954,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 )
                 .ok_or("pending cast selected a nonexistent spell form")?;
                 if pending.kicked.is_none()
-                    || pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
+                    || !pending_cast_targeting_is_complete(&pending, active_target_spec)
                     || pending.cast_mode.is_none()
                 {
                     return Err(
@@ -8948,6 +9071,7 @@ fn begin_cast_ex(
         target_spec,
         targets_chosen: vec![],
         target_contracts: vec![],
+        target_selection_finished: false,
         is_flashback,
         cast_mode,
         additional_cost_discarded,
