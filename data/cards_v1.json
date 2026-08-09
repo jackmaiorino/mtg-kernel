@@ -201,6 +201,7 @@
     },
     {
       "name": "Blood Fountain",
+      "engine_capability": "full",
       "mana_cost": "{B}",
       "mana_value": 1,
       "colors": [
@@ -894,6 +895,7 @@
     },
     {
       "name": "Eviscerator's Insight",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -1074,6 +1076,7 @@
     },
     {
       "name": "Fanatical Offering",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -2885,6 +2888,7 @@
     },
     {
       "name": "Reckoner's Bargain",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -4531,6 +4535,37 @@
         "life_gain"
       ],
       "java_file": "Mage.Sets/src/mage/cards/h/HealerOfTheGlade.java"
+    },
+    {
+      "name": "Map Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Map"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_cost",
+        "tap_ability",
+        "explore",
+        "counter",
+        "reveal"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/MapToken.java"
     }
   ],
   "unresolved": [

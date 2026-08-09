@@ -52,6 +52,7 @@ struct CardJson {
     #[serde(default)]
     engine_capability: EngineCapabilityJson,
     mana_cost: String,
+    mana_value: u16,
     #[serde(default)]
     types: Vec<String>,
     #[serde(default)]
@@ -2302,6 +2303,16 @@ enum Special {
         amount: i32,
         excluded_subtype: &'static str,
     },
+    /// Draw cards, then create one named token.
+    DrawThenCreateToken {
+        draw: u8,
+        token: &'static str,
+    },
+    /// Gain life equal to the frozen mana value of the paid sacrifice, then
+    /// draw cards.
+    GainPaidCostManaValueThenDraw {
+        draw: u8,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2477,6 +2488,12 @@ impl Special {
                 amount,
                 excluded_subtype,
             } => format!("damage_each_creature_without_subtype:{amount}:{excluded_subtype}"),
+            Special::DrawThenCreateToken { draw, token } => {
+                format!("draw_then_create_token:{draw}:{token}")
+            }
+            Special::GainPaidCostManaValueThenDraw { draw } => {
+                format!("gain_paid_cost_mana_value_then_draw:{draw}")
+            }
         }
     }
 }
@@ -2500,6 +2517,8 @@ enum AbilityEffectRecipe {
     GainLife(u8),
     CreateToken(&'static str),
     DamageTarget(u8),
+    MoveAllTargetsToHand,
+    ExploreTarget,
     /// The interpreter currently supports exactly this typecycling search
     /// contract. Keeping all semantic knobs in the recipe makes codegen fail
     /// closed if a future caller asks for a different cardinality/reveal/
@@ -2541,6 +2560,12 @@ fn special_for(name: &str) -> Special {
         "Lorien Revealed" => Special::DrawCards(3),
         "Thoughtcast" => Special::DrawCards(2),
         "Of One Mind" => Special::DrawCards(2),
+        "Eviscerator's Insight" => Special::DrawCards(2),
+        "Fanatical Offering" => Special::DrawThenCreateToken {
+            draw: 2,
+            token: "Map Token",
+        },
+        "Reckoner's Bargain" => Special::GainPaidCostManaValueThenDraw { draw: 2 },
         "Lightning Bolt" => Special::BurnAnyTarget(3),
         "Fiery Temper" => Special::BurnAnyTarget(3),
         "Fireblast" => Special::BurnAnyTarget(4),
@@ -2735,6 +2760,12 @@ fn effect_recipe_for(card: &CardJson) -> String {
         } => format!(
             "target=None;spell=DamageEachCreatureWithoutSubtype({amount},{excluded_subtype});mana=None"
         ),
+        Special::DrawThenCreateToken { draw, token } => {
+            format!("target=None;spell=DrawThenCreateToken(Controller,{draw},{token});mana=None")
+        }
+        Special::GainPaidCostManaValueThenDraw { draw } => {
+            format!("target=None;spell=GainPaidCostManaValueThenDraw(Controller,{draw});mana=None")
+        }
     }
 }
 
@@ -2850,6 +2881,9 @@ fn alt_cost_for(name: &str) -> &'static str {
 fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Grab the Prize" => "Some(&[CostComponent::DiscardCards(1)])",
+        "Fanatical Offering" | "Reckoner's Bargain" | "Eviscerator's Insight" => {
+            "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::ArtifactOrCreature }])"
+        }
         _ => "None",
     }
 }
@@ -2875,6 +2909,13 @@ fn flashback_for(name: &str) -> String {
             let (pips, generic, x_count) = parse_cost("{1}{U}");
             format!(
                 "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::PayLife(3)] }})",
+                pips.join(", ")
+            )
+        }
+        "Eviscerator's Insight" => {
+            let (pips, generic, x_count) = parse_cost("{4}{B}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
                 pips.join(", ")
             )
         }
@@ -2954,6 +2995,38 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
             target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Map Token" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::ExploreTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Blood Fountain" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("B"),
+                    generic: 3,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::MoveAllTargetsToHand,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "UpToTwoCreatureCardsInOwnGraveyard",
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
@@ -3124,6 +3197,8 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::GainLife(amount) => format!("gain_life:{amount}"),
         AbilityEffectRecipe::CreateToken(name) => format!("create_token:{name}"),
         AbilityEffectRecipe::DamageTarget(amount) => format!("damage_target:{amount}"),
+        AbilityEffectRecipe::MoveAllTargetsToHand => "move_all_targets_to_hand".to_string(),
+        AbilityEffectRecipe::ExploreTarget => "explore_target".to_string(),
         AbilityEffectRecipe::SearchLibraryToHand {
             filter,
             min_targets,
@@ -3175,6 +3250,10 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::DamageTarget(amount) => {
             format!("ability_effect_damage_target_{amount}")
         }
+        AbilityEffectRecipe::MoveAllTargetsToHand => {
+            "ability_effect_move_all_targets_to_hand".to_string()
+        }
+        AbilityEffectRecipe::ExploreTarget => "ability_effect_explore_target".to_string(),
         AbilityEffectRecipe::SearchLibraryToHand {
             filter: LibrarySearchFilterRecipe::LandWithSubtype(subtype),
             min_targets: 0,
@@ -3211,7 +3290,8 @@ fn activated_abilities_for(name: &str) -> String {
     }
     let abilities = recipes
         .iter()
-        .map(|recipe| {
+        .enumerate()
+        .map(|(_index, recipe)| {
             let costs = recipe
                 .cost
                 .iter()
@@ -3240,7 +3320,8 @@ fn activated_abilities_for(name: &str) -> String {
 fn activated_abilities_token(name: &str) -> String {
     activated_ability_recipes_for(name)
         .iter()
-        .map(|recipe| {
+        .enumerate()
+        .map(|(_index, recipe)| {
             let costs = recipe
                 .cost
                 .iter()
@@ -3461,6 +3542,33 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    for card in cards {
+        match special_for(&card.name) {
+            Special::DrawThenCreateToken { draw, token } => {
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},").unwrap();
+                writeln!(out, "        EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }},").unwrap();
+                writeln!(out, "    ]))").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
+            Special::GainPaidCostManaValueThenDraw { draw } => {
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::GainLifeEqualToPaidCostManaValue {{ player: PlayerRef::Controller }},").unwrap();
+                writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},").unwrap();
+                writeln!(out, "    ]))").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
+            _ => {}
+        }
+    }
+
     // Shared/one-off effect-program functions. Function *pointers* (not
     // owned EffectOp values) are what make a `static [CardDef; N]` array
     // possible: EffectOp contains Vec/Box and can't live in a const
@@ -3547,6 +3655,20 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(
                     out,
                     "    EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: {amount} }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::MoveAllTargetsToHand => {
+                writeln!(
+                    out,
+                    "    EffectOp::MoveAllTargets {{ to_zone: Zone::Hand }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::ExploreTarget => {
+                writeln!(
+                    out,
+                    "    EffectOp::ExploreTarget {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
             }
@@ -4582,6 +4704,16 @@ fn codegen(cards: &[CardJson]) -> String {
                 ),
                 "no_effect".to_string(),
             ),
+            Special::DrawThenCreateToken { .. } | Special::GainPaidCostManaValueThenDraw { .. } => {
+                (
+                    "TargetSpec::None",
+                    format!(
+                        "spell_effect_{}",
+                        c.name.to_ascii_lowercase().replace([' ', '\''], "_")
+                    ),
+                    "no_effect".to_string(),
+                )
+            }
             Special::MillThenDraw { player, mill, draw } => {
                 let (target_spec, player_suffix) = match player {
                     MillPlayer::Controller => ("TargetSpec::None", "controller"),
@@ -4723,6 +4855,7 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        omen: {},", omen_for(&c.name)).unwrap();
+        writeln!(out, "        mana_value: {},", c.mana_value).unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -4748,11 +4881,13 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v14\n");
+    let mut canon = String::from("kernel_carddb/v16\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
         canon.push_str(&c.mana_cost);
+        canon.push('|');
+        canon.push_str(&c.mana_value.to_string());
         canon.push('|');
         canon.push_str(&c.types.join(","));
         canon.push('|');
@@ -4973,6 +5108,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Wall" => "Subtype::Wall",
         "Troll" => "Subtype::Troll",
         "Elemental" => "Subtype::Elemental",
+        "Map" => "Subtype::Map",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

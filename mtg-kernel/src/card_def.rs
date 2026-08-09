@@ -194,6 +194,8 @@ pub enum Subtype {
     Troll,
     /// Appended for Healer of the Glade. Existing stable ids remain fixed.
     Elemental,
+    /// Appended for Map Token. Existing stable ids remain fixed.
+    Map,
 }
 
 impl Subtype {
@@ -281,6 +283,12 @@ pub enum TargetSpec {
     /// Appended for Pulse of Murasa without changing any earlier target
     /// identity.
     CreatureOrLandCardInGraveyard,
+    /// Exactly one creature controlled by the activating player. Map
+    /// Token's Explore ability is the first consumer.
+    ControlledCreature,
+    /// Zero, one, or two creature cards in the activating player's own
+    /// graveyard. Blood Fountain may legally announce none.
+    UpToTwoCreatureCardsInOwnGraveyard,
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -350,6 +358,13 @@ pub enum PermanentFilterDef {
     LandWithSubtype(Subtype),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermanentFilter {
+    /// A controlled permanent whose definition has either the Artifact or
+    /// Creature card type. Artifact creatures and artifact lands match once.
+    ArtifactOrCreature,
+}
+
 /// One component of a composite cost. Composable (a real cost is `&'static
 /// [CostComponent]`) rather than card-shaped, matching the `EffectOp`
 /// philosophy in `effect.rs`: "sacrifice 2 Mountains" is
@@ -377,6 +392,9 @@ pub enum CostComponent {
     /// `PendingCast::sacrifice_chosen` compatibility field also carries the
     /// mutually-exclusive Escape graveyard selection family.
     SacrificeLands(u8),
+    /// Sacrifice `count` controlled permanents matching `filter`, announced
+    /// one at a time through `Decision::ChooseCostTargets`.
+    SacrificeControlled { count: u8, filter: PermanentFilter },
     /// An ordinary mana payment, solved by `mana::solve` same as a spell's
     /// printed cost.
     Mana(Cost),
@@ -659,6 +677,9 @@ pub struct CardDef {
     /// Alternative Omen spell characteristics, if any. Appended so all
     /// pre-existing generated `CardDef` field identities stay fixed.
     pub omen: Option<OmenDef>,
+    /// Printed mana value from the registry. This remains constant even when
+    /// Affinity or another reducer changes the amount actually paid.
+    pub mana_value: u16,
 }
 
 impl CardDef {
@@ -823,12 +844,13 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 142 real pool cards + 5 tokens (Blood, created by Voldaren
+        // 142 real pool cards + 6 tokens (Blood, created by Voldaren
         // Epicure's ETB trigger; Human Soldier Token/Samurai Token, created
         // by Rally at the Hornburg/Experimental Synthesizer; Bird Illusion
         // Token, created by Murmuring Mystic; Food Token, created by Generous
-        // Ent -- see `trigger.rs`/`build.rs`).
-        assert_eq!(CARD_DEFS.len(), 147);
+        // Ent; Map Token, created by Fanatical Offering -- see
+        // `trigger.rs`/`build.rs`).
+        assert_eq!(CARD_DEFS.len(), 148);
     }
 
     #[test]
@@ -854,6 +876,8 @@ mod tests {
             (TargetSpec::ArtifactSpellOnStack, 17),
             (TargetSpec::ArtifactPermanent, 18),
             (TargetSpec::CreatureOrLandCardInGraveyard, 19),
+            (TargetSpec::ControlledCreature, 20),
+            (TargetSpec::UpToTwoCreatureCardsInOwnGraveyard, 21),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec as u8, ordinal);
@@ -869,10 +893,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v18_is_frozen() {
-        // Version 18 appends the Elves tribal recipes to the green utility,
-        // typecycling, Omen, counterspell, and Spy-mana composition.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x26e4_c977_2f9c_b11d);
+    fn card_db_hash_v19_is_frozen() {
+        // Version 19 composes the Elves tribal and Affinity value-card
+        // recipes while preserving every earlier card and token id.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xfb48_7f43_5983_3ade);
     }
 
     #[test]
@@ -1072,7 +1096,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 92, "87 deck cards plus five required tokens");
+        assert_eq!(full, 102, "96 deck cards plus six required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

@@ -86,6 +86,7 @@ fn execute_trigger(state: &mut GameState, source: ObjectId, controller: PlayerId
             targets: Vec::new(),
             target_contracts: Vec::new(),
             discarded: Vec::new(),
+            paid_cost_refs: Vec::new(),
             kicked: false,
         },
         state,

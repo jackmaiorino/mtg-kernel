@@ -78,6 +78,7 @@ fn execute_trigger(state: &mut GameState, trigger: &trigger::PendingTrigger) {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             discarded: Vec::new(),
+            paid_cost_refs: Vec::new(),
             kicked: false,
         },
         state,

@@ -19,7 +19,7 @@ use crate::card_def::{CardType, DynamicValueDef, Subtype};
 use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
-use crate::state::{GameState, StackItem, StackTargetContractV4, Target, Zone};
+use crate::state::{GameState, PaidCostRefV4, StackItem, StackTargetContractV4, Target, Zone};
 use serde::{Deserialize, Serialize};
 
 /// Which of a controller's creatures a team-wide pump/keyword effect
@@ -483,6 +483,31 @@ pub enum EffectOp {
         count: u8,
         card_type: CardType,
     },
+    /// Gains life equal to the printed mana values of the objects frozen in
+    /// this stack item's cost-payment provenance. Cost reductions never
+    /// change those values. Reckoner's Bargain is the first consumer.
+    GainLifeEqualToPaidCostManaValue {
+        player: PlayerRef,
+    },
+    /// Moves each still-valid announced object target independently. This
+    /// implements effects such as Blood Fountain's up-to-two graveyard
+    /// returns, where one stale target does not stop the other from moving.
+    MoveAllTargets {
+        to_zone: Zone,
+    },
+    /// The target creature explores: its controller reveals the top card of
+    /// their library, puts a land into hand, or puts a +1/+1 counter on the
+    /// creature and may put a nonland into the graveyard.
+    ExploreTarget {
+        object: ObjectRef,
+    },
+    /// Interpreter-owned exact-incarnation move used after Explore reveals a
+    /// nonland. Generated card programs never contain a pre-bound object.
+    MoveBoundObject {
+        object: EffectObjectBinding,
+        to_zone: Zone,
+        preserve_known_identity: bool,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -811,6 +836,11 @@ pub enum EffectOptionChoicePurpose {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    ExploreNonlandTop {
+        player: PlayerId,
+        top: EffectObjectBinding,
+        canonical_path: Vec<u16>,
+    },
 }
 
 /// A policy-visible choice yielded by the generic effect interpreter. This is
@@ -891,7 +921,7 @@ pub enum ResumableProgress {
 /// Everything an effect program needs to resolve symbolic refs against a
 /// concrete game: which object it's running for, who controls it, and the
 /// targets chosen when it was cast/activated.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecCtx {
     /// Exact resolving stack incarnation. Direct unit-test contexts that do
     /// not originate from a real stack item leave this absent.
@@ -909,6 +939,10 @@ pub struct ExecCtx {
     /// the Prize), if any. Empty for everything else. Read by
     /// `EffectCond::DiscardedNonLandForCost`.
     pub discarded: Vec<ObjectId>,
+    /// Exact historical objects used to pay this stack item's cost. Dynamic
+    /// values read these frozen definitions, never the objects' later zones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paid_cost_refs: Vec<PaidCostRefV4>,
     /// True iff the spell/ability this resolution belongs to was kicked
     /// (`card_def::CardDef::kicker_cost`) -- carried on `state::StackItem::
     /// kicked` and copied in here by `engine::resolve_top_of_stack`, and
@@ -918,6 +952,24 @@ pub struct ExecCtx {
     /// Kicker (the overwhelming majority), and for any ability/trigger not
     /// downstream of a kicked cast.
     pub kicked: bool,
+}
+
+impl std::hash::Hash for ExecCtx {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Preserve the historical hot-path state hash for every pre-v12
+        // continuation. The appended provenance participates only when a
+        // program actually carries a paid object.
+        std::hash::Hash::hash(&self.source, state);
+        std::hash::Hash::hash(&self.controller, state);
+        std::hash::Hash::hash(&self.targets, state);
+        std::hash::Hash::hash(&self.target_contracts, state);
+        std::hash::Hash::hash(&self.discarded, state);
+        std::hash::Hash::hash(&self.kicked, state);
+        if !self.paid_cost_refs.is_empty() {
+            std::hash::Hash::hash(&0x7061_6964_5f72_6566_u64, state);
+            std::hash::Hash::hash(&self.paid_cost_refs, state);
+        }
+    }
 }
 
 /// Whether this program can yield a policy-visible choice anywhere in its
@@ -947,7 +999,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
-        | EffectOp::LookTopSelectByTypeToHandBottomRest { .. } => true,
+        | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
+        | EffectOp::ExploreTarget { .. } => true,
         _ => false,
     }
 }
@@ -1056,6 +1109,12 @@ pub fn choose_resumable_option(state: &mut GameState, option_index: u16) -> Resu
                             frame: Box::new(frame.clone()),
                         });
                     continuation.frames.push(frame);
+                }
+                EffectOptionChoicePurpose::ExploreNonlandTop { .. } => {
+                    path.push(option_index);
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: selected, path });
                 }
             }
             Ok(())
@@ -2102,6 +2161,7 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         || pending.ctx.targets != pending.resolving_item.targets
         || pending.ctx.target_contracts != pending.resolving_item.v4.target_contracts
         || pending.ctx.discarded != pending.resolving_item.discarded
+        || pending.ctx.paid_cost_refs != pending.resolving_item.v4.paid_cost_refs
         || pending.ctx.kicked != pending.resolving_item.kicked
     {
         return Err(
@@ -2628,6 +2688,43 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     );
                 }
                 validate_owner_library_target_binding(state, pending, *object, *owner)?;
+            }
+            EffectOptionChoicePurpose::ExploreNonlandTop {
+                player: library_player,
+                top,
+                canonical_path,
+            } => {
+                if player != library_player || path != canonical_path {
+                    return Err("explore choice player or structural path changed".to_string());
+                }
+                let [EffectOp::Sequence(keep), EffectOp::MoveBoundObject {
+                    object,
+                    to_zone: Zone::Graveyard,
+                    preserve_known_identity: true,
+                }] = options.as_slice()
+                else {
+                    return Err(
+                        "explore choice changed its exact keep-or-graveyard options".to_string()
+                    );
+                };
+                if !keep.is_empty() || object != top {
+                    return Err("explore choice changed its bound top card".to_string());
+                }
+                validate_effect_object_binding(state, *top)?;
+                if top.expected_zone != Zone::Library
+                    || state.players[library_player.index()]
+                        .library
+                        .first()
+                        .copied()
+                        != Some(top.object)
+                    || state.objects.get(top.object).owner != *library_player
+                    || crate::card_def::CARD_DEFS[state.objects.get(top.object).card_def as usize]
+                        .has_type(CardType::Land)
+                {
+                    return Err(
+                        "explore choice no longer binds the revealed nonland on top".to_string()
+                    );
+                }
             }
         },
     }
@@ -3778,6 +3875,64 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::ExploreTarget { object } => {
+                let target = continuation.ctx.resolve_object(object);
+                let target_index = match object {
+                    ObjectRef::Target(index) => usize::from(index),
+                    ObjectRef::ThisSource => {
+                        return Err("Explore requires an announced creature target".to_string())
+                    }
+                };
+                if !continuation
+                    .ctx
+                    .target_incarnation_matches(target_index, state)
+                    || state.objects.get(target).zone != Zone::Battlefield
+                {
+                    return Err("Explore target incarnation is no longer valid".to_string());
+                }
+                let player = continuation.ctx.controller;
+                let Some(top) = bind_library_top(state, player, 1).into_iter().next() else {
+                    continue;
+                };
+                state.reveal_library_top(PlayerId::P0, player, 1);
+                state.reveal_library_top(PlayerId::P1, player, 1);
+                let top_def =
+                    &crate::card_def::CARD_DEFS[state.objects.get(top.object).card_def as usize];
+                if top_def.has_type(CardType::Land) {
+                    event::propose_and_commit(
+                        state,
+                        event::ProposedEvent::zone_change_preserving_known_identity(
+                            top.object,
+                            Zone::Hand,
+                        ),
+                    );
+                    continue;
+                }
+                let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+                *counters = counters
+                    .checked_add(1)
+                    .ok_or("Explore +1/+1 counter overflow")?;
+                let canonical_path = path.clone();
+                continuation.choice = Some(PendingEffectChoice::ChooseOption {
+                    player,
+                    path,
+                    options: vec![
+                        EffectOp::Sequence(vec![]),
+                        EffectOp::MoveBoundObject {
+                            object: top,
+                            to_zone: Zone::Graveyard,
+                            preserve_known_identity: true,
+                        },
+                    ],
+                    purpose: EffectOptionChoicePurpose::ExploreNonlandTop {
+                        player,
+                        top,
+                        canonical_path,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
             EffectOp::PutBoundObjectInOwnersLibrary {
                 object,
                 owner,
@@ -3802,6 +3957,22 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     event::ProposedEvent::public_library_insert(object.object, placement),
                 );
             }
+            EffectOp::MoveBoundObject {
+                object,
+                to_zone,
+                preserve_known_identity,
+            } => {
+                validate_effect_object_binding(state, object)?;
+                let proposed = if preserve_known_identity {
+                    event::ProposedEvent::zone_change_preserving_known_identity(
+                        object.object,
+                        to_zone,
+                    )
+                } else {
+                    event::ProposedEvent::zone_change(object.object, to_zone)
+                };
+                event::propose_and_commit(state, proposed);
+            }
             leaf => execute(&leaf, &continuation.ctx, state),
         }
     }
@@ -3823,6 +3994,7 @@ impl ExecCtx {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             discarded: Vec::new(),
+            paid_cost_refs: Vec::new(),
             kicked: false,
         }
     }
@@ -4962,6 +5134,23 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let amount = crate::engine::evaluate_dynamic_value(state, *amount);
             event::propose_and_commit(state, event::ProposedEvent::life_gain(player, amount));
         }
+        EffectOp::GainLifeEqualToPaidCostManaValue { player } => {
+            let player = ctx.resolve_player(*player, state);
+            let amount = ctx.paid_cost_refs.iter().try_fold(0_i32, |total, paid| {
+                let mana_value = crate::card_def::CARD_DEFS
+                    .get(paid.card_def as usize)
+                    .map(|def| i32::from(def.mana_value))?;
+                total.checked_add(mana_value)
+            });
+            let Some(amount) = amount else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            event::propose_and_commit(state, event::ProposedEvent::life_gain(player, amount));
+        }
         EffectOp::LoseLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
             event::propose_and_commit(state, event::ProposedEvent::life_loss(player, *amount));
@@ -5009,6 +5198,24 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             }
             event::propose_and_commit(state, event::ProposedEvent::zone_change(object, *to_zone));
         }
+        EffectOp::MoveAllTargets { to_zone } => {
+            let events = ctx
+                .targets
+                .iter()
+                .enumerate()
+                .filter_map(|(index, target)| {
+                    let Target::Object(object) = target else {
+                        return None;
+                    };
+                    ctx.target_incarnation_matches(index, state).then(|| {
+                        event::ProposedEvent::zone_change_preserving_known_identity(
+                            *object, *to_zone,
+                        )
+                    })
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
         EffectOp::DestroyObject { object } => {
             let object = ctx.resolve_object(*object);
             if state.objects.get(object).zone == Zone::Battlefield
@@ -5044,6 +5251,28 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 })
                 .collect();
             event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::ExploreTarget { .. } => {
+            panic!("ExploreTarget must run through the resumable interpreter")
+        }
+        EffectOp::MoveBoundObject {
+            object,
+            to_zone,
+            preserve_known_identity,
+        } => {
+            if validate_effect_object_binding(state, *object).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            let proposed = if *preserve_known_identity {
+                event::ProposedEvent::zone_change_preserving_known_identity(object.object, *to_zone)
+            } else {
+                event::ProposedEvent::zone_change(object.object, *to_zone)
+            };
+            event::propose_and_commit(state, proposed);
         }
         EffectOp::TapObject { object } => {
             let object = ctx.resolve_object(*object);
@@ -5460,6 +5689,7 @@ mod tests {
             targets: vec![Target::Player(PlayerId::P1)],
             target_contracts: vec![StackTargetContractV4::Player(PlayerId::P1)],
             discarded: Vec::new(),
+            paid_cost_refs: Vec::new(),
             kicked: false,
         };
         execute(
@@ -5493,6 +5723,7 @@ mod tests {
                 spell_copy_origin: state.objects.get(creature).spell_copy_origin,
             }],
             discarded: Vec::new(),
+            paid_cost_refs: Vec::new(),
             kicked: false,
         };
         execute(

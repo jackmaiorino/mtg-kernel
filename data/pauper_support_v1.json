@@ -5,21 +5,21 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "9fa381c824f8591b58c5dd9d1b0590fbb07f11e68e730156c8d6d69cf9368396"
+    "registry_raw_sha256": "6467cba9f54224a0050d946998cca21b3dd3031784909872c3b5227d0c1ea370"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 92,
+    "full_cards": 96,
     "partial_cards": 0,
-    "no_effect_cards": 58,
-    "token_dependencies": 5
+    "no_effect_cards": 54,
+    "token_dependencies": 6
   },
   "deck_mainboard_copy_totals": [
     {
       "deck_id": "Wildfire",
-      "full": 28,
+      "full": 34,
       "partial": 0,
-      "no_effect": 32,
+      "no_effect": 26,
       "total": 60
     },
     {
@@ -31,9 +31,9 @@
     },
     {
       "deck_id": "Affinity",
-      "full": 39,
+      "full": 46,
       "partial": 0,
-      "no_effect": 21,
+      "no_effect": 14,
       "total": 60
     },
     {
@@ -83,7 +83,8 @@
     {
       "name": "Blood Token",
       "required_by": [
-        "Voldaren Epicure"
+        "Voldaren Epicure",
+        "Blood Fountain"
       ],
       "registry_status": "present",
       "expected_decks": [],
@@ -132,6 +133,18 @@
       "name": "Food Token",
       "required_by": [
         "Generous Ent"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Map Token",
+      "required_by": [
+        "Fanatical Offering"
       ],
       "registry_status": "present",
       "expected_decks": [],
@@ -320,10 +333,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Blue Elemental Blast",
@@ -911,10 +922,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Experimental Synthesizer",
@@ -1062,10 +1071,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Fiery Temper",
@@ -2633,10 +2640,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Red Elemental Blast",

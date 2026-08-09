@@ -41,7 +41,8 @@
 
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
-    Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, PermanentFilterDef, TargetSpec,
+    Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, PermanentFilter, PermanentFilterDef,
+    TargetSpec,
 };
 use crate::effect::{self, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, TargetRef};
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
@@ -1169,9 +1170,22 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::NoncreatureSpellOnStack
         | TargetSpec::ArtifactSpellOnStack
         | TargetSpec::ArtifactPermanent
-        | TargetSpec::CreatureOrLandCardInGraveyard => 1,
+        | TargetSpec::CreatureOrLandCardInGraveyard
+        | TargetSpec::ControlledCreature => 1,
         TargetSpec::PlayerThenTheirCreature => 2,
+        TargetSpec::UpToTwoCreatureCardsInOwnGraveyard => 2,
     }
+}
+
+fn target_min_count(spec: TargetSpec) -> u8 {
+    match spec {
+        TargetSpec::UpToTwoCreatureCardsInOwnGraveyard => 0,
+        _ => target_count(spec),
+    }
+}
+
+fn target_cardinality_is_complete(spec: TargetSpec, count: usize) -> bool {
+    count >= usize::from(target_min_count(spec)) && count <= usize::from(target_count(spec))
 }
 
 fn is_color(state: &GameState, id: ObjectId, color: mana::ManaColor) -> bool {
@@ -1629,6 +1643,15 @@ pub fn legal_targets_for(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
+    legal_targets_for_controller(spec, targets_chosen, state.priority_player, state)
+}
+
+fn legal_targets_for_controller(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    state: &GameState,
+) -> Vec<Target> {
     match spec {
         TargetSpec::None => Vec::new(),
         TargetSpec::AnyPlayer => {
@@ -1734,6 +1757,32 @@ pub fn legal_targets_for(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::ControlledCreature => state.players[controller.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .filter(|&id| {
+                let object = state.objects.get(id);
+                object.controller == controller
+                    && object.zone == Zone::Battlefield
+                    && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::UpToTwoCreatureCardsInOwnGraveyard => state.players[controller.index()]
+            .graveyard
+            .iter()
+            .copied()
+            .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
+            .filter(|&id| {
+                let object = state.objects.get(id);
+                object.owner == controller
+                    && object.zone == Zone::Graveyard
+                    && !object.v4.is_token
+                    && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+            })
+            .map(Target::Object)
+            .collect(),
     }
 }
 
@@ -1747,8 +1796,8 @@ fn target_prefix_can_complete(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> bool {
-    let need = target_count(spec) as usize;
-    if targets_chosen.len() > need {
+    let max = target_count(spec) as usize;
+    if targets_chosen.len() > max {
         return false;
     }
     let mut validated_prefix = Vec::with_capacity(targets_chosen.len());
@@ -1758,7 +1807,7 @@ fn target_prefix_can_complete(
         }
         validated_prefix.push(target);
     }
-    if targets_chosen.len() == need {
+    if targets_chosen.len() >= usize::from(target_min_count(spec)) {
         return true;
     }
     legal_targets_for(spec, targets_chosen, state)
@@ -1794,7 +1843,8 @@ fn activation_legal_targets_for(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
-    legal_targets_for(ability.target_spec, targets_chosen, state)
+    let controller = state.objects.get(source).controller;
+    legal_targets_for_controller(ability.target_spec, targets_chosen, controller, state)
         .into_iter()
         .filter(|target| match ability.activation_target_filter {
             ActivationTargetFilter::TargetSpecOnly => true,
@@ -1821,8 +1871,8 @@ fn activation_target_prefix_can_complete(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> bool {
-    let need = usize::from(target_count(ability.target_spec));
-    if targets_chosen.len() > need {
+    let max = usize::from(target_count(ability.target_spec));
+    if targets_chosen.len() > max {
         return false;
     }
     let mut validated_prefix = Vec::with_capacity(targets_chosen.len());
@@ -1834,7 +1884,7 @@ fn activation_target_prefix_can_complete(
         }
         validated_prefix.push(target);
     }
-    if targets_chosen.len() == need {
+    if targets_chosen.len() >= usize::from(target_min_count(ability.target_spec)) {
         return true;
     }
     activation_legal_targets_for(source, ability, targets_chosen, state)
@@ -1942,6 +1992,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut saw_source_changing_component = false;
     let mut discard_count = 0;
     let mut sacrifice_lands_count = 0;
+    let mut sacrifice_controlled_count = 0;
     let mut graveyard_exile_count = 0;
     let mut return_permanent_count = 0;
     let mut pay_life_count = 0;
@@ -1979,6 +2030,13 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 sacrifice_lands_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::SacrificeControlled { count, .. } => {
+                if *count == 0 {
+                    return false;
+                }
+                sacrifice_controlled_count += 1;
+                saw_source_changing_component = true;
+            }
             CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => {
                 if *amount == 0 {
                     return false;
@@ -2000,7 +2058,11 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     }
 
     if discard_count > 1
-        || sacrifice_lands_count + graveyard_exile_count + return_permanent_count > 1
+        || sacrifice_lands_count
+            + sacrifice_controlled_count
+            + graveyard_exile_count
+            + return_permanent_count
+            > 1
         || pay_life_count > 1
         || tap_count > 1
         || source_departure_count > 1
@@ -2025,6 +2087,7 @@ fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
             matches!(
                 component,
                 CostComponent::SacrificeLands(_)
+                    | CostComponent::SacrificeControlled { .. }
                     | CostComponent::ExileOtherCardsFromOwnGraveyard(_)
             )
         })
@@ -2072,7 +2135,7 @@ fn return_permanent_filter_in(components: &[CostComponent]) -> Option<PermanentF
     })
 }
 
-fn permanent_matches_filter(
+fn permanent_matches_return_filter(
     state: &GameState,
     object: ObjectId,
     filter: PermanentFilterDef,
@@ -2107,7 +2170,7 @@ fn return_permanent_cost_candidates(
         .filter_map(|(id, object)| {
             (object.controller == player
                 && object.zone == Zone::Battlefield
-                && permanent_matches_filter(state, id, filter)
+                && permanent_matches_return_filter(state, id, filter)
                 && !already_chosen.iter().any(|binding| binding.object == id))
             .then_some(EffectObjectBinding {
                 object: id,
@@ -2158,6 +2221,10 @@ fn can_pay_components(
                 hand_other >= *n as usize
             }
             CostComponent::SacrificeLands(n) => count_controlled_lands(player, state) >= *n as u32,
+            CostComponent::SacrificeControlled { count, filter } => {
+                sacrificeable_controlled_permanents(player, *filter, state, &[]).len()
+                    >= usize::from(*count)
+            }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                 checked_graveyard_exile_candidates(player, source, state, &[])
                     .is_some_and(|candidates| candidates.len() >= usize::from(*n))
@@ -2235,6 +2302,32 @@ fn pay_cost_components(
             return false;
         }
     }
+    let sacrifice_controlled = components.iter().find_map(|component| match component {
+        CostComponent::SacrificeControlled { count, filter } => {
+            Some((usize::from(*count), *filter))
+        }
+        _ => None,
+    });
+    if let Some((needed, filter)) = sacrifice_controlled {
+        let duplicate = object_cost_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, id)| object_cost_chosen[..index].contains(id));
+        let invalid = object_cost_chosen.iter().any(|id| {
+            !state.players[player.index()].battlefield.contains(id)
+                || state.objects.try_get(*id).is_none_or(|object| {
+                    object.controller != player
+                        || object.zone != Zone::Battlefield
+                        || !permanent_matches_filter(
+                            &card_def::CARD_DEFS[object.card_def as usize],
+                            filter,
+                        )
+                })
+        });
+        if object_cost_chosen.len() != needed || duplicate || invalid {
+            return false;
+        }
+    }
     let graveyard_exile_needed = components.iter().find_map(|component| match component {
         CostComponent::ExileOtherCardsFromOwnGraveyard(amount) => Some(*amount as usize),
         _ => None,
@@ -2254,7 +2347,7 @@ fn pay_cost_components(
                 state.objects.try_get(*id).is_none_or(|object| {
                     object.controller != player
                         || object.zone != Zone::Battlefield
-                        || !permanent_matches_filter(state, *id, filter)
+                        || !permanent_matches_return_filter(state, *id, filter)
                 })
             })
             || (object_cost_chosen.contains(&source)
@@ -2270,7 +2363,9 @@ fn pay_cost_components(
             return false;
         }
     } else if sacrifice_needed.is_none()
+        && sacrifice_controlled.is_none()
         && graveyard_exile_needed.is_none()
+        && return_filter.is_none()
         && !object_cost_chosen.is_empty()
     {
         return false;
@@ -2318,6 +2413,10 @@ fn pay_cost_components(
                     *n as usize,
                     "sacrifice_chosen must be exactly this component's already-decided picks"
                 );
+                commit_sacrifice(state, object_cost_chosen);
+            }
+            CostComponent::SacrificeControlled { count, .. } => {
+                debug_assert_eq!(object_cost_chosen.len(), usize::from(*count));
                 commit_sacrifice(state, object_cost_chosen);
             }
             CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
@@ -2425,6 +2524,38 @@ fn sacrificeable_lands(
         .collect()
 }
 
+fn permanent_matches_filter(def: &card_def::CardDef, filter: PermanentFilter) -> bool {
+    match filter {
+        PermanentFilter::ArtifactOrCreature => {
+            def.has_type(CardType::Artifact) || def.has_type(CardType::Creature)
+        }
+    }
+}
+
+/// Ordered currently-controlled battlefield candidates for a typed
+/// permanent-sacrifice cost. A permanent matching multiple listed types is
+/// still one candidate, while opponent-controlled objects never enter the
+/// pool.
+fn sacrificeable_controlled_permanents(
+    player: PlayerId,
+    filter: PermanentFilter,
+    state: &GameState,
+    already_chosen: &[ObjectId],
+) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|id| !already_chosen.contains(id))
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            object.zone == Zone::Battlefield
+                && object.controller == player
+                && permanent_matches_filter(&card_def::CARD_DEFS[object.card_def as usize], filter)
+        })
+        .collect()
+}
+
 fn graveyard_exile_cards_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 {
     if pending.source_contract.cast_method != CastMethodV4::Escape {
         return 0;
@@ -2438,6 +2569,15 @@ fn graveyard_exile_cards_needed(pending: &PendingCast, def: &card_def::CardDef) 
             })
         })
         .unwrap_or(0)
+}
+
+fn controlled_permanent_sacrifice_needed(def: &card_def::CardDef) -> Option<(u8, PermanentFilter)> {
+    def.additional_cost.and_then(|components| {
+        components.iter().find_map(|component| match component {
+            CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter)),
+            _ => None,
+        })
+    })
 }
 
 /// Ordered live candidates for the next Escape graveyard-cost pick. The
@@ -2728,10 +2868,12 @@ fn is_castable_now(
     }
 
     match cast_method {
-        CastMethodV4::Flashback => def
-            .flashback
-            .as_ref()
-            .is_some_and(|flashback| can_pay_components(flashback.cost, player, id, state)),
+        CastMethodV4::Flashback => def.flashback.as_ref().is_some_and(|flashback| {
+            can_pay_components(flashback.cost, player, id, state)
+                && def
+                    .additional_cost
+                    .is_none_or(|cost| can_pay_components(cost, player, id, state))
+        }),
         CastMethodV4::Escape => def.escape.as_ref().is_some_and(|escape| {
             def.additional_cost.is_none()
                 && def.kicker_cost.is_none()
@@ -4420,10 +4562,16 @@ pub(crate) fn validate_pending_cast(
 
     let sacrifice_needed = sacrifice_lands_needed(pending, def);
     let graveyard_exile_needed = graveyard_exile_cards_needed(pending, def);
-    if sacrifice_needed != 0 && graveyard_exile_needed != 0 {
+    let controlled_sacrifice = controlled_permanent_sacrifice_needed(def);
+    let active_object_cost_families = u8::from(sacrifice_needed != 0)
+        + u8::from(graveyard_exile_needed != 0)
+        + u8::from(controlled_sacrifice.is_some());
+    if active_object_cost_families > 1 {
         return Err("pending cast has multiple interactive object-cost families".to_string());
     }
-    let interactive_object_cost_needed = sacrifice_needed.max(graveyard_exile_needed);
+    let interactive_object_cost_needed = sacrifice_needed
+        .max(graveyard_exile_needed)
+        .max(controlled_sacrifice.map_or(0, |(count, _)| count));
     if pending.sacrifice_chosen.len() > usize::from(interactive_object_cost_needed) {
         return Err("pending cast chose too many interactive cost objects".to_string());
     }
@@ -4456,6 +4604,23 @@ pub(crate) fn validate_pending_cast(
         {
             return Err(
                 "pending cast graveyard-exile prefix or graveyard index is malformed".to_string(),
+            );
+        }
+    } else if let Some((_, filter)) = controlled_sacrifice {
+        let candidates =
+            sacrificeable_controlled_permanents(pending.controller, filter, state, &[]);
+        let mut chosen = pending.sacrifice_chosen.clone();
+        chosen.sort_unstable();
+        chosen.dedup();
+        if chosen.len() != pending.sacrifice_chosen.len()
+            || pending
+                .sacrifice_chosen
+                .iter()
+                .any(|object| !candidates.contains(object))
+        {
+            return Err(
+                "pending cast sacrifice prefix is not unique matching controlled permanents"
+                    .to_string(),
             );
         }
     } else if !pending.sacrifice_chosen.is_empty() {
@@ -4802,6 +4967,41 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         });
     }
 
+    if let Some((needed, filter)) = controlled_permanent_sacrifice_needed(def) {
+        if (pending.sacrifice_chosen.len() as u8) < needed {
+            let candidates = sacrificeable_controlled_permanents(
+                pending.controller,
+                filter,
+                state,
+                &pending.sacrifice_chosen,
+            );
+            let remaining = needed - pending.sacrifice_chosen.len() as u8;
+            if candidates.len() < usize::from(remaining) {
+                let cast_method = finalized_cast_method(&pending, staged_method, def);
+                let pending = state.engine.pending_cast.take().unwrap();
+                abort_cast(state, pending, cast_method);
+                return None;
+            }
+            if candidates.len() <= 1 {
+                state
+                    .engine
+                    .pending_cast
+                    .as_mut()
+                    .unwrap()
+                    .sacrifice_chosen
+                    .extend(candidates);
+                return drain_pending_cast_or_decide(state);
+            }
+            return Some(Decision::ChooseCostTargets {
+                player: pending.controller,
+                source: pending.spell,
+                cost_kind: CostKind::SacrificePermanents,
+                remaining,
+                candidates,
+            });
+        }
+    }
+
     if pending.additional_cost_discarded.is_none() {
         let add = def.additional_cost.expect(
             "additional_cost_discarded is None only when begin_cast saw an additional_cost",
@@ -4854,19 +5054,34 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
     let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
     let ability = &def.activated_abilities[pending.ability_index as usize];
 
-    let need = target_count(pending.target_spec);
-    if (pending.targets_chosen.len() as u8) < need {
-        return Some(Decision::ChooseTargets {
-            player: pending.controller,
-            spell: pending.source,
-            remaining: need - pending.targets_chosen.len() as u8,
-            legal_targets: completable_next_activation_targets_for(
-                pending.source,
-                ability,
-                &pending.targets_chosen,
-                state,
-            ),
-        });
+    let max_targets = target_count(pending.target_spec);
+    if (pending.targets_chosen.len() as u8) < max_targets {
+        let legal_targets = completable_next_activation_targets_for(
+            pending.source,
+            ability,
+            &pending.targets_chosen,
+            state,
+        );
+        if target_min_count(pending.target_spec) < max_targets {
+            if !legal_targets.is_empty() {
+                return Some(Decision::ChooseEffectTargets {
+                    player: pending.controller,
+                    source: pending.source,
+                    selected_count: pending.targets_chosen.len() as u16,
+                    min_targets: u16::from(target_min_count(pending.target_spec)),
+                    max_targets: u16::from(max_targets),
+                    legal_targets,
+                    can_finish: true,
+                });
+            }
+        } else {
+            return Some(Decision::ChooseTargets {
+                player: pending.controller,
+                spell: pending.source,
+                remaining: max_targets - pending.targets_chosen.len() as u8,
+                legal_targets,
+            });
+        }
     }
 
     if let Some(filter) = return_permanent_filter_in(ability.cost) {
@@ -5005,7 +5220,7 @@ pub(crate) fn validate_pending_activation(
                 if live.zone_change_count != binding.expected_zone_change_count
                     || live.zone != Zone::Battlefield
                     || live.controller != pending.controller
-                    || !permanent_matches_filter(state, binding.object, filter)
+                    || !permanent_matches_return_filter(state, binding.object, filter)
                 {
                     return Err(
                         "activation object-cost permanent changed incarnation or legality"
@@ -5040,11 +5255,13 @@ pub(crate) fn validate_pending_activation(
         return Err("pending activation cost is no longer payable".to_string());
     }
 
-    let required = usize::from(target_count(pending.target_spec));
-    if pending.targets_chosen.len() > required {
+    let max_targets = usize::from(target_count(pending.target_spec));
+    if pending.targets_chosen.len() > max_targets {
         return Err("pending activation has too many targets".to_string());
     }
-    if !pending.object_cost_chosen.is_empty() && pending.targets_chosen.len() != required {
+    if !pending.object_cost_chosen.is_empty()
+        && !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len())
+    {
         return Err("activation object cost was selected before targeting completed".to_string());
     }
     if !target_contracts_are_structurally_valid(
@@ -5098,7 +5315,7 @@ pub(crate) fn validate_pending_activation(
             || discard.player != pending.controller
             || discard_count_in(ability.cost).map(u32::from) != Some(discard.count)
             || pending.cost_discard_paid.is_some()
-            || pending.targets_chosen.len() != required
+            || !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len())
             || (return_permanent_filter_in(ability.cost).is_some()
                 && pending.object_cost_chosen.len() != 1)
         {
@@ -5448,7 +5665,7 @@ pub(crate) fn validated_stack_item_target_spec(
     if item.v4.target_spec != Some(spec) {
         return Err("stack target specification does not match its definition".to_string());
     }
-    if item.targets.len() != target_count(spec) as usize
+    if !target_cardinality_is_complete(spec, item.targets.len())
         || item.v4.target_contracts.len() != item.targets.len()
     {
         return Err("stack target and contract cardinalities are malformed".to_string());
@@ -5541,7 +5758,8 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
                     .ok_or("activated stack item carries an out-of-range ability index")?;
                 activation_legal_targets_for(item.source, ability, &chosen, state).contains(&target)
             }
-            _ => legal_targets_for(spec, &chosen, state).contains(&target),
+            _ => legal_targets_for_controller(spec, &chosen, item.controller, state)
+                .contains(&target),
         };
         any_legal |= same_incarnation && legal_now;
         chosen.push(target);
@@ -5777,6 +5995,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         targets: item.targets.clone(),
         target_contracts: item.v4.target_contracts.clone(),
         discarded: item.discarded.clone(),
+        paid_cost_refs: item.v4.paid_cost_refs.clone(),
         kicked: item.kicked,
     };
 
@@ -6434,6 +6653,7 @@ enum PendingCastActionStage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingActivationActionStage {
     ChooseTarget,
+    ChooseOptionalTarget,
     Discard,
     AwaitEngineAdvance,
     /// Appended generic interactive permanent-cost stage.
@@ -6478,6 +6698,11 @@ fn pending_cast_action_stage(
     if pending.sacrifice_chosen.len() < usize::from(graveyard_exile_cards_needed(pending, def)) {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
+    if pending.sacrifice_chosen.len()
+        < controlled_permanent_sacrifice_needed(def).map_or(0, |(count, _)| usize::from(count))
+    {
+        return Ok(PendingCastActionStage::ChooseCostTarget);
+    }
     Ok(PendingCastActionStage::AwaitEngineAdvance)
 }
 
@@ -6512,6 +6737,9 @@ fn pending_activation_action_stage(
         return Ok(PendingActivationActionStage::Discard);
     }
     if pending.targets_chosen.len() < usize::from(target_count(pending.target_spec)) {
+        if target_min_count(pending.target_spec) < target_count(pending.target_spec) {
+            return Ok(PendingActivationActionStage::ChooseOptionalTarget);
+        }
         return Ok(PendingActivationActionStage::ChooseTarget);
     }
     let object_cost_needed = return_permanent_filter_in(
@@ -6535,6 +6763,9 @@ fn action_matches_pending_activation_stage(
         (
             PendingActivationActionStage::ChooseTarget,
             Action::ChooseTarget(_)
+        ) | (
+            PendingActivationActionStage::ChooseOptionalTarget,
+            Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
         ) | (PendingActivationActionStage::Discard, Action::Discard(_))
             | (
                 PendingActivationActionStage::ChooseCostTarget,
@@ -6720,8 +6951,20 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         Action::ChooseEffectOption(option_index) => {
             effect::choose_resumable_option(state, option_index)
         }
-        Action::ChooseEffectTarget(target) => effect::choose_resumable_target(state, target),
-        Action::FinishEffectSelection => effect::finish_resumable_target_selection(state),
+        Action::ChooseEffectTarget(target) => {
+            if state.engine.pending_activation.is_some() {
+                apply_choose_optional_activation_target(state, target)
+            } else {
+                effect::choose_resumable_target(state, target)
+            }
+        }
+        Action::FinishEffectSelection => {
+            if state.engine.pending_activation.is_some() {
+                finish_optional_activation_targets(state)
+            } else {
+                effect::finish_resumable_target_selection(state)
+            }
+        }
         Action::ChooseEffectBoolean(value) => effect::choose_resumable_boolean(state, value),
         Action::ChooseOptionalCost(choice) => apply_choose_optional_cost(state, choice),
         Action::ChooseSpellCopyPayment(pay) => apply_choose_spell_copy_payment(state, pay),
@@ -6777,7 +7020,9 @@ fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, Stri
     }
     if let Some(pending) = state.engine.pending_activation.as_ref() {
         validate_pending_activation(state, pending)?;
-        if pending.targets_chosen.len() < usize::from(target_count(pending.target_spec)) {
+        if target_min_count(pending.target_spec) == target_count(pending.target_spec)
+            && pending.targets_chosen.len() < usize::from(target_count(pending.target_spec))
+        {
             producers.push(TargetingProducer::Activation(pending.clone()));
         }
     }
@@ -6848,6 +7093,70 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
             apply_choose_spell_copy_target(state, target)
         }
     }
+}
+
+fn apply_choose_optional_activation_target(
+    state: &mut GameState,
+    target: Target,
+) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_activation
+        .clone()
+        .ok_or("no activation is selecting optional targets")?;
+    validate_pending_activation(state, &pending)?;
+    let min = target_min_count(pending.target_spec);
+    let max = target_count(pending.target_spec);
+    if min >= max || pending.targets_chosen.len() >= usize::from(max) {
+        return Err("the pending activation has no open optional target slot".to_string());
+    }
+    if pending.cost_discard_paid.as_deref() != Some(&[]) {
+        return Err(
+            "optional activation targets cannot precede an interactive discard".to_string(),
+        );
+    }
+    let legal = completable_next_targets_for(pending.target_spec, &pending.targets_chosen, state);
+    if !legal.contains(&target) {
+        return Err(format!(
+            "{target:?} is not a legal optional activation target"
+        ));
+    }
+    let contract = StackTargetContractV4::capture(state, target);
+    let live = state
+        .engine
+        .pending_activation
+        .as_mut()
+        .ok_or("optional activation targeting context disappeared")?;
+    if live != &pending {
+        return Err("optional activation targeting context changed before commit".to_string());
+    }
+    live.targets_chosen.push(target);
+    live.target_contracts.push(contract);
+    Ok(())
+}
+
+fn finish_optional_activation_targets(state: &mut GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_activation
+        .clone()
+        .ok_or("no activation is selecting optional targets")?;
+    validate_pending_activation(state, &pending)?;
+    if target_min_count(pending.target_spec) >= target_count(pending.target_spec)
+        || !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len())
+    {
+        return Err("the pending activation target selection cannot finish".to_string());
+    }
+    if pending.cost_discard_paid.as_deref() != Some(&[]) {
+        return Err(
+            "optional activation targets cannot finish before an interactive discard".to_string(),
+        );
+    }
+    finalize_activation(state);
+    if state.engine.halted.is_some() {
+        return Err("optional activation failed validation during final payment".to_string());
+    }
+    Ok(())
 }
 
 /// Answers one `Decision::ChooseCostTargets` pick -- see that decision's
@@ -6936,6 +7245,51 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .sacrifice_chosen
                 .push(id);
             return Ok(());
+        }
+        if let Some((needed, filter)) = controlled_permanent_sacrifice_needed(def) {
+            if (pending.sacrifice_chosen.len() as u8) < needed {
+                let active_target_spec = spell_form_target_spec(
+                    def,
+                    pending.mode_chosen.ok_or(
+                        "cast permanent-sacrifice target chosen before spell form completed",
+                    )?,
+                )
+                .ok_or("pending cast selected a nonexistent spell form")?;
+                if pending.kicked.is_none()
+                    || pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
+                    || pending.cast_mode.is_none()
+                {
+                    return Err(
+                        "cast permanent-sacrifice target chosen before prior cast stages completed"
+                            .to_string(),
+                    );
+                }
+                let candidates = sacrificeable_controlled_permanents(
+                    pending.controller,
+                    filter,
+                    state,
+                    &pending.sacrifice_chosen,
+                );
+                let remaining = needed - pending.sacrifice_chosen.len() as u8;
+                if candidates.len() < usize::from(remaining) {
+                    return Err(
+                        "cast permanent-sacrifice cost can no longer be completed".to_string()
+                    );
+                }
+                if !candidates.contains(&id) {
+                    return Err(format!(
+                        "{id} is not a legal permanent-sacrifice cost candidate"
+                    ));
+                }
+                state
+                    .engine
+                    .pending_cast
+                    .as_mut()
+                    .unwrap()
+                    .sacrifice_chosen
+                    .push(id);
+                return Ok(());
+            }
         }
     }
     if let Some(pending) = state.engine.pending_activation.clone() {
@@ -7983,6 +8337,17 @@ fn finalize_owned_cast(
     } else {
         pending.sacrifice_chosen.clone()
     };
+    let additional_owns_object_cost = controlled_permanent_sacrifice_needed(def).is_some();
+    let base_object_cost_chosen: &[ObjectId] = if additional_owns_object_cost {
+        &[]
+    } else {
+        &object_cost_chosen
+    };
+    let additional_object_cost_chosen: &[ObjectId] = if additional_owns_object_cost {
+        &object_cost_chosen
+    } else {
+        &[]
+    };
 
     match cast_method {
         CastMethodV4::Plotted => {}
@@ -8006,7 +8371,7 @@ fn finalize_owned_cast(
                 pending.controller,
                 pending.spell,
                 fb.cost,
-                &object_cost_chosen,
+                base_object_cost_chosen,
             ) {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
@@ -8022,7 +8387,7 @@ fn finalize_owned_cast(
                 pending.controller,
                 pending.spell,
                 escape.cost,
-                &object_cost_chosen,
+                base_object_cost_chosen,
             ) {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
@@ -8055,7 +8420,7 @@ fn finalize_owned_cast(
                 pending.controller,
                 pending.spell,
                 alt,
-                &object_cost_chosen,
+                base_object_cost_chosen,
             ) {
                 abort_cast(state, pending, cast_method);
                 return Ok(());
@@ -8075,7 +8440,13 @@ fn finalize_owned_cast(
         }
     }
     if let Some(add) = def.additional_cost {
-        if !pay_cost_components(state, pending.controller, pending.spell, add, &[]) {
+        if !pay_cost_components(
+            state,
+            pending.controller,
+            pending.spell,
+            add,
+            additional_object_cost_chosen,
+        ) {
             abort_cast(state, pending, cast_method);
             return Ok(());
         }
@@ -8257,6 +8628,18 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
 /// call `push_paid_activation` synchronously from `apply_discard`, so no
 /// serialized Boolean or vector can claim that payment already happened.
 fn finalize_activation(state: &mut GameState) {
+    let Some(staged) = state.engine.pending_activation.as_ref() else {
+        return;
+    };
+    if validate_pending_activation(state, staged).is_err()
+        || !target_cardinality_is_complete(staged.target_spec, staged.targets_chosen.len())
+    {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            staged.source,
+        ));
+        return;
+    }
     let pending = state
         .engine
         .pending_activation

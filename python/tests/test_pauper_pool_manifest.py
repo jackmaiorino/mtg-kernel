@@ -463,6 +463,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             "Samurai Token",
             "Bird Illusion Token",
             "Food Token",
+            "Map Token",
         ):
             self.assertTrue(registry_cards[token_name]["is_token"])
             self.assertEqual(registry_cards[token_name]["decks"], [])
@@ -543,16 +544,16 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 92,
+                "full_cards": 96,
                 "partial_cards": 0,
-                "no_effect_cards": 58,
-                "token_dependencies": 5,
+                "no_effect_cards": 54,
+                "token_dependencies": 6,
             },
         )
         expected_copy_totals = [
-            {"deck_id": "Wildfire", "full": 28, "partial": 0, "no_effect": 32, "total": 60},
+            {"deck_id": "Wildfire", "full": 34, "partial": 0, "no_effect": 26, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Affinity", "full": 39, "partial": 0, "no_effect": 21, "total": 60},
+            {"deck_id": "Affinity", "full": 46, "partial": 0, "no_effect": 14, "total": 60},
             {"deck_id": "Elves", "full": 48, "partial": 0, "no_effect": 12, "total": 60},
             {"deck_id": "Spy", "full": 43, "partial": 0, "no_effect": 17, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
@@ -757,7 +758,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             [
                 {
                     "name": "Blood Token",
-                    "required_by": ["Voldaren Epicure"],
+                    "required_by": ["Voldaren Epicure", "Blood Fountain"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],
@@ -798,6 +799,16 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {
                     "name": "Food Token",
                     "required_by": ["Generous Ent"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Map Token",
+                    "required_by": ["Fanatical Offering"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],

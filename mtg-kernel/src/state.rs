@@ -567,7 +567,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::NonlandPermanent
                 | TargetSpec::Creature
                 | TargetSpec::NonlegendaryCreature
-                | TargetSpec::ArtifactPermanent,
+                | TargetSpec::ArtifactPermanent
+                | TargetSpec::ControlledCreature,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -576,6 +577,13 @@ pub fn stack_target_contract_is_structurally_valid(
         ) | (
             TargetSpec::CreatureOrLandCardInGraveyard,
             0,
+            StackTargetContractV4::Object {
+                zone: Zone::Graveyard,
+                ..
+            },
+        ) | (
+            TargetSpec::UpToTwoCreatureCardsInOwnGraveyard,
+            0 | 1,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,
                 ..

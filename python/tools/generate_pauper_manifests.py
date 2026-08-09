@@ -98,17 +98,18 @@ EXPECTED_RUNTIME_DECK_HASHES = {
 
 
 TOKEN_DEPENDENCIES = (
-    ("Blood Token", ("Voldaren Epicure",)),
+    ("Blood Token", ("Voldaren Epicure", "Blood Fountain")),
     ("Human Soldier Token", ("Rally at the Hornburg",)),
     ("Samurai Token", ("Experimental Synthesizer",)),
     ("Bird Illusion Token", ("Murmuring Mystic",)),
     ("Food Token", ("Generous Ent",)),
+    ("Map Token", ("Fanatical Offering",)),
 )
 
 EXPECTED_MAINBOARD_SUPPORT = {
-    "Wildfire": {"full": 28, "partial": 0, "no_effect": 32},
+    "Wildfire": {"full": 34, "partial": 0, "no_effect": 26},
     "Rally": {"full": 60, "partial": 0, "no_effect": 0},
-    "Affinity": {"full": 39, "partial": 0, "no_effect": 21},
+    "Affinity": {"full": 46, "partial": 0, "no_effect": 14},
     "Elves": {"full": 48, "partial": 0, "no_effect": 12},
     "Spy": {"full": 43, "partial": 0, "no_effect": 17},
     "Burn": {"full": 60, "partial": 0, "no_effect": 0},

@@ -114,6 +114,14 @@ fn generous_ent_effect() -> EffectOp {
     }
 }
 
+fn blood_fountain_effect() -> EffectOp {
+    let blood = crate::card_def::card_id_by_name("Blood Token").expect("Blood Token in CARD_DEFS");
+    EffectOp::CreateToken {
+        token_def: blood,
+        controller: PlayerRef::Controller,
+    }
+}
+
 fn gain_three_life_effect() -> EffectOp {
     EffectOp::GainLife {
         player: PlayerRef::Controller,
@@ -168,6 +176,13 @@ const GENEROUS_ENT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
     effect: generous_ent_effect,
+}];
+const BLOOD_FOUNTAIN_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: blood_fountain_effect,
 }];
 const SAGU_WILDLING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
@@ -394,6 +409,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Murmuring Mystic" => &MURMURING_MYSTIC_TRIGGERS,
         "Voldaren Epicure" => &VOLDAREN_EPICURE_TRIGGERS,
         "Generous Ent" => &GENEROUS_ENT_TRIGGERS,
+        "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
         "Healer of the Glade" | "Spinewoods Paladin" => &GAIN_THREE_LIFE_ETB_TRIGGERS,
