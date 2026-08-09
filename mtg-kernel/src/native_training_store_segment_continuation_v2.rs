@@ -1113,11 +1113,11 @@ mod tests {
     fn one_group_continuation_closed_maximum_matches_frozen_recurrence() {
         assert_eq!(
             maximum_one_group_continuation_cj_bytes_v2(1, 1, 1).unwrap(),
-            4_823 + 730
+            4_915 + 730
         );
         assert_eq!(
             maximum_one_group_continuation_cj_bytes_v2(2, 65_536, 131_072).unwrap(),
-            36_509_750
+            36_509_934
         );
     }
 

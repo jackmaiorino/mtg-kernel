@@ -1888,6 +1888,18 @@ pub struct NativeTrainerEpisodeEvidenceV1 {
     pub opponent_population_slot: Option<u8>,
     pub opponent_run_sha256: Option<[u8; 32]>,
     pub opponent_checkpoint_manifest_sha256: Option<[u8; 32]>,
+    /// Bounded-staleness async-inference provenance, stamped only by the
+    /// opt-in async production integration
+    /// (`bounded_staleness_async_production_v1`) after this evidence is
+    /// returned from `run_even_batch_update_v2`/`_wide_v2`: which trainer
+    /// weight version scored this episode's rollout
+    /// (`scoring_weight_version`) and which trainer update its data trains
+    /// (`consuming_update_version`). Both always `None` on the synchronous
+    /// path (the structural default): nothing in this module's own update
+    /// call sets them, matching `opponent_population_slot`'s own
+    /// None-unless-attached discipline above.
+    pub scoring_weight_version: Option<u64>,
+    pub consuming_update_version: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3680,6 +3692,8 @@ fn train_grouped_candidate_v1(
             opponent_population_slot: None,
             opponent_run_sha256: None,
             opponent_checkpoint_manifest_sha256: None,
+            scoring_weight_version: None,
+            consuming_update_version: None,
         });
         for group in &episode.groups {
             source_groups.push(group);
@@ -3945,6 +3959,8 @@ fn train_grouped_candidate_wide_v1(
             opponent_population_slot: None,
             opponent_run_sha256: None,
             opponent_checkpoint_manifest_sha256: None,
+            scoring_weight_version: None,
+            consuming_update_version: None,
         });
         for group in &episode.groups {
             source_groups.push(group);

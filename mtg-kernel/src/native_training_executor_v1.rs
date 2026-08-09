@@ -1085,6 +1085,20 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
         &self.observation
     }
 
+    /// Crate-private mutable access to this guard's observation. The only
+    /// intended caller is the bounded-staleness async production
+    /// integration, which stamps each episode's `scoring_weight_version`/
+    /// `consuming_update_version` (see `NativeTrainerEpisodeEvidenceV1`)
+    /// after `prepare_update_v2` returns and before this guard is handed to
+    /// `build_update_group_v1`. Every other caller only ever reads the
+    /// observation the trainer already computed; nothing here can
+    /// retroactively change rollout, seeding, or learning math, since the
+    /// episodes themselves (and their trained parameters) are already fixed
+    /// by the time a caller can reach this guard.
+    pub(crate) fn observation_mut(&mut self) -> &mut NativeTrainingUpdateObservationV2 {
+        &mut self.observation
+    }
+
     pub fn checkpoint_candidate(&self) -> &NativeTrainingCheckpointCandidateV1 {
         &self.checkpoint
     }
