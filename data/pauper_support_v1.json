@@ -5,21 +5,21 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "2f37087d2ee322731a619ba2bbf3c7e5dd2ec0d094a220aa953eb842f74f6815"
+    "registry_raw_sha256": "87d9a0242531a9f93237ed49435805cc5883fff513fa29b0d03e9af65ed7b96c"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 62,
+    "full_cards": 66,
     "partial_cards": 0,
-    "no_effect_cards": 88,
+    "no_effect_cards": 84,
     "token_dependencies": 4
   },
   "deck_mainboard_copy_totals": [
     {
       "deck_id": "Wildfire",
-      "full": 19,
+      "full": 27,
       "partial": 0,
-      "no_effect": 41,
+      "no_effect": 33,
       "total": 60
     },
     {
@@ -31,9 +31,9 @@
     },
     {
       "deck_id": "Affinity",
-      "full": 35,
+      "full": 39,
       "partial": 0,
-      "no_effect": 25,
+      "no_effect": 21,
       "total": 60
     },
     {
@@ -66,9 +66,9 @@
     },
     {
       "deck_id": "CawGates",
-      "full": 16,
+      "full": 18,
       "partial": 0,
-      "no_effect": 44,
+      "no_effect": 42,
       "total": 60
     },
     {
@@ -404,10 +404,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Burning-Tree Emissary",
@@ -446,10 +444,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Cast into the Fire",
@@ -2370,10 +2366,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Overgrown Battlement",
@@ -2714,10 +2708,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Relic of Progenitus",

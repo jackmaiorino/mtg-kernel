@@ -79,6 +79,8 @@ pub enum PlayerRef {
     /// The controller of a target object (e.g. "that creature's
     /// controller").
     ObjectController(ObjectRef),
+    /// The controller's one opponent in this strictly two-player kernel.
+    Opponent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -155,6 +157,9 @@ pub enum EffectCond {
     /// table makes that failure mode structurally impossible rather than
     /// merely avoided by careful clearing).
     WasKicked,
+    /// Refurbished Familiar's 1v1 form: its opponent can discard exactly
+    /// one card iff that opponent's hand is nonempty at resolution.
+    OpponentHasCardsInHand,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -424,6 +429,12 @@ pub enum EffectOp {
         ward_target: StackTargetContractV4,
         targeting_stack_item: StackItemId,
         generic: u8,
+    },
+    /// Deals one simultaneous damage batch to every creature without the
+    /// excluded subtype. Breath Weapon is the first consumer.
+    DamageEachCreatureWithoutSubtype {
+        amount: i32,
+        excluded_subtype: Subtype,
     },
 }
 
@@ -3057,6 +3068,7 @@ impl ExecCtx {
             PlayerRef::ObjectController(oref) => {
                 state.objects.get(self.resolve_object(oref)).controller
             }
+            PlayerRef::Opponent => self.controller.opponent(),
         }
     }
 }
@@ -3946,6 +3958,27 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::DamageEachCreatureWithoutSubtype {
+            amount,
+            excluded_subtype,
+        } => {
+            let events = [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+                .filter_map(|id| {
+                    let object = state.objects.get(id);
+                    let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
+                    (def.has_type(crate::card_def::CardType::Creature)
+                        && object
+                            .v4
+                            .effective_subtype_ids
+                            .binary_search(&excluded_subtype.stable_id())
+                            .is_err())
+                    .then(|| event::ProposedEvent::damage(ctx.source, Target::Object(id), *amount))
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
         EffectOp::TapObject { object } => {
             let object = ctx.resolve_object(*object);
             event::propose_and_commit(state, event::ProposedEvent::tap(object));
@@ -4253,6 +4286,9 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
                 .any(|id| id != ctx.source && state.objects.get(id).card_def == source_def)
         }
         EffectCond::WasKicked => ctx.kicked,
+        EffectCond::OpponentHasCardsInHand => !state.players[ctx.controller.opponent().index()]
+            .hand
+            .is_empty(),
     }
 }
 

@@ -293,6 +293,7 @@
     },
     {
       "name": "Breath Weapon",
+      "engine_capability": "full",
       "mana_cost": "{2}{R}",
       "mana_value": 3,
       "colors": [
@@ -356,6 +357,7 @@
     },
     {
       "name": "Cast Down",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -2544,6 +2546,7 @@
     },
     {
       "name": "Outlaw Medic",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -2930,6 +2933,7 @@
     },
     {
       "name": "Refurbished Familiar",
+      "engine_capability": "full",
       "mana_cost": "{3}{B}",
       "mana_value": 4,
       "colors": [

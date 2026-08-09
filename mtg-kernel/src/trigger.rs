@@ -190,6 +190,29 @@ fn faerie_seer_effect() -> EffectOp {
     }
 }
 
+fn outlaw_medic_dies_effect() -> EffectOp {
+    EffectOp::DrawCards {
+        player: PlayerRef::Controller,
+        count: 1,
+    }
+}
+
+fn refurbished_familiar_etb_effect() -> EffectOp {
+    // The kernel is strictly 1v1. The opponent chooses and discards one
+    // card when possible; otherwise the Familiar's controller draws one.
+    EffectOp::Conditional {
+        cond: EffectCond::OpponentHasCardsInHand,
+        then: Box::new(EffectOp::DiscardCards {
+            player: PlayerRef::Opponent,
+            count: 1,
+        }),
+        else_: Box::new(EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        }),
+    }
+}
+
 fn experimental_synthesizer_impulse_effect() -> EffectOp {
     // When Experimental Synthesizer enters or leaves the battlefield, exile
     // the top card of your library. Until end of turn, you may play that
@@ -288,6 +311,22 @@ const FAERIE_SEER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: faerie_seer_effect,
 }];
 
+const OUTLAW_MEDIC_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    home_zone: Zone::Graveyard,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: outlaw_medic_dies_effect,
+}];
+
+const REFURBISHED_FAMILIAR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: refurbished_familiar_etb_effect,
+}];
+
 /// The pool's implemented triggered abilities, matched by card name (ids are
 /// codegen-assigned from `cards_v1.json`'s array order and not worth
 /// duplicating as constants here -- see `build.rs`'s module doc on id
@@ -312,6 +351,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Goblin Bushwhacker" => &GOBLIN_BUSHWHACKER_TRIGGERS,
         "Faerie Miscreant" => &FAERIE_MISCREANT_TRIGGERS,
         "Faerie Seer" => &FAERIE_SEER_TRIGGERS,
+        "Outlaw Medic" => &OUTLAW_MEDIC_TRIGGERS,
+        "Refurbished Familiar" => &REFURBISHED_FAMILIAR_TRIGGERS,
         _ => &[],
     }
 }

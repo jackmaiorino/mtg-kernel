@@ -409,10 +409,28 @@ fn replacement_apply(
     }
 }
 
-/// Convenience: replace/prevent then commit if anything survived.
+fn lifelink_gain_for(state: &GameState, event: &ProposedEvent) -> Option<(PlayerId, i32)> {
+    let ProposedEvent::Damage(damage) = event else {
+        return None;
+    };
+    if damage.amount <= 0 {
+        return None;
+    }
+    let source = state.objects.try_get(damage.source)?;
+    crate::engine::has_effective_keyword(state, damage.source, crate::card_def::Keywords::LIFELINK)
+        .then_some((source.controller, damage.amount))
+}
+
+/// Convenience: replace/prevent then commit if anything survived. Lifelink
+/// is evaluated from the final damage amount and source immediately before
+/// that damage is committed.
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     if let Some(final_event) = apply_replacements(state, event) {
+        let lifelink_gain = lifelink_gain_for(state, &final_event);
         commit(state, final_event);
+        if let Some((player, amount)) = lifelink_gain {
+            commit(state, ProposedEvent::life_gain(player, amount));
+        }
     }
 }
 
@@ -553,8 +571,17 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    // Lifelink changes life at the same time as the damage. Capture every
+    // source/controller before any member of the simultaneous batch can die.
+    let lifelink_gains = survivors
+        .iter()
+        .filter_map(|event| lifelink_gain_for(state, event))
+        .collect::<Vec<_>>();
     for e in survivors {
         commit(state, e);
+    }
+    for (player, amount) in lifelink_gains {
+        commit(state, ProposedEvent::life_gain(player, amount));
     }
 }
 

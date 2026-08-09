@@ -1137,7 +1137,8 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::BluePermanent
         | TargetSpec::RedPermanent
         | TargetSpec::NonlandPermanent
-        | TargetSpec::Creature => 1,
+        | TargetSpec::Creature
+        | TargetSpec::NonlegendaryCreature => 1,
         TargetSpec::PlayerThenTheirCreature => 2,
     }
 }
@@ -1622,6 +1623,15 @@ pub fn legal_targets_for(
             .filter(|&id| {
                 let def_idx = state.objects.get(id).card_def;
                 card_def::CARD_DEFS[def_idx as usize].has_type(CardType::Creature)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::NonlegendaryCreature => battlefield_objects(state)
+            .filter(|&id| {
+                let def_idx = state.objects.get(id).card_def;
+                let def = &card_def::CARD_DEFS[def_idx as usize];
+                def.has_type(CardType::Creature)
+                    && !def.supertypes.contains(&card_def::Supertype::Legendary)
             })
             .map(Target::Object)
             .collect(),

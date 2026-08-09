@@ -62,6 +62,10 @@ pub enum CardType {
 pub enum Supertype {
     Basic,
     Snow,
+    /// Appended for exact nonlegendary target filtering. No current pool
+    /// permanent is legendary, but the filter must remain correct as the
+    /// registry grows.
+    Legendary,
 }
 
 /// Fail-closed engine readiness for one registry definition. This is
@@ -243,6 +247,9 @@ pub enum TargetSpec {
     /// every pre-existing target-spec discriminant and serialized snapshot
     /// identity remains stable.
     Creature,
+    /// Exactly 1 target: a creature without the Legendary supertype.
+    /// Appended for Cast Down without changing any earlier target identity.
+    NonlegendaryCreature,
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -684,6 +691,7 @@ mod tests {
             (TargetSpec::RedPermanent, 10),
             (TargetSpec::NonlandPermanent, 11),
             (TargetSpec::Creature, 12),
+            (TargetSpec::NonlegendaryCreature, 13),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec as u8, ordinal);
@@ -699,10 +707,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v11_is_frozen() {
-        // Version 11 composes the artifact reducer catalog with Tolarian
-        // Terror's graveyard reducer and static generic Ward definition.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x7347_6d95_f5d3_3174);
+    fn card_db_hash_v12_is_frozen() {
+        // Version 12 adds the Cast Down, Breath Weapon, Outlaw Medic, and
+        // Refurbished Familiar executable recipes to the combined catalog.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x397a_48f2_d7c4_a7a8);
     }
 
     #[test]
@@ -902,7 +910,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 66, "62 deck cards plus four required tokens");
+        assert_eq!(full, 70, "66 deck cards plus four required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

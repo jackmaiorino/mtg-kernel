@@ -2272,6 +2272,15 @@ enum Special {
     /// skip its current controller's next untap. Sleep of the Dead is the
     /// first consumer.
     TapAndSkipNextUntap,
+    /// Destroy target nonlegendary creature. Cast Down is the first
+    /// consumer of the append-only target filter and shared destroy leaf.
+    DestroyNonlegendaryCreature,
+    /// Deal one simultaneous damage batch to every creature other than the
+    /// excluded subtype. Breath Weapon excludes Dragons and deals two.
+    DamageEachCreatureWithoutSubtype {
+        amount: i32,
+        excluded_subtype: &'static str,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2410,6 +2419,15 @@ impl Special {
             }
             Special::DeemInferior => "deem_inferior".to_string(),
             Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
+            Special::DestroyNonlegendaryCreature => {
+                "destroy_nonlegendary_creature".to_string()
+            }
+            Special::DamageEachCreatureWithoutSubtype {
+                amount,
+                excluded_subtype,
+            } => format!(
+                "damage_each_creature_without_subtype:{amount}:{excluded_subtype}"
+            ),
         }
     }
 }
@@ -2511,6 +2529,11 @@ fn special_for(name: &str) -> Special {
         "Preordain" => Special::ScryThenDraw { scry: 2, draw: 1 },
         "Deem Inferior" => Special::DeemInferior,
         "Sleep of the Dead" => Special::TapAndSkipNextUntap,
+        "Cast Down" => Special::DestroyNonlegendaryCreature,
+        "Breath Weapon" => Special::DamageEachCreatureWithoutSubtype {
+            amount: 2,
+            excluded_subtype: "Dragon",
+        },
         _ => Special::None,
     }
 }
@@ -2608,6 +2631,15 @@ fn effect_recipe_for(card: &CardJson) -> String {
             "target=Creature;spell=Sequence(TapObject(Target0),SkipNextUntap(Target0));mana=None"
                 .to_string()
         }
+        Special::DestroyNonlegendaryCreature => {
+            "target=NonlegendaryCreature;spell=DestroyObject(Target0);mana=None".to_string()
+        }
+        Special::DamageEachCreatureWithoutSubtype {
+            amount,
+            excluded_subtype,
+        } => format!(
+            "target=None;spell=DamageEachCreatureWithoutSubtype({amount},{excluded_subtype});mana=None"
+        ),
     }
 }
 
@@ -2632,7 +2664,9 @@ fn keywords_for(card: &CardJson) -> &'static str {
         "Sneaky Snacker"
         | "Bird Illusion Token"
         | "Faerie Miscreant"
-        | "Faerie Seer" => "Keywords::FLYING",
+        | "Faerie Seer"
+        | "Refurbished Familiar" => "Keywords::FLYING",
+        "Outlaw Medic" => "Keywords::LIFELINK",
         "Samurai Token" => "Keywords::VIGILANCE",
         _ => "Keywords::NONE",
     }
@@ -2981,7 +3015,7 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
-        "Myr Enforcer" | "Thoughtcast" => {
+        "Myr Enforcer" | "Thoughtcast" | "Refurbished Familiar" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
         }
         "Cryptic Serpent" | "Tolarian Terror" => {
@@ -3468,6 +3502,52 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::DestroyNonlegendaryCreature
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_destroy_nonlegendary_creature() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
+        )
+        .unwrap();
+        writeln!(out, "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),").unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
+        writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    let mut damage_without_subtype_shapes = Vec::new();
+    for card in cards {
+        if let Special::DamageEachCreatureWithoutSubtype {
+            amount,
+            excluded_subtype,
+        } = special_for(&card.name)
+        {
+            let shape = (amount, excluded_subtype);
+            if !damage_without_subtype_shapes.contains(&shape) {
+                damage_without_subtype_shapes.push(shape);
+            }
+        }
+    }
+    for (amount, excluded_subtype) in damage_without_subtype_shapes {
+        let subtype = subtype_variant(excluded_subtype);
+        let suffix = excluded_subtype.to_ascii_lowercase();
+        writeln!(out, "fn spell_effect_damage_each_creature_without_{suffix}_{amount}() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::DamageEachCreatureWithoutSubtype {{ amount: {amount}, excluded_subtype: {subtype} }})").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -3983,6 +4063,23 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_tap_and_skip_next_untap".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::DestroyNonlegendaryCreature => (
+                "TargetSpec::NonlegendaryCreature",
+                "spell_effect_destroy_nonlegendary_creature".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::DamageEachCreatureWithoutSubtype {
+                amount,
+                excluded_subtype,
+            } => (
+                "TargetSpec::None",
+                format!(
+                    "spell_effect_damage_each_creature_without_{}_{}",
+                    excluded_subtype.to_ascii_lowercase(),
+                    amount
+                ),
+                "no_effect".to_string(),
+            ),
             Special::MillThenDraw { player, mill, draw } => {
                 let (target_spec, player_suffix) = match player {
                     MillPlayer::Controller => ("TargetSpec::None", "controller"),
@@ -4132,7 +4229,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v8\n");
+    let mut canon = String::from("kernel_carddb/v9\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -4261,6 +4358,7 @@ fn supertype_variant(t: &str) -> &'static str {
     match t {
         "Basic" => "Basic",
         "Snow" => "Snow",
+        "Legendary" => "Legendary",
         other => panic!("cards_v1.json: unknown supertype {other:?}"),
     }
 }

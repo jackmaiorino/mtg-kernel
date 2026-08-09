@@ -565,7 +565,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::BluePermanent
                 | TargetSpec::RedPermanent
                 | TargetSpec::NonlandPermanent
-                | TargetSpec::Creature,
+                | TargetSpec::Creature
+                | TargetSpec::NonlegendaryCreature,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
