@@ -2200,9 +2200,18 @@ enum Special {
     /// turn (Searing Blaze).
     SearingBlaze,
     /// Counter target spell, with the target pool selected independently
-    /// from the shared generated counter effect. Counterspell accepts any
-    /// spell; Dispel accepts only instant spells.
+    /// from the shared generated counter effect.
     CounterTarget(StackSpellFilter),
+    /// Counter a target spell unless its controller pays a fixed generic
+    /// amount. Target eligibility remains definition data rather than a
+    /// runtime card-name branch.
+    CounterUnlessPaysGeneric {
+        filter: StackSpellFilter,
+        generic: u8,
+    },
+    /// Choose one: counter target artifact spell, or return target artifact
+    /// permanent to its owner's hand.
+    SteelSabotage,
     /// Symmetric Elemental Blast recipe. `checked_color` is the color the
     /// target must have; `filter_timing` distinguishes the Elemental Blasts'
     /// targeting restriction from Pyroblast/Hydroblast's resolution-time
@@ -2293,6 +2302,10 @@ enum MillPlayer {
 enum StackSpellFilter {
     Any,
     Instant,
+    ArtifactOrEnchantment,
+    Sorcery,
+    Noncreature,
+    Artifact,
 }
 
 impl MillPlayer {
@@ -2309,6 +2322,23 @@ impl StackSpellFilter {
         match self {
             StackSpellFilter::Any => "any",
             StackSpellFilter::Instant => "instant",
+            StackSpellFilter::ArtifactOrEnchantment => "artifact_or_enchantment",
+            StackSpellFilter::Sorcery => "sorcery",
+            StackSpellFilter::Noncreature => "noncreature",
+            StackSpellFilter::Artifact => "artifact",
+        }
+    }
+
+    fn target_spec(self) -> &'static str {
+        match self {
+            StackSpellFilter::Any => "TargetSpec::AnySpellOnStack",
+            StackSpellFilter::Instant => "TargetSpec::InstantSpellOnStack",
+            StackSpellFilter::ArtifactOrEnchantment => {
+                "TargetSpec::ArtifactOrEnchantmentSpellOnStack"
+            }
+            StackSpellFilter::Sorcery => "TargetSpec::SorcerySpellOnStack",
+            StackSpellFilter::Noncreature => "TargetSpec::NoncreatureSpellOnStack",
+            StackSpellFilter::Artifact => "TargetSpec::ArtifactSpellOnStack",
         }
     }
 }
@@ -2392,6 +2422,11 @@ impl Special {
             Special::CounterTarget(filter) => {
                 format!("counter_target:{}", filter.canonical_token())
             }
+            Special::CounterUnlessPaysGeneric { filter, generic } => format!(
+                "counter_unless_pays_generic:{}:{generic}",
+                filter.canonical_token()
+            ),
+            Special::SteelSabotage => "steel_sabotage:counter_or_bounce_artifact".to_string(),
             Special::ColorBlast {
                 checked_color,
                 filter_timing,
@@ -2493,6 +2528,17 @@ fn special_for(name: &str) -> Special {
         "Searing Blaze" => Special::SearingBlaze,
         "Counterspell" => Special::CounterTarget(StackSpellFilter::Any),
         "Dispel" => Special::CounterTarget(StackSpellFilter::Instant),
+        "Annul" => Special::CounterTarget(StackSpellFilter::ArtifactOrEnchantment),
+        "Envelop" => Special::CounterTarget(StackSpellFilter::Sorcery),
+        "Force Spike" => Special::CounterUnlessPaysGeneric {
+            filter: StackSpellFilter::Any,
+            generic: 1,
+        },
+        "Spell Pierce" => Special::CounterUnlessPaysGeneric {
+            filter: StackSpellFilter::Noncreature,
+            generic: 2,
+        },
+        "Steel Sabotage" => Special::SteelSabotage,
         "Blue Elemental Blast" => Special::ColorBlast {
             checked_color: BlastColor::Red,
             filter_timing: BlastFilterTiming::Targeting,
@@ -2581,11 +2627,20 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::SearingBlaze => {
             "target=PlayerThenTheirCreature;spell=SearingBlaze;mana=None".to_string()
         }
-        Special::CounterTarget(StackSpellFilter::Any) => {
-            "target=AnySpellOnStack;spell=CounterTarget;mana=None".to_string()
-        }
-        Special::CounterTarget(StackSpellFilter::Instant) => {
-            "target=InstantSpellOnStack;spell=CounterTarget;mana=None".to_string()
+        Special::CounterTarget(filter) => format!(
+            "target={};spell=CounterTarget;mana=None",
+            filter
+                .target_spec()
+                .trim_start_matches("TargetSpec::")
+        ),
+        Special::CounterUnlessPaysGeneric { filter, generic } => format!(
+            "target={};spell=CounterTargetUnlessPaysGeneric({generic});mana=None",
+            filter
+                .target_spec()
+                .trim_start_matches("TargetSpec::")
+        ),
+        Special::SteelSabotage => {
+            "target=ArtifactSpellOnStack;spell=CounterTarget;mode2=ReturnArtifactPermanentToOwnersHand;mana=None".to_string()
         }
         Special::ColorBlast {
             checked_color,
@@ -3060,6 +3115,7 @@ fn mode2_for(name: &str) -> String {
             "Some(ModeDef {{ target_spec: TargetSpec::AnyPermanent, effect: mode2_effect_destroy_target_permanent_if_{} }})",
             checked_color.suffix()
         ),
+        Special::SteelSabotage => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_return_target_permanent_to_owners_hand })".to_string(),
         _ => "None".to_string(),
     }
 }
@@ -3834,6 +3890,52 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
+    let mut counter_unless_generics = cards
+        .iter()
+        .filter_map(|card| match special_for(&card.name) {
+            Special::CounterUnlessPaysGeneric { generic, .. } => Some(generic),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    counter_unless_generics.sort_unstable();
+    counter_unless_generics.dedup();
+    for generic in counter_unless_generics {
+        writeln!(
+            out,
+            "fn spell_effect_counter_target_unless_pays_generic_{generic}() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    Some(EffectOp::CounterTargetUnlessPaysGeneric {{ target: TargetRef::Target(0), generic: {generic} }})"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::SteelSabotage))
+    {
+        writeln!(
+            out,
+            "fn mode2_effect_return_target_permanent_to_owners_hand() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(out, "    EffectOp::Conditional {{").unwrap();
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
+        )
+        .unwrap();
+        writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Hand }}),").unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
+        writeln!(out, "    }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     if cards
         .iter()
         .any(|c| matches!(special_for(&c.name), Special::ColorBlast { .. }))
@@ -4063,14 +4165,19 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_searing_blaze".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::CounterTarget(StackSpellFilter::Any) => (
-                "TargetSpec::AnySpellOnStack",
+            Special::CounterTarget(filter) => (
+                filter.target_spec(),
                 "spell_effect_counter_target".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::CounterTarget(StackSpellFilter::Instant) => (
-                "TargetSpec::InstantSpellOnStack",
+            Special::SteelSabotage => (
+                StackSpellFilter::Artifact.target_spec(),
                 "spell_effect_counter_target".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::CounterUnlessPaysGeneric { filter, generic } => (
+                filter.target_spec(),
+                format!("spell_effect_counter_target_unless_pays_generic_{generic}"),
                 "no_effect".to_string(),
             ),
             Special::ColorBlast {
@@ -4315,7 +4422,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v11\n");
+    let mut canon = String::from("kernel_carddb/v12\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');

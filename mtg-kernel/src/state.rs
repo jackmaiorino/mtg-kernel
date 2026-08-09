@@ -566,7 +566,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::RedPermanent
                 | TargetSpec::NonlandPermanent
                 | TargetSpec::Creature
-                | TargetSpec::NonlegendaryCreature,
+                | TargetSpec::NonlegendaryCreature
+                | TargetSpec::ArtifactPermanent,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -576,7 +577,11 @@ pub fn stack_target_contract_is_structurally_valid(
             TargetSpec::AnySpellOnStack
                 | TargetSpec::InstantSpellOnStack
                 | TargetSpec::BlueSpellOnStack
-                | TargetSpec::RedSpellOnStack,
+                | TargetSpec::RedSpellOnStack
+                | TargetSpec::ArtifactOrEnchantmentSpellOnStack
+                | TargetSpec::SorcerySpellOnStack
+                | TargetSpec::NoncreatureSpellOnStack
+                | TargetSpec::ArtifactSpellOnStack,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Stack,

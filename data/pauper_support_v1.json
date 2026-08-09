@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "8cf6575e9344b959ee4cd93e232053408639475ca6a9cc932bcdc9e01f7fb6d1"
+    "registry_raw_sha256": "dd0c86d714ab7320cdf035394ee2aa26dd4b871b0e6f14fc21b340d1cb537eba"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 75,
+    "full_cards": 80,
     "partial_cards": 0,
-    "no_effect_cards": 75,
+    "no_effect_cards": 70,
     "token_dependencies": 4
   },
   "deck_mainboard_copy_totals": [
@@ -66,16 +66,16 @@
     },
     {
       "deck_id": "CawGates",
-      "full": 21,
+      "full": 23,
       "partial": 0,
-      "no_effect": 39,
+      "no_effect": 37,
       "total": 60
     },
     {
       "deck_id": "Faeries",
-      "full": 36,
+      "full": 38,
       "partial": 0,
-      "no_effect": 24,
+      "no_effect": 22,
       "total": 60
     }
   ],
@@ -153,10 +153,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Avenging Hunter",
@@ -881,10 +879,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Eviscerator's Insight",
@@ -1137,10 +1133,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Forest",
@@ -3022,10 +3016,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Spellstutter Sprite",
@@ -3110,10 +3102,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Swamp",

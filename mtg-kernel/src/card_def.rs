@@ -256,6 +256,23 @@ pub enum TargetSpec {
     /// Exactly 1 target: a creature without the Legendary supertype.
     /// Appended for Cast Down without changing any earlier target identity.
     NonlegendaryCreature,
+    /// Exactly 1 target: an artifact or enchantment spell on the stack
+    /// (Annul). Appended so every pre-existing target-spec discriminant and
+    /// serialized snapshot identity remains stable.
+    ArtifactOrEnchantmentSpellOnStack,
+    /// Exactly 1 target: a sorcery spell on the stack (Envelop). Appended
+    /// for the same identity-preservation reason.
+    SorcerySpellOnStack,
+    /// Exactly 1 target: a noncreature spell on the stack (Spell Pierce).
+    /// Type filtering happens at targeting time and is rechecked at
+    /// resolution through the shared stack-target contract.
+    NoncreatureSpellOnStack,
+    /// Exactly 1 target: an artifact spell on the stack (Steel Sabotage's
+    /// first mode).
+    ArtifactSpellOnStack,
+    /// Exactly 1 target: an artifact permanent on either battlefield (Steel
+    /// Sabotage's second mode).
+    ArtifactPermanent,
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -758,7 +775,7 @@ mod tests {
     }
 
     #[test]
-    fn creature_target_spec_is_append_only() {
+    fn target_spec_variants_are_append_only() {
         let stable_ordinals = [
             (TargetSpec::None, 0),
             (TargetSpec::AnyTarget, 1),
@@ -774,25 +791,30 @@ mod tests {
             (TargetSpec::NonlandPermanent, 11),
             (TargetSpec::Creature, 12),
             (TargetSpec::NonlegendaryCreature, 13),
+            (TargetSpec::ArtifactOrEnchantmentSpellOnStack, 14),
+            (TargetSpec::SorcerySpellOnStack, 15),
+            (TargetSpec::NoncreatureSpellOnStack, 16),
+            (TargetSpec::ArtifactSpellOnStack, 17),
+            (TargetSpec::ArtifactPermanent, 18),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec as u8, ordinal);
         }
         assert_eq!(
-            serde_json::to_string(&TargetSpec::Creature).unwrap(),
-            "\"Creature\""
+            serde_json::to_string(&TargetSpec::ArtifactPermanent).unwrap(),
+            "\"ArtifactPermanent\""
         );
         assert_eq!(
-            serde_json::from_str::<TargetSpec>("\"Creature\"").unwrap(),
-            TargetSpec::Creature
+            serde_json::from_str::<TargetSpec>("\"ArtifactPermanent\"").unwrap(),
+            TargetSpec::ArtifactPermanent
         );
     }
 
     #[test]
-    fn card_db_hash_v14_is_frozen() {
-        // Version 14 adds exact dual-land definitions and Of One Mind's
-        // Human/non-Human conditional reducer plus draw program.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xbf5a_a423_6b3e_34bc);
+    fn card_db_hash_v15_is_frozen() {
+        // Version 15 composes the five-card counterspell wave with the
+        // exact dual lands and Of One Mind added in version 14.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x5da7_de61_61f1_4559);
     }
 
     #[test]
@@ -992,7 +1014,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 79, "75 deck cards plus four required tokens");
+        assert_eq!(full, 84, "80 deck cards plus four required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -1164,12 +1186,18 @@ mod tests {
     }
 
     #[test]
-    fn non_burn_deck_card_has_no_effect_this_increment() {
-        // Annul (Mono-Blue Faeries/Terror) is in the pool but out of scope
-        // for this increment: present, not castable.
-        let id = card_id_by_name("Annul").expect("Annul in pool");
-        let def = &CARD_DEFS[id as usize];
-        assert!(!def.is_castable());
+    fn pauper_counterspell_wave_is_fully_supported() {
+        for name in [
+            "Annul",
+            "Envelop",
+            "Force Spike",
+            "Spell Pierce",
+            "Steel Sabotage",
+        ] {
+            let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in pool"));
+            assert!(CARD_DEFS[id as usize].has_full_support(), "{name}");
+            assert!(CARD_DEFS[id as usize].is_castable(), "{name}");
+        }
     }
 
     #[test]

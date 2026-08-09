@@ -436,6 +436,14 @@ pub enum EffectOp {
         amount: i32,
         excluded_subtype: Subtype,
     },
+    /// Counters the exact spell incarnation selected by `target` unless
+    /// that spell's controller pays generic mana. Unlike Ward, this binding
+    /// originates from the resolving spell's own cast-time target contract.
+    /// Appended so every existing effect discriminant remains stable.
+    CounterTargetUnlessPaysGeneric {
+        target: TargetRef,
+        generic: u8,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -550,6 +558,17 @@ pub enum EffectFrame {
     ResolveCounterUnlessPaysGeneric {
         ward_target: StackTargetContractV4,
         targeting_stack_item: StackItemId,
+        player: PlayerId,
+        generic: u8,
+        pay: bool,
+        path: Vec<u16>,
+    },
+    /// Authenticated post-answer completion for a resolving counterspell's
+    /// exact target incarnation. Kept distinct from the Ward frame because
+    /// its source and target bindings have opposite roles.
+    ResolveCounterTargetUnlessPaysGeneric {
+        target_contract: StackTargetContractV4,
+        target_stack_item: StackItemId,
         player: PlayerId,
         generic: u8,
         pay: bool,
@@ -684,6 +703,12 @@ pub enum EffectBooleanChoicePurpose {
         player: PlayerId,
         generic: u8,
     },
+    CounterTargetUnlessPaysGeneric {
+        target_contract: StackTargetContractV4,
+        target_stack_item: StackItemId,
+        player: PlayerId,
+        generic: u8,
+    },
 }
 
 /// Internal completion contract for an option choice. Public schema-v4
@@ -767,6 +792,7 @@ pub struct EffectContinuation {
 pub enum EffectAnsweredChoiceGuard {
     OwnerLibrarySecondOrBottom { frame: Box<EffectFrame> },
     CounterUnlessPaysGeneric { frame: Box<EffectFrame> },
+    CounterTargetUnlessPaysGeneric { frame: Box<EffectFrame> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -832,7 +858,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::Scry { .. }
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
-        | EffectOp::CounterUnlessPaysGeneric { .. } => true,
+        | EffectOp::CounterUnlessPaysGeneric { .. }
+        | EffectOp::CounterTargetUnlessPaysGeneric { .. } => true,
         _ => false,
     }
 }
@@ -1174,6 +1201,39 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                     };
                     continuation.answered_choice_guard =
                         Some(EffectAnsweredChoiceGuard::CounterUnlessPaysGeneric {
+                            frame: Box::new(frame.clone()),
+                        });
+                    continuation.frames.push(frame);
+                }
+                EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
+                    target_contract,
+                    target_stack_item,
+                    player: payer,
+                    generic,
+                } => {
+                    if player != payer
+                        || path.as_slice() != [u16::from(value)]
+                        || !continuation.frames.is_empty()
+                    {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path,
+                            default,
+                            purpose,
+                        });
+                        return Err("counter-unless-pay Boolean choice metadata is inconsistent"
+                            .to_string());
+                    }
+                    let frame = EffectFrame::ResolveCounterTargetUnlessPaysGeneric {
+                        target_contract,
+                        target_stack_item,
+                        player: payer,
+                        generic,
+                        pay: value,
+                        path,
+                    };
+                    continuation.answered_choice_guard =
+                        Some(EffectAnsweredChoiceGuard::CounterTargetUnlessPaysGeneric {
                             frame: Box::new(frame.clone()),
                         });
                     continuation.frames.push(frame);
@@ -1649,6 +1709,178 @@ fn validate_counter_unless_pays_frame(
     Ok(())
 }
 
+fn validate_counter_target_unless_pays_program(
+    state: &GameState,
+    pending: &EffectContinuation,
+    target_contract: StackTargetContractV4,
+    generic: u8,
+) -> Result<(), String> {
+    if generic == 0 {
+        return Err("counter-unless-pay cannot request zero generic mana".to_string());
+    }
+    let StackTargetContractV4::Object {
+        object,
+        zone: Zone::Stack,
+        ..
+    } = target_contract
+    else {
+        return Err("counter-unless-pay lost its stack-spell target binding".to_string());
+    };
+    if pending.ctx.targets.as_slice() != [Target::Object(object)]
+        || pending.ctx.target_contracts.as_slice() != [target_contract]
+    {
+        return Err("counter-unless-pay no longer matches its resolving target".to_string());
+    }
+    let Some(target_spec) = pending.resolving_item.v4.target_spec else {
+        return Err("counter-unless-pay resolving spell lost its target specification".to_string());
+    };
+    if !matches!(
+        target_spec,
+        crate::card_def::TargetSpec::AnySpellOnStack
+            | crate::card_def::TargetSpec::InstantSpellOnStack
+            | crate::card_def::TargetSpec::BlueSpellOnStack
+            | crate::card_def::TargetSpec::RedSpellOnStack
+            | crate::card_def::TargetSpec::ArtifactOrEnchantmentSpellOnStack
+            | crate::card_def::TargetSpec::SorcerySpellOnStack
+            | crate::card_def::TargetSpec::NoncreatureSpellOnStack
+            | crate::card_def::TargetSpec::ArtifactSpellOnStack
+    ) {
+        return Err("counter-unless-pay resolving spell has a nonspell target filter".to_string());
+    }
+    let def = crate::card_def::CARD_DEFS
+        .get(state.objects.get(pending.resolving_item.source).card_def as usize)
+        .ok_or("counter-unless-pay resolving definition is missing")?;
+    let program = match pending.resolving_item.mode_chosen {
+        0 => (def.spell_effect)(),
+        1 => def.mode2.as_ref().map(|mode| (mode.effect)()),
+        _ => None,
+    };
+    if program
+        != Some(EffectOp::CounterTargetUnlessPaysGeneric {
+            target: TargetRef::Target(0),
+            generic,
+        })
+    {
+        return Err(
+            "counter-unless-pay continuation no longer matches its card program".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_counter_target_unless_pays_binding(
+    state: &GameState,
+    pending: &EffectContinuation,
+    target_contract: StackTargetContractV4,
+    target_stack_item: StackItemId,
+    player: PlayerId,
+    generic: u8,
+    require_payable: bool,
+) -> Result<StackItem, String> {
+    validate_counter_target_unless_pays_program(state, pending, target_contract, generic)?;
+    if target_stack_item == StackItemId::default() {
+        return Err("counter-unless-pay targets an unstamped stack incarnation".to_string());
+    }
+    let StackTargetContractV4::Object {
+        object,
+        card_def,
+        owner,
+        controller,
+        zone: Zone::Stack,
+        zone_change_count,
+        spell_copy_origin,
+    } = target_contract
+    else {
+        unreachable!("program validation already established an object stack target")
+    };
+    let live = state
+        .objects
+        .try_get(object)
+        .ok_or("counter-unless-pay target object no longer exists")?;
+    if live.card_def != card_def
+        || live.owner != owner
+        || live.controller != controller
+        || live.zone != Zone::Stack
+        || live.zone_change_count != zone_change_count
+        || live.spell_copy_origin != spell_copy_origin
+    {
+        return Err("counter-unless-pay target incarnation metadata changed".to_string());
+    }
+    let matches = state
+        .stack
+        .iter()
+        .filter(|item| item.v4.stack_item_id == target_stack_item)
+        .cloned()
+        .collect::<Vec<_>>();
+    let [item] = matches.as_slice() else {
+        return Err(format!(
+            "counter-unless-pay expected one bound stack item, found {}",
+            matches.len()
+        ));
+    };
+    if item.v4.stack_item_id == pending.resolving_item.v4.stack_item_id
+        || item.kind != crate::state::StackItemKind::Spell
+        || item.source != object
+        || item.controller != player
+        || controller != player
+    {
+        return Err("counter-unless-pay target/controller binding changed".to_string());
+    }
+    crate::engine::validated_stack_item_target_spec(item, state)
+        .map_err(|error| format!("counter-unless-pay target provenance is invalid: {error}"))?;
+    let source = item
+        .v4
+        .source_contract
+        .ok_or("counter-unless-pay target lost its spell-source contract")?;
+    if source.source != object
+        || source.card_def != card_def
+        || source.owner != owner
+        || source.controller != controller
+        || source.zone != Zone::Stack
+        || source.zone_change_count != zone_change_count
+        || source.spell_copy_origin != spell_copy_origin
+    {
+        return Err("counter-unless-pay target source contract changed".to_string());
+    }
+    if require_payable
+        && crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none()
+    {
+        return Err("the staged counter-unless-pay payment is no longer payable".to_string());
+    }
+    Ok(item.clone())
+}
+
+fn validate_counter_target_unless_pays_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::ResolveCounterTargetUnlessPaysGeneric {
+        target_contract,
+        target_stack_item,
+        player,
+        generic,
+        pay,
+        path,
+    } = frame
+    else {
+        return Err("counter-unless-pay answer guard does not contain its typed frame".to_string());
+    };
+    if path.as_slice() != [u16::from(*pay)] || !pending.frames.ends_with(&[frame.clone()]) {
+        return Err("counter-unless-pay answered Boolean path changed".to_string());
+    }
+    validate_counter_target_unless_pays_binding(
+        state,
+        pending,
+        *target_contract,
+        *target_stack_item,
+        *player,
+        *generic,
+        true,
+    )?;
+    Ok(())
+}
+
 fn validate_answered_choice_guard(
     state: &GameState,
     pending: &EffectContinuation,
@@ -1665,6 +1897,7 @@ fn validate_answered_choice_guard(
                     frame,
                     EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
+                        | EffectFrame::ResolveCounterTargetUnlessPaysGeneric { .. }
                 )
             }) {
                 return Err("typed answered-choice frame has no matching guard".to_string());
@@ -1696,6 +1929,19 @@ fn validate_answered_choice_guard(
                 return Err("Ward answered continuation frame stack changed".to_string());
             }
             validate_counter_unless_pays_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::CounterTargetUnlessPaysGeneric { frame }) => {
+            if pending.choice.is_some() {
+                return Err(
+                    "answered counter-unless-pay guard still carries a live choice".to_string(),
+                );
+            }
+            if pending.frames.as_slice() != [frame.as_ref().clone()] {
+                return Err(
+                    "counter-unless-pay answered continuation frame stack changed".to_string(),
+                );
+            }
+            validate_counter_target_unless_pays_frame(state, pending, frame)?;
         }
     }
     Ok(())
@@ -2057,6 +2303,27 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     true,
                 )?;
             }
+            EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
+                target_contract,
+                target_stack_item,
+                player: payer,
+                generic,
+            } => {
+                if player != payer || !path.is_empty() || !pending.frames.is_empty() {
+                    return Err(
+                        "counter-unless-pay Boolean choice metadata is inconsistent".to_string()
+                    );
+                }
+                validate_counter_target_unless_pays_binding(
+                    state,
+                    pending,
+                    *target_contract,
+                    *target_stack_item,
+                    *payer,
+                    *generic,
+                    true,
+                )?;
+            }
         },
         PendingEffectChoice::ChooseOption {
             player,
@@ -2306,6 +2573,56 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     {
                         return Err(
                             "the declined Ward payment lost its bound stack item".to_string()
+                        );
+                    }
+                }
+                EffectFrame::ResolveCounterTargetUnlessPaysGeneric {
+                    target_contract,
+                    target_stack_item,
+                    player,
+                    generic,
+                    pay,
+                    path,
+                } => {
+                    let answered_frame = EffectFrame::ResolveCounterTargetUnlessPaysGeneric {
+                        target_contract,
+                        target_stack_item,
+                        player,
+                        generic,
+                        pay,
+                        path: path.clone(),
+                    };
+                    if !continuation.frames.is_empty()
+                        || continuation.answered_choice_guard.as_ref()
+                            != Some(&EffectAnsweredChoiceGuard::CounterTargetUnlessPaysGeneric {
+                                frame: Box::new(answered_frame),
+                            })
+                        || path.as_slice() != [u16::from(pay)]
+                    {
+                        return Err("counter-unless-pay answered frame/guard mismatch".to_string());
+                    }
+                    validate_counter_target_unless_pays_binding(
+                        state,
+                        &continuation,
+                        target_contract,
+                        target_stack_item,
+                        player,
+                        generic,
+                        true,
+                    )?;
+                    continuation.answered_choice_guard = None;
+                    if pay {
+                        let plan =
+                            crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state)
+                                .ok_or(
+                                    "the accepted counter-unless-pay payment became unpayable",
+                                )?;
+                        crate::engine::pay_plan(state, player, &plan);
+                    } else if crate::engine::counter_stack_item_by_id(state, target_stack_item)?
+                        .is_none()
+                    {
+                        return Err(
+                            "the declined counter-unless-pay lost its bound spell".to_string()
                         );
                     }
                 }
@@ -2786,6 +3103,82 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     purpose: EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
                         ward_target,
                         targeting_stack_item,
+                        player,
+                        generic,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::CounterTargetUnlessPaysGeneric { target, generic } => {
+                if target != TargetRef::Target(0)
+                    || !path.is_empty()
+                    || !continuation.frames.is_empty()
+                {
+                    return Err(
+                        "counter-unless-pay must be a root effect bound to target zero".to_string(),
+                    );
+                }
+                let [target_contract] = continuation.ctx.target_contracts.as_slice() else {
+                    return Err(
+                        "counter-unless-pay lost its single cast-time target contract".to_string(),
+                    );
+                };
+                let target_contract = *target_contract;
+                let StackTargetContractV4::Object {
+                    object,
+                    zone: Zone::Stack,
+                    ..
+                } = target_contract
+                else {
+                    return Err("counter-unless-pay target is not a stack spell".to_string());
+                };
+                let target_items = state
+                    .stack
+                    .iter()
+                    .filter(|item| {
+                        item.source == object && item.kind == crate::state::StackItemKind::Spell
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let [target_item] = target_items.as_slice() else {
+                    return Err(format!(
+                        "counter-unless-pay expected one targeted spell, found {}",
+                        target_items.len()
+                    ));
+                };
+                let target_stack_item = target_item.v4.stack_item_id;
+                let player = target_item.controller;
+                validate_counter_target_unless_pays_binding(
+                    state,
+                    &continuation,
+                    target_contract,
+                    target_stack_item,
+                    player,
+                    generic,
+                    false,
+                )?;
+                if crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none() {
+                    crate::engine::counter_stack_item_by_id(state, target_stack_item)?
+                        .ok_or("the unpayable counter-unless-pay target disappeared")?;
+                    continue;
+                }
+                validate_counter_target_unless_pays_binding(
+                    state,
+                    &continuation,
+                    target_contract,
+                    target_stack_item,
+                    player,
+                    generic,
+                    true,
+                )?;
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path,
+                    default: Some(false),
+                    purpose: EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
+                        target_contract,
+                        target_stack_item,
                         player,
                         generic,
                     },
@@ -4222,7 +4615,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
-        | EffectOp::CounterUnlessPaysGeneric { .. } => {
+        | EffectOp::CounterUnlessPaysGeneric { .. }
+        | EffectOp::CounterTargetUnlessPaysGeneric { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }

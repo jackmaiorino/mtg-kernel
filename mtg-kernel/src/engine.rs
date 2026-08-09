@@ -1145,7 +1145,12 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::RedPermanent
         | TargetSpec::NonlandPermanent
         | TargetSpec::Creature
-        | TargetSpec::NonlegendaryCreature => 1,
+        | TargetSpec::NonlegendaryCreature
+        | TargetSpec::ArtifactOrEnchantmentSpellOnStack
+        | TargetSpec::SorcerySpellOnStack
+        | TargetSpec::NoncreatureSpellOnStack
+        | TargetSpec::ArtifactSpellOnStack
+        | TargetSpec::ArtifactPermanent => 1,
         TargetSpec::PlayerThenTheirCreature => 2,
     }
 }
@@ -1548,6 +1553,52 @@ fn permanent_targets_of_color(state: &GameState, color: mana::ManaColor) -> Vec<
         .collect()
 }
 
+fn spell_targets_with_any_type(state: &GameState, types: &[CardType]) -> Vec<Target> {
+    let announcing = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .map(|pending| pending.spell);
+    state
+        .stack
+        .iter()
+        .filter(|item| item.kind == StackItemKind::Spell && Some(item.source) != announcing)
+        .filter(|item| {
+            let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
+            types.iter().any(|&card_type| def.has_type(card_type))
+        })
+        .map(|item| Target::Object(item.source))
+        .collect()
+}
+
+fn spell_targets_without_type(state: &GameState, excluded: CardType) -> Vec<Target> {
+    let announcing = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .map(|pending| pending.spell);
+    state
+        .stack
+        .iter()
+        .filter(|item| item.kind == StackItemKind::Spell && Some(item.source) != announcing)
+        .filter(|item| {
+            let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
+            !def.has_type(excluded)
+        })
+        .map(|item| Target::Object(item.source))
+        .collect()
+}
+
+fn permanent_targets_with_type(state: &GameState, card_type: CardType) -> Vec<Target> {
+    battlefield_objects(state)
+        .filter(|&id| {
+            let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+            def.has_type(card_type)
+        })
+        .map(Target::Object)
+        .collect()
+}
+
 /// `targets_chosen` is the *already-picked* prefix for this same targeting
 /// pass -- needed for `PlayerThenTheirCreature`'s second, dependent pick
 /// (any other spec's legal pool doesn't vary with what's already chosen, so
@@ -1616,6 +1667,16 @@ pub fn legal_targets_for(
         }
         TargetSpec::BlueSpellOnStack => spell_targets_of_color(state, mana::ManaColor::U),
         TargetSpec::RedSpellOnStack => spell_targets_of_color(state, mana::ManaColor::R),
+        TargetSpec::ArtifactOrEnchantmentSpellOnStack => {
+            spell_targets_with_any_type(state, &[CardType::Artifact, CardType::Enchantment])
+        }
+        TargetSpec::SorcerySpellOnStack => spell_targets_with_any_type(state, &[CardType::Sorcery]),
+        TargetSpec::NoncreatureSpellOnStack => {
+            spell_targets_without_type(state, CardType::Creature)
+        }
+        TargetSpec::ArtifactSpellOnStack => {
+            spell_targets_with_any_type(state, &[CardType::Artifact])
+        }
         TargetSpec::AnyPermanent => battlefield_objects(state).map(Target::Object).collect(),
         TargetSpec::BluePermanent => permanent_targets_of_color(state, mana::ManaColor::U),
         TargetSpec::RedPermanent => permanent_targets_of_color(state, mana::ManaColor::R),
@@ -1642,6 +1703,7 @@ pub fn legal_targets_for(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::ArtifactPermanent => permanent_targets_with_type(state, CardType::Artifact),
     }
 }
 

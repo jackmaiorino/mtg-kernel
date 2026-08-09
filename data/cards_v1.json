@@ -15,6 +15,7 @@
   "cards": [
     {
       "name": "Annul",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -865,6 +866,7 @@
     },
     {
       "name": "Envelop",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -1160,6 +1162,7 @@
     },
     {
       "name": "Force Spike",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -3338,6 +3341,7 @@
     },
     {
       "name": "Spell Pierce",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -3459,6 +3463,7 @@
     },
     {
       "name": "Steel Sabotage",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [

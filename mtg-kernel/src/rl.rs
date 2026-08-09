@@ -5090,6 +5090,9 @@ fn pending_effect_semantic_v4(
                         }
                         crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
                             ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
+                            ..
                         } => BooleanChoicePurposeV4::PayCost,
                     },
                 }),
