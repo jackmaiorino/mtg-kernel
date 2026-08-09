@@ -1,4 +1,4 @@
-use mtg_kernel::card_def::card_id_by_name;
+use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::sideboard::{
     checked_in_pauper_registered_decks_v1, CardCountV1, DeterministicSideboardPolicyV1,
     RegisteredDeckV1, SideboardDefaultPlanV1, SideboardErrorV1, SideboardPlanV1, SideboardZoneV1,
@@ -94,15 +94,25 @@ fn executable_registration_rejects_unknown_token_and_unsupported_cards() {
         })
     );
 
-    let annul = card_id("Annul");
-    assert_eq!(
-        RegisteredDeckV1::new_fully_supported_v1("Deck", vec![annul; 60], vec![island; 15]),
-        Err(SideboardErrorV1::CardNotFullySupported {
-            zone: SideboardZoneV1::RegisteredMainboard,
-            card_id: annul,
-            card_name: "Annul".to_owned(),
-        })
-    );
+    if let Some((unsupported, definition)) = CARD_DEFS
+        .iter()
+        .enumerate()
+        .find(|(_, definition)| !definition.is_token && !definition.has_full_support())
+    {
+        let unsupported = u16::try_from(unsupported).unwrap();
+        assert_eq!(
+            RegisteredDeckV1::new_fully_supported_v1(
+                "Deck",
+                vec![unsupported; 60],
+                vec![island; 15],
+            ),
+            Err(SideboardErrorV1::CardNotFullySupported {
+                zone: SideboardZoneV1::RegisteredMainboard,
+                card_id: unsupported,
+                card_name: definition.name.to_owned(),
+            })
+        );
+    }
 }
 
 #[test]
