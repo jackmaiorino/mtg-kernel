@@ -549,7 +549,10 @@ pub fn stack_target_contract_is_structurally_valid(
     let shape_is_valid = matches!(
         (spec, target_index, contract),
         (
-            TargetSpec::AnyPlayer | TargetSpec::AnyTarget | TargetSpec::PlayerThenTheirCreature,
+            TargetSpec::AnyPlayer
+                | TargetSpec::AnyTarget
+                | TargetSpec::PlayerThenTheirCreature
+                | TargetSpec::TargetOpponent,
             0,
             StackTargetContractV4::Player(_),
         ) | (
@@ -587,7 +590,7 @@ pub fn stack_target_contract_is_structurally_valid(
                 ..
             },
         ) | (
-            TargetSpec::CreatureOrLandCardInGraveyard,
+            TargetSpec::CreatureOrLandCardInGraveyard | TargetSpec::CreatureCardInOwnGraveyard,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,

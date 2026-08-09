@@ -113,7 +113,7 @@ EXPECTED_MAINBOARD_SUPPORT = {
     "Rally": {"full": 60, "partial": 0, "no_effect": 0},
     "Affinity": {"full": 53, "partial": 0, "no_effect": 7},
     "Elves": {"full": 48, "partial": 0, "no_effect": 12},
-    "Spy": {"full": 43, "partial": 0, "no_effect": 17},
+    "Spy": {"full": 55, "partial": 0, "no_effect": 5},
     "Burn": {"full": 60, "partial": 0, "no_effect": 0},
     "Terror": {"full": 60, "partial": 0, "no_effect": 0},
     "CawGates": {"full": 47, "partial": 0, "no_effect": 13},
@@ -465,9 +465,9 @@ def normalize_registry(
             raise ManifestError(f"registry-only non-token card {name!r} is outside the pinned pool")
         card["decks"] = list(expected_memberships[name])
     expected_token_names = {name for name, _producers in TOKEN_DEPENDENCIES}
-    if non_token_count != 142 or token_names != expected_token_names:
+    if non_token_count != 146 or token_names != expected_token_names:
         raise ManifestError(
-            f"registry baseline drift: expected 142 deck cards and tokens "
+            f"registry baseline drift: expected 146 deck cards and tokens "
             f"{sorted(expected_token_names)!r}, got {non_token_count} and {sorted(token_names)!r}"
         )
     registry["pool_decks"] = [spec.filename for spec in DECK_SPECS]

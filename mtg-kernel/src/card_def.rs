@@ -197,6 +197,8 @@ pub enum Subtype {
     Map,
     /// Appended for the reusable Treasure token created by Heap Gate.
     Treasure,
+    /// Appended for Lotleth Giant. Existing stable ids remain fixed.
+    Giant,
 }
 
 impl Subtype {
@@ -302,6 +304,18 @@ pub enum TargetSpec {
     /// Zero, one, or two distinct players. The kernel is strictly two-player,
     /// so this is the complete bounded form of "any number of target players."
     UpToTwoPlayers,
+    /// Exactly one creature card in the targeting player's own graveyard.
+    /// Appended for Dread Return without changing any earlier target identity.
+    CreatureCardInOwnGraveyard,
+    /// Exactly the targeting player's opponent. Appended for targeted ETB
+    /// abilities such as Lotleth Giant in this strictly two-player kernel.
+    TargetOpponent,
+}
+
+impl Default for TargetSpec {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -380,6 +394,9 @@ pub enum PermanentFilter {
     /// A controlled artifact permanent. Artifact creatures and artifact
     /// lands match, while permanents without the Artifact type do not.
     Artifact,
+    /// A controlled permanent with the Creature card type. Appended for
+    /// Dread Return's flashback cost.
+    Creature,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -433,6 +450,11 @@ pub enum CostComponent {
     /// effective subtype. The physical object is chosen during activation
     /// staging and paid atomically with the remaining components.
     TapOtherUntappedControlledPermanentWithSubtype(Subtype),
+    /// Reveal the payer's complete hand, but only if it contains no card of
+    /// the named type. The reveal itself is the cost, so it happens during
+    /// payment after the spell has left hand for the stack. Land Grant is
+    /// the first consumer.
+    RevealHandIfNoCardsWithType(CardType),
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -528,6 +550,10 @@ pub enum DynamicValueDef {
     /// A literal signed value routed through the same exact-incarnation
     /// duration machinery as board-dependent pumps.
     Fixed(i32),
+    /// Count cards of the named type in the evaluating controller's
+    /// graveyard. The controller is supplied by the effect or mana-ability
+    /// context at the moment the value is sampled.
+    ControllerGraveyardCardsWithType(CardType),
 }
 
 /// Reusable definition for a single printed mana ability whose cost, amount,
@@ -957,9 +983,9 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 142 real pool cards + 8 tokens. Sacred Cat's Embalm copy and Heap
-        // Gate's Treasure are appended after Map Token and every earlier id.
-        assert_eq!(CARD_DEFS.len(), 150);
+        // 146 real pool cards + 8 tokens. The Spy combo core appends four
+        // pool definitions after Sacred Cat's Embalm and Heap Gate tokens.
+        assert_eq!(CARD_DEFS.len(), 154);
     }
 
     #[test]
@@ -991,6 +1017,8 @@ mod tests {
             (TargetSpec::ExactlyTwoArtifactPermanents, 23),
             (TargetSpec::EnchantmentPermanent, 24),
             (TargetSpec::UpToTwoPlayers, 25),
+            (TargetSpec::CreatureCardInOwnGraveyard, 26),
+            (TargetSpec::TargetOpponent, 27),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec as u8, ordinal);
@@ -1006,10 +1034,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v23_is_frozen() {
-        // Version 23 adds the exact variable-target modal hate wave while
-        // preserving all 150 card and token ids.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xc479_c219_d34a_37b0);
+    fn card_db_hash_v24_is_frozen() {
+        // Version 24 appends the Spy combo core while preserving every earlier
+        // card and token id.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x9973_8f29_7e5b_e382);
     }
 
     #[test]
@@ -1209,7 +1237,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 115, "107 deck cards plus eight required tokens");
+        assert_eq!(full, 122, "114 pool cards plus eight required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -1693,11 +1721,16 @@ mod tests {
     }
 
     #[test]
-    fn cast_into_the_fire_remains_deferred_this_increment() {
-        // Sideboard-only, modal with a 0-2 variable-count target mode this
-        // kernel's `TargetSpec` shape doesn't support -- see the module doc.
+    fn cast_into_the_fire_uses_the_variable_target_modal_program() {
         let id = card_id_by_name("Cast into the Fire").expect("Cast into the Fire in pool");
-        assert!(!CARD_DEFS[id as usize].is_castable());
+        let def = &CARD_DEFS[id as usize];
+        assert_eq!(def.capability, CardCapability::Full);
+        assert!(def.is_castable());
+        assert_eq!(def.target_spec, TargetSpec::UpToTwoCreatures);
+        assert_eq!(
+            (def.spell_effect)(),
+            Some(EffectOp::DamageAllTargets { amount: 1 })
+        );
     }
 
     #[test]

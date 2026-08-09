@@ -4647,16 +4647,140 @@
         "any_color_mana"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/TreasureToken.java"
+    },
+    {
+      "name": "Balustrade Spy",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "target_player",
+        "reveal_until_land",
+        "mill"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BalustradeSpy.java"
+    },
+    {
+      "name": "Dread Return",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "graveyard_target",
+        "return_to_battlefield",
+        "flashback",
+        "sacrifice_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DreadReturn.java"
+    },
+    {
+      "name": "Land Grant",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "alternative_cost",
+        "reveal_hand",
+        "library_search",
+        "reveal",
+        "shuffle"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LandGrant.java"
+    },
+    {
+      "name": "Lotleth Giant",
+      "engine_capability": "full",
+      "mana_cost": "{6}{B}",
+      "mana_value": 7,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie",
+        "Giant"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "target_opponent",
+        "graveyard_count",
+        "damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LotlethGiant.java"
     }
   ],
   "unresolved": [
-    "Balustrade Spy",
-    "Dread Return",
     "Faerie Macabre",
     "Flaring Pain",
     "Fume Spitter",
-    "Land Grant",
-    "Lotleth Giant",
     "Mesmeric Fiend"
   ]
 }

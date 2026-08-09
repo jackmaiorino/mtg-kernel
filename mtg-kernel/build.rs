@@ -2324,6 +2324,13 @@ enum Special {
     GainPaidCostManaValueThenDraw {
         draw: u8,
     },
+    /// Return target creature card from the controller's graveyard to the
+    /// battlefield. Dread Return's flashback cost is modeled independently.
+    ReturnOwnGraveyardCreatureToBattlefield,
+    /// Search the controller's library for a Forest card, reveal it, put it
+    /// into hand, then shuffle. Land Grant's conditional hand-reveal
+    /// alternative cost is modeled independently.
+    SearchForestToHand,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2513,6 +2520,10 @@ impl Special {
             Special::GainPaidCostManaValueThenDraw { draw } => {
                 format!("gain_paid_cost_mana_value_then_draw:{draw}")
             }
+            Special::ReturnOwnGraveyardCreatureToBattlefield => {
+                "return_own_graveyard_creature_to_battlefield".to_string()
+            }
+            Special::SearchForestToHand => "search_forest_to_hand".to_string(),
         }
     }
 }
@@ -2688,6 +2699,8 @@ fn special_for(name: &str) -> Special {
             amount: 2,
             excluded_subtype: "Dragon",
         },
+        "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
+        "Land Grant" => Special::SearchForestToHand,
         _ => Special::None,
     }
 }
@@ -2819,6 +2832,8 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::GainPaidCostManaValueThenDraw { draw } => {
             format!("target=None;spell=GainPaidCostManaValueThenDraw(Controller,{draw});mana=None")
         }
+        Special::ReturnOwnGraveyardCreatureToBattlefield => "target=CreatureCardInOwnGraveyard;spell=MoveObject(Target0,Battlefield);mana=None".to_string(),
+        Special::SearchForestToHand => "target=None;spell=SearchLibraryToHand(Controller,LandWithSubtype(Forest));mana=None".to_string(),
     }
 }
 
@@ -2850,7 +2865,8 @@ fn keywords_for(card: &CardJson) -> String {
         | "Faerie Seer"
         | "Refurbished Familiar"
         | "Sagu Wildling"
-        | "Squadron Hawk" => keywords.push("Keywords::FLYING"),
+        | "Squadron Hawk"
+        | "Balustrade Spy" => keywords.push("Keywords::FLYING"),
         "Generous Ent" => keywords.push("Keywords::REACH"),
         "Spinewoods Paladin" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" => {
@@ -2967,6 +2983,7 @@ fn kicker_cost_for(name: &str) -> String {
 fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Fireblast" => "Some(&[CostComponent::SacrificeLands(2)])",
+        "Land Grant" => "Some(&[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)])",
         _ => "None",
     }
 }
@@ -3015,6 +3032,7 @@ fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
+        "Dread Return" => "Some(FlashbackDef { cost: &[CostComponent::SacrificeControlled { count: 3, filter: PermanentFilter::Creature }] })".to_string(),
         _ => "None".to_string(),
     }
 }
@@ -4949,6 +4967,36 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::ReturnOwnGraveyardCreatureToBattlefield
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_return_own_graveyard_creature_to_battlefield() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Battlefield }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::SearchForestToHand))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_search_forest_to_hand() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::SearchLibraryToHand {{ player: PlayerRef::Controller, filter: LibraryCardFilter::LandWithSubtype(Subtype::Forest) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     // ---- CARD_DEFS -------------------------------------------------
     writeln!(out, "pub static CARD_DEFS: [CardDef; {}] = [", cards.len()).unwrap();
     for c in cards {
@@ -5200,6 +5248,16 @@ fn codegen(cards: &[CardJson]) -> String {
                     "no_effect".to_string(),
                 )
             }
+            Special::ReturnOwnGraveyardCreatureToBattlefield => (
+                "TargetSpec::CreatureCardInOwnGraveyard",
+                "spell_effect_return_own_graveyard_creature_to_battlefield".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::SearchForestToHand => (
+                "TargetSpec::None",
+                "spell_effect_search_forest_to_hand".to_string(),
+                "no_effect".to_string(),
+            ),
         };
 
         let executable = c.engine_capability != EngineCapabilityJson::NoEffect;
@@ -5384,7 +5442,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v20\n");
+    let mut canon = String::from("kernel_carddb/v21\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -5643,6 +5701,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Elemental" => "Subtype::Elemental",
         "Map" => "Subtype::Map",
         "Treasure" => "Subtype::Treasure",
+        "Giant" => "Subtype::Giant",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

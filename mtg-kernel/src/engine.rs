@@ -521,6 +521,9 @@ pub struct PendingTriggerPublicV2 {
     pub controller: PlayerId,
     pub is_madness_offer: bool,
     pub kicked: bool,
+    pub target_spec: TargetSpec,
+    pub targets: Vec<Target>,
+    pub placement_ordered: bool,
 }
 
 /// A runtime mechanic the kernel cannot simulate faithfully. Distinct from
@@ -1213,7 +1216,9 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::ArtifactPermanent
         | TargetSpec::CreatureOrLandCardInGraveyard
         | TargetSpec::ControlledCreature
-        | TargetSpec::EnchantmentPermanent => 1,
+        | TargetSpec::EnchantmentPermanent
+        | TargetSpec::CreatureCardInOwnGraveyard
+        | TargetSpec::TargetOpponent => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
@@ -1720,6 +1725,7 @@ fn legal_targets_for_controller(
             .map(Target::Player)
             .filter(|target| !targets_chosen.contains(target))
             .collect(),
+        TargetSpec::TargetOpponent => vec![Target::Player(controller.opponent())],
         TargetSpec::AnyTarget => {
             let mut out = vec![Target::Player(PlayerId::P0), Target::Player(PlayerId::P1)];
             for p in [PlayerId::P0, PlayerId::P1] {
@@ -1856,6 +1862,19 @@ fn legal_targets_for_controller(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::CreatureCardInOwnGraveyard => state.players[controller.index()]
+            .graveyard
+            .iter()
+            .copied()
+            .filter(|&id| {
+                let object = state.objects.get(id);
+                object.owner == controller
+                    && object.zone == Zone::Graveyard
+                    && !object.v4.is_token
+                    && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+            })
+            .map(Target::Object)
+            .collect(),
     }
 }
 
@@ -1869,13 +1888,24 @@ fn target_prefix_can_complete(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> bool {
+    target_prefix_can_complete_for_controller(spec, targets_chosen, state.priority_player, state)
+}
+
+fn target_prefix_can_complete_for_controller(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    state: &GameState,
+) -> bool {
     let max = target_count(spec) as usize;
     if targets_chosen.len() > max {
         return false;
     }
     let mut validated_prefix = Vec::with_capacity(targets_chosen.len());
     for &target in targets_chosen {
-        if !legal_targets_for(spec, &validated_prefix, state).contains(&target) {
+        if !legal_targets_for_controller(spec, &validated_prefix, controller, state)
+            .contains(&target)
+        {
             return false;
         }
         validated_prefix.push(target);
@@ -1883,12 +1913,12 @@ fn target_prefix_can_complete(
     if targets_chosen.len() >= usize::from(target_min_count(spec)) {
         return true;
     }
-    legal_targets_for(spec, targets_chosen, state)
+    legal_targets_for_controller(spec, targets_chosen, controller, state)
         .into_iter()
         .any(|candidate| {
             let mut next = targets_chosen.to_vec();
             next.push(candidate);
-            target_prefix_can_complete(spec, &next, state)
+            target_prefix_can_complete_for_controller(spec, &next, controller, state)
         })
 }
 
@@ -1900,12 +1930,21 @@ fn completable_next_targets_for(
     targets_chosen: &[Target],
     state: &GameState,
 ) -> Vec<Target> {
-    legal_targets_for(spec, targets_chosen, state)
+    completable_next_targets_for_controller(spec, targets_chosen, state.priority_player, state)
+}
+
+fn completable_next_targets_for_controller(
+    spec: TargetSpec,
+    targets_chosen: &[Target],
+    controller: PlayerId,
+    state: &GameState,
+) -> Vec<Target> {
+    legal_targets_for_controller(spec, targets_chosen, controller, state)
         .into_iter()
         .filter(|candidate| {
             let mut next = targets_chosen.to_vec();
             next.push(*candidate);
-            target_prefix_can_complete(spec, &next, state)
+            target_prefix_can_complete_for_controller(spec, &next, controller, state)
         })
         .collect()
 }
@@ -2035,7 +2074,11 @@ pub(crate) fn count_controlled_lands(player: PlayerId, state: &GameState) -> u32
 /// Samples one reusable board-dependent value from current state. Effects
 /// and mana abilities call this at resolution/activation time so intervening
 /// battlefield changes are reflected exactly once.
-pub(crate) fn evaluate_dynamic_value(state: &GameState, value: DynamicValueDef) -> i32 {
+pub(crate) fn evaluate_dynamic_value(
+    state: &GameState,
+    value: DynamicValueDef,
+    controller: PlayerId,
+) -> i32 {
     let count = match value {
         DynamicValueDef::Fixed(value) => return value,
         DynamicValueDef::BattlefieldPermanentsWithSubtype(subtype) => state
@@ -2050,6 +2093,18 @@ pub(crate) fn evaluate_dynamic_value(state: &GameState, value: DynamicValueDef) 
                         .is_ok()
             })
             .count(),
+        DynamicValueDef::ControllerGraveyardCardsWithType(card_type) => state.players
+            [controller.index()]
+        .graveyard
+        .iter()
+        .filter(|&&object| {
+            let live = state.objects.get(object);
+            live.owner == controller
+                && live.zone == Zone::Graveyard
+                && !live.v4.is_token
+                && card_def::CARD_DEFS[live.card_def as usize].has_type(card_type)
+        })
+        .count(),
     };
     i32::try_from(count).expect("the object arena count fits the engine's signed value range")
 }
@@ -2176,6 +2231,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut tap_count = 0;
     let mut source_departure_count = 0;
     let mut tap_other_permanent_count = 0;
+    let mut reveal_hand_condition_count = 0;
 
     for component in components {
         match component {
@@ -2236,6 +2292,9 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 tap_other_permanent_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::RevealHandIfNoCardsWithType(_) => {
+                reveal_hand_condition_count += 1;
+            }
         }
     }
 
@@ -2250,6 +2309,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
         || tap_count > 1
         || source_departure_count > 1
         || tap_other_permanent_count > 1
+        || reveal_hand_condition_count > 1
     {
         return false;
     }
@@ -2415,6 +2475,12 @@ fn can_pay_components(
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
                 !activation_cost_object_candidates(player, source, *subtype, state, &[]).is_empty()
             }
+            CostComponent::RevealHandIfNoCardsWithType(card_type) => {
+                state.players[player.index()].hand.iter().all(|&object| {
+                    !card_def::CARD_DEFS[state.objects.get(object).card_def as usize]
+                        .has_type(*card_type)
+                })
+            }
         };
         if !ok {
             return false;
@@ -2446,6 +2512,11 @@ fn pay_cost_components(
     }
     if components.iter().any(|component| {
         matches!(component, CostComponent::PayLife(amount) if state.players[player.index()].life < i32::from(*amount))
+    }) {
+        return false;
+    }
+    if components.iter().any(|component| {
+        matches!(component, CostComponent::RevealHandIfNoCardsWithType(card_type) if state.players[player.index()].hand.iter().any(|&object| card_def::CARD_DEFS[state.objects.get(object).card_def as usize].has_type(*card_type)))
     }) {
         return false;
     }
@@ -2655,6 +2726,16 @@ fn pay_cost_components(
             CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_) => {
                 event::propose_and_commit(state, ProposedEvent::tap(object_cost_chosen[0]));
             }
+            CostComponent::RevealHandIfNoCardsWithType(_) => {
+                let hand = state.players[player.index()].hand.clone();
+                for object in hand {
+                    for observer in [PlayerId::P0, PlayerId::P1] {
+                        state
+                            .reveal_hand_card(observer, player, object)
+                            .expect("preflighted live hand card remains revealable");
+                    }
+                }
+            }
         }
     }
     true
@@ -2740,6 +2821,7 @@ fn permanent_matches_filter(def: &card_def::CardDef, filter: PermanentFilter) ->
             def.has_type(CardType::Artifact) || def.has_type(CardType::Creature)
         }
         PermanentFilter::Artifact => def.has_type(CardType::Artifact),
+        PermanentFilter::Creature => def.has_type(CardType::Creature),
     }
 }
 
@@ -2809,12 +2891,12 @@ fn graveyard_exile_cards_needed(pending: &PendingCast, def: &card_def::CardDef) 
         .unwrap_or(0)
 }
 
-fn controlled_permanent_sacrifice_needed(def: &card_def::CardDef) -> Option<(u8, PermanentFilter)> {
-    def.additional_cost.and_then(|components| {
-        components.iter().find_map(|component| match component {
-            CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter)),
-            _ => None,
-        })
+fn controlled_permanent_sacrifice_in(
+    components: &[CostComponent],
+) -> Option<(u8, PermanentFilter)> {
+    components.iter().find_map(|component| match component {
+        CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter)),
+        _ => None,
     })
 }
 
@@ -2830,8 +2912,27 @@ fn activation_permanent_sacrifice_needed(
 fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
     match filter {
         PermanentFilter::Artifact => CostKind::SacrificeArtifacts,
-        PermanentFilter::ArtifactOrCreature => CostKind::SacrificePermanents,
+        PermanentFilter::ArtifactOrCreature | PermanentFilter::Creature => {
+            CostKind::SacrificePermanents
+        }
     }
+}
+
+fn controlled_permanent_sacrifice_needed(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+) -> Option<(u8, PermanentFilter)> {
+    if pending.is_flashback {
+        if let Some(sacrifice) = def
+            .flashback
+            .as_ref()
+            .and_then(|flashback| controlled_permanent_sacrifice_in(flashback.cost))
+        {
+            return Some(sacrifice);
+        }
+    }
+    def.additional_cost
+        .and_then(controlled_permanent_sacrifice_in)
 }
 
 /// Ordered live candidates for the next Escape graveyard-cost pick. The
@@ -3546,7 +3647,7 @@ fn activate_mana_ability_for(
             .count()
             .try_into()
             .map_err(|_| "mana ability amount exceeds u8".to_string())?,
-            ManaAbilityAmountDef::Dynamic(value) => evaluate_dynamic_value(state, value)
+            ManaAbilityAmountDef::Dynamic(value) => evaluate_dynamic_value(state, value, player)
                 .try_into()
                 .map_err(|_| "mana ability amount exceeds u8".to_string())?,
         };
@@ -4405,6 +4506,10 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 effect: EffectOp::Sequence(vec![]),
                 is_madness_offer: true,
                 kicked: false,
+                target_spec: TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
             });
         } else {
             event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
@@ -5012,7 +5117,7 @@ pub(crate) fn validate_pending_cast(
 
     let sacrifice_needed = sacrifice_lands_needed(pending, def);
     let graveyard_exile_needed = graveyard_exile_cards_needed(pending, def);
-    let controlled_sacrifice = controlled_permanent_sacrifice_needed(def);
+    let controlled_sacrifice = controlled_permanent_sacrifice_needed(pending, def);
     let active_object_cost_families = u8::from(sacrifice_needed != 0)
         + u8::from(graveyard_exile_needed != 0)
         + u8::from(controlled_sacrifice.is_some());
@@ -5423,7 +5528,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         });
     }
 
-    if let Some((needed, filter)) = controlled_permanent_sacrifice_needed(def) {
+    if let Some((needed, filter)) = controlled_permanent_sacrifice_needed(&pending, def) {
         if (pending.sacrifice_chosen.len() as u8) < needed {
             let candidates = sacrificeable_controlled_permanents(
                 pending.controller,
@@ -5451,7 +5556,11 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             return Some(Decision::ChooseCostTargets {
                 player: pending.controller,
                 source: pending.spell,
-                cost_kind: CostKind::SacrificePermanents,
+                cost_kind: match filter {
+                    PermanentFilter::Creature => CostKind::SacrificeCreatures,
+                    PermanentFilter::Artifact => CostKind::SacrificeArtifacts,
+                    PermanentFilter::ArtifactOrCreature => CostKind::SacrificePermanents,
+                },
                 remaining,
                 candidates,
             });
@@ -5935,30 +6044,106 @@ pub(crate) fn validate_pending_activation(
 /// real choice to make) or returns `Decision::OrderTriggers` for a group of
 /// 2+ sharing a controller.
 fn drain_pending_triggers_or_decide(state: &mut GameState) -> Option<Decision> {
-    if state.engine.pending_triggers.is_empty() {
-        return None;
-    }
-    let controller = state.engine.pending_triggers[0].controller;
-    let group_len = state
-        .engine
-        .pending_triggers
-        .iter()
-        .take_while(|t| t.controller == controller)
-        .count();
+    loop {
+        let first = state.engine.pending_triggers.first()?.clone();
+        let controller = first.controller;
+        let group_len = state
+            .engine
+            .pending_triggers
+            .iter()
+            .take_while(|trigger| trigger.controller == controller)
+            .count();
+        let group_is_ordered = state.engine.pending_triggers[..group_len]
+            .iter()
+            .all(|trigger| trigger.placement_ordered);
 
-    if group_len >= 2 {
-        let pending = state.engine.pending_triggers[..group_len].to_vec();
-        return Some(Decision::OrderTriggers {
-            player: controller,
-            pending,
-        });
-    }
+        if group_len >= 2 && !group_is_ordered {
+            return Some(Decision::OrderTriggers {
+                player: controller,
+                pending: state.engine.pending_triggers[..group_len].to_vec(),
+            });
+        }
+        if group_len == 1 && !first.placement_ordered {
+            state.engine.pending_triggers[0].placement_ordered = true;
+        }
 
-    let group: Vec<_> = state.engine.pending_triggers.drain(..group_len).collect();
-    for t in group {
-        push_trigger_onto_stack(state, t);
+        let pending = state.engine.pending_triggers[0].clone();
+        if validate_pending_trigger(state, &pending).is_err() {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
+                pending.source,
+            ));
+            return None;
+        }
+        let need = target_count(pending.target_spec);
+        if pending.targets.len() < usize::from(need) {
+            return Some(Decision::ChooseTargets {
+                player: pending.controller,
+                spell: pending.source,
+                remaining: need - pending.targets.len() as u8,
+                legal_targets: completable_next_targets_for_controller(
+                    pending.target_spec,
+                    &pending.targets,
+                    pending.controller,
+                    state,
+                ),
+                can_finish: pending.targets.len()
+                    >= usize::from(target_min_count(pending.target_spec)),
+            });
+        }
+
+        let pending = state.engine.pending_triggers.remove(0);
+        push_trigger_onto_stack(state, pending);
     }
-    None
+}
+
+fn validate_pending_trigger(state: &GameState, pending: &PendingTrigger) -> Result<(), String> {
+    if !pending.placement_ordered {
+        return Err("pending trigger has not completed placement ordering".to_string());
+    }
+    if pending.is_madness_offer {
+        if pending.target_spec != TargetSpec::None
+            || !pending.targets.is_empty()
+            || !pending.target_contracts.is_empty()
+        {
+            return Err("Madness offer carries triggered-ability targets".to_string());
+        }
+        return Ok(());
+    }
+    if pending.target_spec == TargetSpec::None {
+        if !pending.targets.is_empty() || !pending.target_contracts.is_empty() {
+            return Err("untargeted pending trigger carries targets".to_string());
+        }
+        return Ok(());
+    }
+    let source = state
+        .objects
+        .try_get(pending.source)
+        .ok_or("pending targeted trigger source is missing")?;
+    let expected = trigger::target_spec_for_trigger(source.card_def, &pending.effect)
+        .ok_or("pending targeted trigger has no matching definition-owned ability")?;
+    if pending.target_spec != expected {
+        return Err("pending trigger target specification changed".to_string());
+    }
+    if pending.targets.len() > usize::from(target_count(expected))
+        || !target_contracts_are_structurally_valid(
+            state,
+            &pending.targets,
+            &pending.target_contracts,
+        )
+    {
+        return Err("pending trigger target prefix or contracts are malformed".to_string());
+    }
+    let mut prefix = Vec::new();
+    for &target in &pending.targets {
+        if !completable_next_targets_for_controller(expected, &prefix, pending.controller, state)
+            .contains(&target)
+        {
+            return Err("pending trigger carries an illegal target prefix".to_string());
+        }
+        prefix.push(target);
+    }
+    Ok(())
 }
 
 /// Emits one committed targeting marker per distinct permanent incarnation in
@@ -6027,7 +6212,7 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) {
         },
         source: t.source,
         controller: t.controller,
-        targets: vec![],
+        targets: t.targets,
         is_copy: false,
         // A Madness offer (`is_madness_offer`, set by `apply_discard`) has
         // no fixed `EffectOp` program to run at resolution -- resolving it
@@ -6050,6 +6235,8 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) {
         v4: StackStateV4 {
             stack_item_id,
             madness_source_contract,
+            target_spec: (t.target_spec != TargetSpec::None).then_some(t.target_spec),
+            target_contracts: t.target_contracts,
             ..StackStateV4::default()
         },
     });
@@ -6258,7 +6445,21 @@ pub(crate) fn validated_stack_item_target_spec(
                     "triggered stack item carries incompatible producer metadata".to_string(),
                 );
             }
-            None
+            if let Some(spec) = item.v4.target_spec {
+                let source = state.objects.get(item.source);
+                let effect = item
+                    .inline_effect
+                    .as_ref()
+                    .expect("checked targeted trigger effect above");
+                let expected = trigger::target_spec_for_trigger(source.card_def, effect)
+                    .ok_or("targeted trigger no longer matches a definition-owned ability")?;
+                if spec != expected {
+                    return Err("triggered ability target specification changed".to_string());
+                }
+                Some(expected)
+            } else {
+                None
+            }
         }
         StackItemKind::MadnessOffer => {
             validate_madness_offer_stack_item(state, item)?;
@@ -7337,7 +7538,8 @@ fn pending_cast_action_stage(
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
     if pending.sacrifice_chosen.len()
-        < controlled_permanent_sacrifice_needed(def).map_or(0, |(count, _)| usize::from(count))
+        < controlled_permanent_sacrifice_needed(pending, def)
+            .map_or(0, |(count, _)| usize::from(count))
     {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
@@ -7447,6 +7649,19 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         validate_pending_discard_binding(state, pending_discard).map_err(|(_, message)| message)?;
         if !matches!(&action, Action::Discard(_)) {
             return Err("only the exact Discard action may answer a pending discard".to_string());
+        }
+    }
+    if let Some(pending_trigger) = state.engine.pending_triggers.first() {
+        if pending_trigger.placement_ordered
+            && pending_trigger.targets.len()
+                < usize::from(target_count(pending_trigger.target_spec))
+        {
+            validate_pending_trigger(state, pending_trigger)?;
+            if !matches!(&action, Action::ChooseTarget(_)) {
+                return Err(
+                    "only ChooseTarget may answer a pending triggered ability target".to_string(),
+                );
+            }
         }
     }
     match action {
@@ -7662,6 +7877,7 @@ enum TargetingProducer {
     },
     Activation(PendingActivation),
     SpellCopy(PendingSpellCopy),
+    Trigger(PendingTrigger),
 }
 
 fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, String> {
@@ -7694,6 +7910,14 @@ fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, Stri
         if pending.stage == SpellCopyStage::Target {
             validate_pending_spell_copy(state, pending)?;
             producers.push(TargetingProducer::SpellCopy(pending.clone()));
+        }
+    }
+    if let Some(pending) = state.engine.pending_triggers.first() {
+        if pending.placement_ordered
+            && pending.targets.len() < usize::from(target_count(pending.target_spec))
+        {
+            validate_pending_trigger(state, pending)?;
+            producers.push(TargetingProducer::Trigger(pending.clone()));
         }
     }
     match producers.len() {
@@ -7755,6 +7979,32 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
                 return Err("spell-copy targeting context changed before commit".to_string());
             }
             apply_choose_spell_copy_target(state, target)
+        }
+        TargetingProducer::Trigger(pending) => {
+            if !completable_next_targets_for_controller(
+                pending.target_spec,
+                &pending.targets,
+                pending.controller,
+                state,
+            )
+            .contains(&target)
+            {
+                return Err(format!(
+                    "{target:?} is not a legal triggered-ability target"
+                ));
+            }
+            let contract = StackTargetContractV4::capture(state, target);
+            let live = state
+                .engine
+                .pending_triggers
+                .first_mut()
+                .ok_or("validated trigger targeting context disappeared")?;
+            if live != &pending {
+                return Err("trigger targeting context changed before commit".to_string());
+            }
+            live.targets.push(target);
+            live.target_contracts.push(contract);
+            Ok(())
         }
     }
 }
@@ -7944,7 +8194,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .push(id);
             return Ok(());
         }
-        if let Some((needed, filter)) = controlled_permanent_sacrifice_needed(def) {
+        if let Some((needed, filter)) = controlled_permanent_sacrifice_needed(&pending, def) {
             if (pending.sacrifice_chosen.len() as u8) < needed {
                 let active_target_spec = spell_form_target_spec(
                     def,
@@ -8804,8 +9054,22 @@ fn apply_order_triggers(state: &mut GameState, perm: Vec<usize>) -> Result<(), S
     }
 
     let group: Vec<_> = state.engine.pending_triggers.drain(..group_len).collect();
-    for i in perm {
-        push_trigger_onto_stack(state, group[i].clone());
+    let mut ordered = perm
+        .into_iter()
+        .map(|index| {
+            let mut trigger = group[index].clone();
+            trigger.placement_ordered = true;
+            trigger
+        })
+        .collect::<Vec<_>>();
+    ordered.append(&mut state.engine.pending_triggers);
+    state.engine.pending_triggers = ordered;
+    // Preserve the historical immediate placement for groups whose triggers
+    // are all untargeted. A targeted member remains queued at its ordinary
+    // ChooseTargets decision before the remaining group continues.
+    let _ = drain_pending_triggers_or_decide(state);
+    if state.engine.halted.is_some() {
+        return Err("ordered trigger group failed placement validation".to_string());
     }
     Ok(())
 }
@@ -9162,7 +9426,10 @@ fn finalize_owned_cast(
     } else {
         pending.sacrifice_chosen.clone()
     };
-    let additional_owns_object_cost = controlled_permanent_sacrifice_needed(def).is_some();
+    let additional_owns_object_cost = def
+        .additional_cost
+        .and_then(controlled_permanent_sacrifice_in)
+        .is_some();
     let base_object_cost_chosen: &[ObjectId] = if additional_owns_object_cost {
         &[]
     } else {
@@ -10371,6 +10638,10 @@ mod tests {
             },
             is_madness_offer: false,
             kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
         });
         state.engine.pending_triggers.push(PendingTrigger {
             controller: PlayerId::P0,
@@ -10381,6 +10652,10 @@ mod tests {
             },
             is_madness_offer: false,
             kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
         });
 
         let decision = advance_until_decision(&mut state);
@@ -10412,6 +10687,10 @@ mod tests {
             effect: EffectOp::Sequence(vec![]),
             is_madness_offer: false,
             kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
         });
         state.engine.pending_triggers.push(PendingTrigger {
             controller: PlayerId::P0,
@@ -10419,6 +10698,10 @@ mod tests {
             effect: EffectOp::Sequence(vec![]),
             is_madness_offer: false,
             kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
         });
         let err = step(&mut state, Action::OrderTriggers(vec![0, 0])).unwrap_err();
         assert!(err.contains("permutation"));

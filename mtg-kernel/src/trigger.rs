@@ -8,10 +8,11 @@
 //! `engine.rs` to place on the stack (or, if 2+ share a controller, to ask
 //! that controller to order via `engine::Decision::OrderTriggers`).
 
+use crate::card_def::{CardType, DynamicValueDef, TargetSpec};
 use crate::effect::{EffectCond, EffectOp, PlayerRef, TargetRef};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{GameState, Zone};
+use crate::state::{GameState, StackTargetContractV4, Target, Zone};
 use serde::{Deserialize, Serialize};
 
 /// Trigger conditions this increment's kernel can match.
@@ -136,6 +137,20 @@ fn gatecreeper_vine_effect() -> EffectOp {
     }
 }
 
+fn balustrade_spy_effect() -> EffectOp {
+    EffectOp::RevealUntilCardTypeAndMill {
+        player: PlayerRef::Target(0),
+        card_type: CardType::Land,
+    }
+}
+
+fn lotleth_giant_effect() -> EffectOp {
+    EffectOp::DealDamageDynamic {
+        target: TargetRef::Target(0),
+        amount: DynamicValueDef::ControllerGraveyardCardsWithType(CardType::Creature),
+    }
+}
+
 fn sneaky_snacker_effect() -> EffectOp {
     // Return Sneaky Snacker from your graveyard to the battlefield tapped.
     EffectOp::Sequence(vec![
@@ -197,6 +212,20 @@ const GATECREEPER_VINE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
     effect: gatecreeper_vine_effect,
+}];
+const BALUSTRADE_SPY_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: balustrade_spy_effect,
+}];
+const LOTLETH_GIANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: lotleth_giant_effect,
 }];
 const GAIN_THREE_LIFE_ETB_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
@@ -449,6 +478,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Blood Fountain" => &BLOOD_FOUNTAIN_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
+        "Balustrade Spy" => &BALUSTRADE_SPY_TRIGGERS,
+        "Lotleth Giant" => &LOTLETH_GIANT_TRIGGERS,
         "Healer of the Glade" | "Spinewoods Paladin" => &GAIN_THREE_LIFE_ETB_TRIGGERS,
         "Sneaky Snacker" => &SNEAKY_SNACKER_TRIGGERS,
         "Burning-Tree Emissary" => &BURNING_TREE_EMISSARY_TRIGGERS,
@@ -464,6 +495,19 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Squadron Hawk" => &SQUADRON_HAWK_TRIGGERS,
         _ => &[],
     }
+}
+
+pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    let target_spec = match card.name {
+        "Balustrade Spy" => TargetSpec::AnyPlayer,
+        "Lotleth Giant" => TargetSpec::TargetOpponent,
+        _ => TargetSpec::None,
+    };
+    triggers_for(card_def)
+        .iter()
+        .any(|definition| (definition.effect)() == *effect)
+        .then_some(target_spec)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -490,6 +534,20 @@ pub struct PendingTrigger {
     /// `state::StackItem::kicked`, then `effect::ExecCtx::kicked` at
     /// resolution. `false` for every other trigger.
     pub kicked: bool,
+    /// Definition-owned target shape selected while this trigger is put on
+    /// the stack. Existing untargeted triggers retain `None`.
+    #[serde(default)]
+    pub target_spec: TargetSpec,
+    /// Target prefix chosen while placing this trigger on the stack.
+    #[serde(default)]
+    pub targets: Vec<Target>,
+    /// Exact target-incarnation contracts parallel to `targets`.
+    #[serde(default)]
+    pub target_contracts: Vec<StackTargetContractV4>,
+    /// True after the trigger's simultaneous-controller group has either
+    /// been ordered by its controller or proven singleton.
+    #[serde(default)]
+    pub placement_ordered: bool,
 }
 
 fn creature_dies_to_state_based_actions(
@@ -664,12 +722,22 @@ fn triggers_from_events(
                             continue;
                         }
                     }
+                    let effect = (def.effect)();
+                    let target_spec = match card.name {
+                        "Balustrade Spy" => TargetSpec::AnyPlayer,
+                        "Lotleth Giant" => TargetSpec::TargetOpponent,
+                        _ => TargetSpec::None,
+                    };
                     new_triggers.push(PendingTrigger {
                         controller: event_controller,
                         source: id,
-                        effect: (def.effect)(),
+                        effect,
                         is_madness_offer: false,
                         kicked,
+                        target_spec,
+                        targets: Vec::new(),
+                        target_contracts: Vec::new(),
+                        placement_ordered: false,
                     });
                 }
             }
@@ -706,6 +774,10 @@ fn triggers_from_events(
                         },
                         is_madness_offer: false,
                         kicked: false,
+                        target_spec: TargetSpec::None,
+                        targets: Vec::new(),
+                        target_contracts: Vec::new(),
+                        placement_ordered: false,
                     });
                 }
             }
@@ -896,6 +968,10 @@ mod tests {
             effect: EffectOp::Sequence(vec![]),
             is_madness_offer: false,
             kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
         };
         let b = PendingTrigger {
             controller: PlayerId::P0,
@@ -903,6 +979,10 @@ mod tests {
             effect: EffectOp::Sequence(vec![]),
             is_madness_offer: false,
             kicked: false,
+            target_spec: TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
         };
         let ordered = order_apnap(vec![a.clone(), b.clone()], PlayerId::P0);
         assert_eq!(ordered, vec![b, a]);

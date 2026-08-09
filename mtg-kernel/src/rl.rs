@@ -667,6 +667,9 @@ pub struct PendingTriggerSemanticV2 {
     pub controller: PlayerSeatV1,
     pub trigger_kind: PendingTriggerKindV2,
     pub kicked: bool,
+    pub target_spec: crate::card_def::TargetSpec,
+    pub targets: Vec<TargetRefV1>,
+    pub placement_ordered: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -5123,6 +5126,14 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
                         PendingTriggerKindV2::TriggeredAbility
                     },
                     kicked: p.kicked,
+                    target_spec: p.target_spec,
+                    targets: p
+                        .targets
+                        .iter()
+                        .copied()
+                        .map(|target| target_ref(state, target))
+                        .collect::<Result<Vec<_>>>()?,
+                    placement_ordered: p.placement_ordered,
                 })
             })
             .collect::<Result<Vec<_>>>()?,
@@ -5243,6 +5254,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
                                 TargetSelectionPurposeV4::CardSelection
                             }
+                            crate::effect::EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard {
+                                ..
+                            } => TargetSelectionPurposeV4::LibraryOrder,
                             crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
                                 ..
                             }

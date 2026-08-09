@@ -580,6 +580,21 @@ pub enum EffectOp {
     /// Exiles every card in each distinctly targeted player's graveyard as
     /// one simultaneous batch. The two-player kernel bounds this at two.
     ExileTargetPlayersGraveyards,
+    /// Publicly reveal cards from the top of `player`'s library through the
+    /// first card with `card_type`, including that card, then put the entire
+    /// revealed prefix into its owner's graveyard. If no matching card
+    /// exists, the complete library is revealed and moved. Balustrade Spy is
+    /// the first consumer.
+    RevealUntilCardTypeAndMill {
+        player: PlayerRef,
+        card_type: CardType,
+    },
+    /// Deal a state-dependent amount of damage, sampled once when this leaf
+    /// resolves. Lotleth Giant is the first consumer.
+    DealDamageDynamic {
+        target: TargetRef,
+        amount: DynamicValueDef,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -760,6 +775,16 @@ pub enum EffectFrame {
         canonical_path: Vec<u16>,
         expected_remaining_frames: Vec<EffectFrame>,
     },
+    /// A publicly revealed exact library prefix awaiting or carrying its
+    /// owner's graveyard order. `original_prefix` preserves top-to-bottom
+    /// identity independently from the mutable chosen order.
+    RevealedLibraryToGraveyardBatch {
+        player: PlayerId,
+        original_prefix: Vec<EffectObjectBinding>,
+        objects: Vec<EffectObjectBinding>,
+        order_resolved: bool,
+        path: Vec<u16>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -905,6 +930,13 @@ pub enum EffectTargetSelectionPurpose {
         player: PlayerId,
         original_graveyard: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
+    },
+    /// Orders one publicly revealed, exact library prefix into its owner's
+    /// graveyard while retaining the original top-to-bottom binding for
+    /// stale and tamper validation.
+    OrderRevealedIntoGraveyard {
+        player: PlayerId,
+        original_prefix: Vec<EffectObjectBinding>,
     },
 }
 
@@ -1123,6 +1155,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         // the program must enter the resumable interpreter so a 2+ card
         // graveyard batch can yield its owner's ordering choice.
         EffectOp::RevealTopAndPartitionByType { .. } => true,
+        EffectOp::RevealUntilCardTypeAndMill { .. } => true,
         EffectOp::MillCards { count, .. } => *count > 1,
         EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }
@@ -1645,6 +1678,20 @@ fn complete_resumable_target_selection(
                 order_resolved: true,
                 path,
             });
+        }
+        EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard {
+            player,
+            original_prefix,
+        } => {
+            continuation
+                .frames
+                .push(EffectFrame::RevealedLibraryToGraveyardBatch {
+                    player,
+                    original_prefix,
+                    objects,
+                    order_resolved: true,
+                    path,
+                });
         }
         EffectTargetSelectionPurpose::OrderLookedLibraryTop {
             player,
@@ -3069,6 +3116,40 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         );
                     }
                 }
+                EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard {
+                    player: library_player,
+                    original_prefix,
+                } => {
+                    if chooser != library_player {
+                        return Err(
+                            "revealed-library ordering player does not own the library".to_string()
+                        );
+                    }
+                    validate_bound_library_prefix_exact(state, *library_player, original_prefix)?;
+                    let candidates = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "revealed-library ordering target lacks an object binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    validate_exact_binding_permutation(
+                        original_prefix,
+                        &candidates,
+                        "revealed-library ordering candidates",
+                    )?;
+                    let count = u16::try_from(original_prefix.len()).map_err(|_| {
+                        "revealed-library prefix exceeds u16 target cardinality".to_string()
+                    })?;
+                    if *min_targets != count || *max_targets != count || !*ordered {
+                        return Err(
+                            "revealed-library ordering prompt has a noncanonical shape".to_string()
+                        );
+                    }
+                }
                 EffectTargetSelectionPurpose::OrderIntoGraveyard { .. } => {}
             }
         }
@@ -3355,6 +3436,35 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         return Ok(ResumableProgress::Suspended);
                     }
                     commit_zone_change_batch(state, &objects, Zone::Graveyard, false)?;
+                }
+                EffectFrame::RevealedLibraryToGraveyardBatch {
+                    player,
+                    original_prefix,
+                    objects,
+                    order_resolved,
+                    path,
+                } => {
+                    validate_bound_library_prefix_exact(state, player, &original_prefix)?;
+                    validate_exact_binding_permutation(
+                        &original_prefix,
+                        &objects,
+                        "revealed-library graveyard order",
+                    )?;
+                    if objects.len() >= 2 && !order_resolved {
+                        stage_graveyard_order_choice(
+                            &mut continuation,
+                            player,
+                            path,
+                            objects,
+                            EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard {
+                                player,
+                                original_prefix,
+                            },
+                        );
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                    commit_zone_change_batch(state, &objects, Zone::Graveyard, true)?;
                 }
                 EffectFrame::ReorderLibraryTop {
                     player,
@@ -4349,6 +4459,22 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     order_resolved: false,
                     path,
                 });
+            }
+            EffectOp::RevealUntilCardTypeAndMill { player, card_type } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_prefix = bind_library_through_first_type(state, player, card_type);
+                for observer in [PlayerId::P0, PlayerId::P1] {
+                    state.reveal_library_top(observer, player, original_prefix.len());
+                }
+                continuation
+                    .frames
+                    .push(EffectFrame::RevealedLibraryToGraveyardBatch {
+                        player,
+                        objects: original_prefix.clone(),
+                        original_prefix,
+                        order_resolved: false,
+                        path,
+                    });
             }
             EffectOp::LookAtLibraryTopAndReorder { player, count } => {
                 let player = continuation.ctx.resolve_player(player, state);
@@ -5708,6 +5834,26 @@ fn bind_library_top(state: &GameState, player: PlayerId, count: u8) -> Vec<Effec
         .collect()
 }
 
+fn bind_library_through_first_type(
+    state: &GameState,
+    player: PlayerId,
+    card_type: CardType,
+) -> Vec<EffectObjectBinding> {
+    let mut prefix = Vec::new();
+    for &object in &state.players[player.index()].library {
+        let live = state.objects.get(object);
+        prefix.push(EffectObjectBinding {
+            object,
+            expected_zone: Zone::Library,
+            expected_zone_change_count: live.zone_change_count,
+        });
+        if crate::card_def::CARD_DEFS[live.card_def as usize].has_type(card_type) {
+            break;
+        }
+    }
+    prefix
+}
+
 fn validate_bound_hand_exact(
     state: &GameState,
     player: PlayerId,
@@ -5971,13 +6117,21 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::damage(ctx.source, target, *amount),
             );
         }
+        EffectOp::DealDamageDynamic { target, amount } => {
+            let target = ctx.resolve_target(*target);
+            let amount = crate::engine::evaluate_dynamic_value(state, *amount, ctx.controller);
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::damage(ctx.source, target, amount),
+            );
+        }
         EffectOp::GainLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
             event::propose_and_commit(state, event::ProposedEvent::life_gain(player, *amount));
         }
         EffectOp::GainLifeDynamic { player, amount } => {
             let player = ctx.resolve_player(*player, state);
-            let amount = crate::engine::evaluate_dynamic_value(state, *amount);
+            let amount = crate::engine::evaluate_dynamic_value(state, *amount, ctx.controller);
             event::propose_and_commit(state, event::ProposedEvent::life_gain(player, amount));
         }
         EffectOp::GainLifeEqualToPaidCostManaValue { player } => {
@@ -6384,8 +6538,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let Target::Object(object) = ctx.resolve_target(*target) else {
                 panic!("dynamic target pump requires an object target");
             };
-            let power = crate::engine::evaluate_dynamic_value(state, *power);
-            let toughness = crate::engine::evaluate_dynamic_value(state, *toughness);
+            let power = crate::engine::evaluate_dynamic_value(state, *power, ctx.controller);
+            let toughness =
+                crate::engine::evaluate_dynamic_value(state, *toughness, ctx.controller);
             if power != 0 || toughness != 0 {
                 let timestamp = crate::engine::next_timestamp(state);
                 state.engine.until_end_of_turn.push(
@@ -6548,6 +6703,19 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             );
             commit_zone_change_batch(state, &objects, Zone::Graveyard, false)
                 .expect("fresh mill bindings remain valid");
+        }
+        EffectOp::RevealUntilCardTypeAndMill { player, card_type } => {
+            let player = ctx.resolve_player(*player, state);
+            let objects = bind_library_through_first_type(state, player, *card_type);
+            assert!(
+                objects.len() < 2,
+                "a multi-card revealed mill must use the resumable interpreter"
+            );
+            for observer in [PlayerId::P0, PlayerId::P1] {
+                state.reveal_library_top(observer, player, objects.len());
+            }
+            commit_zone_change_batch(state, &objects, Zone::Graveyard, true)
+                .expect("freshly revealed library prefix remains valid");
         }
         EffectOp::LookAtLibraryTopAndReorder { .. }
         | EffectOp::MayShuffleLibrary { .. }

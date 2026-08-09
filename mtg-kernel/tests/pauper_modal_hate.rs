@@ -1,18 +1,14 @@
 //! Focused current-Mage parity for Cast into the Fire, Dust to Dust, and
 //! Thraben Charm, including reusable variable-cardinality spell targeting.
 
-use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, TargetSpec, CARD_DEFS,
-};
+use mtg_kernel::card_def::{card_id_by_name, CardCapability, TargetSpec, CARD_DEFS};
 use mtg_kernel::effect::{EffectOp, ObjectRef, TargetRef};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1};
-use mtg_kernel::state::{
-    Counters, GameObject, GameState, ObjectStateV4, Step, Target, Zone,
-};
+use mtg_kernel::state::{Counters, GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use mtg_kernel::surface_v2::SurfaceDecision;
 
 fn card_id(name: &str) -> u16 {
@@ -122,23 +118,34 @@ fn generated_definitions_bind_the_exact_modal_target_shapes_and_programs() {
     assert_eq!(card_id("Cast into the Fire"), 12);
     assert_eq!(card_id("Dust to Dust"), 25);
     assert_eq!(card_id("Thraben Charm"), 118);
-    assert_eq!(CARD_DEFS.len(), 150);
+    assert_eq!(CARD_DEFS.len(), 154);
 
     let cast = &CARD_DEFS[card_id("Cast into the Fire") as usize];
     assert_eq!(cast.capability, CardCapability::Full);
     assert_eq!(cast.target_spec, TargetSpec::UpToTwoCreatures);
-    assert_eq!((cast.spell_effect)(), Some(EffectOp::DamageAllTargets { amount: 1 }));
-    let cast_mode2 = cast.mode2.as_ref().expect("Cast into the Fire has two modes");
+    assert_eq!(
+        (cast.spell_effect)(),
+        Some(EffectOp::DamageAllTargets { amount: 1 })
+    );
+    let cast_mode2 = cast
+        .mode2
+        .as_ref()
+        .expect("Cast into the Fire has two modes");
     assert_eq!(cast_mode2.target_spec, TargetSpec::ArtifactPermanent);
     assert_eq!(
         (cast_mode2.effect)(),
-        EffectOp::MoveAllTargets { to_zone: Zone::Exile }
+        EffectOp::MoveAllTargets {
+            to_zone: Zone::Exile
+        }
     );
 
     let dust = &CARD_DEFS[card_id("Dust to Dust") as usize];
     assert_eq!(dust.capability, CardCapability::Full);
     assert_eq!(dust.target_spec, TargetSpec::ExactlyTwoArtifactPermanents);
-    assert_eq!((dust.spell_effect)(), Some(EffectOp::ExileAllArtifactTargets));
+    assert_eq!(
+        (dust.spell_effect)(),
+        Some(EffectOp::ExileAllArtifactTargets)
+    );
 
     let thraben = &CARD_DEFS[card_id("Thraben Charm") as usize];
     assert_eq!(thraben.capability, CardCapability::Full);
@@ -158,9 +165,15 @@ fn generated_definitions_bind_the_exact_modal_target_shapes_and_programs() {
             object: ObjectRef::Target(0),
         }
     );
-    let thraben_mode3 = thraben.mode3.as_ref().expect("Thraben Charm has mode three");
+    let thraben_mode3 = thraben
+        .mode3
+        .as_ref()
+        .expect("Thraben Charm has mode three");
     assert_eq!(thraben_mode3.target_spec, TargetSpec::UpToTwoPlayers);
-    assert_eq!((thraben_mode3.effect)(), EffectOp::ExileTargetPlayersGraveyards);
+    assert_eq!(
+        (thraben_mode3.effect)(),
+        EffectOp::ExileTargetPlayersGraveyards
+    );
 }
 
 #[test]
@@ -177,11 +190,7 @@ fn optional_spell_targets_have_an_executable_flat_finish_action_and_roundtrip() 
             ..
         } if legal_targets.is_empty()
     ));
-    let actions = legal_action_candidates_v1(
-        &SurfaceDecision::Decision(decision),
-        &state,
-    )
-    .unwrap();
+    let actions = legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state).unwrap();
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         actions[0].record.semantic,
@@ -201,7 +210,10 @@ fn optional_spell_targets_have_an_executable_flat_finish_action_and_roundtrip() 
         .is_some_and(|pending| pending.target_selection_finished));
     let bytes = serde_json::to_vec(&state).unwrap();
     let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(state.diagnostic_state_hash(), restored.diagnostic_state_hash());
+    assert_eq!(
+        state.diagnostic_state_hash(),
+        restored.diagnostic_state_hash()
+    );
     assert!(matches!(
         engine::advance_until_decision(&mut restored),
         Decision::CastSpellOrPass { .. }
@@ -226,21 +238,18 @@ fn sparse_three_mode_choices_preserve_printed_indices_on_the_rl_surface() {
             ..
         } if spell == charm && legal_modes == &vec![0, 2]
     ));
-    let modes = legal_action_candidates_v1(
-        &SurfaceDecision::Decision(decision),
-        &state,
-    )
-    .unwrap()
-    .into_iter()
-    .map(|candidate| match candidate.record.semantic {
-        ActionSemanticV1::ChooseSpellMode {
-            mode_index,
-            mode_count,
-            ..
-        } => (mode_index, mode_count),
-        other => panic!("unexpected sparse-mode action: {other:?}"),
-    })
-    .collect::<Vec<_>>();
+    let modes = legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state)
+        .unwrap()
+        .into_iter()
+        .map(|candidate| match candidate.record.semantic {
+            ActionSemanticV1::ChooseSpellMode {
+                mode_index,
+                mode_count,
+                ..
+            } => (mode_index, mode_count),
+            other => panic!("unexpected sparse-mode action: {other:?}"),
+        })
+        .collect::<Vec<_>>();
     assert_eq!(modes, vec![(0, 3), (2, 3)]);
     assert!(engine::step(&mut state, Action::ChooseSpellMode(1)).is_err());
     engine::step(&mut state, Action::ChooseSpellMode(2)).unwrap();
@@ -297,12 +306,7 @@ fn cast_into_the_fire_damages_each_still_legal_target_and_exiles_artifacts() {
 fn dust_to_dust_requires_two_distinct_artifacts_and_ignores_a_stale_one() {
     let mut state = ready_game(0x4455_5354_0000_0001);
     let dust = put_object(&mut state, PlayerId::P0, "Dust to Dust", Zone::Hand);
-    let first_artifact = put_object(
-        &mut state,
-        PlayerId::P0,
-        "Great Furnace",
-        Zone::Battlefield,
-    );
+    let first_artifact = put_object(&mut state, PlayerId::P0, "Great Furnace", Zone::Battlefield);
     let castable = engine::advance_until_decision(&mut state);
     assert!(matches!(
         castable,
@@ -310,12 +314,7 @@ fn dust_to_dust_requires_two_distinct_artifacts_and_ignores_a_stale_one() {
             if !castable_spells.contains(&dust)
     ));
 
-    let second_artifact = put_object(
-        &mut state,
-        PlayerId::P1,
-        "Myr Enforcer",
-        Zone::Battlefield,
-    );
+    let second_artifact = put_object(&mut state, PlayerId::P1, "Myr Enforcer", Zone::Battlefield);
     assert!(matches!(
         engine::advance_until_decision(&mut state),
         Decision::CastSpellOrPass { ref castable_spells, .. }
@@ -376,11 +375,7 @@ fn thraben_charm_samples_creature_count_at_resolution_and_destroys_enchantments(
         Zone::Hand,
     );
     let targets = begin_mode(&mut destroy_state, charm, 1, 3);
-    choose_target(
-        &mut destroy_state,
-        targets,
-        Target::Object(enchantment),
-    );
+    choose_target(&mut destroy_state, targets, Target::Object(enchantment));
     resolve_spell(&mut destroy_state, charm);
     assert_eq!(destroy_state.objects.get(enchantment).zone, Zone::Graveyard);
 }
@@ -403,7 +398,10 @@ fn thraben_charm_graveyard_mode_accepts_zero_one_or_both_players() {
         if selected.len() < 2 {
             assert!(matches!(
                 decision,
-                Decision::ChooseTargets { can_finish: true, .. }
+                Decision::ChooseTargets {
+                    can_finish: true,
+                    ..
+                }
             ));
             engine::step(&mut state, Action::FinishEffectSelection).unwrap();
         } else {

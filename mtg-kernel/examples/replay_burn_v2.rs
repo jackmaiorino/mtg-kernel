@@ -4319,6 +4319,10 @@ mod tests {
                 },
                 is_madness_offer: false,
                 kicked: false,
+                target_spec: mtg_kernel::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
             },
             PendingTrigger {
                 controller: PlayerId::P0,
@@ -4329,6 +4333,10 @@ mod tests {
                 },
                 is_madness_offer: false,
                 kicked: false,
+                target_spec: mtg_kernel::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
             },
         ];
         // `check_trigger_commutativity` (like its one real call site in
@@ -4377,6 +4385,10 @@ mod tests {
                 },
                 is_madness_offer: false,
                 kicked: false,
+                target_spec: mtg_kernel::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
             },
             PendingTrigger {
                 controller: PlayerId::P0,
@@ -4387,6 +4399,10 @@ mod tests {
                 },
                 is_madness_offer: false,
                 kicked: false,
+                target_spec: mtg_kernel::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
             },
         ];
         state.engine.pending_triggers = pending.clone();

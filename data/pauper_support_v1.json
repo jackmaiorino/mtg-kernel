@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "cc8b43683e7e1fac5609958dd70e75287ed030d66faa24ce7513db8489f315ed"
+    "registry_raw_sha256": "2be8b7bd3e6a01e8a079aa22987e22c072af5c4613df45b797fd15de3801a32f"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 110,
+    "full_cards": 114,
     "partial_cards": 0,
-    "no_effect_cards": 40,
+    "no_effect_cards": 36,
     "token_dependencies": 8
   },
   "deck_mainboard_copy_totals": [
@@ -45,9 +45,9 @@
     },
     {
       "deck_id": "Spy",
-      "full": 43,
+      "full": 55,
       "partial": 0,
-      "no_effect": 17,
+      "no_effect": 5,
       "total": 60
     },
     {
@@ -256,17 +256,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Basilisk Gate",
@@ -750,17 +749,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Drossforge Bridge",
@@ -1806,17 +1804,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lava Dart",
@@ -1967,17 +1964,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lotus Petal",
