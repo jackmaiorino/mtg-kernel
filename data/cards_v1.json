@@ -139,6 +139,7 @@
     },
     {
       "name": "Bind the Monster",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -1601,6 +1602,7 @@
     },
     {
       "name": "Harrier Strix",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -1703,6 +1705,7 @@
     },
     {
       "name": "Humbling Elder",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -2320,6 +2323,7 @@
     },
     {
       "name": "Moon-Circuit Hacker",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -2474,6 +2478,7 @@
     },
     {
       "name": "Ninja of the Deep Hours",
+      "engine_capability": "full",
       "mana_cost": "{3}{U}",
       "mana_value": 4,
       "colors": [
@@ -3055,6 +3060,7 @@
     },
     {
       "name": "Saiba Cryptomancer",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -3272,6 +3278,7 @@
     },
     {
       "name": "Snap",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -3391,6 +3398,7 @@
     },
     {
       "name": "Spellstutter Sprite",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [

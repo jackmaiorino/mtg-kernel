@@ -2331,6 +2331,11 @@ enum Special {
     /// into hand, then shuffle. Land Grant's conditional hand-reveal
     /// alternative cost is modeled independently.
     SearchForestToHand,
+    /// Aura permanent spell that enters attached to its creature target.
+    BindTheMonster,
+    /// Return target creature, then choose up to two controlled lands to
+    /// untap during the same resolution.
+    Snap,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2524,6 +2529,8 @@ impl Special {
                 "return_own_graveyard_creature_to_battlefield".to_string()
             }
             Special::SearchForestToHand => "search_forest_to_hand".to_string(),
+            Special::BindTheMonster => "bind_the_monster:aura_creature".to_string(),
+            Special::Snap => "snap:bounce_then_untap_up_to_two_lands".to_string(),
         }
     }
 }
@@ -2545,6 +2552,7 @@ enum AbilityCostRecipe {
         count: u8,
         filter: PermanentFilterRecipe,
     },
+    ReturnControlledUnblockedAttacker,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2578,6 +2586,11 @@ enum AbilityEffectRecipe {
     GainLifeBattlefieldSubtypeCount(&'static str),
     PumpTargetBattlefieldSubtypeCount(&'static str),
     PumpTargetByControlledSubtypeCount(&'static str),
+    DrawThenDiscard {
+        draw: u8,
+        discard: u8,
+    },
+    PutSourceOntoBattlefieldTappedAndAttacking,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2701,6 +2714,8 @@ fn special_for(name: &str) -> Special {
         },
         "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
         "Land Grant" => Special::SearchForestToHand,
+        "Bind the Monster" => Special::BindTheMonster,
+        "Snap" => Special::Snap,
         _ => Special::None,
     }
 }
@@ -2834,6 +2849,14 @@ fn effect_recipe_for(card: &CardJson) -> String {
         }
         Special::ReturnOwnGraveyardCreatureToBattlefield => "target=CreatureCardInOwnGraveyard;spell=MoveObject(Target0,Battlefield);mana=None".to_string(),
         Special::SearchForestToHand => "target=None;spell=SearchLibraryToHand(Controller,LandWithSubtype(Forest));mana=None".to_string(),
+        Special::BindTheMonster => {
+            "target=Creature;spell=PutSourceOntoBattlefieldAttachedToTarget(Target0);mana=None"
+                .to_string()
+        }
+        Special::Snap => {
+            "target=Creature;spell=Sequence(ReturnTargetToOwnersHand,UntapUpToLands(Controller,2));mana=None"
+                .to_string()
+        }
     }
 }
 
@@ -2863,10 +2886,12 @@ fn keywords_for(card: &CardJson) -> String {
         | "Bird Illusion Token"
         | "Faerie Miscreant"
         | "Faerie Seer"
+        | "Harrier Strix"
         | "Refurbished Familiar"
         | "Sagu Wildling"
         | "Squadron Hawk"
-        | "Balustrade Spy" => keywords.push("Keywords::FLYING"),
+        | "Balustrade Spy"
+        | "Spellstutter Sprite" => keywords.push("Keywords::FLYING"),
         "Generous Ent" | "Writhing Chrysalis" => keywords.push("Keywords::REACH"),
         "Spinewoods Paladin" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" => {
@@ -2874,6 +2899,15 @@ fn keywords_for(card: &CardJson) -> String {
         }
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
+    }
+    if matches!(
+        card.name.as_str(),
+        "Humbling Elder" | "Saiba Cryptomancer" | "Spellstutter Sprite"
+    ) {
+        keywords.push("Keywords::FLASH");
+    }
+    if card.name == "Saiba Cryptomancer" {
+        keywords.push("Keywords::HEXPROOF");
     }
     if keywords.is_empty() {
         "Keywords::NONE".to_string()
@@ -3387,6 +3421,51 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Harrier Strix" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("U"),
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::DrawThenDiscard {
+                draw: 1,
+                discard: 1,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Moon-Circuit Hacker" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("U"),
+                    generic: 0,
+                },
+                AbilityCostRecipe::ReturnControlledUnblockedAttacker,
+            ],
+            effect: AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking,
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Ninja of the Deep Hours" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("U"),
+                    generic: 1,
+                },
+                AbilityCostRecipe::ReturnControlledUnblockedAttacker,
+            ],
+            effect: AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking,
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         _ => &[],
     }
 }
@@ -3419,6 +3498,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
             "CostComponent::SacrificeControlled {{ count: {count}, filter: {} }}",
             permanent_filter_src(filter)
         ),
+        AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
+            "CostComponent::ReturnControlledUnblockedAttackerToOwnersHand".to_string()
+        }
     }
 }
 
@@ -3443,6 +3525,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
                 "sacrifice_controlled:{count}:{}",
                 permanent_filter_token(filter)
             )
+        }
+        AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
+            "return_controlled_unblocked_attacker".to_string()
         }
     }
 }
@@ -3504,6 +3589,12 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::PumpTargetByControlledSubtypeCount(subtype) => {
             format!("pump_target_by_controlled_subtype_count:{subtype}")
+        }
+        AbilityEffectRecipe::DrawThenDiscard { draw, discard } => {
+            format!("draw_then_discard:{draw}:{discard}")
+        }
+        AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking => {
+            "put_source_onto_battlefield_tapped_and_attacking".to_string()
         }
     }
 }
@@ -3607,6 +3698,12 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             "ability_effect_pump_target_by_controlled_{}_count",
             subtype.to_ascii_lowercase()
         ),
+        AbilityEffectRecipe::DrawThenDiscard { draw, discard } => {
+            format!("ability_effect_draw_{draw}_then_discard_{discard}")
+        }
+        AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking => {
+            "ability_effect_put_source_onto_battlefield_tapped_and_attacking".to_string()
+        }
     }
 }
 
@@ -3801,6 +3898,49 @@ fn ward_cost_for(name: &str) -> &'static str {
     }
 }
 
+fn attachment_for(name: &str) -> &'static str {
+    match name {
+        "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
+        _ => "None",
+    }
+}
+
+/// Stable semantic binding for definition-owned triggered abilities. Runtime
+/// construction lives in trigger.rs, while this token makes each selected
+/// event, target, and effect part of the generated card database identity.
+fn trigger_recipe_for(name: &str) -> &'static str {
+    match name {
+        "Guttersnipe" => "cast_instant_or_sorcery:damage_opponent:2",
+        "Murmuring Mystic" => "cast_instant_or_sorcery:create_bird_illusion",
+        "Voldaren Epicure" => "etb:damage_opponent:1:create_blood",
+        "Generous Ent" => "etb:create_food",
+        "Blood Fountain" => "etb:create_blood",
+        "Sagu Wildling" | "Healer of the Glade" | "Spinewoods Paladin" => "etb:gain_life:3",
+        "Gatecreeper Vine" => "etb:search_basic_land_or_gate_to_hand",
+        "Sneaky Snacker" => "third_draw:return_source_to_battlefield_tapped",
+        "Burning-Tree Emissary" => "etb:add_r_g",
+        "Clockwork Percussionist" => "dies:impulse_top_one_until_owners_next_turn",
+        "Ichor Wellspring" => "etb_and_dies:draw:1",
+        "Experimental Synthesizer" => "etb_and_leaves:impulse_top_one_end_of_turn",
+        "Goblin Bushwhacker" => "etb_if_kicked:pump_controlled_creatures:1:0:haste",
+        "Faerie Miscreant" => "etb_if_another_same_definition:draw:1",
+        "Faerie Seer" => "etb:scry:2",
+        "Outlaw Medic" => "dies:draw:1",
+        "Refurbished Familiar" => "etb:opponent_discard_else_draw",
+        "Squadron Hawk" => "etb:search_up_to_three_same_definition_reveal_shuffle",
+        "Bind the Monster" => "etb:tap_attached_then_attached_deals_power_to_aura_controller",
+        "Harrier Strix" => "etb:target_any_permanent:tap",
+        "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
+        "Moon-Circuit Hacker" => {
+            "combat_damage_player:may_draw:discard_unless_source_entered_this_turn:lki"
+        }
+        "Ninja of the Deep Hours" => "combat_damage_player:may_draw:1",
+        "Saiba Cryptomancer" => "etb:target_creature:backup_1:hexproof",
+        "Spellstutter Sprite" => "etb:target_spell_mv_at_most_controlled_faerie_count:counter",
+        _ => "none",
+    }
+}
+
 fn intrinsic_basic_mana_color(card: &CardJson) -> Option<&'static str> {
     let is_basic_land = card.is_land
         && card.types.iter().any(|card_type| card_type == "Land")
@@ -3952,6 +4092,37 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::BindTheMonster))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_bind_the_monster() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::PutSourceOntoBattlefieldAttachedToTarget {{ target: ObjectRef::Target(0) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::Snap))
+    {
+        writeln!(out, "fn spell_effect_snap() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Hand }},"
+        )
+        .unwrap();
+        writeln!(out, "        EffectOp::UntapUpToLands {{ chooser: PlayerRef::Controller, max_targets: 2 }},").unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     // Emit each structured activated-ability effect once. These are the same
     // recipes used for CardDef source and the v3 card-database hash tokens,
     // so a cost/zone/effect change cannot update one surface and leave the
@@ -4076,6 +4247,19 @@ fn codegen(cards: &[CardJson]) -> String {
                     out,
                     "    EffectOp::PumpTargetByControlledSubtypeCount {{ target: ObjectRef::Target(0), subtype: {} }}",
                     subtype_variant(subtype)
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::DrawThenDiscard { draw, discard } => {
+                writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},").unwrap();
+                writeln!(out, "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: {discard} }},").unwrap();
+                writeln!(out, "    ])").unwrap();
+            }
+            AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking => {
+                writeln!(
+                    out,
+                    "    EffectOp::PutSourceOntoBattlefieldTappedAndAttacking"
                 )
                 .unwrap();
             }
@@ -5267,6 +5451,16 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_search_forest_to_hand".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::BindTheMonster => (
+                "TargetSpec::Creature",
+                "spell_effect_bind_the_monster".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::Snap => (
+                "TargetSpec::Creature",
+                "spell_effect_snap".to_string(),
+                "no_effect".to_string(),
+            ),
         };
 
         let executable = c.engine_capability != EngineCapabilityJson::NoEffect;
@@ -5436,6 +5630,7 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(out, "        attachment: {},", attachment_for(&c.name)).unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -5453,7 +5648,7 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out).unwrap();
 
     // ---- content + executable-recipe hash ------------------------------
-    // v8 hashes every generated CardDef selector plus semantic tokens from
+    // v23 hashes every generated CardDef selector plus semantic tokens from
     // the same `Special` and structured activated-ability recipes that emit
     // executable definitions. Lorien's Draw3/search and Deep Analysis's
     // target-player draw/ordered flashback and Sleep's ordered Escape cost
@@ -5461,7 +5656,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v22\n");
+    let mut canon = String::from("kernel_carddb/v23\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -5563,6 +5758,16 @@ fn codegen(cards: &[CardJson]) -> String {
             enters_battlefield_tapped_unless_for(&c.name)
         } else {
             "None"
+        });
+        canon.push('|');
+        canon.push_str("attachment=");
+        canon.push_str(attachment_for(&c.name));
+        canon.push('|');
+        canon.push_str("trigger=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            trigger_recipe_for(&c.name)
+        } else {
+            "none"
         });
         canon.push('|');
         canon.push_str(alt_cost_for(&c.name));

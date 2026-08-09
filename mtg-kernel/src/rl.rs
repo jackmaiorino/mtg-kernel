@@ -4381,7 +4381,14 @@ fn object_is_live_in_zone_index(state: &GameState, id: ObjectId) -> Result<bool>
             .contains(&id),
         Zone::Graveyard => state.players[object.owner.index()].graveyard.contains(&id),
         Zone::Exile => state.exile.contains(&id),
-        Zone::Stack => state.stack.iter().any(|item| item.source == id),
+        Zone::Stack => state.stack.iter().any(|item| {
+            item.kind == StackItemKind::Spell
+                && item.source == id
+                && item
+                    .v4
+                    .source_contract
+                    .is_some_and(|contract| contract.zone_change_count == object.zone_change_count)
+        }),
         Zone::Command => state.command.contains(&id),
     })
 }
@@ -5281,6 +5288,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
                             } => TargetSelectionPurposeV4::SearchResult,
+                            crate::effect::EffectTargetSelectionPurpose::UntapLands {
+                                ..
+                            } => TargetSelectionPurposeV4::PermanentSelection,
                             crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
                                 stage,
                                 ..
@@ -5672,7 +5682,7 @@ fn stack_item_public_v1(
 ) -> Result<StackItemPublicV1> {
     Ok(StackItemPublicV1 {
         stack_index,
-        source: card_ref(state, item.source)?,
+        source: stack_source_ref(state, item)?,
         controller: item.controller.into(),
         targets: stack_target_refs(state, item)?,
         is_trigger_or_ability: item.kind != StackItemKind::Spell,
@@ -5707,7 +5717,7 @@ fn stack_item_public_v2(
     }
     Ok(StackItemPublicV2 {
         stack_index,
-        source: card_ref(state, item.source)?,
+        source: stack_source_ref(state, item)?,
         controller: item.controller.into(),
         // Announced stack targets are public historical facts. Project the
         // frozen target contract rather than rebuilding a reference from a
@@ -5723,6 +5733,54 @@ fn stack_item_public_v2(
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
         paid_cost_refs: paid_cost_card_refs(&item.v4.paid_cost_refs, acting_player),
+    })
+}
+
+fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
+    crate::engine::validated_stack_item_target_spec(item, state)
+        .map_err(|error| RlContractError(format!("invalid stack source metadata: {error}")))?;
+    let (card_def, owner, controller, zone, zone_change_count) = match item.kind {
+        StackItemKind::Spell => return card_ref(state, item.source),
+        StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility => {
+            let contract = item.v4.ability_source_contract.ok_or_else(|| {
+                RlContractError("ability stack source lost its frozen incarnation".to_string())
+            })?;
+            (
+                contract.card_def,
+                contract.owner,
+                contract.controller,
+                contract.zone,
+                contract.zone_change_count,
+            )
+        }
+        StackItemKind::MadnessOffer => {
+            let contract = item.v4.madness_source_contract.ok_or_else(|| {
+                RlContractError("Madness offer lost its frozen source incarnation".to_string())
+            })?;
+            (
+                contract.card_def,
+                contract.owner,
+                contract.controller,
+                contract.zone,
+                contract.zone_change_count,
+            )
+        }
+    };
+    let historical = state.objects.try_get(item.source).ok_or_else(|| {
+        RlContractError("ability stack source references an unknown arena object".to_string())
+    })?;
+    if historical.card_def != card_def || historical.owner != owner {
+        return Err(RlContractError(
+            "ability stack source changed stable arena identity".to_string(),
+        ));
+    }
+    Ok(CardStableRefV1 {
+        arena_id: item.source.0,
+        card_db_id: card_def,
+        owner: owner.into(),
+        controller: controller.into(),
+        zone,
+        zone_change_count,
     })
 }
 

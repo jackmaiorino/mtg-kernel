@@ -313,11 +313,63 @@ pub enum TargetSpec {
     /// Exactly the targeting player's opponent. Appended for targeted ETB
     /// abilities such as Lotleth Giant in this strictly two-player kernel.
     TargetOpponent,
+    /// Exactly one creature controlled by an opponent of the announcing
+    /// player. Humbling Elder is the first consumer.
+    OpponentControlledCreature,
+    /// Exactly one spell whose printed mana value is no greater than the
+    /// number of permanents the announcing player controls with either of
+    /// the named effective subtypes. The two-subtype form preserves the
+    /// registry's case-distinct Faerie spellings without making the rules
+    /// query card-name-specific.
+    SpellManaValueAtMostControlledSubtypes {
+        first: Subtype,
+        second: Option<Subtype>,
+    },
 }
 
 impl Default for TargetSpec {
     fn default() -> Self {
         Self::None
+    }
+}
+
+impl TargetSpec {
+    /// Stable append-only identity used by tests and semantic tooling. This
+    /// remains explicit now that the grammar includes a parameterized target
+    /// filter and Rust no longer permits a direct enum-to-integer cast.
+    pub const fn stable_id(self) -> u8 {
+        match self {
+            TargetSpec::None => 0,
+            TargetSpec::AnyTarget => 1,
+            TargetSpec::PlayerThenTheirCreature => 2,
+            TargetSpec::AnySpellOnStack => 3,
+            TargetSpec::InstantSpellOnStack => 4,
+            TargetSpec::BlueSpellOnStack => 5,
+            TargetSpec::AnyPermanent => 6,
+            TargetSpec::BluePermanent => 7,
+            TargetSpec::AnyPlayer => 8,
+            TargetSpec::RedSpellOnStack => 9,
+            TargetSpec::RedPermanent => 10,
+            TargetSpec::NonlandPermanent => 11,
+            TargetSpec::Creature => 12,
+            TargetSpec::NonlegendaryCreature => 13,
+            TargetSpec::ArtifactOrEnchantmentSpellOnStack => 14,
+            TargetSpec::SorcerySpellOnStack => 15,
+            TargetSpec::NoncreatureSpellOnStack => 16,
+            TargetSpec::ArtifactSpellOnStack => 17,
+            TargetSpec::ArtifactPermanent => 18,
+            TargetSpec::CreatureOrLandCardInGraveyard => 19,
+            TargetSpec::ControlledCreature => 20,
+            TargetSpec::UpToTwoCreatureCardsInOwnGraveyard => 21,
+            TargetSpec::UpToTwoCreatures => 22,
+            TargetSpec::ExactlyTwoArtifactPermanents => 23,
+            TargetSpec::EnchantmentPermanent => 24,
+            TargetSpec::UpToTwoPlayers => 25,
+            TargetSpec::CreatureCardInOwnGraveyard => 26,
+            TargetSpec::TargetOpponent => 27,
+            TargetSpec::OpponentControlledCreature => 28,
+            TargetSpec::SpellManaValueAtMostControlledSubtypes { .. } => 29,
+        }
     }
 }
 
@@ -348,6 +400,9 @@ impl Keywords {
     pub const INDESTRUCTIBLE: Keywords = Keywords(1 << 12);
     pub const PROTECTION_FROM_MONOCOLORED: Keywords = Keywords(1 << 13);
     pub const ISLANDWALK: Keywords = Keywords(1 << 14);
+    /// The permanent spell may be cast whenever its controller has
+    /// priority, using the same timing permission as an instant.
+    pub const FLASH: Keywords = Keywords(1 << 15);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -458,6 +513,19 @@ pub enum CostComponent {
     /// payment after the spell has left hand for the stack. Land Grant is
     /// the first consumer.
     RevealHandIfNoCardsWithType(CardType),
+    /// Return one controlled unblocked attacking creature to its owner's
+    /// hand. This component also owns ninjutsu's exact post-blockers combat
+    /// timing gate, so hand-zone abilities using it cannot be offered in an
+    /// ordinary priority window.
+    ReturnControlledUnblockedAttackerToOwnersHand,
+}
+
+/// Static rules carried by a permanent while it is attached. The host link
+/// itself is incarnation-bound in `ObjectStateV4::attached_to`; this
+/// definition describes what a valid attachment requires and grants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentDef {
+    AuraCreature { prevents_untap: bool },
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -771,6 +839,10 @@ pub struct CardDef {
     /// A conditional replacement for unconditional tapped entry. `None`
     /// preserves the existing `enters_battlefield_tapped` behavior.
     pub enters_battlefield_tapped_unless: Option<EntersBattlefieldTappedUnlessDef>,
+    /// A permanent spell that enters attached uses this definition both for
+    /// attachment state-based actions and for continuous host restrictions.
+    /// Appended so every existing generated field identity remains fixed.
+    pub attachment: Option<AttachmentDef>,
 }
 
 impl CardDef {
@@ -1034,9 +1106,17 @@ mod tests {
             (TargetSpec::UpToTwoPlayers, 25),
             (TargetSpec::CreatureCardInOwnGraveyard, 26),
             (TargetSpec::TargetOpponent, 27),
+            (TargetSpec::OpponentControlledCreature, 28),
+            (
+                TargetSpec::SpellManaValueAtMostControlledSubtypes {
+                    first: Subtype::Faerie,
+                    second: Some(Subtype::FaerieAllCaps),
+                },
+                29,
+            ),
         ];
         for (target_spec, ordinal) in stable_ordinals {
-            assert_eq!(target_spec as u8, ordinal);
+            assert_eq!(target_spec.stable_id(), ordinal);
         }
         assert_eq!(
             serde_json::to_string(&TargetSpec::CreatureOrLandCardInGraveyard).unwrap(),
@@ -1049,10 +1129,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v25_is_frozen() {
-        // Version 25 appends Eldrazi Spawn after the Spy combo core and
-        // promotes exact Gingerbread Cabin and Writhing Chrysalis behavior.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x3645_63d1_395d_951b);
+    fn card_db_hash_v26_is_frozen() {
+        // Version 26 composes the exact Faeries card programs after the
+        // green-value and Spy combo waves without renumbering prior ids.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x327c_dff7_bda9_00e4);
     }
 
     #[test]

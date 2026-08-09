@@ -118,7 +118,7 @@ EXPECTED_MAINBOARD_SUPPORT = {
     "Burn": {"full": 60, "partial": 0, "no_effect": 0},
     "Terror": {"full": 60, "partial": 0, "no_effect": 0},
     "CawGates": {"full": 47, "partial": 0, "no_effect": 13},
-    "Faeries": {"full": 38, "partial": 0, "no_effect": 22},
+    "Faeries": {"full": 60, "partial": 0, "no_effect": 0},
 }
 
 

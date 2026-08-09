@@ -466,6 +466,40 @@ impl MadnessOfferSourceContractV4 {
     }
 }
 
+/// Frozen source identity for a non-Madness triggered ability. The physical
+/// card may legally change zones, or even be cast again, while the ability
+/// remains on the stack. This contract therefore authenticates the
+/// definition, owner, controller, zone, and generation at trigger creation
+/// without requiring the live object to remain in that incarnation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AbilitySourceContractV4 {
+    pub source: ObjectId,
+    pub card_def: u16,
+    pub owner: PlayerId,
+    pub controller: PlayerId,
+    pub zone: Zone,
+    pub zone_change_count: u32,
+    /// Exact host relation at trigger or activation creation. This is LKI,
+    /// not a claim that the source remains attached while the ability waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached_to: Option<ObjectLinkV4>,
+}
+
+impl AbilitySourceContractV4 {
+    pub fn capture(state: &GameState, source: ObjectId) -> AbilitySourceContractV4 {
+        let object = state.objects.get(source);
+        AbilitySourceContractV4 {
+            source,
+            card_def: object.card_def,
+            owner: object.owner,
+            controller: object.controller,
+            zone: object.zone,
+            zone_change_count: object.zone_change_count,
+            attached_to: object.v4.attached_to,
+        }
+    }
+}
+
 /// Historical identity of one object used to pay a cost. It belongs to the
 /// stack incarnation and must not follow the arena object through later zone
 /// changes.
@@ -578,7 +612,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::NonlegendaryCreature
                 | TargetSpec::ArtifactPermanent
                 | TargetSpec::EnchantmentPermanent
-                | TargetSpec::ControlledCreature,
+                | TargetSpec::ControlledCreature
+                | TargetSpec::OpponentControlledCreature,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -613,7 +648,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::ArtifactOrEnchantmentSpellOnStack
                 | TargetSpec::SorcerySpellOnStack
                 | TargetSpec::NoncreatureSpellOnStack
-                | TargetSpec::ArtifactSpellOnStack,
+                | TargetSpec::ArtifactSpellOnStack
+                | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. },
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Stack,
@@ -690,6 +726,17 @@ pub struct StackStateV4 {
     /// resolution; public stack/action schemas remain unchanged.
     #[serde(default)]
     pub activated_ability_index: Option<u8>,
+    /// Exact hidden-zone source incarnation revealed for an activated
+    /// ability. Ninjutsu freezes this link while the ability is on the
+    /// stack; if that incarnation leaves the hand, resolution has no effect.
+    /// Other abilities retain `None`.
+    #[serde(default)]
+    pub hidden_ability_source: Option<ObjectLinkV4>,
+    /// Historical source incarnation for a definition-owned triggered
+    /// ability. Unlike a spell source, it need not remain live in its
+    /// captured zone while the ability waits or resolves.
+    #[serde(default)]
+    pub ability_source_contract: Option<AbilitySourceContractV4>,
 }
 
 impl StackStateV4 {

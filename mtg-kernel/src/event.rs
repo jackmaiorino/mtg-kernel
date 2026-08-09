@@ -10,7 +10,7 @@
 
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
-use crate::state::{GameState, Target, Zone};
+use crate::state::{GameState, StackItemKind, Target, Zone};
 use serde::{Deserialize, Serialize};
 
 pub type ReplacementId = u32;
@@ -332,6 +332,16 @@ pub enum CommittedEvent {
         controller_before: PlayerId,
         effective_subtype_ids_before: Vec<u16>,
     },
+    /// Nonreplaceable marker emitted after a combat-damage batch only when
+    /// positive damage to a player survived prevention. The exact source
+    /// incarnation prevents a later zone-change generation from inheriting
+    /// the combat trigger.
+    CombatDamageToPlayer {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        player: PlayerId,
+        amount: i32,
+    },
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -641,6 +651,27 @@ pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
     state.engine.event_history.push(committed);
 }
 
+/// Records that one exact permanent incarnation dealt combat damage to a
+/// player. The underlying damage event remains independently committed;
+/// this marker exists only to distinguish combat from noncombat damage for
+/// triggered-ability matching.
+pub fn log_combat_damage_to_player(
+    state: &mut GameState,
+    source: ObjectId,
+    source_zone_change_count: u32,
+    player: PlayerId,
+    amount: i32,
+) {
+    let committed = CommittedEvent::CombatDamageToPlayer {
+        source,
+        source_zone_change_count,
+        player,
+        amount,
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
 fn permanent_enters_battlefield_tapped(
     state: &GameState,
     object: ObjectId,
@@ -881,7 +912,14 @@ fn remove_from_zone(state: &mut GameState, owner: PlayerId, id: ObjectId, zone: 
         Zone::Command => drop_from(&mut state.command, id),
         Zone::Stack => {
             let before = state.stack.len();
-            state.stack.retain(|item| item.source != id);
+            let live_generation = state.objects.get(id).zone_change_count;
+            state.stack.retain(|item| {
+                item.kind != StackItemKind::Spell
+                    || item.source != id
+                    || item.v4.source_contract.map_or(true, |contract| {
+                        contract.zone_change_count != live_generation
+                    })
+            });
             before != state.stack.len()
         }
     }

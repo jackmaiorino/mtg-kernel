@@ -8,11 +8,11 @@
 //! `engine.rs` to place on the stack (or, if 2+ share a controller, to ask
 //! that controller to order via `engine::Decision::OrderTriggers`).
 
-use crate::card_def::{CardType, DynamicValueDef, Subtype, TargetSpec};
-use crate::effect::{EffectCond, EffectObjectBinding, EffectOp, PlayerRef, TargetRef};
+use crate::card_def::{CardType, DynamicValueDef, Keywords, Subtype, TargetSpec};
+use crate::effect::{EffectCond, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{GameState, StackTargetContractV4, Target, Zone};
+use crate::state::{AbilitySourceContractV4, GameState, StackTargetContractV4, Target, Zone};
 use serde::{Deserialize, Serialize};
 
 /// Trigger conditions this increment's kernel can match.
@@ -61,6 +61,9 @@ pub enum TriggerCondition {
     /// This permanent's controller sacrifices another permanent that had
     /// the named effective subtype immediately before leaving.
     SacrificeAnotherWithSubtype(Subtype),
+    /// This creature deals combat damage to a player. The committed marker
+    /// carries the source's exact zone-change generation.
+    DealsCombatDamageToPlayer,
 }
 
 pub struct TriggeredAbilityDef {
@@ -419,6 +422,81 @@ fn squadron_hawk_etb_effect() -> EffectOp {
     }
 }
 
+fn bind_the_monster_etb_effect() -> EffectOp {
+    EffectOp::TapAttachedCreatureAndDamageControllerByPower
+}
+
+fn harrier_strix_etb_effect() -> EffectOp {
+    EffectOp::TapObject {
+        object: ObjectRef::Target(0),
+    }
+}
+
+fn humbling_elder_etb_effect() -> EffectOp {
+    EffectOp::PumpTargetUntilEndOfTurnDynamic {
+        target: TargetRef::Target(0),
+        power: DynamicValueDef::Fixed(-2),
+        toughness: DynamicValueDef::Fixed(0),
+    }
+}
+
+fn moon_circuit_hacker_combat_effect_for_entered_this_turn(entered_this_turn: bool) -> EffectOp {
+    let after_draw = if entered_this_turn {
+        EffectOp::Sequence(vec![])
+    } else {
+        EffectOp::DiscardCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        }
+    };
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::Sequence(vec![
+                EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                },
+                after_draw,
+            ]),
+        ],
+    }
+}
+
+fn moon_circuit_hacker_combat_effect() -> EffectOp {
+    // Definition inventory placeholder. Event matching freezes the actual
+    // source-incarnation fact into one of the two canonical programs below.
+    moon_circuit_hacker_combat_effect_for_entered_this_turn(false)
+}
+
+fn ninja_of_the_deep_hours_combat_effect() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            EffectOp::Sequence(vec![]),
+            EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 1,
+            },
+        ],
+    }
+}
+
+fn saiba_cryptomancer_etb_effect() -> EffectOp {
+    EffectOp::BackupTarget {
+        target: ObjectRef::Target(0),
+        keyword: Keywords::HEXPROOF,
+    }
+}
+
+fn spellstutter_sprite_etb_effect() -> EffectOp {
+    EffectOp::MoveObject {
+        object: ObjectRef::Target(0),
+        to_zone: Zone::Graveyard,
+    }
+}
+
 fn experimental_synthesizer_impulse_effect() -> EffectOp {
     // When Experimental Synthesizer enters or leaves the battlefield, exile
     // the top card of your library. Until end of turn, you may play that
@@ -548,6 +626,62 @@ const SQUADRON_HAWK_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: squadron_hawk_etb_effect,
 }];
 
+const BIND_THE_MONSTER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: bind_the_monster_etb_effect,
+}];
+
+const HARRIER_STRIX_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: harrier_strix_etb_effect,
+}];
+
+const HUMBLING_ELDER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: humbling_elder_etb_effect,
+}];
+
+const MOON_CIRCUIT_HACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: moon_circuit_hacker_combat_effect,
+}];
+
+const NINJA_OF_THE_DEEP_HOURS_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::DealsCombatDamageToPlayer,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: ninja_of_the_deep_hours_combat_effect,
+}];
+
+const SAIBA_CRYPTOMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: saiba_cryptomancer_etb_effect,
+}];
+
+const SPELLSTUTTER_SPRITE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: spellstutter_sprite_etb_effect,
+}];
+
 /// The pool's implemented triggered abilities, matched by card name (ids are
 /// codegen-assigned from `cards_v1.json`'s array order and not worth
 /// duplicating as constants here -- see `build.rs`'s module doc on id
@@ -585,21 +719,64 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Outlaw Medic" => &OUTLAW_MEDIC_TRIGGERS,
         "Refurbished Familiar" => &REFURBISHED_FAMILIAR_TRIGGERS,
         "Squadron Hawk" => &SQUADRON_HAWK_TRIGGERS,
+        "Bind the Monster" => &BIND_THE_MONSTER_TRIGGERS,
+        "Harrier Strix" => &HARRIER_STRIX_TRIGGERS,
+        "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
+        "Moon-Circuit Hacker" => &MOON_CIRCUIT_HACKER_TRIGGERS,
+        "Ninja of the Deep Hours" => &NINJA_OF_THE_DEEP_HOURS_TRIGGERS,
+        "Saiba Cryptomancer" => &SAIBA_CRYPTOMANCER_TRIGGERS,
+        "Spellstutter Sprite" => &SPELLSTUTTER_SPRITE_TRIGGERS,
         _ => &[],
     }
 }
 
-pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
-    let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
-    let target_spec = match card.name {
+/// Definition-owned target specification for the pool's triggered abilities.
+pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
+    let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
+        return TargetSpec::None;
+    };
+    match card.name {
         "Balustrade Spy" => TargetSpec::AnyPlayer,
         "Lotleth Giant" => TargetSpec::TargetOpponent,
+        "Harrier Strix" => TargetSpec::AnyPermanent,
+        "Humbling Elder" => TargetSpec::OpponentControlledCreature,
+        "Saiba Cryptomancer" => TargetSpec::Creature,
+        "Spellstutter Sprite" => TargetSpec::SpellManaValueAtMostControlledSubtypes {
+            first: Subtype::Faerie,
+            second: Some(Subtype::FaerieAllCaps),
+        },
         _ => TargetSpec::None,
+    }
+}
+
+/// Authenticates the finite set of effects a definition-owned trigger can
+/// place on the stack, including Moon-Circuit Hacker's event-frozen branch.
+pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
+    let Some(card) = crate::card_def::CARD_DEFS.get(card_def as usize) else {
+        return false;
     };
+    if card.name == "Moon-Circuit Hacker"
+        && [false, true].into_iter().any(|entered| {
+            moon_circuit_hacker_combat_effect_for_entered_this_turn(entered) == *effect
+        })
+    {
+        return true;
+    }
+    if card.name == "Writhing Chrysalis"
+        && matches!(
+            effect,
+            EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. }
+        )
+    {
+        return true;
+    }
     triggers_for(card_def)
         .iter()
         .any(|definition| (definition.effect)() == *effect)
-        .then_some(target_spec)
+}
+
+pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
+    trigger_effect_matches(card_def, effect).then_some(trigger_target_spec(card_def))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -640,6 +817,10 @@ pub struct PendingTrigger {
     /// been ordered by its controller or proven singleton.
     #[serde(default)]
     pub placement_ordered: bool,
+    /// Exact source incarnation captured when the trigger was created. The
+    /// independent ability remains valid after the source changes zones.
+    #[serde(default)]
+    pub source_contract: Option<AbilitySourceContractV4>,
 }
 
 fn creature_dies_to_state_based_actions(
@@ -682,6 +863,43 @@ pub fn sba_fixed_point(state: &mut GameState) {
             }
         }
         for id in dying {
+            crate::event::commit(
+                state,
+                crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
+            );
+            changed = true;
+        }
+
+        // 704.5m: an Aura attached to an illegal object or player, or not
+        // attached at all, is put into its owner's graveyard. The current
+        // attachment grammar supports creature Auras only and requires both
+        // exact-incarnation directions of the relation to agree.
+        let invalid_auras = state
+            .objects
+            .iter()
+            .filter_map(|(id, aura)| {
+                if aura.zone != Zone::Battlefield {
+                    return None;
+                }
+                let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
+                let Some(crate::card_def::AttachmentDef::AuraCreature { .. }) =
+                    definition.attachment
+                else {
+                    return None;
+                };
+                let valid = aura.v4.attached_to.is_some_and(|link| {
+                    state.objects.try_get(link.object).is_some_and(|host| {
+                        host.zone == Zone::Battlefield
+                            && host.zone_change_count == link.zone_change_count
+                            && crate::card_def::CARD_DEFS[host.card_def as usize]
+                                .has_type(crate::card_def::CardType::Creature)
+                            && host.attachments.contains(&id)
+                    })
+                });
+                (!valid).then_some(id)
+            })
+            .collect::<Vec<_>>();
+        for id in invalid_auras {
             crate::event::commit(
                 state,
                 crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
@@ -756,6 +974,20 @@ pub fn collect_and_process(state: &mut GameState) -> Vec<PendingTrigger> {
     let sba_events: Vec<CommittedEvent> = state.engine.event_log.drain(..).collect();
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
 
+    // 603.3d: a triggered ability requiring targets is removed from the
+    // stack-placement queue when no complete legal target assignment exists.
+    // This check belongs after the SBA fixed point, at the actual placement
+    // checkpoint, rather than at the earlier event-matching snapshot.
+    new_triggers.retain(|pending| {
+        pending.target_spec == TargetSpec::None
+            || crate::engine::target_prefix_can_complete_for_controller(
+                pending.target_spec,
+                &pending.targets,
+                pending.controller,
+                state,
+            )
+    });
+
     order_apnap(new_triggers, state.active_player)
 }
 
@@ -814,11 +1046,42 @@ fn triggers_from_events(
                             continue;
                         }
                     }
-                    let effect = materialize_trigger_effect(def, id, state);
-                    let target_spec = match card.name {
-                        "Balustrade Spy" => TargetSpec::AnyPlayer,
-                        "Lotleth Giant" => TargetSpec::TargetOpponent,
-                        _ => TargetSpec::None,
+                    let effect = if card.name == "Moon-Circuit Hacker"
+                        && matches!(def.condition, TriggerCondition::DealsCombatDamageToPlayer)
+                    {
+                        moon_circuit_hacker_combat_effect_for_entered_this_turn(
+                            obj.v4.entered_battlefield_turn == Some(state.turn),
+                        )
+                    } else {
+                        materialize_trigger_effect(def, id, state)
+                    };
+                    let source_contract = match ev {
+                        CommittedEvent::ZoneChange {
+                            object,
+                            from,
+                            controller_before,
+                            ..
+                        } if *object == id && uses_leave_lki => {
+                            let Some(zone_change_count) = obj.zone_change_count.checked_sub(1)
+                            else {
+                                continue;
+                            };
+                            Some(AbilitySourceContractV4 {
+                                source: id,
+                                card_def: obj.card_def,
+                                owner: obj.owner,
+                                controller: *controller_before,
+                                zone: *from,
+                                zone_change_count,
+                                attached_to: None,
+                            })
+                        }
+                        _ if obj.zone == Zone::Stack => None,
+                        _ => {
+                            let mut contract = AbilitySourceContractV4::capture(state, id);
+                            contract.controller = event_controller;
+                            Some(contract)
+                        }
                     };
                     new_triggers.push(PendingTrigger {
                         controller: event_controller,
@@ -826,10 +1089,11 @@ fn triggers_from_events(
                         effect,
                         is_madness_offer: false,
                         kicked,
-                        target_spec,
+                        target_spec: trigger_target_spec(obj.card_def),
                         targets: Vec::new(),
                         target_contracts: Vec::new(),
                         placement_ordered: false,
+                        source_contract,
                     });
                 }
             }
@@ -870,6 +1134,7 @@ fn triggers_from_events(
                         targets: Vec::new(),
                         target_contracts: Vec::new(),
                         placement_ordered: false,
+                        source_contract: Some(AbilitySourceContractV4::capture(state, id)),
                     });
                 }
             }
@@ -986,6 +1251,17 @@ fn trigger_matches(
             count >= usize::from(minimum_count)
         }
         (TriggerCondition::DealsDamage, CommittedEvent::Damage { source: s, .. }) => *s == source,
+        (
+            TriggerCondition::DealsCombatDamageToPlayer,
+            CommittedEvent::CombatDamageToPlayer {
+                source: event_source,
+                source_zone_change_count,
+                ..
+            },
+        ) => {
+            *event_source == source
+                && state.objects.get(source).zone_change_count == *source_zone_change_count
+        }
         (
             TriggerCondition::CastInstantOrSorcery,
             CommittedEvent::SpellCast {
@@ -1117,6 +1393,7 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
+            source_contract: None,
         };
         let b = PendingTrigger {
             controller: PlayerId::P0,
@@ -1128,6 +1405,7 @@ mod tests {
             targets: Vec::new(),
             target_contracts: Vec::new(),
             placement_ordered: false,
+            source_contract: None,
         };
         let ordered = order_apnap(vec![a.clone(), b.clone()], PlayerId::P0);
         assert_eq!(ordered, vec![b, a]);

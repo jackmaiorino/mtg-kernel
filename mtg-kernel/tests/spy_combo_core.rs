@@ -181,8 +181,8 @@ fn registry_appends_exact_spy_combo_core_definitions() {
     let giant = &CARD_DEFS[ids[3] as usize];
     assert_eq!((giant.power, giant.toughness), (Some(6), Some(5)));
     assert_eq!(giant.subtypes, &[Subtype::Zombie, Subtype::Giant]);
-    assert_eq!(TargetSpec::CreatureCardInOwnGraveyard as u8, 26);
-    assert_eq!(TargetSpec::TargetOpponent as u8, 27);
+    assert_eq!(TargetSpec::CreatureCardInOwnGraveyard.stable_id(), 26);
+    assert_eq!(TargetSpec::TargetOpponent.stable_id(), 27);
     assert_eq!(
         Subtype::Giant.stable_id(),
         Subtype::Treasure.stable_id() + 1

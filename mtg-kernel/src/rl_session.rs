@@ -9306,6 +9306,7 @@ mod tests {
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
+                source_contract: None,
             })
             .collect();
         flat_install_origin_decision(

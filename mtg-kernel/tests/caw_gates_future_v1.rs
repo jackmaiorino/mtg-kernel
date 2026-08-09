@@ -8,15 +8,15 @@ use mtg_kernel::card_def::{
 use mtg_kernel::effect::{EffectOp, LibraryCardFilter, PlayerRef};
 use mtg_kernel::engine::{self, Action, CostKind, Decision};
 use mtg_kernel::event::{self, ProposedEvent};
-use mtg_kernel::ids::{ObjectId, PlayerId};
+use mtg_kernel::ids::{ObjectId, PlayerId, StackItemId};
 use mtg_kernel::mana::{Cost, ManaColor, Pip};
 use mtg_kernel::rl::{
     legal_action_candidates_v1, observe_v2, ActionSemanticV1, PendingEffectChoiceSemanticV4,
     TargetSelectionPurposeV4,
 };
 use mtg_kernel::state::{
-    Counters, GameObject, GameState, ObjectStateV4, StackItem, StackItemKind, StackStateV4, Step,
-    Target, Zone,
+    AbilitySourceContractV4, Counters, GameObject, GameState, ObjectStateV4, StackItem,
+    StackItemKind, StackStateV4, Step, Target, Zone,
 };
 use mtg_kernel::surface_v2::{HarnessSurfaceV2, SurfaceAction, SurfaceDecision};
 use mtg_kernel::trigger::{self, TriggerCondition};
@@ -126,7 +126,7 @@ fn reference_shuffle(
 
 #[test]
 fn definitions_ids_and_generic_programs_are_exact() {
-    assert_eq!(KERNEL_CARDDB_HASH, 0x3645_63d1_395d_951b);
+    assert_eq!(KERNEL_CARDDB_HASH, 0x327c_dff7_bda9_00e4);
     let expected_ids = [
         ("Basilisk Gate", 3),
         ("Citadel Gate", 14),
@@ -566,6 +566,7 @@ fn squadron_hawk_searches_zero_through_three_exact_physical_hawks_reveals_and_sh
     let mountain = put_object(&mut state, PlayerId::P0, "Mountain", Zone::Library);
     let source = put_object(&mut state, PlayerId::P0, "Squadron Hawk", Zone::Battlefield);
     let trigger_effect = (trigger::triggers_for(card_id("Squadron Hawk"))[0].effect)();
+    state.engine.next_stack_item_id = 1;
     state.stack.push(StackItem {
         kind: StackItemKind::TriggeredAbility,
         source,
@@ -578,7 +579,11 @@ fn squadron_hawk_searches_zero_through_three_exact_physical_hawks_reveals_and_sh
         mode_chosen: 0,
         madness_offer: false,
         kicked: false,
-        v4: StackStateV4::default(),
+        v4: StackStateV4 {
+            stack_item_id: StackItemId(1),
+            ability_source_contract: Some(AbilitySourceContractV4::capture(&state, source)),
+            ..StackStateV4::default()
+        },
     });
     state.engine.priority_passes = [true, true];
 

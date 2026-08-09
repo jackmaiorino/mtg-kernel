@@ -19,7 +19,10 @@ use crate::card_def::{CardType, DynamicValueDef, Keywords, Subtype};
 use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
-use crate::state::{GameState, PaidCostRefV4, StackItem, StackTargetContractV4, Target, Zone};
+use crate::state::{
+    AbilitySourceContractV4, GameState, ObjectLinkV4, PaidCostRefV4, StackItem,
+    StackTargetContractV4, Target, Zone,
+};
 use serde::{Deserialize, Serialize};
 
 /// Which of a controller's creatures a team-wide pump/keyword effect
@@ -612,6 +615,31 @@ pub enum EffectOp {
     PutPlusOnePlusOneCounterOnBoundObject {
         object: EffectObjectBinding,
     },
+    /// Move this resolving permanent spell onto the battlefield attached to
+    /// its exact creature target. Aura attachment is installed before the
+    /// next SBA checkpoint.
+    PutSourceOntoBattlefieldAttachedToTarget {
+        target: ObjectRef,
+    },
+    /// Tap the creature currently attached to this Aura, then that creature
+    /// deals damage to the Aura ability's controller equal to its power.
+    TapAttachedCreatureAndDamageControllerByPower,
+    /// Put a +1/+1 counter on the target and grant the keyword until end of
+    /// turn iff the target is not this ability's source.
+    BackupTarget {
+        target: ObjectRef,
+        keyword: crate::card_def::Keywords,
+    },
+    /// Move a hand-zone activated-ability source onto the battlefield tapped
+    /// and attacking. The engine rechecks the live combat window.
+    PutSourceOntoBattlefieldTappedAndAttacking,
+    /// Let `chooser` choose zero through `max_targets` tapped lands, then
+    /// untap the exact selected incarnations. The lands may have any
+    /// controller.
+    UntapUpToLands {
+        chooser: PlayerRef,
+        max_targets: u16,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -802,6 +830,13 @@ pub enum EffectFrame {
         order_resolved: bool,
         path: Vec<u16>,
     },
+    /// Commits a public, incarnation-bound variable-size untap selection.
+    UntapObjectsBatch {
+        player: PlayerId,
+        objects: Vec<EffectObjectBinding>,
+        max_targets: u16,
+        path: Vec<u16>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -954,6 +989,13 @@ pub enum EffectTargetSelectionPurpose {
     OrderRevealedIntoGraveyard {
         player: PlayerId,
         original_prefix: Vec<EffectObjectBinding>,
+    },
+    /// Public zero-through-N selection of tapped lands by `chooser`.
+    UntapLands {
+        chooser: PlayerId,
+        max_targets: u16,
+        original_candidates: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
     },
 }
 
@@ -1125,6 +1167,17 @@ pub struct ExecCtx {
     /// values read these frozen definitions, never the objects' later zones.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paid_cost_refs: Vec<PaidCostRefV4>,
+    /// Exact hidden-zone incarnation revealed to activate an ability. This
+    /// remains frozen even if that card later changes zones while the
+    /// ability is on the stack. Ninjutsu uses it to avoid following a later
+    /// incarnation of the same physical card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden_ability_source: Option<ObjectLinkV4>,
+    /// Frozen nonspell source facts used by effects that explicitly consult
+    /// last known information. Ordinary spell and direct-test contexts leave
+    /// this absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ability_source_contract: Option<AbilitySourceContractV4>,
     /// True iff the spell/ability this resolution belongs to was kicked
     /// (`card_def::CardDef::kicker_cost`) -- carried on `state::StackItem::
     /// kicked` and copied in here by `engine::resolve_top_of_stack`, and
@@ -1150,6 +1203,14 @@ impl std::hash::Hash for ExecCtx {
         if !self.paid_cost_refs.is_empty() {
             std::hash::Hash::hash(&0x7061_6964_5f72_6566_u64, state);
             std::hash::Hash::hash(&self.paid_cost_refs, state);
+        }
+        if let Some(source) = self.hidden_ability_source {
+            std::hash::Hash::hash(&0x6869_6464_656e_5f73_u64, state);
+            std::hash::Hash::hash(&source, state);
+        }
+        if let Some(source) = self.ability_source_contract {
+            std::hash::Hash::hash(&0x6162_696c_6974_795f_u64, state);
+            std::hash::Hash::hash(&source, state);
         }
     }
 }
@@ -1180,6 +1241,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::Scry { .. }
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::SearchLibraryToHandUpTo { .. }
+        | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
@@ -1965,6 +2027,31 @@ fn complete_resumable_target_selection(
                     frame: Box::new(frame.clone()),
                 });
             continuation.frames.push(frame);
+        }
+        EffectTargetSelectionPurpose::UntapLands {
+            chooser,
+            max_targets,
+            original_candidates,
+            canonical_path,
+        } => {
+            if path != canonical_path {
+                return Err("land-untap prompt structural path changed".to_string());
+            }
+            if objects.len() > usize::from(max_targets) {
+                return Err("land-untap selection exceeded its maximum".to_string());
+            }
+            if objects
+                .iter()
+                .any(|binding| !original_candidates.contains(binding))
+            {
+                return Err("land-untap selection escaped its original candidates".to_string());
+            }
+            continuation.frames.push(EffectFrame::UntapObjectsBatch {
+                player: chooser,
+                objects,
+                max_targets,
+                path: canonical_path,
+            });
         }
     }
     Ok(())
@@ -3173,6 +3260,48 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         );
                     }
                 }
+                EffectTargetSelectionPurpose::UntapLands {
+                    chooser: land_chooser,
+                    max_targets: purpose_max,
+                    original_candidates,
+                    canonical_path,
+                } => {
+                    if chooser != land_chooser
+                        || path != canonical_path
+                        || *land_chooser != pending.ctx.controller
+                        || *purpose_max == 0
+                        || *max_targets != *purpose_max
+                        || *min_targets != 0
+                        || *ordered
+                        || selected.len() >= usize::from(*max_targets)
+                    {
+                        return Err("land-untap prompt has a noncanonical shape".to_string());
+                    }
+                    if &tapped_land_bindings(state) != original_candidates {
+                        return Err("land-untap original candidate set changed".to_string());
+                    }
+                    let mut partition = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "land-untap target lacks an incarnation binding".to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    partition.sort_by_key(|binding| binding.object);
+                    let mut expected = original_candidates.clone();
+                    expected.sort_by_key(|binding| binding.object);
+                    if partition != expected
+                        || partition
+                            .windows(2)
+                            .any(|pair| pair[0].object == pair[1].object)
+                    {
+                        return Err(
+                            "land-untap candidates no longer form the exact partition".to_string()
+                        );
+                    }
+                }
                 EffectTargetSelectionPurpose::OrderIntoGraveyard { .. } => {}
             }
         }
@@ -3371,9 +3500,7 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
             }
         }
         EffectOp::MayPayManaThen { then, .. } => validate_resumable_program(then)?,
-        EffectOp::DiscardCards { .. }
-        | EffectOp::MayPayCostThen { .. }
-        | EffectOp::OfferAffectedPlayerSpellCopy { .. } => {
+        EffectOp::MayPayCostThen { .. } | EffectOp::OfferAffectedPlayerSpellCopy { .. } => {
             return Err(
                 "choice-bearing programs cannot yet mix legacy-suspending effect leaves"
                     .to_string(),
@@ -4215,6 +4342,31 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
                 }
+                EffectFrame::UntapObjectsBatch {
+                    player,
+                    objects,
+                    max_targets,
+                    path: _,
+                } => {
+                    if player != continuation.ctx.controller
+                        || max_targets == 0
+                        || objects.len() > usize::from(max_targets)
+                    {
+                        return Err("land-untap frame metadata changed".to_string());
+                    }
+                    let candidates = tapped_land_bindings(state);
+                    let mut seen = Vec::new();
+                    for binding in objects {
+                        validate_effect_object_binding(state, binding)?;
+                        if !candidates.contains(&binding) || seen.contains(&binding.object) {
+                            return Err(
+                                "land-untap frame contains a stale or duplicate land".to_string()
+                            );
+                        }
+                        seen.push(binding.object);
+                        state.objects.get_mut(binding.object).tapped = false;
+                    }
+                }
                 EffectFrame::OwnerLibraryPlacement {
                     object,
                     owner,
@@ -4701,6 +4853,17 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     return Ok(ResumableProgress::Suspended);
                 }
             }
+            EffectOp::UntapUpToLands {
+                chooser,
+                max_targets,
+            } => {
+                let chooser = continuation.ctx.resolve_player(chooser, state);
+                if !tapped_land_bindings(state).is_empty() {
+                    stage_land_untap_choice(&mut continuation, state, chooser, max_targets, path)?;
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::PutObjectInOwnersLibrarySecondOrBottom { object } => {
                 let object = continuation.ctx.resolve_object(object);
                 let live = state
@@ -4844,7 +5007,13 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 };
                 event::propose_and_commit(state, proposed);
             }
-            leaf => execute(&leaf, &continuation.ctx, state),
+            leaf => {
+                if matches!(leaf, EffectOp::DiscardCards { .. }) && !continuation.frames.is_empty()
+                {
+                    return Err("a resumable discard must be the terminal effect leaf".to_string());
+                }
+                execute(&leaf, &continuation.ctx, state)
+            }
         }
     }
 
@@ -4866,6 +5035,8 @@ impl ExecCtx {
             target_contracts: Vec::new(),
             discarded: Vec::new(),
             paid_cost_refs: Vec::new(),
+            hidden_ability_source: None,
+            ability_source_contract: None,
             kicked: false,
         }
     }
@@ -5283,6 +5454,65 @@ fn stage_graveyard_exile_choice(
             canonical_path,
         },
     });
+}
+
+fn tapped_land_bindings(state: &GameState) -> Vec<EffectObjectBinding> {
+    state
+        .objects
+        .iter()
+        .filter_map(|(object, live)| {
+            (live.zone == Zone::Battlefield
+                && live.tapped
+                && crate::card_def::CARD_DEFS[live.card_def as usize].has_type(CardType::Land))
+            .then_some(EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: live.zone_change_count,
+            })
+        })
+        .collect()
+}
+
+fn stage_land_untap_choice(
+    continuation: &mut EffectContinuation,
+    state: &GameState,
+    player: PlayerId,
+    max_targets: u16,
+    canonical_path: Vec<u16>,
+) -> Result<(), String> {
+    if max_targets == 0 {
+        return Err("land-untap selection requires a positive maximum".to_string());
+    }
+    let original_candidates = tapped_land_bindings(state);
+    let max_targets = max_targets.min(
+        original_candidates
+            .len()
+            .try_into()
+            .map_err(|_| "land-untap candidate count exceeds u16".to_string())?,
+    );
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path: canonical_path.clone(),
+        selected: Vec::new(),
+        legal: original_candidates
+            .iter()
+            .copied()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: 0,
+        max_targets,
+        ordered: false,
+        purpose: EffectTargetSelectionPurpose::UntapLands {
+            chooser: player,
+            max_targets,
+            original_candidates,
+            canonical_path,
+        },
+    });
+    Ok(())
 }
 
 fn bind_library_exact(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
@@ -6243,6 +6473,135 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             }
             event::propose_and_commit(state, event::ProposedEvent::zone_change(object, *to_zone));
         }
+        EffectOp::PutSourceOntoBattlefieldAttachedToTarget { target } => {
+            let target_index = match target {
+                ObjectRef::Target(index) => usize::from(*index),
+                ObjectRef::ThisSource => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            };
+            let target = ctx.resolve_object(*target);
+            let source_is_stack = state.objects.get(ctx.source).zone == Zone::Stack;
+            let target_is_creature = ctx.target_incarnation_matches(target_index, state)
+                && state.objects.get(target).zone == Zone::Battlefield
+                && crate::card_def::CARD_DEFS[state.objects.get(target).card_def as usize]
+                    .has_type(CardType::Creature);
+            if !source_is_stack || !target_is_creature {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            event::propose_and_commit(
+                state,
+                event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield),
+            );
+            let link = ObjectLinkV4 {
+                object: target,
+                zone_change_count: state.objects.get(target).zone_change_count,
+            };
+            state.objects.get_mut(ctx.source).v4.attached_to = Some(link);
+            if !state.objects.get(target).attachments.contains(&ctx.source) {
+                state.objects.get_mut(target).attachments.push(ctx.source);
+            }
+        }
+        EffectOp::TapAttachedCreatureAndDamageControllerByPower => {
+            let Some(source_contract) = ctx.ability_source_contract else {
+                return;
+            };
+            let live_source = state.objects.try_get(ctx.source);
+            let source_is_same_battlefield_incarnation = live_source.is_some_and(|source| {
+                source.zone == Zone::Battlefield
+                    && source.zone_change_count == source_contract.zone_change_count
+            });
+            let link = if source_is_same_battlefield_incarnation {
+                live_source.and_then(|source| source.v4.attached_to)
+            } else {
+                source_contract.attached_to
+            };
+            let Some(link) = link else {
+                return;
+            };
+            let Some(attached) = state.objects.try_get(link.object) else {
+                return;
+            };
+            if attached.zone != Zone::Battlefield
+                || attached.zone_change_count != link.zone_change_count
+                || !crate::card_def::CARD_DEFS[attached.card_def as usize]
+                    .has_type(CardType::Creature)
+                || (source_is_same_battlefield_incarnation
+                    && !attached.attachments.contains(&ctx.source))
+            {
+                return;
+            }
+            let attached = link.object;
+            event::propose_and_commit(state, event::ProposedEvent::tap(attached));
+            let amount = crate::engine::effective_power(state, attached).max(0);
+            if amount > 0 {
+                event::propose_and_commit(
+                    state,
+                    event::ProposedEvent::damage(attached, Target::Player(ctx.controller), amount),
+                );
+            }
+        }
+        EffectOp::BackupTarget { target, keyword } => {
+            let target_index = match target {
+                ObjectRef::Target(index) => usize::from(*index),
+                ObjectRef::ThisSource => usize::MAX,
+            };
+            let target = ctx.resolve_object(*target);
+            if target_index != usize::MAX && !ctx.target_incarnation_matches(target_index, state) {
+                return;
+            }
+            let Some(object) = state.objects.try_get(target) else {
+                return;
+            };
+            if object.zone != Zone::Battlefield {
+                return;
+            }
+            let counters = &mut state.objects.get_mut(target).counters.plus1_plus1;
+            let Some(updated) = counters.checked_add(1) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            *counters = updated;
+            if target != ctx.source {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.engine.until_end_of_turn.push(
+                    crate::engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                        object_id: target,
+                        object_zone_change_count: state.objects.get(target).zone_change_count,
+                        layer: crate::engine::Layers::ABILITY_ADDING,
+                        timestamp,
+                        duration: crate::engine::EffectDuration::EndOfTurn,
+                        keywords: *keyword,
+                    },
+                );
+            }
+        }
+        EffectOp::PutSourceOntoBattlefieldTappedAndAttacking => {
+            if crate::engine::put_ninjutsu_source_onto_battlefield_attacking(
+                state,
+                ctx.source,
+                ctx.controller,
+                ctx.hidden_ability_source,
+            )
+            .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
+        }
         EffectOp::MoveAllTargets { to_zone } => {
             let events = ctx
                 .targets
@@ -6768,6 +7127,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::Scry { .. }
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::SearchLibraryToHandUpTo { .. }
+        | EffectOp::UntapUpToLands { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
@@ -6798,7 +7158,15 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
         }
         EffectCond::TargetInZone(idx, zone) => match ctx.targets.get(*idx as usize) {
             Some(Target::Object(id)) if *zone == Zone::Stack => {
-                state.stack.iter().any(|item| item.source == *id)
+                let live_generation = state.objects.get(*id).zone_change_count;
+                state.stack.iter().any(|item| {
+                    item.kind == crate::state::StackItemKind::Spell
+                        && item.source == *id
+                        && item
+                            .v4
+                            .source_contract
+                            .is_some_and(|contract| contract.zone_change_count == live_generation)
+                })
             }
             Some(Target::Object(id)) => state.objects.get(*id).zone == *zone,
             _ => false,
@@ -6935,6 +7303,8 @@ mod tests {
             target_contracts: vec![StackTargetContractV4::Player(PlayerId::P1)],
             discarded: Vec::new(),
             paid_cost_refs: Vec::new(),
+            hidden_ability_source: None,
+            ability_source_contract: None,
             kicked: false,
         };
         execute(
@@ -6969,6 +7339,8 @@ mod tests {
             }],
             discarded: Vec::new(),
             paid_cost_refs: Vec::new(),
+            hidden_ability_source: None,
+            ability_source_contract: None,
             kicked: false,
         };
         execute(

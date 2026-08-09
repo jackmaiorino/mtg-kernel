@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "5139834dce7a8fa6ceee4237af16f2dce4d3876f1e77b68ad53b4d4661db217c"
+    "registry_raw_sha256": "bedeeb80bbba9b27fe5682fe0d6d8321969f3d9144e412e1101f38c8944cf91a"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 116,
+    "full_cards": 124,
     "partial_cards": 0,
-    "no_effect_cards": 34,
+    "no_effect_cards": 26,
     "token_dependencies": 9
   },
   "deck_mainboard_copy_totals": [
@@ -73,9 +73,9 @@
     },
     {
       "deck_id": "Faeries",
-      "full": 38,
+      "full": 60,
       "partial": 0,
-      "no_effect": 22,
+      "no_effect": 0,
       "total": 60
     }
   ],
@@ -317,10 +317,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Black Mage's Rod",
@@ -1528,10 +1526,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Healer of the Glade",
@@ -1610,10 +1606,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Hunter's Blowgun",
@@ -2190,10 +2184,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Mountain",
@@ -2310,10 +2302,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Nyxborn Hydra",
@@ -2797,10 +2787,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Saruli Caretaker",
@@ -2965,10 +2953,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Sneaky Snacker",
@@ -3047,10 +3033,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Spinewoods Paladin",
