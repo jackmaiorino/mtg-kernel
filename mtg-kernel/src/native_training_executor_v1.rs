@@ -1085,6 +1085,41 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
         &self.observation
     }
 
+    /// Forward-looking scaffolding for the executor-integrated bounded-
+    /// staleness async path: stamps every episode in this guard's
+    /// observation with `scoring_weight_version` / `consuming_update_version`
+    /// (see `NativeTrainerEpisodeEvidenceV1`), for a caller to use after
+    /// `prepare_update_v2` returns and before this guard is handed to
+    /// `build_update_group_v1`. Nothing in this crate calls this today: the
+    /// bounded-staleness async production integration
+    /// (`bounded_staleness_async_production_v1::stamp_episode_
+    /// provenance_v1`) currently stamps a freestanding `NativeTrainerUpdate
+    /// EvidenceV2` directly, without going through this executor-owned
+    /// guard at all (see that module's doc for the still-open gap: the
+    /// async arm does not yet drive `NativeTrainingExecutorV1`/Store
+    /// publication). The only current caller is this file's own test suite
+    /// (`native_training_store_update_group_v1::tests::bounded_staleness_
+    /// provenance_round_trips_through_the_written_record`), which exercises
+    /// the shape a real executor-integrated caller will need next.
+    ///
+    /// Scoped to exactly the two provenance fields on purpose, rather than
+    /// exposing `&mut NativeTrainingUpdateObservationV2` wholesale: nothing
+    /// here can retroactively change rollout, seeding, or learning math
+    /// (the episodes and their trained parameters are already fixed by the
+    /// time a caller can reach this guard), and narrowing the type to that
+    /// guarantee now, before an executor-integrated caller makes this
+    /// load-bearing, is cheaper than relying on caller discipline later.
+    pub(crate) fn stamp_episode_provenance_v1(
+        &mut self,
+        scoring_weight_version: u64,
+        consuming_update_version: u64,
+    ) {
+        for episode in &mut self.observation.episodes {
+            episode.scoring_weight_version = Some(scoring_weight_version);
+            episode.consuming_update_version = Some(consuming_update_version);
+        }
+    }
+
     pub fn checkpoint_candidate(&self) -> &NativeTrainingCheckpointCandidateV1 {
         &self.checkpoint
     }

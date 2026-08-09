@@ -973,15 +973,15 @@ mod tests {
         assert_eq!(first.max_physical_terms_per_segment_v2(), 262_144);
         assert_eq!(first.max_gauge_bounds_per_segment_v2(), 524_288);
         assert_eq!(first.max_logical_rows_per_update_v2(), 196_611);
-        assert_eq!(first.max_update_group_json_token_bytes_v2(), 36_509_020);
+        assert_eq!(first.max_update_group_json_token_bytes_v2(), 36_509_204);
         assert_eq!(
             first.max_segment_update_group_json_token_bytes_v2(),
-            146_036_080
+            146_036_816
         );
-        assert_eq!(first.max_update_group_cj_bytes_v2(), 36_509_021);
-        assert_eq!(first.max_segment_update_group_cj_bytes_v2(), 146_036_084);
-        assert_eq!(first.max_one_group_continuation_cj_bytes_v2(), 36_509_750);
-        assert_eq!(first.max_segment_continuation_cj_bytes_v2(), 146_039_000);
+        assert_eq!(first.max_update_group_cj_bytes_v2(), 36_509_205);
+        assert_eq!(first.max_segment_update_group_cj_bytes_v2(), 146_036_820);
+        assert_eq!(first.max_one_group_continuation_cj_bytes_v2(), 36_509_934);
+        assert_eq!(first.max_segment_continuation_cj_bytes_v2(), 146_039_736);
         assert_eq!(first.max_trained_segment_manifest_cj_bytes_v2(), 4_144);
         assert_eq!(first.max_genesis_segment_manifest_cj_bytes_v2(), 1_401);
         assert_eq!(first.max_checkpoint_manifest_cj_bytes_v2(), 2_204);

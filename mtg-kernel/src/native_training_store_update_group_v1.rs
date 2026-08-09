@@ -7,6 +7,7 @@
 //! is not the Store continuation file cap or representability authority.
 
 use crate::async_flat_scored_rollout_v2::ASYNC_FLAT_SCORED_MEMBERSHIP_DIGEST_IDENTITY_V1;
+use crate::bounded_staleness_async_v1::{check_staleness_bound_v1, StalenessLedgerEntryV1};
 use crate::canonical_json_v1::{
     from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonClosedMaxErrorV1,
     CanonicalJsonClosedMaxV1, CanonicalJsonErrorKindV1, CanonicalJsonErrorV1,
@@ -218,6 +219,22 @@ struct EpisodeWireV1 {
     opponent_run_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     opponent_checkpoint_manifest_sha256: Option<String>,
+    /// Bounded-staleness async-inference provenance: which trainer weight
+    /// version scored this episode's rollout, and which trainer update its
+    /// data is destined to train. Both `None` for every record written
+    /// before this field existed and for every synchronous-mode run (the
+    /// structural default): the synchronous path never dispatches through
+    /// `BoundedStalenessSchedulerV1`, so it has nothing to stamp here.
+    /// `#[serde(default)]` and `skip_serializing_if` give the identical
+    /// decode-then-reencode round-trip guarantee the opponent-identity
+    /// fields above already rely on. Present together only, never singly
+    /// (see `validate_episodes_v1`), and always satisfy
+    /// `consuming_update_version >= scoring_weight_version` (the same
+    /// causality rule `check_staleness_bound_v1` enforces at the scheduler).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scoring_weight_version: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    consuming_update_version: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -349,6 +366,7 @@ pub(crate) fn maximum_update_group_json_shape_v2(
     let seat = CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("p0")?;
 
     let episode = CanonicalJsonClosedMaxV1::object_v1(&[
+        ("consuming_update_version", u63),
         (
             "deck_hashes_u64_hex",
             CanonicalJsonClosedMaxV1::array_v1(2, hex16)?,
@@ -380,6 +398,7 @@ pub(crate) fn maximum_update_group_json_shape_v2(
             "schema",
             CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(EPISODE_SCHEMA_V1)?,
         ),
+        ("scoring_weight_version", u63),
         (
             "terminal_classification",
             CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("natural")?,
@@ -1428,6 +1447,8 @@ fn evidence_from_observation_v1(
             opponent_checkpoint_manifest_sha256: observed
                 .opponent_checkpoint_manifest_sha256
                 .map(lower_hex_raw32_v1),
+            scoring_weight_version: observed.scoring_weight_version,
+            consuming_update_version: observed.consuming_update_version,
         });
     }
     if total_policy_steps == 0
@@ -1968,6 +1989,41 @@ fn validate_episodes_v1(run: &ValidatedTrainRunV2, evidence: &UpdateEvidenceWire
                     || parse_digest_v1(run_sha256).is_err()
                     || parse_digest_v1(checkpoint_manifest_sha256).is_err()
                 {
+                    return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+                }
+            }
+            _ => return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding)),
+        }
+        // Bounded-staleness async provenance: present together or not at
+        // all (a synchronous run, or any record predating this field,
+        // leaves both absent). When present, the Store has no independent
+        // notion of the run's declared staleness bound K (only the
+        // scheduler does), so it cannot reject on boundedness -- but it can
+        // and does reject the causality invariant no K ever admits: an
+        // episode can never be scored by weights newer than the update
+        // consuming it. This calls the scheduler's own
+        // `check_staleness_bound_v1` directly (rather than restating the
+        // `scoring_weight_version > consuming_update_version` comparison
+        // here) with `max_staleness_updates: u32::MAX`, a bound wide enough
+        // that it can never itself be the reason for rejection, so the only
+        // way this call returns `Err` is the causality check inside it --
+        // the two call sites are provably checking the identical rule, not
+        // just similar-looking duplicated logic.
+        match (
+            episode.scoring_weight_version,
+            episode.consuming_update_version,
+        ) {
+            (None, None) => {}
+            (Some(scoring_weight_version), Some(consuming_update_version)) => {
+                if !is_u63_v1(scoring_weight_version) || !is_u63_v1(consuming_update_version) {
+                    return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+                }
+                let entry = StalenessLedgerEntryV1 {
+                    episode_id: expected_index,
+                    scoring_weight_version,
+                    consuming_update_version,
+                };
+                if check_staleness_bound_v1(entry, u32::MAX).is_err() {
                     return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
                 }
             }
@@ -2591,12 +2647,12 @@ mod tests {
     #[test]
     fn update_group_closed_maximum_matches_frozen_recurrence() {
         let one = maximum_update_group_json_shape_v2(1, 1, 1).unwrap();
-        assert_eq!(one.token_bytes(), 3_728 + 754 + 125 + 216);
-        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_824);
+        assert_eq!(one.token_bytes(), 3_820 + 754 + 125 + 216);
+        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_916);
 
         let current = maximum_update_group_json_shape_v2(2, 65_536, 131_072).unwrap();
-        assert_eq!(current.token_bytes(), 36_509_020);
-        assert_eq!(current.canonical_document_bytes_v1().unwrap(), 36_509_021);
+        assert_eq!(current.token_bytes(), 36_509_204);
+        assert_eq!(current.canonical_document_bytes_v1().unwrap(), 36_509_205);
     }
 
     fn execution_config_v1(run: &ValidatedTrainRunV2) -> NativeTrainingExecutionConfigV1 {
@@ -3592,6 +3648,8 @@ mod tests {
             opponent_population_slot: Some(u32::MAX),
             opponent_run_sha256: Some("f".repeat(64)),
             opponent_checkpoint_manifest_sha256: Some("f".repeat(64)),
+            scoring_weight_version: Some(U63_MAX_V1),
+            consuming_update_version: Some(U63_MAX_V1),
         };
         let bytes = to_canonical_json_bytes_v1(&maximum_episode, GROUP_NULL_POLICY_V1)
             .expect("the maximum episode is canonically serializable");
@@ -3635,13 +3693,13 @@ mod tests {
         // `update_group_closed_maximum_matches_frozen_recurrence`; restate them
         // here so a planner widening cannot satisfy the allowance equality
         // above by moving both sides at once.
-        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_824);
+        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_916);
         assert_eq!(
             maximum_update_group_json_shape_v2(2, 65_536, 131_072)
                 .unwrap()
                 .canonical_document_bytes_v1()
                 .unwrap(),
-            36_509_021
+            36_509_205
         );
 
         const BASE_EPISODE_KEYS_V1: [&str; 18] = [
@@ -3681,6 +3739,12 @@ mod tests {
             }
             if episode.opponent_checkpoint_manifest_sha256.is_some() {
                 keys.push("opponent_checkpoint_manifest_sha256");
+            }
+            if episode.scoring_weight_version.is_some() {
+                keys.push("scoring_weight_version");
+            }
+            if episode.consuming_update_version.is_some() {
+                keys.push("consuming_update_version");
             }
             keys.sort_unstable();
             keys
@@ -3751,6 +3815,18 @@ mod tests {
                 object.insert(
                     "opponent_checkpoint_manifest_sha256".to_owned(),
                     Value::from(checkpoint_manifest_sha256.clone()),
+                );
+            }
+            if let Some(scoring_weight_version) = episode.scoring_weight_version {
+                object.insert(
+                    "scoring_weight_version".to_owned(),
+                    Value::from(scoring_weight_version),
+                );
+            }
+            if let Some(consuming_update_version) = episode.consuming_update_version {
+                object.insert(
+                    "consuming_update_version".to_owned(),
+                    Value::from(consuming_update_version),
                 );
             }
             value
@@ -3929,6 +4005,261 @@ mod tests {
         assert_eq!(
             reencoded, group_bytes,
             "a population-opponent record must round-trip byte for byte"
+        );
+    }
+
+    /// Exercises the bounded-staleness async provenance fields the way a
+    /// future executor-integrated caller will: after `prepare_update_v2`
+    /// returns and before the guard is handed to `build_update_group_v1`,
+    /// using the crate-private, scope-narrowed `stamp_episode_provenance_v1`
+    /// setter added for this integration (today's actual production
+    /// integration, `bounded_staleness_async_production_v1::stamp_episode_
+    /// provenance_v1`, stamps a freestanding `NativeTrainerUpdateEvidenceV2`
+    /// directly and does not yet drive this executor guard at all -- see
+    /// that module's doc). Confirms the stamped fields reach the written
+    /// record and the whole group still round-trips byte for byte. Uses
+    /// equal scoring/consuming versions (the boundary-legal zero-staleness
+    /// case: scored by the exact weight version consuming it) so this same
+    /// real, self-consistent group also covers that boundary; the
+    /// strictly-nonzero-but-within-bound and the causality-violation cases
+    /// are covered by the mutation tests below against the same underlying
+    /// `validate_episodes_v1` branch.
+    #[test]
+    fn bounded_staleness_provenance_round_trips_through_the_written_record() {
+        let run_bytes = test_fixture_bytes_v2();
+        let run = decode_train_run_v2(&run_bytes).unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+
+        let genesis_candidate = executor.checkpoint_candidate_v1().unwrap();
+        let genesis_payload = genesis_candidate.payload().to_vec();
+        let genesis = build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
+        let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let mut prepared = executor.prepare_update_v2().unwrap();
+        prepared.stamp_episode_provenance_v1(2, 2);
+        let (group, _advanced_context) = build_update_group_v1(&run, context, &prepared)
+            .unwrap()
+            .into_parts();
+        let group_bytes = group.canonical_bytes().to_vec();
+
+        let decode_context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let decoded = decode_update_group_v1(&run, decode_context, &group_bytes)
+            .expect("the stamped group decodes");
+        let episodes = &decoded.group().wire.evidence.episodes;
+        assert!(!episodes.is_empty(), "the update must emit real episodes");
+        for episode in episodes {
+            assert_eq!(episode.scoring_weight_version, Some(2));
+            assert_eq!(episode.consuming_update_version, Some(2));
+        }
+
+        let reencoded = to_canonical_json_bytes_v1(&decoded.group().wire, GROUP_NULL_POLICY_V1)
+            .expect("the decoded group re-serializes");
+        assert_eq!(
+            reencoded, group_bytes,
+            "a bounded-staleness-stamped record must round-trip byte for byte"
+        );
+    }
+
+    /// The synchronous path: no stamping at all. Confirms the two new
+    /// fields stay fully absent (never emitted, not even as `null`) for a
+    /// record built the ordinary way, exactly like every record written
+    /// before this field existed.
+    #[test]
+    fn absent_bounded_staleness_provenance_round_trips_unchanged() {
+        let run_bytes = test_fixture_bytes_v2();
+        let run = decode_train_run_v2(&run_bytes).unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+
+        let genesis_candidate = executor.checkpoint_candidate_v1().unwrap();
+        let genesis_payload = genesis_candidate.payload().to_vec();
+        let genesis = build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
+        let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let prepared = executor.prepare_update_v2().unwrap();
+        let (group, _advanced_context) = build_update_group_v1(&run, context, &prepared)
+            .unwrap()
+            .into_parts();
+        let group_bytes = group.canonical_bytes().to_vec();
+        let group_text = std::str::from_utf8(&group_bytes).unwrap();
+        assert!(
+            !group_text.contains("scoring_weight_version")
+                && !group_text.contains("consuming_update_version"),
+            "an ordinary synchronous-path update must never emit either new key"
+        );
+
+        let decode_context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let decoded = decode_update_group_v1(&run, decode_context, &group_bytes)
+            .expect("the ordinary group decodes");
+        for episode in &decoded.group().wire.evidence.episodes {
+            assert_eq!(episode.scoring_weight_version, None);
+            assert_eq!(episode.consuming_update_version, None);
+        }
+        let reencoded = to_canonical_json_bytes_v1(&decoded.group().wire, GROUP_NULL_POLICY_V1)
+            .expect("the decoded group re-serializes");
+        assert_eq!(reencoded, group_bytes);
+    }
+
+    /// Golden sync-identity proof required by the production-integration
+    /// task: this exact fixed-seed, unstamped update group, run through
+    /// this branch's synchronous path (no scheduler, no stamping, identical
+    /// call sequence to `absent_bounded_staleness_provenance_round_trips_
+    /// unchanged` above), must reproduce the byte length and sha256 that
+    /// pristine `origin/main` (commit e930890, before this branch's merge
+    /// or any of its own commits) produces for the identical fixture. The
+    /// reference values were captured by adding the same construction
+    /// (`test_fixture_bytes_v2` -> decode -> executor -> genesis ->
+    /// `prepare_update_v2` -> `build_update_group_v1` -> sha256 of
+    /// `canonical_bytes()`) to a throwaway `origin/main` worktree, running
+    /// it there, and pasting back the printed digest -- not computed by
+    /// hand, matching this file's own frozen-byte-total discipline.
+    #[test]
+    fn sync_path_reproduces_mains_golden_store_hash() {
+        use sha2::Digest;
+
+        const MAIN_GOLDEN_SHA256_V1: &str =
+            "d0413353fbb7298c47646adfc56d6d43a22e83cb59f874731973177e4ad00f61";
+        const MAIN_GOLDEN_LEN_V1: usize = 78_190;
+
+        let run_bytes = test_fixture_bytes_v2();
+        let run = decode_train_run_v2(&run_bytes).unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+        let genesis_candidate = executor.checkpoint_candidate_v1().unwrap();
+        let genesis_payload = genesis_candidate.payload().to_vec();
+        let genesis = build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
+        let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        // No stamping: this is the plain synchronous call sequence,
+        // unmodified from what `origin/main` itself runs.
+        let prepared = executor.prepare_update_v2().unwrap();
+        let (group, _advanced_context) = build_update_group_v1(&run, context, &prepared)
+            .unwrap()
+            .into_parts();
+        let group_bytes = group.canonical_bytes().to_vec();
+
+        assert_eq!(
+            group_bytes.len(),
+            MAIN_GOLDEN_LEN_V1,
+            "the synchronous path's canonical byte length must match origin/main exactly"
+        );
+        let digest: [u8; 32] = sha2::Sha256::digest(&group_bytes).into();
+        assert_eq!(
+            lower_hex_raw32_v1(digest),
+            MAIN_GOLDEN_SHA256_V1,
+            "the synchronous path's Store hash must match origin/main exactly: this branch's \
+             additive fields must not perturb a single byte of ordinary synchronous output"
+        );
+    }
+
+    /// Mutation-rejection: the two staleness-provenance fields must be
+    /// present together or not at all, exactly like the three
+    /// opponent-identity fields above.
+    #[test]
+    fn staleness_provenance_present_only_singly_is_rejected() {
+        let mut only_scoring = group_value_v1();
+        only_scoring["evidence"]["episodes"][0]["scoring_weight_version"] = Value::from(0_u64);
+        assert_eq!(
+            decode_value_error_v1(&only_scoring),
+            UpdateGroupV1ErrorKind::EpisodeBinding
+        );
+
+        let mut only_consuming = group_value_v1();
+        only_consuming["evidence"]["episodes"][0]["consuming_update_version"] = Value::from(1_u64);
+        assert_eq!(
+            decode_value_error_v1(&only_consuming),
+            UpdateGroupV1ErrorKind::EpisodeBinding
+        );
+    }
+
+    /// Mutation-rejection: `scoring_weight_version > consuming_update_version`
+    /// is a causality violation (an episode scored by weights newer than the
+    /// update consuming it), and is rejected regardless of any staleness
+    /// bound -- the same rule `check_staleness_bound_v1` enforces at the
+    /// scheduler.
+    #[test]
+    fn staleness_provenance_causality_violation_is_rejected() {
+        let mut violation = group_value_v1();
+        violation["evidence"]["episodes"][0]["scoring_weight_version"] = Value::from(5_u64);
+        violation["evidence"]["episodes"][0]["consuming_update_version"] = Value::from(4_u64);
+        assert_eq!(
+            decode_value_error_v1(&violation),
+            UpdateGroupV1ErrorKind::EpisodeBinding
+        );
+    }
+
+    /// Proves the Store's causality gate inside `validate_episodes_v1` and
+    /// the scheduler's own `check_staleness_bound_v1` (called there with
+    /// `max_staleness_updates: u32::MAX`, see the comment at that call
+    /// site) are the same rule, not just similar-looking duplicated logic:
+    /// for a table of (scoring, consuming) pairs spanning both sides of the
+    /// causality boundary, `check_staleness_bound_v1`'s own verdict is
+    /// cross-checked against whether the Store's `EpisodeBinding` causality
+    /// gate rejects. A mutated copy of the shared fixture can trip an
+    /// unrelated chain-hash mismatch further down the decode pipeline even
+    /// when the causality gate itself is satisfied (the fixture's other
+    /// embedded hashes were computed over the original, unmutated episode),
+    /// so this checks specifically whether `EpisodeBinding` was the
+    /// rejection reason, not merely whether the whole decode succeeded --
+    /// `staleness_provenance_causality_violation_is_rejected` and
+    /// `staleness_provenance_present_only_singly_is_rejected` above already
+    /// prove the true end-to-end rejection case; this test generalizes the
+    /// specific causality comparison across more pairs and pins it against
+    /// the scheduler's own function.
+    #[test]
+    fn staleness_provenance_causality_check_matches_check_staleness_bound_v1() {
+        let cases: [(u64, u64); 5] = [(0, 0), (3, 5), (5, 5), (5, 3), (U63_MAX_V1, U63_MAX_V1)];
+        for (scoring, consuming) in cases {
+            let entry = StalenessLedgerEntryV1 {
+                episode_id: 0,
+                scoring_weight_version: scoring,
+                consuming_update_version: consuming,
+            };
+            let scheduler_ok = check_staleness_bound_v1(entry, u32::MAX).is_ok();
+
+            let mut mutated = group_value_v1();
+            mutated["evidence"]["episodes"][0]["scoring_weight_version"] = Value::from(scoring);
+            mutated["evidence"]["episodes"][0]["consuming_update_version"] = Value::from(consuming);
+            let (run, context) = run_and_context_v1();
+            let outcome =
+                decode_update_group_v1(&run, context, &canonical_group_value_v1(&mutated));
+            let store_rejected_via_causality_gate = matches!(
+                outcome.as_ref().err().map(|error| error.kind()),
+                Some(UpdateGroupV1ErrorKind::EpisodeBinding)
+            );
+
+            assert_eq!(
+                !scheduler_ok, store_rejected_via_causality_gate,
+                "scoring={scoring} consuming={consuming}: the Store's EpisodeBinding causality \
+                 gate must reject exactly when check_staleness_bound_v1(entry, u32::MAX) rejects"
+            );
+        }
+    }
+
+    /// Mutation-rejection: a staleness-provenance value above the u63 domain
+    /// is rejected, matching every other u63-domain counter in this schema.
+    #[test]
+    fn staleness_provenance_above_u63_domain_is_rejected() {
+        let mut over_max = group_value_v1();
+        over_max["evidence"]["episodes"][0]["scoring_weight_version"] = Value::from(U63_MAX_V1 + 1);
+        over_max["evidence"]["episodes"][0]["consuming_update_version"] =
+            Value::from(U63_MAX_V1 + 1);
+        assert_eq!(
+            decode_value_error_v1(&over_max),
+            UpdateGroupV1ErrorKind::EpisodeBinding
         );
     }
 

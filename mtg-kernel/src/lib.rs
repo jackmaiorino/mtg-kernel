@@ -37,6 +37,9 @@ pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
+pub mod bounded_staleness_async_harness_v1;
+pub mod bounded_staleness_async_production_v1;
+pub mod bounded_staleness_async_v1;
 pub mod card_def;
 // Fail-closed canonical JSON codec shared by the native training store's
 // records. Schema validation remains a separate layer.

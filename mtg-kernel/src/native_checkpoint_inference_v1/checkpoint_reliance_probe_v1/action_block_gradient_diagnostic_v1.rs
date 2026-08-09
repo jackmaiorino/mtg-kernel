@@ -4982,6 +4982,7 @@ fn run_neutral_tape_v1(
         episode_count: EPISODES_PER_TAPE_V1,
         scheduler_timeout: Duration::from_millis(30_000),
         measure_broker_service_time: false,
+        starting_player: None,
     };
     let observer = ReceiptRetainingObserverV1::new_v1(0, EPISODES_PER_TAPE_V1)
         .expect("receipt-retaining observer must construct");
