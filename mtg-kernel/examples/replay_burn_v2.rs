@@ -4126,6 +4126,7 @@ mod tests {
             target_contracts: vec![mtg_kernel::state::StackTargetContractV4::Player(
                 PlayerId::P1,
             )],
+            target_selection_finished: false,
             is_flashback: false,
             cast_mode: None,
             additional_cost_discarded: Some(Vec::new()),
@@ -4323,6 +4324,8 @@ mod tests {
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
+                source_contract: None,
+                granted_by: None,
             },
             PendingTrigger {
                 controller: PlayerId::P0,
@@ -4337,6 +4340,8 @@ mod tests {
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
+                source_contract: None,
+                granted_by: None,
             },
         ];
         // `check_trigger_commutativity` (like its one real call site in
@@ -4389,6 +4394,8 @@ mod tests {
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
+                source_contract: None,
+                granted_by: None,
             },
             PendingTrigger {
                 controller: PlayerId::P0,
@@ -4403,6 +4410,8 @@ mod tests {
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
+                source_contract: None,
+                granted_by: None,
             },
         ];
         state.engine.pending_triggers = pending.clone();

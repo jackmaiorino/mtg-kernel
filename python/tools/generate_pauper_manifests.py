@@ -108,12 +108,13 @@ TOKEN_DEPENDENCIES = (
     ("Treasure Token", ("Heap Gate",)),
     ("Eldrazi Spawn Token", ("Writhing Chrysalis",)),
     ("Hero Token", ("Black Mage's Rod",)),
+    ("Clue Token", ("Toxin Analysis",)),
 )
 
 EXPECTED_MAINBOARD_SUPPORT = {
-    "Wildfire": {"full": 46, "partial": 0, "no_effect": 14},
+    "Wildfire": {"full": 59, "partial": 0, "no_effect": 1},
     "Rally": {"full": 60, "partial": 0, "no_effect": 0},
-    "Affinity": {"full": 58, "partial": 0, "no_effect": 2},
+    "Affinity": {"full": 60, "partial": 0, "no_effect": 0},
     "Elves": {"full": 48, "partial": 0, "no_effect": 12},
     "Spy": {"full": 57, "partial": 0, "no_effect": 3},
     "Burn": {"full": 60, "partial": 0, "no_effect": 0},

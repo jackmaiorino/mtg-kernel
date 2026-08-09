@@ -537,16 +537,16 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 137,
+                "full_cards": 143,
                 "partial_cards": 0,
-                "no_effect_cards": 13,
-                "token_dependencies": 10,
+                "no_effect_cards": 7,
+                "token_dependencies": 11,
             },
         )
         expected_copy_totals = [
-            {"deck_id": "Wildfire", "full": 46, "partial": 0, "no_effect": 14, "total": 60},
+            {"deck_id": "Wildfire", "full": 59, "partial": 0, "no_effect": 1, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Affinity", "full": 58, "partial": 0, "no_effect": 2, "total": 60},
+            {"deck_id": "Affinity", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Elves", "full": 48, "partial": 0, "no_effect": 12, "total": 60},
             {"deck_id": "Spy", "full": 57, "partial": 0, "no_effect": 3, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
@@ -874,6 +874,16 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {
                     "name": "Hero Token",
                     "required_by": ["Black Mage's Rod"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Clue Token",
+                    "required_by": ["Toxin Analysis"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],

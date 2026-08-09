@@ -21,9 +21,22 @@ use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
 use crate::state::{
     AbilitySourceContractV4, GameState, LinkedExileRecordV4, ObjectLinkV4, PaidCostRefV4,
-    StackItem, StackTargetContractV4, Target, Zone,
+    StackItem, StackSourceContractV4, StackTargetContractV4, Target, Zone,
 };
 use serde::{Deserialize, Serialize};
+
+/// Immutable cast-time evidence for one Storm trigger. The printed copy
+/// count is frozen immediately after the source cast, while the historical
+/// contract lets the trigger survive that physical spell leaving the stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StormCopyBindingV1 {
+    pub source_contract: StackSourceContractV4,
+    pub producing_stack_item: StackItemId,
+    pub turn: u32,
+    pub active_player: PlayerId,
+    pub spell_cast_event_index: u32,
+    pub casts_after_source: [u16; 2],
+}
 
 /// Which of a controller's creatures a team-wide pump/keyword effect
 /// affects (`EffectOp::PumpControlled`). A closed, tiny enum rather than a
@@ -66,6 +79,9 @@ pub enum LibraryCardFilter {
     /// A physical card with this exact generated card-definition id. This
     /// is the reusable same-name search contract used by Squadron Hawk.
     CardDefinition(u16),
+    /// A physical card with the Basic supertype and Land type that carries
+    /// at least one of the three requested effective land subtypes.
+    BasicLandWithAnySubtype([Subtype; 3]),
 }
 
 /// How long an impulse-drawn card (`EffectOp::ImpulseDraw`) stays playable
@@ -659,6 +675,35 @@ pub enum EffectOp {
         chooser: PlayerRef,
         max_targets: u16,
     },
+    /// Destroy the exact target land, then let the controller it had at
+    /// resolution search for a basic land to enter tapped. The controller
+    /// binding is captured before destruction.
+    DestroyTargetLandThenMaySearchBasicTapped {
+        object: ObjectRef,
+    },
+    /// Search one player's library for zero or one matching card, put it on
+    /// the battlefield tapped, then shuffle. Zero selection is legal.
+    SearchLibraryToBattlefieldTapped {
+        player: PlayerRef,
+        filter: LibraryCardFilter,
+    },
+    /// Reveal the target player's complete hand, then let the effect
+    /// controller choose one noncreature, nonland card for that player to
+    /// discard when at least one such card exists.
+    RevealTargetHandChooseNoncreatureNonlandDiscard {
+        player: PlayerRef,
+    },
+    /// Move the exact leave-trigger source from its owner's graveyard into
+    /// that library, if it is still there, then shuffle that library.
+    ShuffleTriggerSourceIntoOwnersLibrary,
+    /// Trigger-definition marker replaced with a bound Storm program at the
+    /// exact SpellCast checkpoint. It must never reach resolution directly.
+    MaterializeStormCopies,
+    /// Create the number of virtual spell copies frozen by `binding`.
+    /// Copies are not casts and therefore emit no SpellCast marker.
+    CreateStormCopies {
+        binding: StormCopyBindingV1,
+    },
     /// Creates a global until-end-of-turn rule effect under which no damage
     /// can be prevented. Existing prevention shields remain unconsumed.
     DamageCannotBePreventedThisTurn,
@@ -896,6 +941,35 @@ pub enum EffectFrame {
         max_targets: u16,
         path: Vec<u16>,
     },
+    /// Commits a private optional single-card search to the battlefield
+    /// tapped while retaining the exact pre-search library order.
+    SearchLibraryToBattlefieldTapped {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        filter_fingerprint: u64,
+        original_library: Vec<EffectObjectBinding>,
+        selected: Option<EffectObjectBinding>,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
+    /// Commits Duress's exact selected public hand incarnation.
+    DiscardRevealedHandCard {
+        player: PlayerId,
+        original_hand: Vec<EffectObjectBinding>,
+        eligible: Vec<EffectObjectBinding>,
+        selected: EffectObjectBinding,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
+    /// Authenticated post-answer start of Cleansing Wildfire's optional
+    /// basic-land search.
+    BeginSearchLibraryToBattlefieldTapped {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
     /// Authenticated post-answer frame for Mesmeric Fiend's publicly
     /// revealed hand choice and exact historical linked exile.
     LinkedExileChosenHandCard {
@@ -1067,6 +1141,22 @@ pub enum EffectTargetSelectionPurpose {
         original_candidates: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    /// Optional zero-or-one result of a private whole-library search whose
+    /// selected card enters the battlefield tapped.
+    SearchLibraryToBattlefieldTapped {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        filter_fingerprint: u64,
+        original_library: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
+    /// Public exact-one selection from a hand that has just been revealed.
+    DuressDiscard {
+        player: PlayerId,
+        original_hand: Vec<EffectObjectBinding>,
+        eligible: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
     /// Mandatory exact-one choice from a publicly revealed target hand.
     /// Only nonland cards are candidates, while the complete original hand
     /// and historical ability source authenticate the linked exile.
@@ -1121,6 +1211,13 @@ pub enum EffectBooleanChoicePurpose {
         colored: Vec<ManaColor>,
         generic: u8,
         then: Box<EffectOp>,
+    },
+    /// Cleansing Wildfire's controller-bound optional basic-land search.
+    SearchLibraryToBattlefieldTapped {
+        player: PlayerId,
+        filter: LibraryCardFilter,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
     },
 }
 
@@ -1222,6 +1319,7 @@ pub enum EffectAnsweredChoiceGuard {
     ExileOneFromGraveyard { frame: Box<EffectFrame> },
     PayManaThen { frame: Box<EffectFrame> },
     LinkedExileFromRevealedHand { frame: Box<EffectFrame> },
+    SearchLibraryToBattlefieldTapped { frame: Box<EffectFrame> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1337,6 +1435,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::ExploreTarget { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayPayManaThen { .. }
+        | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
+        | EffectOp::SearchLibraryToBattlefieldTapped { .. }
+        | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand
         | EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { .. } => true,
@@ -1532,6 +1633,10 @@ pub fn choose_resumable_target(state: &mut GameState, target: Target) -> Result<
     | EffectTargetSelectionPurpose::SearchLibraryToHandMany {
         player: search_player,
         ..
+    }
+    | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+        player: search_player,
+        ..
     } = purpose
     {
         let token = state
@@ -1600,6 +1705,10 @@ pub fn finish_resumable_target_selection(state: &mut GameState) -> Result<(), St
             | EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                 player: search_player,
                 ..
+            }
+            | EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+                player: search_player,
+                ..
             },
         ..
     }) = state
@@ -1631,6 +1740,24 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
             purpose:
                 EffectBooleanChoicePurpose::ShuffleLibrary {
                     player: library_player,
+                },
+            ..
+        }) = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .and_then(|pending| pending.choice.as_ref())
+        {
+            let token = state
+                .preflight_library_shuffle(*library_player)
+                .map_err(|error| error.to_string())?;
+            drop(token);
+        }
+        if let Some(PendingEffectChoice::ChooseBoolean {
+            purpose:
+                EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                    player: library_player,
+                    ..
                 },
             ..
         }) = state
@@ -1815,6 +1942,50 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                             Some(EffectAnsweredChoiceGuard::PayManaThen {
                                 frame: Box::new(frame.clone()),
                             });
+                        continuation.frames.push(frame);
+                    }
+                }
+                EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                    player: library_player,
+                    filter,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    if player != library_player || continuation.frames != expected_remaining_frames
+                    {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path,
+                            default,
+                            purpose: EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                                player: library_player,
+                                filter,
+                                canonical_path,
+                                expected_remaining_frames,
+                            },
+                        });
+                        return Err(
+                            "battlefield-search choice player or remainder changed".to_string()
+                        );
+                    }
+                    let mut expected_path = canonical_path.clone();
+                    expected_path.push(u16::from(value));
+                    if path != expected_path {
+                        return Err("battlefield-search Boolean path changed".to_string());
+                    }
+                    if value {
+                        let frame = EffectFrame::BeginSearchLibraryToBattlefieldTapped {
+                            player: library_player,
+                            filter,
+                            path,
+                            canonical_path,
+                            expected_remaining_frames,
+                        };
+                        continuation.answered_choice_guard = Some(
+                            EffectAnsweredChoiceGuard::SearchLibraryToBattlefieldTapped {
+                                frame: Box::new(frame.clone()),
+                            },
+                        );
                         continuation.frames.push(frame);
                     }
                 }
@@ -2036,6 +2207,51 @@ fn complete_resumable_target_selection(
                 path: canonical_path.clone(),
                 canonical_path,
             });
+        }
+        EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+            player,
+            filter,
+            filter_fingerprint,
+            original_library,
+            canonical_path,
+        } => {
+            if path != canonical_path {
+                return Err("battlefield library-search prompt structural path changed".to_string());
+            }
+            if objects.len() > 1 {
+                return Err("battlefield library search selected more than one card".to_string());
+            }
+            continuation
+                .frames
+                .push(EffectFrame::SearchLibraryToBattlefieldTapped {
+                    player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    selected: objects.pop(),
+                    path: canonical_path.clone(),
+                    canonical_path,
+                });
+        }
+        EffectTargetSelectionPurpose::DuressDiscard {
+            player,
+            original_hand,
+            eligible,
+            canonical_path,
+        } => {
+            if path != canonical_path || objects.len() != 1 {
+                return Err("Duress discard prompt changed path or cardinality".to_string());
+            }
+            continuation
+                .frames
+                .push(EffectFrame::DiscardRevealedHandCard {
+                    player,
+                    original_hand,
+                    eligible,
+                    selected: objects[0],
+                    path: canonical_path.clone(),
+                    canonical_path,
+                });
         }
         EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
             player,
@@ -2633,17 +2849,42 @@ fn validate_counter_target_unless_pays_frame(
     Ok(())
 }
 
-fn validated_definition_owned_root_effect<'a>(
+fn validated_definition_owned_root_effect(
     state: &GameState,
-    pending: &'a EffectContinuation,
-) -> Result<&'a EffectOp, String> {
-    let root = pending
-        .resolving_item
-        .inline_effect
-        .as_ref()
-        .ok_or("answered effect frame lost its definition-owned root program")?;
+    pending: &EffectContinuation,
+) -> Result<Box<EffectOp>, String> {
+    let root = if let Some(inline) = pending.resolving_item.inline_effect.as_ref() {
+        Box::new(inline.clone())
+    } else if pending.resolving_item.kind == crate::state::StackItemKind::Spell {
+        let source = state
+            .objects
+            .try_get(pending.resolving_item.source)
+            .ok_or("answered spell frame lost its source object")?;
+        let definition = crate::card_def::CARD_DEFS
+            .get(source.card_def as usize)
+            .ok_or("answered spell frame lost its source definition")?;
+        let effect =
+            if pending.resolving_item.v4.cast_method == Some(crate::state::CastMethodV4::Omen) {
+                definition.omen.as_ref().map(|omen| (omen.effect)())
+            } else {
+                match pending.resolving_item.mode_chosen {
+                    0 => (definition.spell_effect)(),
+                    1 => definition.mode2.as_ref().map(|mode| (mode.effect)()),
+                    2 => definition.mode3.as_ref().map(|mode| (mode.effect)()),
+                    _ => None,
+                }
+            }
+            .ok_or("answered spell frame lost its definition-owned root program")?;
+        Box::new(effect)
+    } else {
+        return Err("answered effect frame lost its definition-owned root program".to_string());
+    };
     if pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility {
-        let card_def = state.objects.get(pending.resolving_item.source).card_def;
+        let card_def = state
+            .objects
+            .try_get(pending.resolving_item.source)
+            .ok_or("answered trigger frame lost its source object")?
+            .card_def;
         if !crate::trigger::triggers_for(card_def)
             .iter()
             .any(|trigger| {
@@ -2684,7 +2925,7 @@ fn validate_exile_chosen_graveyard_frame(
     let root = validated_definition_owned_root_effect(state, pending)?;
     let EffectOp::ExileOneFromPlayersGraveyard {
         player: original_player,
-    } = root
+    } = root.as_ref()
     else {
         return Err("graveyard-exile answer lost its originating operation".to_string());
     };
@@ -2726,7 +2967,7 @@ fn validate_linked_exile_chosen_hand_frame(
     let root = validated_definition_owned_root_effect(state, pending)?;
     let EffectOp::RevealHandChooseNonlandToLinkedExile {
         player: original_player,
-    } = root
+    } = root.as_ref()
     else {
         return Err("linked-exile answer lost its originating operation".to_string());
     };
@@ -2798,7 +3039,7 @@ fn validate_pay_mana_then_frame(
         colored: original_colored,
         generic: original_generic,
         then: original_then,
-    } = root
+    } = root.as_ref()
     else {
         return Err("optional-mana answer lost its originating operation".to_string());
     };
@@ -2814,6 +3055,98 @@ fn validate_pay_mana_then_frame(
         return Err("accepted optional mana cost is no longer payable".to_string());
     }
     Ok(())
+}
+
+fn effect_op_at_path<'a>(mut op: &'a EffectOp, path: &[u16]) -> Option<&'a EffectOp> {
+    for &component in path {
+        op = match op {
+            EffectOp::Sequence(ops) => ops.get(usize::from(component))?,
+            EffectOp::Conditional { then, else_, .. } => match component {
+                0 => then,
+                1 => else_,
+                _ => return None,
+            },
+            EffectOp::Choice { options, .. } => options.get(usize::from(component))?,
+            _ => return None,
+        };
+    }
+    Some(op)
+}
+
+fn validate_search_library_to_battlefield_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    filter: LibraryCardFilter,
+    canonical_path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    match effect_op_at_path(root.as_ref(), canonical_path) {
+        Some(EffectOp::SearchLibraryToBattlefieldTapped {
+            player: original_player,
+            filter: original_filter,
+        }) if *original_filter == filter
+            && pending.ctx.resolve_player(*original_player, state) == player =>
+        {
+            Ok(())
+        }
+        Some(EffectOp::DestroyTargetLandThenMaySearchBasicTapped {
+            object: ObjectRef::Target(0),
+        }) if filter == LibraryCardFilter::BasicLand
+            && pending.resolving_item.v4.target_spec == Some(crate::card_def::TargetSpec::Land)
+            && pending.ctx.targets.len() == 1
+            && pending.ctx.target_contracts.len() == 1
+            && matches!(
+                pending.ctx.target_contracts[0],
+                StackTargetContractV4::Object {
+                    controller,
+                    zone: Zone::Battlefield,
+                    ..
+                } if controller == player
+            ) =>
+        {
+            Ok(())
+        }
+        _ => Err("battlefield-search lost its definition-owned origin".to_string()),
+    }
+}
+
+fn validate_duress_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    player: PlayerId,
+    canonical_path: &[u16],
+) -> Result<(), String> {
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    match effect_op_at_path(root.as_ref(), canonical_path) {
+        Some(EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard {
+            player: original_player,
+        }) if pending.ctx.resolve_player(*original_player, state) == player => Ok(()),
+        _ => Err("Duress continuation lost its definition-owned origin".to_string()),
+    }
+}
+
+fn validate_begin_search_library_to_battlefield_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::BeginSearchLibraryToBattlefieldTapped {
+        player,
+        filter,
+        path,
+        canonical_path,
+        expected_remaining_frames: _,
+    } = frame
+    else {
+        return Err("battlefield-search answer guard changed frame kind".to_string());
+    };
+    let mut expected_path = canonical_path.clone();
+    expected_path.push(1);
+    if path != &expected_path || *filter != LibraryCardFilter::BasicLand {
+        return Err("battlefield-search answered path or filter changed".to_string());
+    }
+    validate_search_library_to_battlefield_origin(state, pending, *player, *filter, canonical_path)
 }
 
 fn validate_answered_choice_guard(
@@ -2836,6 +3169,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ExileChosenGraveyardCard { .. }
                         | EffectFrame::PayManaThen { .. }
                         | EffectFrame::LinkedExileChosenHandCard { .. }
+                        | EffectFrame::BeginSearchLibraryToBattlefieldTapped { .. }
                 )
             }) {
                 return Err("typed answered-choice frame has no matching guard".to_string());
@@ -2936,6 +3270,28 @@ fn validate_answered_choice_guard(
                 return Err("linked-exile answered continuation frame stack changed".to_string());
             }
             validate_linked_exile_chosen_hand_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::SearchLibraryToBattlefieldTapped { frame }) => {
+            if pending.choice.is_some() {
+                return Err(
+                    "answered battlefield-search guard still carries a live choice".to_string(),
+                );
+            }
+            let EffectFrame::BeginSearchLibraryToBattlefieldTapped {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("battlefield-search answer guard changed frame kind".to_string());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.frames != expected {
+                return Err(
+                    "battlefield-search answered continuation frame stack changed".to_string(),
+                );
+            }
+            validate_begin_search_library_to_battlefield_frame(state, pending, frame)?;
         }
     }
     Ok(())
@@ -3250,6 +3606,98 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         return Err(
                             "library-search candidates are not the canonical physical match set"
                                 .to_string(),
+                        );
+                    }
+                }
+                EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+                    player: library_player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    canonical_path,
+                } => {
+                    if chooser != library_player || path != canonical_path {
+                        return Err(
+                            "battlefield library-search choice player or path changed".to_string()
+                        );
+                    }
+                    if *filter_fingerprint != library_filter_fingerprint(*filter)
+                        || *min_targets != 0
+                        || *max_targets != 1
+                        || *ordered
+                        || !selected.is_empty()
+                    {
+                        return Err("battlefield library-search prompt has a noncanonical shape"
+                            .to_string());
+                    }
+                    validate_search_library_to_battlefield_origin(
+                        state,
+                        pending,
+                        *library_player,
+                        *filter,
+                        canonical_path,
+                    )?;
+                    validate_library_search_live_metadata(
+                        state,
+                        *library_player,
+                        *filter,
+                        original_library,
+                    )?;
+                    let expected = library_search_candidates(
+                        state,
+                        *library_player,
+                        *filter,
+                        original_library,
+                    )?;
+                    let actual = legal
+                        .iter()
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "battlefield library-search target lacks an incarnation binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    if actual != expected {
+                        return Err("battlefield library-search candidates changed".to_string());
+                    }
+                }
+                EffectTargetSelectionPurpose::DuressDiscard {
+                    player: hand_player,
+                    original_hand,
+                    eligible,
+                    canonical_path,
+                } => {
+                    if *chooser != pending.ctx.controller
+                        || path != canonical_path
+                        || *hand_player == pending.ctx.controller
+                        || pending.ctx.targets.as_slice() != [Target::Player(*hand_player)]
+                        || pending.resolving_item.v4.target_spec
+                            != Some(crate::card_def::TargetSpec::TargetOpponent)
+                        || *min_targets != 1
+                        || *max_targets != 1
+                        || *ordered
+                        || !selected.is_empty()
+                    {
+                        return Err("Duress discard prompt has a noncanonical shape".to_string());
+                    }
+                    validate_duress_origin(state, pending, *hand_player, canonical_path)?;
+                    validate_bound_hand_exact(state, *hand_player, original_hand)?;
+                    let recomputed = duress_eligible_hand(state, original_hand)?;
+                    if eligible != &recomputed || eligible.is_empty() {
+                        return Err("Duress eligible hand partition changed".to_string());
+                    }
+                    let actual = legal
+                        .iter()
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "Duress target lacks an object-incarnation binding".to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    if actual != *eligible {
+                        return Err(
+                            "Duress legal targets changed from the revealed hand".to_string()
                         );
                     }
                 }
@@ -3675,6 +4123,41 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                 validate_resumable_program(then)?;
                 if !crate::engine::can_pay_effect_mana(*payer, colored, *generic, state) {
                     return Err("pending optional mana cost is not payable".to_string());
+                }
+            }
+            EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                player: library_player,
+                filter,
+                canonical_path,
+                expected_remaining_frames,
+            } => {
+                if player != library_player
+                    || path != canonical_path
+                    || *filter != LibraryCardFilter::BasicLand
+                    || &pending.frames != expected_remaining_frames
+                {
+                    return Err("battlefield-search Boolean metadata is inconsistent".to_string());
+                }
+                let root = validated_definition_owned_root_effect(state, pending)?;
+                if effect_op_at_path(root.as_ref(), canonical_path)
+                    != Some(&EffectOp::DestroyTargetLandThenMaySearchBasicTapped {
+                        object: ObjectRef::Target(0),
+                    })
+                {
+                    return Err(
+                        "battlefield-search Boolean lost its originating operation".to_string()
+                    );
+                }
+                let [StackTargetContractV4::Object {
+                    controller,
+                    zone: Zone::Battlefield,
+                    ..
+                }] = pending.ctx.target_contracts.as_slice()
+                else {
+                    return Err("battlefield-search Boolean lost its target binding".to_string());
+                };
+                if controller != library_player {
+                    return Err("battlefield-search Boolean target controller changed".to_string());
                 }
             }
         },
@@ -4476,6 +4959,134 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     state
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
+                }
+                EffectFrame::SearchLibraryToBattlefieldTapped {
+                    player,
+                    filter,
+                    filter_fingerprint,
+                    original_library,
+                    selected,
+                    path,
+                    canonical_path,
+                } => {
+                    if path != canonical_path
+                        || filter_fingerprint != library_filter_fingerprint(filter)
+                    {
+                        return Err(
+                            "battlefield library-search coordinator metadata changed".to_string()
+                        );
+                    }
+                    validate_search_library_to_battlefield_origin(
+                        state,
+                        &continuation,
+                        player,
+                        filter,
+                        &canonical_path,
+                    )?;
+                    validate_library_search_live_metadata(
+                        state,
+                        player,
+                        filter,
+                        &original_library,
+                    )?;
+                    let candidates =
+                        library_search_candidates(state, player, filter, &original_library)?;
+                    if selected.is_some_and(|binding| !candidates.contains(&binding)) {
+                        return Err(
+                            "battlefield library-search result is outside the canonical match set"
+                                .to_string(),
+                        );
+                    }
+                    let shuffle_token = state
+                        .preflight_library_shuffle(player)
+                        .map_err(|error| error.to_string())?;
+                    if let Some(binding) = selected {
+                        event::propose_and_commit(
+                            state,
+                            event::ProposedEvent::zone_change_to_battlefield_tapped(binding.object),
+                        );
+                    }
+                    state
+                        .commit_library_shuffle(player, shuffle_token)
+                        .map_err(|error| error.to_string())?;
+                }
+                EffectFrame::DiscardRevealedHandCard {
+                    player,
+                    original_hand,
+                    eligible,
+                    selected,
+                    path,
+                    canonical_path,
+                } => {
+                    if path != canonical_path {
+                        return Err("Duress discard frame path changed".to_string());
+                    }
+                    validate_duress_origin(state, &continuation, player, &canonical_path)?;
+                    validate_bound_hand_exact(state, player, &original_hand)?;
+                    let recomputed = duress_eligible_hand(state, &original_hand)?;
+                    if eligible != recomputed
+                        || eligible
+                            .iter()
+                            .filter(|binding| **binding == selected)
+                            .count()
+                            != 1
+                    {
+                        return Err("Duress discard binding changed".to_string());
+                    }
+                    event::propose_and_commit(
+                        state,
+                        event::ProposedEvent::zone_change(selected.object, Zone::Graveyard),
+                    );
+                }
+                EffectFrame::BeginSearchLibraryToBattlefieldTapped {
+                    player,
+                    filter,
+                    path,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    let answered_frame = EffectFrame::BeginSearchLibraryToBattlefieldTapped {
+                        player,
+                        filter,
+                        path: path.clone(),
+                        canonical_path: canonical_path.clone(),
+                        expected_remaining_frames: expected_remaining_frames.clone(),
+                    };
+                    if continuation.frames != expected_remaining_frames
+                        || continuation.answered_choice_guard.as_ref()
+                            != Some(
+                                &EffectAnsweredChoiceGuard::SearchLibraryToBattlefieldTapped {
+                                    frame: Box::new(answered_frame.clone()),
+                                },
+                            )
+                    {
+                        return Err("battlefield-search answered frame/guard mismatch".to_string());
+                    }
+                    validate_begin_search_library_to_battlefield_frame(
+                        state,
+                        &continuation,
+                        &answered_frame,
+                    )?;
+                    continuation.answered_choice_guard = None;
+                    let original_library = bind_library_exact(state, player);
+                    validate_library_search_live_metadata(
+                        state,
+                        player,
+                        filter,
+                        &original_library,
+                    )?;
+                    let candidates =
+                        library_search_candidates(state, player, filter, &original_library)?;
+                    stage_library_search_to_battlefield_choice(
+                        &mut continuation,
+                        player,
+                        filter,
+                        original_library,
+                        candidates,
+                        canonical_path,
+                    );
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
                 }
                 EffectFrame::LookTopSelectByTypeToHandBottomRest {
                     player,
@@ -5424,6 +6035,88 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                     return Ok(ResumableProgress::Suspended);
                 }
             }
+            EffectOp::DestroyTargetLandThenMaySearchBasicTapped { object } => {
+                if object != ObjectRef::Target(0)
+                    || !continuation.ctx.target_incarnation_matches(0, state)
+                {
+                    return Err(
+                        "destroy-then-search lost its exact target-land incarnation".to_string()
+                    );
+                }
+                let target = continuation.ctx.resolve_object(object);
+                let live = state
+                    .objects
+                    .try_get(target)
+                    .ok_or("destroy-then-search target no longer exists")?;
+                if live.zone != Zone::Battlefield
+                    || !crate::card_def::CARD_DEFS[live.card_def as usize].has_type(CardType::Land)
+                {
+                    return Err("destroy-then-search target is not a battlefield land".to_string());
+                }
+                let player = live.controller;
+                execute(
+                    &EffectOp::DestroyObject { object },
+                    &continuation.ctx,
+                    state,
+                );
+                let canonical_path = path.clone();
+                let expected_remaining_frames = continuation.frames.clone();
+                continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                    player,
+                    path,
+                    default: Some(false),
+                    purpose: EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                        player,
+                        filter: LibraryCardFilter::BasicLand,
+                        canonical_path,
+                        expected_remaining_frames,
+                    },
+                });
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::SearchLibraryToBattlefieldTapped { player, filter } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library = bind_library_exact(state, player);
+                validate_library_search_live_metadata(state, player, filter, &original_library)?;
+                let candidates =
+                    library_search_candidates(state, player, filter, &original_library)?;
+                stage_library_search_to_battlefield_choice(
+                    &mut continuation,
+                    player,
+                    filter,
+                    original_library,
+                    candidates,
+                    path,
+                );
+                state.engine.pending_effect = Some(continuation);
+                return Ok(ResumableProgress::Suspended);
+            }
+            EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { player } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                if player == continuation.ctx.controller {
+                    return Err("Duress must target an opponent".to_string());
+                }
+                let original_hand = bind_hand(state, player);
+                validate_bound_hand_exact(state, player, &original_hand)?;
+                for binding in &original_hand {
+                    for observer in [PlayerId::P0, PlayerId::P1] {
+                        state.reveal_hand_card(observer, player, binding.object)?;
+                    }
+                }
+                let eligible = duress_eligible_hand(state, &original_hand)?;
+                if !eligible.is_empty() {
+                    stage_duress_discard_choice(
+                        &mut continuation,
+                        player,
+                        original_hand,
+                        eligible,
+                        path,
+                    );
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::PutObjectInOwnersLibrarySecondOrBottom { object } => {
                 let object = continuation.ctx.resolve_object(object);
                 let live = state
@@ -5952,6 +6645,69 @@ fn stage_library_search_choice(
     });
 }
 
+fn stage_library_search_to_battlefield_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    filter: LibraryCardFilter,
+    original_library: Vec<EffectObjectBinding>,
+    candidates: Vec<EffectObjectBinding>,
+    canonical_path: Vec<u16>,
+) {
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path: canonical_path.clone(),
+        selected: Vec::new(),
+        legal: candidates
+            .into_iter()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: 0,
+        max_targets: 1,
+        ordered: false,
+        purpose: EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+            player,
+            filter,
+            filter_fingerprint: library_filter_fingerprint(filter),
+            original_library,
+            canonical_path,
+        },
+    });
+}
+
+fn stage_duress_discard_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    original_hand: Vec<EffectObjectBinding>,
+    eligible: Vec<EffectObjectBinding>,
+    canonical_path: Vec<u16>,
+) {
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player: continuation.ctx.controller,
+        path: canonical_path.clone(),
+        selected: Vec::new(),
+        legal: eligible
+            .iter()
+            .copied()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: 1,
+        max_targets: 1,
+        ordered: false,
+        purpose: EffectTargetSelectionPurpose::DuressDiscard {
+            player,
+            original_hand,
+            eligible,
+            canonical_path,
+        },
+    });
+}
+
 fn stage_library_search_many_choice(
     continuation: &mut EffectContinuation,
     player: PlayerId,
@@ -6175,6 +6931,13 @@ fn library_filter_matches(
                     .is_ok()
         }
         LibraryCardFilter::CardDefinition(card_def) => object.card_def == card_def,
+        LibraryCardFilter::BasicLandWithAnySubtype(subtypes) => {
+            def.has_type(CardType::Land)
+                && def.supertypes.contains(&crate::card_def::Supertype::Basic)
+                && subtypes
+                    .iter()
+                    .any(|subtype| subtype_ids.binary_search(&subtype.stable_id()).is_ok())
+        }
     })
 }
 
@@ -6193,6 +6956,11 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         LibraryCardFilter::CardDefinition(card_def) => {
             fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 3), u64::from(card_def))
         }
+        LibraryCardFilter::BasicLandWithAnySubtype(subtypes) => subtypes
+            .iter()
+            .fold(fnv1a_u64(0xcbf2_9ce4_8422_2325, 4), |hash, subtype| {
+                fnv1a_u64(hash, u64::from(subtype.stable_id()))
+            }),
     }
 }
 
@@ -6730,6 +7498,27 @@ fn validate_bound_hand_exact(
     Ok(())
 }
 
+fn duress_eligible_hand(
+    state: &GameState,
+    original_hand: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    let mut eligible = Vec::new();
+    for &binding in original_hand {
+        validate_effect_object_binding(state, binding)?;
+        let object = state
+            .objects
+            .try_get(binding.object)
+            .ok_or("Duress hand object is missing")?;
+        let definition = crate::card_def::CARD_DEFS
+            .get(object.card_def as usize)
+            .ok_or("Duress hand card definition is missing")?;
+        if !definition.has_type(CardType::Creature) && !definition.has_type(CardType::Land) {
+            eligible.push(binding);
+        }
+    }
+    Ok(eligible)
+}
+
 fn validate_bound_graveyard_exact(
     state: &GameState,
     player: PlayerId,
@@ -7013,6 +7802,20 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                 ctx.source,
             ));
+        }
+        EffectOp::MaterializeStormCopies => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
+        }
+        EffectOp::CreateStormCopies { binding } => {
+            if crate::engine::create_storm_spell_copies(state, ctx, *binding).is_err() {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+            }
         }
         EffectOp::PutPlusOnePlusOneCounterOnBoundObject { object } => {
             if validate_effect_object_binding(state, *object).is_err()
@@ -7910,6 +8713,61 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             commit_zone_change_batch(state, &objects, Zone::Graveyard, true)
                 .expect("freshly revealed library prefix remains valid");
         }
+        EffectOp::ShuffleTriggerSourceIntoOwnersLibrary => {
+            let Some(source) = ctx.ability_source_contract else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let Some(expected_generation) = source.zone_change_count.checked_add(1) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            let Some(live) = state.objects.try_get(source.source) else {
+                return;
+            };
+            if live.card_def != source.card_def || live.owner != source.owner {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            if live.zone != Zone::Graveyard || live.zone_change_count != expected_generation {
+                return;
+            }
+            let mut staged = state.clone();
+            let Ok(shuffle_token) = staged.preflight_library_shuffle(source.owner) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            event::propose_and_commit(
+                &mut staged,
+                event::ProposedEvent::public_library_insert(
+                    source.source,
+                    event::LibraryPlacement::Top,
+                ),
+            );
+            if staged
+                .commit_library_shuffle(source.owner, shuffle_token)
+                .is_err()
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
+            *state = staged;
+        }
         EffectOp::ExileTargetLinkedToSource { object } => {
             let target_index = match *object {
                 ObjectRef::Target(index) => Some(usize::from(index)),
@@ -8087,6 +8945,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
         | EffectOp::MayPayManaThen { .. }
+        | EffectOp::DestroyTargetLandThenMaySearchBasicTapped { .. }
+        | EffectOp::SearchLibraryToBattlefieldTapped { .. }
+        | EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard { .. }
         | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
         | EffectOp::ReturnLinkedExiledCardToOwnersHand => {
             panic!("choice-bearing effects must use the resumable interpreter")

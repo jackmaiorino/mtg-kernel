@@ -85,6 +85,9 @@ pub struct ZoneChangeProposed {
     /// inserted identity. Other observers learn no new identity, while their
     /// still-valid prior library position facts shift through the insertion.
     pub library_insert_visibility: LibraryInsertVisibility,
+    /// Forces a permanent moved to the battlefield by this effect to enter
+    /// tapped, independently of its own static entry rules.
+    pub force_battlefield_tapped: bool,
     /// Optional transformed battlefield face. Ordinary zone changes retain
     /// `None`, which resets the object to its front face.
     pub battlefield_face_index: Option<u8>,
@@ -162,6 +165,20 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Hidden,
+            force_battlefield_tapped: false,
+            battlefield_face_index: None,
+            battlefield_controller: None,
+            touched_by: Vec::new(),
+        })
+    }
+    pub fn zone_change_to_battlefield_tapped(object: ObjectId) -> ProposedEvent {
+        ProposedEvent::ZoneChange(ZoneChangeProposed {
+            object,
+            to_zone: Zone::Battlefield,
+            library_placement: LibraryPlacement::Top,
+            preserve_known_identity: false,
+            library_insert_visibility: LibraryInsertVisibility::Hidden,
+            force_battlefield_tapped: true,
             battlefield_face_index: None,
             battlefield_controller: None,
             touched_by: Vec::new(),
@@ -174,6 +191,7 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: true,
             library_insert_visibility: LibraryInsertVisibility::Hidden,
+            force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
             touched_by: Vec::new(),
@@ -189,6 +207,7 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Owner,
+            force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
             touched_by: Vec::new(),
@@ -205,6 +224,7 @@ impl ProposedEvent {
             library_placement: placement,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Public,
+            force_battlefield_tapped: false,
             battlefield_face_index: None,
             battlefield_controller: None,
             touched_by: Vec::new(),
@@ -221,6 +241,7 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Public,
+            force_battlefield_tapped: false,
             battlefield_face_index: Some(face_index),
             battlefield_controller: Some(controller),
             touched_by: Vec::new(),
@@ -616,6 +637,7 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 z.library_placement,
                 z.preserve_known_identity,
                 z.library_insert_visibility,
+                z.force_battlefield_tapped,
                 z.battlefield_face_index,
                 z.battlefield_controller,
             );
@@ -889,6 +911,7 @@ fn commit_zone_change(
     library_placement: LibraryPlacement,
     preserve_known_identity: bool,
     library_insert_visibility: LibraryInsertVisibility,
+    force_battlefield_tapped: bool,
     battlefield_face_index: Option<u8>,
     battlefield_controller: Option<PlayerId>,
 ) {
@@ -950,8 +973,8 @@ fn commit_zone_change(
     }
 
     let turn = state.turn;
-    let enters_battlefield_tapped =
-        to_zone == Zone::Battlefield && permanent_enters_battlefield_tapped(state, id, owner);
+    let enters_battlefield_tapped = to_zone == Zone::Battlefield
+        && (force_battlefield_tapped || permanent_enters_battlefield_tapped(state, id, owner));
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;

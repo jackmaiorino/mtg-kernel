@@ -208,6 +208,9 @@ pub enum Subtype {
     Horror,
     /// Appended for Mesmeric Fiend. Existing stable ids remain fixed.
     Nightmare,
+    /// Appended for the reusable Clue token created by Investigate.
+    /// Existing stable subtype ids remain unchanged.
+    Clue,
 }
 
 impl Subtype {
@@ -346,6 +349,9 @@ pub enum TargetSpec {
     /// Exactly one noncreature artifact permanent. Gorilla Shaman derives X
     /// from this target's printed mana value.
     NoncreatureArtifactPermanent,
+    /// Exactly one land permanent on either battlefield. Appended for
+    /// Cleansing Wildfire without changing any earlier target identity.
+    Land,
 }
 
 impl Default for TargetSpec {
@@ -394,6 +400,7 @@ impl TargetSpec {
             TargetSpec::CreatureOtherThanSource => 31,
             TargetSpec::UpToOneTappedCreature => 32,
             TargetSpec::NoncreatureArtifactPermanent => 33,
+            TargetSpec::Land => 34,
         }
     }
 }
@@ -1203,9 +1210,9 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // Hero Token is appended as id 159 after the four Spy sideboard
-        // records, preserving every earlier definition id.
-        assert_eq!(CARD_DEFS.len(), 160);
+        // Hero Token remains id 159 after the four Spy sideboard records;
+        // Clue Token is appended as id 160 without renumbering earlier ids.
+        assert_eq!(CARD_DEFS.len(), 161);
     }
 
     #[test]
@@ -1251,6 +1258,7 @@ mod tests {
             (TargetSpec::CreatureOtherThanSource, 31),
             (TargetSpec::UpToOneTappedCreature, 32),
             (TargetSpec::NoncreatureArtifactPermanent, 33),
+            (TargetSpec::Land, 34),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1266,10 +1274,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v29_is_frozen() {
-        // Version 29 appends Hero Token and composes the artifact/equipment
-        // mechanics without renumbering combined-pool ids.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xf5d4_55dd_4a3a_d03b);
+    fn card_db_hash_v30_is_frozen() {
+        // Version 30 appends Clue Token and composes Wildfire utility
+        // mechanics without renumbering the combined pool.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x3670_dd45_fb83_a8c9);
     }
 
     #[test]

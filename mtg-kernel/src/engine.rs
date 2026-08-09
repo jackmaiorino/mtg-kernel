@@ -44,7 +44,9 @@ use crate::card_def::{
     Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, PermanentFilter,
     PermanentFilterDef, TargetSpec,
 };
-use crate::effect::{self, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, TargetRef};
+use crate::effect::{
+    self, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, StormCopyBindingV1, TargetRef,
+};
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{self, Cost, ManaColor};
@@ -1238,6 +1240,7 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. }
         | TargetSpec::UpToOneTappedCreature
         | TargetSpec::NoncreatureArtifactPermanent
+        | TargetSpec::Land
         | TargetSpec::CreatureOtherThanSource => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
@@ -1707,6 +1710,205 @@ fn validate_equipment_granted_trigger_contract(
     Ok(())
 }
 
+/// Authenticates Weather the Storm's historical producing cast contract.
+/// The source may still be the unique live spell or may have changed zones
+/// after its independent Storm trigger was put on the stack.
+fn storm_source_contract_is_structurally_valid(
+    state: &GameState,
+    contract: StackSourceContractV4,
+) -> bool {
+    let Some(source) = state.objects.try_get(contract.source) else {
+        return false;
+    };
+    let Some(definition) = card_def::CARD_DEFS.get(contract.card_def as usize) else {
+        return false;
+    };
+    let Some(origin) = contract.spell_cast_origin else {
+        return false;
+    };
+    let route_is_valid = match origin.route {
+        SpellCastRouteV4::Hand => {
+            origin.origin_zone == Zone::Hand && contract.owner == contract.controller
+        }
+        SpellCastRouteV4::ExilePermission {
+            holder,
+            permission_zone_change_count,
+        } => {
+            origin.origin_zone == Zone::Exile
+                && holder == contract.controller
+                && permission_zone_change_count == origin.origin_zone_change_count
+        }
+        SpellCastRouteV4::GraveyardFlashback
+        | SpellCastRouteV4::Plotted { .. }
+        | SpellCastRouteV4::Madness
+        | SpellCastRouteV4::GraveyardEscape => false,
+    };
+    definition.name == "Weather the Storm"
+        && definition.is_executable()
+        && definition.is_castable()
+        && contract.zone == Zone::Stack
+        && contract.cast_method == CastMethodV4::Normal
+        && contract.spell_copy_origin.is_none()
+        && origin.finalized_method == Some(CastMethodV4::Normal)
+        && origin
+            .origin_zone_change_count
+            .checked_add(1)
+            .is_some_and(|generation| generation == contract.zone_change_count)
+        && route_is_valid
+        && source.card_def == contract.card_def
+        && source.owner == contract.owner
+        && source.zone_change_count >= contract.zone_change_count
+        && (source.zone_change_count != contract.zone_change_count
+            || (source.zone == Zone::Stack
+                && source.controller == contract.controller
+                && source.spell_copy_origin == contract.spell_copy_origin
+                && source.v4.spell_cast_origin == contract.spell_cast_origin))
+}
+
+fn storm_copy_count_from_binding(
+    state: &GameState,
+    binding: StormCopyBindingV1,
+) -> Result<u16, String> {
+    if binding.producing_stack_item == StackItemId::default()
+        || binding.turn != state.turn
+        || binding.active_player != state.active_player
+        || !storm_source_contract_is_structurally_valid(state, binding.source_contract)
+    {
+        return Err("Storm cast binding is structurally malformed".to_string());
+    }
+    let event_index = usize::try_from(binding.spell_cast_event_index)
+        .map_err(|_| "Storm event index does not fit this platform".to_string())?;
+    if state.engine.event_history.get(event_index)
+        != Some(&CommittedEvent::SpellCast {
+            spell: binding.source_contract.source,
+            controller: binding.source_contract.controller,
+        })
+    {
+        return Err("Storm binding lost its exact SpellCast marker".to_string());
+    }
+    if state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .skip(event_index + 1)
+        .any(|(_, event)| {
+            matches!(
+                event,
+                CommittedEvent::SpellCast { spell, .. }
+                    if *spell == binding.source_contract.source
+            )
+        })
+    {
+        return Err("Storm source was cast again after the bound cast marker".to_string());
+    }
+
+    let mut memberships = state
+        .stack
+        .iter()
+        .filter(|item| item.v4.stack_item_id == binding.producing_stack_item);
+    if let Some(producer) = memberships.next() {
+        if memberships.next().is_some()
+            || producer.kind != StackItemKind::Spell
+            || producer.source != binding.source_contract.source
+            || producer.v4.source_contract != Some(binding.source_contract)
+        {
+            return Err("Storm binding lost its unique producing spell".to_string());
+        }
+        validate_spell_source_contract_fields(state, producer)?;
+        let exact_source_memberships = state
+            .stack
+            .iter()
+            .filter(|item| {
+                item.kind == StackItemKind::Spell && item.source == binding.source_contract.source
+            })
+            .count();
+        let appears_outside_stack = [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
+            let zones = &state.players[player.index()];
+            zones.library.contains(&binding.source_contract.source)
+                || zones.hand.contains(&binding.source_contract.source)
+                || zones.battlefield.contains(&binding.source_contract.source)
+                || zones.graveyard.contains(&binding.source_contract.source)
+        }) || state.exile.contains(&binding.source_contract.source)
+            || state.command.contains(&binding.source_contract.source);
+        if exact_source_memberships != 1 || appears_outside_stack {
+            return Err("Storm producing spell has malformed stack membership".to_string());
+        }
+    } else if state
+        .objects
+        .get(binding.source_contract.source)
+        .zone_change_count
+        <= binding.source_contract.zone_change_count
+    {
+        return Err(
+            "Storm binding has neither its producer nor a historical departure".to_string(),
+        );
+    }
+
+    let mut later_casts = [0_u16; 2];
+    for event in state.engine.event_history.iter().skip(event_index + 1) {
+        let CommittedEvent::SpellCast { controller, .. } = event else {
+            continue;
+        };
+        later_casts[controller.index()] = later_casts[controller.index()]
+            .checked_add(1)
+            .ok_or("Storm later-cast count overflow")?;
+    }
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let expected = binding.casts_after_source[player.index()]
+            .checked_add(later_casts[player.index()])
+            .ok_or("Storm turn-cast count overflow")?;
+        if state.players[player.index()].spells_cast_this_turn != expected {
+            return Err("Storm binding disagrees with the exact later cast history".to_string());
+        }
+    }
+    if binding.casts_after_source[binding.source_contract.controller.index()] == 0 {
+        return Err("Storm binding does not include its own cast".to_string());
+    }
+    binding.casts_after_source[0]
+        .checked_add(binding.casts_after_source[1])
+        .and_then(|casts| casts.checked_sub(1))
+        .ok_or_else(|| "Storm frozen copy count overflowed or omitted its cast".to_string())
+}
+
+pub(crate) fn materialize_storm_copy_binding(
+    state: &GameState,
+    source: ObjectId,
+) -> Option<StormCopyBindingV1> {
+    let mut producers = state
+        .stack
+        .iter()
+        .filter(|item| item.kind == StackItemKind::Spell && item.source == source);
+    let producer = producers.next()?;
+    if producers.next().is_some() || validate_spell_stack_source(state, producer).is_err() {
+        return None;
+    }
+    let source_contract = producer.v4.source_contract?;
+    let spell_cast_event_index = state.engine.event_history.iter().rposition(|event| {
+        *event
+            == (CommittedEvent::SpellCast {
+                spell: source,
+                controller: producer.controller,
+            })
+    })?;
+    if spell_cast_event_index + 1 != state.engine.event_history.len() {
+        return None;
+    }
+    let binding = StormCopyBindingV1 {
+        source_contract,
+        producing_stack_item: producer.v4.stack_item_id,
+        turn: state.turn,
+        active_player: state.active_player,
+        spell_cast_event_index: spell_cast_event_index.try_into().ok()?,
+        casts_after_source: [
+            state.players[0].spells_cast_this_turn,
+            state.players[1].spells_cast_this_turn,
+        ],
+    };
+    storm_copy_count_from_binding(state, binding).ok()?;
+    Some(binding)
+}
+
 /// Authenticates the one supported nonspell shape whose physical source is
 /// still on the stack: a definition-owned cast trigger. The trigger carries
 /// the exact contract of its unique producing spell, and its inline program
@@ -1732,6 +1934,17 @@ fn validate_spell_sourced_trigger(
         || item.v4.activated_ability_index.is_some()
     {
         return Err("spell-sourced trigger carries incompatible producer metadata".to_string());
+    }
+    if let Some(EffectOp::CreateStormCopies { binding }) = item.inline_effect.as_ref() {
+        if contract != binding.source_contract
+            || item.source != binding.source_contract.source
+            || item.controller != binding.source_contract.controller
+            || item.v4.stack_item_id == binding.producing_stack_item
+        {
+            return Err("Storm trigger changed its exact producing cast binding".to_string());
+        }
+        storm_copy_count_from_binding(state, *binding)?;
+        return Ok(());
     }
     let source = state
         .objects
@@ -2171,6 +2384,10 @@ fn legal_targets_for_controller_from_source(
                 .map(|item| Target::Object(item.source))
                 .collect()
         }
+        TargetSpec::Land => battlefield_objects(state)
+            .filter(|&id| object_has_type(state, id, CardType::Land))
+            .map(Target::Object)
+            .collect(),
         TargetSpec::NoncreatureArtifactPermanent => battlefield_objects(state)
             .filter(|&id| {
                 let definition = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
@@ -8058,6 +8275,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     } else if def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery) {
         let to_zone = match plan_spell_departure(state, &item, Zone::Graveyard) {
             Ok(SpellDeparture::Move { to_zone, .. }) => to_zone,
+            Ok(SpellDeparture::Cease { .. })
+                if state.engine.pending_discard.is_none()
+                    && state.engine.pending_optional_cost.is_none() =>
+            {
+                if finish_resolved_stack_item(state, &item).is_err() {
+                    state.engine.halted =
+                        Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                    return ResolutionProgress::Suspended;
+                }
+                return ResolutionProgress::Complete;
+            }
             Ok(SpellDeparture::Cease { .. }) | Err(_) => {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
@@ -10050,6 +10278,89 @@ fn create_spell_copy(state: &mut GameState, pending: &PendingSpellCopy) -> (Obje
     );
     state.stack.push(copy);
     (copy_source, copy_stack_item)
+}
+
+/// Materializes an already-authenticated Storm trigger as independent
+/// virtual copies of Weather the Storm. This is transactional: either every
+/// copy receives valid source/stack ancestry, or the caller's state is left
+/// byte-for-byte unchanged and resolution fails closed.
+pub(crate) fn create_storm_spell_copies(
+    state: &mut GameState,
+    ctx: &ExecCtx,
+    binding: StormCopyBindingV1,
+) -> Result<(), String> {
+    if ctx.source != binding.source_contract.source
+        || ctx.controller != binding.source_contract.controller
+        || ctx
+            .stack_item_id
+            .is_none_or(|id| id == StackItemId::default() || id == binding.producing_stack_item)
+        || !ctx.targets.is_empty()
+        || !ctx.target_contracts.is_empty()
+        || !ctx.discarded.is_empty()
+        || !ctx.paid_cost_refs.is_empty()
+        || ctx.hidden_ability_source.is_some()
+        || ctx.ability_source_contract.is_some()
+        || ctx.kicked
+    {
+        return Err("Storm resolution context changed from its bound trigger".to_string());
+    }
+    let copy_count = storm_copy_count_from_binding(state, binding)?;
+    let parent = state.objects.get(binding.source_contract.source);
+    let parent_name = parent.name.clone();
+    let mut staged = state.clone();
+    for _ in 0..copy_count {
+        let copy_source = staged.objects.push(crate::state::GameObject {
+            card_def: binding.source_contract.card_def,
+            name: parent_name.clone(),
+            owner: binding.source_contract.owner,
+            controller: binding.source_contract.controller,
+            zone: Zone::Stack,
+            tapped: false,
+            summoning_sick: false,
+            damage: 0,
+            counters: Default::default(),
+            attachments: Vec::new(),
+            v4: ObjectStateV4::from_card_def(binding.source_contract.card_def),
+            spell_copy_origin: Some(SpellCopyOriginV4 {
+                parent: binding.source_contract.source,
+                parent_card_def: binding.source_contract.card_def,
+                parent_owner: binding.source_contract.owner,
+                parent_controller: binding.source_contract.controller,
+                parent_stack_zone_change_count: binding.source_contract.zone_change_count,
+                parent_was_copy: false,
+            }),
+            plotted_turn: None,
+            zone_change_count: 0,
+        });
+        let stack_item_id = next_stack_item_id(&mut staged);
+        let source_contract =
+            StackSourceContractV4::capture(&staged, copy_source, CastMethodV4::Normal);
+        let copy = StackItem {
+            kind: StackItemKind::Spell,
+            source: copy_source,
+            controller: binding.source_contract.controller,
+            targets: Vec::new(),
+            is_copy: true,
+            inline_effect: None,
+            discarded: Vec::new(),
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            v4: StackStateV4 {
+                stack_item_id,
+                cast_method: Some(CastMethodV4::Normal),
+                source_contract: Some(source_contract),
+                target_spec: Some(TargetSpec::None),
+                ..StackStateV4::default()
+            },
+        };
+        staged.stack.push(copy.clone());
+        validate_spell_stack_source(&staged, &copy)?;
+        validated_stack_item_target_spec(&copy, &staged)?;
+    }
+    *state = staged;
+    Ok(())
 }
 
 fn pending_spell_copy_parent(

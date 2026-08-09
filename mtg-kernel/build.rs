@@ -2345,6 +2345,18 @@ enum Special {
     /// Choose a color, then prevent all damage from sources of that color
     /// this turn. Its flashback tap cost is modeled independently.
     PrismaticStrands,
+    /// Destroy target land, offer its resolution-time controller an optional
+    /// basic-land search to the battlefield tapped, then draw a card.
+    CleansingWildfire,
+    /// Reveal target opponent's hand and choose a noncreature, nonland card
+    /// from it for that player to discard.
+    Duress,
+    /// Target creature gains deathtouch and lifelink until end of turn, then
+    /// the controller investigates.
+    ToxinAnalysis,
+    /// Gain three life. The card's CastSelf Storm trigger is defined in the
+    /// shared trigger table.
+    WeatherTheStorm,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2549,6 +2561,15 @@ impl Special {
             Special::PrismaticStrands => {
                 "prismatic_strands:choose_color_prevent_source_damage_this_turn".to_string()
             }
+            Special::CleansingWildfire => {
+                "cleansing_wildfire:destroy_land_optional_basic_tapped_draw".to_string()
+            }
+            Special::Duress => "duress:reveal_opponent_hand_choose_noncreature_nonland_discard"
+                .to_string(),
+            Special::ToxinAnalysis => {
+                "toxin_analysis:deathtouch_lifelink_eot_investigate".to_string()
+            }
+            Special::WeatherTheStorm => "weather_the_storm:gain_three:storm".to_string(),
         }
     }
 }
@@ -2575,6 +2596,10 @@ enum AbilityCostRecipe {
         filter: PermanentFilterRecipe,
     },
     ReturnControlledUnblockedAttacker,
+    /// An arbitrary printed mana cost parsed by the same canonical cost
+    /// grammar as spell costs. Twisted Landscape's Cycling is the first
+    /// multicolor consumer.
+    ManaCost(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2618,6 +2643,9 @@ enum AbilityEffectRecipe {
     PutSourceOntoBattlefieldTappedAndAttacking,
     MoveAllTargetsToExile,
     AddMinusOneMinusOneCounter,
+    SearchLibraryToBattlefieldTapped {
+        filter: LibrarySearchFilterRecipe,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2635,6 +2663,7 @@ enum CreatureEffectFilterRecipe {
 enum LibrarySearchFilterRecipe {
     LandWithSubtype(&'static str),
     BasicLand,
+    BasicLandWithAnySubtype([&'static str; 3]),
 }
 
 #[derive(Clone, Copy)]
@@ -2746,6 +2775,10 @@ fn special_for(name: &str) -> Special {
         "Snap" => Special::Snap,
         "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         "Prismatic Strands" => Special::PrismaticStrands,
+        "Cleansing Wildfire" => Special::CleansingWildfire,
+        "Duress" => Special::Duress,
+        "Toxin Analysis" => Special::ToxinAnalysis,
+        "Weather the Storm" => Special::WeatherTheStorm,
         _ => Special::None,
     }
 }
@@ -2892,6 +2925,12 @@ fn effect_recipe_for(card: &CardJson) -> String {
             "target=None;spell=DamageCannotBePreventedThisTurn;mana=None".to_string()
         }
         Special::PrismaticStrands => "target=None;spell=PreventDamageFromChosenColorUntilEndOfTurn;mana=None".to_string(),
+        Special::CleansingWildfire => "target=Land;spell=Sequence(DestroyTargetLandThenMaySearchBasicTapped(Target0),DrawCards(Controller,1));mana=None".to_string(),
+        Special::Duress => "target=TargetOpponent;spell=RevealTargetHandChooseNoncreatureNonlandDiscard(Target0);mana=None".to_string(),
+        Special::ToxinAnalysis => "target=Creature;spell=Sequence(GrantKeywordsTargetUntilEndOfTurn(Target0,Deathtouch|Lifelink),CreateToken(ClueToken));mana=None".to_string(),
+        Special::WeatherTheStorm => {
+            "target=None;spell=GainLife(Controller,3);trigger=CastSelf:Storm;mana=None".to_string()
+        }
     }
 }
 
@@ -3300,6 +3339,37 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Lembas" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::GainLife(3),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Clue Token" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::DrawCards(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Map Token" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::Mana {
@@ -3594,6 +3664,33 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             activation_target_filter: "TargetSpecOnly",
             max_activations_per_turn: None,
         }],
+        "Twisted Landscape" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
+                effect: AbilityEffectRecipe::SearchLibraryToBattlefieldTapped {
+                    filter: LibrarySearchFilterRecipe::BasicLandWithAnySubtype([
+                        "Swamp", "Mountain", "Forest",
+                    ]),
+                },
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[
+                    AbilityCostRecipe::ManaCost("{B}{R}{G}"),
+                    AbilityCostRecipe::DiscardSelf,
+                ],
+                effect: AbilityEffectRecipe::DrawCards(1),
+                activation_zone: "Hand",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
         _ => &[],
     }
 }
@@ -3632,6 +3729,13 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
             "CostComponent::ReturnControlledUnblockedAttackerToOwnersHand".to_string()
         }
+        AbilityCostRecipe::ManaCost(cost) => {
+            let (pips, generic, x_count) = parse_cost(cost);
+            format!(
+                "CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})",
+                pips.join(", ")
+            )
+        }
     }
 }
 
@@ -3663,6 +3767,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
             "return_controlled_unblocked_attacker".to_string()
         }
+        AbilityCostRecipe::ManaCost(cost) => format!("mana_cost:{cost}"),
     }
 }
 
@@ -3741,6 +3846,10 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
+            "search_library_to_battlefield_tapped:{}",
+            library_search_filter_token(filter)
+        ),
     }
 }
 
@@ -3758,6 +3867,9 @@ fn library_search_filter_token(filter: LibrarySearchFilterRecipe) -> String {
             format!("land_with_subtype:{subtype}")
         }
         LibrarySearchFilterRecipe::BasicLand => "basic_land".to_string(),
+        LibrarySearchFilterRecipe::BasicLandWithAnySubtype(subtypes) => {
+            format!("basic_land_with_any_subtype:{}", subtypes.join("|"))
+        }
     }
 }
 
@@ -3767,6 +3879,14 @@ fn library_search_filter_src(filter: LibrarySearchFilterRecipe) -> String {
             format!("LibraryCardFilter::LandWithSubtype(Subtype::{subtype})")
         }
         LibrarySearchFilterRecipe::BasicLand => "LibraryCardFilter::BasicLand".to_string(),
+        LibrarySearchFilterRecipe::BasicLandWithAnySubtype(subtypes) => format!(
+            "LibraryCardFilter::BasicLandWithAnySubtype([{}])",
+            subtypes
+                .iter()
+                .map(|subtype| subtype_variant(subtype))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
@@ -3862,6 +3982,12 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
             "ability_effect_add_minus_one_minus_one_counter".to_string()
         }
+        AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
+            "ability_effect_search_{}_to_battlefield_tapped",
+            library_search_filter_token(filter)
+                .replace([':', '|'], "_")
+                .to_ascii_lowercase()
+        ),
     }
 }
 
@@ -4103,6 +4229,10 @@ fn trigger_recipe_for(name: &str) -> &'static str {
         "Ninja of the Deep Hours" => "combat_damage_player:may_draw:1",
         "Saiba Cryptomancer" => "etb:target_creature:backup_1:hexproof",
         "Spellstutter Sprite" => "etb:target_spell_mv_at_most_controlled_faerie_count:counter",
+        "Lembas" => {
+            "etb:scry:1:draw:1;left_battlefield_to_graveyard:shuffle_source_into_owners_library"
+        }
+        "Weather the Storm" => "cast_self:storm_copies:frozen_turn_cast_count",
         _ => "none",
     }
 }
@@ -4305,6 +4435,73 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::CleansingWildfire))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_cleansing_wildfire() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        EffectOp::DestroyTargetLandThenMaySearchBasicTapped {{ object: ObjectRef::Target(0) }},").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::Duress))
+    {
+        writeln!(out, "fn spell_effect_duress() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard {{ player: PlayerRef::Target(0) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::ToxinAnalysis))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_toxin_analysis() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    let clue = crate::card_def::card_id_by_name(\"Clue Token\").expect(\"Clue Token in CARD_DEFS\");").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::DEATHTOUCH | Keywords::LIFELINK }},").unwrap();
+        writeln!(out, "        EffectOp::CreateToken {{ token_def: clue, controller: PlayerRef::Controller }},").unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::WeatherTheStorm))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_weather_the_storm() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    Some(EffectOp::GainLife {{ player: PlayerRef::Controller, amount: 3 }})"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     // Emit each structured activated-ability effect once. These are the same
     // recipes used for CardDef source and the v3 card-database hash tokens,
     // so a cost/zone/effect change cannot update one surface and leave the
@@ -4475,6 +4672,10 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::AddMinusOneMinusOneCounter {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => {
+                let filter = library_search_filter_src(filter);
+                writeln!(out, "    EffectOp::SearchLibraryToBattlefieldTapped {{ player: PlayerRef::Controller, filter: {filter} }}").unwrap();
             }
         }
         writeln!(out, "}}").unwrap();
@@ -5743,6 +5944,26 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_prismatic_strands".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::CleansingWildfire => (
+                "TargetSpec::Land",
+                "spell_effect_cleansing_wildfire".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::Duress => (
+                "TargetSpec::TargetOpponent",
+                "spell_effect_duress".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::ToxinAnalysis => (
+                "TargetSpec::Creature",
+                "spell_effect_toxin_analysis".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::WeatherTheStorm => (
+                "TargetSpec::None",
+                "spell_effect_weather_the_storm".to_string(),
+                "no_effect".to_string(),
+            ),
         };
 
         let executable = c.engine_capability != EngineCapabilityJson::NoEffect;
@@ -5951,15 +6172,16 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out).unwrap();
 
     // ---- content + executable-recipe hash ------------------------------
-    // v29 hashes every generated CardDef selector plus semantic tokens from
+    // v30 hashes every generated CardDef selector plus semantic tokens from
     // the same `Special` and structured activated-ability recipes that emit
     // executable definitions. Lorien's Draw3/search and Deep Analysis's
     // target-player draw/ordered flashback and Sleep's ordered Escape cost
     // remain bound alongside each Blast's checked color and
-    // targeting-versus-resolution filter timing.
+    // targeting-versus-resolution filter timing. Wildfire utility effects,
+    // typed battlefield searches, Storm, and Clue remain bound too.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v29\n");
+    let mut canon = String::from("kernel_carddb/v30\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -6257,6 +6479,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Phyrexian" => "Subtype::Phyrexian",
         "Horror" => "Subtype::Horror",
         "Nightmare" => "Subtype::Nightmare",
+        "Clue" => "Subtype::Clue",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

@@ -100,6 +100,11 @@ pub(crate) fn materialize_trigger_effect(
                 },
             }
         }
+        EffectOp::MaterializeStormCopies => {
+            crate::engine::materialize_storm_copy_binding(state, source)
+                .map(|binding| EffectOp::CreateStormCopies { binding })
+                .unwrap_or(EffectOp::MaterializeStormCopies)
+        }
         effect => effect,
     }
 }
@@ -530,6 +535,27 @@ fn spellstutter_sprite_etb_effect() -> EffectOp {
     }
 }
 
+fn lembas_etb_effect() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::Scry {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+    ])
+}
+
+fn lembas_graveyard_effect() -> EffectOp {
+    EffectOp::ShuffleTriggerSourceIntoOwnersLibrary
+}
+
+fn weather_the_storm_cast_effect() -> EffectOp {
+    EffectOp::MaterializeStormCopies
+}
+
 fn journey_to_nowhere_etb_effect() -> EffectOp {
     EffectOp::ExileTargetLinkedToSource {
         object: crate::effect::ObjectRef::Target(0),
@@ -748,6 +774,31 @@ const SPELLSTUTTER_SPRITE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbility
     effect: spellstutter_sprite_etb_effect,
 }];
 
+const LEMBAS_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Etb,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: lembas_etb_effect,
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        home_zone: Zone::Graveyard,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: lembas_graveyard_effect,
+    },
+];
+
+const WEATHER_THE_STORM_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::CastSelf,
+    home_zone: Zone::Stack,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: weather_the_storm_cast_effect,
+}];
+
 const JOURNEY_TO_NOWHERE_TRIGGERS: [TriggeredAbilityDef; 2] = [
     TriggeredAbilityDef {
         condition: TriggerCondition::Etb,
@@ -817,6 +868,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Saiba Cryptomancer" => &SAIBA_CRYPTOMANCER_TRIGGERS,
         "Spellstutter Sprite" => &SPELLSTUTTER_SPRITE_TRIGGERS,
         "Journey to Nowhere" => &JOURNEY_TO_NOWHERE_TRIGGERS,
+        "Lembas" => &LEMBAS_TRIGGERS,
+        "Weather the Storm" => &WEATHER_THE_STORM_TRIGGERS,
         _ => &[],
     }
 }
@@ -859,6 +912,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
             EffectOp::PutPlusOnePlusOneCounterOnBoundObject { .. }
         )
     {
+        return true;
+    }
+    if card.name == "Weather the Storm" && matches!(effect, EffectOp::CreateStormCopies { .. }) {
         return true;
     }
     triggers_for(card_def)

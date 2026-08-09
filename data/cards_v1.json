@@ -485,6 +485,7 @@
     },
     {
       "name": "Cleansing Wildfire",
+      "engine_capability": "full",
       "mana_cost": "{1}{R}",
       "mana_value": 2,
       "colors": [
@@ -756,6 +757,7 @@
     },
     {
       "name": "Duress",
+      "engine_capability": "full",
       "mana_cost": "{B}",
       "mana_value": 1,
       "colors": [
@@ -2019,6 +2021,7 @@
     },
     {
       "name": "Lembas",
+      "engine_capability": "full",
       "mana_cost": "{2}",
       "mana_value": 2,
       "colors": [],
@@ -3747,6 +3750,7 @@
     },
     {
       "name": "Toxin Analysis",
+      "engine_capability": "full",
       "mana_cost": "{B}",
       "mana_value": 1,
       "colors": [
@@ -3809,6 +3813,7 @@
     },
     {
       "name": "Twisted Landscape",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3962,6 +3967,7 @@
     },
     {
       "name": "Weather the Storm",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -4984,6 +4990,34 @@
         "job_select"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/HeroToken.java"
+    },
+    {
+      "name": "Clue Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Clue"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_cost",
+        "draw_card"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/ClueArtifactToken.java"
     }
   ],
   "unresolved": []

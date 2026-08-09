@@ -5470,17 +5470,22 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+                                ..
+                            }
                     ) && acting_player != *player;
                     let search_for_chooser = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
                             | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
@@ -5558,6 +5563,9 @@ fn pending_effect_semantic_v4(
                             }
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
                                 ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+                                ..
                             } => TargetSelectionPurposeV4::SearchResult,
                             crate::effect::EffectTargetSelectionPurpose::UntapLands {
                                 ..
@@ -5577,6 +5585,9 @@ fn pending_effect_semantic_v4(
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::DuressDiscard {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
                         },
@@ -5604,6 +5615,9 @@ fn pending_effect_semantic_v4(
                         crate::effect::EffectBooleanChoicePurpose::PayManaThen { .. } => {
                             BooleanChoicePurposeV4::PayCost
                         }
+                        crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                            ..
+                        } => BooleanChoicePurposeV4::OptionalEffect,
                     },
                 }),
             }
@@ -6026,6 +6040,18 @@ fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRef
         .map_err(|error| RlContractError(format!("invalid stack source metadata: {error}")))?;
     let (card_def, owner, controller, zone, zone_change_count) = match item.kind {
         StackItemKind::Spell => return card_ref(state, item.source),
+        StackItemKind::TriggeredAbility if item.v4.source_contract.is_some() => {
+            let contract = item.v4.source_contract.ok_or_else(|| {
+                RlContractError("spell-sourced trigger lost its frozen producer".to_string())
+            })?;
+            (
+                contract.card_def,
+                contract.owner,
+                contract.controller,
+                contract.zone,
+                contract.zone_change_count,
+            )
+        }
         StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility => {
             let contract = item.v4.ability_source_contract.ok_or_else(|| {
                 RlContractError("ability stack source lost its frozen incarnation".to_string())

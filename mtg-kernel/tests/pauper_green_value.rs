@@ -98,7 +98,7 @@ fn generated_definitions_match_checked_in_mage_text() {
     assert_eq!(card_id("Gingerbread Cabin"), 43);
     assert_eq!(card_id("Writhing Chrysalis"), 131);
     assert_eq!(card_id("Eldrazi Spawn Token"), 154);
-    assert_eq!(CARD_DEFS.len(), 160);
+    assert_eq!(CARD_DEFS.len(), 161);
     assert_eq!(Subtype::Spawn.stable_id(), 64);
 
     let cabin = &CARD_DEFS[card_id("Gingerbread Cabin") as usize];

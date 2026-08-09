@@ -1709,7 +1709,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             | card_def::CostComponent::ReturnControlledPermanentToOwnersHand(_)
             | card_def::CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
             | card_def::CostComponent::TapUntappedControlledPermanent(_)
-            | card_def::CostComponent::RevealHandIfNoCardsWithType(_)) => {
+            | card_def::CostComponent::RevealHandIfNoCardsWithType(_)
+            | card_def::CostComponent::ReturnControlledUnblockedAttackerToOwnersHand) => {
                 panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
             }
         }

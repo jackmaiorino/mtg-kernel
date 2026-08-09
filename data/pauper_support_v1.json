@@ -5,21 +5,21 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "4b003b5baaa6156829a7878b7f7682a6b790f17d91699c99308302774be717e7"
+    "registry_raw_sha256": "a267d11630edbfe8a0ffbd88d123a9ec83dd239c419032fe3efceb6496e3a0c7"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 137,
+    "full_cards": 143,
     "partial_cards": 0,
-    "no_effect_cards": 13,
-    "token_dependencies": 10
+    "no_effect_cards": 7,
+    "token_dependencies": 11
   },
   "deck_mainboard_copy_totals": [
     {
       "deck_id": "Wildfire",
-      "full": 46,
+      "full": 59,
       "partial": 0,
-      "no_effect": 14,
+      "no_effect": 1,
       "total": 60
     },
     {
@@ -31,9 +31,9 @@
     },
     {
       "deck_id": "Affinity",
-      "full": 58,
+      "full": 60,
       "partial": 0,
-      "no_effect": 2,
+      "no_effect": 0,
       "total": 60
     },
     {
@@ -194,6 +194,18 @@
       "name": "Hero Token",
       "required_by": [
         "Black Mage's Rod"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Clue Token",
+      "required_by": [
+        "Toxin Analysis"
       ],
       "registry_status": "present",
       "expected_decks": [],
@@ -585,10 +597,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Clockwork Percussionist",
@@ -822,10 +832,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Dust to Dust",
@@ -1880,10 +1888,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lightning Bolt",
@@ -3290,10 +3296,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Troll of Khazad-dum",
@@ -3354,10 +3358,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Unexpected Fangs",
@@ -3496,10 +3498,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Wellwisher",
