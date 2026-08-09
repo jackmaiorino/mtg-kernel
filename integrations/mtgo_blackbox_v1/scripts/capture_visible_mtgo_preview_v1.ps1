@@ -678,7 +678,10 @@ try {
     $height = [int]$before.client_bounds.Height
     $bitmap = [System.Drawing.Bitmap]::new($width, $height, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-    $copyOperation = [System.Drawing.CopyPixelOperation]([int][System.Drawing.CopyPixelOperation]::SourceCopy -bor [int][System.Drawing.CopyPixelOperation]::CaptureBlt)
+    # CopyFromScreen rejects combined raster-operation enum values even though
+    # native BitBlt accepts CAPTUREBLT as a flag. SourceCopy is the supported
+    # composed-screen operation; the separate Z-order audit rejects overlays.
+    $copyOperation = [System.Drawing.CopyPixelOperation]::SourceCopy
     $graphics.CopyFromScreen(
         [int]$before.client_bounds.Left,
         [int]$before.client_bounds.Top,

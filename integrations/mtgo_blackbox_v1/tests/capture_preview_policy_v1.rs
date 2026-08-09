@@ -3,7 +3,8 @@ const PREVIEW_SCRIPT: &str = include_str!("../scripts/capture_visible_mtgo_previ
 #[test]
 fn preview_is_visibly_composed_and_non_actionable() {
     assert!(PREVIEW_SCRIPT.contains("CopyFromScreen"));
-    assert!(PREVIEW_SCRIPT.contains("CopyPixelOperation]::CaptureBlt"));
+    assert!(PREVIEW_SCRIPT.contains("CopyPixelOperation]::SourceCopy"));
+    assert!(!PREVIEW_SCRIPT.contains("CopyPixelOperation]::CaptureBlt"));
     assert!(PREVIEW_SCRIPT.contains("pending_visual_review"));
     assert!(PREVIEW_SCRIPT.contains("safe_for_semantic_evidence = $false"));
     assert!(PREVIEW_SCRIPT.contains("safe_for_ocr = $false"));
