@@ -140,6 +140,10 @@ impl HarnessConfigV1 {
             episode_count: self.batch_episodes,
             scheduler_timeout: self.scheduler_timeout,
             measure_broker_service_time: false,
+            // Legacy per-family `reset_session` dispatch, unchanged: the
+            // bounded-staleness harness predates the opt-in starting-player
+            // authority and does not exercise it.
+            starting_player: None,
         }
     }
 }

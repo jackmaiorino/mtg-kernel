@@ -127,6 +127,7 @@ fn v2_config(
         episode_count,
         scheduler_timeout: Duration::from_millis(args.scheduler_timeout_ms),
         measure_broker_service_time: broker_timing,
+        starting_player: None,
     }
 }
 
