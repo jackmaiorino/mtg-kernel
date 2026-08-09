@@ -544,9 +544,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 96,
+                "full_cards": 97,
                 "partial_cards": 0,
-                "no_effect_cards": 54,
+                "no_effect_cards": 53,
                 "token_dependencies": 6,
             },
         )

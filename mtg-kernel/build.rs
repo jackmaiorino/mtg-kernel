@@ -2213,6 +2213,9 @@ enum Special {
     /// Choose one: counter target artifact spell, or return target artifact
     /// permanent to its owner's hand.
     SteelSabotage,
+    /// Choose one: grant target creature islandwalk; give target creature
+    /// +2/-1; or have target player discard a card.
+    PiracyCharm,
     /// Symmetric Elemental Blast recipe. `checked_color` is the color the
     /// target must have; `filter_timing` distinguishes the Elemental Blasts'
     /// targeting restriction from Pyroblast/Hydroblast's resolution-time
@@ -2450,6 +2453,7 @@ impl Special {
                 filter.canonical_token()
             ),
             Special::SteelSabotage => "steel_sabotage:counter_or_bounce_artifact".to_string(),
+            Special::PiracyCharm => "piracy_charm:islandwalk_or_pump_or_discard".to_string(),
             Special::ColorBlast {
                 checked_color,
                 filter_timing,
@@ -2593,6 +2597,7 @@ fn special_for(name: &str) -> Special {
             generic: 2,
         },
         "Steel Sabotage" => Special::SteelSabotage,
+        "Piracy Charm" => Special::PiracyCharm,
         "Blue Elemental Blast" => Special::ColorBlast {
             checked_color: BlastColor::Red,
             filter_timing: BlastFilterTiming::Targeting,
@@ -2701,6 +2706,7 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::SteelSabotage => {
             "target=ArtifactSpellOnStack;spell=CounterTarget;mode2=ReturnArtifactPermanentToOwnersHand;mana=None".to_string()
         }
+        Special::PiracyCharm => "target=Creature;spell=GrantIslandwalk;mode2=PumpTarget(2,-1);mode3=DiscardCards(Target0,1);mana=None".to_string(),
         Special::ColorBlast {
             checked_color,
             filter_timing: BlastFilterTiming::Targeting,
@@ -3386,6 +3392,16 @@ fn mode2_for(name: &str) -> String {
             checked_color.suffix()
         ),
         Special::SteelSabotage => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_return_target_permanent_to_owners_hand })".to_string(),
+        Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
+        _ => "None".to_string(),
+    }
+}
+
+/// Optional third printed mode, using the same stable mode index carried by
+/// pending casts and stack items.
+fn mode3_for(name: &str) -> String {
+    match special_for(name) {
+        Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::AnyPlayer, effect: mode3_effect_piracy_charm_discard })".to_string(),
         _ => "None".to_string(),
     }
 }
@@ -4364,6 +4380,34 @@ fn codegen(cards: &[CardJson]) -> String {
 
     if cards
         .iter()
+        .any(|card| matches!(special_for(&card.name), Special::PiracyCharm))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_piracy_charm_islandwalk() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::ISLANDWALK }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(out, "fn mode2_effect_piracy_charm_pump() -> EffectOp {{").unwrap();
+        writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed(2), toughness: DynamicValueDef::Fixed(-1) }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(out, "fn mode3_effect_piracy_charm_discard() -> EffectOp {{").unwrap();
+        writeln!(
+            out,
+            "    EffectOp::DiscardCards {{ player: PlayerRef::Target(0), count: 1 }}"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
         .any(|c| matches!(special_for(&c.name), Special::ColorBlast { .. }))
     {
         // The "if it's [color]" half used by Pyroblast/Hydroblast. Color is
@@ -4601,6 +4645,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_counter_target".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::PiracyCharm => (
+                "TargetSpec::Creature",
+                "spell_effect_piracy_charm_islandwalk".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::CounterUnlessPaysGeneric { filter, generic } => (
                 filter.target_spec(),
                 format!("spell_effect_counter_target_unless_pays_generic_{generic}"),
@@ -4820,6 +4869,7 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        plot_cost: {},", plot_cost_for(&c.name)).unwrap();
         writeln!(out, "        madness_cost: {},", madness_cost_for(&c.name)).unwrap();
         writeln!(out, "        mode2: {},", mode2_for(&c.name)).unwrap();
+        writeln!(out, "        mode3: {},", mode3_for(&c.name)).unwrap();
         writeln!(out, "        is_token: {},", c.is_token).unwrap();
         writeln!(out, "        escape: {},", escape_for(&c.name)).unwrap();
         let mana_ability_choices_src = mana_ability_colors
@@ -4881,7 +4931,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v16\n");
+    let mut canon = String::from("kernel_carddb/v17\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -4965,6 +5015,8 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push_str(&madness_cost_for(&c.name));
         canon.push('|');
         canon.push_str(&mode2_for(&c.name));
+        canon.push('|');
+        canon.push_str(&mode3_for(&c.name));
         canon.push('|');
         canon.push_str("minimum_blockers=");
         canon.push_str(&minimum_blockers_for(&c.name).to_string());

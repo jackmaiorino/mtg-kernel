@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "6467cba9f54224a0050d946998cca21b3dd3031784909872c3b5227d0c1ea370"
+    "registry_raw_sha256": "b29267a762de2f2da5ca9c62e6c1a786657b3ae5ad61e21ff8c6f720fcbd197d"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 96,
+    "full_cards": 97,
     "partial_cards": 0,
-    "no_effect_cards": 54,
+    "no_effect_cards": 53,
     "token_dependencies": 6
   },
   "deck_mainboard_copy_totals": [
@@ -2405,10 +2405,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Ponder",

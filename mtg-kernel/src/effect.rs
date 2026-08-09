@@ -508,6 +508,12 @@ pub enum EffectOp {
         to_zone: Zone,
         preserve_known_identity: bool,
     },
+    /// Grants one keyword to the exact target permanent incarnation until
+    /// end of turn. Piracy Charm's islandwalk mode is the first consumer.
+    GrantKeywordTargetUntilEndOfTurn {
+        object: ObjectRef,
+        keyword: crate::card_def::Keywords,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -1957,6 +1963,7 @@ fn validate_counter_target_unless_pays_program(
     let program = match pending.resolving_item.mode_chosen {
         0 => (def.spell_effect)(),
         1 => def.mode2.as_ref().map(|mode| (mode.effect)()),
+        2 => def.mode3.as_ref().map(|mode| (mode.effect)()),
         _ => None,
     };
     if program
@@ -5446,6 +5453,22 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                         power,
                         toughness,
                         grant_haste: false,
+                    },
+                );
+            }
+        }
+        EffectOp::GrantKeywordTargetUntilEndOfTurn { object, keyword } => {
+            let object = ctx.resolve_object(*object);
+            if state.objects.get(object).zone == Zone::Battlefield {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.engine.until_end_of_turn.push(
+                    crate::engine::UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                        object_id: object,
+                        object_zone_change_count: state.objects.get(object).zone_change_count,
+                        layer: crate::engine::Layers::ABILITY_ADDING,
+                        timestamp,
+                        duration: crate::engine::EffectDuration::EndOfTurn,
+                        keywords: *keyword,
                     },
                 );
             }

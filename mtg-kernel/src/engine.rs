@@ -336,6 +336,17 @@ pub enum UntilEndOfTurnEffect {
         toughness: i32,
         grant_haste: bool,
     },
+    /// One exact battlefield incarnation receives a temporary keyword.
+    /// Kept separate from the historical Haste-only pump fields so existing
+    /// serialized variants retain their shape.
+    ResolvedObjectKeywordEffect {
+        object_id: ObjectId,
+        object_zone_change_count: u32,
+        layer: Layers,
+        timestamp: u64,
+        duration: EffectDuration,
+        keywords: Keywords,
+    },
 }
 
 /// Whether an `effect::EffectOp::ImpulseDraw`-exiled card's `PlayPermission`
@@ -1916,13 +1927,19 @@ fn completable_next_activation_targets_for(
 /// current state. Omen uses the same public two-form decision, but its forms
 /// also have distinct timing and costs and are filtered after announcement.
 fn viable_printed_spell_modes(def: &card_def::CardDef, state: &GameState) -> Vec<u8> {
-    let mut modes = Vec::with_capacity(if def.mode2.is_some() { 2 } else { 1 });
+    let mut modes =
+        Vec::with_capacity(1 + usize::from(def.mode2.is_some()) + usize::from(def.mode3.is_some()));
     if target_prefix_can_complete(def.target_spec, &[], state) {
         modes.push(0);
     }
     if let Some(mode2) = &def.mode2 {
         if target_prefix_can_complete(mode2.target_spec, &[], state) {
             modes.push(1);
+        }
+    }
+    if let Some(mode3) = &def.mode3 {
+        if target_prefix_can_complete(mode3.target_spec, &[], state) {
+            modes.push(2);
         }
     }
     modes
@@ -1958,6 +1975,7 @@ pub(crate) fn count_controlled_lands(player: PlayerId, state: &GameState) -> u32
 /// battlefield changes are reflected exactly once.
 pub(crate) fn evaluate_dynamic_value(state: &GameState, value: DynamicValueDef) -> i32 {
     let count = match value {
+        DynamicValueDef::Fixed(value) => return value,
         DynamicValueDef::BattlefieldPermanentsWithSubtype(subtype) => state
             .objects
             .iter()
@@ -2723,13 +2741,14 @@ fn supported_omen(def: &card_def::CardDef) -> Option<&card_def::OmenDef> {
         && def.plot_cost.is_none()
         && def.madness_cost.is_none()
         && def.mode2.is_none()
+        && def.mode3.is_none()
         && def.escape.is_none()
         && def.generic_cost_reduction.is_none())
     .then_some(omen)
 }
 
 fn has_spell_form_choice(def: &card_def::CardDef) -> bool {
-    def.mode2.is_some() || supported_omen(def).is_some()
+    def.mode2.is_some() || def.mode3.is_some() || supported_omen(def).is_some()
 }
 
 fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpec> {
@@ -2740,6 +2759,7 @@ fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpe
             .as_ref()
             .map(|mode| mode.target_spec)
             .or_else(|| supported_omen(def).map(|omen| omen.target_spec)),
+        2 => def.mode3.as_ref().map(|mode| mode.target_spec),
         _ => None,
     }
 }
@@ -3381,6 +3401,23 @@ pub(crate) fn minimum_blockers_required(state: &GameState, attacker: ObjectId) -
 fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
     let attacker_obj = state.objects.get(attacker);
     let defender = attacker_obj.controller.opponent();
+    let defender_controls_island = state.players[defender.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .any(|id| {
+            let object = state.objects.get(id);
+            let definition = &card_def::CARD_DEFS[object.card_def as usize];
+            definition.has_type(CardType::Land)
+                && object
+                    .v4
+                    .effective_subtype_ids
+                    .binary_search(&card_def::Subtype::Island.stable_id())
+                    .is_ok()
+        });
+    if defender_controls_island && has_effective_keyword(state, attacker, Keywords::ISLANDWALK) {
+        return Vec::new();
+    }
     let attacker_flying = has_effective_keyword(state, attacker, Keywords::FLYING);
     let minimum = minimum_blockers_required(state, attacker);
     let blockers = state.players[defender.index()]
@@ -4516,10 +4553,12 @@ pub(crate) fn validate_pending_cast(
     if pending.target_spec != def.target_spec {
         return Err("pending cast target specification changed".to_string());
     }
-    let mode_shape_valid = matches!(
-        (has_spell_form_choice(def), pending.mode_chosen),
-        (false, Some(0)) | (true, None | Some(0) | Some(1))
-    );
+    let mode_shape_valid = match pending.mode_chosen {
+        None => has_spell_form_choice(def),
+        Some(mode) => {
+            spell_form_target_spec(def, mode).is_some() && (has_spell_form_choice(def) || mode == 0)
+        }
+    };
     if !mode_shape_valid {
         return Err("pending cast mode selection is noncanonical".to_string());
     }
@@ -4832,7 +4871,8 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         return Some(Decision::ChooseSpellMode {
             player: pending.controller,
             spell: pending.spell,
-            mode_count: 2,
+            mode_count: u8::try_from(viable_modes.len())
+                .expect("the bounded printed mode count fits u8"),
         });
     }
     let active_target_spec = spell_form_target_spec(
@@ -5609,6 +5649,12 @@ pub(crate) fn validated_stack_item_target_spec(
                             .ok_or("spell stack item selected a nonexistent second mode")?
                             .target_spec
                     }
+                    2 => {
+                        def.mode3
+                            .as_ref()
+                            .ok_or("spell stack item selected a nonexistent third mode")?
+                            .target_spec
+                    }
                     _ => return Err("spell stack item carries an unknown mode index".to_string()),
                 })
             }
@@ -6016,15 +6062,17 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     let def = &card_def::CARD_DEFS[card_def_idx as usize];
     // 601.2b: a modal spell resolves whichever mode was chosen at cast time
     // (`PendingCast::mode_chosen`, threaded onto the `StackItem` by
-    // `finalize_cast`) -- `mode_chosen == 1` only for a Blast card's
-    // destroy mode, everything else always resolves its primary
-    // `spell_effect`.
+    // `finalize_cast`). Each printed mode retains its own definition-owned
+    // program, while Omen continues to use its separate cast form.
     let program = if item.v4.cast_method == Some(CastMethodV4::Omen) {
         supported_omen(def).map(|omen| (omen.effect)())
-    } else if item.mode_chosen == 1 {
-        def.mode2.as_ref().map(|m| (m.effect)())
     } else {
-        (def.spell_effect)()
+        match item.mode_chosen {
+            0 => (def.spell_effect)(),
+            1 => def.mode2.as_ref().map(|mode| (mode.effect)()),
+            2 => def.mode3.as_ref().map(|mode| (mode.effect)()),
+            _ => None,
+        }
     };
     if let Some(program) = program {
         if execute_resolving_program(state, &item, &ctx, &program) == ResolutionProgress::Suspended
@@ -6441,6 +6489,22 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     if def.keywords.has(kw) {
         return true;
     }
+    if state.engine.until_end_of_turn.iter().any(|effect| {
+        matches!(
+            effect,
+            UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                object_id,
+                object_zone_change_count,
+                keywords,
+                ..
+            } if *object_id == id
+                && obj.zone == Zone::Battlefield
+                && obj.zone_change_count == *object_zone_change_count
+                && keywords.has(kw)
+        )
+    }) {
+        return true;
+    }
     if kw.has(Keywords::HASTE) {
         if let Some(boost) = static_self_boost_for(def.name) {
             if boost.grant_haste && (boost.condition)(obj.controller, state) {
@@ -6465,6 +6529,7 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                         && obj.zone == Zone::Battlefield
                         && obj.zone_change_count == *object_zone_change_count
                 }
+                UntilEndOfTurnEffect::ResolvedObjectKeywordEffect { .. } => false,
                 UntilEndOfTurnEffect::SyntheticMarker(_) => false,
             };
             if grants {
@@ -6942,7 +7007,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
             let viable_modes = viable_pending_spell_forms(def, pending, state);
-            if viable_modes.len() != 2 || !viable_modes.contains(&mode) {
+            if viable_modes.len() < 2 || !viable_modes.contains(&mode) {
                 return Err(format!("{mode} is not a legal spell mode for {p:?}'s cast"));
             }
             state.engine.pending_cast.as_mut().unwrap().mode_chosen = Some(mode);
@@ -7567,6 +7632,7 @@ fn has_supported_spell_copy_offer_program(state: &GameState, item: &StackItem) -
     let effect = match item.mode_chosen {
         0 => (def.spell_effect)(),
         1 => def.mode2.as_ref().map(|mode| (mode.effect)()),
+        2 => def.mode3.as_ref().map(|mode| (mode.effect)()),
         _ => None,
     };
     effect
@@ -9741,6 +9807,33 @@ mod tests {
             legal.is_empty(),
             "a non-flying, non-reach creature should not be able to block a flyer"
         );
+    }
+
+    #[test]
+    fn granted_islandwalk_prevents_blocks_only_while_defender_controls_an_island() {
+        let mut state = empty_game();
+        let attacker = put_on_battlefield(&mut state, PlayerId::P0, "Guttersnipe");
+        let blocker = put_on_battlefield(&mut state, PlayerId::P1, "Voldaren Epicure");
+        let island = put_on_battlefield(&mut state, PlayerId::P1, "Island");
+        let generation = state.objects.get(attacker).zone_change_count;
+        state
+            .engine
+            .until_end_of_turn
+            .push(UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                object_id: attacker,
+                object_zone_change_count: generation,
+                layer: Layers::ABILITY_ADDING,
+                timestamp: 1,
+                duration: EffectDuration::EndOfTurn,
+                keywords: Keywords::ISLANDWALK,
+            });
+
+        assert!(legal_blockers_for(&state, attacker).is_empty());
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(island, Zone::Graveyard),
+        );
+        assert_eq!(legal_blockers_for(&state, attacker), vec![blocker]);
     }
 
     #[test]

@@ -317,6 +317,7 @@ impl Keywords {
     pub const HEXPROOF: Keywords = Keywords(1 << 11);
     pub const INDESTRUCTIBLE: Keywords = Keywords(1 << 12);
     pub const PROTECTION_FROM_MONOCOLORED: Keywords = Keywords(1 << 13);
+    pub const ISLANDWALK: Keywords = Keywords(1 << 14);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -501,6 +502,9 @@ pub enum DynamicValueDef {
     /// Count every battlefield permanent, regardless of controller, whose
     /// effective subtype set contains the named subtype.
     BattlefieldPermanentsWithSubtype(Subtype),
+    /// A literal signed value routed through the same exact-incarnation
+    /// duration machinery as board-dependent pumps.
+    Fixed(i32),
 }
 
 /// Reusable definition for a single printed mana ability whose cost, amount,
@@ -513,13 +517,9 @@ pub struct ManaAbilityDef {
     pub max_activations_per_turn: Option<u8>,
 }
 
-/// A spell's alternative mode (the four Blast cards' "Choose one --"
-/// destroy mode): its own target shape and its own resolution program,
-/// entirely independent of the card's primary
-/// `CardDef::target_spec`/`CardDef::spell_effect`. `engine::Decision::
-/// ChooseSpellMode` picks between the primary mode (index 0) and this one
-/// (index 1) before targeting begins, for any card with `CardDef::mode2 ==
-/// Some(_)`.
+/// One alternative mode of a spell, with its own target shape and resolution
+/// program. `engine::Decision::ChooseSpellMode` selects the printed index
+/// before targeting begins.
 pub struct ModeDef {
     pub target_spec: TargetSpec,
     pub effect: fn() -> EffectOp,
@@ -647,6 +647,8 @@ pub struct CardDef {
     /// `Some` iff this spell is modal with a second mode (the Blast cards'
     /// destroy mode) -- see `ModeDef`'s doc.
     pub mode2: Option<ModeDef>,
+    /// Optional third printed mode. Piracy Charm is the first consumer.
+    pub mode3: Option<ModeDef>,
     /// A permanent token (`cards_v1.json`'s own `is_token`, e.g. Blood),
     /// never itself a deck card -- read by `trigger::sba_fixed_point` for
     /// 111.8/704.5d ("if a token is in a zone other than the battlefield,
@@ -893,10 +895,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v19_is_frozen() {
-        // Version 19 composes the Elves tribal and Affinity value-card
-        // recipes while preserving every earlier card and token id.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xfb48_7f43_5983_3ade);
+    fn card_db_hash_v20_is_frozen() {
+        // Version 20 adds Piracy Charm's third printed mode while preserving
+        // every earlier card and token id.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x9068_7933_578d_0434);
     }
 
     #[test]
@@ -1096,7 +1098,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 102, "96 deck cards plus six required tokens");
+        assert_eq!(full, 103, "97 deck cards plus six required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
