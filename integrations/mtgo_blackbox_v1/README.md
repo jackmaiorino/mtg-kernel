@@ -1,8 +1,30 @@
 # MTGO black-box adapter v1
 
-This directory is an isolated, offline-first boundary between player-visible MTGO state and the existing `mtg-kernel` policy types. It contains no live capture, UI Automation enumeration, process inspection, network inspection, client-file parsing, synthetic input, or checkpoint scoring.
+This directory is an isolated, offline-first boundary between player-visible MTGO state and the existing `mtg-kernel` policy types. The Rust contract contains no live capture, UI Automation enumeration, process inspection, network inspection, client-file parsing, synthetic input, or checkpoint scoring. A separate calibration-preview script performs the narrow live operation documented below.
 
 The read-only installation findings and capture implications are recorded in `CLIENT_INVENTORY_2026-08-08.md`.
+
+## Live calibration preview
+
+`scripts/capture_visible_mtgo_preview_v1.ps1` creates only a local, composed-desktop calibration preview. It crops the visible desktop to the MTGO client area. It does not use direct window capture, UI Automation, process memory, network data, client logs, hidden client state, or input.
+
+The script requires one responsive MTGO process and exactly one visible top-level window. It pins the exact client version, executable SHA-256, Authenticode leaf certificate, title, and DPI. It requires the window to be foreground, visible, uncloaked, unminimized, entirely within one monitor, free of intersecting windows above it, and free of the visible cursor. It captures only after entering Per-Monitor V2 DPI awareness, then repeats identity, geometry, foreground, monitor, occlusion, and signature checks before persisting anything.
+
+Those before-and-after checks cannot prove that a very brief cursor, notification, tooltip, or other occluder did not appear and disappear during the copy. This unresolved race is another reason the preview is not evidence. A production backend needs capture-time frame correlation in addition to the same conservative checks.
+
+Every output is marked `pending_visual_review` and explicitly unsafe for semantic evidence, OCR, policy scoring, and input. The destination must be a new absolute directory outside this repository. The first reviewed image should establish a client-version, DPI, physical-size, and image-anchor calibration profile. A production evidence backend should use DXGI Desktop Duplication and must remain a separate later tranche.
+
+Example after independently verifying the current identity values and placing MTGO unobscured in the foreground with the cursor outside its client area:
+
+```powershell
+.\scripts\capture_visible_mtgo_preview_v1.ps1 `
+  -OutputDirectory (Join-Path $env:TEMP 'mtgo-preview-YYYYMMDD-HHMMSS') `
+  -ExpectedProductVersion '<exact-product-version>' `
+  -ExpectedExecutableSha256 '<exact-executable-sha256>' `
+  -ExpectedSignerThumbprint '<exact-leaf-certificate-thumbprint>' `
+  -ExpectedSignerSubject '<exact-leaf-certificate-subject>' `
+  -ExpectedDpi 120
+```
 
 ## Current result
 
