@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
-pub const BEST_OF_THREE_MAX_GAMES_V1: u8 = 3;
 pub const BEST_OF_THREE_WINS_REQUIRED_V1: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -80,7 +79,7 @@ impl BestOfThreeMatchStateV1 {
         validate_player_v1(game_one_chooser)?;
         Ok(Self {
             wins: [0, 0],
-            games: Vec::with_capacity(usize::from(BEST_OF_THREE_MAX_GAMES_V1)),
+            games: Vec::with_capacity(3),
             phase: MatchPhaseV1::AwaitingPlayDrawChoice {
                 game_index: 1,
                 chooser: game_one_chooser,
@@ -155,38 +154,44 @@ impl BestOfThreeMatchStateV1 {
             }
             MatchPhaseV1::Complete { .. } => return Err(MatchStateErrorV1::MatchComplete),
         };
-        if let GameOutcomeV1::Win { winner } = outcome {
-            validate_player_v1(winner)?;
+        let game_winner = match outcome {
+            GameOutcomeV1::Win { winner } => {
+                validate_player_v1(winner)?;
+                Some(winner)
+            }
+            GameOutcomeV1::Draw => None,
+        };
+        let match_winner = game_winner
+            .filter(|winner| self.wins[winner.index()] + 1 >= BEST_OF_THREE_WINS_REQUIRED_V1);
+        let next_game_index = if match_winner.is_none() {
+            Some(
+                start
+                    .game_index
+                    .checked_add(1)
+                    .ok_or(MatchStateErrorV1::GameIndexExhausted)?,
+            )
+        } else {
+            None
+        };
+
+        if let Some(winner) = game_winner {
             self.wins[winner.index()] += 1;
         }
         self.games.push(CompletedMatchGameV1 { start, outcome });
 
-        let game_limit_reached = self.games.len() == usize::from(BEST_OF_THREE_MAX_GAMES_V1);
-        let two_wins_reached = self
-            .wins
-            .iter()
-            .any(|wins| *wins >= BEST_OF_THREE_WINS_REQUIRED_V1);
-        if game_limit_reached || two_wins_reached {
-            let outcome = if self.wins[0] > self.wins[1] {
-                MatchOutcomeV1::Winner {
-                    winner: PlayerId::P0,
-                }
-            } else if self.wins[1] > self.wins[0] {
-                MatchOutcomeV1::Winner {
-                    winner: PlayerId::P1,
-                }
-            } else {
-                MatchOutcomeV1::Draw
-            };
+        if let Some(winner) = match_winner {
+            let outcome = MatchOutcomeV1::Winner { winner };
             self.phase = MatchPhaseV1::Complete { outcome };
             return Ok(MatchTransitionV1::Complete { outcome });
         }
 
         let chooser = match outcome {
             GameOutcomeV1::Win { winner } => winner.opponent(),
-            GameOutcomeV1::Draw => start.player_on_draw(),
+            // Magic Tournament Rules 2.2 and CR 103.1: after a drawn game,
+            // the player who made that game's play/draw choice chooses again.
+            GameOutcomeV1::Draw => start.chooser,
         };
-        let game_index = start.game_index + 1;
+        let game_index = next_game_index.expect("nonterminal result precomputed a next game index");
         self.phase = MatchPhaseV1::AwaitingPlayDrawChoice {
             game_index,
             chooser,
@@ -209,6 +214,7 @@ pub enum MatchStateErrorV1 {
     },
     PlayDrawChoiceRequired,
     GameAlreadyStarted,
+    GameIndexExhausted,
     MatchComplete,
 }
 
@@ -226,6 +232,9 @@ impl fmt::Display for MatchStateErrorV1 {
             }
             Self::GameAlreadyStarted => {
                 formatter.write_str("the current game already has a play/draw choice")
+            }
+            Self::GameIndexExhausted => {
+                formatter.write_str("the match cannot represent another drawn game")
             }
             Self::MatchComplete => formatter.write_str("the best-of-three match is complete"),
         }
