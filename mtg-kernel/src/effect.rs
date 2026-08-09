@@ -15,7 +15,7 @@
 //! (`event::commit`) mutates `GameState` in response to card behavior (see the
 //! crate-level invariants in `lib.rs`).
 
-use crate::card_def::{CardType, DynamicValueDef, Subtype};
+use crate::card_def::{CardType, DynamicValueDef, Keywords, Subtype};
 use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
@@ -33,6 +33,9 @@ use serde::{Deserialize, Serialize};
 pub enum CreatureFilter {
     AnyControlled,
     ControlledWithSubtype(Subtype),
+    /// Any creature that does not currently have `keyword`. Operations may
+    /// apply this predicate across both battlefields.
+    WithoutKeyword(Keywords),
 }
 
 /// Typed predicate for a private library search. The first consumer is
@@ -534,6 +537,32 @@ pub enum EffectOp {
         filter: LibraryCardFilter,
         max_targets: u16,
     },
+    /// Deals one simultaneous damage wave to every battlefield creature
+    /// matching `filter`, independent of controller.
+    DamageAllCreatures {
+        filter: CreatureFilter,
+        amount: i32,
+    },
+    /// Exiles every card in one selected player's graveyard as a single
+    /// resolution batch.
+    ExilePlayersGraveyard {
+        player: PlayerRef,
+    },
+    /// The selected player chooses one card from their own graveyard and
+    /// exiles it. Empty and singleton graveyards need no policy choice.
+    ExileOneFromPlayersGraveyard {
+        player: PlayerRef,
+    },
+    /// Exiles all cards from both graveyards in one deterministic batch.
+    ExileAllGraveyards,
+    /// Offers `player` a Boolean choice to pay the owned mana cost. An
+    /// accepted payment commits before `then` runs without opening priority.
+    MayPayManaThen {
+        player: PlayerRef,
+        colored: Vec<ManaColor>,
+        generic: u8,
+        then: Box<EffectOp>,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -691,6 +720,29 @@ pub enum EffectFrame {
         path: Vec<u16>,
         canonical_path: Vec<u16>,
     },
+    /// Authenticated post-answer frame for one target-player graveyard pick.
+    /// The exact pre-answer graveyard and remaining frame stack prevent a
+    /// restored answer from redirecting or reordering resolution.
+    ExileChosenGraveyardCard {
+        player: PlayerId,
+        original_graveyard: Vec<EffectObjectBinding>,
+        chosen: EffectObjectBinding,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
+    /// Authenticated post-answer frame for an accepted optional mana cost.
+    /// Payment and installation of `then` happen together on the next engine
+    /// advance, after the exact answered frame stack is revalidated.
+    PayManaThen {
+        player: PlayerId,
+        colored: Vec<ManaColor>,
+        generic: u8,
+        then: Box<EffectOp>,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -830,6 +882,13 @@ pub enum EffectTargetSelectionPurpose {
         max_targets: u16,
         canonical_path: Vec<u16>,
     },
+    /// Mandatory exact-one public graveyard choice made by that
+    /// graveyard's owner. The full snapshot binds candidates/incarnations.
+    ExileOneFromGraveyard {
+        player: PlayerId,
+        original_graveyard: Vec<EffectObjectBinding>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -853,7 +912,7 @@ pub enum LibraryPartitionSelectionStage {
 /// Internal completion semantics for a generic Boolean effect choice.
 /// Public schema-v4 projects the shuffle use through its already-reserved
 /// `BooleanChoicePurposeV4::Shuffle` variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EffectBooleanChoicePurpose {
     ShuffleLibrary {
         player: PlayerId,
@@ -869,6 +928,12 @@ pub enum EffectBooleanChoicePurpose {
         target_stack_item: StackItemId,
         player: PlayerId,
         generic: u8,
+    },
+    PayManaThen {
+        player: PlayerId,
+        colored: Vec<ManaColor>,
+        generic: u8,
+        then: Box<EffectOp>,
     },
 }
 
@@ -959,6 +1024,8 @@ pub enum EffectAnsweredChoiceGuard {
     OwnerLibrarySecondOrBottom { frame: Box<EffectFrame> },
     CounterUnlessPaysGeneric { frame: Box<EffectFrame> },
     CounterTargetUnlessPaysGeneric { frame: Box<EffectFrame> },
+    ExileOneFromGraveyard { frame: Box<EffectFrame> },
+    PayManaThen { frame: Box<EffectFrame> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1050,7 +1117,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
-        | EffectOp::ExploreTarget { .. } => true,
+        | EffectOp::ExploreTarget { .. }
+        | EffectOp::ExileOneFromPlayersGraveyard { .. }
+        | EffectOp::MayPayManaThen { .. } => true,
         _ => false,
     }
 }
@@ -1330,6 +1399,25 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                 .map_err(|error| error.to_string())?;
             drop(token);
         }
+        if let Some(PendingEffectChoice::ChooseBoolean {
+            purpose:
+                EffectBooleanChoicePurpose::PayManaThen {
+                    player,
+                    colored,
+                    generic,
+                    ..
+                },
+            ..
+        }) = state
+            .engine
+            .pending_effect
+            .as_ref()
+            .and_then(|pending| pending.choice.as_ref())
+        {
+            if !crate::engine::can_pay_effect_mana(*player, colored, *generic, state) {
+                return Err("optional effect mana cost is no longer payable".to_string());
+            }
+        }
     }
     let continuation = state
         .engine
@@ -1357,7 +1445,9 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                             player,
                             path,
                             default,
-                            purpose,
+                            purpose: EffectBooleanChoicePurpose::ShuffleLibrary {
+                                player: library_player,
+                            },
                         });
                         return Err(
                             "shuffle choice player does not own the selected library".to_string()
@@ -1442,6 +1532,46 @@ pub fn choose_resumable_boolean(state: &mut GameState, value: bool) -> Result<()
                             frame: Box::new(frame.clone()),
                         });
                     continuation.frames.push(frame);
+                }
+                EffectBooleanChoicePurpose::PayManaThen {
+                    player: payer,
+                    colored,
+                    generic,
+                    then,
+                } => {
+                    if player != payer {
+                        continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                            player,
+                            path,
+                            default,
+                            purpose: EffectBooleanChoicePurpose::PayManaThen {
+                                player: payer,
+                                colored,
+                                generic,
+                                then,
+                            },
+                        });
+                        return Err("mana-payment choice player mismatch".to_string());
+                    }
+                    if value {
+                        let mut canonical_path = path.clone();
+                        canonical_path.pop();
+                        let expected_remaining_frames = continuation.frames.clone();
+                        let frame = EffectFrame::PayManaThen {
+                            player: payer,
+                            colored,
+                            generic,
+                            then,
+                            path,
+                            canonical_path,
+                            expected_remaining_frames,
+                        };
+                        continuation.answered_choice_guard =
+                            Some(EffectAnsweredChoiceGuard::PayManaThen {
+                                frame: Box::new(frame.clone()),
+                            });
+                        continuation.frames.push(frame);
+                    }
                 }
             }
             Ok(())
@@ -1731,6 +1861,29 @@ fn complete_resumable_target_selection(
                     path: canonical_path.clone(),
                     canonical_path,
                 });
+        }
+        EffectTargetSelectionPurpose::ExileOneFromGraveyard {
+            player,
+            original_graveyard,
+            canonical_path,
+        } => {
+            if path != canonical_path || objects.len() != 1 {
+                return Err("graveyard exile choice changed path or cardinality".to_string());
+            }
+            let expected_remaining_frames = continuation.frames.clone();
+            let frame = EffectFrame::ExileChosenGraveyardCard {
+                player,
+                original_graveyard,
+                chosen: objects[0],
+                path: canonical_path.clone(),
+                canonical_path,
+                expected_remaining_frames,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::ExileOneFromGraveyard {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
         }
     }
     Ok(())
@@ -2171,6 +2324,116 @@ fn validate_counter_target_unless_pays_frame(
     Ok(())
 }
 
+fn validated_definition_owned_root_effect<'a>(
+    state: &GameState,
+    pending: &'a EffectContinuation,
+) -> Result<&'a EffectOp, String> {
+    let root = pending
+        .resolving_item
+        .inline_effect
+        .as_ref()
+        .ok_or("answered effect frame lost its definition-owned root program")?;
+    if pending.resolving_item.kind == crate::state::StackItemKind::TriggeredAbility {
+        let card_def = state.objects.get(pending.resolving_item.source).card_def;
+        if !crate::trigger::triggers_for(card_def)
+            .iter()
+            .any(|trigger| (trigger.effect)() == *root)
+        {
+            return Err(
+                "answered trigger effect no longer matches its card definition".to_string(),
+            );
+        }
+    }
+    Ok(root)
+}
+
+fn validate_exile_chosen_graveyard_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::ExileChosenGraveyardCard {
+        player,
+        original_graveyard,
+        chosen,
+        path,
+        canonical_path,
+        ..
+    } = frame
+    else {
+        return Err("graveyard-exile answer guard changed frame kind".to_string());
+    };
+    if !canonical_path.is_empty() || path != canonical_path {
+        return Err("graveyard-exile answered path changed".to_string());
+    }
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let EffectOp::ExileOneFromPlayersGraveyard {
+        player: original_player,
+    } = root
+    else {
+        return Err("graveyard-exile answer lost its originating operation".to_string());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != *player {
+        return Err("graveyard-exile answered player changed".to_string());
+    }
+    validate_bound_graveyard_exact(state, *player, original_graveyard)?;
+    if original_graveyard
+        .iter()
+        .filter(|binding| **binding == *chosen)
+        .count()
+        != 1
+    {
+        return Err("graveyard-exile answer is not one bound original card".to_string());
+    }
+    Ok(())
+}
+
+fn validate_pay_mana_then_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::PayManaThen {
+        player,
+        colored,
+        generic,
+        then,
+        path,
+        canonical_path,
+        ..
+    } = frame
+    else {
+        return Err("optional-mana answer guard changed frame kind".to_string());
+    };
+    let mut expected_path = canonical_path.clone();
+    expected_path.push(1);
+    if !canonical_path.is_empty() || path != &expected_path {
+        return Err("optional-mana answered path changed".to_string());
+    }
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let EffectOp::MayPayManaThen {
+        player: original_player,
+        colored: original_colored,
+        generic: original_generic,
+        then: original_then,
+    } = root
+    else {
+        return Err("optional-mana answer lost its originating operation".to_string());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != *player
+        || original_colored != colored
+        || original_generic != generic
+        || original_then != then
+    {
+        return Err("optional-mana answered cost or consequence changed".to_string());
+    }
+    validate_resumable_program(then)?;
+    if !crate::engine::can_pay_effect_mana(*player, colored, *generic, state) {
+        return Err("accepted optional mana cost is no longer payable".to_string());
+    }
+    Ok(())
+}
+
 fn validate_answered_choice_guard(
     state: &GameState,
     pending: &EffectContinuation,
@@ -2188,6 +2451,8 @@ fn validate_answered_choice_guard(
                     EffectFrame::OwnerLibraryPlacement { .. }
                         | EffectFrame::ResolveCounterUnlessPaysGeneric { .. }
                         | EffectFrame::ResolveCounterTargetUnlessPaysGeneric { .. }
+                        | EffectFrame::ExileChosenGraveyardCard { .. }
+                        | EffectFrame::PayManaThen { .. }
                 )
             }) {
                 return Err("typed answered-choice frame has no matching guard".to_string());
@@ -2232,6 +2497,44 @@ fn validate_answered_choice_guard(
                 );
             }
             validate_counter_target_unless_pays_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::ExileOneFromGraveyard { frame }) => {
+            if pending.choice.is_some() {
+                return Err(
+                    "answered graveyard-exile guard still carries a live choice".to_string()
+                );
+            }
+            let EffectFrame::ExileChosenGraveyardCard {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("graveyard-exile answer guard changed frame kind".to_string());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.frames != expected {
+                return Err("graveyard-exile answered continuation frame stack changed".to_string());
+            }
+            validate_exile_chosen_graveyard_frame(state, pending, frame)?;
+        }
+        Some(EffectAnsweredChoiceGuard::PayManaThen { frame }) => {
+            if pending.choice.is_some() {
+                return Err("answered optional-mana guard still carries a live choice".to_string());
+            }
+            let EffectFrame::PayManaThen {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("optional-mana answer guard changed frame kind".to_string());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.frames != expected {
+                return Err("optional-mana answered continuation frame stack changed".to_string());
+            }
+            validate_pay_mana_then_frame(state, pending, frame)?;
         }
     }
     Ok(())
@@ -2715,6 +3018,40 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         );
                     }
                 }
+                EffectTargetSelectionPurpose::ExileOneFromGraveyard {
+                    player: graveyard_player,
+                    original_graveyard,
+                    canonical_path,
+                } => {
+                    if chooser != graveyard_player || path != canonical_path {
+                        return Err(
+                            "graveyard exile choice player or structural path changed".to_string()
+                        );
+                    }
+                    if *min_targets != 1
+                        || *max_targets != 1
+                        || !*ordered
+                        || !selected.is_empty()
+                        || original_graveyard.len() < 2
+                    {
+                        return Err("graveyard exile prompt has a noncanonical shape".to_string());
+                    }
+                    validate_bound_graveyard_exact(state, *graveyard_player, original_graveyard)?;
+                    let actual = legal
+                        .iter()
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "graveyard exile target lacks an incarnation binding".to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    if &actual != original_graveyard {
+                        return Err(
+                            "graveyard exile candidates changed from the bound graveyard"
+                                .to_string(),
+                        );
+                    }
+                }
                 EffectTargetSelectionPurpose::OrderIntoGraveyard { .. } => {}
             }
         }
@@ -2782,6 +3119,20 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     *generic,
                     true,
                 )?;
+            }
+            EffectBooleanChoicePurpose::PayManaThen {
+                player: payer,
+                colored,
+                generic,
+                then,
+            } => {
+                if player != payer {
+                    return Err("mana-payment choice player mismatch".to_string());
+                }
+                validate_resumable_program(then)?;
+                if !crate::engine::can_pay_effect_mana(*payer, colored, *generic, state) {
+                    return Err("pending optional mana cost is not payable".to_string());
+                }
             }
         },
         PendingEffectChoice::ChooseOption {
@@ -2898,6 +3249,7 @@ fn validate_resumable_program(op: &EffectOp) -> Result<(), String> {
                 validate_resumable_program(option)?;
             }
         }
+        EffectOp::MayPayManaThen { then, .. } => validate_resumable_program(then)?,
         EffectOp::DiscardCards { .. }
         | EffectOp::MayPayCostThen { .. }
         | EffectOp::OfferAffectedPlayerSpellCopy { .. } => {
@@ -3121,6 +3473,80 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                             "the declined counter-unless-pay lost its bound spell".to_string()
                         );
                     }
+                }
+                EffectFrame::ExileChosenGraveyardCard {
+                    player,
+                    original_graveyard,
+                    chosen,
+                    path,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    let answered_frame = EffectFrame::ExileChosenGraveyardCard {
+                        player,
+                        original_graveyard,
+                        chosen,
+                        path,
+                        canonical_path,
+                        expected_remaining_frames: expected_remaining_frames.clone(),
+                    };
+                    if continuation.frames != expected_remaining_frames {
+                        return Err(
+                            "graveyard-exile answered continuation remainder changed".to_string()
+                        );
+                    }
+                    if continuation.answered_choice_guard.as_ref()
+                        != Some(&EffectAnsweredChoiceGuard::ExileOneFromGraveyard {
+                            frame: Box::new(answered_frame.clone()),
+                        })
+                    {
+                        return Err("graveyard-exile answered frame/guard mismatch".to_string());
+                    }
+                    validate_exile_chosen_graveyard_frame(state, &continuation, &answered_frame)?;
+                    continuation.answered_choice_guard = None;
+                    event::propose_and_commit(
+                        state,
+                        event::ProposedEvent::zone_change(chosen.object, Zone::Exile),
+                    );
+                }
+                EffectFrame::PayManaThen {
+                    player,
+                    colored,
+                    generic,
+                    then,
+                    path,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    let answered_frame = EffectFrame::PayManaThen {
+                        player,
+                        colored: colored.clone(),
+                        generic,
+                        then: then.clone(),
+                        path: path.clone(),
+                        canonical_path,
+                        expected_remaining_frames: expected_remaining_frames.clone(),
+                    };
+                    if continuation.frames != expected_remaining_frames {
+                        return Err(
+                            "optional-mana answered continuation remainder changed".to_string()
+                        );
+                    }
+                    if continuation.answered_choice_guard.as_ref()
+                        != Some(&EffectAnsweredChoiceGuard::PayManaThen {
+                            frame: Box::new(answered_frame.clone()),
+                        })
+                    {
+                        return Err("optional-mana answered frame/guard mismatch".to_string());
+                    }
+                    validate_pay_mana_then_frame(state, &continuation, &answered_frame)?;
+                    continuation.answered_choice_guard = None;
+                    if !crate::engine::pay_effect_mana(player, &colored, generic, state) {
+                        return Err("accepted optional mana payment became unpayable".to_string());
+                    }
+                    continuation
+                        .frames
+                        .push(EffectFrame::Program { op: *then, path });
                 }
                 EffectFrame::PutCardsFromHandOnLibraryTop {
                     player,
@@ -4061,6 +4487,54 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::ExileOneFromPlayersGraveyard { player } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_graveyard = bind_graveyard_exact(state, player);
+                validate_bound_graveyard_exact(state, player, &original_graveyard)?;
+                match original_graveyard.len() {
+                    0 => {}
+                    1 => continuation.frames.push(EffectFrame::MoveObjectsBatch {
+                        objects: original_graveyard,
+                        to_zone: Zone::Exile,
+                        preserve_known_identity: false,
+                        order_resolved: true,
+                        path,
+                    }),
+                    _ => {
+                        stage_graveyard_exile_choice(
+                            &mut continuation,
+                            player,
+                            original_graveyard,
+                            path,
+                        );
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+            }
+            EffectOp::MayPayManaThen {
+                player,
+                colored,
+                generic,
+                then,
+            } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                if crate::engine::can_pay_effect_mana(player, &colored, generic, state) {
+                    continuation.choice = Some(PendingEffectChoice::ChooseBoolean {
+                        player,
+                        path,
+                        default: Some(false),
+                        purpose: EffectBooleanChoicePurpose::PayManaThen {
+                            player,
+                            colored,
+                            generic,
+                            then,
+                        },
+                    });
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::PutObjectInOwnersLibrarySecondOrBottom { object } => {
                 let object = continuation.ctx.resolve_object(object);
                 let live = state
@@ -4615,6 +5089,36 @@ fn stage_library_search_many_choice(
     });
 }
 
+fn stage_graveyard_exile_choice(
+    continuation: &mut EffectContinuation,
+    player: PlayerId,
+    original_graveyard: Vec<EffectObjectBinding>,
+    canonical_path: Vec<u16>,
+) {
+    debug_assert!(original_graveyard.len() >= 2);
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path: canonical_path.clone(),
+        selected: Vec::new(),
+        legal: original_graveyard
+            .iter()
+            .copied()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: 1,
+        max_targets: 1,
+        ordered: true,
+        purpose: EffectTargetSelectionPurpose::ExileOneFromGraveyard {
+            player,
+            original_graveyard,
+            canonical_path,
+        },
+    });
+}
+
 fn bind_library_exact(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
     state.players[player.index()]
         .library
@@ -4623,6 +5127,19 @@ fn bind_library_exact(state: &GameState, player: PlayerId) -> Vec<EffectObjectBi
         .map(|object| EffectObjectBinding {
             object,
             expected_zone: Zone::Library,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect()
+}
+
+fn bind_graveyard_exact(state: &GameState, player: PlayerId) -> Vec<EffectObjectBinding> {
+    state.players[player.index()]
+        .graveyard
+        .iter()
+        .copied()
+        .map(|object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Graveyard,
             expected_zone_change_count: state.objects.get(object).zone_change_count,
         })
         .collect()
@@ -5204,6 +5721,34 @@ fn validate_bound_hand_exact(
     Ok(())
 }
 
+fn validate_bound_graveyard_exact(
+    state: &GameState,
+    player: PlayerId,
+    objects: &[EffectObjectBinding],
+) -> Result<(), String> {
+    if objects
+        .iter()
+        .any(|binding| binding.expected_zone != Zone::Graveyard)
+    {
+        return Err("graveyard binding does not expect the graveyard zone".to_string());
+    }
+    for &binding in objects {
+        validate_effect_object_binding(state, binding)?;
+        if state.objects.get(binding.object).owner != player {
+            return Err("graveyard binding has the wrong owner".to_string());
+        }
+    }
+    let current = &state.players[player.index()].graveyard;
+    let expected = objects
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    if current != &expected {
+        return Err("bound graveyard changed order, identity, or membership".to_string());
+    }
+    Ok(())
+}
+
 /// Validates both object incarnation and membership in the exact current
 /// library prefix. Zone-change generations alone cannot detect a shuffle or
 /// reorder, so a restored mill continuation must also prove that its bound
@@ -5369,6 +5914,21 @@ fn commit_zone_change_batch(
         .collect();
     event::propose_and_commit_batch(state, events);
     Ok(())
+}
+
+fn creature_matches_filter(state: &GameState, object: ObjectId, filter: &CreatureFilter) -> bool {
+    let live = state.objects.get(object);
+    let def = &crate::card_def::CARD_DEFS[live.card_def as usize];
+    if live.zone != Zone::Battlefield || !def.has_type(CardType::Creature) {
+        return false;
+    }
+    match filter {
+        CreatureFilter::AnyControlled => true,
+        CreatureFilter::ControlledWithSubtype(subtype) => def.subtypes.contains(subtype),
+        CreatureFilter::WithoutKeyword(keyword) => {
+            !crate::engine::has_effective_keyword(state, object, *keyword)
+        }
+    }
 }
 
 pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
@@ -5650,6 +6210,35 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             );
             event::propose_and_commit_batch(state, events);
         }
+        EffectOp::DamageAllCreatures { filter, amount } => {
+            let events = [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
+                .filter(|object| creature_matches_filter(state, *object, filter))
+                .map(|object| {
+                    event::ProposedEvent::damage(ctx.source, Target::Object(object), *amount)
+                })
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::ExilePlayersGraveyard { player } => {
+            let player = ctx.resolve_player(*player, state);
+            let events = state.players[player.index()]
+                .graveyard
+                .iter()
+                .copied()
+                .map(|object| event::ProposedEvent::zone_change(object, Zone::Exile))
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
+        EffectOp::ExileAllGraveyards => {
+            let events = [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
+                .map(|object| event::ProposedEvent::zone_change(object, Zone::Exile))
+                .collect();
+            event::propose_and_commit_batch(state, events);
+        }
         EffectOp::PumpControlled {
             filter,
             power,
@@ -5665,10 +6254,7 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                     if !def.has_type(crate::card_def::CardType::Creature) {
                         return false;
                     }
-                    match filter {
-                        CreatureFilter::AnyControlled => true,
-                        CreatureFilter::ControlledWithSubtype(sub) => def.subtypes.contains(sub),
-                    }
+                    creature_matches_filter(state, id, filter)
                 })
                 .collect();
             if !object_ids.is_empty() {
@@ -5876,7 +6462,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
-        | EffectOp::LookTopSelectByTypeToHandBottomRest { .. } => {
+        | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
+        | EffectOp::ExileOneFromPlayersGraveyard { .. }
+        | EffectOp::MayPayManaThen { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }

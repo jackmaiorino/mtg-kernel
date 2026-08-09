@@ -12,10 +12,9 @@
 //! they're just a castable body), Faithless Looting, Grab the Prize,
 //! Highway Robbery (+ Plot), Fiery Temper's Madness, Searing Blaze
 //! (landfall + 2 related targets), and the four elemental/hydro/pyro Blasts
-//! (modal, color-checked counter/destroy). Relic of Progenitus is the one
-//! remaining deferred card -- graveyard-card targeting doesn't fit any
-//! existing `TargetSpec` shape and is sideboard-only, so it's lower
-//! priority; see `still_deferred_burn_cards_are_out_of_scope_this_increment`.
+//! (modal, color-checked counter/destroy). Relic of Progenitus now uses
+//! effect-level graveyard selection for its targeted single-card exile and
+//! implements both activated abilities.
 //! Definitions without an explicit registry `engine_capability` remain
 //! `NoEffect`. Supported ordinary permanents and intrinsic basic-land mana
 //! are generated from metadata only after that capability gate, so registry
@@ -366,6 +365,9 @@ pub enum PermanentFilter {
     /// A controlled permanent whose definition has either the Artifact or
     /// Creature card type. Artifact creatures and artifact lands match once.
     ArtifactOrCreature,
+    /// A controlled artifact permanent. Artifact creatures and artifact
+    /// lands match, while permanents without the Artifact type do not.
+    Artifact,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -988,10 +990,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v21_is_frozen() {
-        // Version 21 composes the Caw-Gates wave after Piracy Charm's third
-        // printed mode while preserving every earlier card and token id.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xbfe2_c254_4934_26f1);
+    fn card_db_hash_v22_is_frozen() {
+        // Version 22 composes artifact control with Caw-Gates and Piracy
+        // Charm while preserving all 150 card and token ids.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x1aa4_9b91_2b7b_bc7b);
     }
 
     #[test]
@@ -1191,7 +1193,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 103, "97 deck cards plus six required tokens");
+        assert_eq!(full, 115, "107 deck cards plus eight required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -1378,14 +1380,12 @@ mod tests {
     }
 
     #[test]
-    fn still_deferred_burn_cards_are_out_of_scope_this_increment() {
-        // Relic of Progenitus needs graveyard-card targeting, which doesn't
-        // fit any `TargetSpec` shape built so far, and it's sideboard-only
-        // -- present in `CARD_DEFS` with correct metadata, not castable,
-        // per the kernel's fail-closed invariant.
+    fn relic_of_progenitus_is_enabled() {
         let name = "Relic of Progenitus";
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in pool"));
-        assert!(!CARD_DEFS[id as usize].is_castable(), "{name}");
+        let def = &CARD_DEFS[id as usize];
+        assert!(def.is_castable(), "{name}");
+        assert_eq!(def.activated_abilities.len(), 2, "{name}");
     }
 
     #[test]

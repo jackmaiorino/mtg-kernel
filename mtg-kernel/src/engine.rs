@@ -462,6 +462,8 @@ pub struct PendingActivationPublicV2 {
     pub target_spec: TargetSpec,
     pub targets_chosen: Vec<Target>,
     pub cost_discard_paid: Option<Vec<ObjectId>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub object_cost_chosen: Vec<ObjectId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2065,6 +2067,43 @@ fn payable_activation_cost_object_candidates(
         .collect()
 }
 
+/// Deterministic mana-solver bridge for resolution-time optional payments.
+/// The owned color list lives in serializable `EffectOp` state; this helper
+/// materializes the borrowed `Cost` shape used by the ordinary cast payer.
+pub(crate) fn can_pay_effect_mana(
+    player: PlayerId,
+    colored: &[mana::ManaColor],
+    generic: u8,
+    state: &GameState,
+) -> bool {
+    let pips = colored
+        .iter()
+        .copied()
+        .map(mana::Pip::Colored)
+        .collect::<Vec<_>>();
+    mana::can_pay_owned(&pips, generic, player, state).is_some()
+}
+
+/// Commits the exact deterministic plan preflighted by
+/// `can_pay_effect_mana`. No priority or trigger checkpoint occurs here.
+pub(crate) fn pay_effect_mana(
+    player: PlayerId,
+    colored: &[mana::ManaColor],
+    generic: u8,
+    state: &mut GameState,
+) -> bool {
+    let pips = colored
+        .iter()
+        .copied()
+        .map(mana::Pip::Colored)
+        .collect::<Vec<_>>();
+    let Some(plan) = mana::can_pay_owned(&pips, generic, player, state) else {
+        return false;
+    };
+    pay_plan(state, player, &plan);
+    true
+}
+
 /// Whether the generic component payer can solve this exact ordered shape.
 /// The current solver deliberately supports one component from each
 /// interactive/resource family and requires mana to precede anything that
@@ -2176,16 +2215,15 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
         }))
 }
 
-/// Activated abilities stage the admitted filtered-return and typed
-/// tap-other-permanent families through `ChooseCostTargets`. Cast-only
-/// sacrifice and graveyard-exile selections still fail closed here.
+/// Activated abilities stage filtered returns, filtered sacrifices, and typed
+/// tap-other-permanent costs through `ChooseCostTargets`. Cast-only land
+/// sacrifice and graveyard exile remain fail closed in this context.
 fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
     component_payment_shape_supported(components)
         && !components.iter().any(|component| {
             matches!(
                 component,
                 CostComponent::SacrificeLands(_)
-                    | CostComponent::SacrificeControlled { .. }
                     | CostComponent::ExileOtherCardsFromOwnGraveyard(_)
             )
         })
@@ -2342,8 +2380,9 @@ fn can_pay_components(
 /// paid via the `pending_discard` staging by the time this runs -- see
 /// `EngineState::pending_discard`'s doc). `object_cost_chosen` is the
 /// already-decided answer to the one supported interactive object-cost
-/// component (`SacrificeLands`, `ExileOtherCardsFromOwnGraveyard`, or one
-/// filtered returned permanent, or a typed tap-other-permanent cost) in
+/// component (`SacrificeLands`, `SacrificeControlled`,
+/// `ExileOtherCardsFromOwnGraveyard`, one filtered returned permanent, or a
+/// typed tap-other-permanent cost) in
 /// `components`. Casts stage this in `PendingCast::sacrifice_chosen`;
 /// activations use their incarnation-bound object-cost field. The cast field
 /// name is a frozen compatibility alias. Pass `&[]` for a component list
@@ -2419,7 +2458,16 @@ fn pay_cost_components(
                         )
                 })
         });
-        if object_cost_chosen.len() != needed || duplicate || invalid {
+        let aliases_source_departure = object_cost_chosen.contains(&source)
+            && components.iter().any(|component| {
+                matches!(
+                    component,
+                    CostComponent::SacrificeSelf
+                        | CostComponent::ExileSelf
+                        | CostComponent::DiscardSelf
+                )
+            });
+        if object_cost_chosen.len() != needed || duplicate || invalid || aliases_source_departure {
             return false;
         }
     }
@@ -2644,6 +2692,7 @@ fn permanent_matches_filter(def: &card_def::CardDef, filter: PermanentFilter) ->
         PermanentFilter::ArtifactOrCreature => {
             def.has_type(CardType::Artifact) || def.has_type(CardType::Creature)
         }
+        PermanentFilter::Artifact => def.has_type(CardType::Artifact),
     }
 }
 
@@ -2671,6 +2720,33 @@ fn sacrificeable_controlled_permanents(
         .collect()
 }
 
+/// Incarnation-bound form of `sacrificeable_controlled_permanents` used by
+/// staged activations. Cast staging retains its frozen `ObjectId` wire shape,
+/// while an activation must reject a selected permanent that left and later
+/// returned before payment.
+fn activation_sacrifice_cost_candidates(
+    player: PlayerId,
+    filter: PermanentFilter,
+    state: &GameState,
+    already_chosen: &[EffectObjectBinding],
+) -> Vec<EffectObjectBinding> {
+    let already_chosen_ids = already_chosen
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
+        .into_iter()
+        .map(|object| {
+            let live = state.objects.get(object);
+            EffectObjectBinding {
+                object,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: live.zone_change_count,
+            }
+        })
+        .collect()
+}
+
 fn graveyard_exile_cards_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 {
     if pending.source_contract.cast_method != CastMethodV4::Escape {
         return 0;
@@ -2693,6 +2769,22 @@ fn controlled_permanent_sacrifice_needed(def: &card_def::CardDef) -> Option<(u8,
             _ => None,
         })
     })
+}
+
+fn activation_permanent_sacrifice_needed(
+    components: &[CostComponent],
+) -> Option<(u8, PermanentFilter)> {
+    components.iter().find_map(|component| match component {
+        CostComponent::SacrificeControlled { count, filter } => Some((*count, *filter)),
+        _ => None,
+    })
+}
+
+fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
+    match filter {
+        PermanentFilter::Artifact => CostKind::SacrificeArtifacts,
+        PermanentFilter::ArtifactOrCreature => CostKind::SacrificePermanents,
+    }
 }
 
 /// Ordered live candidates for the next Escape graveyard-cost pick. The
@@ -4302,7 +4394,18 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             // builds, but costs must be paid in every profile. The complete
             // activation/discard preflight above ran before any chosen card
             // moved, so this cannot fail for a reachable supported shape.
-            let paid = pay_cost_components(state, p.controller, p.source, ability.cost, &[]);
+            let object_cost_ids = p
+                .object_cost_chosen
+                .iter()
+                .map(|binding| binding.object)
+                .collect::<Vec<_>>();
+            let paid = pay_cost_components(
+                state,
+                p.controller,
+                p.source,
+                ability.cost,
+                &object_cost_ids,
+            );
             if !paid {
                 state.engine.pending_activation = None;
                 state.engine.halted =
@@ -4469,7 +4572,7 @@ fn drain_pending_effect_or_decide(state: &mut GameState) -> Option<Decision> {
                 player: *player,
                 source: pending.resolving_item.source,
                 default: *default,
-                purpose: *purpose,
+                purpose: purpose.clone(),
             },
         });
     }
@@ -5399,6 +5502,36 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                     .collect(),
             });
         }
+    } else if let Some((needed, filter)) = activation_permanent_sacrifice_needed(ability.cost) {
+        if pending.object_cost_chosen.len() < usize::from(needed) {
+            let candidates = activation_sacrifice_cost_candidates(
+                pending.controller,
+                filter,
+                state,
+                &pending.object_cost_chosen,
+            );
+            let remaining = needed - pending.object_cost_chosen.len() as u8;
+            if candidates.len() == usize::from(remaining) {
+                state
+                    .engine
+                    .pending_activation
+                    .as_mut()
+                    .expect("validated activation remains staged")
+                    .object_cost_chosen
+                    .extend(candidates);
+                return drain_pending_activation_or_decide(state);
+            }
+            return Some(Decision::ChooseCostTargets {
+                player: pending.controller,
+                source: pending.source,
+                cost_kind: cost_kind_for_permanent_filter(filter),
+                remaining,
+                candidates: candidates
+                    .into_iter()
+                    .map(|binding| binding.object)
+                    .collect(),
+            });
+        }
     }
 
     if activation_tap_cost_subtype(ability.cost).is_some() {
@@ -5521,31 +5654,33 @@ pub(crate) fn validate_pending_activation(
 
     let return_filter = return_permanent_filter_in(ability.cost);
     let tap_cost_subtype = activation_tap_cost_subtype(ability.cost);
-    if return_filter.is_some() && tap_cost_subtype.is_some() {
-        return Err("activation combines unsupported interactive object costs".to_string());
+    let sacrifice_cost = activation_permanent_sacrifice_needed(ability.cost);
+    let interactive_families = usize::from(return_filter.is_some())
+        + usize::from(tap_cost_subtype.is_some())
+        + usize::from(sacrifice_cost.is_some());
+    if interactive_families > 1 {
+        return Err("activation has multiple interactive object-cost families".to_string());
     }
-    if return_filter.is_none()
-        && tap_cost_subtype.is_none()
-        && !pending.object_cost_chosen.is_empty()
-    {
+    if interactive_families == 0 && !pending.object_cost_chosen.is_empty() {
         return Err("activation without an object cost carries chosen cost objects".to_string());
     }
-    if pending.object_cost_chosen.len() > 1 {
-        return Err("activation carries too many chosen object-cost permanents".to_string());
-    }
-    for &binding in &pending.object_cost_chosen {
-        if binding.expected_zone != Zone::Battlefield {
-            return Err(
-                "activation object-cost binding does not expect the battlefield".to_string(),
-            );
+    if return_filter.is_some() || tap_cost_subtype.is_some() {
+        if pending.object_cost_chosen.len() > 1 {
+            return Err("activation carries too many chosen object-cost permanents".to_string());
         }
-        let live = state
-            .objects
-            .try_get(binding.object)
-            .ok_or_else(|| "activation object-cost permanent no longer exists".to_string())?;
-        let matches_cost = return_filter
-            .is_some_and(|filter| permanent_matches_return_filter(state, binding.object, filter))
-            || tap_cost_subtype.is_some_and(|subtype| {
+        for &binding in &pending.object_cost_chosen {
+            if binding.expected_zone != Zone::Battlefield {
+                return Err(
+                    "activation object-cost binding does not expect the battlefield".to_string(),
+                );
+            }
+            let live = state
+                .objects
+                .try_get(binding.object)
+                .ok_or_else(|| "activation object-cost permanent no longer exists".to_string())?;
+            let matches_cost = return_filter.is_some_and(|filter| {
+                permanent_matches_return_filter(state, binding.object, filter)
+            }) || tap_cost_subtype.is_some_and(|subtype| {
                 binding.object != pending.source
                     && !live.tapped
                     && live
@@ -5561,14 +5696,57 @@ pub(crate) fn validate_pending_activation(
                     )
                     .contains(&binding.object)
             });
-        if live.zone_change_count != binding.expected_zone_change_count
-            || live.zone != Zone::Battlefield
-            || live.controller != pending.controller
-            || !matches_cost
-        {
-            return Err(
-                "activation object-cost permanent changed incarnation or legality".to_string(),
-            );
+            if live.zone_change_count != binding.expected_zone_change_count
+                || live.zone != Zone::Battlefield
+                || live.controller != pending.controller
+                || !matches_cost
+            {
+                return Err(
+                    "activation object-cost permanent changed incarnation or legality".to_string(),
+                );
+            }
+        }
+    } else if let Some((needed, filter)) = sacrifice_cost {
+        if pending.object_cost_chosen.len() > usize::from(needed) {
+            return Err("pending activation has too many object-cost selections".to_string());
+        }
+        let duplicate = pending
+            .object_cost_chosen
+            .iter()
+            .enumerate()
+            .any(|(index, binding)| {
+                pending.object_cost_chosen[..index]
+                    .iter()
+                    .any(|chosen| chosen.object == binding.object)
+            });
+        if duplicate {
+            return Err("pending activation repeats an object-cost selection".to_string());
+        }
+        if pending.object_cost_chosen.iter().any(|binding| {
+            binding.expected_zone != Zone::Battlefield
+                || state.objects.try_get(binding.object).is_none_or(|live| {
+                    live.zone_change_count != binding.expected_zone_change_count
+                        || live.controller != pending.controller
+                        || live.zone != Zone::Battlefield
+                        || !state.players[pending.controller.index()]
+                            .battlefield
+                            .contains(&binding.object)
+                        || !permanent_matches_filter(
+                            &card_def::CARD_DEFS[live.card_def as usize],
+                            filter,
+                        )
+                })
+        }) {
+            return Err("pending activation carries an illegal object-cost selection".to_string());
+        }
+        let remaining = activation_sacrifice_cost_candidates(
+            pending.controller,
+            filter,
+            state,
+            &pending.object_cost_chosen,
+        );
+        if remaining.len() < usize::from(needed).saturating_sub(pending.object_cost_chosen.len()) {
+            return Err("pending activation object cost can no longer complete".to_string());
         }
     }
 
@@ -5663,6 +5841,8 @@ pub(crate) fn validate_pending_activation(
             || discard.player != pending.controller
             || discard_count_in(ability.cost).map(u32::from) != Some(discard.count)
             || pending.cost_discard_paid.is_some()
+            || activation_permanent_sacrifice_needed(ability.cost)
+                .is_some_and(|(needed, _)| pending.object_cost_chosen.len() != usize::from(needed))
             || !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len())
             || ((return_filter.is_some() || tap_cost_subtype.is_some())
                 && pending.object_cost_chosen.len() != 1)
@@ -7115,11 +7295,15 @@ fn pending_activation_action_stage(
         }
         return Ok(PendingActivationActionStage::ChooseTarget);
     }
-    let ability = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize]
-        .activated_abilities[pending.ability_index as usize];
-    let object_cost_needed = return_permanent_filter_in(ability.cost).is_some()
-        || activation_tap_cost_subtype(ability.cost).is_some();
-    if object_cost_needed && pending.object_cost_chosen.is_empty() {
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
+    let ability = &def.activated_abilities[pending.ability_index as usize];
+    let return_cost_incomplete =
+        return_permanent_filter_in(ability.cost).is_some() && pending.object_cost_chosen.is_empty();
+    let sacrifice_cost_incomplete = activation_permanent_sacrifice_needed(ability.cost)
+        .is_some_and(|(needed, _)| pending.object_cost_chosen.len() < usize::from(needed));
+    let tap_cost_incomplete = activation_tap_cost_subtype(ability.cost).is_some()
+        && pending.object_cost_chosen.is_empty();
+    if return_cost_incomplete || sacrifice_cost_incomplete || tap_cost_incomplete {
         return Ok(PendingActivationActionStage::ChooseCostTarget);
     }
     Ok(PendingActivationActionStage::AwaitEngineAdvance)
@@ -7685,27 +7869,65 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
     }
     if let Some(pending) = state.engine.pending_activation.clone() {
         validate_pending_activation(state, &pending)?;
-        let definition = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
-        let ability = &definition.activated_abilities[pending.ability_index as usize];
-        if pending.targets_chosen.len() != usize::from(target_count(pending.target_spec)) {
+        let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
+        let ability = &def.activated_abilities[pending.ability_index as usize];
+        if !target_cardinality_is_complete(pending.target_spec, pending.targets_chosen.len()) {
             return Err(
                 "activation cost target chosen before activation targeting completed".to_string(),
             );
         }
-        if !pending.object_cost_chosen.is_empty() {
-            return Err("activation object cost has already been selected".to_string());
-        }
-        let binding = if let Some(filter) = return_permanent_filter_in(ability.cost) {
-            return_permanent_cost_candidates(
+
+        if let Some(filter) = return_permanent_filter_in(ability.cost) {
+            if !pending.object_cost_chosen.is_empty() {
+                return Err("activation object cost has already been selected".to_string());
+            }
+            let candidates = return_permanent_cost_candidates(
                 pending.controller,
                 state,
                 filter,
                 &pending.object_cost_chosen,
-            )
-            .into_iter()
-            .find(|binding| binding.object == id)
-            .ok_or_else(|| format!("{id} is not a legal activation object-cost candidate"))?
-        } else if activation_tap_cost_subtype(ability.cost).is_some() {
+            );
+            let binding = candidates
+                .into_iter()
+                .find(|binding| binding.object == id)
+                .ok_or_else(|| format!("{id} is not a legal activation object-cost candidate"))?;
+            state
+                .engine
+                .pending_activation
+                .as_mut()
+                .expect("validated activation remains staged")
+                .object_cost_chosen
+                .push(binding);
+            return Ok(());
+        } else if let Some((needed, filter)) = activation_permanent_sacrifice_needed(ability.cost) {
+            if pending.object_cost_chosen.len() < usize::from(needed) {
+                let candidates = activation_sacrifice_cost_candidates(
+                    pending.controller,
+                    filter,
+                    state,
+                    &pending.object_cost_chosen,
+                );
+                let remaining = needed - pending.object_cost_chosen.len() as u8;
+                if candidates.len() < usize::from(remaining) {
+                    return Err(
+                        "activation permanent-sacrifice cost can no longer complete".to_string()
+                    );
+                }
+                let binding = candidates
+                    .into_iter()
+                    .find(|binding| binding.object == id)
+                    .ok_or_else(|| format!("{id} is not a legal activation sacrifice candidate"))?;
+                state
+                    .engine
+                    .pending_activation
+                    .as_mut()
+                    .expect("validated activation remains staged")
+                    .object_cost_chosen
+                    .push(binding);
+                return Ok(());
+            }
+        }
+        if activation_tap_cost_subtype(ability.cost).is_some() {
             if !payable_activation_cost_object_candidates(
                 pending.controller,
                 pending.source,
@@ -7717,24 +7939,23 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 return Err(format!("{id} is not a legal activation-cost candidate"));
             }
             let object = state.objects.get(id);
-            EffectObjectBinding {
+            let binding = EffectObjectBinding {
                 object: id,
                 expected_zone: Zone::Battlefield,
                 expected_zone_change_count: object.zone_change_count,
+            };
+            let live = state
+                .engine
+                .pending_activation
+                .as_mut()
+                .expect("validated activation remains staged");
+            if live != &pending {
+                return Err("pending activation changed before object-cost commit".to_string());
             }
-        } else {
-            return Err("pending activation has no interactive object cost".to_string());
-        };
-        let live = state
-            .engine
-            .pending_activation
-            .as_mut()
-            .expect("validated activation remains staged");
-        if live != &pending {
-            return Err("pending activation changed before object-cost commit".to_string());
+            live.object_cost_chosen.push(binding);
+            return Ok(());
         }
-        live.object_cost_chosen.push(binding);
-        return Ok(());
+        return Err("pending activation has no interactive object cost".to_string());
     }
     if let Some(pending) = state.engine.pending_optional_cost_sacrifice.as_ref() {
         if (pending.chosen.len() as u8) < pending.remaining {

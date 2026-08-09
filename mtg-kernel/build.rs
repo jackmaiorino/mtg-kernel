@@ -2515,6 +2515,10 @@ enum AbilityCostRecipe {
     ReturnControlledLandWithSubtype(&'static str),
     ExileSelf,
     TapOtherUntappedControlledPermanentWithSubtype(&'static str),
+    SacrificeControlled {
+        count: u8,
+        filter: PermanentFilterRecipe,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2525,6 +2529,14 @@ enum AbilityEffectRecipe {
     DamageTarget(u8),
     MoveAllTargetsToHand,
     ExploreTarget,
+    DealDamageAnyTarget(i32),
+    DamageAllCreatures {
+        amount: i32,
+        filter: CreatureEffectFilterRecipe,
+    },
+    ExileTargetPlayersGraveyard,
+    ExileOneFromTargetPlayersGraveyard,
+    ExileAllGraveyardsThenDraw(u8),
     /// The interpreter currently supports exactly this typecycling search
     /// contract. Keeping all semantic knobs in the recipe makes codegen fail
     /// closed if a future caller asks for a different cardinality/reveal/
@@ -2540,6 +2552,17 @@ enum AbilityEffectRecipe {
     GainLifeBattlefieldSubtypeCount(&'static str),
     PumpTargetBattlefieldSubtypeCount(&'static str),
     PumpTargetByControlledSubtypeCount(&'static str),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PermanentFilterRecipe {
+    Artifact,
+    ArtifactOrCreature,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CreatureEffectFilterRecipe {
+    WithoutKeyword(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3005,6 +3028,74 @@ fn escape_for(name: &str) -> String {
 /// then resolve the reusable typed library search.
 fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Krark-Clan Shaman" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::SacrificeControlled {
+                count: 1,
+                filter: PermanentFilterRecipe::Artifact,
+            }],
+            effect: AbilityEffectRecipe::DamageAllCreatures {
+                amount: 1,
+                filter: CreatureEffectFilterRecipe::WithoutKeyword("FLYING"),
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Makeshift Munitions" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::SacrificeControlled {
+                    count: 1,
+                    filter: PermanentFilterRecipe::ArtifactOrCreature,
+                },
+            ],
+            effect: AbilityEffectRecipe::DealDamageAnyTarget(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "AnyTarget",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Nihil Spellbomb" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::ExileTargetPlayersGraveyard,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "AnyPlayer",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Relic of Progenitus" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Tap],
+                effect: AbilityEffectRecipe::ExileOneFromTargetPlayersGraveyard,
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "AnyPlayer",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[
+                    AbilityCostRecipe::Mana {
+                        colored: None,
+                        generic: 1,
+                    },
+                    AbilityCostRecipe::ExileSelf,
+                ],
+                effect: AbilityEffectRecipe::ExileAllGraveyardsThenDraw(1),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
         "Masked Meower" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::DiscardCards(1),
@@ -3276,6 +3367,10 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
             "CostComponent::TapOtherUntappedControlledPermanentWithSubtype({})",
             subtype_variant(subtype)
         ),
+        AbilityCostRecipe::SacrificeControlled { count, filter } => format!(
+            "CostComponent::SacrificeControlled {{ count: {count}, filter: {} }}",
+            permanent_filter_src(filter)
+        ),
     }
 }
 
@@ -3295,6 +3390,26 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
             format!("tap_other_untapped_controlled_subtype:{subtype}")
         }
+        AbilityCostRecipe::SacrificeControlled { count, filter } => {
+            format!(
+                "sacrifice_controlled:{count}:{}",
+                permanent_filter_token(filter)
+            )
+        }
+    }
+}
+
+fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
+    match filter {
+        PermanentFilterRecipe::Artifact => "PermanentFilter::Artifact",
+        PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
+    }
+}
+
+fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
+    match filter {
+        PermanentFilterRecipe::Artifact => "artifact",
+        PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
     }
 }
 
@@ -3306,6 +3421,22 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::DamageTarget(amount) => format!("damage_target:{amount}"),
         AbilityEffectRecipe::MoveAllTargetsToHand => "move_all_targets_to_hand".to_string(),
         AbilityEffectRecipe::ExploreTarget => "explore_target".to_string(),
+        AbilityEffectRecipe::DealDamageAnyTarget(amount) => {
+            format!("deal_damage_any_target:{amount}")
+        }
+        AbilityEffectRecipe::DamageAllCreatures { amount, filter } => format!(
+            "damage_all_creatures:{amount}:{}",
+            creature_effect_filter_token(filter)
+        ),
+        AbilityEffectRecipe::ExileTargetPlayersGraveyard => {
+            "exile_target_players_graveyard".to_string()
+        }
+        AbilityEffectRecipe::ExileOneFromTargetPlayersGraveyard => {
+            "exile_one_from_target_players_graveyard".to_string()
+        }
+        AbilityEffectRecipe::ExileAllGraveyardsThenDraw(draw) => {
+            format!("exile_all_graveyards_then_draw:{draw}")
+        }
         AbilityEffectRecipe::SearchLibraryToHand {
             filter,
             min_targets,
@@ -3325,6 +3456,14 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::PumpTargetByControlledSubtypeCount(subtype) => {
             format!("pump_target_by_controlled_subtype_count:{subtype}")
+        }
+    }
+}
+
+fn creature_effect_filter_token(filter: CreatureEffectFilterRecipe) -> String {
+    match filter {
+        CreatureEffectFilterRecipe::WithoutKeyword(keyword) => {
+            format!("without_keyword:{}", keyword.to_ascii_lowercase())
         }
     }
 }
@@ -3370,6 +3509,26 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             "ability_effect_move_all_targets_to_hand".to_string()
         }
         AbilityEffectRecipe::ExploreTarget => "ability_effect_explore_target".to_string(),
+        AbilityEffectRecipe::DealDamageAnyTarget(amount) => {
+            format!("ability_effect_deal_damage_any_target_{amount}")
+        }
+        AbilityEffectRecipe::DamageAllCreatures {
+            amount,
+            filter: CreatureEffectFilterRecipe::WithoutKeyword(keyword),
+        } => format!(
+            "ability_effect_damage_all_creatures_without_{}_{}",
+            keyword.to_ascii_lowercase(),
+            amount
+        ),
+        AbilityEffectRecipe::ExileTargetPlayersGraveyard => {
+            "ability_effect_exile_target_players_graveyard".to_string()
+        }
+        AbilityEffectRecipe::ExileOneFromTargetPlayersGraveyard => {
+            "ability_effect_exile_one_from_target_players_graveyard".to_string()
+        }
+        AbilityEffectRecipe::ExileAllGraveyardsThenDraw(draw) => {
+            format!("ability_effect_exile_all_graveyards_then_draw_{draw}")
+        }
         AbilityEffectRecipe::SearchLibraryToHand {
             filter: LibrarySearchFilterRecipe::LandWithSubtype(subtype),
             min_targets: 0,
@@ -3801,6 +3960,39 @@ fn codegen(cards: &[CardJson]) -> String {
                     "    EffectOp::ExploreTarget {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
+            }
+            AbilityEffectRecipe::DealDamageAnyTarget(amount) => {
+                writeln!(
+                    out,
+                    "    EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: {amount} }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::DamageAllCreatures {
+                amount,
+                filter: CreatureEffectFilterRecipe::WithoutKeyword(keyword),
+            } => {
+                writeln!(out, "    EffectOp::DamageAllCreatures {{ filter: CreatureFilter::WithoutKeyword(Keywords::{keyword}), amount: {amount} }}").unwrap();
+            }
+            AbilityEffectRecipe::ExileTargetPlayersGraveyard => {
+                writeln!(
+                    out,
+                    "    EffectOp::ExilePlayersGraveyard {{ player: PlayerRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::ExileOneFromTargetPlayersGraveyard => {
+                writeln!(
+                    out,
+                    "    EffectOp::ExileOneFromPlayersGraveyard {{ player: PlayerRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::ExileAllGraveyardsThenDraw(draw) => {
+                writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::ExileAllGraveyards,").unwrap();
+                writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},").unwrap();
+                writeln!(out, "    ])").unwrap();
             }
             AbilityEffectRecipe::SearchLibraryToHand {
                 filter,
@@ -5080,7 +5272,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v18\n");
+    let mut canon = String::from("kernel_carddb/v19\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');

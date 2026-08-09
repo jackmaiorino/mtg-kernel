@@ -517,6 +517,8 @@ pub struct PendingActivationSemanticV2 {
     pub ability_index: u8,
     pub chosen_targets: Vec<TargetRefV1>,
     pub cost_discard_paid: Option<Vec<CardStableRefV1>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub object_cost_chosen: Vec<CardStableRefV1>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -5252,6 +5254,9 @@ fn pending_effect_semantic_v4(
                                     TargetSelectionPurposeV4::LibraryOrder
                                 }
                             },
+                            crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
+                                ..
+                            } => TargetSelectionPurposeV4::CardSelection,
                         },
                     })
                 }
@@ -5274,6 +5279,9 @@ fn pending_effect_semantic_v4(
                         | crate::effect::EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
+                        crate::effect::EffectBooleanChoicePurpose::PayManaThen { .. } => {
+                            BooleanChoicePurposeV4::PayCost
+                        }
                     },
                 }),
             }
@@ -5333,6 +5341,11 @@ fn pending_activation_semantic_v2(
 ) -> Result<PendingActivationSemanticV2> {
     engine::validate_pending_activation(state, p)
         .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
+    let object_cost_chosen = p
+        .object_cost_chosen
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
     Ok(PendingActivationSemanticV2 {
         source: visible_card_ref(state, p.source, acting_player)?,
         controller: p.controller.into(),
@@ -5342,6 +5355,7 @@ fn pending_activation_semantic_v2(
             Some(ids) => Some(visible_card_refs(state, ids, acting_player)?),
             None => None,
         },
+        object_cost_chosen: visible_card_refs(state, &object_cost_chosen, acting_player)?,
     })
 }
 

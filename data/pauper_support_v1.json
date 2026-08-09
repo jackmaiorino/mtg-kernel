@@ -5,21 +5,21 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "0be33eba66106abb0f9d9fc96893dcb54a0998dae348b74fe2117161d84361d0"
+    "registry_raw_sha256": "e37a34b507a72793fad1910fdcad7e2b54a2a30efc0644514530eccadc578c53"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 103,
+    "full_cards": 107,
     "partial_cards": 0,
-    "no_effect_cards": 47,
+    "no_effect_cards": 43,
     "token_dependencies": 8
   },
   "deck_mainboard_copy_totals": [
     {
       "deck_id": "Wildfire",
-      "full": 34,
+      "full": 42,
       "partial": 0,
-      "no_effect": 26,
+      "no_effect": 18,
       "total": 60
     },
     {
@@ -31,9 +31,9 @@
     },
     {
       "deck_id": "Affinity",
-      "full": 46,
+      "full": 53,
       "partial": 0,
-      "no_effect": 14,
+      "no_effect": 7,
       "total": 60
     },
     {
@@ -1798,10 +1798,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Land Grant",
@@ -2028,10 +2026,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Masked Meower",
@@ -2291,10 +2287,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Ninja of the Deep Hours",
@@ -2740,10 +2734,8 @@
         "Deck - Mono-Red Burn.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Sacred Cat",

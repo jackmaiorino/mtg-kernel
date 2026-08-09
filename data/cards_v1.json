@@ -1915,6 +1915,7 @@
     },
     {
       "name": "Krark-Clan Shaman",
+      "engine_capability": "full",
       "mana_cost": "{R}",
       "mana_value": 1,
       "colors": [
@@ -2130,6 +2131,7 @@
     },
     {
       "name": "Makeshift Munitions",
+      "engine_capability": "full",
       "mana_cost": "{1}{R}",
       "mana_value": 2,
       "colors": [
@@ -2439,6 +2441,7 @@
     },
     {
       "name": "Nihil Spellbomb",
+      "engine_capability": "full",
       "mana_cost": "{1}",
       "mana_value": 1,
       "colors": [],
@@ -2989,6 +2992,7 @@
     },
     {
       "name": "Relic of Progenitus",
+      "engine_capability": "full",
       "mana_cost": "{1}",
       "mana_value": 1,
       "colors": [],

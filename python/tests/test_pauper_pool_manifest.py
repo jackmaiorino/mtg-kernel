@@ -544,16 +544,16 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 103,
+                "full_cards": 107,
                 "partial_cards": 0,
-                "no_effect_cards": 47,
+                "no_effect_cards": 43,
                 "token_dependencies": 8,
             },
         )
         expected_copy_totals = [
-            {"deck_id": "Wildfire", "full": 34, "partial": 0, "no_effect": 26, "total": 60},
+            {"deck_id": "Wildfire", "full": 42, "partial": 0, "no_effect": 18, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Affinity", "full": 46, "partial": 0, "no_effect": 14, "total": 60},
+            {"deck_id": "Affinity", "full": 53, "partial": 0, "no_effect": 7, "total": 60},
             {"deck_id": "Elves", "full": 48, "partial": 0, "no_effect": 12, "total": 60},
             {"deck_id": "Spy", "full": 43, "partial": 0, "no_effect": 17, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
@@ -643,6 +643,21 @@ class PauperPoolManifestTest(unittest.TestCase):
         }
         self.assertEqual(set(caw_gates_promoted), caw_gates_promoted_names)
         for row in caw_gates_promoted.values():
+            self.assertEqual(row["support_status"], "full")
+            self.assertEqual(row["blockers"], [])
+        artifact_control_promoted_names = {
+            "Krark-Clan Shaman",
+            "Makeshift Munitions",
+            "Nihil Spellbomb",
+            "Relic of Progenitus",
+        }
+        artifact_control_promoted = {
+            row["name"]: row
+            for row in self.support["cards"]
+            if row["name"] in artifact_control_promoted_names
+        }
+        self.assertEqual(set(artifact_control_promoted), artifact_control_promoted_names)
+        for row in artifact_control_promoted.values():
             self.assertEqual(row["support_status"], "full")
             self.assertEqual(row["blockers"], [])
         ponder = next(row for row in self.support["cards"] if row["name"] == "Ponder")

@@ -237,6 +237,18 @@ fn ichor_wellspring_draw_effect() -> EffectOp {
     }
 }
 
+fn nihil_spellbomb_graveyard_effect() -> EffectOp {
+    EffectOp::MayPayManaThen {
+        player: PlayerRef::Controller,
+        colored: vec![crate::mana::ManaColor::B],
+        generic: 0,
+        then: Box::new(EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        }),
+    }
+}
+
 fn faerie_miscreant_effect() -> EffectOp {
     EffectOp::Conditional {
         cond: EffectCond::ControlsAnotherSourceCard,
@@ -344,6 +356,13 @@ const ICHOR_WELLSPRING_TRIGGERS: [TriggeredAbilityDef; 2] = [
         effect: ichor_wellspring_draw_effect,
     },
 ];
+const NIHIL_SPELLBOMB_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::LeftBattlefieldToGraveyard,
+    home_zone: Zone::Graveyard,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: nihil_spellbomb_graveyard_effect,
+}];
 const EXPERIMENTAL_SYNTHESIZER_TRIGGERS: [TriggeredAbilityDef; 2] = [
     TriggeredAbilityDef {
         condition: TriggerCondition::Etb,
@@ -435,6 +454,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Burning-Tree Emissary" => &BURNING_TREE_EMISSARY_TRIGGERS,
         "Clockwork Percussionist" => &CLOCKWORK_PERCUSSIONIST_TRIGGERS,
         "Ichor Wellspring" => &ICHOR_WELLSPRING_TRIGGERS,
+        "Nihil Spellbomb" => &NIHIL_SPELLBOMB_TRIGGERS,
         "Experimental Synthesizer" => &EXPERIMENTAL_SYNTHESIZER_TRIGGERS,
         "Goblin Bushwhacker" => &GOBLIN_BUSHWHACKER_TRIGGERS,
         "Faerie Miscreant" => &FAERIE_MISCREANT_TRIGGERS,

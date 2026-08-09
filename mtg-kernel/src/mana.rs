@@ -142,6 +142,34 @@ pub fn can_pay(
         .filter(|plan| plan.life_paid <= state.players[player.index()].life)
 }
 
+/// Owned-pip counterpart to `can_pay` for serialized resolution-time costs.
+/// Card definitions keep `Cost` pips static, while a suspended effect owns
+/// its color vector and therefore borrows it only for this solver call.
+pub fn can_pay_owned(
+    pips: &[Pip],
+    generic: u8,
+    player: PlayerId,
+    state: &GameState,
+) -> Option<PaymentPlan> {
+    let sources = gather_sources(player, state);
+    let pool = state.players[player.index()].mana_pool;
+    let mut plan = PaymentPlan::default();
+    let mut pool_remaining = pool;
+    let mut used = vec![false; sources.len()];
+    if !solve_pips(pips, 0, &sources, &mut used, &mut pool_remaining, &mut plan)
+        || !pay_generic(
+            u32::from(generic),
+            &sources,
+            &mut used,
+            &mut pool_remaining,
+            &mut plan,
+        )
+    {
+        return None;
+    }
+    (plan.life_paid <= state.players[player.index()].life).then_some(plan)
+}
+
 /// Like `can_pay`, but checks/solves 2+ costs *together* against the same
 /// pool of mana sources -- Goblin Bushwhacker's base cost + its optional
 /// Kicker cost, paid as one combined announcement (601.2b/f), never as two
