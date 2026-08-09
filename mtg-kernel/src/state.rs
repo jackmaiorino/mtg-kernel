@@ -137,6 +137,13 @@ impl ObjectStateV4 {
             .iter()
             .map(|subtype| subtype.stable_id())
             .collect();
+        if def.changeling {
+            subtype_ids.extend(
+                crate::card_def::Subtype::CREATURE_TYPES
+                    .iter()
+                    .map(|subtype| subtype.stable_id()),
+            );
+        }
         subtype_ids.sort_unstable();
         subtype_ids.dedup();
         ObjectStateV4 {
@@ -649,7 +656,8 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::OpponentControlledCreature
                 | TargetSpec::UpToOneTappedCreature
                 | TargetSpec::NoncreatureArtifactPermanent
-                | TargetSpec::Land,
+                | TargetSpec::Land
+                | TargetSpec::OpponentArtifactOrEnchantmentPermanent,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
@@ -784,6 +792,12 @@ pub struct StackStateV4 {
     /// stack item's source creature. Only attachment-granted triggers use it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted_by: Option<AbilitySourceContractV4>,
+    /// Optional additional cost actually paid for this exact cast or the
+    /// triggered ability produced by it. Internal cast provenance only;
+    /// existing public stack schemas continue to expose the associated
+    /// physical payments through `paid_cost_refs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optional_additional_cost_paid: Option<crate::card_def::OptionalAdditionalCostDef>,
 }
 
 impl StackStateV4 {
@@ -3241,6 +3255,9 @@ mod tests {
             origin_zone: Zone::Hand,
             sacrifice_chosen: Vec::new(),
             kicked: Some(false),
+            optional_additional_cost_paid: Some(false),
+            optional_additional_cost_chosen: Vec::new(),
+            optional_additional_cost_selection_finished: false,
         });
         let ordinary_contract = state.diagnostic_state_hash();
         state

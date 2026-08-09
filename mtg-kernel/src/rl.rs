@@ -5584,12 +5584,18 @@ fn pending_effect_semantic_v4(
                             crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::ExileOneMatchingFromGraveyard {
+                                ..
+                            }
                             | crate::effect::EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {
                                 ..
                             }
                             | crate::effect::EffectTargetSelectionPurpose::DuressDiscard {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
+                            crate::effect::EffectTargetSelectionPurpose::SacrificeCreature {
+                                ..
+                            } => TargetSelectionPurposeV4::PermanentSelection,
                         },
                     })
                 }
@@ -5612,9 +5618,10 @@ fn pending_effect_semantic_v4(
                         | crate::effect::EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
                             ..
                         } => BooleanChoicePurposeV4::PayCost,
-                        crate::effect::EffectBooleanChoicePurpose::PayManaThen { .. } => {
-                            BooleanChoicePurposeV4::PayCost
-                        }
+                        crate::effect::EffectBooleanChoicePurpose::PayManaThen { .. }
+                        | crate::effect::EffectBooleanChoicePurpose::PayExileFromGraveyardThen {
+                            ..
+                        } => BooleanChoicePurposeV4::PayCost,
                         crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
                             ..
                         } => BooleanChoicePurposeV4::OptionalEffect,

@@ -41,8 +41,8 @@
 
 use crate::card_def::{
     self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
-    Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, PermanentFilter,
-    PermanentFilterDef, TargetSpec,
+    Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, ManaAbilityDef, OptionalAdditionalCostDef,
+    PermanentFilter, PermanentFilterDef, TargetSpec,
 };
 use crate::effect::{
     self, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, StormCopyBindingV1, TargetRef,
@@ -663,6 +663,35 @@ pub struct PendingCast {
     /// stack item -- see that field's doc for how it flows onward into the
     /// resolution/ETB context from there.
     pub kicked: Option<bool>,
+    /// `None` until the caster decides whether to pay this definition's
+    /// optional additional cost. Cards without one, plus declined costs,
+    /// use the legacy-compatible `Some(false)` seed.
+    #[serde(
+        default = "default_optional_additional_cost_declined",
+        skip_serializing_if = "optional_additional_cost_is_declined"
+    )]
+    pub optional_additional_cost_paid: Option<bool>,
+    /// Exact-incarnation objects selected to pay Collect Evidence or
+    /// Bargain. Definition data supplies the filter and cardinality; these
+    /// bindings never self-authenticate a payment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub optional_additional_cost_chosen: Vec<EffectObjectBinding>,
+    /// Collect Evidence alone needs an explicit finish marker after its
+    /// selected mana-value sum reaches the printed threshold.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub optional_additional_cost_selection_finished: bool,
+}
+
+fn default_optional_additional_cost_declined() -> Option<bool> {
+    Some(false)
+}
+
+fn optional_additional_cost_is_declined(value: &Option<bool>) -> bool {
+    *value == Some(false)
+}
+
+fn bool_is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1241,6 +1270,7 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToOneTappedCreature
         | TargetSpec::NoncreatureArtifactPermanent
         | TargetSpec::Land
+        | TargetSpec::OpponentArtifactOrEnchantmentPermanent
         | TargetSpec::CreatureOtherThanSource => 1,
         TargetSpec::PlayerThenTheirCreature
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
@@ -1594,6 +1624,14 @@ fn validate_spell_source_contract_fields(
     if !def.is_executable() || !def.is_castable() {
         return Err("spell stack source is not an executable spell".to_string());
     }
+    if let Some(kind) = item.v4.optional_additional_cost_paid {
+        if def.optional_additional_cost != Some(kind) || is_virtual_copy {
+            return Err(
+                "spell optional additional-cost provenance is not definition-owned".to_string(),
+            );
+        }
+        validate_optional_additional_paid_refs(kind, item.controller, &item.v4.paid_cost_refs)?;
+    }
     match cast_method {
         CastMethodV4::Normal => {}
         CastMethodV4::Alternative if def.alt_cost.is_some() => {}
@@ -1931,6 +1969,7 @@ fn validate_spell_sourced_trigger(
         || item.v4.face_index != 0
         || item.v4.x_value != 0
         || !item.v4.paid_cost_refs.is_empty()
+        || item.v4.optional_additional_cost_paid.is_some()
         || item.v4.activated_ability_index.is_some()
     {
         return Err("spell-sourced trigger carries incompatible producer metadata".to_string());
@@ -2345,6 +2384,21 @@ fn legal_targets_for_controller_from_source(
             })
             .map(Target::Object)
             .collect(),
+        TargetSpec::OpponentArtifactOrEnchantmentPermanent => state.players
+            [controller.opponent().index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let object = state.objects.get(id);
+            let definition = &card_def::CARD_DEFS[object.card_def as usize];
+            object.zone == Zone::Battlefield
+                && object.controller == controller.opponent()
+                && (definition.has_type(CardType::Artifact)
+                    || definition.has_type(CardType::Enchantment))
+        })
+        .map(Target::Object)
+        .collect(),
         TargetSpec::SpellManaValueAtMostControlledSubtypes { first, second } => {
             let first = first.stable_id();
             let second = second.map(card_def::Subtype::stable_id);
@@ -3620,6 +3674,228 @@ fn commit_graveyard_exile(state: &mut GameState, chosen: &[ObjectId]) {
         .map(|id| ProposedEvent::zone_change(id, Zone::Exile))
         .collect();
     event::propose_and_commit_batch(state, events);
+}
+
+fn collect_evidence_candidates(
+    player: PlayerId,
+    state: &GameState,
+) -> Result<Vec<EffectObjectBinding>, String> {
+    let graveyard = &state.players[player.index()].graveyard;
+    let mut seen = Vec::with_capacity(graveyard.len());
+    let mut candidates = Vec::with_capacity(graveyard.len());
+    for &object_id in graveyard {
+        if seen.contains(&object_id) {
+            return Err("Collect Evidence graveyard index contains a duplicate".to_string());
+        }
+        seen.push(object_id);
+        let object = state
+            .objects
+            .try_get(object_id)
+            .ok_or("Collect Evidence graveyard object is missing")?;
+        if object.zone != Zone::Graveyard || object.owner != player {
+            return Err("Collect Evidence graveyard binding changed owner or zone".to_string());
+        }
+        if object.v4.face_index != 0 {
+            return Err(
+                "Collect Evidence mana value is unavailable for a non-front face".to_string(),
+            );
+        }
+        let def = card_def::CARD_DEFS
+            .get(object.card_def as usize)
+            .ok_or("Collect Evidence card definition is missing")?;
+        if object.v4.is_token != def.is_token {
+            return Err("Collect Evidence token identity is inconsistent".to_string());
+        }
+        if !def.is_token {
+            candidates.push(EffectObjectBinding {
+                object: object_id,
+                expected_zone: Zone::Graveyard,
+                expected_zone_change_count: object.zone_change_count,
+            });
+        }
+    }
+    Ok(candidates)
+}
+
+fn bargain_candidates(
+    player: PlayerId,
+    state: &GameState,
+) -> Result<Vec<EffectObjectBinding>, String> {
+    let battlefield = &state.players[player.index()].battlefield;
+    let mut seen = Vec::with_capacity(battlefield.len());
+    let mut candidates = Vec::new();
+    for &object_id in battlefield {
+        if seen.contains(&object_id) {
+            return Err("Bargain battlefield index contains a duplicate".to_string());
+        }
+        seen.push(object_id);
+        let object = state
+            .objects
+            .try_get(object_id)
+            .ok_or("Bargain battlefield object is missing")?;
+        if object.zone != Zone::Battlefield || object.controller != player {
+            return Err("Bargain permanent binding changed controller or zone".to_string());
+        }
+        if object.v4.face_index != 0 {
+            return Err(
+                "Bargain effective card types are unavailable for a non-front face".to_string(),
+            );
+        }
+        let def = card_def::CARD_DEFS
+            .get(object.card_def as usize)
+            .ok_or("Bargain permanent definition is missing")?;
+        if object.v4.is_token != def.is_token {
+            return Err("Bargain token identity is inconsistent".to_string());
+        }
+        if def.is_token || def.has_type(CardType::Artifact) || def.has_type(CardType::Enchantment) {
+            candidates.push(EffectObjectBinding {
+                object: object_id,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: object.zone_change_count,
+            });
+        }
+    }
+    Ok(candidates)
+}
+
+fn optional_cost_binding_is_live(state: &GameState, binding: EffectObjectBinding) -> bool {
+    state.objects.try_get(binding.object).is_some_and(|object| {
+        object.zone == binding.expected_zone
+            && object.zone_change_count == binding.expected_zone_change_count
+    })
+}
+
+fn selected_bindings_are_unique_subset(
+    selected: &[EffectObjectBinding],
+    candidates: &[EffectObjectBinding],
+) -> bool {
+    selected.iter().enumerate().all(|(index, binding)| {
+        candidates
+            .iter()
+            .filter(|candidate| *candidate == binding)
+            .count()
+            == 1
+            && !selected[..index].contains(binding)
+    })
+}
+
+fn collect_evidence_mana_value(
+    state: &GameState,
+    selected: &[EffectObjectBinding],
+) -> Result<u32, String> {
+    selected.iter().try_fold(0_u32, |sum, binding| {
+        if !optional_cost_binding_is_live(state, *binding) {
+            return Err("Collect Evidence selection is stale".to_string());
+        }
+        let object = state.objects.get(binding.object);
+        let mana_value = u32::from(
+            card_def::CARD_DEFS
+                .get(object.card_def as usize)
+                .ok_or("Collect Evidence card definition is missing")?
+                .mana_value,
+        );
+        sum.checked_add(mana_value)
+            .ok_or_else(|| "Collect Evidence mana-value sum overflowed".to_string())
+    })
+}
+
+fn optional_additional_cost_is_payable(
+    kind: OptionalAdditionalCostDef,
+    player: PlayerId,
+    state: &GameState,
+) -> Result<bool, String> {
+    match kind {
+        OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value } => {
+            let candidates = collect_evidence_candidates(player, state)?;
+            Ok(collect_evidence_mana_value(state, &candidates)? >= u32::from(minimum_mana_value))
+        }
+        OptionalAdditionalCostDef::Bargain => Ok(!bargain_candidates(player, state)?.is_empty()),
+    }
+}
+
+fn optional_additional_cost_selection_is_complete(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    state: &GameState,
+) -> Result<bool, String> {
+    match (
+        def.optional_additional_cost,
+        pending.optional_additional_cost_paid,
+    ) {
+        (None, Some(false)) | (Some(_), Some(false)) => Ok(true),
+        (Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }), Some(true)) => {
+            Ok(pending.optional_additional_cost_selection_finished
+                && collect_evidence_mana_value(state, &pending.optional_additional_cost_chosen)?
+                    >= u32::from(minimum_mana_value))
+        }
+        (Some(OptionalAdditionalCostDef::Bargain), Some(true)) => {
+            Ok(pending.optional_additional_cost_chosen.len() == 1)
+        }
+        (Some(_), None) => Ok(false),
+        _ => Err("pending cast optional additional-cost state is noncanonical".to_string()),
+    }
+}
+
+fn validate_optional_additional_paid_refs(
+    kind: OptionalAdditionalCostDef,
+    controller: PlayerId,
+    refs: &[PaidCostRefV4],
+) -> Result<(), String> {
+    if refs.is_empty()
+        || refs.iter().enumerate().any(|(index, paid)| {
+            refs[..index]
+                .iter()
+                .any(|prior| prior.object == paid.object)
+        })
+    {
+        return Err("optional additional-cost provenance is empty or duplicated".to_string());
+    }
+    match kind {
+        OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value } => {
+            let mut total = 0_u32;
+            for paid in refs {
+                let def = card_def::CARD_DEFS
+                    .get(paid.card_def as usize)
+                    .ok_or("Collect Evidence paid-card definition is missing")?;
+                if paid.owner != controller
+                    || paid.zone != Zone::Exile
+                    || paid.visible_to_mask != 0b11
+                    || def.is_token
+                {
+                    return Err(
+                        "Collect Evidence paid-card provenance changed owner, zone, or type"
+                            .to_string(),
+                    );
+                }
+                total = total
+                    .checked_add(u32::from(def.mana_value))
+                    .ok_or("Collect Evidence paid mana-value sum overflowed")?;
+            }
+            if total < u32::from(minimum_mana_value) {
+                return Err("Collect Evidence paid provenance is below its minimum".to_string());
+            }
+        }
+        OptionalAdditionalCostDef::Bargain => {
+            let [paid] = refs else {
+                return Err(
+                    "Bargain paid provenance must contain exactly one permanent".to_string()
+                );
+            };
+            let def = card_def::CARD_DEFS
+                .get(paid.card_def as usize)
+                .ok_or("Bargain paid permanent definition is missing")?;
+            if paid.controller != controller
+                || paid.zone != Zone::Graveyard
+                || paid.visible_to_mask != 0b11
+                || !(def.is_token
+                    || def.has_type(CardType::Artifact)
+                    || def.has_type(CardType::Enchantment))
+            {
+                return Err("Bargain paid provenance is not one eligible sacrifice".to_string());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// How many lands (0 if none) the cast currently staged in `pending`
@@ -5412,6 +5688,8 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
                 targets: Vec::new(),
                 target_contracts: Vec::new(),
                 placement_ordered: false,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             });
         } else {
             event::propose_and_commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
@@ -5828,6 +6106,7 @@ pub(crate) fn validate_pending_cast(
         || placeholder.v4.face_index != 0
         || placeholder.v4.x_value != 0
         || !placeholder.v4.paid_cost_refs.is_empty()
+        || placeholder.v4.optional_additional_cost_paid.is_some()
         || placeholder.v4.target_spec.is_some()
         || !placeholder.v4.target_contracts.is_empty()
         || placeholder.v4.activated_ability_index.is_some()
@@ -6030,6 +6309,79 @@ pub(crate) fn validate_pending_cast(
         return Err("pending cast kicker stage is malformed".to_string());
     }
 
+    match (
+        def.optional_additional_cost,
+        pending.optional_additional_cost_paid,
+    ) {
+        (None, Some(false)) => {
+            if !pending.optional_additional_cost_chosen.is_empty()
+                || pending.optional_additional_cost_selection_finished
+            {
+                return Err(
+                    "cast without an optional additional cost carries payment state".to_string(),
+                );
+            }
+        }
+        (Some(_), None) | (Some(_), Some(false)) => {
+            if !pending.optional_additional_cost_chosen.is_empty()
+                || pending.optional_additional_cost_selection_finished
+            {
+                return Err("unpaid optional additional cost carries payment objects".to_string());
+            }
+        }
+        (Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }), Some(true)) => {
+            let candidates = collect_evidence_candidates(pending.controller, state)?;
+            if !selected_bindings_are_unique_subset(
+                &pending.optional_additional_cost_chosen,
+                &candidates,
+            ) || pending
+                .optional_additional_cost_chosen
+                .iter()
+                .any(|binding| !optional_cost_binding_is_live(state, *binding))
+            {
+                return Err(
+                    "Collect Evidence selection is not a unique live graveyard subset".to_string(),
+                );
+            }
+            let selected_sum =
+                collect_evidence_mana_value(state, &pending.optional_additional_cost_chosen)?;
+            let remaining = candidates
+                .iter()
+                .copied()
+                .filter(|binding| !pending.optional_additional_cost_chosen.contains(binding))
+                .collect::<Vec<_>>();
+            let remaining_sum = collect_evidence_mana_value(state, &remaining)?;
+            if selected_sum
+                .checked_add(remaining_sum)
+                .is_none_or(|total| total < u32::from(minimum_mana_value))
+            {
+                return Err("Collect Evidence selection can no longer meet its minimum".to_string());
+            }
+            if pending.optional_additional_cost_selection_finished
+                && selected_sum < u32::from(minimum_mana_value)
+            {
+                return Err("Collect Evidence finished below its minimum mana value".to_string());
+            }
+        }
+        (Some(OptionalAdditionalCostDef::Bargain), Some(true)) => {
+            let candidates = bargain_candidates(pending.controller, state)?;
+            if pending.optional_additional_cost_selection_finished
+                || pending.optional_additional_cost_chosen.len() > 1
+                || !selected_bindings_are_unique_subset(
+                    &pending.optional_additional_cost_chosen,
+                    &candidates,
+                )
+                || pending
+                    .optional_additional_cost_chosen
+                    .iter()
+                    .any(|binding| !optional_cost_binding_is_live(state, *binding))
+            {
+                return Err("Bargain selection is not one live eligible permanent".to_string());
+            }
+        }
+        _ => return Err("pending cast optional additional-cost state is noncanonical".to_string()),
+    }
+
     let sacrifice_needed = sacrifice_lands_needed(pending, def);
     let graveyard_exile_needed = graveyard_exile_cards_needed(pending, def);
     let controlled_sacrifice = controlled_permanent_sacrifice_needed(pending, def);
@@ -6119,6 +6471,19 @@ pub(crate) fn validate_pending_cast(
     {
         return Err("pending cast chose object costs before prior stages completed".to_string());
     }
+    if (!pending.optional_additional_cost_chosen.is_empty()
+        || pending.optional_additional_cost_selection_finished)
+        && (pending.kicked.is_none()
+            || pending.mode_chosen.is_none()
+            || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
+            || pending.cast_mode.is_none()
+            || pending.sacrifice_chosen.len() != usize::from(interactive_object_cost_needed))
+    {
+        return Err(
+            "optional additional-cost objects were chosen before prior cast stages completed"
+                .to_string(),
+        );
+    }
 
     let interactive_discard = def.additional_cost.and_then(discard_count_in);
     let seeded_mode = if has_spell_form_choice(def) {
@@ -6137,9 +6502,17 @@ pub(crate) fn validate_pending_cast(
     } else {
         pending.additional_cost_discarded.is_none()
     };
+    let optional_is_at_seed = if def.optional_additional_cost.is_none() {
+        pending.optional_additional_cost_paid == Some(false)
+    } else {
+        pending.optional_additional_cost_paid.is_none()
+    } && pending.optional_additional_cost_chosen.is_empty()
+        && !pending.optional_additional_cost_selection_finished;
     let later_fields_are_seeded = |require_seeded_cast_mode: bool| {
         (!require_seeded_cast_mode || pending.cast_mode == seeded_cast_mode)
             && pending.sacrifice_chosen.is_empty()
+            && pending.optional_additional_cost_chosen.is_empty()
+            && !pending.optional_additional_cost_selection_finished
             && additional_is_at_seed
             && state.engine.pending_discard.is_none()
     };
@@ -6147,9 +6520,20 @@ pub(crate) fn validate_pending_cast(
         && (pending.mode_chosen != seeded_mode
             || !pending.targets_chosen.is_empty()
             || pending.target_selection_finished
+            || !optional_is_at_seed
             || !later_fields_are_seeded(true))
     {
         return Err("pending cast advanced past an unresolved kicker choice".to_string());
+    }
+    if pending.optional_additional_cost_paid.is_none()
+        && (pending.mode_chosen != seeded_mode
+            || !pending.targets_chosen.is_empty()
+            || pending.target_selection_finished
+            || !later_fields_are_seeded(true))
+    {
+        return Err(
+            "pending cast advanced past an unresolved optional additional-cost choice".to_string(),
+        );
     }
     if has_spell_form_choice(def)
         && pending.mode_chosen.is_none()
@@ -6185,6 +6569,13 @@ pub(crate) fn validate_pending_cast(
         && (!additional_is_at_seed || state.engine.pending_discard.is_some())
     {
         return Err("pending cast advanced past an incomplete object cost".to_string());
+    }
+    if !optional_additional_cost_selection_is_complete(pending, def, state)?
+        && (!additional_is_at_seed || state.engine.pending_discard.is_some())
+    {
+        return Err(
+            "pending cast advanced past an incomplete optional additional cost".to_string(),
+        );
     }
     match (
         def.additional_cost,
@@ -6235,6 +6626,7 @@ pub(crate) fn validate_pending_cast(
             || pending.cast_mode.is_none()
             || pending.kicked.is_none()
             || pending.sacrifice_chosen.len() != usize::from(interactive_object_cost_needed)
+            || !optional_additional_cost_selection_is_complete(pending, def, state)?
         {
             return Err("pending cast discard binding or stage changed".to_string());
         }
@@ -6303,6 +6695,36 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             }
             state.engine.pending_cast.as_mut().unwrap().kicked = Some(false);
             return drain_pending_cast_or_decide(state);
+        }
+    }
+
+    if let Some(kind) = def.optional_additional_cost {
+        if pending.optional_additional_cost_paid.is_none() {
+            match optional_additional_cost_is_payable(kind, pending.controller, state) {
+                Ok(true) => {
+                    return Some(Decision::ChooseEffectOption {
+                        player: pending.controller,
+                        source: pending.spell,
+                        option_count: 2,
+                    });
+                }
+                Ok(false) => {
+                    state
+                        .engine
+                        .pending_cast
+                        .as_mut()
+                        .expect("validated cast remains pending")
+                        .optional_additional_cost_paid = Some(false);
+                    return drain_pending_cast_or_decide(state);
+                }
+                Err(_) => {
+                    state.engine.halted = Some((
+                        UnsupportedMechanic::InvalidEffectContinuation,
+                        pending.spell,
+                    ));
+                    return None;
+                }
+            }
         }
     }
 
@@ -6533,6 +6955,132 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 remaining: 1,
                 candidates,
             });
+        }
+    }
+
+    if pending.optional_additional_cost_paid == Some(true) {
+        match def
+            .optional_additional_cost
+            .expect("a paid optional additional cost remains definition-owned")
+        {
+            OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value } => {
+                if !pending.optional_additional_cost_selection_finished {
+                    let candidates = match collect_evidence_candidates(pending.controller, state) {
+                        Ok(candidates) => candidates,
+                        Err(_) => {
+                            state.engine.halted = Some((
+                                UnsupportedMechanic::InvalidEffectContinuation,
+                                pending.spell,
+                            ));
+                            return None;
+                        }
+                    };
+                    let remaining = candidates
+                        .iter()
+                        .copied()
+                        .filter(|binding| {
+                            !pending.optional_additional_cost_chosen.contains(binding)
+                        })
+                        .collect::<Vec<_>>();
+                    let selected_sum = match collect_evidence_mana_value(
+                        state,
+                        &pending.optional_additional_cost_chosen,
+                    ) {
+                        Ok(sum) => sum,
+                        Err(_) => {
+                            state.engine.halted = Some((
+                                UnsupportedMechanic::InvalidEffectContinuation,
+                                pending.spell,
+                            ));
+                            return None;
+                        }
+                    };
+                    if selected_sum < u32::from(minimum_mana_value) && remaining.len() == 1 {
+                        state
+                            .engine
+                            .pending_cast
+                            .as_mut()
+                            .expect("validated cast remains pending")
+                            .optional_additional_cost_chosen
+                            .push(remaining[0]);
+                        return drain_pending_cast_or_decide(state);
+                    }
+                    if remaining.is_empty() && selected_sum < u32::from(minimum_mana_value) {
+                        state.engine.halted = Some((
+                            UnsupportedMechanic::InvalidEffectContinuation,
+                            pending.spell,
+                        ));
+                        return None;
+                    }
+                    let max_targets = match u16::try_from(candidates.len()) {
+                        Ok(count) => count,
+                        Err(_) => {
+                            state.engine.halted = Some((
+                                UnsupportedMechanic::InvalidEffectContinuation,
+                                pending.spell,
+                            ));
+                            return None;
+                        }
+                    };
+                    return Some(Decision::ChooseEffectTargets {
+                        player: pending.controller,
+                        source: pending.spell,
+                        selected_count: pending.optional_additional_cost_chosen.len() as u16,
+                        min_targets: 1,
+                        max_targets,
+                        legal_targets: remaining
+                            .into_iter()
+                            .map(|binding| Target::Object(binding.object))
+                            .collect(),
+                        can_finish: selected_sum >= u32::from(minimum_mana_value),
+                    });
+                }
+            }
+            OptionalAdditionalCostDef::Bargain => {
+                if pending.optional_additional_cost_chosen.is_empty() {
+                    let candidates = match bargain_candidates(pending.controller, state) {
+                        Ok(candidates) => candidates,
+                        Err(_) => {
+                            state.engine.halted = Some((
+                                UnsupportedMechanic::InvalidEffectContinuation,
+                                pending.spell,
+                            ));
+                            return None;
+                        }
+                    };
+                    match candidates.as_slice() {
+                        [] => {
+                            state.engine.halted = Some((
+                                UnsupportedMechanic::InvalidEffectContinuation,
+                                pending.spell,
+                            ));
+                            return None;
+                        }
+                        [binding] => {
+                            state
+                                .engine
+                                .pending_cast
+                                .as_mut()
+                                .expect("validated cast remains pending")
+                                .optional_additional_cost_chosen
+                                .push(*binding);
+                            return drain_pending_cast_or_decide(state);
+                        }
+                        _ => {
+                            return Some(Decision::ChooseCostTargets {
+                                player: pending.controller,
+                                source: pending.spell,
+                                cost_kind: CostKind::SacrificePermanents,
+                                remaining: 1,
+                                candidates: candidates
+                                    .into_iter()
+                                    .map(|binding| binding.object)
+                                    .collect(),
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -7313,6 +7861,8 @@ fn validate_pending_trigger_for_stack(
         v4: StackStateV4 {
             stack_item_id: prospective_stack_item_id,
             source_contract: spell_source_contract,
+            paid_cost_refs: pending.paid_cost_refs.clone(),
+            optional_additional_cost_paid: pending.optional_additional_cost_paid,
             target_spec: (pending.target_spec != TargetSpec::None).then_some(pending.target_spec),
             target_contracts: pending.target_contracts.clone(),
             ability_source_contract: pending.source_contract,
@@ -7344,6 +7894,8 @@ fn validate_pending_trigger_identity(
             .ok_or("pending Madness trigger source definition is missing")?;
         if pending.target_spec != TargetSpec::None
             || !pending.targets.is_empty()
+            || pending.optional_additional_cost_paid.is_some()
+            || !pending.paid_cost_refs.is_empty()
             || pending.effect != EffectOp::Sequence(Vec::new())
             || pending.granted_by.is_some()
             || source_contract.source != pending.source
@@ -7377,6 +7929,8 @@ fn validate_pending_trigger_identity(
         kicked: pending.kicked,
         v4: StackStateV4 {
             source_contract: spell_source_contract,
+            paid_cost_refs: pending.paid_cost_refs.clone(),
+            optional_additional_cost_paid: pending.optional_additional_cost_paid,
             target_spec: (pending.target_spec != TargetSpec::None).then_some(pending.target_spec),
             target_contracts: pending.target_contracts.clone(),
             ability_source_contract: pending.source_contract,
@@ -7430,6 +7984,8 @@ fn push_trigger_onto_stack(state: &mut GameState, t: PendingTrigger) -> Result<(
             stack_item_id,
             source_contract: spell_source_contract,
             madness_source_contract,
+            paid_cost_refs: t.paid_cost_refs,
+            optional_additional_cost_paid: t.optional_additional_cost_paid,
             target_spec: (t.target_spec != TargetSpec::None).then_some(t.target_spec),
             target_contracts: t.target_contracts,
             ability_source_contract: (!t.is_madness_offer && spell_source_contract.is_none()).then(
@@ -7490,6 +8046,7 @@ fn validate_madness_offer_stack_item(state: &GameState, item: &StackItem) -> Res
         || item.v4.face_index != 0
         || item.v4.x_value != 0
         || !item.v4.paid_cost_refs.is_empty()
+        || item.v4.optional_additional_cost_paid.is_some()
         || item.v4.target_spec.is_some()
         || !item.v4.target_contracts.is_empty()
         || item.v4.activated_ability_index.is_some()
@@ -7637,6 +8194,14 @@ fn triggered_stack_item_expected_target_spec(
         (_, None) => false,
     };
     let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
+    let expected_optional_cost =
+        trigger::required_optional_additional_cost_for_trigger(source_card_def, inline_effect);
+    if item.v4.optional_additional_cost_paid != expected_optional_cost {
+        return Err("trigger optional additional-cost provenance changed".to_string());
+    }
+    if let Some(kind) = expected_optional_cost {
+        validate_optional_additional_paid_refs(kind, item.controller, &item.v4.paid_cost_refs)?;
+    }
     let definition_trigger = item.v4.granted_by.is_none() && definition_target_spec.is_some();
     let ward_trigger = if item.v4.granted_by.is_none() {
         if let Some(source_contract) = ability_source_contract {
@@ -7754,6 +8319,7 @@ pub(crate) fn validated_stack_item_target_spec(
             if item.inline_effect.is_none()
                 || item.v4.madness_source_contract.is_some()
                 || item.v4.granted_by.is_some()
+                || item.v4.optional_additional_cost_paid.is_some()
             {
                 return Err(
                     "activated stack item carries incompatible producer metadata".to_string(),
@@ -8211,6 +8777,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
         hidden_ability_source: item.v4.hidden_ability_source,
         ability_source_contract: item.v4.ability_source_contract,
         kicked: item.kicked,
+        optional_additional_cost_paid: item.v4.optional_additional_cost_paid,
     };
 
     if !targets_legal {
@@ -8220,6 +8787,19 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
             return ResolutionProgress::Suspended;
         }
         return ResolutionProgress::Complete;
+    }
+
+    if item.kind == StackItemKind::Spell {
+        if let Some(kind) = item.v4.optional_additional_cost_paid {
+            state
+                .engine
+                .event_log
+                .push(CommittedEvent::OptionalAdditionalCostPaid {
+                    source: item.source,
+                    kind,
+                    paid_cost_refs: item.v4.paid_cost_refs.clone(),
+                });
+        }
     }
 
     if let Some(effect) = item.inline_effect.clone() {
@@ -9157,11 +9737,14 @@ fn assign_attacker_damage_to_blockers(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PendingCastActionStage {
     ChooseKicker,
+    ChooseOptionalAdditionalCost,
     ChooseSpellMode,
     ChooseTarget,
     ChooseOptionalTarget,
     ChooseCastMode,
     ChooseCostTarget,
+    ChooseCollectEvidenceCard,
+    ChooseBargainPermanent,
     Discard,
     AwaitEngineAdvance,
 }
@@ -9191,6 +9774,9 @@ fn pending_cast_action_stage(
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     if pending.kicked.is_none() {
         return Ok(PendingCastActionStage::ChooseKicker);
+    }
+    if pending.optional_additional_cost_paid.is_none() {
+        return Ok(PendingCastActionStage::ChooseOptionalAdditionalCost);
     }
     if pending.mode_chosen.is_none() {
         return Ok(PendingCastActionStage::ChooseSpellMode);
@@ -9231,6 +9817,24 @@ fn pending_cast_action_stage(
     {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
+    if pending.optional_additional_cost_paid == Some(true) {
+        match def
+            .optional_additional_cost
+            .ok_or("paid optional additional cost lost its definition")?
+        {
+            OptionalAdditionalCostDef::CollectEvidence { .. }
+                if !pending.optional_additional_cost_selection_finished =>
+            {
+                return Ok(PendingCastActionStage::ChooseCollectEvidenceCard);
+            }
+            OptionalAdditionalCostDef::Bargain
+                if pending.optional_additional_cost_chosen.is_empty() =>
+            {
+                return Ok(PendingCastActionStage::ChooseBargainPermanent);
+            }
+            _ => {}
+        }
+    }
     Ok(PendingCastActionStage::AwaitEngineAdvance)
 }
 
@@ -9240,6 +9844,9 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
         (
             PendingCastActionStage::ChooseKicker,
             Action::ChooseKicker(_)
+        ) | (
+            PendingCastActionStage::ChooseOptionalAdditionalCost,
+            Action::ChooseEffectOption(_)
         ) | (
             PendingCastActionStage::ChooseSpellMode,
             Action::ChooseSpellMode(_)
@@ -9254,6 +9861,12 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
             Action::ChooseCastMode(_)
         ) | (
             PendingCastActionStage::ChooseCostTarget,
+            Action::ChooseCostTarget(_)
+        ) | (
+            PendingCastActionStage::ChooseCollectEvidenceCard,
+            Action::ChooseEffectTarget(_) | Action::FinishEffectSelection
+        ) | (
+            PendingCastActionStage::ChooseBargainPermanent,
             Action::ChooseCostTarget(_)
         ) | (PendingCastActionStage::Discard, Action::Discard(_))
     )
@@ -9518,12 +10131,16 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         Action::ChooseEffectOption(option_index) => {
             if state.engine.pending_land_play.is_some() {
                 apply_choose_land_color(state, option_index)
+            } else if state.engine.pending_cast.is_some() {
+                apply_choose_optional_additional_cost(state, option_index)
             } else {
                 effect::choose_resumable_option(state, option_index)
             }
         }
         Action::ChooseEffectTarget(target) => {
-            if state.engine.pending_activation.is_some() {
+            if state.engine.pending_cast.is_some() {
+                apply_choose_collect_evidence_target(state, target)
+            } else if state.engine.pending_activation.is_some() {
                 apply_choose_optional_activation_target(state, target)
             } else {
                 effect::choose_resumable_target(state, target)
@@ -9531,7 +10148,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
         }
         Action::FinishEffectSelection => {
             if state.engine.pending_cast.is_some() {
-                finish_optional_cast_targets(state)
+                finish_optional_cast_or_collect_evidence(state)
             } else if state.engine.pending_activation.is_some() {
                 finish_optional_activation_targets(state)
             } else {
@@ -9712,6 +10329,108 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
             Ok(())
         }
     }
+}
+
+fn apply_choose_optional_additional_cost(
+    state: &mut GameState,
+    option_index: u16,
+) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .clone()
+        .ok_or("no cast is choosing an optional additional cost")?;
+    validate_pending_cast(state, &pending)?;
+    if pending.kicked.is_none() || pending.optional_additional_cost_paid.is_some() {
+        return Err("optional additional cost is not the active cast stage".to_string());
+    }
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let kind = def
+        .optional_additional_cost
+        .ok_or("this spell has no optional additional cost")?;
+    if !optional_additional_cost_is_payable(kind, pending.controller, state)? {
+        return Err("optional additional cost is no longer payable".to_string());
+    }
+    let paid = match option_index {
+        0 => false,
+        1 => true,
+        _ => return Err("optional additional-cost option index is out of range".to_string()),
+    };
+    state
+        .engine
+        .pending_cast
+        .as_mut()
+        .expect("validated cast remains pending")
+        .optional_additional_cost_paid = Some(paid);
+    Ok(())
+}
+
+fn apply_choose_collect_evidence_target(
+    state: &mut GameState,
+    target: Target,
+) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .clone()
+        .ok_or("no cast is selecting Collect Evidence cards")?;
+    validate_pending_cast(state, &pending)?;
+    if pending_cast_action_stage(state, &pending)?
+        != PendingCastActionStage::ChooseCollectEvidenceCard
+    {
+        return Err("Collect Evidence is not the active cast stage".to_string());
+    }
+    let Target::Object(object_id) = target else {
+        return Err("Collect Evidence requires a graveyard card".to_string());
+    };
+    let candidates = collect_evidence_candidates(pending.controller, state)?;
+    let binding = candidates
+        .into_iter()
+        .find(|binding| {
+            binding.object == object_id
+                && !pending.optional_additional_cost_chosen.contains(binding)
+        })
+        .ok_or_else(|| format!("{object_id} is not a legal Collect Evidence card"))?;
+    state
+        .engine
+        .pending_cast
+        .as_mut()
+        .expect("validated cast remains pending")
+        .optional_additional_cost_chosen
+        .push(binding);
+    Ok(())
+}
+
+fn finish_optional_cast_or_collect_evidence(state: &mut GameState) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_cast
+        .clone()
+        .ok_or("no cast has a finishable selection")?;
+    validate_pending_cast(state, &pending)?;
+    if pending_cast_action_stage(state, &pending)?
+        == PendingCastActionStage::ChooseCollectEvidenceCard
+    {
+        let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+        let Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value }) =
+            def.optional_additional_cost
+        else {
+            return Err("Collect Evidence finish lost its definition".to_string());
+        };
+        let selected_sum =
+            collect_evidence_mana_value(state, &pending.optional_additional_cost_chosen)?;
+        if selected_sum < u32::from(minimum_mana_value) {
+            return Err("Collect Evidence cannot finish below its mana-value minimum".to_string());
+        }
+        state
+            .engine
+            .pending_cast
+            .as_mut()
+            .expect("validated cast remains pending")
+            .optional_additional_cost_selection_finished = true;
+        return Ok(());
+    }
+    finish_optional_cast_targets(state)
 }
 
 fn finish_optional_cast_targets(state: &mut GameState) -> Result<(), String> {
@@ -9976,6 +10695,28 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                     .push(id);
                 return Ok(());
             }
+        }
+        if pending.optional_additional_cost_paid == Some(true)
+            && def.optional_additional_cost == Some(OptionalAdditionalCostDef::Bargain)
+            && pending.optional_additional_cost_chosen.is_empty()
+        {
+            if pending_cast_action_stage(state, &pending)?
+                != PendingCastActionStage::ChooseBargainPermanent
+            {
+                return Err("Bargain is not the active cast stage".to_string());
+            }
+            let binding = bargain_candidates(pending.controller, state)?
+                .into_iter()
+                .find(|binding| binding.object == id)
+                .ok_or_else(|| format!("{id} is not a legal Bargain permanent"))?;
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .expect("validated cast remains pending")
+                .optional_additional_cost_chosen
+                .push(binding);
+            return Ok(());
         }
     }
     if let Some(pending) = state.engine.pending_activation.clone() {
@@ -11145,6 +11886,11 @@ fn begin_cast_ex(
     } else {
         None
     };
+    let optional_additional_cost_paid = if def.optional_additional_cost.is_none() {
+        Some(false)
+    } else {
+        None
+    };
 
     move_to_stack(state, spell_id, origin_zone);
     if is_plotted {
@@ -11199,6 +11945,9 @@ fn begin_cast_ex(
         origin_zone,
         sacrifice_chosen: vec![],
         kicked,
+        optional_additional_cost_paid,
+        optional_additional_cost_chosen: vec![],
+        optional_additional_cost_selection_finished: false,
     });
 }
 
@@ -11400,8 +12149,34 @@ fn finalize_owned_cast(
         }
     }
 
+    let paid_optional_additional_cost = if pending.optional_additional_cost_paid == Some(true) {
+        let kind = def
+            .optional_additional_cost
+            .expect("validated paid optional additional cost remains definition-owned");
+        let chosen = pending
+            .optional_additional_cost_chosen
+            .iter()
+            .map(|binding| binding.object)
+            .collect::<Vec<_>>();
+        match kind {
+            OptionalAdditionalCostDef::CollectEvidence { .. } => {
+                commit_graveyard_exile(state, &chosen)
+            }
+            OptionalAdditionalCostDef::Bargain => commit_sacrifice(state, &chosen),
+        }
+        Some(kind)
+    } else {
+        None
+    };
+
     let mut paid_cost_objects = object_cost_chosen;
     paid_cost_objects.extend(discarded.iter().copied());
+    paid_cost_objects.extend(
+        pending
+            .optional_additional_cost_chosen
+            .iter()
+            .map(|binding| binding.object),
+    );
     // Capture after sacrifice/discard zone changes have committed. These refs
     // describe the payment-time incarnation and visibility forever; later
     // reanimation, bounce, shuffle, or exile cannot rewrite stack provenance.
@@ -11450,6 +12225,7 @@ fn finalize_owned_cast(
     };
     item.kicked = was_kicked;
     item.v4.paid_cost_refs = paid_cost_refs;
+    item.v4.optional_additional_cost_paid = paid_optional_additional_cost;
     item.v4.cast_method = Some(cast_method);
     item.v4.source_contract = Some(finalized_source_contract);
     let stack_item_id = item.v4.stack_item_id;
@@ -12581,6 +13357,8 @@ mod tests {
             target_contracts: Vec::new(),
             placement_ordered: false,
             source_contract: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
         });
         state.engine.pending_triggers.push(PendingTrigger {
             controller: PlayerId::P0,
@@ -12594,6 +13372,8 @@ mod tests {
             target_contracts: Vec::new(),
             placement_ordered: false,
             source_contract: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
         });
         let err = step(&mut state, Action::OrderTriggers(vec![0, 0])).unwrap_err();
         assert!(err.contains("permutation"));

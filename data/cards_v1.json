@@ -964,6 +964,7 @@
     },
     {
       "name": "Extract a Confession",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -2212,6 +2213,7 @@
     },
     {
       "name": "Masked Vandal",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -3780,6 +3782,7 @@
     },
     {
       "name": "Troublemaker Ouphe",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -3901,6 +3904,7 @@
     },
     {
       "name": "Vitu-Ghazi Inspector",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [

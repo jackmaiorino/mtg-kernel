@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "a267d11630edbfe8a0ffbd88d123a9ec83dd239c419032fe3efceb6496e3a0c7"
+    "registry_raw_sha256": "c02fb3b1a7c9cac18248de11221a93fc26a818fad542bc529bc78ae563c4b0b5"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 143,
+    "full_cards": 147,
     "partial_cards": 0,
-    "no_effect_cards": 7,
+    "no_effect_cards": 3,
     "token_dependencies": 11
   },
   "deck_mainboard_copy_totals": [
@@ -38,16 +38,16 @@
     },
     {
       "deck_id": "Elves",
-      "full": 48,
+      "full": 52,
       "partial": 0,
-      "no_effect": 12,
+      "no_effect": 8,
       "total": 60
     },
     {
       "deck_id": "Spy",
-      "full": 57,
+      "full": 60,
       "partial": 0,
-      "no_effect": 3,
+      "no_effect": 0,
       "total": 60
     },
     {
@@ -1003,10 +1003,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Faerie Macabre",
@@ -2077,10 +2075,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Mental Note",
@@ -3336,10 +3332,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Twisted Landscape",
@@ -3430,10 +3424,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Voldaren Epicure",

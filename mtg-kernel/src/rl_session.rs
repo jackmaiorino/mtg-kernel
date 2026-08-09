@@ -9308,6 +9308,8 @@ mod tests {
                 target_contracts: Vec::new(),
                 placement_ordered: false,
                 source_contract: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             })
             .collect();
         flat_install_origin_decision(

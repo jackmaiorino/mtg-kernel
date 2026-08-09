@@ -1835,6 +1835,9 @@ fn rl_contract_engine_pending_cast_context_changes_hash() {
         origin_zone: Zone::Hand,
         sacrifice_chosen: Vec::new(),
         kicked: Some(false),
+        optional_additional_cost_paid: Some(false),
+        optional_additional_cost_chosen: Vec::new(),
+        optional_additional_cost_selection_finished: false,
     });
     let mut b = a.clone();
     b.engine.pending_cast.as_mut().unwrap().targets_chosen = vec![Target::Player(PlayerId::P0)];

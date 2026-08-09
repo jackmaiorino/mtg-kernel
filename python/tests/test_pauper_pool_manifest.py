@@ -537,9 +537,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 143,
+                "full_cards": 147,
                 "partial_cards": 0,
-                "no_effect_cards": 7,
+                "no_effect_cards": 3,
                 "token_dependencies": 11,
             },
         )
@@ -547,8 +547,8 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Wildfire", "full": 59, "partial": 0, "no_effect": 1, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Affinity", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Elves", "full": 48, "partial": 0, "no_effect": 12, "total": 60},
-            {"deck_id": "Spy", "full": 57, "partial": 0, "no_effect": 3, "total": 60},
+            {"deck_id": "Elves", "full": 52, "partial": 0, "no_effect": 8, "total": 60},
+            {"deck_id": "Spy", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "CawGates", "full": 60, "partial": 0, "no_effect": 0, "total": 60},

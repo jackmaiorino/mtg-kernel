@@ -10,7 +10,7 @@
 
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
-use crate::state::{GameState, StackItemKind, Target, Zone};
+use crate::state::{GameState, PaidCostRefV4, StackItemKind, Target, Zone};
 use serde::{Deserialize, Serialize};
 
 pub type ReplacementId = u32;
@@ -408,6 +408,15 @@ pub enum CommittedEvent {
         source_zone_change_count: u32,
         controller: PlayerId,
         chapter: u8,
+    },
+    /// Transient cast-provenance marker consumed from `event_log` by the
+    /// trigger collection immediately following this resolution. It is not
+    /// appended to permanent `event_history`; the spell stack item and its
+    /// paid-cost references remain the durable provenance.
+    OptionalAdditionalCostPaid {
+        source: ObjectId,
+        kind: crate::card_def::OptionalAdditionalCostDef,
+        paid_cost_refs: Vec<PaidCostRefV4>,
     },
 }
 

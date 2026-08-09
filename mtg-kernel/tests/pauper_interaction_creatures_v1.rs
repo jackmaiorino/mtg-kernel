@@ -86,6 +86,7 @@ fn execute_trigger(state: &mut GameState, pending: &trigger::PendingTrigger) {
             hidden_ability_source: None,
             ability_source_contract: pending.source_contract,
             kicked: false,
+            optional_additional_cost_paid: None,
         },
         state,
     );
@@ -173,6 +174,7 @@ fn cast_down_uses_the_nonlegendary_filter_and_shared_destroy_path() {
             hidden_ability_source: None,
             ability_source_contract: None,
             kicked: false,
+            optional_additional_cost_paid: None,
         },
         &mut state,
     );

@@ -4134,6 +4134,9 @@ mod tests {
             origin_zone: Zone::Hand,
             sacrifice_chosen: Vec::new(),
             kicked: Some(false),
+            optional_additional_cost_paid: Some(false),
+            optional_additional_cost_chosen: Vec::new(),
+            optional_additional_cost_selection_finished: false,
         });
 
         let rec = decision_record_ex(
@@ -4326,6 +4329,8 @@ mod tests {
                 placement_ordered: false,
                 source_contract: None,
                 granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             },
             PendingTrigger {
                 controller: PlayerId::P0,
@@ -4342,6 +4347,8 @@ mod tests {
                 placement_ordered: false,
                 source_contract: None,
                 granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             },
         ];
         // `check_trigger_commutativity` (like its one real call site in
@@ -4396,6 +4403,8 @@ mod tests {
                 placement_ordered: false,
                 source_contract: None,
                 granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             },
             PendingTrigger {
                 controller: PlayerId::P0,
@@ -4412,6 +4421,8 @@ mod tests {
                 placement_ordered: false,
                 source_contract: None,
                 granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             },
         ];
         state.engine.pending_triggers = pending.clone();

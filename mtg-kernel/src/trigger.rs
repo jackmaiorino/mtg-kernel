@@ -8,11 +8,15 @@
 //! `engine.rs` to place on the stack (or, if 2+ share a controller, to ask
 //! that controller to order via `engine::Decision::OrderTriggers`).
 
-use crate::card_def::{CardType, DynamicValueDef, Keywords, Subtype, TargetSpec};
+use crate::card_def::{
+    CardType, DynamicValueDef, Keywords, OptionalAdditionalCostDef, Subtype, TargetSpec,
+};
 use crate::effect::{EffectCond, EffectObjectBinding, EffectOp, ObjectRef, PlayerRef, TargetRef};
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{AbilitySourceContractV4, GameState, StackTargetContractV4, Target, Zone};
+use crate::state::{
+    AbilitySourceContractV4, GameState, PaidCostRefV4, StackTargetContractV4, Target, Zone,
+};
 use serde::{Deserialize, Serialize};
 
 /// Trigger conditions this increment's kernel can match.
@@ -566,6 +570,46 @@ fn journey_to_nowhere_ltb_effect() -> EffectOp {
     EffectOp::ReturnObjectsExiledBySource
 }
 
+fn masked_vandal_etb_effect() -> EffectOp {
+    EffectOp::MayExileFromPlayersGraveyardMatchingThen {
+        player: PlayerRef::Controller,
+        card_type: CardType::Creature,
+        then: Box::new(EffectOp::MoveObject {
+            object: ObjectRef::Target(0),
+            to_zone: Zone::Exile,
+        }),
+    }
+}
+
+fn troublemaker_ouphe_etb_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::OptionalAdditionalCostPaid(OptionalAdditionalCostDef::Bargain),
+        then: Box::new(EffectOp::MoveObject {
+            object: ObjectRef::Target(0),
+            to_zone: Zone::Exile,
+        }),
+        else_: Box::new(EffectOp::Sequence(Vec::new())),
+    }
+}
+
+fn vitu_ghazi_inspector_etb_effect() -> EffectOp {
+    EffectOp::Conditional {
+        cond: EffectCond::OptionalAdditionalCostPaid(OptionalAdditionalCostDef::CollectEvidence {
+            minimum_mana_value: 6,
+        }),
+        then: Box::new(EffectOp::Sequence(vec![
+            EffectOp::PutPlusOnePlusOneCounter {
+                object: ObjectRef::Target(0),
+            },
+            EffectOp::GainLife {
+                player: PlayerRef::Controller,
+                amount: 2,
+            },
+        ])),
+        else_: Box::new(EffectOp::Sequence(Vec::new())),
+    }
+}
+
 fn experimental_synthesizer_impulse_effect() -> EffectOp {
     // When Experimental Synthesizer enters or leaves the battlefield, exile
     // the top card of your library. Until end of turn, you may play that
@@ -817,6 +861,29 @@ const JOURNEY_TO_NOWHERE_TRIGGERS: [TriggeredAbilityDef; 2] = [
         effect: journey_to_nowhere_ltb_effect,
     },
 ];
+const MASKED_VANDAL_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: masked_vandal_etb_effect,
+}];
+
+const TROUBLEMAKER_OUPHE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: troublemaker_ouphe_etb_effect,
+}];
+
+const VITU_GHAZI_INSPECTOR_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: vitu_ghazi_inspector_etb_effect,
+}];
 
 /// The pool's implemented triggered abilities, matched by card name (ids are
 /// codegen-assigned from `cards_v1.json`'s array order and not worth
@@ -870,6 +937,9 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Journey to Nowhere" => &JOURNEY_TO_NOWHERE_TRIGGERS,
         "Lembas" => &LEMBAS_TRIGGERS,
         "Weather the Storm" => &WEATHER_THE_STORM_TRIGGERS,
+        "Masked Vandal" => &MASKED_VANDAL_TRIGGERS,
+        "Troublemaker Ouphe" => &TROUBLEMAKER_OUPHE_TRIGGERS,
+        "Vitu-Ghazi Inspector" => &VITU_GHAZI_INSPECTOR_TRIGGERS,
         _ => &[],
     }
 }
@@ -889,7 +959,29 @@ pub fn trigger_target_spec(card_def: u16) -> TargetSpec {
             first: Subtype::Faerie,
             second: Some(Subtype::FaerieAllCaps),
         },
+        "Masked Vandal" | "Troublemaker Ouphe" => {
+            TargetSpec::OpponentArtifactOrEnchantmentPermanent
+        }
+        "Vitu-Ghazi Inspector" => TargetSpec::Creature,
         _ => TargetSpec::None,
+    }
+}
+
+pub(crate) fn required_optional_additional_cost_for_trigger(
+    card_def: u16,
+    effect: &EffectOp,
+) -> Option<OptionalAdditionalCostDef> {
+    let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    match card.name {
+        "Troublemaker Ouphe" if *effect == troublemaker_ouphe_etb_effect() => {
+            Some(OptionalAdditionalCostDef::Bargain)
+        }
+        "Vitu-Ghazi Inspector" if *effect == vitu_ghazi_inspector_etb_effect() => {
+            Some(OptionalAdditionalCostDef::CollectEvidence {
+                minimum_mana_value: 6,
+            })
+        }
+        _ => None,
     }
 }
 
@@ -989,6 +1081,14 @@ pub struct PendingTrigger {
     /// Exact Equipment incarnation that granted this trigger to `source`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub granted_by: Option<AbilitySourceContractV4>,
+    /// Exact cast-scoped optional additional cost inherited by this ETB.
+    /// This is absent for every trigger without an intervening-if cost gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optional_additional_cost_paid: Option<OptionalAdditionalCostDef>,
+    /// Historical physical-card payment provenance copied from the producing
+    /// spell's stack incarnation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paid_cost_refs: Vec<PaidCostRefV4>,
 }
 
 fn creature_dies_to_state_based_actions(
@@ -1306,6 +1406,8 @@ fn triggers_from_events(
                         attached_to: None,
                     }),
                     granted_by: None,
+                    optional_additional_cost_paid: None,
+                    paid_cost_refs: Vec::new(),
                 });
             }
         }
@@ -1361,6 +1463,31 @@ fn triggers_from_events(
                     } else {
                         materialize_trigger_effect(def, id, state)
                     };
+                    let required_optional_cost =
+                        required_optional_additional_cost_for_trigger(obj.card_def, &effect);
+                    let (paid_optional_cost, paid_cost_refs) =
+                        if let Some(required) = required_optional_cost {
+                            let matching = events
+                                .iter()
+                                .filter_map(|event| match event {
+                                    CommittedEvent::OptionalAdditionalCostPaid {
+                                        source,
+                                        kind,
+                                        paid_cost_refs,
+                                    } if *source == id => Some((*kind, paid_cost_refs.clone())),
+                                    _ => None,
+                                })
+                                .collect::<Vec<_>>();
+                            let [(kind, refs)] = matching.as_slice() else {
+                                continue;
+                            };
+                            if *kind != required {
+                                continue;
+                            }
+                            (Some(required), refs.clone())
+                        } else {
+                            (None, Vec::new())
+                        };
                     let target_spec =
                         target_spec_for_trigger(obj.card_def, &effect).unwrap_or(TargetSpec::None);
                     let source_contract = match ev {
@@ -1403,6 +1530,8 @@ fn triggers_from_events(
                         target_contracts: Vec::new(),
                         placement_ordered: false,
                         source_contract,
+                        optional_additional_cost_paid: paid_optional_cost,
+                        paid_cost_refs,
                     });
                 }
             }
@@ -1445,6 +1574,8 @@ fn triggers_from_events(
                         target_contracts: Vec::new(),
                         placement_ordered: false,
                         source_contract: Some(AbilitySourceContractV4::capture(state, id)),
+                        optional_additional_cost_paid: None,
+                        paid_cost_refs: Vec::new(),
                     });
                 }
             }
@@ -1503,6 +1634,8 @@ fn triggers_from_events(
                     targets: Vec::new(),
                     target_contracts: Vec::new(),
                     placement_ordered: false,
+                    optional_additional_cost_paid: None,
+                    paid_cost_refs: Vec::new(),
                 });
             }
         }
@@ -1768,6 +1901,8 @@ mod tests {
             target_contracts: Vec::new(),
             placement_ordered: false,
             source_contract: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
         };
         let b = PendingTrigger {
             controller: PlayerId::P0,
@@ -1781,6 +1916,8 @@ mod tests {
             target_contracts: Vec::new(),
             placement_ordered: false,
             source_contract: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
         };
         let ordered = order_apnap(vec![a.clone(), b.clone()], PlayerId::P0);
         assert_eq!(ordered, vec![b, a]);

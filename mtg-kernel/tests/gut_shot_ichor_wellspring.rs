@@ -90,6 +90,7 @@ fn execute_trigger(state: &mut GameState, source: ObjectId, controller: PlayerId
             hidden_ability_source: None,
             ability_source_contract: None,
             kicked: false,
+            optional_additional_cost_paid: None,
         },
         state,
     );

@@ -82,6 +82,7 @@ fn execute_trigger(state: &mut GameState, trigger: &trigger::PendingTrigger) {
             hidden_ability_source: None,
             ability_source_contract: trigger.source_contract,
             kicked: false,
+            optional_additional_cost_paid: None,
         },
         state,
     );

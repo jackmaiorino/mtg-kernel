@@ -39,8 +39,8 @@
 //! coverage_ledger.md` for the full per-card ledger.
 
 use crate::effect::{
-    CreatureFilter, EffectCond, EffectOp, ImpulseDuration, LibraryCardFilter, ObjectRef, PlayerRef,
-    TargetRef,
+    CreatureFilter, CreatureSacrificeFilter, EffectCond, EffectOp, ImpulseDuration,
+    LibraryCardFilter, ObjectRef, PlayerRef, TargetRef,
 };
 use crate::mana::{Cost, ManaColor, Pip};
 use crate::state::Zone;
@@ -214,11 +214,136 @@ pub enum Subtype {
 }
 
 impl Subtype {
+    /// Every creature type represented by the checked-in pool, in stable-id
+    /// order. Case-distinct registry spellings remain separate because their
+    /// existing ids and subtype queries are intentionally preserved.
+    pub const CREATURE_TYPES: &'static [Subtype] = &[
+        Subtype::Ape,
+        Subtype::BirdAllCaps,
+        Subtype::Bird,
+        Subtype::Cat,
+        Subtype::Detective,
+        Subtype::Dragon,
+        Subtype::Drone,
+        Subtype::Druid,
+        Subtype::Eldrazi,
+        Subtype::Elf,
+        Subtype::FaerieAllCaps,
+        Subtype::Faerie,
+        Subtype::Goblin,
+        Subtype::HumanAllCaps,
+        Subtype::Hero,
+        Subtype::Human,
+        Subtype::Hydra,
+        Subtype::Knight,
+        Subtype::Monk,
+        Subtype::Moonfolk,
+        Subtype::Monkey,
+        Subtype::Myr,
+        Subtype::NinjaAllCaps,
+        Subtype::Ninja,
+        Subtype::Ouphe,
+        Subtype::Pirate,
+        Subtype::RogueAllCaps,
+        Subtype::Ranger,
+        Subtype::Rat,
+        Subtype::Rogue,
+        Subtype::Serpent,
+        Subtype::Samurai,
+        Subtype::Shaman,
+        Subtype::Shapeshifter,
+        Subtype::Soldier,
+        Subtype::Spider,
+        Subtype::Spirit,
+        Subtype::Toy,
+        Subtype::Treefolk,
+        Subtype::Vampire,
+        Subtype::WizardAllCaps,
+        Subtype::Warrior,
+        Subtype::Wizard,
+        Subtype::Zombie,
+        Subtype::Illusion,
+        Subtype::Dryad,
+        Subtype::Plant,
+        Subtype::Wall,
+        Subtype::Troll,
+        Subtype::Elemental,
+        Subtype::Giant,
+        Subtype::Spawn,
+        Subtype::Phyrexian,
+        Subtype::Horror,
+        Subtype::Nightmare,
+    ];
+
     /// Schema-v4 observation id. Existing discriminants are append-only:
     /// feature encoders may sort and embed these ids without depending on
     /// source spelling or locale-sensitive string ordering.
     pub const fn stable_id(self) -> u16 {
         self as u16
+    }
+
+    /// Whether this closed-pool subtype is a creature type. Changeling
+    /// materializes every true entry into an object's effective subtype set;
+    /// card, artifact, enchantment, and land subtypes remain excluded.
+    pub const fn is_creature_type(self) -> bool {
+        matches!(
+            self,
+            Subtype::Ape
+                | Subtype::BirdAllCaps
+                | Subtype::Bird
+                | Subtype::Cat
+                | Subtype::Detective
+                | Subtype::Dragon
+                | Subtype::Drone
+                | Subtype::Druid
+                | Subtype::Eldrazi
+                | Subtype::Elf
+                | Subtype::FaerieAllCaps
+                | Subtype::Faerie
+                | Subtype::Goblin
+                | Subtype::HumanAllCaps
+                | Subtype::Hero
+                | Subtype::Human
+                | Subtype::Hydra
+                | Subtype::Knight
+                | Subtype::Monk
+                | Subtype::Moonfolk
+                | Subtype::Monkey
+                | Subtype::Myr
+                | Subtype::NinjaAllCaps
+                | Subtype::Ninja
+                | Subtype::Ouphe
+                | Subtype::Pirate
+                | Subtype::RogueAllCaps
+                | Subtype::Ranger
+                | Subtype::Rat
+                | Subtype::Rogue
+                | Subtype::Serpent
+                | Subtype::Samurai
+                | Subtype::Shaman
+                | Subtype::Shapeshifter
+                | Subtype::Soldier
+                | Subtype::Spider
+                | Subtype::Spirit
+                | Subtype::Toy
+                | Subtype::Treefolk
+                | Subtype::Vampire
+                | Subtype::WizardAllCaps
+                | Subtype::Warrior
+                | Subtype::Wizard
+                | Subtype::Zombie
+                | Subtype::Illusion
+                | Subtype::Dryad
+                | Subtype::Plant
+                | Subtype::Wall
+                | Subtype::Troll
+                | Subtype::Elemental
+                | Subtype::Giant
+                | Subtype::Spawn
+                | Subtype::Phyrexian
+                | Subtype::Horror
+                | Subtype::Nightmare
+        )
     }
 }
 
@@ -352,6 +477,10 @@ pub enum TargetSpec {
     /// Exactly one land permanent on either battlefield. Appended for
     /// Cleansing Wildfire without changing any earlier target identity.
     Land,
+    /// Exactly one artifact or enchantment controlled by an opponent of the
+    /// announcing player. Appended for Masked Vandal and Troublemaker Ouphe
+    /// without changing any existing target identity.
+    OpponentArtifactOrEnchantmentPermanent,
 }
 
 impl Default for TargetSpec {
@@ -401,6 +530,7 @@ impl TargetSpec {
             TargetSpec::UpToOneTappedCreature => 32,
             TargetSpec::NoncreatureArtifactPermanent => 33,
             TargetSpec::Land => 34,
+            TargetSpec::OpponentArtifactOrEnchantmentPermanent => 35,
         }
     }
 }
@@ -558,6 +688,18 @@ pub enum CostComponent {
     /// timing gate, so hand-zone abilities using it cannot be offered in an
     /// ordinary priority window.
     ReturnControlledUnblockedAttackerToOwnersHand,
+}
+
+/// Optional additional costs chosen while announcing a spell. The selected
+/// physical cards or permanents are staged separately in `engine::PendingCast`
+/// and paid atomically with the spell's other costs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OptionalAdditionalCostDef {
+    /// Exile any number of cards from the caster's own graveyard whose
+    /// printed mana values total at least this amount.
+    CollectEvidence { minimum_mana_value: u16 },
+    /// Sacrifice one controlled artifact, enchantment, or token.
+    Bargain,
 }
 
 /// Static rules carried by a permanent while it is attached. The host link
@@ -929,6 +1071,13 @@ pub struct CardDef {
     /// metadata because not every card with a printed Saga subtype is
     /// necessarily executable.
     pub saga: Option<SagaDef>,
+    /// Optional cast-time additional cost, if any. Appended so all existing
+    /// generated field identities remain fixed.
+    pub optional_additional_cost: Option<OptionalAdditionalCostDef>,
+    /// True iff the object has Changeling and therefore every creature type
+    /// in the closed subtype registry. Appended independently from ordinary
+    /// printed subtypes so Shapeshifter remains visible as printed metadata.
+    pub changeling: bool,
 }
 
 impl CardDef {
@@ -1259,6 +1408,7 @@ mod tests {
             (TargetSpec::UpToOneTappedCreature, 32),
             (TargetSpec::NoncreatureArtifactPermanent, 33),
             (TargetSpec::Land, 34),
+            (TargetSpec::OpponentArtifactOrEnchantmentPermanent, 35),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec.stable_id(), ordinal);
@@ -1274,10 +1424,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v30_is_frozen() {
-        // Version 30 appends Clue Token and composes Wildfire utility
-        // mechanics without renumbering the combined pool.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x3670_dd45_fb83_a8c9);
+    fn card_db_hash_v31_is_frozen() {
+        // Version 31 composes the optional-cost green/black wave after the
+        // combined Caw, artifact, and Wildfire roots without renumbering.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x5da6_ab41_0e1a_7686);
     }
 
     #[test]
@@ -1477,7 +1627,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 125, "116 pool cards plus nine required tokens");
+        assert_eq!(full, 141, "132 pool cards plus nine required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

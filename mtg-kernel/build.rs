@@ -2187,6 +2187,9 @@ enum Special {
         draw: i32,
         discard: i32,
     },
+    /// Each opponent sacrifices a creature, restricted to greatest power
+    /// when this exact cast collected evidence.
+    ExtractAConfession,
     /// Grab the Prize: draw two cards, then (if the card discarded to pay
     /// the mandatory additional cost -- see `additional_cost_for` --
     /// wasn't a land) deal 2 damage to the opponent.
@@ -2483,6 +2486,7 @@ impl Special {
             Special::DrawThenDiscard { draw, discard } => {
                 format!("draw_then_discard:{draw}:{discard}")
             }
+            Special::ExtractAConfession => "extract_a_confession".to_string(),
             Special::GrabThePrize => "grab_the_prize".to_string(),
             Special::HighwayRobbery => "highway_robbery".to_string(),
             Special::SearingBlaze => "searing_blaze".to_string(),
@@ -2702,6 +2706,7 @@ fn special_for(name: &str) -> Special {
             draw: 2,
             discard: 2,
         },
+        "Extract a Confession" => Special::ExtractAConfession,
         "Grab the Prize" => Special::GrabThePrize,
         "Highway Robbery" => Special::HighwayRobbery,
         "Searing Blaze" => Special::SearingBlaze,
@@ -2820,6 +2825,10 @@ fn effect_recipe_for(card: &CardJson) -> String {
         }
         Special::DrawThenDiscard { draw, discard } => {
             format!("target=None;spell=DrawThenDiscard(Controller,{draw},{discard});mana=None")
+        }
+        Special::ExtractAConfession => {
+            "target=None;spell=SacrificeCreature(Opponent,GreatestPowerIfCollectEvidence6);mana=None"
+                .to_string()
         }
         Special::GrabThePrize => "target=None;spell=GrabThePrize;mana=None".to_string(),
         Special::HighwayRobbery => "target=None;spell=HighwayRobbery;mana=None".to_string(),
@@ -2967,7 +2976,9 @@ fn keywords_for(card: &CardJson) -> String {
         | "Squadron Hawk"
         | "Balustrade Spy"
         | "Spellstutter Sprite" => keywords.push("Keywords::FLYING"),
-        "Generous Ent" | "Writhing Chrysalis" => keywords.push("Keywords::REACH"),
+        "Generous Ent" | "Writhing Chrysalis" | "Vitu-Ghazi Inspector" => {
+            keywords.push("Keywords::REACH")
+        }
         "Spinewoods Paladin" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" => {
             keywords.push("Keywords::LIFELINK")
@@ -4197,6 +4208,20 @@ fn attachment_for(name: &str) -> &'static str {
     }
 }
 
+fn optional_additional_cost_for(name: &str) -> &'static str {
+    match name {
+        "Extract a Confession" | "Vitu-Ghazi Inspector" => {
+            "Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value: 6 })"
+        }
+        "Troublemaker Ouphe" => "Some(OptionalAdditionalCostDef::Bargain)",
+        _ => "None",
+    }
+}
+
+fn changeling_for(name: &str) -> bool {
+    name == "Masked Vandal"
+}
+
 /// Stable semantic binding for definition-owned triggered abilities. Runtime
 /// construction lives in trigger.rs, while this token makes each selected
 /// event, target, and effect part of the generated card database identity.
@@ -4233,6 +4258,15 @@ fn trigger_recipe_for(name: &str) -> &'static str {
             "etb:scry:1:draw:1;left_battlefield_to_graveyard:shuffle_source_into_owners_library"
         }
         "Weather the Storm" => "cast_self:storm_copies:frozen_turn_cast_count",
+        "Masked Vandal" => {
+            "etb:target_opponent_artifact_or_enchantment:may_exile_controller_creature_card_then_exile_target"
+        }
+        "Troublemaker Ouphe" => {
+            "etb_if_bargained:target_opponent_artifact_or_enchantment:exile_target"
+        }
+        "Vitu-Ghazi Inspector" => {
+            "etb_if_collect_evidence_6:target_creature:plus_one_counter:gain_life_2"
+        }
         _ => "none",
     }
 }
@@ -4403,6 +4437,24 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "    Some(EffectOp::MoveObject {{ object: ObjectRef::ThisSource, to_zone: Zone::Battlefield }})").unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::ExtractAConfession))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_extract_a_confession() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
+        writeln!(out, "        cond: EffectCond::OptionalAdditionalCostPaid(OptionalAdditionalCostDef::CollectEvidence {{ minimum_mana_value: 6 }}),").unwrap();
+        writeln!(out, "        then: Box::new(EffectOp::SacrificeCreature {{ player: PlayerRef::Opponent, filter: CreatureSacrificeFilter::GreatestPower }}),").unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::SacrificeCreature {{ player: PlayerRef::Opponent, filter: CreatureSacrificeFilter::Any }}),").unwrap();
+        writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
 
     if cards
         .iter()
@@ -5740,6 +5792,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 format!("spell_effect_draw_then_discard_{draw}_{discard}"),
                 "no_effect".to_string(),
             ),
+            Special::ExtractAConfession => (
+                "TargetSpec::None",
+                "spell_effect_extract_a_confession".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::GrabThePrize => (
                 "TargetSpec::None",
                 "spell_effect_grab_the_prize".to_string(),
@@ -6155,6 +6212,22 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(
+            out,
+            "        optional_additional_cost: {},",
+            if executable {
+                optional_additional_cost_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        changeling: {},",
+            executable && changeling_for(&c.name)
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -6181,7 +6254,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // typed battlefield searches, Storm, and Clue remain bound too.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v30\n");
+    let mut canon = String::from("kernel_carddb/v31\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -6304,6 +6377,22 @@ fn codegen(cards: &[CardJson]) -> String {
         } else {
             "None"
         });
+        canon.push('|');
+        canon.push_str("optional_additional_cost=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            optional_additional_cost_for(&c.name)
+        } else {
+            "None"
+        });
+        canon.push('|');
+        canon.push_str("changeling=");
+        canon.push_str(
+            if c.engine_capability != EngineCapabilityJson::NoEffect && changeling_for(&c.name) {
+                "true"
+            } else {
+                "false"
+            },
+        );
         canon.push('|');
         canon.push_str("trigger=");
         canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
