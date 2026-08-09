@@ -6,6 +6,8 @@ The read-only installation findings and capture implications are recorded in `CL
 
 The first live Standard spectator observations and exact non-claims are recorded in `LIVE_SPECTATOR_FINDINGS_2026-08-09.md`.
 
+The first acting-player Freeform Solitaire observation is recorded in `LIVE_SOLITAIRE_FINDINGS_2026-08-09.md`.
+
 ## Live calibration preview
 
 `scripts/capture_visible_mtgo_preview_v1.ps1` creates only a local, composed-desktop calibration preview. It crops the visible desktop to the MTGO client area. It does not use direct window capture, UI Automation, process memory, network data, client logs, hidden client state, or input.
@@ -16,7 +18,7 @@ Those before-and-after checks cannot prove that a very brief cursor, notificatio
 
 Every output is marked `pending_visual_review` and explicitly unsafe for semantic evidence, OCR, policy scoring, and input. The destination must be a new absolute directory outside this repository. The first reviewed image should establish a client-version, DPI, physical-size, and image-anchor calibration profile. A production evidence backend should use DXGI Desktop Duplication and must remain a separate later tranche.
 
-The default `MainClient` mode retains the original single-window requirement. `ForegroundSpectatorGame` mode is only for a manually selected spectated 1-on-1 game. It requires the main client to remain visible, selects only the foreground top-level window owned by the same verified MTGO process, pins the expected format, validates the duel title structure and participants, records whether Windows exposed numeric match and game IDs, commits the complete visible MTGO top-level window set, and repeats those checks after capture. MTGO sometimes visibly renders the IDs in its title bar without including them in `GetWindowText`; that case is recorded as `participants_only` rather than pretending the IDs were independently verified. Other MTGO panes may remain visible behind the duel, but any window intersecting the duel above it still rejects the capture.
+The default `MainClient` mode retains the original single-window requirement. `ForegroundSpectatorGame` mode is only for a manually selected spectated 1-on-1 game. `ForegroundSolitaireGame` is only for a one-player game created through Custom Match. Both gameplay modes require the main client to remain visible, select only the foreground top-level window owned by the same verified MTGO process, pin the expected format, validate the mode-specific title structure, commit the complete visible MTGO top-level window set, and repeat those checks after capture. MTGO sometimes visibly renders numeric match and game IDs in its title bar without including them in `GetWindowText`; that case is recorded as a less specific title identity rather than pretending the IDs were independently verified. Other MTGO panes may remain visible behind the game, but any window intersecting the game above it still rejects the capture.
 
 Example after independently verifying the current identity values and placing MTGO unobscured in the foreground with the cursor outside its client area:
 
@@ -45,6 +47,22 @@ Example for an already-open spectated Standard game:
 ```
 
 Spectator-game output uses artifact kind `mtgo_visible_spectator_gameplay_calibration_preview_v1` and records `capture_role = spectator`. It is still only a local calibration preview. It is not accepted by the reviewed desktop-preview contract and grants no OCR, evidence, scoring, or input authority. A spectator frame may inform duel-window identity and coarse battlefield layout, but it must not calibrate player hand, prompt, priority, legal-action, target-selection, or input regions.
+
+Example for an already-open Freeform Solitaire game:
+
+```powershell
+.\scripts\capture_visible_mtgo_preview_v1.ps1 `
+  -OutputDirectory (Join-Path $env:TEMP 'mtgo-solitaire-preview-YYYYMMDD-HHMMSS') `
+  -ExpectedProductVersion '<exact-product-version>' `
+  -ExpectedExecutableSha256 '<exact-executable-sha256>' `
+  -ExpectedSignerThumbprint '<exact-leaf-certificate-thumbprint>' `
+  -ExpectedSignerSubject '<exact-leaf-certificate-subject>' `
+  -ExpectedDpi 120 `
+  -TargetWindowMode ForegroundSolitaireGame `
+  -ExpectedGameFormat Freeform
+```
+
+Solitaire-game output uses artifact kind `mtgo_visible_solitaire_gameplay_calibration_preview_v1` and records `capture_role = acting_player_solitaire`. The scope label distinguishes an acting-player layout from a spectator layout, but it grants no OCR, evidence, scoring, or input authority. Any future action path still requires a separately trusted live-frame backend, a fully reconciled current decision, explicit authorization, and visible postcondition confirmation.
 
 ## Reviewed capture contract
 

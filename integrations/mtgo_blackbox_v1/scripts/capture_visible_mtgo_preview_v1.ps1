@@ -27,7 +27,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$ExpectedWindowTitle = 'Magic: The Gathering Online',
 
-    [ValidateSet('MainClient', 'ForegroundSpectatorGame')]
+    [ValidateSet('MainClient', 'ForegroundSpectatorGame', 'ForegroundSolitaireGame')]
     [string]$TargetWindowMode = 'MainClient',
 
     [ValidateSet('Standard', 'Pioneer', 'Modern', 'Legacy', 'Vintage', 'Pauper', 'Freeform')]
@@ -553,7 +553,6 @@ function Get-MtgoPreviewSnapshot {
         [IntPtr]$windowHandle = $mainClientWindows[0]
     }
     else {
-        $captureRole = 'spectator'
         if ([string]::IsNullOrWhiteSpace($ExpectedGameFormat)) {
             throw 'MTGO_PREVIEW_EXPECTED_GAME_FORMAT_REQUIRED'
         }
@@ -572,8 +571,16 @@ function Get-MtgoPreviewSnapshot {
             throw 'MTGO_PREVIEW_FOREGROUND_GAME_NOT_IN_VISIBLE_WINDOW_SET'
         }
         $escapedGameFormat = [Regex]::Escape($ExpectedGameFormat)
-        $baseGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^,#\r\n]+$' -f $escapedGameFormat)
-        $identifiedGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^\r\n]+?\s+Match #\s*\d+\s*-\s*Game #\s*\d+$' -f $escapedGameFormat)
+        if ($TargetWindowMode -ceq 'ForegroundSpectatorGame') {
+            $captureRole = 'spectator'
+            $baseGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^,#\r\n]+$' -f $escapedGameFormat)
+            $identifiedGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^\r\n]+?\s+Match #\s*\d+\s*-\s*Game #\s*\d+$' -f $escapedGameFormat)
+        }
+        else {
+            $captureRole = 'acting_player_solitaire'
+            $baseGameWindowTitleRule = ('^\(Solitaire\): {0}: Vs\. [^,#\r\n]+$' -f $escapedGameFormat)
+            $identifiedGameWindowTitleRule = ('^\(Solitaire\): {0}: Vs\. [^\r\n]+?\s+Match #\s*\d+\s*-\s*Game #\s*\d+$' -f $escapedGameFormat)
+        }
         $expectedWindowTitleRule = "$identifiedGameWindowTitleRule OR $baseGameWindowTitleRule"
     }
 
@@ -780,11 +787,10 @@ try {
     $pngSha256 = Get-HexSha256FromBytes -Bytes $pngBytes
     $capturedAtUtc = [DateTime]::UtcNow.ToString('O')
 
-    $artifactKind = if ($TargetWindowMode -ceq 'ForegroundSpectatorGame') {
-        'mtgo_visible_spectator_gameplay_calibration_preview_v1'
-    }
-    else {
-        'mtgo_visible_desktop_calibration_preview_v1'
+    $artifactKind = switch ($TargetWindowMode) {
+        'ForegroundSpectatorGame' { 'mtgo_visible_spectator_gameplay_calibration_preview_v1' }
+        'ForegroundSolitaireGame' { 'mtgo_visible_solitaire_gameplay_calibration_preview_v1' }
+        default { 'mtgo_visible_desktop_calibration_preview_v1' }
     }
     $manifest = [ordered]@{
         schema_version = 1

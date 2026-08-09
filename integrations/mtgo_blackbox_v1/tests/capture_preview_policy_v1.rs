@@ -98,3 +98,18 @@ fn gameplay_preview_selects_only_a_visible_foreground_mtgo_duel() {
     assert!(PREVIEW_SCRIPT.contains("Match #\\s*\\d+"));
     assert!(PREVIEW_SCRIPT.contains("Game #\\s*\\d+"));
 }
+
+#[test]
+fn solitaire_preview_has_a_distinct_acting_player_scope() {
+    for required in [
+        "ForegroundSolitaireGame",
+        "acting_player_solitaire",
+        "^\\(Solitaire\\): {0}: Vs\\.",
+        "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    ] {
+        assert!(
+            PREVIEW_SCRIPT.contains(required),
+            "missing solitaire preview guard: {required}"
+        );
+    }
+}
