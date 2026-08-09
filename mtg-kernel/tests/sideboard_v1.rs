@@ -291,6 +291,12 @@ fn exchange_validation_fails_closed_before_deck_mutation() {
         Err(SideboardErrorV1::InvalidPostboardGameIndex { actual: 1 })
     );
     assert_eq!(
+        SideboardPlanV1::keep_registered_v1("A", "B", 4)
+            .unwrap()
+            .game_index(),
+        4
+    );
+    assert_eq!(
         SideboardPlanV1::new_v1(
             "A",
             "B",

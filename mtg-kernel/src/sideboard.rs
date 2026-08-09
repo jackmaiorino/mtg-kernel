@@ -802,7 +802,7 @@ impl fmt::Display for SideboardErrorV1 {
                 "sideboard must contain exactly {REGISTERED_SIDEBOARD_SIZE_V1} cards, got {actual}"
             ),
             Self::InvalidPostboardGameIndex { actual } => {
-                write!(formatter, "sideboarding is only valid for games 2 and 3, got {actual}")
+                write!(formatter, "sideboarding is only valid after game 1, got game {actual}")
             }
             Self::ZeroCardCount { card_id } => {
                 write!(formatter, "card {card_id} has a zero exchange count")
@@ -927,9 +927,9 @@ impl fmt::Display for SideboardErrorV1 {
             Self::PolicySchemaMismatch { actual } => {
                 write!(formatter, "unexpected sideboard policy schema {actual:?}")
             }
-            Self::PolicyCoverageMismatch => formatter.write_str(
-                "sideboard policy must cover all ordered matchups for games 2 and 3",
-            ),
+            Self::PolicyCoverageMismatch => {
+                formatter.write_str("sideboard policy coverage declaration is not supported")
+            }
             Self::UnknownDefaultPlan { actual } => {
                 write!(formatter, "unknown sideboard default plan {actual:?}")
             }
@@ -1088,7 +1088,10 @@ fn validate_identifier_v1(field: &'static str, value: &str) -> Result<(), Sidebo
 }
 
 fn validate_postboard_game_index_v1(game_index: u8) -> Result<(), SideboardErrorV1> {
-    if !(2..=3).contains(&game_index) {
+    // Drawn games do not count toward either player's two required wins, so
+    // a best-of-three match can have a fourth or later physical game. Every
+    // physical game after the first remains a postboard game.
+    if game_index < 2 {
         return Err(SideboardErrorV1::InvalidPostboardGameIndex { actual: game_index });
     }
     Ok(())

@@ -260,3 +260,35 @@ fn completed_checked_in_decks_create_an_executable_postboard_session() {
         assert!(game_two.sideboard_receipt(player).is_some());
     }
 }
+
+#[test]
+fn drawn_games_can_reach_a_fourth_postboard_game() {
+    let mut session =
+        BestOfThreeDeckMatchV1::checked_in_pauper_v1("Terror", "Terror", PlayerId::P0).unwrap();
+    for game_index in 1..=3 {
+        let game = session
+            .prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Play)
+            .unwrap();
+        assert_eq!(game.start().game_index, game_index);
+        assert_eq!(
+            session.record_game_result_v1(GameOutcomeV1::Draw).unwrap(),
+            MatchTransitionV1::NextGameChoice {
+                game_index: game_index + 1,
+                chooser: PlayerId::P0,
+            }
+        );
+    }
+
+    let game_four = session
+        .prepare_game_v1(PlayerId::P0, PlayDrawChoiceV1::Draw)
+        .unwrap();
+    assert_eq!(game_four.start().game_index, 4);
+    assert_eq!(game_four.start().starting_player, PlayerId::P1);
+    for player in [PlayerId::P0, PlayerId::P1] {
+        assert_eq!(
+            game_four.configuration(player).unwrap().mainboard().len(),
+            60
+        );
+        assert!(game_four.sideboard_receipt(player).is_some());
+    }
+}

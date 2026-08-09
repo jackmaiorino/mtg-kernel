@@ -1,10 +1,10 @@
 //! Deterministic composition of registered decks, sideboarding, and BO3 state.
 //!
 //! Each prepared game carries an exact 60-card configuration for both seats
-//! plus the play/draw result. Game 1 uses the registered mainboards; Games 2
-//! and 3 independently apply the versioned sideboard policy to the original
-//! registered 75. Preparing a game is transactional: policy failure leaves
-//! the match phase unchanged.
+//! plus the play/draw result. Game 1 uses the registered mainboards; every
+//! later physical game independently applies the versioned sideboard policy
+//! to the original registered 75. Preparing a game is transactional: policy
+//! failure leaves the match phase unchanged.
 
 use crate::bo3_match::{
     BestOfThreeMatchStateV1, GameOutcomeV1, GameStartV1, MatchStateErrorV1, MatchTransitionV1,
