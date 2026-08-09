@@ -68,3 +68,29 @@ fn preview_requires_identity_focus_geometry_and_post_capture_recheck() {
         assert!(PREVIEW_SCRIPT.contains(required), "missing guard: {required}");
     }
 }
+
+#[test]
+fn gameplay_preview_selects_only_a_visible_foreground_mtgo_duel() {
+    for required in [
+        "ForegroundSpectatorGame",
+        "ExpectedGameFormat",
+        "MTGO_PREVIEW_FOREGROUND_GAME_NOT_OWNED_BY_MTGO",
+        "MTGO_PREVIEW_FOREGROUND_GAME_IS_MAIN_CLIENT",
+        "MTGO_PREVIEW_FOREGROUND_GAME_NOT_IN_VISIBLE_WINDOW_SET",
+        "MTGO_PREVIEW_GAME_WINDOW_TITLE_MISMATCH",
+        "MTGO_PREVIEW_EXPECTED_EXACTLY_ONE_MAIN_CLIENT_WINDOW",
+        "visible_mtgo_top_level_window_count",
+        "visible_mtgo_top_level_window_set_sha256",
+        "capture_role = $captureRole",
+        "mtgo_visible_spectator_gameplay_calibration_preview_v1",
+    ] {
+        assert!(
+            PREVIEW_SCRIPT.contains(required),
+            "missing gameplay preview guard: {required}"
+        );
+    }
+
+    assert!(PREVIEW_SCRIPT.contains("^\\(1-on-1\\): {0}: Vs\\."));
+    assert!(PREVIEW_SCRIPT.contains("Match #\\s*\\d+"));
+    assert!(PREVIEW_SCRIPT.contains("Game #\\s*\\d+"));
+}

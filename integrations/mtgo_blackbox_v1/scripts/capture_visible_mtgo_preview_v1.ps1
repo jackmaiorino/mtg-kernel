@@ -25,7 +25,13 @@ param(
     [int]$ExpectedDpi,
 
     [ValidateNotNullOrEmpty()]
-    [string]$ExpectedWindowTitle = 'Magic: The Gathering Online'
+    [string]$ExpectedWindowTitle = 'Magic: The Gathering Online',
+
+    [ValidateSet('MainClient', 'ForegroundSpectatorGame')]
+    [string]$TargetWindowMode = 'MainClient',
+
+    [ValidateSet('Standard', 'Pioneer', 'Modern', 'Legacy', 'Vintage', 'Pauper', 'Freeform')]
+    [string]$ExpectedGameFormat
 )
 
 Set-StrictMode -Version Latest
@@ -517,10 +523,55 @@ function Get-MtgoPreviewSnapshot {
 
     $mtgoProcessId = [uint32]$mtgoProcess.Id
     $windows = @([MtgoVisiblePreviewNativeV1]::VisibleTopLevelWindowsForProcess($mtgoProcessId))
-    if ($windows.Count -ne 1) {
-        throw "MTGO_PREVIEW_EXPECTED_EXACTLY_ONE_VISIBLE_TOP_LEVEL_WINDOW:$($windows.Count)"
+    if ($windows.Count -eq 0 -or $windows.Count -gt 8) {
+        throw "MTGO_PREVIEW_VISIBLE_TOP_LEVEL_WINDOW_COUNT_OUT_OF_RANGE:$($windows.Count)"
     }
-    [IntPtr]$windowHandle = $windows[0]
+
+    $mainClientWindows = @($windows | Where-Object {
+        [MtgoVisiblePreviewNativeV1]::WindowTitle($_) -ceq $ExpectedWindowTitle
+    })
+    if ($mainClientWindows.Count -ne 1) {
+        throw "MTGO_PREVIEW_EXPECTED_EXACTLY_ONE_MAIN_CLIENT_WINDOW:$($mainClientWindows.Count)"
+    }
+    $visibleWindowSetLines = @($windows | Sort-Object { $_.ToInt64() } | ForEach-Object {
+        $candidateTitle = [MtgoVisiblePreviewNativeV1]::WindowTitle($_)
+        '{0}:{1}:{2}' -f $_.ToInt64(), $candidateTitle.Length, $candidateTitle
+    })
+    $visibleWindowSetBytes = [Text.Encoding]::UTF8.GetBytes(
+        "mtgo_visible_top_level_window_set_v1`n$($visibleWindowSetLines -join "`n")")
+    $visibleWindowSetSha256 = Get-HexSha256FromBytes -Bytes $visibleWindowSetBytes
+
+    $expectedWindowTitleRule = $ExpectedWindowTitle
+    $captureRole = 'main_client'
+    if ($TargetWindowMode -ceq 'MainClient') {
+        if ($windows.Count -ne 1) {
+            throw "MTGO_PREVIEW_EXPECTED_EXACTLY_ONE_VISIBLE_TOP_LEVEL_WINDOW:$($windows.Count)"
+        }
+        [IntPtr]$windowHandle = $mainClientWindows[0]
+    }
+    else {
+        $captureRole = 'spectator'
+        if ([string]::IsNullOrWhiteSpace($ExpectedGameFormat)) {
+            throw 'MTGO_PREVIEW_EXPECTED_GAME_FORMAT_REQUIRED'
+        }
+        if ($windows.Count -lt 2) {
+            throw "MTGO_PREVIEW_GAME_REQUIRES_MAIN_AND_DUEL_WINDOWS:$($windows.Count)"
+        }
+        [IntPtr]$windowHandle = [MtgoVisiblePreviewNativeV1]::GetForegroundWindow()
+        if ($windowHandle -eq [IntPtr]::Zero -or
+            [MtgoVisiblePreviewNativeV1]::ProcessIdForWindow($windowHandle) -ne $mtgoProcessId) {
+            throw 'MTGO_PREVIEW_FOREGROUND_GAME_NOT_OWNED_BY_MTGO'
+        }
+        if ($windowHandle -eq [IntPtr]$mainClientWindows[0]) {
+            throw 'MTGO_PREVIEW_FOREGROUND_GAME_IS_MAIN_CLIENT'
+        }
+        if (-not ($windows -contains $windowHandle)) {
+            throw 'MTGO_PREVIEW_FOREGROUND_GAME_NOT_IN_VISIBLE_WINDOW_SET'
+        }
+        $escapedGameFormat = [Regex]::Escape($ExpectedGameFormat)
+        $expectedWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^\r\n]+?\s+Match #\s*\d+\s*-\s*Game #\s*\d+$' -f $escapedGameFormat)
+    }
+
     if (-not [MtgoVisiblePreviewNativeV1]::IsWindow($windowHandle) -or
         -not [MtgoVisiblePreviewNativeV1]::IsRootWindow($windowHandle)) {
         throw 'MTGO_PREVIEW_TARGET_IS_NOT_A_LIVE_ROOT_WINDOW'
@@ -529,8 +580,13 @@ function Get-MtgoPreviewSnapshot {
         throw 'MTGO_PREVIEW_WINDOW_PROCESS_MISMATCH'
     }
     $windowTitle = [MtgoVisiblePreviewNativeV1]::WindowTitle($windowHandle)
-    if ($windowTitle -cne $ExpectedWindowTitle) {
-        throw "MTGO_PREVIEW_WINDOW_TITLE_MISMATCH:$windowTitle"
+    if ($TargetWindowMode -ceq 'MainClient') {
+        if ($windowTitle -cne $ExpectedWindowTitle) {
+            throw "MTGO_PREVIEW_WINDOW_TITLE_MISMATCH:$windowTitle"
+        }
+    }
+    elseif ($windowTitle -cnotmatch $expectedWindowTitleRule) {
+        throw "MTGO_PREVIEW_GAME_WINDOW_TITLE_MISMATCH:$windowTitle"
     }
     if ([MtgoVisiblePreviewNativeV1]::GetForegroundWindow() -ne $windowHandle) {
         throw 'MTGO_PREVIEW_WINDOW_NOT_FOREGROUND'
@@ -600,6 +656,12 @@ function Get-MtgoPreviewSnapshot {
         executable_sha256 = $executableSha256
         signer_subject = $signature.SignerCertificate.Subject
         signer_thumbprint = $signerThumbprint
+        target_window_mode = $TargetWindowMode
+        capture_role = $captureRole
+        expected_game_format = $ExpectedGameFormat
+        expected_window_title_rule = $expectedWindowTitleRule
+        visible_mtgo_top_level_window_count = [int]$windows.Count
+        visible_mtgo_top_level_window_set_sha256 = $visibleWindowSetSha256
         window_handle = $windowHandle.ToInt64()
         window_title = $windowTitle
         foreground = $true
@@ -629,6 +691,8 @@ function Assert-SnapshotsMatch {
     $fields = @(
         'process_id', 'process_start_utc', 'executable_path', 'product_version', 'file_version',
         'executable_sha256', 'signer_subject', 'signer_thumbprint', 'window_handle', 'window_title',
+        'target_window_mode', 'capture_role', 'expected_game_format', 'expected_window_title_rule',
+        'visible_mtgo_top_level_window_count', 'visible_mtgo_top_level_window_set_sha256',
         'foreground', 'visible', 'minimized', 'cloaked', 'display_affinity',
         'desktop_composition_enabled', 'dpi', 'occluder_intersections', 'cursor_inside_client'
     )
@@ -701,9 +765,15 @@ try {
     $pngSha256 = Get-HexSha256FromBytes -Bytes $pngBytes
     $capturedAtUtc = [DateTime]::UtcNow.ToString('O')
 
+    $artifactKind = if ($TargetWindowMode -ceq 'ForegroundSpectatorGame') {
+        'mtgo_visible_spectator_gameplay_calibration_preview_v1'
+    }
+    else {
+        'mtgo_visible_desktop_calibration_preview_v1'
+    }
     $manifest = [ordered]@{
         schema_version = 1
-        artifact_kind = 'mtgo_visible_desktop_calibration_preview_v1'
+        artifact_kind = $artifactKind
         status = 'pending_visual_review'
         captured_at_utc = $capturedAtUtc
         capture_backend = 'system_drawing_copy_from_composed_screen_v1'
@@ -720,6 +790,10 @@ try {
             signer_subject = $ExpectedSignerSubject
             dpi = $ExpectedDpi
             window_title = $ExpectedWindowTitle
+            target_window_mode = $TargetWindowMode
+            capture_role = $before.capture_role
+            expected_game_format = $ExpectedGameFormat
+            expected_window_title_rule = $before.expected_window_title_rule
         }
         observed_identity = [ordered]@{
             process_id = $before.process_id
@@ -732,6 +806,10 @@ try {
         }
         window = [ordered]@{
             title = $before.window_title
+            target_window_mode = $before.target_window_mode
+            capture_role = $before.capture_role
+            visible_mtgo_top_level_window_count = $before.visible_mtgo_top_level_window_count
+            visible_mtgo_top_level_window_set_sha256 = $before.visible_mtgo_top_level_window_set_sha256
             foreground = $before.foreground
             visible = $before.visible
             minimized = $before.minimized
