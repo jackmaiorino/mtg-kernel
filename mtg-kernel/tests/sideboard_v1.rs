@@ -403,6 +403,11 @@ fn checked_in_policy_is_strict_versioned_and_covers_nine_decks() {
     assert!(receipt.cards_in().is_empty());
     assert_ne!(policy.policy_sha256_v1(), [0; 32]);
 
+    let (after_draws, draw_receipt) = policy.apply_v1(&registered, "Burn", 4).unwrap();
+    assert_eq!(after_draws, *registered.registered_configuration());
+    assert_eq!(draw_receipt.game_index(), 4);
+    assert!(draw_receipt.cards_in().is_empty());
+
     let unknown_field = mtg_kernel::sideboard::PAUPER_SIDEBOARD_POLICY_JSON_V1.replacen(
         "\"schema\":",
         "\"unexpected\": true, \"schema\":",
@@ -412,4 +417,14 @@ fn checked_in_policy_is_strict_versioned_and_covers_nine_decks() {
         DeterministicSideboardPolicyV1::from_json_v1(&unknown_field),
         Err(SideboardErrorV1::PolicyJson(_))
     ));
+
+    let incomplete_coverage = mtg_kernel::sideboard::PAUPER_SIDEBOARD_POLICY_JSON_V1.replacen(
+        "\"postboard_game_index_minimum\": 2",
+        "\"postboard_game_index_minimum\": 3",
+        1,
+    );
+    assert_eq!(
+        DeterministicSideboardPolicyV1::from_json_v1(&incomplete_coverage),
+        Err(SideboardErrorV1::PolicyCoverageMismatch)
+    );
 }

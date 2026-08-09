@@ -479,7 +479,7 @@ impl DeterministicSideboardPolicyV1 {
             });
         }
         if document.coverage.ordered_matchups != SIDEBOARD_POLICY_MATCHUP_COVERAGE_V1
-            || document.coverage.game_indices != [2, 3]
+            || document.coverage.postboard_game_index_minimum != 2
         {
             return Err(SideboardErrorV1::PolicyCoverageMismatch);
         }
@@ -969,7 +969,7 @@ struct SideboardPolicyDocumentV1 {
 #[serde(deny_unknown_fields)]
 struct SideboardPolicyCoverageDocumentV1 {
     ordered_matchups: String,
-    game_indices: Vec<u8>,
+    postboard_game_index_minimum: u8,
 }
 
 #[derive(Debug, Deserialize)]

@@ -14,7 +14,7 @@
   ],
   "coverage": {
     "ordered_matchups": "all_registered_deck_pairs",
-    "game_indices": [2, 3]
+    "postboard_game_index_minimum": 2
   },
   "default_plan": "keep_registered_configuration",
   "plans": []
