@@ -10829,8 +10829,8 @@ mod tests {
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0x1b, 0x00, 0xba, 0xa0, 0x12, 0x31, 0xb1, 0xf4, 0x04, 0x0e, 0x22, 0x6c, 0x0b, 0x5a,
-                0x30, 0x23,
+                0x70, 0x7d, 0xb3, 0x2c, 0x7c, 0x2d, 0x3e, 0x2b, 0xfe, 0x9f, 0x19, 0x65, 0xbc, 0xdb,
+                0x6d, 0xce,
             ]
         );
     }
@@ -10876,8 +10876,8 @@ mod tests {
         assert_eq!(
             v1,
             [
-                0x0b, 0xdb, 0xe9, 0x2d, 0x97, 0xe3, 0x7f, 0x8c, 0x5c, 0x76, 0x91, 0x07, 0x13, 0x9f,
-                0x8b, 0x6d,
+                0x38, 0x90, 0x05, 0xe8, 0xc1, 0x91, 0x00, 0x27, 0xc4, 0x5f, 0x04, 0x3f, 0x40, 0xe7,
+                0x7c, 0xd1,
             ]
         );
 
@@ -10906,16 +10906,16 @@ mod tests {
         assert_eq!(
             common_v2,
             [
-                0xd9, 0xf1, 0xcf, 0x2c, 0xcb, 0xef, 0x04, 0xc4, 0x6c, 0x2b, 0x71, 0x98, 0x2c, 0xca,
-                0x5b, 0xb4,
+                0x9f, 0xfa, 0xca, 0xd5, 0x74, 0x47, 0x33, 0xb5, 0x10, 0x7a, 0xea, 0x33, 0x20, 0x25,
+                0xe3, 0x13,
             ]
         );
         assert_ne!(common_v2, v1);
         assert_eq!(
             commitment_v2(65_536),
             [
-                0x04, 0x5b, 0xa8, 0x8a, 0xcf, 0x1d, 0x54, 0x67, 0x09, 0x4a, 0x2d, 0xa8, 0xea, 0x81,
-                0x06, 0x54,
+                0xb8, 0x28, 0x15, 0xe9, 0x0f, 0xa5, 0xb2, 0xbc, 0x04, 0xcb, 0xd3, 0x4d, 0x55, 0xad,
+                0xc6, 0x06,
             ]
         );
     }
@@ -11543,34 +11543,34 @@ mod tests {
         let v2_fast_core = v2_fast.privileged_core_environment_hash();
         assert_eq!(
             legacy_full.privileged_environment_hash(),
-            0x0409_40da_a4de_ca3e,
-            "stack-incarnation-v7 legacy policy environment golden"
+            0xfca3_b546_61ec_28c6,
+            "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
             legacy_full.privileged_core_environment_hash(),
-            0x07ac_307a_ced8_be3b,
-            "stack-incarnation-v7 legacy full-session core golden"
+            0x9a93_e402_6f8e_ad86,
+            "final-pool-v8 legacy full-session core golden"
         );
         assert_eq!(
             legacy_fast.privileged_core_environment_hash(),
-            0x07ac_307a_ced8_be3b,
+            0x9a93_e402_6f8e_ad86,
             "captured legacy fast-session core golden equals the full one"
         );
 
         assert_eq!(
-            v2_policy, 0x53e2_039b_3793_94f8,
-            "stack-incarnation-v8 environment-v2 policy environment golden"
+            v2_policy, 0x9ed7_895c_1f47_82ca,
+            "final-pool-v9 environment-v2 policy environment golden"
         );
         assert_eq!(
-            v2_full_core, 0xd2ab_40d2_914c_cac5,
-            "stack-incarnation-v8 environment-v2 core environment golden"
+            v2_full_core, 0xf69d_f52f_fdd0_564e,
+            "final-pool-v9 environment-v2 core environment golden"
         );
         assert_eq!(
             v2_fast_core, v2_full_core,
             "full and fast environment-v2 core hashes are equal"
         );
-        assert_ne!(v2_policy, 0x0409_40da_a4de_ca3e);
-        assert_ne!(v2_full_core, 0x07ac_307a_ced8_be3b);
+        assert_ne!(v2_policy, 0xfca3_b546_61ec_28c6);
+        assert_ne!(v2_full_core, 0x9a93_e402_6f8e_ad86);
     }
 
     #[test]
@@ -11737,7 +11737,7 @@ mod tests {
             assert!(session.state.environment_randomization_v2().is_none());
             assert_eq!(
                 session.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v7"
+                "fnv1a64-serde-json-game-state-envelope-v8"
             );
             assert_eq!(session.state, canonical.state);
             assert_eq!(
@@ -11763,7 +11763,7 @@ mod tests {
             assert!(fast.state.environment_randomization_v2().is_none());
             assert_eq!(
                 fast.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v7"
+                "fnv1a64-serde-json-game-state-envelope-v8"
             );
             assert_eq!(fast.state, fast_canonical.state);
             assert_eq!(fast.current, fast_canonical.current);
@@ -11795,15 +11795,15 @@ mod tests {
         // Captured legacy pins are preserved bit-exact.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0x0409_40da_a4de_ca3e
+            0xfca3_b546_61ec_28c6
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
-            0x07ac_307a_ced8_be3b
+            0x9a93_e402_6f8e_ad86
         );
         assert_eq!(
             fast_canonical.privileged_core_environment_hash(),
-            0x07ac_307a_ced8_be3b
+            0x9a93_e402_6f8e_ad86
         );
     }
 
@@ -11845,7 +11845,7 @@ mod tests {
         assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
         assert_eq!(
             full.state.diagnostic_state_hash_algorithm(),
-            "fnv1a64-serde-json-game-state-envelope-v8"
+            "fnv1a64-serde-json-game-state-envelope-v9"
         );
         let serialized = serde_json::to_value(&full.state).unwrap();
         assert!(serialized.get("environment_randomization_v2").is_some());
@@ -11979,17 +11979,17 @@ mod tests {
         let fast = canonical_v2_fast_reset(99);
         assert_eq!(
             full.privileged_environment_hash(),
-            0x53e2_039b_3793_94f8,
+            0x9ed7_895c_1f47_82ca,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
             full.privileged_core_environment_hash(),
-            0xd2ab_40d2_914c_cac5,
+            0xf69d_f52f_fdd0_564e,
             "pre-constructor core pin is reused, not minted"
         );
         assert_eq!(
             fast.privileged_core_environment_hash(),
-            0xd2ab_40d2_914c_cac5,
+            0xf69d_f52f_fdd0_564e,
             "full and fast v2 core hashes are equal and equal the pin"
         );
 
@@ -12027,11 +12027,11 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x53e2_039b_3793_94f8
+            0x9ed7_895c_1f47_82ca
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
-            0xd2ab_40d2_914c_cac5
+            0xf69d_f52f_fdd0_564e
         );
 
         // Root u64::MAX succeeds and stays exact full-width in both.
@@ -12045,7 +12045,7 @@ mod tests {
             assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
             assert_eq!(
                 state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v8"
+                "fnv1a64-serde-json-game-state-envelope-v9"
             );
         }
         assert_eq!(
@@ -12305,9 +12305,10 @@ mod tests {
         "{\"request_type\":\"step\",\"schema_version\":5,\"request_id\":\"v5-transcript-4\",\"episode_id\":1,\"expected_step\":0,\"selected_index\":0,\"selected_action_id\":\"legal-action-v5:c7876642d50fe9e6\"}",
         "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"v5-transcript-5\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":0,\"max_policy_steps\":1024}",
     ];
-    /// Captured at clean parent 9e7d6b8 before any V6 edit. Never rederive.
+    /// Recaptured at the exact final-card head after its CardDB identity
+    /// changed. The V5 schema, protocol, and response layout stay unchanged.
     const V5_TRANSCRIPT_SHA256: &str =
-        "286937e4d1e9e73dd4dae31ed85a3b5dc98cc67a13d1780a2ec8e133cb96edfe";
+        "a583c2309a25d79371ffa729c8eedcfb830b2887c794ee283bbb6b0a2e2541e2";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(
@@ -12538,7 +12539,7 @@ mod tests {
             assert_eq!(v2.pair_environment_seed(), 99);
             assert_eq!(
                 active.session.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v8"
+                "fnv1a64-serde-json-game-state-envelope-v9"
             );
         }
 

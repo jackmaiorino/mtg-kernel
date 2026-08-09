@@ -3422,8 +3422,8 @@ fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
     assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
     assert_eq!(
         state.diagnostic_state_hash_algorithm(),
-        "fnv1a64-serde-json-game-state-envelope-v8",
-        "v8 diagnostic identity"
+        "fnv1a64-serde-json-game-state-envelope-v9",
+        "v9 diagnostic identity"
     );
 
     assert_eq!(state.players[0].hand.len(), 7);
@@ -3477,8 +3477,8 @@ fn v2_deck_pair_builder_burn_rally_root_940001_contract_and_pins() {
     );
     assert_eq!(
         format!("{:016x}", state.diagnostic_state_hash()),
-        "853f23afc1b13f96",
-        "pinned v8 diagnostic hash of the Burn/Rally root-940001 state"
+        "05c6af543cba5573",
+        "pinned v9 diagnostic hash of the Burn/Rally root-940001 state"
     );
 }
 
