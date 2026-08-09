@@ -39,7 +39,10 @@
 //! (`begin_cast`), before targets/modes/costs, so `finalize_cast` only
 //! fills in the placeholder `begin_cast` already pushed.
 
-use crate::card_def::{self, CardType, CostComponent, Keywords, TargetSpec};
+use crate::card_def::{
+    self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, Keywords,
+    ManaAbilityAmountDef, ManaAbilityCostDef, TargetSpec,
+};
 use crate::effect::{self, EffectOp, ExecCtx, ObjectRef, TargetRef};
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
@@ -1078,6 +1081,10 @@ pub enum Action {
     /// with multiple choices. Single-color sources retain the historical
     /// `ActivateManaAbility` variant and therefore retain its action identity.
     ActivateManaAbilityChoice(ObjectId, ManaColor),
+    /// Activates a mana ability whose cost includes one explicitly selected
+    /// battlefield object, currently Saruli Caretaker's other untapped
+    /// controlled creature. Appended for action identity stability.
+    ActivateManaAbilityWithCostTarget(ObjectId, ManaColor, ObjectId),
 }
 
 const CHAIN_COPY_COST: Cost = Cost {
@@ -1685,6 +1692,80 @@ fn completable_next_targets_for(
             let mut next = targets_chosen.to_vec();
             next.push(*candidate);
             target_prefix_can_complete(spec, &next, state)
+        })
+        .collect()
+}
+
+fn activation_legal_targets_for(
+    source: ObjectId,
+    ability: &ActivatedAbilityDef,
+    targets_chosen: &[Target],
+    state: &GameState,
+) -> Vec<Target> {
+    legal_targets_for(ability.target_spec, targets_chosen, state)
+        .into_iter()
+        .filter(|target| match ability.activation_target_filter {
+            ActivationTargetFilter::TargetSpecOnly => true,
+            ActivationTargetFilter::CreatureBlockedBySource => {
+                let Target::Object(attacker) = target else {
+                    return false;
+                };
+                state
+                    .engine
+                    .combat
+                    .blocked_by
+                    .iter()
+                    .any(|(candidate_attacker, blockers)| {
+                        candidate_attacker == attacker && blockers.contains(&source)
+                    })
+            }
+        })
+        .collect()
+}
+
+fn activation_target_prefix_can_complete(
+    source: ObjectId,
+    ability: &ActivatedAbilityDef,
+    targets_chosen: &[Target],
+    state: &GameState,
+) -> bool {
+    let need = usize::from(target_count(ability.target_spec));
+    if targets_chosen.len() > need {
+        return false;
+    }
+    let mut validated_prefix = Vec::with_capacity(targets_chosen.len());
+    for &target in targets_chosen {
+        if !activation_legal_targets_for(source, ability, &validated_prefix, state)
+            .contains(&target)
+        {
+            return false;
+        }
+        validated_prefix.push(target);
+    }
+    if targets_chosen.len() == need {
+        return true;
+    }
+    activation_legal_targets_for(source, ability, targets_chosen, state)
+        .into_iter()
+        .any(|candidate| {
+            let mut next = targets_chosen.to_vec();
+            next.push(candidate);
+            activation_target_prefix_can_complete(source, ability, &next, state)
+        })
+}
+
+fn completable_next_activation_targets_for(
+    source: ObjectId,
+    ability: &ActivatedAbilityDef,
+    targets_chosen: &[Target],
+    state: &GameState,
+) -> Vec<Target> {
+    activation_legal_targets_for(source, ability, targets_chosen, state)
+        .into_iter()
+        .filter(|candidate| {
+            let mut next = targets_chosen.to_vec();
+            next.push(*candidate);
+            activation_target_prefix_can_complete(source, ability, &next, state)
         })
         .collect()
 }
@@ -2463,9 +2544,79 @@ fn available_mana_abilities(player: PlayerId, state: &GameState) -> Vec<ObjectId
         .filter(|&id| {
             let obj = state.objects.get(id);
             let def = &card_def::CARD_DEFS[obj.card_def as usize];
-            !obj.tapped
-                && def.has_mana_ability()
-                && !(def.has_type(CardType::Creature) && obj.summoning_sick)
+            if !def.has_mana_ability() {
+                return false;
+            }
+            let Some(rich) = def.mana_ability_def else {
+                return !obj.tapped && !(def.has_type(CardType::Creature) && obj.summoning_sick);
+            };
+            if rich
+                .max_activations_per_turn
+                .is_some_and(|limit| mana_ability_use_count(state, id, 0) >= u16::from(limit))
+            {
+                return false;
+            }
+            match rich.cost {
+                ManaAbilityCostDef::TapSelf => {
+                    !obj.tapped && !(def.has_type(CardType::Creature) && obj.summoning_sick)
+                }
+                ManaAbilityCostDef::SacrificeSelf
+                | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => true,
+                ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
+                    !obj.tapped
+                        && !(def.has_type(CardType::Creature) && obj.summoning_sick)
+                        && !mana_ability_cost_targets(player, id, state).is_empty()
+                }
+            }
+        })
+        .collect()
+}
+
+fn mana_ability_use_count(state: &GameState, source: ObjectId, ability_index: u16) -> u16 {
+    state
+        .objects
+        .get(source)
+        .v4
+        .ability_uses_this_turn
+        .iter()
+        .find(|entry| {
+            entry.ability_kind == AbilityKindV4::Mana && entry.ability_index == ability_index
+        })
+        .map_or(0, |entry| entry.uses)
+}
+
+/// Exact additional object-cost choices for a rich mana ability. The source
+/// is never a candidate for Saruli Caretaker because it must separately pay
+/// its own tap-symbol cost. Summoning sickness does not restrict the other
+/// creature: the printed cost says "tap," not the tap symbol.
+pub(crate) fn mana_ability_cost_targets(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Vec<ObjectId> {
+    let Some(object) = state.objects.try_get(source) else {
+        return Vec::new();
+    };
+    let Some(definition) = card_def::CARD_DEFS.get(object.card_def as usize) else {
+        return Vec::new();
+    };
+    if !matches!(
+        definition.mana_ability_def.map(|ability| ability.cost),
+        Some(ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature)
+    ) {
+        return Vec::new();
+    }
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&candidate| candidate != source)
+        .filter(|&candidate| {
+            let object = state.objects.get(candidate);
+            object.controller == player
+                && object.zone == Zone::Battlefield
+                && !object.tapped
+                && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
         })
         .collect()
 }
@@ -2475,6 +2626,7 @@ fn activate_mana_ability_for(
     player: PlayerId,
     source: ObjectId,
     choice: ManaColor,
+    cost_target: Option<ObjectId>,
 ) -> Result<(), String> {
     if !available_mana_abilities(player, state).contains(&source) {
         return Err(format!(
@@ -2483,19 +2635,104 @@ fn activate_mana_ability_for(
     }
     let definition = &card_def::CARD_DEFS[state.objects.get(source).card_def as usize];
     let ability_index = definition
-        .mana_ability_choices
-        .iter()
-        .position(|candidate| *candidate == choice)
+        .mana_ability_index(choice)
         .ok_or_else(|| format!("{source} cannot produce {choice:?}"))?;
-    let program = definition
-        .mana_ability_program_for(choice)
-        .expect("validated mana choice has a generated program");
-    let ctx = ExecCtx::no_targets(source, player);
-    effect::execute(&program, &ctx, state);
-    state.objects.get_mut(source).v4.note_ability_use(
-        AbilityKindV4::Mana,
-        u16::try_from(ability_index).expect("mana ability index fits u16"),
-    );
+    let source_zone_change_count = state.objects.get(source).zone_change_count;
+    if let Some(rich) = definition.mana_ability_def {
+        let legal_cost_targets = mana_ability_cost_targets(player, source, state);
+        match rich.cost {
+            ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
+                let target = cost_target.ok_or_else(|| {
+                    format!("{source} requires another untapped controlled creature as a cost")
+                })?;
+                if !legal_cost_targets.contains(&target) {
+                    return Err(format!("{target} is not a legal mana-ability cost target"));
+                }
+            }
+            _ if cost_target.is_some() => {
+                return Err(format!(
+                    "{source} has no additional mana-ability object cost"
+                ));
+            }
+            _ => {}
+        }
+
+        let amount = match rich.amount {
+            ManaAbilityAmountDef::Fixed(amount) => amount,
+            ManaAbilityAmountDef::ControlledCreaturesWithKeyword(keyword) => state.players
+                [player.index()]
+            .battlefield
+            .iter()
+            .filter(|&&candidate| {
+                let object = state.objects.get(candidate);
+                card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+                    && has_effective_keyword(state, candidate, keyword)
+            })
+            .count()
+            .try_into()
+            .map_err(|_| "mana ability amount exceeds u8".to_string())?,
+        };
+
+        match rich.cost {
+            ManaAbilityCostDef::TapSelf => {
+                event::propose_and_commit(state, ProposedEvent::tap(source));
+            }
+            ManaAbilityCostDef::SacrificeSelf => {
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::zone_change(source, Zone::Graveyard),
+                );
+            }
+            ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
+                event::propose_and_commit(state, ProposedEvent::tap(source));
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::tap(cost_target.expect("validated cost target")),
+                );
+            }
+            ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
+                let counters = &mut state.objects.get_mut(source).counters.minus0_minus1;
+                *counters = counters
+                    .checked_add(1)
+                    .ok_or_else(|| "-0/-1 counter count overflow".to_string())?;
+            }
+        }
+        if amount > 0 {
+            event::propose_and_commit(
+                state,
+                ProposedEvent::mana_add(player, vec![choice; usize::from(amount)]),
+            );
+        }
+        if rich.controller_damage > 0 {
+            event::propose_and_commit(
+                state,
+                ProposedEvent::damage(
+                    source,
+                    Target::Player(player),
+                    i32::from(rich.controller_damage),
+                ),
+            );
+        }
+    } else {
+        if cost_target.is_some() {
+            return Err(format!(
+                "{source} has no additional mana-ability object cost"
+            ));
+        }
+        let program = definition
+            .mana_ability_program_for(choice)
+            .expect("validated mana choice has a generated program");
+        let ctx = ExecCtx::no_targets(source, player);
+        effect::execute(&program, &ctx, state);
+    }
+    if state.objects.get(source).zone_change_count == source_zone_change_count {
+        state
+            .objects
+            .get_mut(source)
+            .v4
+            .note_ability_use(AbilityKindV4::Mana, ability_index);
+    }
+    collect_and_queue_triggers(state);
 
     // 605.3b: mana abilities don't use the stack, so nothing goes on
     // it and no new *stack item* appears -- but this is not the same
@@ -2554,7 +2791,7 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                     continue;
                 }
                 if can_pay_activation_components(ability.cost, player, id, state)
-                    && target_prefix_can_complete(ability.target_spec, &[], state)
+                    && activation_target_prefix_can_complete(id, ability, &[], state)
                 {
                     out.push((id, i as u8));
                 }
@@ -2602,6 +2839,7 @@ fn can_attack(state: &GameState, id: ObjectId) -> bool {
     def.is_executable()
         && def.has_type(CardType::Creature)
         && !obj.tapped
+        && !has_effective_keyword(state, id, Keywords::DEFENDER)
         && (!obj.summoning_sick || has_effective_keyword(state, id, Keywords::HASTE))
 }
 
@@ -4233,8 +4471,9 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
             player: pending.controller,
             spell: pending.source,
             remaining: need - pending.targets_chosen.len() as u8,
-            legal_targets: completable_next_targets_for(
-                pending.target_spec,
+            legal_targets: completable_next_activation_targets_for(
+                pending.source,
+                ability,
                 &pending.targets_chosen,
                 state,
             ),
@@ -4345,12 +4584,19 @@ pub(crate) fn validate_pending_activation(
     }
     let mut prefix = Vec::new();
     for &target in &pending.targets_chosen {
-        if !completable_next_targets_for(pending.target_spec, &prefix, state).contains(&target) {
+        if !completable_next_activation_targets_for(pending.source, ability, &prefix, state)
+            .contains(&target)
+        {
             return Err("pending activation carries an illegal target prefix".to_string());
         }
         prefix.push(target);
     }
-    if !target_prefix_can_complete(pending.target_spec, &pending.targets_chosen, state) {
+    if !activation_target_prefix_can_complete(
+        pending.source,
+        ability,
+        &pending.targets_chosen,
+        state,
+    ) {
         return Err("pending activation target prefix cannot complete".to_string());
     }
     if state.engine.pending_cast.is_some()
@@ -4797,7 +5043,22 @@ fn stack_targets_still_legal(item: &StackItem, state: &GameState) -> Result<bool
     let mut any_legal = false;
     for (&target, &contract) in item.targets.iter().zip(&item.v4.target_contracts) {
         let same_incarnation = target_contract_matches_live(state, target, contract);
-        any_legal |= same_incarnation && legal_targets_for(spec, &chosen, state).contains(&target);
+        let legal_now = match item.kind {
+            StackItemKind::ActivatedAbility => {
+                let ability_index = item
+                    .v4
+                    .activated_ability_index
+                    .ok_or("activated stack item lost its definition-owned ability index")?;
+                let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
+                let ability = def
+                    .activated_abilities
+                    .get(ability_index as usize)
+                    .ok_or("activated stack item carries an out-of-range ability index")?;
+                activation_legal_targets_for(item.source, ability, &chosen, state).contains(&target)
+            }
+            _ => legal_targets_for(spec, &chosen, state).contains(&target),
+        };
+        any_legal |= same_incarnation && legal_now;
         chosen.push(target);
     }
     // 608.2b: a spell with multiple targets is countered by the rules only
@@ -5342,7 +5603,8 @@ pub(crate) fn static_self_boost_for(name: &str) -> Option<StaticSelfBoostDef> {
 pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
-    let mut power = def.power.unwrap_or(0) as i32 + obj.counters.plus1_plus1 as i32;
+    let mut power = def.power.unwrap_or(0) as i32 + obj.counters.plus1_plus1 as i32
+        - obj.counters.minus1_minus1 as i32;
     if def.is_executable() {
         if let Some(boost) = static_self_boost_for(def.name) {
             if (boost.condition)(obj.controller, state) {
@@ -5374,7 +5636,9 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
 pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
     let obj = state.objects.get(id);
     let def = &card_def::CARD_DEFS[obj.card_def as usize];
-    let mut toughness = def.toughness.unwrap_or(0) as i32 + obj.counters.plus1_plus1 as i32;
+    let mut toughness = def.toughness.unwrap_or(0) as i32 + obj.counters.plus1_plus1 as i32
+        - obj.counters.minus1_minus1 as i32
+        - obj.counters.minus0_minus1 as i32;
     if def.is_executable() {
         if let Some(boost) = static_self_boost_for(def.name) {
             if (boost.condition)(obj.controller, state) {
@@ -5764,7 +6028,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                     "{id} requires an explicit mana choice from {choices:?}"
                 ));
             };
-            activate_mana_ability_for(state, p, id, *choice)
+            activate_mana_ability_for(state, p, id, *choice, None)
         }
         Action::ActivateManaAbilityChoice(id, choice) => {
             let p = state.priority_player;
@@ -5775,7 +6039,11 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                     "{id} is a single-color source and uses ActivateManaAbility"
                 ));
             }
-            activate_mana_ability_for(state, p, id, choice)
+            activate_mana_ability_for(state, p, id, choice, None)
+        }
+        Action::ActivateManaAbilityWithCostTarget(id, choice, cost_target) => {
+            let p = state.priority_player;
+            activate_mana_ability_for(state, p, id, choice, Some(cost_target))
         }
         Action::ActivateAbility(source, index) => {
             let p = state.priority_player;
@@ -5996,8 +6264,16 @@ fn apply_choose_target(state: &mut GameState, target: Target) -> Result<(), Stri
             Ok(())
         }
         TargetingProducer::Activation(pending) => {
-            if !completable_next_targets_for(pending.target_spec, &pending.targets_chosen, state)
-                .contains(&target)
+            let definition =
+                &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
+            let ability = &definition.activated_abilities[pending.ability_index as usize];
+            if !completable_next_activation_targets_for(
+                pending.source,
+                ability,
+                &pending.targets_chosen,
+                state,
+            )
+            .contains(&target)
             {
                 return Err(format!("{target:?} is not a legal activation target"));
             }

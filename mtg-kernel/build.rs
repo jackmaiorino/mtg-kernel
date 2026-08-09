@@ -2419,15 +2419,11 @@ impl Special {
             }
             Special::DeemInferior => "deem_inferior".to_string(),
             Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
-            Special::DestroyNonlegendaryCreature => {
-                "destroy_nonlegendary_creature".to_string()
-            }
+            Special::DestroyNonlegendaryCreature => "destroy_nonlegendary_creature".to_string(),
             Special::DamageEachCreatureWithoutSubtype {
                 amount,
                 excluded_subtype,
-            } => format!(
-                "damage_each_creature_without_subtype:{amount}:{excluded_subtype}"
-            ),
+            } => format!("damage_each_creature_without_subtype:{amount}:{excluded_subtype}"),
         }
     }
 }
@@ -2448,6 +2444,7 @@ enum AbilityCostRecipe {
 enum AbilityEffectRecipe {
     DrawCards(u8),
     CreateToken(&'static str),
+    DamageTarget(u8),
     /// The interpreter currently supports exactly this typecycling search
     /// contract. Keeping all semantic knobs in the recipe makes codegen fail
     /// closed if a future caller asks for a different cardinality/reveal/
@@ -2468,6 +2465,8 @@ struct ActivatedAbilityRecipe {
     effect: AbilityEffectRecipe,
     activation_zone: &'static str,
     sorcery_speed_only: bool,
+    target_spec: &'static str,
+    activation_target_filter: &'static str,
 }
 
 fn special_for(name: &str) -> Special {
@@ -2651,40 +2650,72 @@ fn effect_recipe_for(card: &CardJson) -> String {
 /// or "as long as you control an artifact") and temporary/derived, so it is
 /// deliberately NOT here -- see `engine::static_self_boost_for` and
 /// `EffectOp::PumpControlled`'s `grant_haste` instead.
-fn keywords_for(card: &CardJson) -> &'static str {
+fn keywords_for(card: &CardJson) -> String {
+    let mut keywords = Vec::new();
     if card
         .mechanics
         .iter()
         .any(|mechanic| mechanic == "indestructible")
     {
-        return "Keywords::INDESTRUCTIBLE";
+        keywords.push("Keywords::INDESTRUCTIBLE");
+    }
+    if card.mechanics.iter().any(|mechanic| mechanic == "defender") {
+        keywords.push("Keywords::DEFENDER");
     }
     match card.name.as_str() {
-        "Masked Meower" | "Clockwork Percussionist" => "Keywords::HASTE",
+        "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),
         "Sneaky Snacker"
         | "Bird Illusion Token"
         | "Faerie Miscreant"
         | "Faerie Seer"
-        | "Refurbished Familiar" => "Keywords::FLYING",
-        "Outlaw Medic" => "Keywords::LIFELINK",
-        "Samurai Token" => "Keywords::VIGILANCE",
-        _ => "Keywords::NONE",
+        | "Refurbished Familiar" => keywords.push("Keywords::FLYING"),
+        "Outlaw Medic" => keywords.push("Keywords::LIFELINK"),
+        "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
+        _ => {}
+    }
+    if keywords.is_empty() {
+        "Keywords::NONE".to_string()
+    } else if keywords.len() == 1 {
+        keywords[0].to_string()
+    } else {
+        format!(
+            "Keywords({})",
+            keywords
+                .iter()
+                .map(|keyword| format!("{keyword}.0"))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        )
     }
 }
 
-/// Whether the registry describes a repeatable tap-for-mana ability rather
-/// than one-shot mana production such as Burning-Tree Emissary's ETB trigger.
-/// Lands with `mana_ability` and nonlands with the explicit `tap_ability`
-/// marker share the same generated substrate.
-fn has_repeatable_mana_ability(card: &CardJson) -> bool {
+/// Whether the registry describes an activated mana ability rather than
+/// one-shot production such as Burning-Tree Emissary's ETB trigger. Richer
+/// activated costs are carried by `mana_ability_def_for`; ordinary sources
+/// continue to use the legacy tap-and-add-one substrate.
+fn has_activated_mana_ability(card: &CardJson) -> bool {
     card.mechanics
         .iter()
         .any(|mechanic| mechanic == "mana_ability")
-        && (card.is_land
-            || card
-                .mechanics
-                .iter()
-                .any(|mechanic| mechanic == "tap_ability"))
+        && !card
+            .mechanics
+            .iter()
+            .any(|mechanic| mechanic == "etb_trigger")
+}
+
+/// Source for a single printed mana ability that is not exactly tap-and-add
+/// one. The runtime interprets these definitions generically and the same
+/// source fragment is included in the card-database identity below.
+fn mana_ability_def_for(name: &str) -> &'static str {
+    match name {
+        "Elves of Deep Shadow" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
+        "Lotus Petal" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
+        "Overgrown Battlement" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::ControlledCreaturesWithKeyword(Keywords::DEFENDER), controller_damage: 0, max_activations_per_turn: None })",
+        "Saruli Caretaker" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
+        "Tinder Wall" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
+        "Wall of Roots" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) })",
+        _ => "None",
+    }
 }
 
 fn enters_battlefield_tapped(card: &CardJson) -> bool {
@@ -2789,6 +2820,8 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             effect: AbilityEffectRecipe::DrawCards(1),
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
         }],
         "Blood Token" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2803,6 +2836,8 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             effect: AbilityEffectRecipe::DrawCards(1),
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
         }],
         "Experimental Synthesizer" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2815,6 +2850,8 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             effect: AbilityEffectRecipe::CreateToken("Samurai Token"),
             activation_zone: "Battlefield",
             sorcery_speed_only: true,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
         }],
         "Lorien Revealed" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2834,6 +2871,22 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             },
             activation_zone: "Hand",
             sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+        }],
+        "Tinder Wall" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("R"),
+                    generic: 0,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::DamageTarget(2),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "CreatureBlockedBySource",
         }],
         _ => &[],
     }
@@ -2874,6 +2927,7 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
     match effect {
         AbilityEffectRecipe::DrawCards(count) => format!("draw_cards:{count}"),
         AbilityEffectRecipe::CreateToken(name) => format!("create_token:{name}"),
+        AbilityEffectRecipe::DamageTarget(amount) => format!("damage_target:{amount}"),
         AbilityEffectRecipe::SearchLibraryToHand {
             card_type,
             subtype,
@@ -2895,6 +2949,9 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::CreateToken(name) => {
             panic!("no generated activated-ability token function for {name:?}")
+        }
+        AbilityEffectRecipe::DamageTarget(amount) => {
+            format!("ability_effect_damage_target_{amount}")
         }
         AbilityEffectRecipe::SearchLibraryToHand {
             card_type: "Land",
@@ -2928,8 +2985,10 @@ fn activated_abilities_for(name: &str) -> String {
             let effect = ability_effect_fn_name(recipe.effect);
             let zone = recipe.activation_zone;
             let sorcery = recipe.sorcery_speed_only;
+            let target_spec = recipe.target_spec;
+            let activation_target_filter = recipe.activation_target_filter;
             format!(
-                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::None, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery} }}"
+                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter} }}"
             )
         })
         .collect::<Vec<_>>()
@@ -2949,9 +3008,11 @@ fn activated_abilities_token(name: &str) -> String {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "zone={};sorcery={};target=none;cost=[{}];effect={}",
+                "zone={};sorcery={};target={};activation_filter={};cost=[{}];effect={}",
                 recipe.activation_zone.to_ascii_lowercase(),
                 recipe.sorcery_speed_only,
+                recipe.target_spec.to_ascii_lowercase(),
+                recipe.activation_target_filter.to_ascii_lowercase(),
                 costs,
                 ability_effect_token(recipe.effect)
             )
@@ -3131,7 +3192,7 @@ fn codegen(cards: &[CardJson]) -> String {
     ] {
         let used = cards.iter().any(|card| {
             card.engine_capability != EngineCapabilityJson::NoEffect
-                && has_repeatable_mana_ability(card)
+                && has_activated_mana_ability(card)
                 && card.produces_mana.iter().any(|produced| produced == color)
         });
         if !used {
@@ -3185,6 +3246,13 @@ fn codegen(cards: &[CardJson]) -> String {
             AbilityEffectRecipe::CreateToken(name) => {
                 writeln!(out, "    let token = crate::card_def::card_id_by_name({name:?}).expect(\"{name} in CARD_DEFS\");").unwrap();
                 writeln!(out, "    EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}").unwrap();
+            }
+            AbilityEffectRecipe::DamageTarget(amount) => {
+                writeln!(
+                    out,
+                    "    EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: {amount} }}"
+                )
+                .unwrap();
             }
             AbilityEffectRecipe::SearchLibraryToHand {
                 card_type: "Land",
@@ -3523,7 +3591,11 @@ fn codegen(cards: &[CardJson]) -> String {
             "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
         )
         .unwrap();
-        writeln!(out, "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),").unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
         writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
         writeln!(out, "    }})").unwrap();
         writeln!(out, "}}").unwrap();
@@ -4101,7 +4173,7 @@ fn codegen(cards: &[CardJson]) -> String {
         // Keep the historical function-pointer program for single-color
         // sources. Multi-color sources expose one action per printed mana
         // ability through `CardDef::mana_ability_choices` below.
-        let mana_ability_colors = if executable && has_repeatable_mana_ability(c) {
+        let mana_ability_colors = if executable && has_activated_mana_ability(c) {
             &c.produces_mana[..]
         } else {
             &[]
@@ -4204,6 +4276,16 @@ fn codegen(cards: &[CardJson]) -> String {
             executable && enters_battlefield_tapped(c)
         )
         .unwrap();
+        writeln!(
+            out,
+            "        mana_ability_def: {},",
+            if executable {
+                mana_ability_def_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -4221,7 +4303,7 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out).unwrap();
 
     // ---- content + executable-recipe hash ------------------------------
-    // v7 hashes every generated CardDef selector plus semantic tokens from
+    // v8 hashes every generated CardDef selector plus semantic tokens from
     // the same `Special` and structured activated-ability recipes that emit
     // executable definitions. Lorien's Draw3/search and Deep Analysis's
     // target-player draw/ordered flashback and Sleep's ordered Escape cost
@@ -4229,7 +4311,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v9\n");
+    let mut canon = String::from("kernel_carddb/v10\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -4272,10 +4354,10 @@ fn codegen(cards: &[CardJson]) -> String {
         // recipe token. This covers every field selected by the generator for
         // `CardDef`; runtime primitive implementation changes remain pinned
         // separately by the source revision.
-        canon.push_str(keywords_for(c));
+        canon.push_str(&keywords_for(c));
         canon.push('|');
         canon.push_str("mana_ability_choices=");
-        if c.engine_capability != EngineCapabilityJson::NoEffect && has_repeatable_mana_ability(c) {
+        if c.engine_capability != EngineCapabilityJson::NoEffect && has_activated_mana_ability(c) {
             canon.push_str(&c.produces_mana.join(","));
         }
         canon.push('|');
@@ -4288,6 +4370,13 @@ fn codegen(cards: &[CardJson]) -> String {
                 "false"
             },
         );
+        canon.push('|');
+        canon.push_str("mana_ability_def=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            mana_ability_def_for(&c.name)
+        } else {
+            "None"
+        });
         canon.push('|');
         canon.push_str(alt_cost_for(&c.name));
         canon.push('|');
@@ -4429,6 +4518,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Wizard" => "Subtype::Wizard",
         "Zombie" => "Subtype::Zombie",
         "Illusion" => "Subtype::Illusion",
+        "Dryad" => "Subtype::Dryad",
+        "Plant" => "Subtype::Plant",
+        "Wall" => "Subtype::Wall",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

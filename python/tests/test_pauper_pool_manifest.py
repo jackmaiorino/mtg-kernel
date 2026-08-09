@@ -34,7 +34,6 @@ EXPECTED_SPECS = (
 MISSING_SPY_RECORDS = {
     "Balustrade Spy",
     "Dread Return",
-    "Elves of Deep Shadow",
     "Faerie Macabre",
     "Flaring Pain",
     "Fume Spitter",
@@ -42,31 +41,20 @@ MISSING_SPY_RECORDS = {
     "Healer of the Glade",
     "Land Grant",
     "Lotleth Giant",
-    "Lotus Petal",
     "Mesmeric Fiend",
-    "Overgrown Battlement",
     "Sagu Wildling",
-    "Saruli Caretaker",
-    "Tinder Wall",
     "Troll of Khazad-dum",
-    "Wall of Roots",
 }
 
 MISSING_SPY_MAIN = {
     "Balustrade Spy": 4,
     "Dread Return": 2,
-    "Elves of Deep Shadow": 2,
     "Gatecreeper Vine": 3,
     "Land Grant": 4,
     "Lotleth Giant": 2,
-    "Lotus Petal": 2,
     "Mesmeric Fiend": 2,
-    "Overgrown Battlement": 4,
     "Sagu Wildling": 4,
-    "Saruli Caretaker": 4,
-    "Tinder Wall": 2,
     "Troll of Khazad-dum": 1,
-    "Wall of Roots": 3,
 }
 
 
@@ -493,12 +481,18 @@ class PauperPoolManifestTest(unittest.TestCase):
             spy_declared,
             {
                 "Forest",
+                "Elves of Deep Shadow",
                 "Generous Ent",
                 "Lead the Stampede",
+                "Lotus Petal",
                 "Masked Vandal",
+                "Overgrown Battlement",
                 "Quirion Ranger",
+                "Saruli Caretaker",
                 "Swamp",
+                "Tinder Wall",
                 "Vitu-Ghazi Inspector",
+                "Wall of Roots",
                 "Winding Way",
             },
         )
@@ -515,8 +509,8 @@ class PauperPoolManifestTest(unittest.TestCase):
         spy_main = roster_from_zone(spy["mainboard"])
         missing_main = {name: spy_main[name] for name in MISSING_SPY_MAIN}
         self.assertEqual(missing_main, MISSING_SPY_MAIN)
-        self.assertEqual(len(missing_main), 14)
-        self.assertEqual(sum(missing_main.values()), 39)
+        self.assertEqual(len(missing_main), 8)
+        self.assertEqual(sum(missing_main.values()), 22)
         for row in missing_rows.values():
             self.assertEqual(row["declared_decks"], [])
             self.assertEqual(row["expected_decks"], ["Deck - Spy Combo.dek"])
@@ -551,9 +545,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 66,
+                "full_cards": 72,
                 "partial_cards": 0,
-                "no_effect_cards": 84,
+                "no_effect_cards": 78,
                 "token_dependencies": 4,
             },
         )
@@ -562,7 +556,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Affinity", "full": 39, "partial": 0, "no_effect": 21, "total": 60},
             {"deck_id": "Elves", "full": 26, "partial": 0, "no_effect": 34, "total": 60},
-            {"deck_id": "Spy", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
+            {"deck_id": "Spy", "full": 25, "partial": 0, "no_effect": 35, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "CawGates", "full": 18, "partial": 0, "no_effect": 42, "total": 60},

@@ -766,11 +766,15 @@ where
             actor,
             source,
             mana_choice,
+            cost_target,
         } => {
             check_actor(*actor)?;
             core.kind = FlatActionKindV1::ActivateManaAbility;
             core.mana_choice = mana_choice.map(flat_mana_color_v1).unwrap_or(0);
             push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+            if let Some(cost_target) = cost_target {
+                push_ref(FlatActionRefRoleV1::Candidate, 0, 0, cost_target)?;
+            }
         }
         ActionSemanticV1::ActivateAbility {
             actor,
@@ -1493,8 +1497,29 @@ fn flat_validate_current_decision_relations_v1(
 
     for candidate in &current.candidates {
         match &candidate.semantic {
-            ActionSemanticV1::ActivateManaAbility { source, .. }
-            | ActionSemanticV1::ActivateAbility { source, .. } => {
+            ActionSemanticV1::ActivateManaAbility {
+                source,
+                cost_target,
+                ..
+            } => {
+                flat_validate_controller_zone_v1(
+                    state,
+                    current.actor,
+                    source,
+                    current.actor,
+                    Zone::Battlefield,
+                )?;
+                if let Some(cost_target) = cost_target {
+                    flat_validate_controller_zone_v1(
+                        state,
+                        current.actor,
+                        cost_target,
+                        current.actor,
+                        Zone::Battlefield,
+                    )?;
+                }
+            }
+            ActionSemanticV1::ActivateAbility { source, .. } => {
                 flat_validate_controller_zone_v1(
                     state,
                     current.actor,
@@ -1713,8 +1738,18 @@ fn flat_validate_origin_decision_v1(
                 if definition.mana_ability_choices.is_empty() {
                     return Err(invalid());
                 }
+                let cost_target_count =
+                    crate::engine::mana_ability_cost_targets(*player, *object, state)
+                        .len()
+                        .max(1);
                 mana_action_count = mana_action_count
-                    .checked_add(definition.mana_ability_choices.len())
+                    .checked_add(
+                        definition
+                            .mana_ability_choices
+                            .len()
+                            .checked_mul(cost_target_count)
+                            .ok_or_else(invalid)?,
+                    )
                     .ok_or_else(invalid)?;
             }
             let expected_count = castable_spells
@@ -1751,45 +1786,86 @@ fn flat_validate_origin_decision_v1(
                     .ok_or_else(invalid)?
                     .mana_ability_choices;
                 for &choice in choices {
-                    let candidate = &candidates[cursor];
-                    let valid = match (&candidate.semantic, &candidate.policy_action) {
-                        (
-                            ActionSemanticV1::ActivateManaAbility {
-                                actor,
-                                source,
-                                mana_choice,
-                            },
-                            PolicyActionV5::Surface(SurfaceAction::Action(
-                                Action::ActivateManaAbility(action),
-                            )),
-                        ) if choices.len() == 1 => {
-                            actor_matches(*actor, *player)
-                                && flat_ref_matches_object_v1(source, *object)
-                                && *mana_choice == Some(choice)
-                                && action == object
+                    let cost_targets =
+                        crate::engine::mana_ability_cost_targets(*player, *object, state);
+                    if cost_targets.is_empty() {
+                        let candidate = &candidates[cursor];
+                        let valid = match (&candidate.semantic, &candidate.policy_action) {
+                            (
+                                ActionSemanticV1::ActivateManaAbility {
+                                    actor,
+                                    source,
+                                    mana_choice,
+                                    cost_target: None,
+                                },
+                                PolicyActionV5::Surface(SurfaceAction::Action(
+                                    Action::ActivateManaAbility(action),
+                                )),
+                            ) if choices.len() == 1 => {
+                                actor_matches(*actor, *player)
+                                    && flat_ref_matches_object_v1(source, *object)
+                                    && *mana_choice == Some(choice)
+                                    && action == object
+                            }
+                            (
+                                ActionSemanticV1::ActivateManaAbility {
+                                    actor,
+                                    source,
+                                    mana_choice,
+                                    cost_target: None,
+                                },
+                                PolicyActionV5::Surface(SurfaceAction::Action(
+                                    Action::ActivateManaAbilityChoice(action, action_choice),
+                                )),
+                            ) if choices.len() > 1 => {
+                                actor_matches(*actor, *player)
+                                    && flat_ref_matches_object_v1(source, *object)
+                                    && *mana_choice == Some(choice)
+                                    && action == object
+                                    && *action_choice == choice
+                            }
+                            _ => false,
+                        };
+                        if !valid {
+                            return Err(invalid());
                         }
-                        (
-                            ActionSemanticV1::ActivateManaAbility {
-                                actor,
-                                source,
-                                mana_choice,
-                            },
-                            PolicyActionV5::Surface(SurfaceAction::Action(
-                                Action::ActivateManaAbilityChoice(action, action_choice),
-                            )),
-                        ) if choices.len() > 1 => {
-                            actor_matches(*actor, *player)
-                                && flat_ref_matches_object_v1(source, *object)
-                                && *mana_choice == Some(choice)
-                                && action == object
-                                && *action_choice == choice
+                        cursor += 1;
+                    } else {
+                        for cost_target in cost_targets {
+                            let candidate = &candidates[cursor];
+                            let valid = matches!(
+                                (&candidate.semantic, &candidate.policy_action),
+                                (
+                                    ActionSemanticV1::ActivateManaAbility {
+                                        actor,
+                                        source,
+                                        mana_choice,
+                                        cost_target: Some(semantic_cost_target),
+                                    },
+                                    PolicyActionV5::Surface(SurfaceAction::Action(
+                                        Action::ActivateManaAbilityWithCostTarget(
+                                            action,
+                                            action_choice,
+                                            action_cost_target,
+                                        ),
+                                    )),
+                                ) if actor_matches(*actor, *player)
+                                    && flat_ref_matches_object_v1(source, *object)
+                                    && *mana_choice == Some(choice)
+                                    && flat_ref_matches_object_v1(
+                                        semantic_cost_target,
+                                        cost_target,
+                                    )
+                                    && action == object
+                                    && *action_choice == choice
+                                    && *action_cost_target == cost_target
+                            );
+                            if !valid {
+                                return Err(invalid());
+                            }
+                            cursor += 1;
                         }
-                        _ => false,
-                    };
-                    if !valid {
-                        return Err(invalid());
                     }
-                    cursor += 1;
                 }
             }
             for object in land_drops {
@@ -2241,7 +2317,11 @@ fn flat_validate_semantic_policy_pair_v1(
             PolicyActionV5::Surface(SurfaceAction::Action(Action::CastSpell(actual))),
         )
         | (
-            ActionSemanticV1::ActivateManaAbility { source, .. },
+            ActionSemanticV1::ActivateManaAbility {
+                source,
+                cost_target: None,
+                ..
+            },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateManaAbility(actual))),
         )
         | (
@@ -2252,6 +2332,7 @@ fn flat_validate_semantic_policy_pair_v1(
             ActionSemanticV1::ActivateManaAbility {
                 source,
                 mana_choice: Some(expected_choice),
+                cost_target: None,
                 ..
             },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateManaAbilityChoice(
@@ -2259,6 +2340,25 @@ fn flat_validate_semantic_policy_pair_v1(
                 actual_choice,
             ))),
         ) => ObjectId(source.arena_id) == *actual && expected_choice == actual_choice,
+        (
+            ActionSemanticV1::ActivateManaAbility {
+                source,
+                mana_choice: Some(expected_choice),
+                cost_target: Some(expected_cost_target),
+                ..
+            },
+            PolicyActionV5::Surface(SurfaceAction::Action(
+                Action::ActivateManaAbilityWithCostTarget(
+                    actual,
+                    actual_choice,
+                    actual_cost_target,
+                ),
+            )),
+        ) => {
+            ObjectId(source.arena_id) == *actual
+                && expected_choice == actual_choice
+                && ObjectId(expected_cost_target.arena_id) == *actual_cost_target
+        }
         (
             ActionSemanticV1::ActivateAbility {
                 source,
@@ -9934,6 +10034,7 @@ mod tests {
                 actor,
                 source: a.clone(),
                 mana_choice: Some(ManaColor::R),
+                cost_target: None,
             },
             ActionSemanticV1::ActivateAbility {
                 actor,
@@ -10372,6 +10473,7 @@ mod tests {
                     actor,
                     source: a.clone(),
                     mana_choice: choice,
+                    cost_target: None,
                 },
                 actor,
             )

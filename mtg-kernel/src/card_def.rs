@@ -184,6 +184,12 @@ pub enum Subtype {
     /// Appended for Bird Illusion Token. Existing stable ids are never
     /// renumbered when the closed pool gains another supported subtype.
     Illusion,
+    /// Appended for Saruli Caretaker. Existing stable ids remain unchanged.
+    Dryad,
+    /// Appended for Tinder Wall and Wall of Roots.
+    Plant,
+    /// Appended for Overgrown Battlement, Tinder Wall, and Wall of Roots.
+    Wall,
 }
 
 impl Subtype {
@@ -389,6 +395,49 @@ pub struct ActivatedAbilityDef {
     /// uses. `false` for Masked Meower's and the Blood token's abilities,
     /// which have no such restriction in their Java source.
     pub sorcery_speed_only: bool,
+    /// Additional activation-time target restriction layered on top of
+    /// `target_spec`. This is definition data so combat-relative targets such
+    /// as "a creature this source is blocking" do not become card-name
+    /// branches in the engine. Resolution rechecks this filter together with
+    /// the ordinary target specification and incarnation contract.
+    pub activation_target_filter: ActivationTargetFilter,
+}
+
+/// A source-relative restriction that applies while announcing a non-mana
+/// activated ability. Appended as a separate vocabulary so serialized
+/// `TargetSpec` discriminants remain untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationTargetFilter {
+    TargetSpecOnly,
+    CreatureBlockedBySource,
+}
+
+/// Cost paid by one printed mana ability. Special mana costs live here rather
+/// than in `CostComponent` because they resolve without the stack and may need
+/// an object choice in the same atomic action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManaAbilityCostDef {
+    TapSelf,
+    SacrificeSelf,
+    TapSelfAndOtherUntappedControlledCreature,
+    PutMinus0Minus1CounterOnSelf,
+}
+
+/// Amount of the chosen color added by a mana ability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManaAbilityAmountDef {
+    Fixed(u8),
+    ControlledCreaturesWithKeyword(Keywords),
+}
+
+/// Reusable definition for a single printed mana ability whose cost, amount,
+/// or side effect is richer than the legacy tap-and-add-one substrate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManaAbilityDef {
+    pub cost: ManaAbilityCostDef,
+    pub amount: ManaAbilityAmountDef,
+    pub controller_damage: u8,
+    pub max_activations_per_turn: Option<u8>,
 }
 
 /// A spell's alternative mode (the four Blast cards' "Choose one --"
@@ -529,6 +578,11 @@ pub struct CardDef {
     /// Whether this permanent enters the battlefield tapped. The shared
     /// zone-change commit path enforces this for every battlefield entry.
     pub enters_battlefield_tapped: bool,
+    /// A single printed mana ability whose rules are not exactly "tap this:
+    /// add one of the selected color." `None` preserves the legacy automatic
+    /// payment path for basics, artifact lands, bridges, and ordinary mana
+    /// creatures.
+    pub mana_ability_def: Option<ManaAbilityDef>,
 }
 
 impl CardDef {
@@ -556,6 +610,31 @@ impl CardDef {
 
     pub fn has_mana_ability(&self) -> bool {
         self.is_executable() && !self.mana_ability_choices.is_empty()
+    }
+
+    /// Automatic spell-cost payment may only tap sources whose entire printed
+    /// mana ability is the legacy tap-and-add-one program. Richer abilities
+    /// remain fully playable through explicit mana actions, preventing the
+    /// solver from silently skipping sacrifice, damage, counter, or object
+    /// costs.
+    pub fn is_automatic_payment_mana_source(&self) -> bool {
+        self.has_mana_ability() && self.mana_ability_def.is_none()
+    }
+
+    /// Stable printed-ability index used by per-turn limits and public
+    /// provenance. A rich definition represents one printed ability even when
+    /// that ability offers several colors; legacy dual lands retain one index
+    /// per separately printed color ability.
+    pub fn mana_ability_index(&self, choice: ManaColor) -> Option<u16> {
+        let choice_index = self
+            .mana_ability_choices
+            .iter()
+            .position(|candidate| *candidate == choice)?;
+        Some(if self.mana_ability_def.is_some() {
+            0
+        } else {
+            u16::try_from(choice_index).ok()?
+        })
     }
 
     /// Builds the exact tap-and-add program for one printed mana ability.
@@ -668,11 +747,11 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 132 real pool cards + 4 tokens (Blood, created by Voldaren
+        // 138 real pool cards + 4 tokens (Blood, created by Voldaren
         // Epicure's ETB trigger; Human Soldier Token/Samurai Token, created
         // by Rally at the Hornburg/Experimental Synthesizer; Bird Illusion
         // Token, created by Murmuring Mystic -- see `trigger.rs`/`build.rs`).
-        assert_eq!(CARD_DEFS.len(), 136);
+        assert_eq!(CARD_DEFS.len(), 142);
     }
 
     #[test]
@@ -707,10 +786,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v12_is_frozen() {
-        // Version 12 adds the Cast Down, Breath Weapon, Outlaw Medic, and
-        // Refurbished Familiar executable recipes to the combined catalog.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x397a_48f2_d7c4_a7a8);
+    fn card_db_hash_v13_is_frozen() {
+        // Version 13 composes the interaction-card recipes with the Spy
+        // mana/defender tranche and its rich mana-cost action semantics.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x465c_d4f2_34a8_0be3);
     }
 
     #[test]
@@ -910,7 +989,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 70, "66 deck cards plus four required tokens");
+        assert_eq!(full, 76, "72 deck cards plus four required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

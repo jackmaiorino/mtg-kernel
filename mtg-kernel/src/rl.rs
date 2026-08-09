@@ -884,6 +884,11 @@ pub enum ActionSemanticV1 {
         actor: PlayerSeatV1,
         source: CardStableRefV1,
         mana_choice: Option<ManaColor>,
+        /// Additional permanent tapped as an activation cost. Absent from
+        /// legacy serialized actions so their stable JSON identities remain
+        /// byte-for-byte unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_target: Option<CardStableRefV1>,
     },
     ActivateAbility {
         actor: PlayerSeatV1,
@@ -2052,19 +2057,42 @@ fn core_surface_action_candidates_v1(
                     let choices =
                         CARD_DEFS[state.objects.get(id).card_def as usize].mana_ability_choices;
                     for &choice in choices {
-                        push_action(
-                            &mut out,
-                            ActionSemanticV1::ActivateManaAbility {
-                                actor,
-                                source: card_ref(state, id)?,
-                                mana_choice: Some(choice),
-                            },
-                            SurfaceAction::Action(if choices.len() == 1 {
-                                Action::ActivateManaAbility(id)
-                            } else {
-                                Action::ActivateManaAbilityChoice(id, choice)
-                            }),
-                        )?;
+                        let cost_targets = engine::mana_ability_cost_targets(*player, id, state);
+                        if cost_targets.is_empty() {
+                            push_action(
+                                &mut out,
+                                ActionSemanticV1::ActivateManaAbility {
+                                    actor,
+                                    source: card_ref(state, id)?,
+                                    mana_choice: Some(choice),
+                                    cost_target: None,
+                                },
+                                SurfaceAction::Action(if choices.len() == 1 {
+                                    Action::ActivateManaAbility(id)
+                                } else {
+                                    Action::ActivateManaAbilityChoice(id, choice)
+                                }),
+                            )?;
+                        } else {
+                            for &cost_target in &cost_targets {
+                                push_action(
+                                    &mut out,
+                                    ActionSemanticV1::ActivateManaAbility {
+                                        actor,
+                                        source: card_ref(state, id)?,
+                                        mana_choice: Some(choice),
+                                        cost_target: Some(card_ref(state, cost_target)?),
+                                    },
+                                    SurfaceAction::Action(
+                                        Action::ActivateManaAbilityWithCostTarget(
+                                            id,
+                                            choice,
+                                            cost_target,
+                                        ),
+                                    ),
+                                )?;
+                            }
+                        }
                     }
                 }
                 for &id in land_drops {

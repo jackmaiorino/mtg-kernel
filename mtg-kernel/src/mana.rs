@@ -198,7 +198,7 @@ pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
         // `mana_ability_choices` field is the narrower repeatable tap-source
         // contract. A creature source also obeys summoning sickness for the
         // tap symbol in its activation cost.
-        if def.has_mana_ability()
+        if def.is_automatic_payment_mana_source()
             && !(def.has_type(crate::card_def::CardType::Creature) && obj.summoning_sick)
         {
             sources.push(ManaSource {

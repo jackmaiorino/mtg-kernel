@@ -4146,12 +4146,224 @@
         "flying"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/BirdIllusionToken.java"
+    },
+    {
+      "name": "Elves of Deep Shadow",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Druid"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [
+        "B"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "mana_dork",
+        "tap_ability",
+        "self_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ElvesOfDeepShadow.java"
+    },
+    {
+      "name": "Lotus Petal",
+      "engine_capability": "full",
+      "mana_cost": "{0}",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "sacrifice_cost",
+        "any_color_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LotusPetal.java"
+    },
+    {
+      "name": "Overgrown Battlement",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [
+        "G"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "mana_ability",
+        "tap_ability",
+        "dynamic_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/OvergrownBattlement.java"
+    },
+    {
+      "name": "Saruli Caretaker",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dryad"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "mana_ability",
+        "tap_ability",
+        "tap_other_creature_cost",
+        "any_color_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SaruliCaretaker.java"
+    },
+    {
+      "name": "Tinder Wall",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant",
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [
+        "R"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "mana_ability",
+        "sacrifice_cost",
+        "activated_ability",
+        "blocking_filter",
+        "damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TinderWall.java"
+    },
+    {
+      "name": "Wall of Roots",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant",
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [
+        "G"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "mana_ability",
+        "put_counter_cost",
+        "once_per_turn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WallOfRoots.java"
     }
   ],
   "unresolved": [
     "Balustrade Spy",
     "Dread Return",
-    "Elves of Deep Shadow",
     "Faerie Macabre",
     "Flaring Pain",
     "Fume Spitter",
@@ -4159,13 +4371,8 @@
     "Healer of the Glade",
     "Land Grant",
     "Lotleth Giant",
-    "Lotus Petal",
     "Mesmeric Fiend",
-    "Overgrown Battlement",
     "Sagu Wildling",
-    "Saruli Caretaker",
-    "Tinder Wall",
-    "Troll of Khazad-dum",
-    "Wall of Roots"
+    "Troll of Khazad-dum"
   ]
 }
