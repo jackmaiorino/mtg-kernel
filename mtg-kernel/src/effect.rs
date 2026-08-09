@@ -47,6 +47,11 @@ pub enum LibraryCardFilter {
     /// the current kernel has no type-changing operation or effective-type
     /// field. Search validation fails closed outside that invariant.
     LandWithSubtype(Subtype),
+    /// A card with both the Basic supertype and Land card type. This is
+    /// intentionally independent of basic land subtypes: Roost Seek may
+    /// find every basic land, including any future nonstandard basic land
+    /// represented by the registry.
+    BasicLand,
 }
 
 /// How long an impulse-drawn card (`EffectOp::ImpulseDraw`) stays playable
@@ -3726,6 +3731,10 @@ fn library_filter_matches(
         LibraryCardFilter::LandWithSubtype(subtype) => {
             def.has_type(CardType::Land) && subtype_ids.binary_search(&subtype.stable_id()).is_ok()
         }
+        LibraryCardFilter::BasicLand => {
+            def.has_type(CardType::Land)
+                && def.supertypes.contains(&crate::card_def::Supertype::Basic)
+        }
     })
 }
 
@@ -3739,6 +3748,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
                 u64::from(subtype.stable_id()),
             )
         }
+        LibraryCardFilter::BasicLand => fnv1a_u64(0xcbf2_9ce4_8422_2325, 1),
     }
 }
 

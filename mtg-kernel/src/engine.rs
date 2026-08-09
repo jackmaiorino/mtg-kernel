@@ -1314,7 +1314,7 @@ fn validate_physical_spell_cast_origin(
                 && source.owner == item.controller
                 && matches!(
                     cast_method,
-                    CastMethodV4::Normal | CastMethodV4::Alternative
+                    CastMethodV4::Normal | CastMethodV4::Alternative | CastMethodV4::Omen
                 )
         }
         SpellCastRouteV4::GraveyardFlashback => {
@@ -1333,7 +1333,7 @@ fn validate_physical_spell_cast_origin(
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && matches!(
                     cast_method,
-                    CastMethodV4::Normal | CastMethodV4::Alternative
+                    CastMethodV4::Normal | CastMethodV4::Alternative | CastMethodV4::Omen
                 )
                 && state
                     .engine
@@ -1451,6 +1451,7 @@ fn validate_spell_source_contract_fields(
         CastMethodV4::Flashback if def.flashback.is_some() => {}
         CastMethodV4::Madness if def.madness_cost.is_some() => {}
         CastMethodV4::Escape if def.escape.is_some() => {}
+        CastMethodV4::Omen if supported_omen(def).is_some() => {}
         CastMethodV4::Plotted
             if def.plot_cost.is_some()
                 && source
@@ -1460,10 +1461,11 @@ fn validate_spell_source_contract_fields(
         | CastMethodV4::Flashback
         | CastMethodV4::Madness
         | CastMethodV4::Plotted
-        | CastMethodV4::Escape => {
+        | CastMethodV4::Escape
+        | CastMethodV4::Omen => {
             return Err("spell cast method is unsupported by its source definition".to_string())
         }
-        CastMethodV4::Bestow | CastMethodV4::Omen => {
+        CastMethodV4::Bestow => {
             return Err("spell stack item uses an unsupported cast method".to_string())
         }
     }
@@ -1832,10 +1834,10 @@ fn completable_next_activation_targets_for(
         .collect()
 }
 
-/// Modal indices whose target requirements can be completed in the current
-/// state. `mode_count` remains the card's stable printed mode count; this
-/// list only filters the currently offered schema-v4 action candidates.
-fn viable_spell_modes(def: &card_def::CardDef, state: &GameState) -> Vec<u8> {
+/// Printed modal indices whose target requirements can be completed in the
+/// current state. Omen uses the same public two-form decision, but its forms
+/// also have distinct timing and costs and are filtered after announcement.
+fn viable_printed_spell_modes(def: &card_def::CardDef, state: &GameState) -> Vec<u8> {
     let mut modes = Vec::with_capacity(if def.mode2.is_some() { 2 } else { 1 });
     if target_prefix_can_complete(def.target_spec, &[], state) {
         modes.push(0);
@@ -2424,6 +2426,117 @@ fn effective_normal_cast_cost(
     cost
 }
 
+/// Returns the supported Omen definition for the current cast pipeline.
+/// Cast-form selection reuses the ordinary two-form decision while retaining
+/// each form's own target shape. Other cast-cost modifiers remain excluded
+/// until their ordering with Omen is needed by a pool card.
+fn supported_omen(def: &card_def::CardDef) -> Option<&card_def::OmenDef> {
+    let omen = def.omen.as_ref()?;
+    let has_spell_type =
+        omen.types.contains(&CardType::Instant) || omen.types.contains(&CardType::Sorcery);
+    (has_spell_type
+        && def.alt_cost.is_none()
+        && def.kicker_cost.is_none()
+        && def.additional_cost.is_none()
+        && def.flashback.is_none()
+        && def.plot_cost.is_none()
+        && def.madness_cost.is_none()
+        && def.mode2.is_none()
+        && def.escape.is_none()
+        && def.generic_cost_reduction.is_none())
+    .then_some(omen)
+}
+
+fn has_spell_form_choice(def: &card_def::CardDef) -> bool {
+    def.mode2.is_some() || supported_omen(def).is_some()
+}
+
+fn spell_form_target_spec(def: &card_def::CardDef, form: u8) -> Option<TargetSpec> {
+    match form {
+        0 => Some(def.target_spec),
+        1 => def
+            .mode2
+            .as_ref()
+            .map(|mode| mode.target_spec)
+            .or_else(|| supported_omen(def).map(|omen| omen.target_spec)),
+        _ => None,
+    }
+}
+
+fn spell_types_have_instant(types: &[CardType]) -> bool {
+    types.contains(&CardType::Instant)
+}
+
+fn cast_form_timing_ok(types: &[CardType], player: PlayerId, state: &GameState) -> bool {
+    spell_types_have_instant(types) || sorcery_speed_timing_ok(player, state)
+}
+
+fn pending_cast_form_timing_ok(
+    types: &[CardType],
+    pending: &PendingCast,
+    state: &GameState,
+) -> bool {
+    spell_types_have_instant(types)
+        || (pending.controller == state.active_player
+            && pending.controller == state.priority_player
+            && matches!(state.step, Step::Main1 | Step::Main2)
+            && state.stack.len() == 1
+            && state
+                .stack
+                .last()
+                .is_some_and(|item| item.source == pending.spell))
+}
+
+/// Spell forms that remain both target-completable and payable after the
+/// source has moved to the stack. Printed modal spells share one cost, while
+/// an Omen card's creature and Omen forms each use their own types and cost.
+fn viable_pending_spell_forms(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+) -> Vec<u8> {
+    let Some(omen) = supported_omen(def) else {
+        return viable_printed_spell_modes(def, state);
+    };
+    let mut forms = Vec::with_capacity(2);
+    let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
+    if target_prefix_can_complete(def.target_spec, &pending.targets_chosen, state)
+        && pending_cast_form_timing_ok(def.types, pending, state)
+        && mana::can_pay(&normal_cost, 0, pending.controller, state).is_some()
+    {
+        forms.push(0);
+    }
+    if target_prefix_can_complete(omen.target_spec, &pending.targets_chosen, state)
+        && pending_cast_form_timing_ok(omen.types, pending, state)
+        && mana::can_pay(&omen.cost, 0, pending.controller, state).is_some()
+    {
+        forms.push(1);
+    }
+    forms
+}
+
+fn payable_cast_modes(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+) -> Vec<CastMode> {
+    let mut modes = Vec::new();
+    let normal = effective_normal_cast_cost(def, pending.controller, state);
+    if pending_cast_form_timing_ok(def.types, pending, state)
+        && mana::can_pay(&normal, 0, pending.controller, state).is_some()
+    {
+        modes.push(CastMode::Normal);
+    }
+    if pending_cast_form_timing_ok(def.types, pending, state)
+        && def.alt_cost.is_some_and(|components| {
+            can_pay_components(components, pending.controller, pending.spell, state)
+        })
+    {
+        modes.push(CastMode::Alternative);
+    }
+    modes
+}
+
 /// Returns the one graveyard cast method this definition can expose through
 /// the current object-id-only `Action::CastSpell` surface. A future card with
 /// both Flashback and Escape is deliberately omitted until the action schema
@@ -2448,7 +2561,10 @@ fn is_castable_now(
     if !def.is_castable() {
         return false;
     }
-    if viable_spell_modes(def, state).is_empty() {
+    if def.omen.is_some() && supported_omen(def).is_none() {
+        return false;
+    }
+    if cast_method != CastMethodV4::Normal && viable_printed_spell_modes(def, state).is_empty() {
         return false;
     }
     // 601.3a/117.1a: sorcery-speed timing applies to every permanent-or-
@@ -2465,12 +2581,8 @@ fn is_castable_now(
     // kernel_step=Main1" divergence class -- both were this same gap, not a
     // step-tracking bug (state.step really was Combat; the timing check
     // just didn't consult it for this card's type).
-    let sorcery_speed_ok = if def.has_type(CardType::Instant) {
-        true
-    } else {
-        sorcery_speed_timing_ok(player, state)
-    };
-    if !sorcery_speed_ok {
+    let main_timing_ok = cast_form_timing_ok(def.types, player, state);
+    if cast_method != CastMethodV4::Normal && !main_timing_ok {
         return false;
     }
 
@@ -2487,20 +2599,24 @@ fn is_castable_now(
         }),
         CastMethodV4::Normal => {
             let normal_cost = effective_normal_cast_cost(def, player, state);
-            let normal_ok = mana::can_pay(&normal_cost, 0, player, state).is_some();
+            let normal_ok =
+                main_timing_ok && mana::can_pay(&normal_cost, 0, player, state).is_some();
             let alt_ok = def
                 .alt_cost
-                .map(|c| can_pay_components(c, player, id, state))
+                .map(|c| main_timing_ok && can_pay_components(c, player, id, state))
                 .unwrap_or(false);
-            if !normal_ok && !alt_ok {
-                return false;
-            }
-            if let Some(add) = def.additional_cost {
-                if !can_pay_components(add, player, id, state) {
-                    return false;
-                }
-            }
-            true
+            let main_ok = !viable_printed_spell_modes(def, state).is_empty()
+                && (normal_ok || alt_ok)
+                && def
+                    .additional_cost
+                    .is_none_or(|add| can_pay_components(add, player, id, state));
+            let omen_ok = supported_omen(def).is_some_and(|omen| {
+                matches!(state.objects.get(id).zone, Zone::Hand | Zone::Exile)
+                    && cast_form_timing_ok(omen.types, player, state)
+                    && target_prefix_can_complete(omen.target_spec, &[], state)
+                    && mana::can_pay(&omen.cost, 0, player, state).is_some()
+            });
+            main_ok || omen_ok
         }
         CastMethodV4::Alternative
         | CastMethodV4::Madness
@@ -2601,7 +2717,7 @@ fn is_plotted_castable_now(player: PlayerId, id: ObjectId, state: &GameState) ->
         && def.plot_cost.is_some()
         && plotted_turn < state.turn
         && def.is_castable()
-        && !viable_spell_modes(def, state).is_empty()
+        && !viable_printed_spell_modes(def, state).is_empty()
         && sorcery_speed_timing_ok(player, state)
 }
 
@@ -2943,11 +3059,29 @@ fn eligible_attackers(state: &GameState) -> Vec<ObjectId> {
 /// Which of the defending player's untapped creatures may legally block
 /// `attacker` (509.1b: flying attackers can only be blocked by
 /// flying/reach).
+pub(crate) fn minimum_blockers_required(state: &GameState, attacker: ObjectId) -> usize {
+    let attacker_obj = state.objects.get(attacker);
+    let definition_minimum = card_def::CARD_DEFS[attacker_obj.card_def as usize].minimum_blockers;
+    let keyword_minimum = if has_effective_keyword(state, attacker, Keywords::MENACE) {
+        2
+    } else {
+        1
+    };
+    usize::from(
+        attacker_obj
+            .v4
+            .minimum_blockers_override
+            .unwrap_or_else(|| definition_minimum.max(keyword_minimum))
+            .max(1),
+    )
+}
+
 fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
     let attacker_obj = state.objects.get(attacker);
     let defender = attacker_obj.controller.opponent();
     let attacker_flying = has_effective_keyword(state, attacker, Keywords::FLYING);
-    state.players[defender.index()]
+    let minimum = minimum_blockers_required(state, attacker);
+    let blockers = state.players[defender.index()]
         .battlefield
         .iter()
         .copied()
@@ -2968,7 +3102,12 @@ fn legal_blockers_for(state: &GameState, attacker: ObjectId) -> Vec<ObjectId> {
             }
             true
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if blockers.len() < minimum {
+        Vec::new()
+    } else {
+        blockers
+    }
 }
 
 fn check_game_over(state: &GameState) -> Option<Decision> {
@@ -3280,8 +3419,8 @@ fn remaining_cast_payment_is_payable(
     pending: &PendingCast,
     staged_method: CastMethodV4,
 ) -> bool {
-    let cast_method = finalized_cast_method(pending, staged_method);
     let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let cast_method = finalized_cast_method(pending, staged_method, def);
     let base_payable = match cast_method {
         CastMethodV4::Normal => {
             let normal = effective_normal_cast_cost(def, pending.controller, state);
@@ -3307,7 +3446,9 @@ fn remaining_cast_payment_is_payable(
             .madness_cost
             .is_some_and(|cost| mana::can_pay(&cost, 0, pending.controller, state).is_some()),
         CastMethodV4::Plotted => true,
-        CastMethodV4::Bestow | CastMethodV4::Omen => false,
+        CastMethodV4::Omen => supported_omen(def)
+            .is_some_and(|omen| mana::can_pay(&omen.cost, 0, pending.controller, state).is_some()),
+        CastMethodV4::Bestow => false,
     };
     base_payable
         && def.additional_cost.is_none_or(|components| {
@@ -3315,9 +3456,19 @@ fn remaining_cast_payment_is_payable(
         })
 }
 
-fn finalized_cast_method(pending: &PendingCast, staged_method: CastMethodV4) -> CastMethodV4 {
-    if staged_method == CastMethodV4::Normal && pending.cast_mode == Some(CastMode::Alternative) {
-        CastMethodV4::Alternative
+fn finalized_cast_method(
+    pending: &PendingCast,
+    staged_method: CastMethodV4,
+    def: &card_def::CardDef,
+) -> CastMethodV4 {
+    if staged_method == CastMethodV4::Normal {
+        if supported_omen(def).is_some() && pending.mode_chosen == Some(1) {
+            CastMethodV4::Omen
+        } else if pending.cast_mode == Some(CastMode::Alternative) {
+            CastMethodV4::Alternative
+        } else {
+            CastMethodV4::Normal
+        }
     } else {
         staged_method
     }
@@ -3496,7 +3647,8 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
             .pending_cast
             .take()
             .expect("validated FinishCast retains its pending cast");
-        let cast_method = finalized_cast_method(&pending, staged_method);
+        let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+        let cast_method = finalized_cast_method(&pending, staged_method, def);
         Some((pending, cast_method))
     } else {
         None
@@ -3881,6 +4033,9 @@ pub(crate) fn validate_pending_cast(
     if !def.is_executable() || !def.is_castable() {
         return Err("pending cast source is not an executable spell".to_string());
     }
+    if def.omen.is_some() && supported_omen(def).is_none() {
+        return Err("pending cast source has an unsupported Omen definition".to_string());
+    }
     if source.spell_copy_origin.is_some() {
         return Err("a virtual spell copy cannot be staged as a cast".to_string());
     }
@@ -4002,9 +4157,9 @@ pub(crate) fn validate_pending_cast(
                 return Err("normal cast method disagrees with its staged cast mode".to_string());
             }
         }
-        CastMethodV4::Alternative => {
+        CastMethodV4::Alternative | CastMethodV4::Omen => {
             return Err(
-                "pending cast stamped its alternative method before finalization".to_string(),
+                "pending cast stamped its selected cast method before finalization".to_string(),
             );
         }
         CastMethodV4::Flashback => {
@@ -4051,7 +4206,7 @@ pub(crate) fn validate_pending_cast(
                 return Err("Madness cast has a noncanonical origin or definition".to_string());
             }
         }
-        CastMethodV4::Bestow | CastMethodV4::Omen => {
+        CastMethodV4::Bestow => {
             return Err("pending cast uses an unsupported cast method".to_string())
         }
     }
@@ -4060,7 +4215,7 @@ pub(crate) fn validate_pending_cast(
         return Err("pending cast target specification changed".to_string());
     }
     let mode_shape_valid = matches!(
-        (def.mode2.is_some(), pending.mode_chosen),
+        (has_spell_form_choice(def), pending.mode_chosen),
         (false, Some(0)) | (true, None | Some(0) | Some(1))
     );
     if !mode_shape_valid {
@@ -4069,17 +4224,13 @@ pub(crate) fn validate_pending_cast(
     if pending.mode_chosen.is_none() && !pending.targets_chosen.is_empty() {
         return Err("pending cast chose targets before choosing its spell mode".to_string());
     }
-    let active_spec = match pending.mode_chosen {
-        Some(0) => Some(def.target_spec),
-        Some(1) => Some(
-            def.mode2
-                .as_ref()
-                .ok_or("pending cast selected a nonexistent second mode")?
-                .target_spec,
-        ),
-        None => None,
-        Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
-    };
+    let active_spec = pending
+        .mode_chosen
+        .map(|mode| {
+            spell_form_target_spec(def, mode)
+                .ok_or("pending cast selected a nonexistent spell form".to_string())
+        })
+        .transpose()?;
     let required_targets = active_spec.map_or(0, |spec| usize::from(target_count(spec)));
     if pending.targets_chosen.len() > required_targets
         || !target_contracts_are_structurally_valid(
@@ -4159,8 +4310,13 @@ pub(crate) fn validate_pending_cast(
     }
 
     let interactive_discard = def.additional_cost.and_then(discard_count_in);
-    let seeded_mode = if def.mode2.is_none() { Some(0) } else { None };
-    let seeded_cast_mode = if method == CastMethodV4::Normal && def.alt_cost.is_some() {
+    let seeded_mode = if has_spell_form_choice(def) {
+        None
+    } else {
+        Some(0)
+    };
+    let has_cast_mode_choice = def.alt_cost.is_some();
+    let seeded_cast_mode = if method == CastMethodV4::Normal && has_cast_mode_choice {
         None
     } else {
         Some(CastMode::Normal)
@@ -4183,7 +4339,7 @@ pub(crate) fn validate_pending_cast(
     {
         return Err("pending cast advanced past an unresolved kicker choice".to_string());
     }
-    if def.mode2.is_some()
+    if has_spell_form_choice(def)
         && pending.mode_chosen.is_none()
         && (!pending.targets_chosen.is_empty() || !later_fields_are_seeded(true))
     {
@@ -4196,7 +4352,7 @@ pub(crate) fn validate_pending_cast(
         return Err("pending cast advanced past incomplete targeting".to_string());
     }
     if method == CastMethodV4::Normal
-        && def.alt_cost.is_some()
+        && has_cast_mode_choice
         && pending.cast_mode.is_some()
         && (pending.kicked.is_none()
             || pending.mode_chosen.is_none()
@@ -4295,15 +4451,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // self-excluding stack state, and revert any impossible announcement
     // instead of exposing an empty targeting decision.
     let targeting_can_complete = match pending.mode_chosen {
-        Some(1) => def.mode2.as_ref().is_some_and(|mode| {
-            target_prefix_can_complete(mode.target_spec, &pending.targets_chosen, state)
-        }),
-        Some(0) => target_prefix_can_complete(def.target_spec, &pending.targets_chosen, state),
-        Some(_) => false,
-        None => !viable_spell_modes(def, state).is_empty(),
+        Some(mode) => spell_form_target_spec(def, mode)
+            .is_some_and(|spec| target_prefix_can_complete(spec, &pending.targets_chosen, state)),
+        None => !viable_pending_spell_forms(def, &pending, state).is_empty(),
     };
     if !targeting_can_complete {
-        let cast_method = finalized_cast_method(&pending, staged_method);
+        let cast_method = finalized_cast_method(&pending, staged_method, def);
         let pending = state.engine.pending_cast.take().unwrap();
         abort_cast(state, pending, cast_method);
         return None;
@@ -4337,12 +4490,12 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // viable there is no policy choice, so retain that mode's original
     // index (including index 1) silently; if both are viable, expose the
     // existing two-action schema-v4 decision unchanged.
-    if def.mode2.is_some() && pending.mode_chosen.is_none() {
-        let viable_modes = viable_spell_modes(def, state);
+    if has_spell_form_choice(def) && pending.mode_chosen.is_none() {
+        let viable_modes = viable_pending_spell_forms(def, &pending, state);
         if viable_modes.is_empty() {
             // Defensive against a state mutation between the general gate
             // above and this mode stage (none exists in today's pipeline).
-            let cast_method = finalized_cast_method(&pending, staged_method);
+            let cast_method = finalized_cast_method(&pending, staged_method, def);
             let pending = state.engine.pending_cast.take().unwrap();
             abort_cast(state, pending, cast_method);
             return None;
@@ -4357,16 +4510,13 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             mode_count: 2,
         });
     }
-    let active_target_spec = match pending.mode_chosen {
-        Some(1) => {
-            def.mode2
-                .as_ref()
-                .expect("mode_chosen == 1 only when mode2 is Some")
-                .target_spec
-        }
-        None | Some(0) => def.target_spec,
-        Some(_) => unreachable!("mode shape validated at drain entry"),
-    };
+    let active_target_spec = spell_form_target_spec(
+        def,
+        pending
+            .mode_chosen
+            .expect("spell-form choice completed before targeting"),
+    )
+    .expect("mode shape validated at drain entry");
 
     let need = target_count(active_target_spec);
     if (pending.targets_chosen.len() as u8) < need {
@@ -4383,30 +4533,21 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     }
 
     if pending.cast_mode.is_none() {
-        let alt = def
-            .alt_cost
-            .expect("cast_mode is None only when begin_cast saw an alt_cost");
-        let normal_cost = effective_normal_cast_cost(def, pending.controller, state);
-        let normal_ok = mana::can_pay(&normal_cost, 0, pending.controller, state).is_some();
-        let alt_ok = can_pay_components(alt, pending.controller, pending.spell, state);
-        if normal_ok && alt_ok {
+        let modes = payable_cast_modes(def, &pending, state);
+        if modes.len() >= 2 {
             return Some(Decision::ChooseCastMode {
                 player: pending.controller,
                 spell: pending.spell,
-                options: vec![CastMode::Normal, CastMode::Alternative],
+                options: modes,
             });
         }
-        if !normal_ok && !alt_ok {
-            let cast_method = finalized_cast_method(&pending, staged_method);
+        let Some(mode) = modes.first().copied() else {
+            let cast_method = finalized_cast_method(&pending, staged_method, def);
             let pending = state.engine.pending_cast.take().unwrap();
             abort_cast(state, pending, cast_method);
             return None;
-        }
-        state.engine.pending_cast.as_mut().unwrap().cast_mode = Some(if normal_ok {
-            CastMode::Normal
-        } else {
-            CastMode::Alternative
-        });
+        };
+        state.engine.pending_cast.as_mut().unwrap().cast_mode = Some(mode);
         return drain_pending_cast_or_decide(state);
     }
 
@@ -4415,7 +4556,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         let candidates = sacrificeable_lands(pending.controller, state, &pending.sacrifice_chosen);
         let remaining = sacrifice_needed - pending.sacrifice_chosen.len() as u8;
         if candidates.len() < usize::from(remaining) {
-            let cast_method = finalized_cast_method(&pending, staged_method);
+            let cast_method = finalized_cast_method(&pending, staged_method, def);
             let pending = state.engine.pending_cast.take().unwrap();
             abort_cast(state, pending, cast_method);
             return None;
@@ -4470,14 +4611,14 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             state,
             &pending.sacrifice_chosen,
         ) else {
-            let cast_method = finalized_cast_method(&pending, staged_method);
+            let cast_method = finalized_cast_method(&pending, staged_method, def);
             let pending = state.engine.pending_cast.take().unwrap();
             abort_cast(state, pending, cast_method);
             return None;
         };
         let remaining = graveyard_exile_needed - pending.sacrifice_chosen.len() as u8;
         if candidates.len() < usize::from(remaining) {
-            let cast_method = finalized_cast_method(&pending, staged_method);
+            let cast_method = finalized_cast_method(&pending, staged_method, def);
             let pending = state.engine.pending_cast.take().unwrap();
             abort_cast(state, pending, cast_method);
             return None;
@@ -4988,16 +5129,27 @@ pub(crate) fn validated_stack_item_target_spec(
                 return Err("spell stack item carries incompatible producer metadata".to_string());
             }
             let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
-            Some(match item.mode_chosen {
-                0 => def.target_spec,
-                1 => {
-                    def.mode2
-                        .as_ref()
-                        .ok_or("spell stack item selected a nonexistent second mode")?
-                        .target_spec
+            if item.v4.cast_method == Some(CastMethodV4::Omen) {
+                if item.mode_chosen != 0 {
+                    return Err("Omen spell stack item carries a modal index".to_string());
                 }
-                _ => return Err("spell stack item carries an unknown mode index".to_string()),
-            })
+                Some(
+                    supported_omen(def)
+                        .ok_or("Omen spell stack item lost its definition")?
+                        .target_spec,
+                )
+            } else {
+                Some(match item.mode_chosen {
+                    0 => def.target_spec,
+                    1 => {
+                        def.mode2
+                            .as_ref()
+                            .ok_or("spell stack item selected a nonexistent second mode")?
+                            .target_spec
+                    }
+                    _ => return Err("spell stack item carries an unknown mode index".to_string()),
+                })
+            }
         }
         StackItemKind::ActivatedAbility => {
             if item.inline_effect.is_none() || item.v4.madness_source_contract.is_some() {
@@ -5256,11 +5408,42 @@ fn finish_resolved_stack_item(state: &mut GameState, item: &StackItem) -> Result
         return Ok(());
     }
     let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
+    if item.v4.cast_method == Some(CastMethodV4::Omen) {
+        supported_omen(def).ok_or("resolved Omen spell lost its definition")?;
+        let departure = plan_spell_departure(state, item, Zone::Library)?;
+        if item.is_copy {
+            return apply_spell_departure(state, departure);
+        }
+        let owner = state.objects.get(item.source).owner;
+        let shuffle = state
+            .preflight_library_shuffle(owner)
+            .map_err(|error| error.to_string())?;
+        apply_spell_departure(state, departure)?;
+        if state.objects.get(item.source).zone != Zone::Library
+            || !state.players[owner.index()].library.contains(&item.source)
+        {
+            return Err("resolved Omen source did not enter its owner's library".to_string());
+        }
+        return state
+            .commit_library_shuffle(owner, shuffle)
+            .map_err(|error| error.to_string());
+    }
     if !(def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery)) {
         return Ok(());
     }
     let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
     apply_spell_departure(state, departure)
+}
+
+/// A spell countered by the rules for having no legal targets performs none
+/// of its resolution effects. In particular, an Omen card goes to the
+/// graveyard here rather than applying its successful source shuffle.
+fn finish_failed_stack_item(state: &mut GameState, item: &StackItem) -> Result<(), String> {
+    if item.kind == StackItemKind::Spell && item.v4.cast_method == Some(CastMethodV4::Omen) {
+        let departure = plan_spell_departure(state, item, Zone::Graveyard)?;
+        return apply_spell_departure(state, departure);
+    }
+    finish_resolved_stack_item(state, item)
 }
 
 /// Applies a source-moving `EffectOp` to a live spell stack item after exact
@@ -5353,7 +5536,7 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
 
     if !targets_legal {
-        if finish_resolved_stack_item(state, &item).is_err() {
+        if finish_failed_stack_item(state, &item).is_err() {
             state.engine.halted =
                 Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
             return ResolutionProgress::Suspended;
@@ -5372,7 +5555,9 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // `finalize_cast`) -- `mode_chosen == 1` only for a Blast card's
     // destroy mode, everything else always resolves its primary
     // `spell_effect`.
-    let program = if item.mode_chosen == 1 {
+    let program = if item.v4.cast_method == Some(CastMethodV4::Omen) {
+        supported_omen(def).map(|omen| (omen.effect)())
+    } else if item.mode_chosen == 1 {
         def.mode2.as_ref().map(|m| (m.effect)())
     } else {
         (def.spell_effect)()
@@ -5401,7 +5586,13 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     // resolution -- or to exile instead, if this was a flashback cast
     // (702.10e). Creatures/artifacts/enchantments handle entering the
     // battlefield themselves, via their own MoveObject effect.
-    if def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery) {
+    if item.v4.cast_method == Some(CastMethodV4::Omen) {
+        if finish_resolved_stack_item(state, &item).is_err() {
+            state.engine.halted =
+                Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+            return ResolutionProgress::Suspended;
+        }
+    } else if def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery) {
         let to_zone = match plan_spell_departure(state, &item, Zone::Graveyard) {
             Ok(SpellDeparture::Move { to_zone, .. }) => to_zone,
             Ok(SpellDeparture::Cease { .. }) | Err(_) => {
@@ -5991,17 +6182,13 @@ fn pending_cast_action_stage(
     if pending.mode_chosen.is_none() {
         return Ok(PendingCastActionStage::ChooseSpellMode);
     }
-    let active_target_spec = match pending.mode_chosen {
-        Some(0) => def.target_spec,
-        Some(1) => {
-            def.mode2
-                .as_ref()
-                .ok_or("pending cast selected a nonexistent second mode")?
-                .target_spec
-        }
-        Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
-        None => unreachable!("handled unresolved mode above"),
-    };
+    let active_target_spec = spell_form_target_spec(
+        def,
+        pending
+            .mode_chosen
+            .expect("handled unresolved spell-form choice above"),
+    )
+    .ok_or("pending cast selected a nonexistent spell form")?;
     if pending.targets_chosen.len() < usize::from(target_count(active_target_spec)) {
         return Ok(PendingCastActionStage::ChooseTarget);
     }
@@ -6164,18 +6351,13 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 return Err("this cast's mode has already been chosen".to_string());
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-            let active_target_spec = match pending.mode_chosen {
-                Some(0) => def.target_spec,
-                Some(1) => def
-                    .mode2
-                    .as_ref()
-                    .ok_or("pending cast selected a nonexistent second mode")?
-                    .target_spec,
-                Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
-                None => {
-                    return Err("cast mode chosen before the spell mode completed".to_string())
-                }
-            };
+            let active_target_spec = spell_form_target_spec(
+                def,
+                pending
+                    .mode_chosen
+                    .ok_or("cast mode chosen before the spell form completed")?,
+            )
+            .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
                 || pending.targets_chosen.len()
                     != usize::from(target_count(active_target_spec))
@@ -6183,14 +6365,11 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
             {
                 return Err("cast mode chosen before prior cast stages completed".to_string());
             }
-            let alt = def
-                .alt_cost
-                .ok_or("this spell has no alternative cast mode")?;
-            let normal = effective_normal_cast_cost(def, pending.controller, state);
-            let normal_ok = mana::can_pay(&normal, 0, pending.controller, state).is_some();
-            let alt_ok = can_pay_components(alt, pending.controller, pending.spell, state);
-            if !normal_ok || !alt_ok {
-                return Err("a cast-mode action requires both modes to remain payable".to_string());
+            let payable = payable_cast_modes(def, &pending, state);
+            if payable.len() < 2 || !payable.contains(&mode) {
+                return Err(
+                    "a cast-mode action requires a currently offered payable mode".to_string(),
+                );
             }
             state
                 .engine
@@ -6241,7 +6420,7 @@ pub fn step(state: &mut GameState, action: Action) -> Result<(), String> {
                 return Err("this cast's mode has already been chosen".to_string());
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-            let viable_modes = viable_spell_modes(def, state);
+            let viable_modes = viable_pending_spell_forms(def, pending, state);
             if viable_modes.len() != 2 || !viable_modes.contains(&mode) {
                 return Err(format!("{mode} is not a legal spell mode for {p:?}'s cast"));
             }
@@ -6295,14 +6474,8 @@ fn exact_targeting_producer(state: &GameState) -> Result<TargetingProducer, Stri
         if pending.kicked.is_some() {
             if let Some(mode) = pending.mode_chosen {
                 let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-                let spec = if mode == 1 {
-                    def.mode2
-                        .as_ref()
-                        .ok_or("pending cast selected a nonexistent second mode")?
-                        .target_spec
-                } else {
-                    def.target_spec
-                };
+                let spec = spell_form_target_spec(def, mode)
+                    .ok_or("pending cast selected a nonexistent spell form")?;
                 if pending.targets_chosen.len() < usize::from(target_count(spec)) {
                     producers.push(TargetingProducer::Cast {
                         pending: pending.clone(),
@@ -6398,21 +6571,13 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
         let needed = sacrifice_lands_needed(&pending, def);
         if (pending.sacrifice_chosen.len() as u8) < needed {
-            let active_target_spec = match pending.mode_chosen {
-                Some(0) => def.target_spec,
-                Some(1) => {
-                    def.mode2
-                        .as_ref()
-                        .ok_or("pending cast selected a nonexistent second mode")?
-                        .target_spec
-                }
-                Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
-                None => {
-                    return Err(
-                        "cast sacrifice target chosen before spell mode completed".to_string()
-                    )
-                }
-            };
+            let active_target_spec = spell_form_target_spec(
+                def,
+                pending
+                    .mode_chosen
+                    .ok_or("cast sacrifice target chosen before spell form completed")?,
+            )
+            .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
                 || pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
                 || pending.cast_mode.is_none()
@@ -6441,22 +6606,13 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         }
         let graveyard_exile_needed = graveyard_exile_cards_needed(&pending, def);
         if (pending.sacrifice_chosen.len() as u8) < graveyard_exile_needed {
-            let active_target_spec = match pending.mode_chosen {
-                Some(0) => def.target_spec,
-                Some(1) => {
-                    def.mode2
-                        .as_ref()
-                        .ok_or("pending cast selected a nonexistent second mode")?
-                        .target_spec
-                }
-                Some(_) => return Err("pending cast selected an unknown spell mode".to_string()),
-                None => {
-                    return Err(
-                        "cast graveyard-exile target chosen before spell mode completed"
-                            .to_string(),
-                    )
-                }
-            };
+            let active_target_spec = spell_form_target_spec(
+                def,
+                pending
+                    .mode_chosen
+                    .ok_or("cast graveyard-exile target chosen before spell form completed")?,
+            )
+            .ok_or("pending cast selected a nonexistent spell form")?;
             if pending.kicked.is_none()
                 || pending.targets_chosen.len() != usize::from(target_count(active_target_spec))
                 || pending.cast_mode.is_none()
@@ -7158,6 +7314,18 @@ pub(crate) fn validate_declare_blockers(
         }
         used_blockers.push(blocker);
     }
+    for &attacker in &attackers {
+        let assigned = blocks
+            .iter()
+            .filter(|(_, blocked)| *blocked == attacker)
+            .count();
+        let minimum = minimum_blockers_required(state, attacker);
+        if assigned != 0 && assigned < minimum {
+            return Err(format!(
+                "{attacker} requires at least {minimum} creatures to block it"
+            ));
+        }
+    }
 
     Ok(())
 }
@@ -7341,7 +7509,11 @@ fn begin_cast_ex(
     } else {
         None
     };
-    let mode_chosen = if def.mode2.is_none() { Some(0) } else { None };
+    let mode_chosen = if has_spell_form_choice(def) {
+        None
+    } else {
+        Some(0)
+    };
     let kicked = if def.kicker_cost.is_none() {
         Some(false)
     } else {
@@ -7448,7 +7620,8 @@ fn finalize_cast(state: &mut GameState, discarded: Vec<ObjectId>) -> Result<(), 
         .pending_cast
         .take()
         .expect("finalize_cast requires a pending cast");
-    let cast_method = finalized_cast_method(&pending, staged_method);
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let cast_method = finalized_cast_method(&pending, staged_method, def);
     finalize_owned_cast(state, pending, cast_method, discarded)
 }
 
@@ -7559,7 +7732,16 @@ fn finalize_owned_cast(
                 return Ok(());
             }
         }
-        CastMethodV4::Bestow | CastMethodV4::Omen => {
+        CastMethodV4::Omen => {
+            let omen = supported_omen(def)
+                .expect("validated Omen cast has definition-owned spell characteristics");
+            let Some(plan) = mana::can_pay(&omen.cost, 0, pending.controller, state) else {
+                abort_cast(state, pending, cast_method);
+                return Ok(());
+            };
+            pay_plan(state, pending.controller, &plan);
+        }
+        CastMethodV4::Bestow => {
             unreachable!("validate_pending_cast rejects unsupported cast methods")
         }
     }
@@ -7579,13 +7761,13 @@ fn finalize_owned_cast(
         .into_iter()
         .map(|object| PaidCostRefV4::capture(state, object))
         .collect();
-    let selected_target_spec = if pending.mode_chosen == Some(1) {
-        def.mode2
-            .as_ref()
-            .expect("mode one requires a generated secondary mode")
+    let selected_target_spec = if cast_method == CastMethodV4::Omen {
+        supported_omen(def)
+            .expect("validated Omen cast retains its definition")
             .target_spec
     } else {
-        def.target_spec
+        spell_form_target_spec(def, pending.mode_chosen.unwrap_or(0))
+            .expect("validated cast retains its selected spell form")
     };
     // Payment is now irrevocably complete. Stamp the independently owned
     // source-object record before recapturing the finalized stack contract;
@@ -7610,7 +7792,14 @@ fn finalize_owned_cast(
     item.v4.target_spec = Some(selected_target_spec);
     item.v4.target_contracts = pending.target_contracts;
     item.discarded = discarded;
-    item.mode_chosen = pending.mode_chosen.unwrap_or(0);
+    // The Omen selection is canonicalized into `cast_method`; the spell's
+    // own modal index remains zero because the front-face mode2 program is
+    // unrelated to the alternative Omen characteristics.
+    item.mode_chosen = if cast_method == CastMethodV4::Omen {
+        0
+    } else {
+        pending.mode_chosen.unwrap_or(0)
+    };
     item.kicked = was_kicked;
     item.v4.paid_cost_refs = paid_cost_refs;
     item.v4.cast_method = Some(cast_method);

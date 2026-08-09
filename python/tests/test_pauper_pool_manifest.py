@@ -42,8 +42,6 @@ MISSING_SPY_RECORDS = {
     "Land Grant",
     "Lotleth Giant",
     "Mesmeric Fiend",
-    "Sagu Wildling",
-    "Troll of Khazad-dum",
 }
 
 MISSING_SPY_MAIN = {
@@ -53,8 +51,6 @@ MISSING_SPY_MAIN = {
     "Land Grant": 4,
     "Lotleth Giant": 2,
     "Mesmeric Fiend": 2,
-    "Sagu Wildling": 4,
-    "Troll of Khazad-dum": 1,
 }
 
 
@@ -469,6 +465,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             "Human Soldier Token",
             "Samurai Token",
             "Bird Illusion Token",
+            "Food Token",
         ):
             self.assertTrue(registry_cards[token_name]["is_token"])
             self.assertEqual(registry_cards[token_name]["decks"], [])
@@ -489,8 +486,10 @@ class PauperPoolManifestTest(unittest.TestCase):
                 "Overgrown Battlement",
                 "Quirion Ranger",
                 "Saruli Caretaker",
+                "Sagu Wildling",
                 "Swamp",
                 "Tinder Wall",
+                "Troll of Khazad-dum",
                 "Vitu-Ghazi Inspector",
                 "Wall of Roots",
                 "Winding Way",
@@ -509,8 +508,8 @@ class PauperPoolManifestTest(unittest.TestCase):
         spy_main = roster_from_zone(spy["mainboard"])
         missing_main = {name: spy_main[name] for name in MISSING_SPY_MAIN}
         self.assertEqual(missing_main, MISSING_SPY_MAIN)
-        self.assertEqual(len(missing_main), 8)
-        self.assertEqual(sum(missing_main.values()), 22)
+        self.assertEqual(len(missing_main), 6)
+        self.assertEqual(sum(missing_main.values()), 17)
         for row in missing_rows.values():
             self.assertEqual(row["declared_decks"], [])
             self.assertEqual(row["expected_decks"], ["Deck - Spy Combo.dek"])
@@ -545,18 +544,18 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 80,
+                "full_cards": 83,
                 "partial_cards": 0,
-                "no_effect_cards": 70,
-                "token_dependencies": 4,
+                "no_effect_cards": 67,
+                "token_dependencies": 5,
             },
         )
         expected_copy_totals = [
             {"deck_id": "Wildfire", "full": 27, "partial": 0, "no_effect": 33, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Affinity", "full": 39, "partial": 0, "no_effect": 21, "total": 60},
-            {"deck_id": "Elves", "full": 26, "partial": 0, "no_effect": 34, "total": 60},
-            {"deck_id": "Spy", "full": 25, "partial": 0, "no_effect": 35, "total": 60},
+            {"deck_id": "Elves", "full": 30, "partial": 0, "no_effect": 30, "total": 60},
+            {"deck_id": "Spy", "full": 34, "partial": 0, "no_effect": 26, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "CawGates", "full": 23, "partial": 0, "no_effect": 37, "total": 60},
@@ -765,6 +764,16 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {
                     "name": "Bird Illusion Token",
                     "required_by": ["Murmuring Mystic"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Food Token",
+                    "required_by": ["Generous Ent"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],

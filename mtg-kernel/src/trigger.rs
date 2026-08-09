@@ -106,6 +106,21 @@ fn voldaren_epicure_effect() -> EffectOp {
     ])
 }
 
+fn generous_ent_effect() -> EffectOp {
+    let food = crate::card_def::card_id_by_name("Food Token").expect("Food Token in CARD_DEFS");
+    EffectOp::CreateToken {
+        token_def: food,
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn sagu_wildling_effect() -> EffectOp {
+    EffectOp::GainLife {
+        player: PlayerRef::Controller,
+        amount: 3,
+    }
+}
+
 fn sneaky_snacker_effect() -> EffectOp {
     // Return Sneaky Snacker from your graveyard to the battlefield tapped.
     EffectOp::Sequence(vec![
@@ -139,6 +154,20 @@ const VOLDAREN_EPICURE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
     effect: voldaren_epicure_effect,
+}];
+const GENEROUS_ENT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: generous_ent_effect,
+}];
+const SAGU_WILDLING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: sagu_wildling_effect,
 }];
 const SNEAKY_SNACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::DrawNth(3),
@@ -343,6 +372,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Guttersnipe" => &GUTTERSNIPE_TRIGGERS,
         "Murmuring Mystic" => &MURMURING_MYSTIC_TRIGGERS,
         "Voldaren Epicure" => &VOLDAREN_EPICURE_TRIGGERS,
+        "Generous Ent" => &GENEROUS_ENT_TRIGGERS,
+        "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
         "Sneaky Snacker" => &SNEAKY_SNACKER_TRIGGERS,
         "Burning-Tree Emissary" => &BURNING_TREE_EMISSARY_TRIGGERS,
         "Clockwork Percussionist" => &CLOCKWORK_PERCUSSIONIST_TRIGGERS,
@@ -689,9 +720,20 @@ fn trigger_matches(
             },
         ) => {
             *caster == controller && {
-                let def = &crate::card_def::CARD_DEFS[state.objects.get(*spell).card_def as usize];
-                def.has_type(crate::card_def::CardType::Instant)
-                    || def.has_type(crate::card_def::CardType::Sorcery)
+                let object = state.objects.get(*spell);
+                let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
+                let types = if object
+                    .v4
+                    .spell_cast_origin
+                    .and_then(|origin| origin.finalized_method)
+                    == Some(crate::state::CastMethodV4::Omen)
+                {
+                    def.omen.as_ref().map(|omen| omen.types).unwrap_or(&[])
+                } else {
+                    def.types
+                };
+                types.contains(&crate::card_def::CardType::Instant)
+                    || types.contains(&crate::card_def::CardType::Sorcery)
             }
         }
         (

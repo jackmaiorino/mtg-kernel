@@ -5,14 +5,14 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "dd0c86d714ab7320cdf035394ee2aa26dd4b871b0e6f14fc21b340d1cb537eba"
+    "registry_raw_sha256": "684131278cbfb7c7bc4cd53b640aa5f24b5c909a111f056ebc23b23918f4b96e"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 80,
+    "full_cards": 83,
     "partial_cards": 0,
-    "no_effect_cards": 70,
-    "token_dependencies": 4
+    "no_effect_cards": 67,
+    "token_dependencies": 5
   },
   "deck_mainboard_copy_totals": [
     {
@@ -38,16 +38,16 @@
     },
     {
       "deck_id": "Elves",
-      "full": 26,
+      "full": 30,
       "partial": 0,
-      "no_effect": 34,
+      "no_effect": 30,
       "total": 60
     },
     {
       "deck_id": "Spy",
-      "full": 25,
+      "full": 34,
       "partial": 0,
-      "no_effect": 35,
+      "no_effect": 26,
       "total": 60
     },
     {
@@ -120,6 +120,18 @@
       "name": "Bird Illusion Token",
       "required_by": [
         "Murmuring Mystic"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Food Token",
+      "required_by": [
+        "Generous Ent"
       ],
       "registry_status": "present",
       "expected_decks": [],
@@ -1273,10 +1285,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Gingerbread Cabin",
@@ -2755,17 +2765,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Saiba Cryptomancer",
@@ -3325,17 +3334,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Troublemaker Ouphe",

@@ -190,6 +190,8 @@ pub enum Subtype {
     Plant,
     /// Appended for Overgrown Battlement, Tinder Wall, and Wall of Roots.
     Wall,
+    /// Appended for Troll of Khazad-dum. Existing stable ids remain fixed.
+    Troll,
 }
 
 impl Subtype {
@@ -469,6 +471,17 @@ pub struct ModeDef {
     pub effect: fn() -> EffectOp,
 }
 
+/// The alternative spell characteristics of an Omen card. The physical
+/// card remains one front-face object in every non-stack zone; choosing this
+/// definition while casting changes only the spell's cost, card types,
+/// targeting, resolution program, and successful stack departure.
+pub struct OmenDef {
+    pub cost: Cost,
+    pub types: &'static [CardType],
+    pub target_spec: TargetSpec,
+    pub effect: fn() -> EffectOp,
+}
+
 /// A deterministic value sampled while deriving a spell's total generic
 /// mana cost. Kept data-driven and card-name-neutral so the same cast-cost
 /// path can serve battlefield reducers (Affinity), graveyard reducers
@@ -603,6 +616,13 @@ pub struct CardDef {
     /// payment path for basics, artifact lands, bridges, and ordinary mana
     /// creatures.
     pub mana_ability_def: Option<ManaAbilityDef>,
+    /// Minimum number of creatures required to block this attacker once it
+    /// is blocked. Zero and one both mean the ordinary one-or-more rule;
+    /// Troll of Khazad-dum is the first value above one (three).
+    pub minimum_blockers: u8,
+    /// Alternative Omen spell characteristics, if any. Appended so all
+    /// pre-existing generated `CardDef` field identities stay fixed.
+    pub omen: Option<OmenDef>,
 }
 
 impl CardDef {
@@ -767,11 +787,12 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 138 real pool cards + 4 tokens (Blood, created by Voldaren
+        // 140 real pool cards + 5 tokens (Blood, created by Voldaren
         // Epicure's ETB trigger; Human Soldier Token/Samurai Token, created
         // by Rally at the Hornburg/Experimental Synthesizer; Bird Illusion
-        // Token, created by Murmuring Mystic -- see `trigger.rs`/`build.rs`).
-        assert_eq!(CARD_DEFS.len(), 142);
+        // Token, created by Murmuring Mystic; Food Token, created by Generous
+        // Ent -- see `trigger.rs`/`build.rs`).
+        assert_eq!(CARD_DEFS.len(), 145);
     }
 
     #[test]
@@ -811,10 +832,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v15_is_frozen() {
-        // Version 15 composes the five-card counterspell wave with the
-        // exact dual lands and Of One Mind added in version 14.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x5da7_de61_61f1_4559);
+    fn card_db_hash_v16_is_frozen() {
+        // Version 16 composes typecycling, Omen, minimum blockers, and Food
+        // with the card and continuation grammar frozen in version 15.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x9407_af21_0b26_f3ff);
     }
 
     #[test]
@@ -1014,7 +1035,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 84, "80 deck cards plus four required tokens");
+        assert_eq!(full, 88, "83 deck cards plus five required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

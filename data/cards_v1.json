@@ -1286,6 +1286,7 @@
     },
     {
       "name": "Generous Ent",
+      "engine_capability": "full",
       "mana_cost": "{5}{G}",
       "mana_value": 6,
       "colors": [
@@ -1311,7 +1312,8 @@
       "mechanics": [
         "etb_trigger",
         "token_creation",
-        "cycling"
+        "cycling",
+        "reach"
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GenerousEnt.java"
     },
@@ -4367,6 +4369,98 @@
         "once_per_turn"
       ],
       "java_file": "Mage.Sets/src/mage/cards/w/WallOfRoots.java"
+    },
+    {
+      "name": "Sagu Wildling",
+      "engine_capability": "full",
+      "mana_cost": "{4}{G}",
+      "mana_value": 5,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "life_gain",
+        "omen",
+        "library_search",
+        "shuffle"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SaguWildling.java"
+    },
+    {
+      "name": "Troll of Khazad-dum",
+      "engine_capability": "full",
+      "mana_cost": "{5}{B}",
+      "mana_value": 6,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Troll"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "cycling",
+        "block_restriction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TrollOfKhazadDum.java"
+    },
+    {
+      "name": "Food Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Food"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_cost",
+        "life_gain"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/FoodToken.java"
     }
   ],
   "unresolved": [
@@ -4379,8 +4473,6 @@
     "Healer of the Glade",
     "Land Grant",
     "Lotleth Giant",
-    "Mesmeric Fiend",
-    "Sagu Wildling",
-    "Troll of Khazad-dum"
+    "Mesmeric Fiend"
   ]
 }

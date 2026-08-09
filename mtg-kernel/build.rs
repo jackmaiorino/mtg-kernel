@@ -2478,6 +2478,7 @@ enum AbilityCostRecipe {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AbilityEffectRecipe {
     DrawCards(u8),
+    GainLife(u8),
     CreateToken(&'static str),
     DamageTarget(u8),
     /// The interpreter currently supports exactly this typecycling search
@@ -2485,13 +2486,18 @@ enum AbilityEffectRecipe {
     /// closed if a future caller asks for a different cardinality/reveal/
     /// shuffle shape without first extending `EffectOp`.
     SearchLibraryToHand {
-        card_type: &'static str,
-        subtype: &'static str,
+        filter: LibrarySearchFilterRecipe,
         min_targets: u8,
         max_targets: u8,
         reveal_selected: bool,
         shuffle: bool,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LibrarySearchFilterRecipe {
+    LandWithSubtype(&'static str),
+    BasicLand,
 }
 
 #[derive(Clone, Copy)]
@@ -2724,7 +2730,9 @@ fn keywords_for(card: &CardJson) -> String {
         | "Bird Illusion Token"
         | "Faerie Miscreant"
         | "Faerie Seer"
-        | "Refurbished Familiar" => keywords.push("Keywords::FLYING"),
+        | "Refurbished Familiar"
+        | "Sagu Wildling" => keywords.push("Keywords::FLYING"),
+        "Generous Ent" => keywords.push("Keywords::REACH"),
         "Outlaw Medic" => keywords.push("Keywords::LIFELINK"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
@@ -2895,6 +2903,21 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
         }],
+        "Food Token" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::GainLife(3),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+        }],
         "Experimental Synthesizer" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::Mana {
@@ -2918,8 +2941,47 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 AbilityCostRecipe::DiscardSelf,
             ],
             effect: AbilityEffectRecipe::SearchLibraryToHand {
-                card_type: "Land",
-                subtype: "Island",
+                filter: LibrarySearchFilterRecipe::LandWithSubtype("Island"),
+                min_targets: 0,
+                max_targets: 1,
+                reveal_selected: true,
+                shuffle: true,
+            },
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+        }],
+        "Generous Ent" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::DiscardSelf,
+            ],
+            effect: AbilityEffectRecipe::SearchLibraryToHand {
+                filter: LibrarySearchFilterRecipe::LandWithSubtype("Forest"),
+                min_targets: 0,
+                max_targets: 1,
+                reveal_selected: true,
+                shuffle: true,
+            },
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+        }],
+        "Troll of Khazad-dum" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::DiscardSelf,
+            ],
+            effect: AbilityEffectRecipe::SearchLibraryToHand {
+                filter: LibrarySearchFilterRecipe::LandWithSubtype("Swamp"),
                 min_targets: 0,
                 max_targets: 1,
                 reveal_selected: true,
@@ -2982,24 +3044,44 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
 fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
     match effect {
         AbilityEffectRecipe::DrawCards(count) => format!("draw_cards:{count}"),
+        AbilityEffectRecipe::GainLife(amount) => format!("gain_life:{amount}"),
         AbilityEffectRecipe::CreateToken(name) => format!("create_token:{name}"),
         AbilityEffectRecipe::DamageTarget(amount) => format!("damage_target:{amount}"),
         AbilityEffectRecipe::SearchLibraryToHand {
-            card_type,
-            subtype,
+            filter,
             min_targets,
             max_targets,
             reveal_selected,
             shuffle,
         } => format!(
-            "search_library_to_hand:{card_type}:{subtype}:min={min_targets}:max={max_targets}:reveal={reveal_selected}:shuffle={shuffle}"
+            "search_library_to_hand:{}:min={min_targets}:max={max_targets}:reveal={reveal_selected}:shuffle={shuffle}",
+            library_search_filter_token(filter)
         ),
+    }
+}
+
+fn library_search_filter_token(filter: LibrarySearchFilterRecipe) -> String {
+    match filter {
+        LibrarySearchFilterRecipe::LandWithSubtype(subtype) => {
+            format!("land_with_subtype:{subtype}")
+        }
+        LibrarySearchFilterRecipe::BasicLand => "basic_land".to_string(),
+    }
+}
+
+fn library_search_filter_src(filter: LibrarySearchFilterRecipe) -> String {
+    match filter {
+        LibrarySearchFilterRecipe::LandWithSubtype(subtype) => {
+            format!("LibraryCardFilter::LandWithSubtype(Subtype::{subtype})")
+        }
+        LibrarySearchFilterRecipe::BasicLand => "LibraryCardFilter::BasicLand".to_string(),
     }
 }
 
 fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
     match effect {
         AbilityEffectRecipe::DrawCards(count) => format!("ability_effect_draw_{count}"),
+        AbilityEffectRecipe::GainLife(amount) => format!("ability_effect_gain_life_{amount}"),
         AbilityEffectRecipe::CreateToken("Samurai Token") => {
             "ability_effect_create_samurai_token".to_string()
         }
@@ -3010,15 +3092,21 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
             format!("ability_effect_damage_target_{amount}")
         }
         AbilityEffectRecipe::SearchLibraryToHand {
-            card_type: "Land",
-            subtype: "Island",
+            filter: LibrarySearchFilterRecipe::LandWithSubtype(subtype),
             min_targets: 0,
             max_targets: 1,
             reveal_selected: true,
             shuffle: true,
-        } => "ability_effect_islandcycle".to_string(),
+        } => format!("ability_effect_{}cycle", subtype.to_ascii_lowercase()),
+        AbilityEffectRecipe::SearchLibraryToHand {
+            filter: LibrarySearchFilterRecipe::BasicLand,
+            min_targets: 0,
+            max_targets: 1,
+            reveal_selected: true,
+            shuffle: true,
+        } => "omen_effect_search_basic_land".to_string(),
         AbilityEffectRecipe::SearchLibraryToHand { .. } => panic!(
-            "SearchLibraryToHand currently supports only optional single Land/Island reveal+shuffle"
+            "SearchLibraryToHand currently supports only optional single-card reveal+shuffle"
         ),
     }
 }
@@ -3117,6 +3205,41 @@ fn mode2_for(name: &str) -> String {
         ),
         Special::SteelSabotage => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_return_target_permanent_to_owners_hand })".to_string(),
         _ => "None".to_string(),
+    }
+}
+
+/// Alternative spell characteristics for Omen cards. Sagu Wildling's
+/// Roost Seek half is a green sorcery that searches for a basic land; the
+/// shared engine cast-method path owns its successful source shuffle.
+fn omen_for(name: &str) -> String {
+    match name {
+        "Sagu Wildling" => {
+            "Some(OmenDef { cost: Cost { pips: &[Pip::Colored(ManaColor::G)], generic: 0, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: omen_effect_search_basic_land })".to_string()
+        }
+        _ => "None".to_string(),
+    }
+}
+
+fn omen_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
+    match name {
+        "Sagu Wildling" => Some(AbilityEffectRecipe::SearchLibraryToHand {
+            filter: LibrarySearchFilterRecipe::BasicLand,
+            min_targets: 0,
+            max_targets: 1,
+            reveal_selected: true,
+            shuffle: true,
+        }),
+        _ => None,
+    }
+}
+
+/// Minimum number of creatures required to block one attacker. The engine
+/// treats zero/one as ordinary blocking and enforces larger values against
+/// the complete declaration, with Troll of Khazad-dum requiring three.
+fn minimum_blockers_for(name: &str) -> u8 {
+    match name {
+        "Troll of Khazad-dum" => 3,
+        _ => 1,
     }
 }
 
@@ -3291,6 +3414,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 activated_effects.push(recipe.effect);
             }
         }
+        if let Some(effect) = omen_effect_recipe_for(&card.name) {
+            if !activated_effects.contains(&effect) {
+                activated_effects.push(effect);
+            }
+        }
     }
     for effect in activated_effects {
         let function_name = ability_effect_fn_name(effect);
@@ -3300,6 +3428,13 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(
                     out,
                     "    EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {count} }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::GainLife(amount) => {
+                writeln!(
+                    out,
+                    "    EffectOp::GainLife {{ player: PlayerRef::Controller, amount: {amount} }}"
                 )
                 .unwrap();
             }
@@ -3315,14 +3450,14 @@ fn codegen(cards: &[CardJson]) -> String {
                 .unwrap();
             }
             AbilityEffectRecipe::SearchLibraryToHand {
-                card_type: "Land",
-                subtype,
+                filter,
                 min_targets: 0,
                 max_targets: 1,
                 reveal_selected: true,
                 shuffle: true,
             } => {
-                writeln!(out, "    EffectOp::SearchLibraryToHand {{ player: PlayerRef::Controller, filter: LibraryCardFilter::LandWithSubtype(Subtype::{subtype}) }}").unwrap();
+                let filter = library_search_filter_src(filter);
+                writeln!(out, "    EffectOp::SearchLibraryToHand {{ player: PlayerRef::Controller, filter: {filter} }}").unwrap();
             }
             AbilityEffectRecipe::SearchLibraryToHand { .. } => {
                 unreachable!("ability_effect_fn_name rejects unsupported search recipes")
@@ -4397,6 +4532,13 @@ fn codegen(cards: &[CardJson]) -> String {
             }
         )
         .unwrap();
+        writeln!(
+            out,
+            "        minimum_blockers: {},",
+            minimum_blockers_for(&c.name)
+        )
+        .unwrap();
+        writeln!(out, "        omen: {},", omen_for(&c.name)).unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -4422,7 +4564,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v12\n");
+    let mut canon = String::from("kernel_carddb/v13\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -4504,6 +4646,19 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push_str(&madness_cost_for(&c.name));
         canon.push('|');
         canon.push_str(&mode2_for(&c.name));
+        canon.push('|');
+        canon.push_str("minimum_blockers=");
+        canon.push_str(&minimum_blockers_for(&c.name).to_string());
+        canon.push('|');
+        canon.push_str("omen=");
+        canon.push_str(&omen_for(&c.name));
+        canon.push('|');
+        canon.push_str("omen_effect=");
+        if let Some(effect) = omen_effect_recipe_for(&c.name) {
+            canon.push_str(&ability_effect_token(effect));
+        } else {
+            canon.push_str("none");
+        }
         canon.push('|');
         canon.push_str(&effect_recipe_for(c));
         canon.push('|');
@@ -4632,6 +4787,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Dryad" => "Subtype::Dryad",
         "Plant" => "Subtype::Plant",
         "Wall" => "Subtype::Wall",
+        "Troll" => "Subtype::Troll",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

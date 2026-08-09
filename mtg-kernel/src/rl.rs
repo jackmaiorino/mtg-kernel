@@ -2454,9 +2454,14 @@ fn core_surface_action_candidates_v1(
             attacker,
             legal_blockers,
         } => {
-            let actor = state.objects.get(*attacker).controller.opponent().into();
+            let attacker_object = state.objects.get(*attacker);
+            let actor = attacker_object.controller.opponent().into();
             let attacker_ref = card_ref(state, *attacker)?;
+            let minimum_blockers = engine::minimum_blockers_required(state, *attacker);
             for blockers in subsets(legal_blockers)? {
+                if !blockers.is_empty() && blockers.len() < minimum_blockers {
+                    continue;
+                }
                 let blocker_refs = blockers
                     .iter()
                     .map(|&id| card_ref(state, id))
@@ -4658,15 +4663,11 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
                 Keywords::PROTECTION_FROM_MONOCOLORED,
             ),
             ward_generic: object.v4.ward_generic,
-            minimum_blockers: object.v4.minimum_blockers_override.unwrap_or_else(|| {
-                if !def.has_type(CardType::Creature) {
-                    0
-                } else if engine::has_effective_keyword(state, id, Keywords::MENACE) {
-                    2
-                } else {
-                    1
-                }
-            }),
+            minimum_blockers: if def.has_type(CardType::Creature) {
+                engine::minimum_blockers_required(state, id) as u8
+            } else {
+                0
+            },
             landwalk_mask: object.v4.landwalk_mask,
         },
     }
