@@ -57,7 +57,7 @@
     "rust_internal_width": 8,
     "schema": "flat-policy-action-ref-role-crosswalk-v1"
   },
-  "card_catalog_sha256": "bedeeb80bbba9b27fe5682fe0d6d8321969f3d9144e412e1101f38c8944cf91a",
+  "card_catalog_sha256": "4f760ab0836cba29094e59f8d2b3879d57b873e7338b57264b11511a4d9ffaf9",
   "encoding_contract_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
   "enum_maps": {
     "action_kind": {
@@ -320,7 +320,7 @@
   },
   "inventory_sha256": "f46c9fbbad3654c0d5f0f5b8ea89134b392a79b148d002dc35ab5bc3156a1220",
   "mapping_sha256": "bf0347ab442bd1c81cade03899b0c1af93d9bc26468b1e8139dbfc562fa4c4b6",
-  "payload_sha256": "fcccca18fc0e30d98c7c807b6e8a4b72e4d038d7ffc55c70cf10815935c864db",
+  "payload_sha256": "c1bfe763fa4f376c08f8e405ece5937e3393c400564dc42dbb7e8e84c3993749",
   "producer_parent_commit": "3de6d2c450d4d32f120f70034324bfc72e1e3339",
   "runtime_fixture_cases": [
     {

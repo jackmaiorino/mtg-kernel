@@ -218,6 +218,16 @@ fn lotleth_giant_effect() -> EffectOp {
     }
 }
 
+fn mesmeric_fiend_exile_effect() -> EffectOp {
+    EffectOp::RevealHandChooseNonlandToLinkedExile {
+        player: PlayerRef::Target(0),
+    }
+}
+
+fn mesmeric_fiend_return_effect() -> EffectOp {
+    EffectOp::ReturnLinkedExiledCardToOwnersHand
+}
+
 fn sneaky_snacker_effect() -> EffectOp {
     // Return Sneaky Snacker from your graveyard to the battlefield tapped.
     EffectOp::Sequence(vec![
@@ -320,6 +330,24 @@ const LOTLETH_GIANT_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     intervening_if_controls_another_source_card: false,
     effect: lotleth_giant_effect,
 }];
+const MESMERIC_FIEND_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Etb,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: mesmeric_fiend_exile_effect,
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefield,
+        // Leave triggers are matched from battlefield last-known
+        // information and therefore ignore the source's post-event zone.
+        home_zone: Zone::Graveyard,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        effect: mesmeric_fiend_return_effect,
+    },
+];
 const GAIN_THREE_LIFE_ETB_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Etb,
     home_zone: Zone::Battlefield,
@@ -706,6 +734,7 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
         "Balustrade Spy" => &BALUSTRADE_SPY_TRIGGERS,
         "Lotleth Giant" => &LOTLETH_GIANT_TRIGGERS,
+        "Mesmeric Fiend" => &MESMERIC_FIEND_TRIGGERS,
         "Healer of the Glade" | "Spinewoods Paladin" => &GAIN_THREE_LIFE_ETB_TRIGGERS,
         "Sneaky Snacker" => &SNEAKY_SNACKER_TRIGGERS,
         "Burning-Tree Emissary" => &BURNING_TREE_EMISSARY_TRIGGERS,
@@ -776,7 +805,17 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
 }
 
 pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<TargetSpec> {
-    trigger_effect_matches(card_def, effect).then_some(trigger_target_spec(card_def))
+    if !trigger_effect_matches(card_def, effect) {
+        return None;
+    }
+    let card = crate::card_def::CARD_DEFS.get(card_def as usize)?;
+    Some(
+        if card.name == "Mesmeric Fiend" && *effect == mesmeric_fiend_exile_effect() {
+            TargetSpec::TargetOpponent
+        } else {
+            trigger_target_spec(card_def)
+        },
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1055,6 +1094,8 @@ fn triggers_from_events(
                     } else {
                         materialize_trigger_effect(def, id, state)
                     };
+                    let target_spec =
+                        target_spec_for_trigger(obj.card_def, &effect).unwrap_or(TargetSpec::None);
                     let source_contract = match ev {
                         CommittedEvent::ZoneChange {
                             object,
@@ -1089,7 +1130,7 @@ fn triggers_from_events(
                         effect,
                         is_madness_offer: false,
                         kicked,
-                        target_spec: trigger_target_spec(obj.card_def),
+                        target_spec,
                         targets: Vec::new(),
                         target_contracts: Vec::new(),
                         placement_ordered: false,

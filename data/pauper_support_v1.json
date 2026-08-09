@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "bedeeb80bbba9b27fe5682fe0d6d8321969f3d9144e412e1101f38c8944cf91a"
+    "registry_raw_sha256": "4f760ab0836cba29094e59f8d2b3879d57b873e7338b57264b11511a4d9ffaf9"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 124,
+    "full_cards": 128,
     "partial_cards": 0,
-    "no_effect_cards": 26,
+    "no_effect_cards": 22,
     "token_dependencies": 9
   },
   "deck_mainboard_copy_totals": [
@@ -45,9 +45,9 @@
     },
     {
       "deck_id": "Spy",
-      "full": 55,
+      "full": 57,
       "partial": 0,
-      "no_effect": 5,
+      "no_effect": 3,
       "total": 60
     },
     {
@@ -1001,17 +1001,16 @@
           "copies": 2
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Faerie Miscreant",
@@ -1148,17 +1147,16 @@
           "copies": 1
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Force Spike",
@@ -1215,17 +1213,16 @@
           "copies": 2
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Fyndhorn Elves",
@@ -2113,17 +2110,16 @@
           "copies": 2
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Mistvault Bridge",

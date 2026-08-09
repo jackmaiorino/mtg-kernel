@@ -202,6 +202,12 @@ pub enum Subtype {
     /// Appended for the reusable Eldrazi Spawn token created by Writhing
     /// Chrysalis. Existing subtype ids remain unchanged.
     Spawn,
+    /// Appended for Fume Spitter. Existing stable ids remain fixed.
+    Phyrexian,
+    /// Appended for Fume Spitter and Mesmeric Fiend.
+    Horror,
+    /// Appended for Mesmeric Fiend. Existing stable ids remain fixed.
+    Nightmare,
 }
 
 impl Subtype {
@@ -325,6 +331,10 @@ pub enum TargetSpec {
         first: Subtype,
         second: Option<Subtype>,
     },
+    /// Zero, one, or two distinct cards in either player's graveyard.
+    /// Faerie Macabre may legally announce no target, and its two targets
+    /// may come from different graveyards.
+    UpToTwoCardsInGraveyards,
 }
 
 impl Default for TargetSpec {
@@ -369,6 +379,7 @@ impl TargetSpec {
             TargetSpec::TargetOpponent => 27,
             TargetSpec::OpponentControlledCreature => 28,
             TargetSpec::SpellManaValueAtMostControlledSubtypes { .. } => 29,
+            TargetSpec::UpToTwoCardsInGraveyards => 30,
         }
     }
 }
@@ -1072,7 +1083,7 @@ mod tests {
     fn card_defs_len_matches_pool() {
         // 146 real pool cards + 9 tokens. Eldrazi Spawn is appended after
         // the Spy combo core and every earlier definition id remains stable.
-        assert_eq!(CARD_DEFS.len(), 155);
+        assert_eq!(CARD_DEFS.len(), 159);
     }
 
     #[test]
@@ -1129,10 +1140,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v26_is_frozen() {
+    fn card_db_hash_v27_is_frozen() {
         // Version 26 composes the exact Faeries card programs after the
         // green-value and Spy combo waves without renumbering prior ids.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x327c_dff7_bda9_00e4);
+        assert_eq!(KERNEL_CARDDB_HASH, 0x3233_08d3_9735_f18c);
     }
 
     #[test]

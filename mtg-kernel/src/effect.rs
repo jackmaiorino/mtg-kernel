@@ -20,8 +20,8 @@ use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
 use crate::state::{
-    AbilitySourceContractV4, GameState, ObjectLinkV4, PaidCostRefV4, StackItem,
-    StackTargetContractV4, Target, Zone,
+    AbilitySourceContractV4, GameState, LinkedExileRecordV4, ObjectLinkV4, PaidCostRefV4,
+    StackItem, StackTargetContractV4, Target, Zone,
 };
 use serde::{Deserialize, Serialize};
 
@@ -640,6 +640,23 @@ pub enum EffectOp {
         chooser: PlayerRef,
         max_targets: u16,
     },
+    /// Creates a global until-end-of-turn rule effect under which no damage
+    /// can be prevented. Existing prevention shields remain unconsumed.
+    DamageCannotBePreventedThisTurn,
+    /// Put one -1/-1 counter on an exact target creature incarnation.
+    AddMinusOneMinusOneCounter {
+        object: ObjectRef,
+    },
+    /// Publicly reveal the selected player's complete hand, then let this
+    /// effect's controller choose exactly one nonland card from it to exile
+    /// under the resolving ability source incarnation. An all-land or empty
+    /// hand reveals and completes without a choice.
+    RevealHandChooseNonlandToLinkedExile {
+        player: PlayerRef,
+    },
+    /// Return the card still exiled by this exact historical ability-source
+    /// incarnation to its owner's hand, if that exact incarnation remains.
+    ReturnLinkedExiledCardToOwnersHand,
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -837,6 +854,17 @@ pub enum EffectFrame {
         max_targets: u16,
         path: Vec<u16>,
     },
+    /// Authenticated post-answer frame for Mesmeric Fiend's publicly
+    /// revealed hand choice and exact historical linked exile.
+    LinkedExileChosenHandCard {
+        player: PlayerId,
+        original_hand: Vec<EffectObjectBinding>,
+        chosen: EffectObjectBinding,
+        source: AbilitySourceContractV4,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+        expected_remaining_frames: Vec<EffectFrame>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -997,6 +1025,15 @@ pub enum EffectTargetSelectionPurpose {
         original_candidates: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    /// Mandatory exact-one choice from a publicly revealed target hand.
+    /// Only nonland cards are candidates, while the complete original hand
+    /// and historical ability source authenticate the linked exile.
+    LinkedExileNonlandFromRevealedHand {
+        player: PlayerId,
+        original_hand: Vec<EffectObjectBinding>,
+        source: AbilitySourceContractV4,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1134,6 +1171,7 @@ pub enum EffectAnsweredChoiceGuard {
     CounterTargetUnlessPaysGeneric { frame: Box<EffectFrame> },
     ExileOneFromGraveyard { frame: Box<EffectFrame> },
     PayManaThen { frame: Box<EffectFrame> },
+    LinkedExileFromRevealedHand { frame: Box<EffectFrame> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1248,7 +1286,9 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::ExploreTarget { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
-        | EffectOp::MayPayManaThen { .. } => true,
+        | EffectOp::MayPayManaThen { .. }
+        | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
+        | EffectOp::ReturnLinkedExiledCardToOwnersHand => true,
         _ => false,
     }
 }
@@ -2053,6 +2093,31 @@ fn complete_resumable_target_selection(
                 path: canonical_path,
             });
         }
+        EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {
+            player,
+            original_hand,
+            source,
+            canonical_path,
+        } => {
+            if path != canonical_path || objects.len() != 1 {
+                return Err("linked-exile choice changed path or cardinality".to_string());
+            }
+            let expected_remaining_frames = continuation.frames.clone();
+            let frame = EffectFrame::LinkedExileChosenHandCard {
+                player,
+                original_hand,
+                chosen: objects[0],
+                source,
+                path: canonical_path.clone(),
+                canonical_path,
+                expected_remaining_frames,
+            };
+            continuation.answered_choice_guard =
+                Some(EffectAnsweredChoiceGuard::LinkedExileFromRevealedHand {
+                    frame: Box::new(frame.clone()),
+                });
+            continuation.frames.push(frame);
+        }
     }
     Ok(())
 }
@@ -2562,6 +2627,73 @@ fn validate_exile_chosen_graveyard_frame(
     Ok(())
 }
 
+fn validate_linked_exile_chosen_hand_frame(
+    state: &GameState,
+    pending: &EffectContinuation,
+    frame: &EffectFrame,
+) -> Result<(), String> {
+    let EffectFrame::LinkedExileChosenHandCard {
+        player,
+        original_hand,
+        chosen,
+        source,
+        path,
+        canonical_path,
+        ..
+    } = frame
+    else {
+        return Err("linked-exile answer guard changed frame kind".to_string());
+    };
+    if !canonical_path.is_empty() || path != canonical_path {
+        return Err("linked-exile answered path changed".to_string());
+    }
+    let root = validated_definition_owned_root_effect(state, pending)?;
+    let EffectOp::RevealHandChooseNonlandToLinkedExile {
+        player: original_player,
+    } = root
+    else {
+        return Err("linked-exile answer lost its originating operation".to_string());
+    };
+    if pending.ctx.resolve_player(*original_player, state) != *player
+        || pending.resolving_item.v4.ability_source_contract != Some(*source)
+        || pending.ctx.ability_source_contract != Some(*source)
+        || source.source != pending.ctx.source
+        || source.controller != pending.ctx.controller
+        || source.zone != Zone::Battlefield
+        || source.attached_to.is_some()
+        || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
+    {
+        return Err("linked-exile player or source contract changed".to_string());
+    }
+    validate_bound_hand_exact(state, *player, original_hand)?;
+    if original_hand
+        .iter()
+        .filter(|binding| **binding == *chosen)
+        .count()
+        != 1
+    {
+        return Err("linked-exile answer is not one bound original card".to_string());
+    }
+    let chosen_def =
+        &crate::card_def::CARD_DEFS[state.objects.get(chosen.object).card_def as usize];
+    if chosen_def.has_type(CardType::Land) {
+        return Err("linked-exile answer selected a land card".to_string());
+    }
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        let known = observer == *player
+            || state.hand_knowledge[observer.index()][player.index()]
+                .iter()
+                .any(|entry| {
+                    entry.object == chosen.object
+                        && entry.zone_change_count == chosen.expected_zone_change_count
+                });
+        if !known {
+            return Err("linked-exile answer lost the public hand reveal".to_string());
+        }
+    }
+    Ok(())
+}
+
 fn validate_pay_mana_then_frame(
     state: &GameState,
     pending: &EffectContinuation,
@@ -2627,6 +2759,7 @@ fn validate_answered_choice_guard(
                         | EffectFrame::ResolveCounterTargetUnlessPaysGeneric { .. }
                         | EffectFrame::ExileChosenGraveyardCard { .. }
                         | EffectFrame::PayManaThen { .. }
+                        | EffectFrame::LinkedExileChosenHandCard { .. }
                 )
             }) {
                 return Err("typed answered-choice frame has no matching guard".to_string());
@@ -2710,6 +2843,24 @@ fn validate_answered_choice_guard(
             }
             validate_pay_mana_then_frame(state, pending, frame)?;
         }
+        Some(EffectAnsweredChoiceGuard::LinkedExileFromRevealedHand { frame }) => {
+            if pending.choice.is_some() {
+                return Err("answered linked-exile guard still carries a live choice".to_string());
+            }
+            let EffectFrame::LinkedExileChosenHandCard {
+                expected_remaining_frames,
+                ..
+            } = frame.as_ref()
+            else {
+                return Err("linked-exile answer guard changed frame kind".to_string());
+            };
+            let mut expected = expected_remaining_frames.clone();
+            expected.push((**frame).clone());
+            if pending.frames != expected {
+                return Err("linked-exile answered continuation frame stack changed".to_string());
+            }
+            validate_linked_exile_chosen_hand_frame(state, pending, frame)?;
+        }
     }
     Ok(())
 }
@@ -2725,6 +2876,8 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
         || pending.ctx.target_contracts != pending.resolving_item.v4.target_contracts
         || pending.ctx.discarded != pending.resolving_item.discarded
         || pending.ctx.paid_cost_refs != pending.resolving_item.v4.paid_cost_refs
+        || pending.ctx.hidden_ability_source != pending.resolving_item.v4.hidden_ability_source
+        || pending.ctx.ability_source_contract != pending.resolving_item.v4.ability_source_contract
         || pending.ctx.kicked != pending.resolving_item.kicked
     {
         return Err(
@@ -3300,6 +3453,70 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         return Err(
                             "land-untap candidates no longer form the exact partition".to_string()
                         );
+                    }
+                }
+                EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {
+                    player: hand_player,
+                    original_hand,
+                    source,
+                    canonical_path,
+                } => {
+                    if chooser != &pending.ctx.controller || path != canonical_path {
+                        return Err("linked-exile chooser or structural path changed".to_string());
+                    }
+                    if *min_targets != 1
+                        || *max_targets != 1
+                        || !*ordered
+                        || !selected.is_empty()
+                        || pending.resolving_item.v4.ability_source_contract != Some(*source)
+                        || pending.ctx.ability_source_contract != Some(*source)
+                    {
+                        return Err("linked-exile prompt has a noncanonical shape".to_string());
+                    }
+                    validate_bound_hand_exact(state, *hand_player, original_hand)?;
+                    for observer in [PlayerId::P0, PlayerId::P1] {
+                        for binding in original_hand {
+                            if observer != *hand_player
+                                && !state.hand_knowledge[observer.index()][hand_player.index()]
+                                    .iter()
+                                    .any(|entry| {
+                                        entry.object == binding.object
+                                            && entry.zone_change_count
+                                                == binding.expected_zone_change_count
+                                    })
+                            {
+                                return Err(
+                                    "linked-exile prompt lost its complete public hand reveal"
+                                        .to_string(),
+                                );
+                            }
+                        }
+                    }
+                    let expected = original_hand
+                        .iter()
+                        .copied()
+                        .filter(|binding| {
+                            !crate::card_def::CARD_DEFS
+                                [state.objects.get(binding.object).card_def as usize]
+                                .has_type(CardType::Land)
+                        })
+                        .collect::<Vec<_>>();
+                    if expected.len() < 2 {
+                        return Err(
+                            "linked-exile prompt has no genuine multi-card choice".to_string()
+                        );
+                    }
+                    let actual = legal
+                        .iter()
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "linked-exile target lacks an incarnation binding".to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    if actual != expected {
+                        return Err("linked-exile candidates changed from the revealed nonlands"
+                            .to_string());
                     }
                 }
                 EffectTargetSelectionPurpose::OrderIntoGraveyard { .. } => {}
@@ -4367,6 +4584,74 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         state.objects.get_mut(binding.object).tapped = false;
                     }
                 }
+                EffectFrame::LinkedExileChosenHandCard {
+                    player,
+                    original_hand,
+                    chosen,
+                    source,
+                    path,
+                    canonical_path,
+                    expected_remaining_frames,
+                } => {
+                    let answered_frame = EffectFrame::LinkedExileChosenHandCard {
+                        player,
+                        original_hand,
+                        chosen,
+                        source,
+                        path,
+                        canonical_path,
+                        expected_remaining_frames: expected_remaining_frames.clone(),
+                    };
+                    if continuation.frames != expected_remaining_frames {
+                        return Err(
+                            "linked-exile answered continuation remainder changed".to_string()
+                        );
+                    }
+                    if continuation.answered_choice_guard.as_ref()
+                        != Some(&EffectAnsweredChoiceGuard::LinkedExileFromRevealedHand {
+                            frame: Box::new(answered_frame.clone()),
+                        })
+                    {
+                        return Err("linked-exile answered frame/guard mismatch".to_string());
+                    }
+                    validate_linked_exile_chosen_hand_frame(state, &continuation, &answered_frame)?;
+                    if state.engine.linked_exile_records.iter().any(|record| {
+                        record.source.source == source.source
+                            && record.source.zone_change_count == source.zone_change_count
+                    }) {
+                        return Err(
+                            "linked-exile source incarnation already owns a card".to_string()
+                        );
+                    }
+                    continuation.answered_choice_guard = None;
+                    event::propose_and_commit(
+                        state,
+                        event::ProposedEvent::zone_change_preserving_known_identity(
+                            chosen.object,
+                            Zone::Exile,
+                        ),
+                    );
+                    let exiled = state.objects.get(chosen.object);
+                    let record = LinkedExileRecordV4 {
+                        source,
+                        exiled: chosen.object,
+                        exiled_card_def: exiled.card_def,
+                        exiled_owner: exiled.owner,
+                        exiled_zone_change_count: exiled.zone_change_count,
+                    };
+                    let source_incarnation_is_live =
+                        state.objects.try_get(source.source).is_some_and(|live| {
+                            live.zone == source.zone
+                                && live.zone_change_count == source.zone_change_count
+                        });
+                    if source_incarnation_is_live {
+                        state.objects.get_mut(chosen.object).v4.exiled_by = Some(ObjectLinkV4 {
+                            object: source.source,
+                            zone_change_count: source.zone_change_count,
+                        });
+                        state.engine.linked_exile_records.push(record);
+                    }
+                }
                 EffectFrame::OwnerLibraryPlacement {
                     object,
                     owner,
@@ -4829,6 +5114,143 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         return Ok(ResumableProgress::Suspended);
                     }
                 }
+            }
+            EffectOp::RevealHandChooseNonlandToLinkedExile { player } => {
+                if !path.is_empty() || !continuation.frames.is_empty() {
+                    return Err("linked-exile hand choice must be a root effect".to_string());
+                }
+                let player = continuation.ctx.resolve_player(player, state);
+                let source = continuation
+                    .resolving_item
+                    .v4
+                    .ability_source_contract
+                    .ok_or("linked-exile effect lost its historical source contract")?;
+                if continuation.ctx.ability_source_contract != Some(source)
+                    || source.source != continuation.ctx.source
+                    || source.controller != continuation.ctx.controller
+                    || source.zone != Zone::Battlefield
+                    || source.attached_to.is_some()
+                    || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
+                {
+                    return Err("linked-exile effect has the wrong source contract".to_string());
+                }
+                let original_hand = bind_hand(state, player);
+                validate_bound_hand_exact(state, player, &original_hand)?;
+                for binding in &original_hand {
+                    for observer in [PlayerId::P0, PlayerId::P1] {
+                        state
+                            .reveal_hand_card(observer, player, binding.object)
+                            .map_err(|error| {
+                                format!("linked-exile public hand reveal failed: {error}")
+                            })?;
+                    }
+                }
+                let candidates = original_hand
+                    .iter()
+                    .copied()
+                    .filter(|binding| {
+                        !crate::card_def::CARD_DEFS
+                            [state.objects.get(binding.object).card_def as usize]
+                            .has_type(CardType::Land)
+                    })
+                    .collect::<Vec<_>>();
+                match candidates.as_slice() {
+                    [] => {}
+                    [chosen] => {
+                        let expected_remaining_frames = continuation.frames.clone();
+                        let frame = EffectFrame::LinkedExileChosenHandCard {
+                            player,
+                            original_hand,
+                            chosen: *chosen,
+                            source,
+                            path: path.clone(),
+                            canonical_path: path,
+                            expected_remaining_frames,
+                        };
+                        continuation.answered_choice_guard =
+                            Some(EffectAnsweredChoiceGuard::LinkedExileFromRevealedHand {
+                                frame: Box::new(frame.clone()),
+                            });
+                        continuation.frames.push(frame);
+                    }
+                    _ => {
+                        let chooser = continuation.ctx.controller;
+                        stage_linked_exile_hand_choice(
+                            &mut continuation,
+                            chooser,
+                            player,
+                            original_hand,
+                            candidates,
+                            source,
+                            path,
+                        );
+                        state.engine.pending_effect = Some(continuation);
+                        return Ok(ResumableProgress::Suspended);
+                    }
+                }
+            }
+            EffectOp::ReturnLinkedExiledCardToOwnersHand => {
+                if !path.is_empty() || !continuation.frames.is_empty() {
+                    return Err("linked-exile return must be a root effect".to_string());
+                }
+                let source = continuation
+                    .resolving_item
+                    .v4
+                    .ability_source_contract
+                    .ok_or("linked-exile return lost its historical source contract")?;
+                if continuation.ctx.ability_source_contract != Some(source)
+                    || source.source != continuation.ctx.source
+                    || source.controller != continuation.ctx.controller
+                    || source.zone != Zone::Battlefield
+                    || source.attached_to.is_some()
+                    || crate::card_def::CARD_DEFS[source.card_def as usize].name != "Mesmeric Fiend"
+                {
+                    return Err("linked-exile return has the wrong source contract".to_string());
+                }
+                let positions = state
+                    .engine
+                    .linked_exile_records
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, record)| (record.source == source).then_some(index))
+                    .collect::<Vec<_>>();
+                let Some(&position) = positions.first() else {
+                    continue;
+                };
+                if positions.len() != 1 {
+                    return Err("linked-exile source owns duplicate records".to_string());
+                }
+                let record = state.engine.linked_exile_records[position];
+                let live = state
+                    .objects
+                    .try_get(record.exiled)
+                    .ok_or("linked-exile record names a missing object")?;
+                if live.card_def != record.exiled_card_def
+                    || live.owner != record.exiled_owner
+                    || live.zone_change_count < record.exiled_zone_change_count
+                {
+                    return Err("linked-exile record is structurally inconsistent".to_string());
+                }
+                if live.zone_change_count == record.exiled_zone_change_count {
+                    let memberships = state
+                        .exile
+                        .iter()
+                        .filter(|&&candidate| candidate == record.exiled)
+                        .count();
+                    if live.zone != Zone::Exile || memberships != 1 {
+                        return Err(
+                            "linked-exile exact incarnation lost its exile membership".to_string()
+                        );
+                    }
+                    event::propose_and_commit(
+                        state,
+                        event::ProposedEvent::zone_change_preserving_known_identity(
+                            record.exiled,
+                            Zone::Hand,
+                        ),
+                    );
+                }
+                state.engine.linked_exile_records.remove(position);
             }
             EffectOp::MayPayManaThen {
                 player,
@@ -5451,6 +5873,39 @@ fn stage_graveyard_exile_choice(
         purpose: EffectTargetSelectionPurpose::ExileOneFromGraveyard {
             player,
             original_graveyard,
+            canonical_path,
+        },
+    });
+}
+
+fn stage_linked_exile_hand_choice(
+    continuation: &mut EffectContinuation,
+    chooser: PlayerId,
+    player: PlayerId,
+    original_hand: Vec<EffectObjectBinding>,
+    candidates: Vec<EffectObjectBinding>,
+    source: AbilitySourceContractV4,
+    canonical_path: Vec<u16>,
+) {
+    debug_assert!(candidates.len() >= 2);
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player: chooser,
+        path: canonical_path.clone(),
+        selected: Vec::new(),
+        legal: candidates
+            .into_iter()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets: 1,
+        max_targets: 1,
+        ordered: true,
+        purpose: EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {
+            player,
+            original_hand,
+            source,
             canonical_path,
         },
     });
@@ -6378,6 +6833,43 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 event::ProposedEvent::damage(ctx.source, target, amount),
             );
         }
+        EffectOp::DamageCannotBePreventedThisTurn => {
+            let timestamp = crate::engine::next_timestamp(state);
+            state.engine.until_end_of_turn.push(
+                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented {
+                    timestamp,
+                    duration: crate::engine::EffectDuration::EndOfTurn,
+                },
+            );
+        }
+        EffectOp::AddMinusOneMinusOneCounter { object } => {
+            let object_id = ctx.resolve_object(*object);
+            let target_index = match object {
+                ObjectRef::Target(index) => Some(usize::from(*index)),
+                ObjectRef::ThisSource => None,
+            };
+            if target_index.is_some_and(|index| !ctx.target_incarnation_matches(index, state))
+                || state.objects.get(object_id).zone != Zone::Battlefield
+                || !crate::card_def::CARD_DEFS[state.objects.get(object_id).card_def as usize]
+                    .has_type(CardType::Creature)
+            {
+                return;
+            }
+            let Some(next) = state
+                .objects
+                .get(object_id)
+                .counters
+                .minus1_minus1
+                .checked_add(1)
+            else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
+            state.objects.get_mut(object_id).counters.minus1_minus1 = next;
+        }
         EffectOp::BindPlusOnePlusOneCounterToTriggerSource => {
             state.engine.halted = Some((
                 crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
@@ -7134,7 +7626,9 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::CounterTargetUnlessPaysGeneric { .. }
         | EffectOp::LookTopSelectByTypeToHandBottomRest { .. }
         | EffectOp::ExileOneFromPlayersGraveyard { .. }
-        | EffectOp::MayPayManaThen { .. } => {
+        | EffectOp::MayPayManaThen { .. }
+        | EffectOp::RevealHandChooseNonlandToLinkedExile { .. }
+        | EffectOp::ReturnLinkedExiledCardToOwnersHand => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }

@@ -2336,6 +2336,9 @@ enum Special {
     /// Return target creature, then choose up to two controlled lands to
     /// untap during the same resolution.
     Snap,
+    /// Damage cannot be prevented this turn. Flaring Pain's flashback cost
+    /// is modeled independently by `flashback_for`.
+    DamageCannotBePreventedThisTurn,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2531,6 +2534,9 @@ impl Special {
             Special::SearchForestToHand => "search_forest_to_hand".to_string(),
             Special::BindTheMonster => "bind_the_monster:aura_creature".to_string(),
             Special::Snap => "snap:bounce_then_untap_up_to_two_lands".to_string(),
+            Special::DamageCannotBePreventedThisTurn => {
+                "damage_cannot_be_prevented_this_turn".to_string()
+            }
         }
     }
 }
@@ -2591,6 +2597,8 @@ enum AbilityEffectRecipe {
         discard: u8,
     },
     PutSourceOntoBattlefieldTappedAndAttacking,
+    MoveAllTargetsToExile,
+    AddMinusOneMinusOneCounter,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2716,6 +2724,7 @@ fn special_for(name: &str) -> Special {
         "Land Grant" => Special::SearchForestToHand,
         "Bind the Monster" => Special::BindTheMonster,
         "Snap" => Special::Snap,
+        "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
         _ => Special::None,
     }
 }
@@ -2857,6 +2866,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
             "target=Creature;spell=Sequence(ReturnTargetToOwnersHand,UntapUpToLands(Controller,2));mana=None"
                 .to_string()
         }
+        Special::DamageCannotBePreventedThisTurn => {
+            "target=None;spell=DamageCannotBePreventedThisTurn;mana=None".to_string()
+        }
     }
 }
 
@@ -2886,6 +2898,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Bird Illusion Token"
         | "Faerie Miscreant"
         | "Faerie Seer"
+        | "Faerie Macabre"
         | "Harrier Strix"
         | "Refurbished Familiar"
         | "Sagu Wildling"
@@ -3076,6 +3089,13 @@ fn flashback_for(name: &str) -> String {
             )
         }
         "Dread Return" => "Some(FlashbackDef { cost: &[CostComponent::SacrificeControlled { count: 3, filter: PermanentFilter::Creature }] })".to_string(),
+        "Flaring Pain" => {
+            let (pips, generic, x_count) = parse_cost("{R}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
         _ => "None".to_string(),
     }
 }
@@ -3110,6 +3130,24 @@ fn escape_for(name: &str) -> String {
 /// then resolve the reusable typed library search.
 fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Faerie Macabre" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::DiscardSelf],
+            effect: AbilityEffectRecipe::MoveAllTargetsToExile,
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "UpToTwoCardsInGraveyards",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Fume Spitter" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::AddMinusOneMinusOneCounter,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
         "Krark-Clan Shaman" => &[ActivatedAbilityRecipe {
             cost: &[AbilityCostRecipe::SacrificeControlled {
                 count: 1,
@@ -3596,6 +3634,12 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking => {
             "put_source_onto_battlefield_tapped_and_attacking".to_string()
         }
+        AbilityEffectRecipe::MoveAllTargetsToExile => {
+            "move_all_targets_to_exile".to_string()
+        }
+        AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
+            "add_minus_one_minus_one_counter".to_string()
+        }
     }
 }
 
@@ -3703,6 +3747,12 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         }
         AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking => {
             "ability_effect_put_source_onto_battlefield_tapped_and_attacking".to_string()
+        }
+        AbilityEffectRecipe::MoveAllTargetsToExile => {
+            "ability_effect_move_all_targets_to_exile".to_string()
+        }
+        AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
+            "ability_effect_add_minus_one_minus_one_counter".to_string()
         }
     }
 }
@@ -4260,6 +4310,20 @@ fn codegen(cards: &[CardJson]) -> String {
                 writeln!(
                     out,
                     "    EffectOp::PutSourceOntoBattlefieldTappedAndAttacking"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::MoveAllTargetsToExile => {
+                writeln!(
+                    out,
+                    "    EffectOp::MoveAllTargets {{ to_zone: Zone::Exile }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
+                writeln!(
+                    out,
+                    "    EffectOp::AddMinusOneMinusOneCounter {{ object: ObjectRef::Target(0) }}"
                 )
                 .unwrap();
             }
@@ -5190,6 +5254,22 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::DamageCannotBePreventedThisTurn
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_damage_cannot_be_prevented_this_turn() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::DamageCannotBePreventedThisTurn)").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     // ---- CARD_DEFS -------------------------------------------------
     writeln!(out, "pub static CARD_DEFS: [CardDef; {}] = [", cards.len()).unwrap();
     for c in cards {
@@ -5461,6 +5541,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_snap".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::DamageCannotBePreventedThisTurn => (
+                "TargetSpec::None",
+                "spell_effect_damage_cannot_be_prevented_this_turn".to_string(),
+                "no_effect".to_string(),
+            ),
         };
 
         let executable = c.engine_capability != EngineCapabilityJson::NoEffect;
@@ -5656,7 +5741,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v23\n");
+    let mut canon = String::from("kernel_carddb/v24\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -5934,6 +6019,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Treasure" => "Subtype::Treasure",
         "Giant" => "Subtype::Giant",
         "Spawn" => "Subtype::Spawn",
+        "Phyrexian" => "Subtype::Phyrexian",
+        "Horror" => "Subtype::Horror",
+        "Nightmare" => "Subtype::Nightmare",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

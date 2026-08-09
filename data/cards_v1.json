@@ -4814,12 +4814,141 @@
         "colorless_mana"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/EldraziSpawnToken.java"
+    },
+    {
+      "name": "Faerie Macabre",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Faerie",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "activated_ability",
+        "hand_ability",
+        "discard_self_cost",
+        "up_to_two_targets",
+        "graveyard_target",
+        "exile"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FaerieMacabre.java"
+    },
+    {
+      "name": "Flaring Pain",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "moderate",
+      "mechanics": [
+        "damage_cant_be_prevented",
+        "until_end_of_turn",
+        "flashback"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FlaringPain.java"
+    },
+    {
+      "name": "Fume Spitter",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "moderate",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_self_cost",
+        "target_creature",
+        "minus_one_minus_one_counter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FumeSpitter.java"
+    },
+    {
+      "name": "Mesmeric Fiend",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Nightmare",
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "leaves_battlefield_trigger",
+        "target_opponent",
+        "reveal_hand",
+        "choose_nonland_card",
+        "linked_exile",
+        "return_to_hand"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MesmericFiend.java"
     }
   ],
-  "unresolved": [
-    "Faerie Macabre",
-    "Flaring Pain",
-    "Fume Spitter",
-    "Mesmeric Fiend"
-  ]
+  "unresolved": []
 }

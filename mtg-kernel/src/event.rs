@@ -353,11 +353,23 @@ pub fn apply_replacements(
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
     loop {
+        let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
+            && state.engine.until_end_of_turn.iter().any(|effect| {
+                matches!(
+                    effect,
+                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                )
+            });
         let hit = state
             .engine
             .active_replacements
             .iter()
-            .find(|r| !proposed.touched_by().contains(&r.id) && replacement_applies(r, &proposed))
+            .find(|r| {
+                !proposed.touched_by().contains(&r.id)
+                    && !(damage_cannot_be_prevented
+                        && matches!(&r.kind, ReplacementEffectKind::PreventNextDamage { .. }))
+                    && replacement_applies(r, &proposed)
+            })
             .cloned();
 
         let Some(repl) = hit else {

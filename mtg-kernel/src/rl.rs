@@ -4792,6 +4792,7 @@ fn object_relations_public_v4(
     state: &GameState,
     acting_player: PlayerId,
 ) -> Result<Vec<ObjectRelationPublicV4>> {
+    validate_linked_exile_records_public_v4(state)?;
     let mut out = Vec::new();
     for (id, object) in state.objects.iter() {
         let Some(source) = visible_card_ref(state, id, acting_player)? else {
@@ -4817,12 +4818,36 @@ fn object_relations_public_v4(
             let target = state.objects.try_get(link.object).ok_or_else(|| {
                 RlContractError("exiled_by relation points at a missing object".to_string())
             })?;
-            if target.zone_change_count != link.zone_change_count {
-                return Err(RlContractError(
-                    "exiled_by relation points at a stale object incarnation".to_string(),
-                ));
-            }
-            if let Some(exiled_by) = visible_card_ref(state, link.object, acting_player)? {
+            let exiled_by = if target.zone_change_count == link.zone_change_count {
+                visible_card_ref(state, link.object, acting_player)?
+            } else {
+                let matches = state
+                    .engine
+                    .linked_exile_records
+                    .iter()
+                    .filter(|record| {
+                        record.exiled == id
+                            && record.exiled_zone_change_count == object.zone_change_count
+                            && record.source.source == link.object
+                            && record.source.zone_change_count == link.zone_change_count
+                    })
+                    .collect::<Vec<_>>();
+                let [record] = matches.as_slice() else {
+                    return Err(RlContractError(
+                        "exiled_by relation points at an unauthenticated historical incarnation"
+                            .to_string(),
+                    ));
+                };
+                Some(CardStableRefV1 {
+                    arena_id: record.source.source.0,
+                    card_db_id: record.source.card_def,
+                    owner: record.source.owner.into(),
+                    controller: record.source.controller.into(),
+                    zone: record.source.zone,
+                    zone_change_count: record.source.zone_change_count,
+                })
+            };
+            if let Some(exiled_by) = exiled_by {
                 out.push(ObjectRelationPublicV4::ExiledBy {
                     object: source,
                     exiled_by,
@@ -4830,7 +4855,99 @@ fn object_relations_public_v4(
             }
         }
     }
+    for record in &state.engine.linked_exile_records {
+        let exiled = state.objects.get(record.exiled);
+        if exiled.zone_change_count != record.exiled_zone_change_count
+            || out.iter().any(|relation| {
+                matches!(
+                    relation,
+                    ObjectRelationPublicV4::ExiledBy { object, exiled_by }
+                        if object.arena_id == record.exiled.0
+                            && object.zone_change_count == record.exiled_zone_change_count
+                            && exiled_by.arena_id == record.source.source.0
+                            && exiled_by.zone_change_count == record.source.zone_change_count
+                )
+            })
+        {
+            continue;
+        }
+        let Some(object) = visible_card_ref(state, record.exiled, acting_player)? else {
+            continue;
+        };
+        out.push(ObjectRelationPublicV4::ExiledBy {
+            object,
+            exiled_by: CardStableRefV1 {
+                arena_id: record.source.source.0,
+                card_db_id: record.source.card_def,
+                owner: record.source.owner.into(),
+                controller: record.source.controller.into(),
+                zone: record.source.zone,
+                zone_change_count: record.source.zone_change_count,
+            },
+        });
+    }
     Ok(out)
+}
+
+fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
+    for (index, record) in state.engine.linked_exile_records.iter().enumerate() {
+        if record.source.zone != Zone::Battlefield
+            || record.source.attached_to.is_some()
+            || crate::card_def::CARD_DEFS
+                .get(record.source.card_def as usize)
+                .is_none_or(|definition| definition.name != "Mesmeric Fiend")
+            || state.engine.linked_exile_records[..index]
+                .iter()
+                .any(|other| other.source == record.source)
+        {
+            return Err(RlContractError(
+                "linked-exile record has an invalid or duplicate source contract".to_string(),
+            ));
+        }
+        let source = state.objects.try_get(record.source.source).ok_or_else(|| {
+            RlContractError("linked-exile record source object is missing".to_string())
+        })?;
+        let exiled = state.objects.try_get(record.exiled).ok_or_else(|| {
+            RlContractError("linked-exile record exiled object is missing".to_string())
+        })?;
+        if source.card_def != record.source.card_def
+            || source.owner != record.source.owner
+            || source.zone_change_count < record.source.zone_change_count
+            || exiled.card_def != record.exiled_card_def
+            || exiled.owner != record.exiled_owner
+            || exiled.zone_change_count < record.exiled_zone_change_count
+        {
+            return Err(RlContractError(
+                "linked-exile record no longer matches its physical objects".to_string(),
+            ));
+        }
+        if exiled.zone_change_count == record.exiled_zone_change_count {
+            let exile_memberships = state
+                .exile
+                .iter()
+                .filter(|&&candidate| candidate == record.exiled)
+                .count();
+            if exiled.zone != Zone::Exile || exile_memberships != 1 {
+                return Err(RlContractError(
+                    "linked-exile exact card incarnation is not uniquely in exile".to_string(),
+                ));
+            }
+        }
+        if source.zone_change_count == record.source.zone_change_count
+            && exiled.zone_change_count == record.exiled_zone_change_count
+            && (source.zone != Zone::Battlefield
+                || exiled.v4.exiled_by
+                    != Some(crate::state::ObjectLinkV4 {
+                        object: record.source.source,
+                        zone_change_count: record.source.zone_change_count,
+                    }))
+        {
+            return Err(RlContractError(
+                "live linked-exile source lost its public object relation".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn continuous_effects_public_v2(
@@ -4991,6 +5108,41 @@ fn continuous_effects_public_v2(
                     remove_landwalk_mask: 0,
                     prevent_damage_from_color_mask: 0,
                     damage_cannot_be_prevented: false,
+                });
+            }
+            UntilEndOfTurnEffect::DamageCannotBePrevented {
+                timestamp,
+                duration,
+            } => {
+                let duration = match duration {
+                    engine::EffectDuration::EndOfTurn => EffectDurationV2::EndOfTurn,
+                };
+                out.push(ContinuousEffectPublicV2 {
+                    source: None,
+                    controller: None,
+                    affected_objects: Vec::new(),
+                    affected_players: Vec::new(),
+                    global: true,
+                    layers: 0,
+                    timestamp: *timestamp,
+                    duration,
+                    power_delta: 0,
+                    toughness_delta: 0,
+                    grants_haste: false,
+                    set_power: None,
+                    set_toughness: None,
+                    add_color_mask: 0,
+                    remove_color_mask: 0,
+                    add_subtype_ids: Vec::new(),
+                    remove_subtype_ids: Vec::new(),
+                    add_keyword_mask: 0,
+                    remove_keyword_mask: 0,
+                    ward_generic_delta: 0,
+                    minimum_blockers: None,
+                    add_landwalk_mask: 0,
+                    remove_landwalk_mask: 0,
+                    prevent_damage_from_color_mask: 0,
+                    damage_cannot_be_prevented: true,
                 });
             }
         }
@@ -5303,6 +5455,9 @@ fn pending_effect_semantic_v4(
                                 }
                             },
                             crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {
                                 ..
                             } => TargetSelectionPurposeV4::CardSelection,
                         },

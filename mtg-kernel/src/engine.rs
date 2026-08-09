@@ -152,6 +152,12 @@ pub struct EngineState {
     pub event_history: Vec<CommittedEvent>,
     pub active_replacements: Vec<ActiveReplacement>,
     pub next_replacement_id: u32,
+    /// Exact historical links created by effects such as Mesmeric Fiend.
+    /// A source zone change cannot erase these records before its queued
+    /// leave trigger resolves, and a later exiled-card incarnation cannot
+    /// satisfy the frozen binding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linked_exile_records: Vec<crate::state::LinkedExileRecordV4>,
     /// Triggered abilities collected but not yet placed on the stack,
     /// grouped APNAP (active player's group first); see
     /// `drain_pending_triggers_or_decide`.
@@ -348,6 +354,13 @@ pub enum UntilEndOfTurnEffect {
         timestamp: u64,
         duration: EffectDuration,
         keywords: Keywords,
+    },
+    /// Global rule-changing effect from Flaring Pain. Prevention shields
+    /// remain installed and unconsumed, but do not apply while this marker
+    /// lasts.
+    DamageCannotBePrevented {
+        timestamp: u64,
+        duration: EffectDuration,
     },
 }
 
@@ -1225,7 +1238,8 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
         | TargetSpec::ExactlyTwoArtifactPermanents
-        | TargetSpec::UpToTwoPlayers => 2,
+        | TargetSpec::UpToTwoPlayers
+        | TargetSpec::UpToTwoCardsInGraveyards => 2,
     }
 }
 
@@ -1233,7 +1247,8 @@ fn target_min_count(spec: TargetSpec) -> u8 {
     match spec {
         TargetSpec::UpToTwoCreatureCardsInOwnGraveyard
         | TargetSpec::UpToTwoCreatures
-        | TargetSpec::UpToTwoPlayers => 0,
+        | TargetSpec::UpToTwoPlayers
+        | TargetSpec::UpToTwoCardsInGraveyards => 0,
         _ => target_count(spec),
     }
 }
@@ -2029,6 +2044,16 @@ fn legal_targets_for_controller(
                     && object.zone == Zone::Graveyard
                     && !object.v4.is_token
                     && card_def::CARD_DEFS[object.card_def as usize].has_type(CardType::Creature)
+            })
+            .map(Target::Object)
+            .collect(),
+        TargetSpec::UpToTwoCardsInGraveyards => [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
+            .filter(|id| !targets_chosen.contains(&Target::Object(*id)))
+            .filter(|&id| {
+                let object = state.objects.get(id);
+                object.zone == Zone::Graveyard && !object.v4.is_token
             })
             .map(Target::Object)
             .collect(),
@@ -6910,7 +6935,8 @@ fn triggered_stack_item_expected_target_spec(
     if !source_def.is_executable() {
         return Err("triggered stack item source definition is not executable".to_string());
     }
-    let definition_trigger = trigger::trigger_effect_matches(source_card_def, inline_effect);
+    let definition_target_spec = trigger::target_spec_for_trigger(source_card_def, inline_effect);
+    let definition_trigger = definition_target_spec.is_some();
     let ward_trigger = if let Some(source_contract) = ability_source_contract {
         match inline_effect {
             EffectOp::CounterUnlessPaysGeneric {
@@ -6948,11 +6974,7 @@ fn triggered_stack_item_expected_target_spec(
     if !definition_trigger && !ward_trigger {
         return Err("triggered stack item effect is not definition-owned".to_string());
     }
-    let spec = if definition_trigger {
-        trigger::trigger_target_spec(source_card_def)
-    } else {
-        TargetSpec::None
-    };
+    let spec = definition_target_spec.unwrap_or(TargetSpec::None);
     Ok((spec != TargetSpec::None).then_some(spec))
 }
 
@@ -7959,6 +7981,7 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
                 }
                 UntilEndOfTurnEffect::ResolvedObjectKeywordEffect { .. } => false,
                 UntilEndOfTurnEffect::SyntheticMarker(_) => false,
+                UntilEndOfTurnEffect::DamageCannotBePrevented { .. } => false,
             };
             if grants {
                 return true;

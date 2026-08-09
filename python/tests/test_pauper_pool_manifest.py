@@ -31,16 +31,9 @@ EXPECTED_SPECS = (
     ("Faeries", "Faeries", "Deck - Mono-Blue Faeries.dek", "8cb962c4ccee6a5f8c0c70fc27c17d13323d13606c82b9b12b8985aa87e0f344"),
 )
 
-MISSING_SPY_RECORDS = {
-    "Faerie Macabre",
-    "Flaring Pain",
-    "Fume Spitter",
-    "Mesmeric Fiend",
-}
+MISSING_SPY_RECORDS: set[str] = set()
 
-MISSING_SPY_MAIN = {
-    "Mesmeric Fiend": 2,
-}
+MISSING_SPY_MAIN: dict[str, int] = {}
 
 
 def load(path: Path):
@@ -442,11 +435,8 @@ class PauperPoolManifestTest(unittest.TestCase):
                 expected_membership.setdefault(name, []).append(Path(deck["source_path"]).name)
         registry_cards = {row["name"]: row for row in self.registry["cards"]}
         non_tokens = {name for name, row in registry_cards.items() if not row.get("is_token", False)}
-        self.assertEqual(non_tokens, pool_names - MISSING_SPY_RECORDS)
-        self.assertEqual(
-            self.registry["unresolved"],
-            sorted(MISSING_SPY_RECORDS, key=lambda name: name.encode("utf-8")),
-        )
+        self.assertEqual(non_tokens, pool_names)
+        self.assertEqual(self.registry["unresolved"], [])
         for name in non_tokens:
             self.assertEqual(registry_cards[name]["decks"], expected_membership[name], name)
         for token_name in (
@@ -458,6 +448,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             "Map Token",
             "Sacred Cat Embalmed Token",
             "Treasure Token",
+            "Eldrazi Spawn Token",
         ):
             self.assertTrue(registry_cards[token_name]["is_token"])
             self.assertEqual(registry_cards[token_name]["decks"], [])
@@ -471,8 +462,11 @@ class PauperPoolManifestTest(unittest.TestCase):
             {
                 "Balustrade Spy",
                 "Dread Return",
+                "Faerie Macabre",
+                "Flaring Pain",
                 "Forest",
                 "Elves of Deep Shadow",
+                "Fume Spitter",
                 "Gatecreeper Vine",
                 "Generous Ent",
                 "Healer of the Glade",
@@ -481,6 +475,7 @@ class PauperPoolManifestTest(unittest.TestCase):
                 "Lotus Petal",
                 "Lotleth Giant",
                 "Masked Vandal",
+                "Mesmeric Fiend",
                 "Overgrown Battlement",
                 "Quirion Ranger",
                 "Saruli Caretaker",
@@ -506,8 +501,8 @@ class PauperPoolManifestTest(unittest.TestCase):
         spy_main = roster_from_zone(spy["mainboard"])
         missing_main = {name: spy_main[name] for name in MISSING_SPY_MAIN}
         self.assertEqual(missing_main, MISSING_SPY_MAIN)
-        self.assertEqual(len(missing_main), 1)
-        self.assertEqual(sum(missing_main.values()), 2)
+        self.assertEqual(len(missing_main), 0)
+        self.assertEqual(sum(missing_main.values()), 0)
         for row in missing_rows.values():
             self.assertEqual(row["declared_decks"], [])
             self.assertEqual(row["expected_decks"], ["Deck - Spy Combo.dek"])
@@ -542,9 +537,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 124,
+                "full_cards": 128,
                 "partial_cards": 0,
-                "no_effect_cards": 26,
+                "no_effect_cards": 22,
                 "token_dependencies": 9,
             },
         )
@@ -553,7 +548,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Affinity", "full": 53, "partial": 0, "no_effect": 7, "total": 60},
             {"deck_id": "Elves", "full": 48, "partial": 0, "no_effect": 12, "total": 60},
-            {"deck_id": "Spy", "full": 55, "partial": 0, "no_effect": 5, "total": 60},
+            {"deck_id": "Spy", "full": 57, "partial": 0, "no_effect": 3, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "CawGates", "full": 47, "partial": 0, "no_effect": 13, "total": 60},

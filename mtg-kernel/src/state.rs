@@ -500,6 +500,20 @@ impl AbilitySourceContractV4 {
     }
 }
 
+/// One card exiled by an exact historical source incarnation and still
+/// eligible for that incarnation's linked leave-the-battlefield return.
+/// The source may move while its leave trigger waits, and the exiled arena
+/// id may later represent a different incarnation, so both generations are
+/// frozen independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LinkedExileRecordV4 {
+    pub source: AbilitySourceContractV4,
+    pub exiled: ObjectId,
+    pub exiled_card_def: u16,
+    pub exiled_owner: PlayerId,
+    pub exiled_zone_change_count: u32,
+}
+
 /// Historical identity of one object used to pay a cost. It belongs to the
 /// stack incarnation and must not follow the arena object through later zone
 /// changes.
@@ -635,6 +649,13 @@ pub fn stack_target_contract_is_structurally_valid(
             },
         ) | (
             TargetSpec::UpToTwoCreatureCardsInOwnGraveyard,
+            0 | 1,
+            StackTargetContractV4::Object {
+                zone: Zone::Graveyard,
+                ..
+            },
+        ) | (
+            TargetSpec::UpToTwoCardsInGraveyards,
             0 | 1,
             StackTargetContractV4::Object {
                 zone: Zone::Graveyard,
