@@ -67,6 +67,7 @@ pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
 pub mod flat_policy_v2;
 pub mod ids;
+pub mod kernel_native_search_opponent_v1;
 pub mod mana;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
