@@ -192,6 +192,8 @@ pub enum Subtype {
     Wall,
     /// Appended for Troll of Khazad-dum. Existing stable ids remain fixed.
     Troll,
+    /// Appended for Healer of the Glade. Existing stable ids remain fixed.
+    Elemental,
 }
 
 impl Subtype {
@@ -275,6 +277,10 @@ pub enum TargetSpec {
     /// Exactly 1 target: an artifact permanent on either battlefield (Steel
     /// Sabotage's second mode).
     ArtifactPermanent,
+    /// Exactly 1 target: a creature or land card in either graveyard.
+    /// Appended for Pulse of Murasa without changing any earlier target
+    /// identity.
+    CreatureOrLandCardInGraveyard,
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -787,12 +793,12 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 140 real pool cards + 5 tokens (Blood, created by Voldaren
+        // 142 real pool cards + 5 tokens (Blood, created by Voldaren
         // Epicure's ETB trigger; Human Soldier Token/Samurai Token, created
         // by Rally at the Hornburg/Experimental Synthesizer; Bird Illusion
         // Token, created by Murmuring Mystic; Food Token, created by Generous
         // Ent -- see `trigger.rs`/`build.rs`).
-        assert_eq!(CARD_DEFS.len(), 145);
+        assert_eq!(CARD_DEFS.len(), 147);
     }
 
     #[test]
@@ -817,25 +823,26 @@ mod tests {
             (TargetSpec::NoncreatureSpellOnStack, 16),
             (TargetSpec::ArtifactSpellOnStack, 17),
             (TargetSpec::ArtifactPermanent, 18),
+            (TargetSpec::CreatureOrLandCardInGraveyard, 19),
         ];
         for (target_spec, ordinal) in stable_ordinals {
             assert_eq!(target_spec as u8, ordinal);
         }
         assert_eq!(
-            serde_json::to_string(&TargetSpec::ArtifactPermanent).unwrap(),
-            "\"ArtifactPermanent\""
+            serde_json::to_string(&TargetSpec::CreatureOrLandCardInGraveyard).unwrap(),
+            "\"CreatureOrLandCardInGraveyard\""
         );
         assert_eq!(
-            serde_json::from_str::<TargetSpec>("\"ArtifactPermanent\"").unwrap(),
-            TargetSpec::ArtifactPermanent
+            serde_json::from_str::<TargetSpec>("\"CreatureOrLandCardInGraveyard\"").unwrap(),
+            TargetSpec::CreatureOrLandCardInGraveyard
         );
     }
 
     #[test]
-    fn card_db_hash_v16_is_frozen() {
-        // Version 16 composes typecycling, Omen, minimum blockers, and Food
-        // with the card and continuation grammar frozen in version 15.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x9407_af21_0b26_f3ff);
+    fn card_db_hash_v17_is_frozen() {
+        // Version 17 adds the green utility tranche to the typecycling,
+        // Omen, counterspell, and Spy-mana composition frozen in version 16.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xa2eb_e984_fe6f_33be);
     }
 
     #[test]
@@ -1035,7 +1042,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 88, "83 deck cards plus five required tokens");
+        assert_eq!(full, 92, "87 deck cards plus five required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()

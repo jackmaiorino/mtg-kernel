@@ -2284,6 +2284,12 @@ enum Special {
     /// Destroy target nonlegendary creature. Cast Down is the first
     /// consumer of the append-only target filter and shared destroy leaf.
     DestroyNonlegendaryCreature,
+    /// Return target creature or land card from a graveyard to its owner's
+    /// hand, then the controller gains a fixed amount of life. Pulse of
+    /// Murasa is the first consumer.
+    ReturnCreatureOrLandFromGraveyardAndGainLife {
+        amount: u8,
+    },
     /// Deal one simultaneous damage batch to every creature other than the
     /// excluded subtype. Breath Weapon excludes Dragons and deals two.
     DamageEachCreatureWithoutSubtype {
@@ -2455,6 +2461,9 @@ impl Special {
             Special::DeemInferior => "deem_inferior".to_string(),
             Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
             Special::DestroyNonlegendaryCreature => "destroy_nonlegendary_creature".to_string(),
+            Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => {
+                format!("return_creature_or_land_from_graveyard_and_gain_life:{amount}")
+            }
             Special::DamageEachCreatureWithoutSubtype {
                 amount,
                 excluded_subtype,
@@ -2582,6 +2591,7 @@ fn special_for(name: &str) -> Special {
         "Deem Inferior" => Special::DeemInferior,
         "Sleep of the Dead" => Special::TapAndSkipNextUntap,
         "Cast Down" => Special::DestroyNonlegendaryCreature,
+        "Pulse of Murasa" => Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount: 6 },
         "Breath Weapon" => Special::DamageEachCreatureWithoutSubtype {
             amount: 2,
             excluded_subtype: "Dragon",
@@ -2695,6 +2705,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::DestroyNonlegendaryCreature => {
             "target=NonlegendaryCreature;spell=DestroyObject(Target0);mana=None".to_string()
         }
+        Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => format!(
+            "target=CreatureOrLandCardInGraveyard;spell=ReturnTargetToOwnersHandThenGainLife({amount});mana=None"
+        ),
         Special::DamageEachCreatureWithoutSubtype {
             amount,
             excluded_subtype,
@@ -2733,6 +2746,7 @@ fn keywords_for(card: &CardJson) -> String {
         | "Refurbished Familiar"
         | "Sagu Wildling" => keywords.push("Keywords::FLYING"),
         "Generous Ent" => keywords.push("Keywords::REACH"),
+        "Spinewoods Paladin" => keywords.push("Keywords::TRAMPLE"),
         "Outlaw Medic" => keywords.push("Keywords::LIFELINK"),
         "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
         _ => {}
@@ -3171,6 +3185,7 @@ fn activated_abilities_token(name: &str) -> String {
 fn plot_cost_for(name: &str) -> String {
     match name {
         "Highway Robbery" => cost_src("{1}{R}"),
+        "Spinewoods Paladin" => cost_src("{3}{G}"),
         _ => "None".to_string(),
     }
 }
@@ -3797,6 +3812,38 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    let mut graveyard_return_life_amounts = Vec::new();
+    for card in cards {
+        if let Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } =
+            special_for(&card.name)
+        {
+            if !graveyard_return_life_amounts.contains(&amount) {
+                graveyard_return_life_amounts.push(amount);
+            }
+        }
+    }
+    for amount in graveyard_return_life_amounts {
+        writeln!(
+            out,
+            "fn spell_effect_return_creature_or_land_from_graveyard_and_gain_life_{amount}() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Hand }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::GainLife {{ player: PlayerRef::Controller, amount: {amount} }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     let mut damage_without_subtype_shapes = Vec::new();
     for card in cards {
         if let Special::DamageEachCreatureWithoutSubtype {
@@ -4386,6 +4433,13 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_destroy_nonlegendary_creature".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => (
+                "TargetSpec::CreatureOrLandCardInGraveyard",
+                format!(
+                    "spell_effect_return_creature_or_land_from_graveyard_and_gain_life_{amount}"
+                ),
+                "no_effect".to_string(),
+            ),
             Special::DamageEachCreatureWithoutSubtype {
                 amount,
                 excluded_subtype,
@@ -4564,7 +4618,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v13\n");
+    let mut canon = String::from("kernel_carddb/v14\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
@@ -4788,6 +4842,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Plant" => "Subtype::Plant",
         "Wall" => "Subtype::Wall",
         "Troll" => "Subtype::Troll",
+        "Elemental" => "Subtype::Elemental",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

@@ -1150,7 +1150,8 @@ fn target_count(spec: TargetSpec) -> u8 {
         | TargetSpec::SorcerySpellOnStack
         | TargetSpec::NoncreatureSpellOnStack
         | TargetSpec::ArtifactSpellOnStack
-        | TargetSpec::ArtifactPermanent => 1,
+        | TargetSpec::ArtifactPermanent
+        | TargetSpec::CreatureOrLandCardInGraveyard => 1,
         TargetSpec::PlayerThenTheirCreature => 2,
     }
 }
@@ -1706,6 +1707,15 @@ pub fn legal_targets_for(
             .map(Target::Object)
             .collect(),
         TargetSpec::ArtifactPermanent => permanent_targets_with_type(state, CardType::Artifact),
+        TargetSpec::CreatureOrLandCardInGraveyard => [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .flat_map(|player| state.players[player.index()].graveyard.iter().copied())
+            .filter(|&id| {
+                let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
+                def.has_type(CardType::Creature) || def.has_type(CardType::Land)
+            })
+            .map(Target::Object)
+            .collect(),
     }
 }
 

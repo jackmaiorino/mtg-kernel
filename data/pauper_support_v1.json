@@ -5,21 +5,21 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "684131278cbfb7c7bc4cd53b640aa5f24b5c909a111f056ebc23b23918f4b96e"
+    "registry_raw_sha256": "6f0841af3ed7497d5c9c6f0aa5cc6b8fdd538891352a14f4f80393d2ffc1bc64"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 83,
+    "full_cards": 87,
     "partial_cards": 0,
-    "no_effect_cards": 67,
+    "no_effect_cards": 63,
     "token_dependencies": 5
   },
   "deck_mainboard_copy_totals": [
     {
       "deck_id": "Wildfire",
-      "full": 27,
+      "full": 28,
       "partial": 0,
-      "no_effect": 33,
+      "no_effect": 32,
       "total": 60
     },
     {
@@ -45,9 +45,9 @@
     },
     {
       "deck_id": "Spy",
-      "full": 34,
+      "full": 37,
       "partial": 0,
-      "no_effect": 26,
+      "no_effect": 23,
       "total": 60
     },
     {
@@ -1250,17 +1250,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Generous Ent",
@@ -1511,17 +1510,16 @@
           "copies": 4
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Heap Gate",
@@ -2515,10 +2513,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Pyroblast",
@@ -3067,10 +3063,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Squadron Hawk",

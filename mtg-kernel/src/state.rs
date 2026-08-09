@@ -574,6 +574,13 @@ pub fn stack_target_contract_is_structurally_valid(
                 ..
             },
         ) | (
+            TargetSpec::CreatureOrLandCardInGraveyard,
+            0,
+            StackTargetContractV4::Object {
+                zone: Zone::Graveyard,
+                ..
+            },
+        ) | (
             TargetSpec::AnySpellOnStack
                 | TargetSpec::InstantSpellOnStack
                 | TargetSpec::BlueSpellOnStack

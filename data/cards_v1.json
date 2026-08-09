@@ -2734,6 +2734,7 @@
     },
     {
       "name": "Pulse of Murasa",
+      "engine_capability": "full",
       "mana_cost": "{2}{G}",
       "mana_value": 3,
       "colors": [
@@ -3402,6 +3403,7 @@
     },
     {
       "name": "Spinewoods Paladin",
+      "engine_capability": "full",
       "mana_cost": "{4}{G}",
       "mana_value": 5,
       "colors": [
@@ -4461,6 +4463,69 @@
         "life_gain"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/FoodToken.java"
+    },
+    {
+      "name": "Gatecreeper Vine",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "defender",
+        "etb_trigger",
+        "library_search",
+        "reveal",
+        "shuffle"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GatecreeperVine.java"
+    },
+    {
+      "name": "Healer of the Glade",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elemental"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "life_gain"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HealerOfTheGlade.java"
     }
   ],
   "unresolved": [
@@ -4469,8 +4534,6 @@
     "Faerie Macabre",
     "Flaring Pain",
     "Fume Spitter",
-    "Gatecreeper Vine",
-    "Healer of the Glade",
     "Land Grant",
     "Lotleth Giant",
     "Mesmeric Fiend"

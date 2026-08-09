@@ -37,8 +37,6 @@ MISSING_SPY_RECORDS = {
     "Faerie Macabre",
     "Flaring Pain",
     "Fume Spitter",
-    "Gatecreeper Vine",
-    "Healer of the Glade",
     "Land Grant",
     "Lotleth Giant",
     "Mesmeric Fiend",
@@ -47,7 +45,6 @@ MISSING_SPY_RECORDS = {
 MISSING_SPY_MAIN = {
     "Balustrade Spy": 4,
     "Dread Return": 2,
-    "Gatecreeper Vine": 3,
     "Land Grant": 4,
     "Lotleth Giant": 2,
     "Mesmeric Fiend": 2,
@@ -479,7 +476,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             {
                 "Forest",
                 "Elves of Deep Shadow",
+                "Gatecreeper Vine",
                 "Generous Ent",
+                "Healer of the Glade",
                 "Lead the Stampede",
                 "Lotus Petal",
                 "Masked Vandal",
@@ -508,8 +507,8 @@ class PauperPoolManifestTest(unittest.TestCase):
         spy_main = roster_from_zone(spy["mainboard"])
         missing_main = {name: spy_main[name] for name in MISSING_SPY_MAIN}
         self.assertEqual(missing_main, MISSING_SPY_MAIN)
-        self.assertEqual(len(missing_main), 6)
-        self.assertEqual(sum(missing_main.values()), 17)
+        self.assertEqual(len(missing_main), 5)
+        self.assertEqual(sum(missing_main.values()), 14)
         for row in missing_rows.values():
             self.assertEqual(row["declared_decks"], [])
             self.assertEqual(row["expected_decks"], ["Deck - Spy Combo.dek"])
@@ -544,18 +543,18 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 83,
+                "full_cards": 87,
                 "partial_cards": 0,
-                "no_effect_cards": 67,
+                "no_effect_cards": 63,
                 "token_dependencies": 5,
             },
         )
         expected_copy_totals = [
-            {"deck_id": "Wildfire", "full": 27, "partial": 0, "no_effect": 33, "total": 60},
+            {"deck_id": "Wildfire", "full": 28, "partial": 0, "no_effect": 32, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Affinity", "full": 39, "partial": 0, "no_effect": 21, "total": 60},
             {"deck_id": "Elves", "full": 30, "partial": 0, "no_effect": 30, "total": 60},
-            {"deck_id": "Spy", "full": 34, "partial": 0, "no_effect": 26, "total": 60},
+            {"deck_id": "Spy", "full": 37, "partial": 0, "no_effect": 23, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "CawGates", "full": 23, "partial": 0, "no_effect": 37, "total": 60},

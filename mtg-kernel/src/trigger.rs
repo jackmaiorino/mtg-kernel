@@ -114,10 +114,17 @@ fn generous_ent_effect() -> EffectOp {
     }
 }
 
-fn sagu_wildling_effect() -> EffectOp {
+fn gain_three_life_effect() -> EffectOp {
     EffectOp::GainLife {
         player: PlayerRef::Controller,
         amount: 3,
+    }
+}
+
+fn gatecreeper_vine_effect() -> EffectOp {
+    EffectOp::SearchLibraryToHand {
+        player: PlayerRef::Controller,
+        filter: crate::effect::LibraryCardFilter::BasicLandOrGate,
     }
 }
 
@@ -167,7 +174,21 @@ const SAGU_WILDLING_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     home_zone: Zone::Battlefield,
     intervening_if_kicked: false,
     intervening_if_controls_another_source_card: false,
-    effect: sagu_wildling_effect,
+    effect: gain_three_life_effect,
+}];
+const GATECREEPER_VINE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: gatecreeper_vine_effect,
+}];
+const GAIN_THREE_LIFE_ETB_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Etb,
+    home_zone: Zone::Battlefield,
+    intervening_if_kicked: false,
+    intervening_if_controls_another_source_card: false,
+    effect: gain_three_life_effect,
 }];
 const SNEAKY_SNACKER_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::DrawNth(3),
@@ -374,6 +395,8 @@ pub fn triggers_for(card_def: u16) -> &'static [TriggeredAbilityDef] {
         "Voldaren Epicure" => &VOLDAREN_EPICURE_TRIGGERS,
         "Generous Ent" => &GENEROUS_ENT_TRIGGERS,
         "Sagu Wildling" => &SAGU_WILDLING_TRIGGERS,
+        "Gatecreeper Vine" => &GATECREEPER_VINE_TRIGGERS,
+        "Healer of the Glade" | "Spinewoods Paladin" => &GAIN_THREE_LIFE_ETB_TRIGGERS,
         "Sneaky Snacker" => &SNEAKY_SNACKER_TRIGGERS,
         "Burning-Tree Emissary" => &BURNING_TREE_EMISSARY_TRIGGERS,
         "Clockwork Percussionist" => &CLOCKWORK_PERCUSSIONIST_TRIGGERS,

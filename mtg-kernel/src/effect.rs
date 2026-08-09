@@ -52,6 +52,11 @@ pub enum LibraryCardFilter {
     /// find every basic land, including any future nonstandard basic land
     /// represented by the registry.
     BasicLand,
+    /// A card that is either a basic land or carries the Gate subtype.
+    /// Gatecreeper Vine is the first consumer. Gate cards are lands in the
+    /// current pool, but the printed filter is subtype-based and remains so
+    /// here rather than silently adding a land-type restriction.
+    BasicLandOrGate,
 }
 
 /// How long an impulse-drawn card (`EffectOp::ImpulseDraw`) stays playable
@@ -3735,6 +3740,13 @@ fn library_filter_matches(
             def.has_type(CardType::Land)
                 && def.supertypes.contains(&crate::card_def::Supertype::Basic)
         }
+        LibraryCardFilter::BasicLandOrGate => {
+            (def.has_type(CardType::Land)
+                && def.supertypes.contains(&crate::card_def::Supertype::Basic))
+                || subtype_ids
+                    .binary_search(&Subtype::Gate.stable_id())
+                    .is_ok()
+        }
     })
 }
 
@@ -3749,6 +3761,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             )
         }
         LibraryCardFilter::BasicLand => fnv1a_u64(0xcbf2_9ce4_8422_2325, 1),
+        LibraryCardFilter::BasicLandOrGate => fnv1a_u64(0xcbf2_9ce4_8422_2325, 2),
     }
 }
 
