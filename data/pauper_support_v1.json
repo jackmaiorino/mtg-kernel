@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "75a16fa3f1d2f2a1700c99d01364455fc850ca050236260317d4ce6c08651d68"
+    "registry_raw_sha256": "8cf6575e9344b959ee4cd93e232053408639475ca6a9cc932bcdc9e01f7fb6d1"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 72,
+    "full_cards": 75,
     "partial_cards": 0,
-    "no_effect_cards": 78,
+    "no_effect_cards": 75,
     "token_dependencies": 4
   },
   "deck_mainboard_copy_totals": [
@@ -66,16 +66,16 @@
     },
     {
       "deck_id": "CawGates",
-      "full": 18,
+      "full": 21,
       "partial": 0,
-      "no_effect": 42,
+      "no_effect": 39,
       "total": 60
     },
     {
       "deck_id": "Faeries",
-      "full": 32,
+      "full": 36,
       "partial": 0,
-      "no_effect": 28,
+      "no_effect": 24,
       "total": 60
     }
   ],
@@ -197,10 +197,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Balustrade Spy",
@@ -1688,10 +1686,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Island",
@@ -2342,10 +2338,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Outlaw Medic",

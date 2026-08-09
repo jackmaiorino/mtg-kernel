@@ -73,6 +73,7 @@
     },
     {
       "name": "Azorius Guildgate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -1808,6 +1809,7 @@
     },
     {
       "name": "Idyllic Beachfront",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -2519,6 +2521,7 @@
     },
     {
       "name": "Of One Mind",
+      "engine_capability": "full",
       "mana_cost": "{2}{U}",
       "mana_value": 3,
       "colors": [

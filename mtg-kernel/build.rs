@@ -2476,6 +2476,7 @@ fn special_for(name: &str) -> Special {
         "Great Furnace" => Special::GreatFurnace,
         "Lorien Revealed" => Special::DrawCards(3),
         "Thoughtcast" => Special::DrawCards(2),
+        "Of One Mind" => Special::DrawCards(2),
         "Lightning Bolt" => Special::BurnAnyTarget(3),
         "Fiery Temper" => Special::BurnAnyTarget(3),
         "Fireblast" => Special::BurnAnyTarget(4),
@@ -3084,6 +3085,9 @@ fn generic_cost_reduction_for(name: &str) -> &'static str {
         }
         "Deem Inferior" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerDrawsThisTurn })"
+        }
+        "Of One Mind" => {
+            "Some(GenericCostReductionDef { generic_per_count: 2, count: DynamicCountDef::ControllerHasCreatureWithAndWithoutSubtype(Subtype::Human) })"
         }
         _ => "None",
     }
@@ -4311,7 +4315,7 @@ fn codegen(cards: &[CardJson]) -> String {
     // targeting-versus-resolution filter timing.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v10\n");
+    let mut canon = String::from("kernel_carddb/v11\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');

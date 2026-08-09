@@ -2327,6 +2327,32 @@ fn effective_normal_cast_cost(
         card_def::DynamicCountDef::ControllerDrawsThisTurn => {
             state.players[player.index()].draws_this_turn
         }
+        card_def::DynamicCountDef::ControllerHasCreatureWithAndWithoutSubtype(subtype) => {
+            let subtype_id = subtype.stable_id();
+            let mut has_subtype = false;
+            let mut lacks_subtype = false;
+            for &object in &state.players[player.index()].battlefield {
+                let object = state.objects.get(object);
+                let def = &card_def::CARD_DEFS[object.card_def as usize];
+                if object.zone != Zone::Battlefield
+                    || object.controller != player
+                    || !def.has_type(CardType::Creature)
+                {
+                    continue;
+                }
+                if object
+                    .v4
+                    .effective_subtype_ids
+                    .binary_search(&subtype_id)
+                    .is_ok()
+                {
+                    has_subtype = true;
+                } else {
+                    lacks_subtype = true;
+                }
+            }
+            u32::from(has_subtype && lacks_subtype)
+        }
     };
     let reduction = count.saturating_mul(u32::from(reducer.generic_per_count));
     let mut cost = def.cost;

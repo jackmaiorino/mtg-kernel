@@ -545,9 +545,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 72,
+                "full_cards": 75,
                 "partial_cards": 0,
-                "no_effect_cards": 78,
+                "no_effect_cards": 75,
                 "token_dependencies": 4,
             },
         )
@@ -559,8 +559,8 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Spy", "full": 25, "partial": 0, "no_effect": 35, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "CawGates", "full": 18, "partial": 0, "no_effect": 42, "total": 60},
-            {"deck_id": "Faeries", "full": 32, "partial": 0, "no_effect": 28, "total": 60},
+            {"deck_id": "CawGates", "full": 21, "partial": 0, "no_effect": 39, "total": 60},
+            {"deck_id": "Faeries", "full": 36, "partial": 0, "no_effect": 24, "total": 60},
         ]
         self.assertEqual(self.support["deck_mainboard_copy_totals"], expected_copy_totals)
         self.assertEqual(

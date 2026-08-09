@@ -465,6 +465,9 @@ pub enum DynamicCountDef {
     ControllerGraveyardAnyType(&'static [CardType]),
     /// Count cards the caster has drawn during the current turn.
     ControllerDrawsThisTurn,
+    /// One iff the controller has both a creature with the named subtype
+    /// and a creature without it. Of One Mind uses Human.
+    ControllerHasCreatureWithAndWithoutSubtype(Subtype),
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -786,10 +789,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v13_is_frozen() {
-        // Version 13 composes the interaction-card recipes with the Spy
-        // mana/defender tranche and its rich mana-cost action semantics.
-        assert_eq!(KERNEL_CARDDB_HASH, 0x465c_d4f2_34a8_0be3);
+    fn card_db_hash_v14_is_frozen() {
+        // Version 14 adds exact dual-land definitions and Of One Mind's
+        // Human/non-Human conditional reducer plus draw program.
+        assert_eq!(KERNEL_CARDDB_HASH, 0xbf5a_a423_6b3e_34bc);
     }
 
     #[test]
@@ -989,7 +992,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 76, "72 deck cards plus four required tokens");
+        assert_eq!(full, 79, "75 deck cards plus four required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
