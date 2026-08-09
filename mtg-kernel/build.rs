@@ -2242,6 +2242,12 @@ enum Special {
     /// during resolution, so it is the first real consumer of the generic
     /// resumable `EffectOp::Choice` interpreter.
     WindingWay,
+    /// Privately look at the top `look` cards, choose any number of cards of
+    /// `card_type` for hand, and put the rest on the bottom in any order.
+    LookTopSelectByTypeToHandBottomRest {
+        look: u8,
+        card_type: &'static str,
+    },
     /// Mill `mill` cards from `player`'s library, then draw `draw` cards.
     /// Mental Note mills its controller without targeting; Thought Scour
     /// mills its chosen player in target slot zero. Both use the same
@@ -2446,6 +2452,9 @@ impl Special {
             Special::RallyAtTheHornburg => "rally_at_the_hornburg".to_string(),
             Special::RecklessImpulse => "reckless_impulse".to_string(),
             Special::WindingWay => "winding_way".to_string(),
+            Special::LookTopSelectByTypeToHandBottomRest { look, card_type } => {
+                format!("look_top_select_by_type_to_hand_bottom_rest:{look}:{card_type}")
+            }
             Special::MillThenDraw { player, mill, draw } => {
                 format!("mill_then_draw:{}:{mill}:{draw}", player.canonical_token())
             }
@@ -2482,6 +2491,7 @@ enum AbilityCostRecipe {
     DiscardCards(u8),
     DiscardSelf,
     SacrificeSelf,
+    ReturnControlledLandWithSubtype(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2501,6 +2511,9 @@ enum AbilityEffectRecipe {
         reveal_selected: bool,
         shuffle: bool,
     },
+    UntapTarget,
+    GainLifeBattlefieldSubtypeCount(&'static str),
+    PumpTargetBattlefieldSubtypeCount(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2517,6 +2530,7 @@ struct ActivatedAbilityRecipe {
     sorcery_speed_only: bool,
     target_spec: &'static str,
     activation_target_filter: &'static str,
+    max_activations_per_turn: Option<u8>,
 }
 
 fn special_for(name: &str) -> Special {
@@ -2575,6 +2589,10 @@ fn special_for(name: &str) -> Special {
         "Rally at the Hornburg" => Special::RallyAtTheHornburg,
         "Reckless Impulse" => Special::RecklessImpulse,
         "Winding Way" => Special::WindingWay,
+        "Lead the Stampede" => Special::LookTopSelectByTypeToHandBottomRest {
+            look: 5,
+            card_type: "Creature",
+        },
         "Mental Note" => Special::MillThenDraw {
             player: MillPlayer::Controller,
             mill: 2,
@@ -2681,6 +2699,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::RallyAtTheHornburg => "target=None;spell=RallyAtTheHornburg;mana=None".to_string(),
         Special::RecklessImpulse => "target=None;spell=RecklessImpulse;mana=None".to_string(),
         Special::WindingWay => "target=None;spell=WindingWay;mana=None".to_string(),
+        Special::LookTopSelectByTypeToHandBottomRest { look, card_type } => format!(
+            "target=None;spell=LookTopSelectByTypeToHandBottomRest(Controller,{look},{card_type});mana=None"
+        ),
         Special::MillThenDraw { player, mill, draw } => {
             let (target, player) = match player {
                 MillPlayer::Controller => ("None", "Controller"),
@@ -2789,6 +2810,7 @@ fn mana_ability_def_for(name: &str) -> &'static str {
         "Elves of Deep Shadow" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
         "Lotus Petal" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Overgrown Battlement" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::ControlledCreaturesWithKeyword(Keywords::DEFENDER), controller_damage: 0, max_activations_per_turn: None })",
+        "Priest of Titania" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Dynamic(DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::Elf)), controller_damage: 0, max_activations_per_turn: None })",
         "Saruli Caretaker" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
         "Tinder Wall" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
         "Wall of Roots" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) })",
@@ -2900,6 +2922,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             sorcery_speed_only: false,
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Blood Token" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2916,6 +2939,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             sorcery_speed_only: false,
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Food Token" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2931,6 +2955,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             sorcery_speed_only: false,
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Experimental Synthesizer" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2945,6 +2970,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             sorcery_speed_only: true,
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Lorien Revealed" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2965,6 +2991,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             sorcery_speed_only: false,
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Generous Ent" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2985,6 +3012,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             sorcery_speed_only: false,
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Troll of Khazad-dum" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -3005,6 +3033,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             sorcery_speed_only: false,
             target_spec: "None",
             activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Tinder Wall" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -3019,6 +3048,34 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             sorcery_speed_only: false,
             target_spec: "Creature",
             activation_target_filter: "CreatureBlockedBySource",
+            max_activations_per_turn: None,
+        }],
+        "Quirion Ranger" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ReturnControlledLandWithSubtype("Forest")],
+            effect: AbilityEffectRecipe::UntapTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: Some(1),
+        }],
+        "Timberwatch Elf" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount("Elf"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Wellwisher" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::GainLifeBattlefieldSubtypeCount("Elf"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         _ => &[],
     }
@@ -3040,6 +3097,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         }
         AbilityCostRecipe::DiscardSelf => "CostComponent::DiscardSelf".to_string(),
         AbilityCostRecipe::SacrificeSelf => "CostComponent::SacrificeSelf".to_string(),
+        AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => format!(
+            "CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::LandWithSubtype(Subtype::{subtype}))"
+        ),
     }
 }
 
@@ -3052,6 +3112,9 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::DiscardCards(count) => format!("discard_cards:{count}"),
         AbilityCostRecipe::DiscardSelf => "discard_self".to_string(),
         AbilityCostRecipe::SacrificeSelf => "sacrifice_self".to_string(),
+        AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => {
+            format!("return_controlled_land_with_subtype:{subtype}")
+        }
     }
 }
 
@@ -3071,6 +3134,13 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
             "search_library_to_hand:{}:min={min_targets}:max={max_targets}:reveal={reveal_selected}:shuffle={shuffle}",
             library_search_filter_token(filter)
         ),
+        AbilityEffectRecipe::UntapTarget => "untap_target".to_string(),
+        AbilityEffectRecipe::GainLifeBattlefieldSubtypeCount(subtype) => {
+            format!("gain_life:battlefield_subtype_count:{subtype}")
+        }
+        AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount(subtype) => {
+            format!("pump_target:battlefield_subtype_count:{subtype}")
+        }
     }
 }
 
@@ -3122,6 +3192,15 @@ fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
         AbilityEffectRecipe::SearchLibraryToHand { .. } => panic!(
             "SearchLibraryToHand currently supports only optional single-card reveal+shuffle"
         ),
+        AbilityEffectRecipe::UntapTarget => "ability_effect_untap_target".to_string(),
+        AbilityEffectRecipe::GainLifeBattlefieldSubtypeCount(subtype) => format!(
+            "ability_effect_gain_life_battlefield_{}_count",
+            subtype.to_ascii_lowercase()
+        ),
+        AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount(subtype) => format!(
+            "ability_effect_pump_target_battlefield_{}_count",
+            subtype.to_ascii_lowercase()
+        ),
     }
 }
 
@@ -3145,8 +3224,12 @@ fn activated_abilities_for(name: &str) -> String {
             let sorcery = recipe.sorcery_speed_only;
             let target_spec = recipe.target_spec;
             let activation_target_filter = recipe.activation_target_filter;
+            let max_activations_per_turn = match recipe.max_activations_per_turn {
+                Some(limit) => format!("Some({limit})"),
+                None => "None".to_string(),
+            };
             format!(
-                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter} }}"
+                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter}, max_activations_per_turn: {max_activations_per_turn} }}"
             )
         })
         .collect::<Vec<_>>()
@@ -3166,11 +3249,14 @@ fn activated_abilities_token(name: &str) -> String {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "zone={};sorcery={};target={};activation_filter={};cost=[{}];effect={}",
+                "zone={};sorcery={};target={};activation_filter={};max_per_turn={};cost=[{}];effect={}",
                 recipe.activation_zone.to_ascii_lowercase(),
                 recipe.sorcery_speed_only,
                 recipe.target_spec.to_ascii_lowercase(),
                 recipe.activation_target_filter.to_ascii_lowercase(),
+                recipe
+                    .max_activations_per_turn
+                    .map_or_else(|| "-".to_string(), |limit| limit.to_string()),
                 costs,
                 ability_effect_token(recipe.effect)
             )
@@ -3477,6 +3563,19 @@ fn codegen(cards: &[CardJson]) -> String {
             AbilityEffectRecipe::SearchLibraryToHand { .. } => {
                 unreachable!("ability_effect_fn_name rejects unsupported search recipes")
             }
+            AbilityEffectRecipe::UntapTarget => {
+                writeln!(
+                    out,
+                    "    EffectOp::UntapObject {{ object: ObjectRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::GainLifeBattlefieldSubtypeCount(subtype) => {
+                writeln!(out, "    EffectOp::GainLifeDynamic {{ player: PlayerRef::Controller, amount: DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::{subtype}) }}").unwrap();
+            }
+            AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount(subtype) => {
+                writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::{subtype}), toughness: DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::{subtype}) }}").unwrap();
+            }
         }
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
@@ -3643,6 +3742,29 @@ fn codegen(cards: &[CardJson]) -> String {
         }
         writeln!(out, "        ],").unwrap();
         writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    let mut typed_top_partition_shapes = Vec::new();
+    for card in cards {
+        if let Special::LookTopSelectByTypeToHandBottomRest { look, card_type } =
+            special_for(&card.name)
+        {
+            let shape = (look, card_type);
+            if !typed_top_partition_shapes.contains(&shape) {
+                typed_top_partition_shapes.push(shape);
+            }
+        }
+    }
+    for (look, card_type) in typed_top_partition_shapes {
+        let suffix = card_type.to_ascii_lowercase();
+        writeln!(
+            out,
+            "fn spell_effect_look_top_{look}_select_{suffix}_to_hand_bottom_rest() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::LookTopSelectByTypeToHandBottomRest {{ player: PlayerRef::Controller, count: {look}, card_type: CardType::{card_type} }})").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -4401,6 +4523,14 @@ fn codegen(cards: &[CardJson]) -> String {
             Special::WindingWay => (
                 "TargetSpec::None",
                 "spell_effect_winding_way".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::LookTopSelectByTypeToHandBottomRest { look, card_type } => (
+                "TargetSpec::None",
+                format!(
+                    "spell_effect_look_top_{look}_select_{}_to_hand_bottom_rest",
+                    card_type.to_ascii_lowercase()
+                ),
                 "no_effect".to_string(),
             ),
             Special::LookReorderMayShuffleThenDraw { look, draw } => (

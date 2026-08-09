@@ -1995,6 +1995,7 @@
       "mechanics": [
         "card_selection"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/l/LeadTheStampede.java"
     },
     {
@@ -2702,6 +2703,7 @@
         "tribal_synergy",
         "tap_ability"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/p/PriestOfTitania.java"
     },
     {
@@ -2823,6 +2825,7 @@
         "activated_ability",
         "alt_cost"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/q/QuirionRanger.java"
     },
     {
@@ -3674,6 +3677,7 @@
         "tribal_synergy",
         "tap_ability"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/t/TimberwatchElf.java"
     },
     {
@@ -3974,6 +3978,7 @@
         "tap_ability",
         "activated_ability"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/w/Wellwisher.java"
     },
     {

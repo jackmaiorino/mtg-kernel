@@ -40,10 +40,10 @@
 //! fills in the placeholder `begin_cast` already pushed.
 
 use crate::card_def::{
-    self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, Keywords,
-    ManaAbilityAmountDef, ManaAbilityCostDef, TargetSpec,
+    self, ActivatedAbilityDef, ActivationTargetFilter, CardType, CostComponent, DynamicValueDef,
+    Keywords, ManaAbilityAmountDef, ManaAbilityCostDef, PermanentFilterDef, TargetSpec,
 };
-use crate::effect::{self, EffectOp, ExecCtx, ObjectRef, TargetRef};
+use crate::effect::{self, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, TargetRef};
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{self, Cost, ManaColor};
@@ -315,6 +315,19 @@ pub enum UntilEndOfTurnEffect {
     /// entry unconditionally (flat evaluation).
     ResolvedSetEffect {
         object_ids: Vec<ObjectId>,
+        layer: Layers,
+        timestamp: u64,
+        duration: EffectDuration,
+        power: i32,
+        toughness: i32,
+        grant_haste: bool,
+    },
+    /// One exact battlefield incarnation receives a resolved temporary
+    /// modification. Unlike the historical set form, this binding cannot
+    /// follow the same arena id through a zone change under CR 400.7.
+    ResolvedObjectEffect {
+        object_id: ObjectId,
+        object_zone_change_count: u32,
         layer: Layers,
         timestamp: u64,
         duration: EffectDuration,
@@ -630,6 +643,11 @@ pub struct PendingActivation {
     /// so an untrusted serialized record can never authenticate payment by
     /// filling this vector itself.
     pub cost_discard_paid: Option<Vec<ObjectId>>,
+    /// Incarnation-bound physical permanents selected for the ability's one
+    /// supported interactive object-cost component. This is definition-
+    /// driven and deliberately independent of the source card's identity.
+    #[serde(default)]
+    pub object_cost_chosen: Vec<EffectObjectBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1885,6 +1903,27 @@ pub(crate) fn count_controlled_lands(player: PlayerId, state: &GameState) -> u32
         .count() as u32
 }
 
+/// Samples one reusable board-dependent value from current state. Effects
+/// and mana abilities call this at resolution/activation time so intervening
+/// battlefield changes are reflected exactly once.
+pub(crate) fn evaluate_dynamic_value(state: &GameState, value: DynamicValueDef) -> i32 {
+    let count = match value {
+        DynamicValueDef::BattlefieldPermanentsWithSubtype(subtype) => state
+            .objects
+            .iter()
+            .filter(|(_, object)| {
+                object.zone == Zone::Battlefield
+                    && object
+                        .v4
+                        .effective_subtype_ids
+                        .binary_search(&subtype.stable_id())
+                        .is_ok()
+            })
+            .count(),
+    };
+    i32::try_from(count).expect("the object arena count fits the engine's signed value range")
+}
+
 /// Whether the generic component payer can solve this exact ordered shape.
 /// The current solver deliberately supports one component from each
 /// interactive/resource family and requires mana to precede anything that
@@ -1904,6 +1943,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     let mut discard_count = 0;
     let mut sacrifice_lands_count = 0;
     let mut graveyard_exile_count = 0;
+    let mut return_permanent_count = 0;
     let mut pay_life_count = 0;
     let mut tap_count = 0;
     let mut source_departure_count = 0;
@@ -1946,6 +1986,10 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
                 graveyard_exile_count += 1;
                 saw_source_changing_component = true;
             }
+            CostComponent::ReturnControlledPermanentToOwnersHand(_) => {
+                return_permanent_count += 1;
+                saw_source_changing_component = true;
+            }
             CostComponent::PayLife(amount) => {
                 if *amount == 0 {
                     return false;
@@ -1956,7 +2000,7 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
     }
 
     if discard_count > 1
-        || sacrifice_lands_count + graveyard_exile_count > 1
+        || sacrifice_lands_count + graveyard_exile_count + return_permanent_count > 1
         || pay_life_count > 1
         || tap_count > 1
         || source_departure_count > 1
@@ -1972,10 +2016,9 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
         }))
 }
 
-/// Activated abilities do not yet have the `ChooseCostTargets` staging used
-/// by casts, so any interactive object-selection component must fail closed
-/// in this context even though the shared payer supports the currently
-/// admitted cast-cost families.
+/// Activated abilities stage the one admitted filtered-return family through
+/// `ChooseCostTargets`. Cast-only sacrifice and graveyard-exile selections
+/// still fail closed in this context.
 fn activation_payment_shape_supported(components: &[CostComponent]) -> bool {
     component_payment_shape_supported(components)
         && !components.iter().any(|component| {
@@ -2022,6 +2065,59 @@ fn can_pay_activation_components(
     true
 }
 
+fn return_permanent_filter_in(components: &[CostComponent]) -> Option<PermanentFilterDef> {
+    components.iter().find_map(|component| match component {
+        CostComponent::ReturnControlledPermanentToOwnersHand(filter) => Some(*filter),
+        _ => None,
+    })
+}
+
+fn permanent_matches_filter(
+    state: &GameState,
+    object: ObjectId,
+    filter: PermanentFilterDef,
+) -> bool {
+    let Some(object) = state.objects.try_get(object) else {
+        return false;
+    };
+    let Some(definition) = card_def::CARD_DEFS.get(object.card_def as usize) else {
+        return false;
+    };
+    match filter {
+        PermanentFilterDef::LandWithSubtype(subtype) => {
+            definition.has_type(CardType::Land)
+                && object
+                    .v4
+                    .effective_subtype_ids
+                    .binary_search(&subtype.stable_id())
+                    .is_ok()
+        }
+    }
+}
+
+fn return_permanent_cost_candidates(
+    player: PlayerId,
+    state: &GameState,
+    filter: PermanentFilterDef,
+    already_chosen: &[EffectObjectBinding],
+) -> Vec<EffectObjectBinding> {
+    state
+        .objects
+        .iter()
+        .filter_map(|(id, object)| {
+            (object.controller == player
+                && object.zone == Zone::Battlefield
+                && permanent_matches_filter(state, id, filter)
+                && !already_chosen.iter().any(|binding| binding.object == id))
+            .then_some(EffectObjectBinding {
+                object: id,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: object.zone_change_count,
+            })
+        })
+        .collect()
+}
+
 /// Whether `player` can currently pay every component of `components`,
 /// where `source` is the spell being cast (still nominally in hand) or
 /// the permanent whose ability is being activated (on the battlefield --
@@ -2066,6 +2162,9 @@ fn can_pay_components(
                 checked_graveyard_exile_candidates(player, source, state, &[])
                     .is_some_and(|candidates| candidates.len() >= usize::from(*n))
             }
+            CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                !return_permanent_cost_candidates(player, state, *filter, &[]).is_empty()
+            }
             CostComponent::Mana(cost) => mana::can_pay(cost, 0, player, state).is_some(),
             CostComponent::PayLife(amount) => {
                 state.players[player.index()].life >= i32::from(*amount)
@@ -2082,11 +2181,11 @@ fn can_pay_components(
 /// paid via the `pending_discard` staging by the time this runs -- see
 /// `EngineState::pending_discard`'s doc). `object_cost_chosen` is the
 /// already-decided answer to the one supported interactive object-cost
-/// component (`SacrificeLands` or `ExileOtherCardsFromOwnGraveyard`) in
-/// `components`. It is staged in `PendingCast::sacrifice_chosen` by
-/// `Decision::ChooseCostTargets`; the field name is a frozen compatibility
-/// alias. Pass `&[]` for a component list statically known not to contain
-/// either family.
+/// component (`SacrificeLands`, `ExileOtherCardsFromOwnGraveyard`, or one
+/// filtered returned permanent) in `components`. Casts stage this in
+/// `PendingCast::sacrifice_chosen`; activations use their incarnation-bound
+/// object-cost field. The cast field name is a frozen compatibility alias.
+/// Pass `&[]` for a component list statically known not to contain any family.
 fn pay_cost_components(
     state: &mut GameState,
     player: PlayerId,
@@ -2147,7 +2246,33 @@ fn pay_cost_components(
         {
             return false;
         }
-    } else if sacrifice_needed.is_none() && !object_cost_chosen.is_empty() {
+    }
+    let return_filter = return_permanent_filter_in(components);
+    if let Some(filter) = return_filter {
+        let invalid = object_cost_chosen.len() != 1
+            || object_cost_chosen.iter().any(|id| {
+                state.objects.try_get(*id).is_none_or(|object| {
+                    object.controller != player
+                        || object.zone != Zone::Battlefield
+                        || !permanent_matches_filter(state, *id, filter)
+                })
+            })
+            || (object_cost_chosen.contains(&source)
+                && components.iter().any(|component| {
+                    matches!(
+                        component,
+                        CostComponent::SacrificeSelf
+                            | CostComponent::ExileSelf
+                            | CostComponent::DiscardSelf
+                    )
+                }));
+        if invalid {
+            return false;
+        }
+    } else if sacrifice_needed.is_none()
+        && graveyard_exile_needed.is_none()
+        && !object_cost_chosen.is_empty()
+    {
         return false;
     }
 
@@ -2202,6 +2327,12 @@ fn pay_cost_components(
                     "sacrifice_chosen compatibility field must contain the exact graveyard picks"
                 );
                 commit_graveyard_exile(state, object_cost_chosen);
+            }
+            CostComponent::ReturnControlledPermanentToOwnersHand(_) => {
+                event::propose_and_commit(
+                    state,
+                    ProposedEvent::zone_change(object_cost_chosen[0], Zone::Hand),
+                );
             }
             CostComponent::Mana(_) => pay_plan(
                 state,
@@ -2799,6 +2930,19 @@ fn mana_ability_use_count(state: &GameState, source: ObjectId, ability_index: u1
         .map_or(0, |entry| entry.uses)
 }
 
+fn activated_ability_use_count(state: &GameState, source: ObjectId, ability_index: u16) -> u16 {
+    state
+        .objects
+        .get(source)
+        .v4
+        .ability_uses_this_turn
+        .iter()
+        .find(|entry| {
+            entry.ability_kind == AbilityKindV4::Activated && entry.ability_index == ability_index
+        })
+        .map_or(0, |entry| entry.uses)
+}
+
 /// Exact additional object-cost choices for a rich mana ability. The source
 /// is never a candidate for Saruli Caretaker because it must separately pay
 /// its own tap-symbol cost. Summoning sickness does not restrict the other
@@ -2885,6 +3029,9 @@ fn activate_mana_ability_for(
             .count()
             .try_into()
             .map_err(|_| "mana ability amount exceeds u8".to_string())?,
+            ManaAbilityAmountDef::Dynamic(value) => evaluate_dynamic_value(state, value)
+                .try_into()
+                .map_err(|_| "mana ability amount exceeds u8".to_string())?,
         };
 
         match rich.cost {
@@ -3001,6 +3148,9 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
             for (i, ability) in def.activated_abilities.iter().enumerate() {
                 if ability.activation_zone != zone
                     || (ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
+                    || ability.max_activations_per_turn.is_some_and(|limit| {
+                        activated_ability_use_count(state, id, i as u16) >= u16::from(limit)
+                    })
                 {
                     continue;
                 }
@@ -4719,6 +4869,47 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         });
     }
 
+    if let Some(filter) = return_permanent_filter_in(ability.cost) {
+        if pending.object_cost_chosen.is_empty() {
+            let candidates = return_permanent_cost_candidates(
+                pending.controller,
+                state,
+                filter,
+                &pending.object_cost_chosen,
+            );
+            if candidates.is_empty() {
+                state.engine.halted = Some((
+                    UnsupportedMechanic::InvalidEffectContinuation,
+                    pending.source,
+                ));
+                return Some(Decision::Halted {
+                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
+                    source: pending.source,
+                });
+            }
+            if candidates.len() == 1 {
+                state
+                    .engine
+                    .pending_activation
+                    .as_mut()
+                    .expect("validated activation remains staged")
+                    .object_cost_chosen
+                    .push(candidates[0]);
+                return drain_pending_activation_or_decide(state);
+            }
+            return Some(Decision::ChooseCostTargets {
+                player: pending.controller,
+                source: pending.source,
+                cost_kind: CostKind::ReturnPermanentsToHand,
+                remaining: 1,
+                candidates: candidates
+                    .into_iter()
+                    .map(|binding| binding.object)
+                    .collect(),
+            });
+        }
+    }
+
     if pending.cost_discard_paid.is_none() {
         let n = discard_count_in(ability.cost).expect(
             "cost_discard_paid is None only when begin_activation saw a DiscardCards component",
@@ -4769,6 +4960,12 @@ pub(crate) fn validate_pending_activation(
     if ability.target_spec != pending.target_spec {
         return Err("pending activation target specification changed".to_string());
     }
+    if ability.max_activations_per_turn.is_some_and(|limit| {
+        activated_ability_use_count(state, pending.source, pending.ability_index as u16)
+            >= u16::from(limit)
+    }) {
+        return Err("pending activation exceeded its per-turn limit".to_string());
+    }
 
     match (
         pending.cost_discard_paid.as_deref(),
@@ -4783,6 +4980,39 @@ pub(crate) fn validate_pending_activation(
         }
         (Some(_), Some(_)) => {
             return Err("interactive activation carries a self-authenticating payment".to_string())
+        }
+    }
+
+    match return_permanent_filter_in(ability.cost) {
+        None if !pending.object_cost_chosen.is_empty() => {
+            return Err("activation without an object cost carries chosen cost objects".to_string())
+        }
+        None => {}
+        Some(_) if pending.object_cost_chosen.len() > 1 => {
+            return Err("activation carries too many chosen object-cost permanents".to_string())
+        }
+        Some(filter) => {
+            for &binding in &pending.object_cost_chosen {
+                if binding.expected_zone != Zone::Battlefield {
+                    return Err(
+                        "activation object-cost binding does not expect the battlefield"
+                            .to_string(),
+                    );
+                }
+                let live = state.objects.try_get(binding.object).ok_or_else(|| {
+                    "activation object-cost permanent no longer exists".to_string()
+                })?;
+                if live.zone_change_count != binding.expected_zone_change_count
+                    || live.zone != Zone::Battlefield
+                    || live.controller != pending.controller
+                    || !permanent_matches_filter(state, binding.object, filter)
+                {
+                    return Err(
+                        "activation object-cost permanent changed incarnation or legality"
+                            .to_string(),
+                    );
+                }
+            }
         }
     }
 
@@ -4813,6 +5043,9 @@ pub(crate) fn validate_pending_activation(
     let required = usize::from(target_count(pending.target_spec));
     if pending.targets_chosen.len() > required {
         return Err("pending activation has too many targets".to_string());
+    }
+    if !pending.object_cost_chosen.is_empty() && pending.targets_chosen.len() != required {
+        return Err("activation object cost was selected before targeting completed".to_string());
     }
     if !target_contracts_are_structurally_valid(
         state,
@@ -4866,6 +5099,8 @@ pub(crate) fn validate_pending_activation(
             || discard_count_in(ability.cost).map(u32::from) != Some(discard.count)
             || pending.cost_discard_paid.is_some()
             || pending.targets_chosen.len() != required
+            || (return_permanent_filter_in(ability.cost).is_some()
+                && pending.object_cost_chosen.len() != 1)
         {
             return Err("pending activation discard binding or stage changed".to_string());
         }
@@ -5902,15 +6137,24 @@ pub fn effective_power(state: &GameState, id: ObjectId) -> i32 {
         }
     }
     for eff in &state.engine.until_end_of_turn {
-        if let UntilEndOfTurnEffect::ResolvedSetEffect {
-            object_ids,
-            power: p,
-            ..
-        } = eff
-        {
-            if object_ids.contains(&id) {
-                power += p;
+        match eff {
+            UntilEndOfTurnEffect::ResolvedSetEffect {
+                object_ids,
+                power: p,
+                ..
+            } if object_ids.contains(&id) => power += p,
+            UntilEndOfTurnEffect::ResolvedObjectEffect {
+                object_id,
+                object_zone_change_count,
+                power: p,
+                ..
+            } if *object_id == id
+                && obj.zone == Zone::Battlefield
+                && obj.zone_change_count == *object_zone_change_count =>
+            {
+                power += p
             }
+            _ => {}
         }
     }
     power
@@ -5936,15 +6180,24 @@ pub fn effective_toughness(state: &GameState, id: ObjectId) -> i32 {
         }
     }
     for eff in &state.engine.until_end_of_turn {
-        if let UntilEndOfTurnEffect::ResolvedSetEffect {
-            object_ids,
-            toughness: t,
-            ..
-        } = eff
-        {
-            if object_ids.contains(&id) {
-                toughness += t;
+        match eff {
+            UntilEndOfTurnEffect::ResolvedSetEffect {
+                object_ids,
+                toughness: t,
+                ..
+            } if object_ids.contains(&id) => toughness += t,
+            UntilEndOfTurnEffect::ResolvedObjectEffect {
+                object_id,
+                object_zone_change_count,
+                toughness: t,
+                ..
+            } if *object_id == id
+                && obj.zone == Zone::Battlefield
+                && obj.zone_change_count == *object_zone_change_count =>
+            {
+                toughness += t
             }
+            _ => {}
         }
     }
     toughness
@@ -5976,15 +6229,27 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
             }
         }
         for eff in &state.engine.until_end_of_turn {
-            if let UntilEndOfTurnEffect::ResolvedSetEffect {
-                object_ids,
-                grant_haste,
-                ..
-            } = eff
-            {
-                if *grant_haste && object_ids.contains(&id) {
-                    return true;
+            let grants = match eff {
+                UntilEndOfTurnEffect::ResolvedSetEffect {
+                    object_ids,
+                    grant_haste,
+                    ..
+                } => *grant_haste && object_ids.contains(&id),
+                UntilEndOfTurnEffect::ResolvedObjectEffect {
+                    object_id,
+                    object_zone_change_count,
+                    grant_haste,
+                    ..
+                } => {
+                    *grant_haste
+                        && *object_id == id
+                        && obj.zone == Zone::Battlefield
+                        && obj.zone_change_count == *object_zone_change_count
                 }
+                UntilEndOfTurnEffect::SyntheticMarker(_) => false,
+            };
+            if grants {
+                return true;
             }
         }
     }
@@ -6171,6 +6436,8 @@ enum PendingActivationActionStage {
     ChooseTarget,
     Discard,
     AwaitEngineAdvance,
+    /// Appended generic interactive permanent-cost stage.
+    ChooseCostTarget,
 }
 
 /// Purely derives the one action family, if any, exposed by a staged cast.
@@ -6247,6 +6514,15 @@ fn pending_activation_action_stage(
     if pending.targets_chosen.len() < usize::from(target_count(pending.target_spec)) {
         return Ok(PendingActivationActionStage::ChooseTarget);
     }
+    let object_cost_needed = return_permanent_filter_in(
+        card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize]
+            .activated_abilities[pending.ability_index as usize]
+            .cost,
+    )
+    .is_some();
+    if object_cost_needed && pending.object_cost_chosen.is_empty() {
+        return Ok(PendingActivationActionStage::ChooseCostTarget);
+    }
     Ok(PendingActivationActionStage::AwaitEngineAdvance)
 }
 
@@ -6260,6 +6536,10 @@ fn action_matches_pending_activation_stage(
             PendingActivationActionStage::ChooseTarget,
             Action::ChooseTarget(_)
         ) | (PendingActivationActionStage::Discard, Action::Discard(_))
+            | (
+                PendingActivationActionStage::ChooseCostTarget,
+                Action::ChooseCostTarget(_)
+            )
     )
 }
 
@@ -6657,6 +6937,44 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
                 .push(id);
             return Ok(());
         }
+    }
+    if let Some(pending) = state.engine.pending_activation.clone() {
+        validate_pending_activation(state, &pending)?;
+        let definition = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
+        let ability = &definition.activated_abilities[pending.ability_index as usize];
+        let filter = return_permanent_filter_in(ability.cost)
+            .ok_or("pending activation has no interactive permanent cost")?;
+        if pending.targets_chosen.len() != usize::from(target_count(pending.target_spec)) {
+            return Err(
+                "activation cost target chosen before activation targeting completed".to_string(),
+            );
+        }
+        if !pending.object_cost_chosen.is_empty() {
+            return Err("activation object cost has already been selected".to_string());
+        }
+        let candidates = return_permanent_cost_candidates(
+            pending.controller,
+            state,
+            filter,
+            &pending.object_cost_chosen,
+        );
+        if !candidates.iter().any(|binding| binding.object == id) {
+            return Err(format!(
+                "{id} is not a legal activation object-cost candidate"
+            ));
+        }
+        let binding = candidates
+            .into_iter()
+            .find(|binding| binding.object == id)
+            .expect("candidate membership checked above");
+        state
+            .engine
+            .pending_activation
+            .as_mut()
+            .expect("validated activation remains staged")
+            .object_cost_chosen
+            .push(binding);
+        return Ok(());
     }
     if let Some(pending) = state.engine.pending_optional_cost_sacrifice.as_ref() {
         if (pending.chosen.len() as u8) < pending.remaining {
@@ -7605,6 +7923,7 @@ fn begin_activation(state: &mut GameState, player: PlayerId, source: ObjectId, a
         } else {
             None
         },
+        object_cost_chosen: vec![],
     });
 }
 
@@ -7933,10 +8252,10 @@ fn abort_cast(state: &mut GameState, pending: PendingCast, cast_method: CastMeth
     reset_priority(state);
 }
 
-/// Pays and pushes a noninteractive activated ability. Interactive
-/// `DiscardCards` activations instead pay and call `push_paid_activation`
-/// synchronously from `apply_discard`, so no serialized Boolean or vector
-/// can claim that payment already happened.
+/// Pays and pushes an activated ability after every target and object-cost
+/// choice is complete. Interactive `DiscardCards` activations instead pay and
+/// call `push_paid_activation` synchronously from `apply_discard`, so no
+/// serialized Boolean or vector can claim that payment already happened.
 fn finalize_activation(state: &mut GameState) {
     let pending = state
         .engine
@@ -7955,7 +8274,18 @@ fn finalize_activation(state: &mut GameState) {
     }
     // Payment is state-changing and therefore must not live inside a
     // `debug_assert!`, whose argument disappears from release builds.
-    let paid = pay_cost_components(state, pending.controller, pending.source, ability.cost, &[]);
+    let object_cost_ids = pending
+        .object_cost_chosen
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    let paid = pay_cost_components(
+        state,
+        pending.controller,
+        pending.source,
+        ability.cost,
+        &object_cost_ids,
+    );
     if !paid {
         // Fail closed for a malformed/restored pending activation rather
         // than granting its effect without collecting the full cost.
@@ -7980,6 +8310,12 @@ fn push_paid_activation(
     let def = &card_def::CARD_DEFS[state.objects.get(pending.source).card_def as usize];
     let ability = &def.activated_abilities[pending.ability_index as usize];
     let mut paid_cost_objects = discarded.clone();
+    paid_cost_objects.extend(
+        pending
+            .object_cost_chosen
+            .iter()
+            .map(|binding| binding.object),
+    );
     if ability.cost.iter().any(|component| {
         matches!(
             component,

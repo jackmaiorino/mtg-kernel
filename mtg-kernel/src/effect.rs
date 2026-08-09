@@ -15,7 +15,7 @@
 //! (`event::commit`) mutates `GameState` in response to card behavior (see the
 //! crate-level invariants in `lib.rs`).
 
-use crate::card_def::{CardType, Subtype};
+use crate::card_def::{CardType, DynamicValueDef, Subtype};
 use crate::event;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::{Cost, ManaColor};
@@ -454,6 +454,35 @@ pub enum EffectOp {
         target: TargetRef,
         generic: u8,
     },
+    /// Gain a board-dependent amount of life, sampled when this leaf
+    /// resolves. Wellwisher is the first consumer.
+    GainLifeDynamic {
+        player: PlayerRef,
+        amount: DynamicValueDef,
+    },
+    /// Untap one bound object. Target legality and incarnation are checked by
+    /// the stack target contract before this leaf executes.
+    UntapObject {
+        object: ObjectRef,
+    },
+    /// Give one target creature a board-dependent power/toughness bonus until
+    /// end of turn. Each value is sampled once at resolution and the affected
+    /// object set is fixed to that one target.
+    PumpTargetUntilEndOfTurnDynamic {
+        target: TargetRef,
+        power: DynamicValueDef,
+        toughness: DynamicValueDef,
+    },
+    /// Privately look at the top `count` cards, choose any number matching
+    /// `card_type`, publicly reveal and move those cards to hand, then put
+    /// the rest on the bottom in their owner's chosen order. The exact prefix
+    /// and every private stage are incarnation-bound by the resumable
+    /// interpreter. Lead the Stampede is the first consumer.
+    LookTopSelectByTypeToHandBottomRest {
+        player: PlayerRef,
+        count: u8,
+        card_type: CardType,
+    },
 }
 
 /// One owned interpreter frame. `path` is the structural route through the
@@ -584,6 +613,21 @@ pub enum EffectFrame {
         pay: bool,
         path: Vec<u16>,
     },
+    /// Resumes one private typed top-library partition after a completed
+    /// policy stage. The complete original prefix and library length are
+    /// retained through selection and remainder ordering so a restored or
+    /// stale continuation cannot redirect either result.
+    LookTopSelectByTypeToHandBottomRest {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        card_type: CardType,
+        original_prefix: Vec<EffectObjectBinding>,
+        progress: LibraryPartitionProgress,
+        progress_fingerprint: u64,
+        path: Vec<u16>,
+        canonical_path: Vec<u16>,
+    },
 }
 
 /// Completed private scry stages. A subset is canonicalized into original
@@ -602,6 +646,20 @@ pub enum ScryProgress {
         bottom_subset: Vec<EffectObjectBinding>,
         ordered_bottom: Vec<EffectObjectBinding>,
         ordered_top: Vec<EffectObjectBinding>,
+    },
+}
+
+/// Completed stages of a typed private top-library partition. The chosen
+/// matching subset is canonicalized into original-prefix order, while the
+/// remainder order is stored shallow-to-deep for direct bottom placement.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LibraryPartitionProgress {
+    MatchingSubsetChosen {
+        selected: Vec<EffectObjectBinding>,
+    },
+    RestOrderChosen {
+        selected: Vec<EffectObjectBinding>,
+        ordered_rest: Vec<EffectObjectBinding>,
     },
 }
 
@@ -685,6 +743,19 @@ pub enum EffectTargetSelectionPurpose {
         original_library: Vec<EffectObjectBinding>,
         canonical_path: Vec<u16>,
     },
+    /// One of the two private prompts for a typed top-library partition:
+    /// choose an optional matching subset, then order the unselected rest
+    /// for the bottom. Both project through existing generic policy purposes.
+    LookTopSelectByTypeToHandBottomRest {
+        player: PlayerId,
+        requested_count: u8,
+        original_library_len: u32,
+        card_type: CardType,
+        original_prefix: Vec<EffectObjectBinding>,
+        stage: LibraryPartitionSelectionStage,
+        stage_fingerprint: u64,
+        canonical_path: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -697,6 +768,12 @@ pub enum ScrySelectionStage {
         bottom_subset: Vec<EffectObjectBinding>,
         ordered_bottom: Vec<EffectObjectBinding>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LibraryPartitionSelectionStage {
+    ChooseMatchingSubset,
+    OrderRest { selected: Vec<EffectObjectBinding> },
 }
 
 /// Internal completion semantics for a generic Boolean effect choice.
@@ -869,7 +946,8 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::SearchLibraryToHand { .. }
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
-        | EffectOp::CounterTargetUnlessPaysGeneric { .. } => true,
+        | EffectOp::CounterTargetUnlessPaysGeneric { .. }
+        | EffectOp::LookTopSelectByTypeToHandBottomRest { .. } => true,
         _ => false,
     }
 }
@@ -1452,6 +1530,63 @@ fn complete_resumable_target_selection(
                 path: canonical_path.clone(),
                 canonical_path,
             });
+        }
+        EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+            player,
+            requested_count,
+            original_library_len,
+            card_type,
+            original_prefix,
+            stage,
+            stage_fingerprint,
+            canonical_path,
+        } => {
+            validate_library_partition_bound_metadata(
+                requested_count,
+                original_library_len,
+                &original_prefix,
+            )?;
+            if stage_fingerprint != library_partition_stage_fingerprint(&stage) {
+                return Err("library-partition prompt stage fingerprint changed".to_string());
+            }
+            let mut expected_choice_path = canonical_path.clone();
+            expected_choice_path.push(library_partition_stage_tag(&stage));
+            if path != expected_choice_path {
+                return Err("library-partition prompt structural path changed".to_string());
+            }
+            let progress = match stage {
+                LibraryPartitionSelectionStage::ChooseMatchingSubset => {
+                    let selected = canonicalize_binding_subset(&original_prefix, &objects)?;
+                    LibraryPartitionProgress::MatchingSubsetChosen { selected }
+                }
+                LibraryPartitionSelectionStage::OrderRest { selected } => {
+                    validate_canonical_binding_subset(&original_prefix, &selected)?;
+                    let rest = binding_partition_rest(&original_prefix, &selected)?;
+                    validate_exact_binding_permutation(
+                        &rest,
+                        &objects,
+                        "library-partition ordered rest",
+                    )?;
+                    LibraryPartitionProgress::RestOrderChosen {
+                        selected,
+                        ordered_rest: objects,
+                    }
+                }
+            };
+            let progress_fingerprint = library_partition_progress_fingerprint(&progress);
+            continuation
+                .frames
+                .push(EffectFrame::LookTopSelectByTypeToHandBottomRest {
+                    player,
+                    requested_count,
+                    original_library_len,
+                    card_type,
+                    original_prefix,
+                    progress,
+                    progress_fingerprint,
+                    path: canonical_path.clone(),
+                    canonical_path,
+                });
         }
     }
     Ok(())
@@ -2266,6 +2401,109 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                         );
                     }
                 }
+                EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                    player: library_player,
+                    requested_count,
+                    original_library_len,
+                    card_type,
+                    original_prefix,
+                    stage,
+                    stage_fingerprint,
+                    canonical_path,
+                } => {
+                    if chooser != library_player {
+                        return Err(
+                            "library-partition choice player does not own the selected library"
+                                .to_string(),
+                        );
+                    }
+                    validate_library_partition_live_metadata(
+                        state,
+                        *library_player,
+                        *requested_count,
+                        *original_library_len,
+                        *card_type,
+                        original_prefix,
+                    )?;
+                    if *stage_fingerprint != library_partition_stage_fingerprint(stage) {
+                        return Err(
+                            "library-partition prompt stage fingerprint changed".to_string()
+                        );
+                    }
+                    let mut expected_path = canonical_path.clone();
+                    expected_path.push(library_partition_stage_tag(stage));
+                    if path != &expected_path {
+                        return Err("library-partition prompt structural path changed".to_string());
+                    }
+                    let candidates = selected
+                        .iter()
+                        .chain(legal)
+                        .map(|candidate| {
+                            candidate.expected_object.ok_or_else(|| {
+                                "library-partition target lacks an object-incarnation binding"
+                                    .to_string()
+                            })
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+                    match stage {
+                        LibraryPartitionSelectionStage::ChooseMatchingSubset => {
+                            let matching = library_partition_matching_prefix(
+                                state,
+                                *card_type,
+                                original_prefix,
+                            )?;
+                            let count = u16::try_from(matching.len()).map_err(|_| {
+                                "library-partition matching set exceeds u16".to_string()
+                            })?;
+                            if *min_targets != 0 || *max_targets != count || *ordered {
+                                return Err(
+                                    "library-partition subset prompt has a noncanonical shape"
+                                        .to_string(),
+                                );
+                            }
+                            validate_exact_binding_permutation(
+                                &matching,
+                                &candidates,
+                                "library-partition matching candidates",
+                            )?;
+                        }
+                        LibraryPartitionSelectionStage::OrderRest { selected: chosen } => {
+                            validate_canonical_binding_subset(original_prefix, chosen)?;
+                            let matching = library_partition_matching_prefix(
+                                state,
+                                *card_type,
+                                original_prefix,
+                            )?;
+                            if chosen.iter().any(|binding| !matching.contains(binding)) {
+                                return Err(
+                                    "library-partition selected card does not match the typed filter"
+                                        .to_string(),
+                                );
+                            }
+                            let rest = binding_partition_rest(original_prefix, chosen)?;
+                            if rest.len() < 2 {
+                                return Err(
+                                    "library-partition rest-order prompt has no genuine choice"
+                                        .to_string(),
+                                );
+                            }
+                            let count = u16::try_from(rest.len()).map_err(|_| {
+                                "library-partition rest set exceeds u16".to_string()
+                            })?;
+                            if *min_targets != count || *max_targets != count || !*ordered {
+                                return Err(
+                                    "library-partition rest-order prompt has a noncanonical shape"
+                                        .to_string(),
+                                );
+                            }
+                            validate_exact_binding_permutation(
+                                &rest,
+                                &candidates,
+                                "library-partition rest-order candidates",
+                            )?;
+                        }
+                    }
+                }
                 EffectTargetSelectionPurpose::OrderIntoGraveyard { .. } => {}
             }
         }
@@ -2963,6 +3201,141 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                         .commit_library_shuffle(player, shuffle_token)
                         .map_err(|error| error.to_string())?;
                 }
+                EffectFrame::LookTopSelectByTypeToHandBottomRest {
+                    player,
+                    requested_count,
+                    original_library_len,
+                    card_type,
+                    original_prefix,
+                    progress,
+                    progress_fingerprint,
+                    path,
+                    canonical_path,
+                } => {
+                    if path != canonical_path {
+                        return Err(
+                            "library-partition coordinator path changed from its canonical path"
+                                .to_string(),
+                        );
+                    }
+                    if progress_fingerprint != library_partition_progress_fingerprint(&progress) {
+                        return Err("library-partition coordinator progress fingerprint changed"
+                            .to_string());
+                    }
+                    validate_library_partition_live_metadata(
+                        state,
+                        player,
+                        requested_count,
+                        original_library_len,
+                        card_type,
+                        &original_prefix,
+                    )?;
+                    match progress {
+                        LibraryPartitionProgress::MatchingSubsetChosen { selected } => {
+                            validate_canonical_binding_subset(&original_prefix, &selected)?;
+                            let matching = library_partition_matching_prefix(
+                                state,
+                                card_type,
+                                &original_prefix,
+                            )?;
+                            if selected.iter().any(|binding| !matching.contains(binding)) {
+                                return Err(
+                                    "library-partition selected card does not match the typed filter"
+                                        .to_string(),
+                                );
+                            }
+                            let rest = binding_partition_rest(&original_prefix, &selected)?;
+                            if rest.len() >= 2 {
+                                stage_library_partition_choice(
+                                    &mut continuation,
+                                    state,
+                                    player,
+                                    requested_count,
+                                    original_library_len,
+                                    card_type,
+                                    original_prefix,
+                                    LibraryPartitionSelectionStage::OrderRest { selected },
+                                    canonical_path,
+                                )?;
+                                state.engine.pending_effect = Some(continuation);
+                                return Ok(ResumableProgress::Suspended);
+                            }
+                            let progress = LibraryPartitionProgress::RestOrderChosen {
+                                selected,
+                                ordered_rest: rest,
+                            };
+                            let progress_fingerprint =
+                                library_partition_progress_fingerprint(&progress);
+                            continuation.frames.push(
+                                EffectFrame::LookTopSelectByTypeToHandBottomRest {
+                                    player,
+                                    requested_count,
+                                    original_library_len,
+                                    card_type,
+                                    original_prefix,
+                                    progress,
+                                    progress_fingerprint,
+                                    path,
+                                    canonical_path,
+                                },
+                            );
+                        }
+                        LibraryPartitionProgress::RestOrderChosen {
+                            selected,
+                            ordered_rest,
+                        } => {
+                            validate_canonical_binding_subset(&original_prefix, &selected)?;
+                            let matching = library_partition_matching_prefix(
+                                state,
+                                card_type,
+                                &original_prefix,
+                            )?;
+                            if selected.iter().any(|binding| !matching.contains(binding)) {
+                                return Err(
+                                    "library-partition selected card does not match the typed filter"
+                                        .to_string(),
+                                );
+                            }
+                            let rest = binding_partition_rest(&original_prefix, &selected)?;
+                            validate_exact_binding_permutation(
+                                &rest,
+                                &ordered_rest,
+                                "library-partition ordered rest",
+                            )?;
+                            let expected_prefix = original_prefix
+                                .iter()
+                                .map(|binding| crate::state::ObjectLinkV4 {
+                                    object: binding.object,
+                                    zone_change_count: binding.expected_zone_change_count,
+                                })
+                                .collect::<Vec<_>>();
+                            let bottom = selected
+                                .iter()
+                                .chain(&ordered_rest)
+                                .map(|binding| binding.object)
+                                .collect::<Vec<_>>();
+                            state.apply_scry_result(player, &expected_prefix, &[], &bottom)?;
+                            let events = selected
+                                .iter()
+                                .map(|binding| {
+                                    event::ProposedEvent::zone_change(binding.object, Zone::Hand)
+                                })
+                                .collect();
+                            event::propose_and_commit_batch(state, events);
+                            for binding in selected {
+                                if state.objects.get(binding.object).zone == Zone::Hand {
+                                    for observer in [PlayerId::P0, PlayerId::P1] {
+                                        state
+                                            .reveal_hand_card(observer, player, binding.object)
+                                            .expect(
+                                            "a successful selected-card move is publicly revealed",
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 EffectFrame::OwnerLibraryPlacement {
                     object,
                     owner,
@@ -3323,6 +3696,43 @@ fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
             }
+            EffectOp::LookTopSelectByTypeToHandBottomRest {
+                player,
+                count,
+                card_type,
+            } => {
+                let player = continuation.ctx.resolve_player(player, state);
+                let original_library_len = state.players[player.index()]
+                    .library
+                    .len()
+                    .try_into()
+                    .expect("a live library length fits the u32 state contract");
+                let original_prefix = bind_library_top(state, player, count);
+                validate_library_partition_live_metadata(
+                    state,
+                    player,
+                    count,
+                    original_library_len,
+                    card_type,
+                    &original_prefix,
+                )?;
+                state.reveal_library_top(player, player, original_prefix.len());
+                if !original_prefix.is_empty() {
+                    stage_library_partition_choice(
+                        &mut continuation,
+                        state,
+                        player,
+                        count,
+                        original_library_len,
+                        card_type,
+                        original_prefix,
+                        LibraryPartitionSelectionStage::ChooseMatchingSubset,
+                        path,
+                    )?;
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
             EffectOp::PutObjectInOwnersLibrarySecondOrBottom { object } => {
                 let object = continuation.ctx.resolve_object(object);
                 let live = state
@@ -3662,6 +4072,80 @@ fn stage_scry_choice(
     Ok(())
 }
 
+fn stage_library_partition_choice(
+    continuation: &mut EffectContinuation,
+    state: &GameState,
+    player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    card_type: CardType,
+    original_prefix: Vec<EffectObjectBinding>,
+    stage: LibraryPartitionSelectionStage,
+    canonical_path: Vec<u16>,
+) -> Result<(), String> {
+    validate_library_partition_live_metadata(
+        state,
+        player,
+        requested_count,
+        original_library_len,
+        card_type,
+        &original_prefix,
+    )?;
+    let (candidates, min_targets, max_targets, ordered) = match &stage {
+        LibraryPartitionSelectionStage::ChooseMatchingSubset => {
+            let matching = library_partition_matching_prefix(state, card_type, &original_prefix)?;
+            let count = u16::try_from(matching.len())
+                .map_err(|_| "library-partition matching set exceeds u16".to_string())?;
+            (matching, 0, count, false)
+        }
+        LibraryPartitionSelectionStage::OrderRest { selected } => {
+            validate_canonical_binding_subset(&original_prefix, selected)?;
+            let matching = library_partition_matching_prefix(state, card_type, &original_prefix)?;
+            if selected.iter().any(|binding| !matching.contains(binding)) {
+                return Err(
+                    "library-partition selected card does not match the typed filter".to_string(),
+                );
+            }
+            let rest = binding_partition_rest(&original_prefix, selected)?;
+            if rest.len() < 2 {
+                return Err("library-partition rest-order prompt has no genuine choice".to_string());
+            }
+            let count = u16::try_from(rest.len())
+                .map_err(|_| "library-partition rest set exceeds u16".to_string())?;
+            (rest, count, count, true)
+        }
+    };
+    let mut choice_path = canonical_path.clone();
+    choice_path.push(library_partition_stage_tag(&stage));
+    let stage_fingerprint = library_partition_stage_fingerprint(&stage);
+    continuation.choice = Some(PendingEffectChoice::SelectTargets {
+        player,
+        path: choice_path,
+        selected: Vec::new(),
+        legal: candidates
+            .into_iter()
+            .map(|binding| EffectTargetCandidate {
+                target: Target::Object(binding.object),
+                expected_object: Some(binding),
+            })
+            .collect(),
+        min_targets,
+        max_targets,
+        ordered,
+        purpose: EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+            player,
+            requested_count,
+            original_library_len,
+            card_type,
+            original_prefix,
+            stage,
+            stage_fingerprint,
+            canonical_path,
+        },
+    });
+    Ok(())
+}
+
 fn stage_library_search_choice(
     continuation: &mut EffectContinuation,
     player: PlayerId,
@@ -3831,6 +4315,167 @@ fn validate_library_search_live_metadata(
         return Err("library-search snapshot contains a duplicate physical object".to_string());
     }
     Ok(())
+}
+
+fn library_partition_stage_tag(stage: &LibraryPartitionSelectionStage) -> u16 {
+    match stage {
+        LibraryPartitionSelectionStage::ChooseMatchingSubset => 0,
+        LibraryPartitionSelectionStage::OrderRest { .. } => 1,
+    }
+}
+
+fn library_partition_stage_fingerprint(stage: &LibraryPartitionSelectionStage) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325;
+    hash = fnv1a_u64(hash, u64::from(library_partition_stage_tag(stage)));
+    match stage {
+        LibraryPartitionSelectionStage::ChooseMatchingSubset => hash,
+        LibraryPartitionSelectionStage::OrderRest { selected } => fnv1a_bindings(hash, selected),
+    }
+}
+
+fn library_partition_progress_fingerprint(progress: &LibraryPartitionProgress) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325;
+    match progress {
+        LibraryPartitionProgress::MatchingSubsetChosen { selected } => {
+            hash = fnv1a_u64(hash, 0);
+            fnv1a_bindings(hash, selected)
+        }
+        LibraryPartitionProgress::RestOrderChosen {
+            selected,
+            ordered_rest,
+        } => {
+            hash = fnv1a_u64(hash, 1);
+            hash = fnv1a_bindings(hash, selected);
+            fnv1a_bindings(hash, ordered_rest)
+        }
+    }
+}
+
+fn validate_library_partition_bound_metadata(
+    requested_count: u8,
+    original_library_len: u32,
+    original_prefix: &[EffectObjectBinding],
+) -> Result<(), String> {
+    let library_len = usize::try_from(original_library_len)
+        .map_err(|_| "library-partition original length does not fit usize".to_string())?;
+    let expected_prefix_len = usize::from(requested_count).min(library_len);
+    if original_prefix.len() != expected_prefix_len {
+        return Err(
+            "library-partition prefix length disagrees with requested count and original length"
+                .to_string(),
+        );
+    }
+    if original_prefix
+        .iter()
+        .any(|binding| binding.expected_zone != Zone::Library)
+    {
+        return Err("library-partition binding does not expect the library zone".to_string());
+    }
+    let mut ids = original_prefix
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.len() != original_prefix.len() {
+        return Err("library-partition prefix contains a duplicate physical object".to_string());
+    }
+    Ok(())
+}
+
+fn validate_library_partition_live_metadata(
+    state: &GameState,
+    player: PlayerId,
+    requested_count: u8,
+    original_library_len: u32,
+    card_type: CardType,
+    original_prefix: &[EffectObjectBinding],
+) -> Result<(), String> {
+    validate_library_partition_bound_metadata(
+        requested_count,
+        original_library_len,
+        original_prefix,
+    )?;
+    if state.players[player.index()].library.len()
+        != usize::try_from(original_library_len)
+            .map_err(|_| "library-partition original length does not fit usize".to_string())?
+    {
+        return Err(
+            "library-partition library length changed while its private choice was pending"
+                .to_string(),
+        );
+    }
+    validate_bound_library_prefix_exact(state, player, original_prefix)?;
+    let _ = library_partition_matching_prefix(state, card_type, original_prefix)?;
+    Ok(())
+}
+
+fn library_partition_matching_prefix(
+    state: &GameState,
+    card_type: CardType,
+    original_prefix: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    let mut matching = Vec::new();
+    for &binding in original_prefix {
+        let object = state.objects.try_get(binding.object).ok_or_else(|| {
+            format!(
+                "library-partition object {} no longer exists",
+                binding.object.0
+            )
+        })?;
+        let definition = crate::card_def::CARD_DEFS
+            .get(object.card_def as usize)
+            .ok_or_else(|| "library-partition card definition is missing".to_string())?;
+        if definition.has_type(card_type) {
+            matching.push(binding);
+        }
+    }
+    Ok(matching)
+}
+
+fn canonicalize_binding_subset(
+    original: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    let mut selected_sorted = selected.to_vec();
+    selected_sorted.sort_by_key(|binding| binding.object);
+    selected_sorted.dedup();
+    if selected_sorted.len() != selected.len()
+        || selected_sorted
+            .iter()
+            .any(|binding| !original.contains(binding))
+    {
+        return Err(
+            "library-partition selection is not a unique subset of the bound prefix".to_string(),
+        );
+    }
+    Ok(original
+        .iter()
+        .copied()
+        .filter(|binding| selected.contains(binding))
+        .collect())
+}
+
+fn validate_canonical_binding_subset(
+    original: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+) -> Result<(), String> {
+    if canonicalize_binding_subset(original, selected)? != selected {
+        return Err("library-partition subset is not in canonical prefix order".to_string());
+    }
+    Ok(())
+}
+
+fn binding_partition_rest(
+    original: &[EffectObjectBinding],
+    selected: &[EffectObjectBinding],
+) -> Result<Vec<EffectObjectBinding>, String> {
+    validate_canonical_binding_subset(original, selected)?;
+    Ok(original
+        .iter()
+        .copied()
+        .filter(|binding| !selected.contains(binding))
+        .collect())
 }
 
 fn scry_stage_tag(stage: &ScrySelectionStage) -> u16 {
@@ -4312,6 +4957,11 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
             let player = ctx.resolve_player(*player, state);
             event::propose_and_commit(state, event::ProposedEvent::life_gain(player, *amount));
         }
+        EffectOp::GainLifeDynamic { player, amount } => {
+            let player = ctx.resolve_player(*player, state);
+            let amount = crate::engine::evaluate_dynamic_value(state, *amount);
+            event::propose_and_commit(state, event::ProposedEvent::life_gain(player, amount));
+        }
         EffectOp::LoseLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
             event::propose_and_commit(state, event::ProposedEvent::life_loss(player, *amount));
@@ -4398,6 +5048,12 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         EffectOp::TapObject { object } => {
             let object = ctx.resolve_object(*object);
             event::propose_and_commit(state, event::ProposedEvent::tap(object));
+        }
+        EffectOp::UntapObject { object } => {
+            let object = ctx.resolve_object(*object);
+            if state.objects.get(object).zone == Zone::Battlefield {
+                state.objects.get_mut(object).tapped = false;
+            }
         }
         EffectOp::SkipNextUntap { object } => {
             let object = ctx.resolve_object(*object);
@@ -4539,6 +5195,32 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        EffectOp::PumpTargetUntilEndOfTurnDynamic {
+            target,
+            power,
+            toughness,
+        } => {
+            let Target::Object(object) = ctx.resolve_target(*target) else {
+                panic!("dynamic target pump requires an object target");
+            };
+            let power = crate::engine::evaluate_dynamic_value(state, *power);
+            let toughness = crate::engine::evaluate_dynamic_value(state, *toughness);
+            if power != 0 || toughness != 0 {
+                let timestamp = crate::engine::next_timestamp(state);
+                state.engine.until_end_of_turn.push(
+                    crate::engine::UntilEndOfTurnEffect::ResolvedObjectEffect {
+                        object_id: object,
+                        object_zone_change_count: state.objects.get(object).zone_change_count,
+                        layer: crate::engine::Layers::POWER_TOUGHNESS,
+                        timestamp,
+                        duration: crate::engine::EffectDuration::EndOfTurn,
+                        power,
+                        toughness,
+                        grant_haste: false,
+                    },
+                );
+            }
+        }
         EffectOp::ImpulseDraw { count, duration } => {
             for _ in 0..*count {
                 let Some(&top) = state.players[ctx.controller.index()].library.first() else {
@@ -4639,7 +5321,8 @@ pub fn execute(op: &EffectOp, ctx: &ExecCtx, state: &mut GameState) {
         | EffectOp::PutObjectInOwnersLibrarySecondOrBottom { .. }
         | EffectOp::PutBoundObjectInOwnersLibrary { .. }
         | EffectOp::CounterUnlessPaysGeneric { .. }
-        | EffectOp::CounterTargetUnlessPaysGeneric { .. } => {
+        | EffectOp::CounterTargetUnlessPaysGeneric { .. }
+        | EffectOp::LookTopSelectByTypeToHandBottomRest { .. } => {
             panic!("choice-bearing effects must use the resumable interpreter")
         }
     }

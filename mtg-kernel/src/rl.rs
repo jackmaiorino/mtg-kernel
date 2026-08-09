@@ -4814,6 +4814,59 @@ fn continuous_effects_public_v2(
                     damage_cannot_be_prevented: false,
                 });
             }
+            UntilEndOfTurnEffect::ResolvedObjectEffect {
+                object_id,
+                object_zone_change_count,
+                layer,
+                timestamp,
+                duration,
+                power,
+                toughness,
+                grant_haste,
+            } => {
+                let Some(object) = state.objects.try_get(*object_id) else {
+                    continue;
+                };
+                if object.zone != Zone::Battlefield
+                    || object.zone_change_count != *object_zone_change_count
+                {
+                    continue;
+                }
+                let duration = match duration {
+                    engine::EffectDuration::EndOfTurn => EffectDurationV2::EndOfTurn,
+                };
+                let affected_objects = visible_card_refs(state, &[*object_id], acting_player)?;
+                if affected_objects.is_empty() {
+                    continue;
+                }
+                out.push(ContinuousEffectPublicV2 {
+                    source: None,
+                    controller: None,
+                    affected_objects,
+                    affected_players: Vec::new(),
+                    global: false,
+                    layers: layer.0,
+                    timestamp: *timestamp,
+                    duration,
+                    power_delta: *power,
+                    toughness_delta: *toughness,
+                    grants_haste: *grant_haste,
+                    set_power: None,
+                    set_toughness: None,
+                    add_color_mask: 0,
+                    remove_color_mask: 0,
+                    add_subtype_ids: Vec::new(),
+                    remove_subtype_ids: Vec::new(),
+                    add_keyword_mask: if *grant_haste { Keywords::HASTE.0 } else { 0 },
+                    remove_keyword_mask: 0,
+                    ward_generic_delta: 0,
+                    minimum_blockers: None,
+                    add_landwalk_mask: 0,
+                    remove_landwalk_mask: 0,
+                    prevent_damage_from_color_mask: 0,
+                    damage_cannot_be_prevented: false,
+                });
+            }
         }
     }
     Ok(out)
@@ -4993,6 +5046,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                                ..
+                            }
                     ) && acting_player != *player;
                     let search_for_chooser = matches!(
                         purpose,
@@ -5001,6 +5057,7 @@ fn pending_effect_semantic_v4(
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
@@ -5073,6 +5130,17 @@ fn pending_effect_semantic_v4(
                             crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
                             } => TargetSelectionPurposeV4::SearchResult,
+                            crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                                stage,
+                                ..
+                            } => match stage {
+                                crate::effect::LibraryPartitionSelectionStage::ChooseMatchingSubset => {
+                                    TargetSelectionPurposeV4::CardSelection
+                                }
+                                crate::effect::LibraryPartitionSelectionStage::OrderRest { .. } => {
+                                    TargetSelectionPurposeV4::LibraryOrder
+                                }
+                            },
                         },
                     })
                 }

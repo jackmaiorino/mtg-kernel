@@ -341,6 +341,15 @@ impl std::ops::BitOr for Keywords {
     }
 }
 
+/// Typed filter for a chosen permanent paid as an activation cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermanentFilterDef {
+    /// A permanent with both the Land card type and the named effective
+    /// subtype. Control is checked independently from the ownership-oriented
+    /// battlefield vectors.
+    LandWithSubtype(Subtype),
+}
+
 /// One component of a composite cost. Composable (a real cost is `&'static
 /// [CostComponent]`) rather than card-shaped, matching the `EffectOp`
 /// philosophy in `effect.rs`: "sacrifice 2 Mountains" is
@@ -380,6 +389,11 @@ pub enum CostComponent {
     /// are staged through `engine::Decision::ChooseCostTargets` before any
     /// mana or zone-change payment commits. Escape is the first consumer.
     ExileOtherCardsFromOwnGraveyard(u8),
+    /// Return exactly one controlled permanent matching `filter` to its
+    /// owner's hand. The physical object is selected through the generic
+    /// cost-target staging before any payment commits. Appended for Quirion
+    /// Ranger without changing any existing cost recipe identity.
+    ReturnControlledPermanentToOwnersHand(PermanentFilterDef),
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -426,6 +440,10 @@ pub struct ActivatedAbilityDef {
     /// branches in the engine. Resolution rechecks this filter together with
     /// the ordinary target specification and incarnation contract.
     pub activation_target_filter: ActivationTargetFilter,
+    /// Printed per-turn activation limit, counted on this source incarnation.
+    /// `None` means unrestricted. Appended for Quirion Ranger without
+    /// changing any existing ability selector.
+    pub max_activations_per_turn: Option<u8>,
 }
 
 /// A source-relative restriction that applies while announcing a non-mana
@@ -453,6 +471,18 @@ pub enum ManaAbilityCostDef {
 pub enum ManaAbilityAmountDef {
     Fixed(u8),
     ControlledCreaturesWithKeyword(Keywords),
+    /// Evaluate one shared board-dependent value at activation resolution.
+    /// Appended for Priest of Titania without renumbering existing variants.
+    Dynamic(DynamicValueDef),
+}
+
+/// A reusable integer derived from current game state. All consumers sample
+/// this at effect or mana-ability resolution, never at announcement time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DynamicValueDef {
+    /// Count every battlefield permanent, regardless of controller, whose
+    /// effective subtype set contains the named subtype.
+    BattlefieldPermanentsWithSubtype(Subtype),
 }
 
 /// Reusable definition for a single printed mana ability whose cost, amount,
@@ -839,10 +869,10 @@ mod tests {
     }
 
     #[test]
-    fn card_db_hash_v17_is_frozen() {
-        // Version 17 adds the green utility tranche to the typecycling,
-        // Omen, counterspell, and Spy-mana composition frozen in version 16.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xa2eb_e984_fe6f_33be);
+    fn card_db_hash_v18_is_frozen() {
+        // Version 18 appends the Elves tribal recipes to the green utility,
+        // typecycling, Omen, counterspell, and Spy-mana composition.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x26e4_c977_2f9c_b11d);
     }
 
     #[test]

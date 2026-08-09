@@ -5,13 +5,13 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "6f0841af3ed7497d5c9c6f0aa5cc6b8fdd538891352a14f4f80393d2ffc1bc64"
+    "registry_raw_sha256": "9fa381c824f8591b58c5dd9d1b0590fbb07f11e68e730156c8d6d69cf9368396"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 87,
+    "full_cards": 92,
     "partial_cards": 0,
-    "no_effect_cards": 63,
+    "no_effect_cards": 58,
     "token_dependencies": 5
   },
   "deck_mainboard_copy_totals": [
@@ -38,16 +38,16 @@
     },
     {
       "deck_id": "Elves",
-      "full": 30,
+      "full": 48,
       "partial": 0,
-      "no_effect": 30,
+      "no_effect": 12,
       "total": 60
     },
     {
       "deck_id": "Spy",
-      "full": 37,
+      "full": 43,
       "partial": 0,
-      "no_effect": 23,
+      "no_effect": 17,
       "total": 60
     },
     {
@@ -1842,10 +1842,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lembas",
@@ -2462,10 +2460,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Prismatic Strands",
@@ -2577,10 +2573,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Rally at the Hornburg",
@@ -3246,10 +3240,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Tinder Wall",
@@ -3544,10 +3536,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Winding Way",

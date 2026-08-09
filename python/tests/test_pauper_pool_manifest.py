@@ -543,9 +543,9 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 87,
+                "full_cards": 92,
                 "partial_cards": 0,
-                "no_effect_cards": 63,
+                "no_effect_cards": 58,
                 "token_dependencies": 5,
             },
         )
@@ -553,8 +553,8 @@ class PauperPoolManifestTest(unittest.TestCase):
             {"deck_id": "Wildfire", "full": 28, "partial": 0, "no_effect": 32, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Affinity", "full": 39, "partial": 0, "no_effect": 21, "total": 60},
-            {"deck_id": "Elves", "full": 30, "partial": 0, "no_effect": 30, "total": 60},
-            {"deck_id": "Spy", "full": 37, "partial": 0, "no_effect": 23, "total": 60},
+            {"deck_id": "Elves", "full": 48, "partial": 0, "no_effect": 12, "total": 60},
+            {"deck_id": "Spy", "full": 43, "partial": 0, "no_effect": 17, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "CawGates", "full": 23, "partial": 0, "no_effect": 37, "total": 60},
@@ -600,6 +600,31 @@ class PauperPoolManifestTest(unittest.TestCase):
         }
         self.assertEqual(set(affinity_promoted), {"Myr Enforcer", "Thoughtcast"})
         for row in affinity_promoted.values():
+            self.assertEqual(row["support_status"], "full")
+            self.assertEqual(row["blockers"], [])
+        elves_promoted = {
+            row["name"]: row
+            for row in self.support["cards"]
+            if row["name"]
+            in {
+                "Lead the Stampede",
+                "Priest of Titania",
+                "Quirion Ranger",
+                "Timberwatch Elf",
+                "Wellwisher",
+            }
+        }
+        self.assertEqual(
+            set(elves_promoted),
+            {
+                "Lead the Stampede",
+                "Priest of Titania",
+                "Quirion Ranger",
+                "Timberwatch Elf",
+                "Wellwisher",
+            },
+        )
+        for row in elves_promoted.values():
             self.assertEqual(row["support_status"], "full")
             self.assertEqual(row["blockers"], [])
         ponder = next(row for row in self.support["cards"] if row["name"] == "Ponder")
