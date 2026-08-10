@@ -403,6 +403,28 @@ pub(crate) fn duel_perception_runtime_profile_for_test_v1(
     .expect("test duel perception profile is valid")
 }
 
+#[cfg(test)]
+pub(crate) fn duel_perception_profile_admitted_for_test_v1(
+    profile: CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
+) -> AdmittedMtgoDuelPerceptionProfileV1 {
+    let evaluation_commitment_sha256 = "e".repeat(64);
+    let mut hasher = Sha256::new();
+    hasher.update(DUEL_PERCEPTION_PROFILE_ADMISSION_DOMAIN_V1);
+    for part in [
+        profile.profile_commitment_sha256().as_bytes(),
+        evaluation_commitment_sha256.as_bytes(),
+        b"acting_player_duel_semantic_perception",
+        b"profile_identity_only_no_scoring_or_input",
+    ] {
+        hash_part_v1(&mut hasher, part);
+    }
+    AdmittedMtgoDuelPerceptionProfileV1 {
+        profile,
+        evaluation_commitment_sha256,
+        admission_commitment_sha256: format!("{:x}", hasher.finalize()),
+    }
+}
+
 pub fn evaluate_untrusted_duel_perception_profile_v1(
     profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
     spec: MtgoDuelPerceptionEvaluationSpecV1,

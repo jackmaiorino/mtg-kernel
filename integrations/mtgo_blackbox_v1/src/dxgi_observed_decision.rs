@@ -308,6 +308,28 @@ pub(crate) fn dxgi_observed_decision_record_for_test_v1(
 }
 
 #[cfg(test)]
+pub(crate) fn checked_untrusted_dxgi_decision_candidate_for_test_v1(
+    profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
+) -> CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1 {
+    use crate::{
+        checked_untrusted_dxgi_artifact_for_test_v1,
+        complete_acting_player_duel_audit_record_for_test_v1,
+        validate_dxgi_bound_observation_reconstruction_audit_v1,
+    };
+
+    let source =
+        checked_untrusted_dxgi_artifact_for_test_v1(MtgoDxgiCaptureRoleV2::ActingPlayerDuel);
+    let audit = validate_dxgi_bound_observation_reconstruction_audit_v1(
+        &source,
+        complete_acting_player_duel_audit_record_for_test_v1(&source),
+    )
+    .expect("test duel reconstruction audit is valid");
+    let record = dxgi_observed_decision_record_for_test_v1(&source, audit.source_frame_sequence());
+    check_untrusted_dxgi_observed_decision_candidate_v1(&source, &audit, profile, record)
+        .expect("test DXGI decision candidate is valid")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
