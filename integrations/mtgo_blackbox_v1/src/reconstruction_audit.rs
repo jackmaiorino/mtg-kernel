@@ -112,6 +112,14 @@ impl CheckedUntrustedMtgoObservationReconstructionAuditV1 {
         &self.record.frame.manifest_sha256
     }
 
+    pub fn source_frame_sequence(&self) -> u64 {
+        self.record.frame.sequence
+    }
+
+    pub fn source_client_size_px(&self) -> &crate::MtgoSizePxV1 {
+        &self.record.frame.client_size_px
+    }
+
     pub fn capture_role(&self) -> MtgoCalibrationCaptureRoleV1 {
         self.record.frame.capture_role
     }
@@ -509,49 +517,50 @@ fn validate_safe_identifier_v1(
 }
 
 #[cfg(test)]
+pub(crate) fn complete_acting_player_duel_audit_record_for_test_v1(
+    source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+) -> MtgoObservationReconstructionAuditV1 {
+    let mut record: MtgoObservationReconstructionAuditV1 = serde_json::from_str(include_str!(
+        "../fixtures/solitaire_observation_reconstruction_audit_v1.json"
+    ))
+    .unwrap();
+    record.audit_id = "dxgi_bound_acting_player_duel_test_v1".to_owned();
+    record.topology = MtgoReconstructionTopologyV1::TwoPlayerDuel;
+    record.frame.sequence = 1;
+    record.frame.manifest_sha256 = source.manifest_sha256().to_owned();
+    record.frame.frame_sha256 = source.canonical_bgra8_sha256().to_owned();
+    record.frame.client_size_px = source.client_size_px().clone();
+    record.frame.artifact_kind =
+        MtgoCalibrationPreviewKindV1::ActingPlayerDuelGameplayCalibrationPreviewV1;
+    record.frame.capture_role = MtgoCalibrationCaptureRoleV1::ActingPlayerDuel;
+    for group in &mut record.groups {
+        match group.group {
+            MtgoObservationReconstructionGroupV1::DuelParticipants
+            | MtgoObservationReconstructionGroupV1::PlayerPublicState
+            | MtgoObservationReconstructionGroupV1::PublicObjectsAndZones
+            | MtgoObservationReconstructionGroupV1::CompleteOrderedLegalActions => {
+                group.status = MtgoReconstructionStatusV1::VisibleComplete;
+                group.missing_reason_codes.clear();
+            }
+            MtgoObservationReconstructionGroupV1::KernelDecisionHistoryContext
+            | MtgoObservationReconstructionGroupV1::ObjectIncarnationsAndCardDb => {
+                group.status = MtgoReconstructionStatusV1::LocalDerivedComplete;
+                group.visible_regions.clear();
+                group.missing_reason_codes.clear();
+            }
+            _ => {}
+        }
+    }
+    record.observation_complete = true;
+    record.legal_action_set_complete = true;
+    record.ready_for_model_scoring = false;
+    record
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::checked_untrusted_dxgi_artifact_for_test_v1;
-
-    fn complete_acting_player_duel_audit_v1(
-        source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
-    ) -> MtgoObservationReconstructionAuditV1 {
-        let mut record: MtgoObservationReconstructionAuditV1 = serde_json::from_str(include_str!(
-            "../fixtures/solitaire_observation_reconstruction_audit_v1.json"
-        ))
-        .unwrap();
-        record.audit_id = "dxgi_bound_acting_player_duel_test_v1".to_owned();
-        record.topology = MtgoReconstructionTopologyV1::TwoPlayerDuel;
-        record.frame.sequence = 1;
-        record.frame.manifest_sha256 = source.manifest_sha256().to_owned();
-        record.frame.frame_sha256 = source.canonical_bgra8_sha256().to_owned();
-        record.frame.client_size_px = source.client_size_px().clone();
-        record.frame.artifact_kind =
-            MtgoCalibrationPreviewKindV1::ActingPlayerDuelGameplayCalibrationPreviewV1;
-        record.frame.capture_role = MtgoCalibrationCaptureRoleV1::ActingPlayerDuel;
-        for group in &mut record.groups {
-            match group.group {
-                MtgoObservationReconstructionGroupV1::DuelParticipants
-                | MtgoObservationReconstructionGroupV1::PlayerPublicState
-                | MtgoObservationReconstructionGroupV1::PublicObjectsAndZones
-                | MtgoObservationReconstructionGroupV1::CompleteOrderedLegalActions => {
-                    group.status = MtgoReconstructionStatusV1::VisibleComplete;
-                    group.missing_reason_codes.clear();
-                }
-                MtgoObservationReconstructionGroupV1::KernelDecisionHistoryContext
-                | MtgoObservationReconstructionGroupV1::ObjectIncarnationsAndCardDb => {
-                    group.status = MtgoReconstructionStatusV1::LocalDerivedComplete;
-                    group.visible_regions.clear();
-                    group.missing_reason_codes.clear();
-                }
-                _ => {}
-            }
-        }
-        record.observation_complete = true;
-        record.legal_action_set_complete = true;
-        record.ready_for_model_scoring = false;
-        record
-    }
 
     #[test]
     fn exact_acting_player_duel_source_can_only_produce_untrusted_readiness() {
@@ -559,7 +568,7 @@ mod tests {
             checked_untrusted_dxgi_artifact_for_test_v1(MtgoDxgiCaptureRoleV2::ActingPlayerDuel);
         let checked = validate_dxgi_bound_observation_reconstruction_audit_v1(
             &source,
-            complete_acting_player_duel_audit_v1(&source),
+            complete_acting_player_duel_audit_record_for_test_v1(&source),
         )
         .unwrap();
 
@@ -577,7 +586,7 @@ mod tests {
     fn source_identity_geometry_role_and_sequence_substitution_fail() {
         let source =
             checked_untrusted_dxgi_artifact_for_test_v1(MtgoDxgiCaptureRoleV2::ActingPlayerDuel);
-        let baseline = complete_acting_player_duel_audit_v1(&source);
+        let baseline = complete_acting_player_duel_audit_record_for_test_v1(&source);
 
         let mut mutations = Vec::new();
         let mut value = baseline.clone();
@@ -606,7 +615,7 @@ mod tests {
     #[test]
     fn navigation_dxgi_source_cannot_enter_gameplay_reconstruction() {
         let source = checked_untrusted_dxgi_artifact_for_test_v1(MtgoDxgiCaptureRoleV2::Navigation);
-        let record = complete_acting_player_duel_audit_v1(&source);
+        let record = complete_acting_player_duel_audit_record_for_test_v1(&source);
         assert_eq!(
             validate_dxgi_bound_observation_reconstruction_audit_v1(&source, record)
                 .err()
