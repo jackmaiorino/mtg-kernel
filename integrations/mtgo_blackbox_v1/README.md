@@ -386,14 +386,16 @@ cargo test --lib `
 
 This is a kernel-generated external-observation wiring probe with explicitly mock frame evidence. It proves the composed validated-decision-to-offline-intent path; it is not evidence that any MTGO pixels have yet been reconstructed into that observation.
 
-For one-shot artifact wiring, `score_mtgo_observed_decision_v1` accepts the native Store root, strict deployment manifest, and strict serialized `MtgoObservedDecisionV1`. It validates the decision before the expensive Store load, then emits only identity commitments, exact score bits, the selected semantic, and the coordinate-free offline intent metadata:
+For one-shot artifact wiring, `score_mtgo_observed_decision_v1` accepts the native Store root, strict deployment manifest, and a strict declared-offline mock envelope. The envelope schema is `mtgo-offline-mock-observed-decision-input/v1`, its `source_kind` must be `synthetic_mock_v1`, and its `decision` is the strict serialized `MtgoObservedDecisionV1`. A raw decision or any declared DXGI source label rejects before Store loading. The executable then emits only identity commitments, exact score bits, the selected semantic, and the coordinate-free offline intent metadata:
 
 ```powershell
 cargo run --bin score_mtgo_observed_decision_v1 -- `
   'D:\mtg-kernel-ladder-pilot-20260725\pool3\primary' `
   'fixtures\provisional_promoted2_mtgo_deployment_20260810_v1.json' `
-  '<observed-decision.json>'
+  '<offline-mock-decision-envelope.json>'
 ```
+
+This envelope prevents accidental direct routing of the source-bound DXGI type into the offline CLI, but a caller declaration cannot prove that arbitrary JSON originated from a synthetic fixture. It is not a live-source admission boundary. A future live scorer must consume a separately admitted source-bound decision, never reinterpret `MtgoMockFrameV1` as a checked DXGI source.
 
 This command has no input backend and always reports `safe_for_live_input = false` and `permits_match_entry = false`. A long-running deployment should load the Store once and call the in-process method for each subsequent validated decision.
 

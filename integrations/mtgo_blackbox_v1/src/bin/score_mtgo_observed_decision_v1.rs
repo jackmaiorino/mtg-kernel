@@ -2,7 +2,7 @@ use mtgo_blackbox_v1::{
     load_mtgo_native_checkpoint_deployment_v1, make_scored_offline_intent_v1,
     validate_observed_decision_v1, MtgoExpectedModelDeploymentV1, MtgoObservedDecisionV1,
 };
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::json;
 use std::env;
 use std::fs;
@@ -11,6 +11,21 @@ use std::process::ExitCode;
 
 const MAX_DEPLOYMENT_JSON_BYTES_V1: u64 = 65_536;
 const MAX_OBSERVED_DECISION_JSON_BYTES_V1: u64 = 64 * 1_048_576;
+const OFFLINE_MOCK_DECISION_INPUT_SCHEMA_V1: &str = "mtgo-offline-mock-observed-decision-input/v1";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoOfflineMockDecisionInputV1 {
+    schema: String,
+    source_kind: MtgoOfflineDecisionSourceKindV1,
+    decision: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum MtgoOfflineDecisionSourceKindV1 {
+    SyntheticMockV1,
+}
 
 fn main() -> ExitCode {
     match run_v1() {
@@ -45,11 +60,12 @@ fn run_v1() -> Result<serde_json::Value, String> {
         MAX_DEPLOYMENT_JSON_BYTES_V1,
         "deployment manifest",
     )?;
-    let record: MtgoObservedDecisionV1 = read_strict_json_v1(
+    let input: MtgoOfflineMockDecisionInputV1 = read_strict_json_v1(
         &decision_path,
         MAX_OBSERVED_DECISION_JSON_BYTES_V1,
-        "observed decision",
+        "offline mock decision envelope",
     )?;
+    let record = unpack_offline_mock_decision_v1(input)?;
     let decision =
         validate_observed_decision_v1(record).map_err(|error| error.code().to_owned())?;
     let loaded = load_mtgo_native_checkpoint_deployment_v1(&store_root, expected)
@@ -63,6 +79,7 @@ fn run_v1() -> Result<serde_json::Value, String> {
     Ok(json!({
         "schema_version": 1,
         "status": "scored_offline",
+        "declared_input_scope": "offline_synthetic_mock_v1",
         "deployment_id": loaded.deployment_id(),
         "deployment_commitment_sha256": loaded.deployment_commitment_sha256(),
         "decision_commitment_sha256": selection.decision_commitment_sha256(),
@@ -79,6 +96,19 @@ fn run_v1() -> Result<serde_json::Value, String> {
     }))
 }
 
+fn unpack_offline_mock_decision_v1(
+    input: MtgoOfflineMockDecisionInputV1,
+) -> Result<MtgoObservedDecisionV1, String> {
+    if input.schema != OFFLINE_MOCK_DECISION_INPUT_SCHEMA_V1 {
+        return Err("offline mock decision envelope schema mismatch".to_owned());
+    }
+    match input.source_kind {
+        MtgoOfflineDecisionSourceKindV1::SyntheticMockV1 => {}
+    }
+    serde_json::from_value(input.decision)
+        .map_err(|_| "offline mock decision is not strict contract JSON".to_owned())
+}
+
 fn read_strict_json_v1<T: DeserializeOwned>(
     path: &Path,
     maximum_bytes: u64,
@@ -93,5 +123,51 @@ fn read_strict_json_v1<T: DeserializeOwned>(
 }
 
 fn usage_v1() -> String {
-    "usage: score_mtgo_observed_decision_v1 <native-store-root> <expected-deployment.json> <observed-decision.json>".to_owned()
+    "usage: score_mtgo_observed_decision_v1 <native-store-root> <expected-deployment.json> <offline-mock-decision-envelope.json>".to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_decision_and_unknown_source_cannot_enter_offline_scorer() {
+        let raw_decision = json!({
+            "schema_version": 1,
+            "decision_id": "not-an-envelope"
+        });
+        assert!(serde_json::from_value::<MtgoOfflineMockDecisionInputV1>(raw_decision).is_err());
+
+        let unknown_source = json!({
+            "schema": OFFLINE_MOCK_DECISION_INPUT_SCHEMA_V1,
+            "source_kind": "checked_dxgi_acting_player_duel_v1",
+            "decision": {}
+        });
+        assert!(serde_json::from_value::<MtgoOfflineMockDecisionInputV1>(unknown_source).is_err());
+    }
+
+    #[test]
+    fn schema_and_inner_decision_are_both_strict() {
+        let wrong_schema: MtgoOfflineMockDecisionInputV1 = serde_json::from_value(json!({
+            "schema": "mtgo-offline-mock-observed-decision-input/v2",
+            "source_kind": "synthetic_mock_v1",
+            "decision": {}
+        }))
+        .unwrap();
+        assert_eq!(
+            unpack_offline_mock_decision_v1(wrong_schema).unwrap_err(),
+            "offline mock decision envelope schema mismatch"
+        );
+
+        let malformed_inner: MtgoOfflineMockDecisionInputV1 = serde_json::from_value(json!({
+            "schema": OFFLINE_MOCK_DECISION_INPUT_SCHEMA_V1,
+            "source_kind": "synthetic_mock_v1",
+            "decision": { "schema_version": 1, "unexpected": true }
+        }))
+        .unwrap();
+        assert_eq!(
+            unpack_offline_mock_decision_v1(malformed_inner).unwrap_err(),
+            "offline mock decision is not strict contract JSON"
+        );
+    }
 }
