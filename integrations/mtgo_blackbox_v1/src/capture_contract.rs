@@ -25,7 +25,7 @@ const MAX_CAPTURE_VALIDATION_LAG_SECONDS_V1: i64 = 10;
 const MAX_CAPTURE_FUTURE_SKEW_SECONDS_V1: i64 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct PreviewUtcInstantV1 {
+pub(crate) struct PreviewUtcInstantV1 {
     epoch_seconds: i64,
     fractional_100ns: u32,
 }
@@ -1632,7 +1632,7 @@ fn validate_lower_hex_v1(
     Ok(())
 }
 
-fn preview_utc_instant_v1(
+pub(crate) fn preview_utc_instant_v1(
     field: &'static str,
     value: &str,
 ) -> Result<PreviewUtcInstantV1, MtgoContractErrorV1> {

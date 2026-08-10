@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "sample_id": "freeform-solitaire-kernel-basics-opening-seven-20260810-v1",
+  "deck": {
+    "visible_name": "mtgo-solitaire-kernel-basics-v1",
+    "total_cards": 60,
+    "cards": [
+      {"visible_card_name": "Forest", "count": 30},
+      {"visible_card_name": "Island", "count": 30}
+    ]
+  },
+  "source": {
+    "match_id": 289056697,
+    "game_id": 958687190,
+    "manifest_sha256": "c4c9e9ca6ca8e8665d97158017f0fd0ce707c9b4313feee7031833a16b9f1c90",
+    "canonical_bgra8_sha256": "70a5f0487d135c88303b4b87eb4f82ef8cd90180b18a6482fc75594c6728bb88",
+    "preview_png_sha256": "4277e8233ee76ded3186e60717253a6c4fdb06546c5044ab0de90cee212d6af6",
+    "prompt_measurement_commitment_sha256": "440b4e834c09b313ac52997a9ecb6f11af999c760a71ad5dd3c278a7f18c0d8a"
+  },
+  "template_profile": {
+    "status": "checked_untrusted_calibration_not_ratified",
+    "calibration_manifest_sha256": "544ea1c82efb6a1ce4e29a51b71e28db478e3eff996ed7a8bfa2d2d72bb7943a",
+    "profile_file_sha256": "8514b234014620bd371730ce9c3d690a5a9c5916fb6a3cee68c0d90a80683ba8",
+    "profile_commitment_sha256": "5df1e8bbfcf5303a8afab22452259201e6f2b13573a152e465dec4b339fc84ef",
+    "template_count": 4,
+    "new_template_count": 3,
+    "prior_template_count": 1
+  },
+  "classification": "match",
+  "prospective_keep_size": 7,
+  "matched_identity_count": 7,
+  "identities": [
+    {"ordinal": 0, "visible_card_name": "Forest", "template_id": "kernel-basics-ordinal-0-forest-dsk-285-v1", "public_print_id": "e84c0880-728d-4ac2-b685-4f18f66c24db", "set_code": "dsk", "collector_number": "285", "mean_absolute_difference_milli": 0, "distinct_name_margin_milli": 45507},
+    {"ordinal": 1, "visible_card_name": "Island", "template_id": "observed-hand-ordinal-4-island-dsk-279-v1", "public_print_id": "947702ca-d065-4368-9f26-f859d4642cb6", "set_code": "dsk", "collector_number": "279", "mean_absolute_difference_milli": 2162, "distinct_name_margin_milli": 43300},
+    {"ordinal": 2, "visible_card_name": "Forest", "template_id": "kernel-basics-ordinal-0-forest-dsk-285-v1", "public_print_id": "e84c0880-728d-4ac2-b685-4f18f66c24db", "set_code": "dsk", "collector_number": "285", "mean_absolute_difference_milli": 15519, "distinct_name_margin_milli": 29560},
+    {"ordinal": 3, "visible_card_name": "Forest", "template_id": "kernel-basics-ordinal-0-forest-dsk-285-v1", "public_print_id": "e84c0880-728d-4ac2-b685-4f18f66c24db", "set_code": "dsk", "collector_number": "285", "mean_absolute_difference_milli": 3842, "distinct_name_margin_milli": 41589},
+    {"ordinal": 4, "visible_card_name": "Forest", "template_id": "kernel-basics-ordinal-0-forest-dsk-285-v1", "public_print_id": "e84c0880-728d-4ac2-b685-4f18f66c24db", "set_code": "dsk", "collector_number": "285", "mean_absolute_difference_milli": 9666, "distinct_name_margin_milli": 35764},
+    {"ordinal": 5, "visible_card_name": "Forest", "template_id": "kernel-basics-ordinal-5-forest-dsk-286-v1", "public_print_id": "0da5fbc2-24ad-4520-a60a-436d3a485fec", "set_code": "dsk", "collector_number": "286", "mean_absolute_difference_milli": 0, "distinct_name_margin_milli": 53000},
+    {"ordinal": 6, "visible_card_name": "Island", "template_id": "kernel-basics-ordinal-6-island-dsk-273-v1", "public_print_id": "40e3bf00-84cc-498c-b214-1052b4904d92", "set_code": "dsk", "collector_number": "273", "mean_absolute_difference_milli": 0, "distinct_name_margin_milli": 71010}
+  ],
+  "kernel_card_db_hash_hex": "a06fa9566106f0ea",
+  "fully_supported_kernel_name_count": 7,
+  "nonclaim": "Three print templates were calibrated on this source frame and one Island template came from an earlier reviewed frame. This is complete same-frame wiring coverage, not a heldout accuracy estimate, object binding, ObservationV5, model decision, or input authority.",
+  "safe_for_object_binding": false,
+  "safe_for_observation_v5": false,
+  "safe_for_policy_scoring": false,
+  "safe_for_input": false
+}

@@ -93,3 +93,18 @@ fn click_helper_does_not_claim_postcondition_or_autonomous_authority() {
         );
     }
 }
+
+#[test]
+fn click_helper_allows_only_an_exact_untitled_foreground_owned_window() {
+    for required in [
+        "[AllowEmptyString()]",
+        "MTGO_CLICK_EMPTY_TITLE_REQUIRES_FOREGROUND_OWNED_WINDOW",
+        "WindowTitle($window) -cne $ExpectedWindowTitle",
+        "$TargetWindowMode -cne 'ForegroundOwnedWindow'",
+    ] {
+        assert!(
+            CLICK_SCRIPT.contains(required),
+            "missing untitled-window guard: {required}"
+        );
+    }
+}

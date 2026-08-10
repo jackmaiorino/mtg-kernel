@@ -33,6 +33,7 @@ const HEURISTIC_PROFILE_DOMAIN_V1: &[u8] = b"mtgo-non-model-pregame-heuristic-pr
 const HEURISTIC_COMPATIBILITY_DIGEST_DOMAIN_V1: &[u8] =
     b"mtgo-non-model-pregame-heuristic-compatibility-digest-v1";
 const FIXED_BASICS_PROFILE_ID_V1: &str = "fixed-30-plains-30-island-wiring-only-v1";
+const KERNEL_BASICS_PROFILE_ID_V1: &str = "fixed-30-forest-30-island-wiring-only-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "card_kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -125,6 +126,33 @@ impl MtgoNonModelPregameHeuristicV1 {
         })
     }
 
+    /// The current 30 Forest, 30 Island kernel-coverage calibration deck.
+    /// This exists only to exercise the full pregame wiring and is not a
+    /// competitive policy.
+    pub fn kernel_basic_lands_wiring_only_v1() -> Result<Self, String> {
+        Self::new_v1(MtgoNonModelPregameHeuristicProfileV1 {
+            schema_version: MTGO_NON_MODEL_PREGAME_HEURISTIC_SCHEMA_V1,
+            profile_id: KERNEL_BASICS_PROFILE_ID_V1.to_owned(),
+            source_card_catalog_sha256: sha256_hex_v1(
+                b"mtgo-fixed-30-forest-30-island-visible-label-catalog-v1",
+            ),
+            cards: vec![
+                MtgoHeuristicCardFeatureV1 {
+                    visible_card_name: "Forest".to_owned(),
+                    kind: MtgoHeuristicCardKindV1::Land {
+                        produced_color_mask: MTGO_HEURISTIC_COLOR_GREEN_V1,
+                    },
+                },
+                MtgoHeuristicCardFeatureV1 {
+                    visible_card_name: "Island".to_owned(),
+                    kind: MtgoHeuristicCardKindV1::Land {
+                        produced_color_mask: MTGO_HEURISTIC_COLOR_BLUE_V1,
+                    },
+                },
+            ],
+        })
+    }
+
     pub fn profile_v1(&self) -> &MtgoNonModelPregameHeuristicProfileV1 {
         &self.profile
     }
@@ -177,7 +205,15 @@ impl MtgoExternalCardAwarePregameScorerV4 for MtgoNonModelPregameHeuristicV1 {
             .iter()
             .map(|name| self.card_kind_v1(name))
             .collect::<Result<Vec<_>, _>>()?;
-        let keep_score = keep_score_v1(request.prospective_keep_size, &features);
+        let profile_contains_only_lands = self
+            .cards_by_name
+            .values()
+            .all(|feature| matches!(feature, MtgoHeuristicCardKindV1::Land { .. }));
+        let keep_score = keep_score_v1(
+            request.prospective_keep_size,
+            &features,
+            profile_contains_only_lands,
+        );
         let logits_f32_bits = request
             .ordered_actions
             .iter()
@@ -346,8 +382,12 @@ fn compatibility_deployment_v1(
     Ok(deployment)
 }
 
-fn keep_score_v1(keep_size: u8, features: &[&MtgoHeuristicCardKindV1]) -> f32 {
-    if keep_size == 1 {
+fn keep_score_v1(
+    keep_size: u8,
+    features: &[&MtgoHeuristicCardKindV1],
+    profile_contains_only_lands: bool,
+) -> f32 {
+    if keep_size == 1 || profile_contains_only_lands {
         return 100.0;
     }
     let bottom_count = 7_u8.saturating_sub(keep_size);
@@ -708,6 +748,26 @@ mod tests {
             f32::from_bits(response.logits_f32_bits[1])
                 > f32::from_bits(response.logits_f32_bits[0])
         );
+    }
+
+    #[test]
+    fn kernel_basic_lands_profile_keeps_the_seven_card_calibration_hand() {
+        let mut scorer =
+            MtgoNonModelPregameHeuristicV1::kernel_basic_lands_wiring_only_v1().unwrap();
+        let request = pregame_request_v4(
+            &scorer,
+            7,
+            &[
+                "Forest", "Island", "Forest", "Forest", "Forest", "Forest", "Island",
+            ],
+        );
+        let response = scorer.score_card_aware_pregame_v4(&request).unwrap();
+        assert!(
+            f32::from_bits(response.logits_f32_bits[1])
+                > f32::from_bits(response.logits_f32_bits[0])
+        );
+        assert!(!scorer.is_model_backed_v1());
+        assert!(!scorer.safe_for_live_input_v1());
     }
 
     #[test]

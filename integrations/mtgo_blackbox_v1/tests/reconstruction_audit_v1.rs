@@ -1,5 +1,6 @@
 use mtgo_blackbox_v1::{
-    validate_observation_reconstruction_audit_v1, MtgoObservationReconstructionAuditV1,
+    validate_observation_reconstruction_audit_v1, MtgoCalibrationCaptureRoleV1,
+    MtgoCalibrationPreviewKindV1, MtgoObservationReconstructionAuditV1,
     MtgoObservationReconstructionGroupV1, MtgoReconstructionStatusV1, MtgoReconstructionTopologyV1,
 };
 
@@ -8,6 +9,13 @@ fn fixture() -> MtgoObservationReconstructionAuditV1 {
         "../fixtures/solitaire_observation_reconstruction_audit_v1.json"
     ))
     .expect("checked-in reconstruction audit must parse")
+}
+
+fn spectator_fixture() -> MtgoObservationReconstructionAuditV1 {
+    serde_json::from_str(include_str!(
+        "../fixtures/spectator_duel_observation_reconstruction_audit_v1.json"
+    ))
+    .expect("checked-in spectator reconstruction audit must parse")
 }
 
 #[test]
@@ -154,6 +162,9 @@ fn frame_geometry_hashes_and_preview_authority_fail_closed() {
 fn complete_two_player_inventory_can_only_produce_readiness_not_an_observation() {
     let mut complete = fixture();
     complete.topology = MtgoReconstructionTopologyV1::TwoPlayerDuel;
+    complete.frame.artifact_kind =
+        MtgoCalibrationPreviewKindV1::ActingPlayerDuelGameplayCalibrationPreviewV1;
+    complete.frame.capture_role = MtgoCalibrationCaptureRoleV1::ActingPlayerDuel;
     for group in &mut complete.groups {
         match group.group {
             MtgoObservationReconstructionGroupV1::DuelParticipants
@@ -180,6 +191,64 @@ fn complete_two_player_inventory_can_only_produce_readiness_not_an_observation()
     assert!(checked.legal_action_set_complete());
     assert!(!checked.ready_for_model_scoring());
     assert!(checked.blocking_groups().is_empty());
+}
+
+#[test]
+fn retained_spectator_frame_maps_duel_layout_without_acting_player_authority() {
+    let checked = validate_observation_reconstruction_audit_v1(spectator_fixture()).unwrap();
+    assert_eq!(
+        checked.topology(),
+        MtgoReconstructionTopologyV1::TwoPlayerDuel
+    );
+    assert_eq!(
+        checked.capture_role(),
+        MtgoCalibrationCaptureRoleV1::Spectator
+    );
+    assert_eq!(
+        checked.blocking_groups(),
+        &[
+            MtgoObservationReconstructionGroupV1::TurnPhaseAndPriority,
+            MtgoObservationReconstructionGroupV1::PlayerPublicState,
+            MtgoObservationReconstructionGroupV1::PublicObjectsAndZones,
+            MtgoObservationReconstructionGroupV1::ActingPlayerPrivateKnowledge,
+            MtgoObservationReconstructionGroupV1::StackCombatAndPendingChoices,
+            MtgoObservationReconstructionGroupV1::KernelDecisionHistoryContext,
+            MtgoObservationReconstructionGroupV1::ObjectIncarnationsAndCardDb,
+            MtgoObservationReconstructionGroupV1::CompleteOrderedLegalActions,
+        ]
+    );
+    assert!(!checked.observation_complete());
+    assert!(!checked.legal_action_set_complete());
+    assert!(!checked.ready_for_model_scoring());
+}
+
+#[test]
+fn spectator_role_can_never_supply_acting_priority_private_knowledge_or_legal_actions() {
+    for group in [1, 4, 8] {
+        let mut claimed = spectator_fixture();
+        claimed.groups[group].status = MtgoReconstructionStatusV1::VisibleComplete;
+        claimed.groups[group].missing_reason_codes.clear();
+        assert_eq!(
+            validate_observation_reconstruction_audit_v1(claimed)
+                .err()
+                .expect("spectator authority claim must fail")
+                .code(),
+            "reconstruction_audit_spectator_authority_forbidden"
+        );
+    }
+}
+
+#[test]
+fn topology_artifact_and_capture_role_must_match() {
+    let mut mismatched = spectator_fixture();
+    mismatched.frame.capture_role = MtgoCalibrationCaptureRoleV1::ActingPlayerDuel;
+    assert_eq!(
+        validate_observation_reconstruction_audit_v1(mismatched)
+            .err()
+            .expect("mismatched source role must fail")
+            .code(),
+        "reconstruction_audit_frame_role_mismatch"
+    );
 }
 
 #[test]

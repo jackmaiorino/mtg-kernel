@@ -272,6 +272,70 @@ fn v2_spectator_requires_two_participants_and_exact_format() {
 }
 
 #[test]
+fn v2_acting_player_duel_requires_one_opponent_and_exact_format() {
+    let (v1, raw, png) = fixture();
+    let duel = as_v2(
+        v1.clone(),
+        "duel_game",
+        "acting_player_duel",
+        "Freeform",
+        "(1-on-1): Freeform: Vs. opponent-name Match #123 - Game #456",
+    );
+    let bytes = serde_json::to_vec(&duel).unwrap();
+    let checked = check_untrusted_dxgi_capture_artifact_v1(&bytes, &raw, &png).unwrap();
+    assert_eq!(
+        checked.capture_role(),
+        MtgoDxgiCaptureRoleV2::ActingPlayerDuel
+    );
+    assert!(!checked.safe_for_semantic_evidence());
+    assert!(!checked.safe_for_ocr());
+    assert!(!checked.safe_for_policy_scoring());
+    assert!(!checked.safe_for_input());
+    let error = match admit_ratified_dxgi_offline_calibration_artifact_v1(
+        &bytes,
+        raw.clone().into_boxed_slice(),
+        &png,
+    ) {
+        Ok(_) => panic!("acting-player duel must not enter the Solitaire calibration path"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "dxgi_offline_calibration_role");
+
+    let spectator_title = as_v2(
+        v1.clone(),
+        "duel_game",
+        "acting_player_duel",
+        "Freeform",
+        "(1-on-1): Freeform: Vs. local-player, opponent-name",
+    );
+    assert_eq!(
+        check(&spectator_title, &raw, &png),
+        Err("dxgi_artifact_window_title")
+    );
+
+    let wrong_format = as_v2(
+        v1.clone(),
+        "duel_game",
+        "acting_player_duel",
+        "Standard",
+        "(1-on-1): Freeform: Vs. opponent-name",
+    );
+    assert_eq!(
+        check(&wrong_format, &raw, &png),
+        Err("dxgi_artifact_window_title")
+    );
+
+    let wrong_role = as_v2(
+        v1,
+        "duel_game",
+        "spectator",
+        "Freeform",
+        "(1-on-1): Freeform: Vs. opponent-name",
+    );
+    assert_eq!(check(&wrong_role, &raw, &png), Err("dxgi_artifact_role"));
+}
+
+#[test]
 fn raw_png_hash_and_decoded_pixel_tampering_fail() {
     let (manifest, raw, png) = fixture();
 

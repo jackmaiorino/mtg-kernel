@@ -140,3 +140,5 @@ The next implementation sequence is:
 6. Resolve one selected semantic action against a fresh trusted frame and require its visible postcondition before another input.
 
 Solitaire is suitable for initial perception, decision, and input calibration. It is not an AI opponent and cannot by itself establish competitive playing strength.
+
+A later visible-only navigation check of the current Constructed Specialty panel showed human lobbies, paid event queues, and the existing Custom Match control. No AI opponent or separate training mode was visible. No lobby, Play control, purchase control, queue, or event entry was selected during that check.

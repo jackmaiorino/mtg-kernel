@@ -2,6 +2,8 @@
 
 Current end-to-end competitive wiring status and the shortest critical path are tracked in `COMPETITIVE_WIRING_STATUS_2026-08-09.md`.
 
+The exact two-player observation, visible-history, legal-control, and card-coverage plan is `DUEL-RECONSTRUCTION-V1-DESIGN.md`.
+
 This directory is an isolated, offline-first boundary between player-visible MTGO state and the existing `mtg-kernel` policy types. The Rust contract contains no live capture, UI Automation enumeration, process inspection, network inspection, client-file parsing, or synthetic input. It can score an already validated exact public decision through an independently pinned immutable native checkpoint handle, but that path has no capture or input authority. A separate calibration-preview script and sibling DXGI candidate executable perform the narrow live operations documented below.
 
 The read-only installation findings and capture implications are recorded in `CLIENT_INVENTORY_2026-08-08.md`.
@@ -52,6 +54,14 @@ Example for an already-open spectated Standard game:
 
 Spectator-game output uses artifact kind `mtgo_visible_spectator_gameplay_calibration_preview_v1` and records `capture_role = spectator`. It is still only a local calibration preview. It is not accepted by the reviewed desktop-preview contract and grants no OCR, evidence, scoring, or input authority. A spectator frame may inform duel-window identity and coarse battlefield layout, but it must not calibrate player hand, prompt, priority, legal-action, target-selection, or input regions.
 
+The retained spectator reconstruction audit makes that separation executable:
+it can close visible duel participants and map the turn/phase layout, but it
+keeps acting-player priority, private knowledge, and the complete legal-action
+set blocked for every spectator source. The current Solitaire first-main
+calibration is also not a duel-state substitute. Solitaire has eight cards at
+that screen, while the kernel's trained starting-player first main correctly
+has seven after the first-turn draw skip.
+
 Example for an already-open Freeform Solitaire game:
 
 ```powershell
@@ -68,7 +78,11 @@ Example for an already-open Freeform Solitaire game:
 
 Solitaire-game output uses artifact kind `mtgo_visible_solitaire_gameplay_calibration_preview_v1` and records `capture_role = acting_player_solitaire`. The scope label distinguishes an acting-player layout from a spectator layout, but it grants no OCR, evidence, scoring, or input authority. Any future action path still requires a separately trusted live-frame backend, a fully reconciled current decision, explicit authorization, and visible postcondition confirmation.
 
-The attended navigation helper `scripts/invoke_supervised_mtgo_click_v1.ps1` emits exactly one left-click after checking the exact process ID and start time, executable and signer identity, DPI, title, client size, foreground ownership, client-to-screen transform, visible hit-test root, and cursor position. It has no keyboard or text-input path. It does not identify the semantic control at the point, does not verify any postcondition, and is explicitly unsafe for autonomous input, purchases, or queue entry. Every use must be bracketed by manually inspected visible previews and must stop on an unexpected state.
+The stricter DXGI v2 artifact checker also recognizes the exact tuple `window_mode = duel_game`, `capture_role = acting_player_duel`, and a nonempty visible game format. Its `(1-on-1)` title rule requires one visible opponent, while the spectator rule requires two visible participants. A duel artifact remains checked-untrusted and cannot be promoted through the Solitaire calibration path or converted into OCR, policy, or input authority.
+
+`validate_dxgi_bound_observation_reconstruction_audit_v1` binds a reconstruction-readiness audit to the exact checked DXGI manifest hash, canonical pixel hash, client size, gameplay kind, and capture role. Navigation sources and zero frame sequences reject. The result still exposes only readiness and blockers. Caller-supplied region labels and completeness declarations do not prove that their semantic interpretation matches the pixels, so this bridge grants no observation, scoring, or input authority.
+
+The attended navigation helper `scripts/invoke_supervised_mtgo_click_v1.ps1` emits exactly one left-click after checking the exact process ID and start time, executable and signer identity, DPI, title, client size, foreground ownership, client-to-screen transform, visible hit-test root, and cursor position. An explicitly empty expected title is accepted only for the exact foreground MTGO-owned window because MTGO uses untitled top-level windows for some visible deck dialogs. It has no keyboard or text-input path. It does not identify the semantic control at the point, does not verify any postcondition, and is explicitly unsafe for autonomous input, purchases, or queue entry. Every use must be bracketed by manually inspected visible previews and must stop on an unexpected state.
 
 ## Supervised pregame transition
 
@@ -164,6 +178,10 @@ cargo run --bin classify_mtgo_offline_mulligan_ladder_candidate_v2 -- 'C:\absolu
 
 `classify_untrusted_offline_first_main_candidate_v2` preserves the exact Turn 1 and empty-battlefield regions and replaces only the prompt and Combat control with dark-core binary ink masks at threshold 182. The two raw regions drifted in a later fixed-deck first-main capture while both binary masks and the other two exact regions remained unchanged.
 
+`classify_untrusted_offline_first_main_visible_card_identities_v1` accepts only that exact v2 first-main result, the same checked capture, and a checked-untrusted visible-card template profile. It evaluates the reviewed eight-card overlap geometry after the acting-player draw and exposes names only when every ordinal clears both fixed template thresholds. Partial matches expose only a count. The current one-game supervised check matched all eight fixed-deck basics, but it remains a caller-labelled calibration result with no semantic-evidence, `ObservationV5`, model-scoring, object-binding, coordinate, or input authority.
+
+`check_untrusted_first_main_kernel_card_coverage_v1` composes that complete eight-card identity result with the compile-bound kernel correspondence profile without creating bindings. It reports full support for the five visible Islands and `MissingFromKernelRegistry` at the three visible Plains ordinals in the retained first-main hand. Coverage therefore remains incomplete and the result exposes no object-binding, `ObservationV5`, scoring, or input authority.
+
 The read-only classifier can be run on an offline artifact with:
 
 ```powershell
@@ -214,6 +232,21 @@ The exact prompt pixels changed slightly in a later Solitaire game even though t
 
 `fixtures/offline_visible_card_public_reference_probe_20260810_v1.json` records the first visible-card identity feasibility probe. Seven manually read card labels in one opening hand were compared against six pinned public print templates. Every ordinal selected the corresponding visible name; the weakest winning correlation was 0.6441 and the weakest margin over another template was 0.2105. The public image hashes and print identifiers are recorded, but the images remain in a local cache and are not committed. The source capture is still pending visual review, the candidate universe is manually constrained, and every authority flag remains false. This is not an accuracy estimate or a kernel card binding. The proposed calibration and runtime boundary is specified in `MTGO-VISIBLE-CARD-IDENTITY-V1-DESIGN.md`.
 
+`resolve_checked_untrusted_kernel_card_correspondence_v1` is the next fail-closed card-database seam. It accepts only an exact, untrimmed kernel card name, requires the compile-bound definition to have `Full` capability, distinguishes tokens from deck cards, and binds the result to a profile commitment over the complete supported subset and `KERNEL_CARDDB_HASH`. The current registry has 136 definitions and only 49 fully supported entries, including four tokens. Unknown names, unsupported registered cards, case changes, whitespace changes, and control characters reject. The caller-provided name is not visual evidence, so the result cannot create a stable object reference, `ObservationV5`, score, or input. Open League and Challenge opponents can expose cards outside this supported subset, which remains a separate model and engine coverage blocker even after UI wiring is complete.
+
+`CheckedUntrustedMtgoVisibleObjectLedgerV1` implements the first narrow object-incarnation slice over the retained Solitaire transitions. Canonically ordered seeds receive deterministic adapter-local arena identifiers after exact card correspondence. The checked PlayLand fixture preserves the Island's arena identifier, replaces its visible object identifier, moves Hand to Battlefield, and increments `zone_change_count` from zero to one. The immediately following checked mana activation preserves that battlefield reference without another increment. Frame, actor, controller, card name, source zone, replacement identifier, and action shape mismatches reject. The ledger is still checked-untrusted calibration state: it exposes only counts and commitments, cannot yield object bindings outside crate tests, and grants no observation, scoring, or input authority.
+
+`classify_untrusted_offline_play_land_hand_reflow_v1` now binds that bookkeeping rule to the exact retained 1550 by 925 PlayLand manifests and PNGs. It verifies the pending-preview identity, chronology, foreground, occlusion, cursor, and no-authority fields, decodes the legacy PNGs internally, and compares all eight pre-action card-art regions with all seven post-action regions. Exactly one order-preserving deletion passes: ordinal zero, matching the declared Island source. The widest surviving-card distance is 26.989, the best alternative deletion needs 66.022, and the 39.033 separation exceeds the fixed 10.000 margin. The record is `fixtures/offline_play_land_hand_reflow_20260810_v1.json`.
+
+The historical hand contains kernel-unsupported survivors, so this retained pair calibrates geometry and source-slot alignment only. The opaque result can advance an eight-card supported Kernel Basics ledger in tests, preserving all seven survivor arena identifiers and moving only the played Island to a new battlefield incarnation. A future live supported-deck transition must provide its own complete exact card coverage before that bridge can contribute to an observation. Every semantic-evidence, observation, scoring, and input flag remains false.
+
+```powershell
+cargo run --bin classify_mtgo_offline_play_land_hand_reflow_v1 -- `
+  'C:\absolute\solitaire_play_land_transition_v1.json' `
+  'C:\absolute\before-preview-directory' `
+  'C:\absolute\after-preview-directory'
+```
+
 `check_untrusted_offline_visible_card_template_profile_v1` validates the first local runtime-profile shape. It fixes the reviewed layout, a 96 by 60 BGR template, the 25.000 mean absolute difference ceiling, and a 10.000 distinct-name margin. Template bytes are bound to their visible calibration capture, public print metadata, public-image hash, and deck commitment. `classify_untrusted_offline_bottom_six_visible_card_identities_v1` then requires a matched bottom-six frame and identifies the complete visible hand or returns `NoMatch`; partial results and distinct-name ties are withheld. The checked profile and result expose no template pixels or coordinates, cannot create `CardStableRefV1`, and keep all semantic, observation, scoring, and input authority false. Caller-supplied labels remain untrusted until a separate reviewed deck-profile ratification exists.
 
 The offline CLI accepts one retained DXGI artifact and one bounded local profile JSON:
@@ -233,6 +266,16 @@ It performs no network access and emits names, ordinals, distances, margins, and
 The fixed no-cost deck `mtgo-solitaire-fixed-basics-v1` narrows that universe to 30 copies each of DSK Plains collector 277 and DSK Island collector 279, both already present in the reviewed seven-template profile. `classify_untrusted_offline_bottom_six_visible_card_identities_v3` uses the v3 state gate. It matched all 14 cards across two independent initial bottom-six hands, including a later heldout game, and directly preserved every visible identity through five leftmost-card reflows in one game. MTGO dims the final remaining card when Done appears, so direct art matching intentionally returns `NoMatch` at that stage. The prior order-preserving reflow history still identifies the survivor, but the direct classifier does not claim that inference. The complete record is `fixtures/offline_fixed_basic_deck_identity_corpus_20260810_v1.json`.
 
 `classify_untrusted_offline_mulligan_visible_card_identities_v1` composes the current v2 mulligan-ladder prompt gate with the same fixed-deck template profile. It evaluates the seven visible card-art regions at every prospective keep size and withholds all labels unless the prompt has exactly one match and every card identity passes. The retained corpus `fixtures/offline_mulligan_visible_card_identity_corpus_20260810_v1.json` covers all seven prospective keep sizes in two fixed-deck Solitaire games. All 14 prompts and all 98 visible card positions matched. This is narrow one-layout wiring evidence for two known prints, not an accuracy estimate or competitive-play evidence.
+
+`fixtures/offline_kernel_basics_opening_hand_coverage_20260810_v1.json` records the first opening hand from the no-cost 30 Forest plus 30 Island deck `mtgo-solitaire-kernel-basics-v1`. Four exact DSK print templates identify all seven visible cards, and every exact visible name resolves to a fully supported kernel deck-card definition. Three templates were calibrated on this same frame, so the record proves complete wiring coverage only. It is not a heldout identity result and creates no object binding, observation, model decision, or input authority.
+
+`start_checked_untrusted_first_main_hand_object_ledger_v1` is the narrow bridge from a complete eight-card first-main kernel-coverage result into the existing incarnation ledger. It requires exact deck-card correspondence at every ordinal and binds the source coverage commitment into the ledger commitment. Synthetic identifiers are deterministic hand-slot labels, and the ledger remains checked-untrusted with no public object-binding, observation, scoring, or input surface.
+
+`derive_checked_untrusted_first_main_legal_actions_v1` closes the next supported-deck bookkeeping gap. It accepts only the unchanged, source-bound local P0 ledger for eight exact Forest or Island hand objects. It produces the kernel surface order internally: eight distinct `PlayLand` semantics in arena order followed by `Pass`. The opaque result exposes counts and commitments only. It does not expose the stable references or actions, and it remains unsafe for `ObservationV5`, policy scoring, or input because Solitaire still cannot supply a complete two-player observation.
+
+`refine_checked_untrusted_first_main_reconstruction_v1` binds that complete action result and the eight-object ledger back to the exact six-blocker Solitaire reconstruction audit for the same manifest and frame. It closes only `object_incarnations_and_card_db` and `complete_ordered_legal_actions`. The remaining blockers are distinct duel participants, second-player public state, distinct opponent zones, and kernel decision-history context. The refined wrapper still cannot create an observation, a model request, or input authority.
+
+`derive_checked_untrusted_first_main_kernel_context_v1` closes the kernel decision-history group only for that same exact reset-state first-main slice. Its engine, harness-surface, and policy-surface reset templates are pinned by a test against the kernel's own first `Main1` decision. It exposes only context hashes and leaves the three distinct-opponent observation groups blocked, so model readiness and input safety remain false.
 
 ```powershell
 cargo run --bin classify_mtgo_offline_mulligan_visible_card_identities_v1 -- `

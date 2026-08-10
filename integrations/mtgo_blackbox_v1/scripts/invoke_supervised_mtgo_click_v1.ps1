@@ -29,7 +29,7 @@ param(
     [string]$ExpectedSignerSubject,
 
     [Parameter(Mandatory = $true)]
-    [ValidateNotNullOrEmpty()]
+    [AllowEmptyString()]
     [string]$ExpectedWindowTitle,
 
     [ValidateSet('MainClient', 'ForegroundOwnedWindow')]
@@ -56,6 +56,11 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrEmpty($ExpectedWindowTitle) -and
+    $TargetWindowMode -cne 'ForegroundOwnedWindow') {
+    throw 'MTGO_CLICK_EMPTY_TITLE_REQUIRES_FOREGROUND_OWNED_WINDOW'
+}
 
 if (-not ('MtgoSupervisedClickNativeV1' -as [type])) {
     Add-Type -TypeDefinition @'
