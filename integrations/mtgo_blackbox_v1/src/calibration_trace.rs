@@ -1,4 +1,5 @@
 use crate::{MtgoContractErrorV1, MtgoRectPxV1, MtgoSizePxV1};
+use mtg_kernel::mana::ManaColor;
 use mtg_kernel::rl::{ActionSemanticV1, PlayerSeatV1};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -144,6 +145,7 @@ pub enum MtgoGameplayVisibleChangeV1 {
     BattlefieldChanged,
     HandChanged,
     VisibleGameLogChanged,
+    ManaPoolChanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +194,13 @@ pub enum MtgoVisibleObjectCalibrationActionV1 {
         source_adapter_object_id: String,
         visible_card_name: String,
     },
+    ActivateManaAbility {
+        actor: PlayerSeatV1,
+        source_adapter_object_id: String,
+        visible_card_name: String,
+        mana_choice: Option<ManaColor>,
+        visible_mana_added: ManaColor,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,10 +217,11 @@ pub struct MtgoVisibleObjectActionCalibrationTraceV1 {
 
 /// Structurally checked calibration for one visible object action.
 ///
-/// V1 accepts only a local-seat PlayLand label with an adapter-local source
-/// object. It does not create `ActionSemanticV1::PlayLand` because the trace
-/// has no complete observation or exact `CardStableRefV1` binding. It has no
-/// region, pixel, evidence, policy, or input accessor.
+/// V1 accepts local-seat PlayLand and ActivateManaAbility labels with an
+/// adapter-local source object. It does not create the corresponding kernel
+/// semantic because the trace has no complete observation or exact
+/// `CardStableRefV1` binding. It has no region, pixel, evidence, policy, or
+/// input accessor.
 pub struct CheckedUntrustedMtgoVisibleObjectActionCalibrationV1 {
     record: MtgoVisibleObjectActionCalibrationTraceV1,
     transition_commitment_sha256: String,
@@ -531,7 +541,7 @@ pub fn validate_visible_object_action_calibration_trace_v1(
     validate_trace_id_v1(&record.trace_id, "visible_object_action_trace_id_invalid")?;
     validate_visible_object_action_frame_pair_v1(&record.before_frame, &record.after_frame)?;
 
-    match &record.action {
+    let required_changes: &[MtgoGameplayVisibleChangeV1] = match &record.action {
         MtgoVisibleObjectCalibrationActionV1::PlayLand {
             actor: PlayerSeatV1::P0,
             source_adapter_object_id,
@@ -539,14 +549,41 @@ pub fn validate_visible_object_action_calibration_trace_v1(
         } => {
             validate_adapter_object_id_v1(source_adapter_object_id)?;
             validate_visible_card_name_v1(visible_card_name)?;
+            &[
+                MtgoGameplayVisibleChangeV1::PromptChanged,
+                MtgoGameplayVisibleChangeV1::PlayerCountsChanged,
+                MtgoGameplayVisibleChangeV1::BattlefieldChanged,
+                MtgoGameplayVisibleChangeV1::HandChanged,
+                MtgoGameplayVisibleChangeV1::VisibleGameLogChanged,
+            ]
+        }
+        MtgoVisibleObjectCalibrationActionV1::ActivateManaAbility {
+            actor: PlayerSeatV1::P0,
+            source_adapter_object_id,
+            visible_card_name,
+            mana_choice,
+            visible_mana_added,
+        } => {
+            validate_adapter_object_id_v1(source_adapter_object_id)?;
+            validate_visible_card_name_v1(visible_card_name)?;
+            if mana_choice.is_some_and(|choice| choice != *visible_mana_added) {
+                return Err(MtgoContractErrorV1::new(
+                    "visible_object_action_trace_mana_choice_mismatch",
+                    "an explicit mana choice must match the visibly added mana",
+                ));
+            }
+            &[
+                MtgoGameplayVisibleChangeV1::BattlefieldChanged,
+                MtgoGameplayVisibleChangeV1::ManaPoolChanged,
+            ]
         }
         _ => {
             return Err(MtgoContractErrorV1::new(
                 "visible_object_action_trace_action_unsupported",
-                "v1 accepts only PlayLand by the local P0 seat",
+                "v1 accepts only supported visible-object actions by the local P0 seat",
             ));
         }
-    }
+    };
 
     validate_rect_v1(
         &record.action_control_before.rect_client_px,
@@ -558,7 +595,7 @@ pub fn validate_visible_object_action_calibration_trace_v1(
         "visible_object_action_trace_action_control_hash_invalid",
     )?;
 
-    if !(5..=8).contains(&record.visible_postconditions.len()) {
+    if !(required_changes.len()..=8).contains(&record.visible_postconditions.len()) {
         return Err(MtgoContractErrorV1::new(
             "visible_object_action_trace_postcondition_count_invalid",
             record.visible_postconditions.len().to_string(),
@@ -600,14 +637,8 @@ pub fn validate_visible_object_action_calibration_trace_v1(
             ));
         }
     }
-    for required in [
-        MtgoGameplayVisibleChangeV1::PromptChanged,
-        MtgoGameplayVisibleChangeV1::PlayerCountsChanged,
-        MtgoGameplayVisibleChangeV1::BattlefieldChanged,
-        MtgoGameplayVisibleChangeV1::HandChanged,
-        MtgoGameplayVisibleChangeV1::VisibleGameLogChanged,
-    ] {
-        if !changes.contains(&required) {
+    for required in required_changes {
+        if !changes.contains(required) {
             return Err(MtgoContractErrorV1::new(
                 "visible_object_action_trace_required_postcondition_missing",
                 format!("{:?}", required),

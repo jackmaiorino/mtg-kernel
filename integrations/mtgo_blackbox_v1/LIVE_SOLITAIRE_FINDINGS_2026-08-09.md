@@ -85,6 +85,19 @@ The digest-only fixture is `fixtures/solitaire_play_land_transition_v1.json`. It
 
 The input calibration exposed one concrete Windows requirement. The input process must enter Per-Monitor V2 DPI awareness before interpreting client coordinates. At 125 percent display scaling, a DPI-unaware helper mapped the intended visible card point below the duel window and caused only a focus change. The successful click used physical desktop coordinates, required the expected MTGO HWND and PID to be foreground, required `WindowFromPoint` to resolve to that same HWND immediately before input, and then issued one left-click as described in the official MTGO gameplay guide.
 
+## Supervised visible-object mana calibration
+
+One click on the visible untapped Island was bracketed by the PlayLand after-frame and a new strict preview:
+
+| State | Capture | Frame SHA-256 |
+| --- | --- | --- |
+| Island untapped, no floating mana | `D:\mtgo-solitaire-after-playland-strict-20260809-2041` | `B5751CAD13425B856A8C5D9394588ADE9EB35BD3799AED740E58982929843453` |
+| Island tapped, one blue mana visible | `D:\mtgo-solitaire-after-island-mana-strict-20260809-2055` | `DA503414C6B948EF399C787A7E7BC17AEC34084B4C360E52DEFF627B308AE31D` |
+
+The Island rotated to its tapped presentation and the battlefield showed one floating blue mana. Hand, player counts, phase, prompt, and visible game log remained stable.
+
+The digest-only fixture is `fixtures/solitaire_activate_island_mana_transition_v1.json`. It records an adapter-local battlefield object, `mana_choice = null` for the single-output Island interaction, and visible blue mana added. As with PlayLand, it does not construct the kernel semantic until a complete observation supplies the exact stable object binding.
+
 ## Visible layout observations
 
 - The current decision is explicit in the upper-left prompt: keep seven cards or mulligan to six.

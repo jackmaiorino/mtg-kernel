@@ -78,6 +78,8 @@ The checked gameplay trace is still not a validated decision. It lacks a complet
 
 `MtgoVisibleObjectActionCalibrationTraceV1` records the next supervised slice: a visible Island moved from hand to battlefield after one left-click. The trace requires changes in the prompt, player counts, battlefield, hand, and visible game log. It keeps the source as an adapter-local object ID plus visible card name and does not mint a kernel `CardStableRefV1`. A future complete observation must create that exact binding, and the battlefield object must be a new zone-change incarnation.
 
+The same trace contract also covers a supervised Island mana activation. It requires both a visible tapped-object change and a visible mana-pool change. The action records `mana_choice = null` for the single-output interaction plus the visibly added blue mana, while still withholding a kernel semantic until the source has an exact observation binding.
+
 The live input check also demonstrated that Windows input geometry must be Per-Monitor V2 DPI-aware before any coordinate is interpreted. A future actuator must additionally bind the physical point to the expected foreground MTGO HWND and PID with `WindowFromPoint` immediately before input. The calibration record contains no input coordinate or callable input path.
 
 ## Reviewed capture contract
