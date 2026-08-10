@@ -8,6 +8,7 @@
 mod action_resolution;
 mod calibration_trace;
 mod capture_contract;
+mod competitive_lifecycle;
 mod contract;
 mod mock;
 mod model_scoring;
@@ -18,6 +19,7 @@ mod visible_history;
 pub use action_resolution::*;
 pub use calibration_trace::*;
 pub use capture_contract::*;
+pub use competitive_lifecycle::*;
 pub use contract::*;
 pub use mock::*;
 pub use model_scoring::*;

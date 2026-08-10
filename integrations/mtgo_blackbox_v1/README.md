@@ -153,6 +153,14 @@ The adapter-side half of step 7 is also defined. `MtgoVisibleActionControlSetV1`
 
 The resolved control is opaque and retains its rectangle only inside the crate. It exposes no coordinate accessor and remains explicitly unsafe for live input. This prevents callers from turning a stale or ambiguous semantic label into a click. A later trusted actuator must consume the opaque result and independently recheck the live frame, window, prompt, timer, and physical point immediately before one input.
 
+## Competitive lifecycle envelope
+
+`MtgoVisibleCompetitiveLifecycleSnapshotV1` defines the coordinate-free visible states surrounding gameplay: event browser, entry review, entered queue, pairing, match, sideboarding, match result, event result, and reconnect. Every state requires phase-specific current-frame facts, complete-state declaration, exact event and match identities where applicable, at least 95 percent confidence, and a fresh committed frame. The checked wrapper remains structurally untrusted and exposes no pixel regions or input method.
+
+User-driven transitions and server-driven transitions are separate. User actions include opening or cancelling entry review, confirming an entry, accepting a pairing, submitting a sideboard, continuing after a match, resuming after reconnect, and closing a completed event. Server events include pairing arrival, game end, match end, event end, and connection interruption. Every transition requires a changed strictly newer frame and preserves event or match identity where required.
+
+League and Challenge mode authorization remain independent. Entry confirmation additionally requires a separate exact `MtgoCompetitiveEntryAuthorizationV1` bound to the same account and written permission, the visible event identity, the exact visible entry terms, and one existing-resource amount. The contract contains no purchase action or resource-acquisition path. All lifecycle intents are offline and coordinate-free, and even a checked transition reports `safe_for_live_input = false`.
+
 ## Deliberate seam after this tranche
 
 The existing checkpoint shadow service owns a simulated `FastActorSessionV1`. It cannot score an arbitrary observation reconstructed from MTGO. Its flat scoring view and inference output accessors are crate-private.
