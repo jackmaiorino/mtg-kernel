@@ -10,13 +10,21 @@ mod probe;
 #[cfg(target_os = "windows")]
 pub use actuator::{
     bind_prepared_competitive_duel_pass_authorization_v1,
+    confirm_pending_competitive_duel_pass_v1,
     confirm_pending_pregame_keep_to_bottom_six_v3, confirm_pending_pregame_keep_to_first_main_v3,
-    confirm_pending_pregame_mulligan_v3, execute_authorized_private_match_pregame_action_v3,
-    pregame_input_gate_status_v3, ratify_competitive_duel_pass_authorization_v1,
-    ratify_private_match_authorization_v3,
-    MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1, MtgoPregameInputGateStatusV3,
-    OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1, OpaqueMtgoPendingPregameInputV3,
-    RatifiedMtgoCompetitiveDuelPassAuthorizationV1, RatifiedMtgoPrivateMatchAuthorizationV3,
+    confirm_pending_pregame_mulligan_v3, execute_authorized_competitive_duel_pass_v1,
+    execute_authorized_private_match_pregame_action_v3,
+    mtgo_input_gate_status_v3, pregame_input_gate_status_v3,
+    ratify_competitive_duel_pass_authorization_v1,
+    ratify_competitive_match_launch_v1, ratify_private_match_authorization_v3,
+    MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
+    MtgoConfirmedCompetitiveDuelPassCommitmentsV1, MtgoInputGateStatusV3,
+    MtgoPregameInputGateStatusV3,
+    OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1,
+    OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV1,
+    OpaqueMtgoPendingCompetitiveDuelPassV1, OpaqueMtgoPendingPregameInputV3,
+    RatifiedMtgoCompetitiveDuelPassAuthorizationV1, RatifiedMtgoCompetitiveMatchLaunchV1,
+    RatifiedMtgoPrivateMatchAuthorizationV3,
 };
 
 #[cfg(target_os = "windows")]

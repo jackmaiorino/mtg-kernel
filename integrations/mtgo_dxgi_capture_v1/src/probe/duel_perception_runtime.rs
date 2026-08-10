@@ -5,6 +5,8 @@ use super::{
 };
 use mtgo_blackbox_v1::{
     bind_profile_bound_action_plan_to_competitive_match_v1,
+    check_untrusted_competitive_gameplay_before_input_pixels_v1,
+    check_untrusted_competitive_gameplay_postcondition_pixels_v1,
     check_untrusted_dxgi_capture_artifact_v1, check_untrusted_dxgi_observed_decision_candidate_v1,
     duel_action_family_v1, prepare_profile_bound_action_postcondition_plan_v1,
     preview_output_identity_commitment_v1, resolve_profile_bound_selected_visible_control_v1,
@@ -12,16 +14,22 @@ use mtgo_blackbox_v1::{
     validate_dxgi_bound_observation_reconstruction_audit_v1, validate_observed_decision_v1,
     visible_frame_region_content_sha256_v1, AdmittedMtgoDuelPerceptionProfileV1,
     CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
+    CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
+    CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
     CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
     CheckedUntrustedMtgoProfileBoundResolvedActionControlV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveEventKindV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
-    MtgoDuelActionFamilyV1, MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1,
-    MtgoExternalObservationScorerV1, MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
-    MtgoProfileBoundPostconditionCalibrationV1, MtgoProfileBoundPostconditionRegionSetV1,
-    MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
-    ValidatedMtgoObservedDecisionV1, MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1,
+    MtgoDuelActionFamilyV1, MtgoDxgiCaptureRoleV2, MtgoEvidenceSourceV1,
+    MtgoExpectedModelDeploymentV1, MtgoExternalObservationScorerV1,
+    MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
+    MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoProfileBoundPostconditionCalibrationV1,
+    MtgoProfileBoundPostconditionRegionSetV1, MtgoRectPxV1, MtgoSignedRectDesktopPxV1,
+    MtgoSizePxV1, MtgoVisibleActionControlSetV1, ValidatedMtgoObservedDecisionV1,
+    MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1, MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
+    MTGO_PROFILE_BOUND_POSTCONDITION_BEFORE_INPUT_FRAME_SCHEMA_V1,
     MTGO_VISIBLE_ACTION_CONTROL_SET_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
@@ -43,6 +51,8 @@ const DUEL_OPAQUE_COMPETITIVE_ACTION_PLAN_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-action-plan-v1";
 const DUEL_OPAQUE_COMPETITIVE_PASS_PREPARATION_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-pass-preparation-v1";
+const DUEL_OPAQUE_COMPETITIVE_PASS_CONFIRMATION_DOMAIN_V1: &[u8] =
+    b"mtgo-opaque-competitive-duel-pass-confirmation-v1";
 const DUEL_PERCEPTION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_PERCEPTION_V1\0";
 const MAX_RUNTIME_ARTIFACT_BYTES_V1: u64 = 512 * 1024 * 1024;
 const MAX_PERCEPTION_RESPONSE_BYTES_V1: usize = 16 * 1024 * 1024;
@@ -354,6 +364,7 @@ pub struct MtgoOpaqueCompetitiveDuelActionPlanCommitmentsV1 {
     pub opaque_competitive_action_plan_commitment_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub game_number: u8,
+    pub gameplay_authorization_valid_through_frame_sequence: u64,
     pub frame_id: u64,
     pub frame_sequence: u64,
 }
@@ -405,6 +416,9 @@ impl OpaqueMtgoCompetitiveDuelActionPlanV1 {
                 .clone(),
             event_kind: self.competitive.event_kind(),
             game_number: self.competitive.game_number(),
+            gameplay_authorization_valid_through_frame_sequence: self
+                .competitive
+                .gameplay_authorization_valid_through_frame_sequence(),
             frame_id: control.frame_id,
             frame_sequence: control.frame_sequence,
         }
@@ -425,6 +439,8 @@ impl OpaqueMtgoCompetitiveDuelActionPlanV1 {
 pub struct MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
     pub competitive_action_plan_commitment_sha256: String,
     pub competitive_mode_authorization_commitment_sha256: String,
+    pub competitive_match_gameplay_authorization_commitment_sha256: String,
+    pub before_input_postcondition_verification_commitment_sha256: String,
     pub immediate_capture_commitment_sha256: String,
     pub immediate_perception_result_commitment_sha256: String,
     pub preparation_commitment_sha256: String,
@@ -453,6 +469,7 @@ pub struct MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
 pub struct OpaqueMtgoPreparedCompetitiveDuelPassV1 {
     _plan: OpaqueMtgoCompetitiveDuelActionPlanV1,
     _current_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    _before_input_postcondition: CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
     commitments: MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
     #[allow(dead_code)]
     pub(crate) hwnd: u64,
@@ -485,6 +502,31 @@ impl OpaqueMtgoPreparedCompetitiveDuelPassV1 {
 
     pub fn permits_event_entry_v1(&self) -> bool {
         false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1 {
+    pub(crate) before_input_verification_commitment_sha256: String,
+    pub(crate) after_capture_commitment_sha256: String,
+    pub(crate) checked_postcondition_commitment_sha256: String,
+    pub(crate) opaque_confirmation_commitment_sha256: String,
+    pub(crate) event_kind: MtgoCompetitiveEventKindV1,
+    pub(crate) game_number: u8,
+    pub(crate) after_frame_id: u64,
+    pub(crate) after_frame_sequence: u64,
+}
+
+pub(crate) struct OpaqueMtgoConfirmedCompetitiveDuelPassV1 {
+    _before_input_postcondition: CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
+    _checked_postcondition: CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
+    _after_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1,
+    commitments: MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
+}
+
+impl OpaqueMtgoConfirmedCompetitiveDuelPassV1 {
+    pub(crate) fn commitments_v1(&self) -> MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1 {
+        self.commitments.clone()
     }
 }
 
@@ -1041,6 +1083,11 @@ pub fn prepare_opaque_competitive_duel_pass_actuation_v1(
         .frame_sequence
         .checked_add(1)
         .ok_or("immediate duel frame sequence overflow")?;
+    if immediate_frame_sequence
+        > plan_commitments.gameplay_authorization_valid_through_frame_sequence
+    {
+        return Err("competitive gameplay authorization expired before Pass recapture".to_owned());
+    }
     let immediate_frame_id = frame_id_from_capture_commitment_v1(
         &current_capture.source_capture.capture_commitment_sha256,
         plan_commitments.frame_id,
@@ -1082,6 +1129,47 @@ pub fn prepare_opaque_competitive_duel_pass_actuation_v1(
     {
         return Err("the immediate Pass control geometry or pixels changed".to_owned());
     }
+
+    let current_source = &current_perception.source_frame.source_frame;
+    let current_manifest = &current_source.manifest;
+    let current_manifest_json = serialize_manifest_v2(current_manifest)
+        .map_err(|error| format!("serialize immediate Pass capture manifest: {error}"))?;
+    let current_output_bounds = MtgoSignedRectDesktopPxV1 {
+        left: current_manifest.output.bounds_desktop_px.left,
+        top: current_manifest.output.bounds_desktop_px.top,
+        width: current_manifest.output.bounds_desktop_px.width()?,
+        height: current_manifest.output.bounds_desktop_px.height()?,
+    };
+    let current_output_identity_sha256 = preview_output_identity_commitment_v1(
+        &current_manifest.output.device_name,
+        &current_output_bounds,
+    )
+    .map_err(|error| format!("immediate Pass output identity is invalid: {error}"))?;
+    let before_input_postcondition = check_untrusted_competitive_gameplay_before_input_pixels_v1(
+        &plan.competitive,
+        MtgoProfileBoundPostconditionBeforeInputFrameV1 {
+            schema_version: MTGO_PROFILE_BOUND_POSTCONDITION_BEFORE_INPUT_FRAME_SCHEMA_V1,
+            plan_commitment_sha256: plan
+                .competitive
+                .postcondition_plan_commitment_sha256()
+                .to_owned(),
+            frame_id: immediate_frame_id,
+            frame_sequence: immediate_frame_sequence,
+            manifest_sha256: sha256_hex_v1(&current_manifest_json),
+            output_identity_sha256: current_output_identity_sha256,
+            perception_profile_admission_commitment_sha256: current_perception
+                .source_frame
+                .perception_profile_admission_commitment_sha256
+                .clone(),
+            client_size_px: MtgoSizePxV1 {
+                width: current_manifest.frame.canonical_width,
+                height: current_manifest.frame.canonical_height,
+            },
+            capture_role: MtgoDxgiCaptureRoleV2::ActingPlayerDuel,
+        },
+        &current_source.canonical_bgra8,
+    )
+    .map_err(|error| format!("verify immediate Pass postcondition baseline: {error}"))?;
 
     let client_rect = current_perception
         .source_frame
@@ -1134,6 +1222,12 @@ pub fn prepare_opaque_competitive_duel_pass_actuation_v1(
             plan_commitments
                 .competitive_mode_authorization_commitment_sha256
                 .as_bytes(),
+            plan_commitments
+                .competitive_authorization_commitment_sha256
+                .as_bytes(),
+            before_input_postcondition
+                .verification_commitment_sha256()
+                .as_bytes(),
             current_capture
                 .source_capture
                 .capture_commitment_sha256
@@ -1156,6 +1250,11 @@ pub fn prepare_opaque_competitive_duel_pass_actuation_v1(
             .opaque_competitive_action_plan_commitment_sha256,
         competitive_mode_authorization_commitment_sha256: plan_commitments
             .competitive_mode_authorization_commitment_sha256,
+        competitive_match_gameplay_authorization_commitment_sha256: plan_commitments
+            .competitive_authorization_commitment_sha256,
+        before_input_postcondition_verification_commitment_sha256: before_input_postcondition
+            .verification_commitment_sha256()
+            .to_owned(),
         immediate_capture_commitment_sha256: current_capture
             .source_capture
             .capture_commitment_sha256,
@@ -1180,6 +1279,7 @@ pub fn prepare_opaque_competitive_duel_pass_actuation_v1(
     Ok(OpaqueMtgoPreparedCompetitiveDuelPassV1 {
         _plan: plan,
         _current_perception: current_perception,
+        _before_input_postcondition: before_input_postcondition,
         commitments,
         hwnd: current_hwnd,
         process_id: current_process_id,
@@ -1190,6 +1290,155 @@ pub fn prepare_opaque_competitive_duel_pass_actuation_v1(
         target_y_desktop_px,
         park_x_desktop_px,
         park_y_desktop_px,
+    })
+}
+
+pub(crate) fn confirm_opaque_competitive_duel_pass_postcondition_v1(
+    prepared: OpaqueMtgoPreparedCompetitiveDuelPassV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoConfirmedCompetitiveDuelPassV1, String> {
+    let prepared_commitments = prepared.commitments_v1();
+    let OpaqueMtgoPreparedCompetitiveDuelPassV1 {
+        _plan: action_plan,
+        _current_perception: current_perception,
+        _before_input_postcondition: before_input_postcondition,
+        ..
+    } = prepared;
+    if current_perception
+        .source_frame
+        .perception_profile_commitment_sha256
+        != profile.perception_profile_commitment_sha256()
+        || current_perception
+            .source_frame
+            .perception_profile_admission_commitment_sha256
+            != profile.admission_commitment_sha256()
+        || before_input_postcondition.frame_id() != prepared_commitments.immediate_frame_id
+        || before_input_postcondition.frame_sequence()
+            != prepared_commitments.immediate_frame_sequence
+        || before_input_postcondition.canonical_bgra8_sha256()
+            != current_perception
+                .source_frame
+                .source_frame
+                .manifest
+                .frame
+                .canonical_bgra8_sha256
+        || before_input_postcondition.verification_commitment_sha256()
+            != prepared_commitments.before_input_postcondition_verification_commitment_sha256
+    {
+        return Err(
+            "prepared Pass baseline no longer matches the admitted duel profile".to_owned(),
+        );
+    }
+
+    let after_frame = capture_admitted_mtgo_duel_visible_frame_v1(profile, timeout_ms)?;
+    let after_capture = after_frame.commitments_v1();
+    let current_manifest = &current_perception.source_frame.source_frame.manifest;
+    let after_manifest = &after_frame.source_frame.manifest;
+    validate_same_duel_window_incarnation_v1(current_manifest, after_manifest)?;
+    if after_capture.source_capture.captured_at_unix_millis
+        <= prepared_commitments.immediate_captured_at_unix_millis
+        || after_capture.source_capture.capture_commitment_sha256
+            == prepared_commitments.immediate_capture_commitment_sha256
+    {
+        return Err("competitive Pass postcondition frame is not strictly newer".to_owned());
+    }
+    let after_frame_sequence = prepared_commitments
+        .immediate_frame_sequence
+        .checked_add(1)
+        .ok_or("competitive Pass postcondition frame sequence overflow")?;
+    let after_frame_id = frame_id_from_capture_commitment_v1(
+        &after_capture.source_capture.capture_commitment_sha256,
+        prepared_commitments.immediate_frame_id,
+    )?;
+    let after_manifest_json = serialize_manifest_v2(after_manifest)
+        .map_err(|error| format!("serialize competitive Pass after manifest: {error}"))?;
+    let after_output_bounds = MtgoSignedRectDesktopPxV1 {
+        left: after_manifest.output.bounds_desktop_px.left,
+        top: after_manifest.output.bounds_desktop_px.top,
+        width: after_manifest.output.bounds_desktop_px.width()?,
+        height: after_manifest.output.bounds_desktop_px.height()?,
+    };
+    let after_output_identity_sha256 = preview_output_identity_commitment_v1(
+        &after_manifest.output.device_name,
+        &after_output_bounds,
+    )
+    .map_err(|error| format!("competitive Pass after output identity is invalid: {error}"))?;
+    let postcondition_plan_commitment_sha256 = action_plan
+        .competitive
+        .postcondition_plan_commitment_sha256()
+        .to_owned();
+    let checked_postcondition = check_untrusted_competitive_gameplay_postcondition_pixels_v1(
+        action_plan.competitive,
+        MtgoProfileBoundPostconditionAfterFrameMetadataV1 {
+            schema_version: MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
+            plan_commitment_sha256: postcondition_plan_commitment_sha256,
+            frame_id: after_frame_id,
+            frame_sequence: after_frame_sequence,
+            manifest_sha256: sha256_hex_v1(&after_manifest_json),
+            output_identity_sha256: after_output_identity_sha256,
+            perception_profile_admission_commitment_sha256: after_frame
+                .perception_profile_admission_commitment_sha256
+                .clone(),
+            client_size_px: MtgoSizePxV1 {
+                width: after_manifest.frame.canonical_width,
+                height: after_manifest.frame.canonical_height,
+            },
+            capture_role: MtgoDxgiCaptureRoleV2::ActingPlayerDuel,
+        },
+        &after_frame.source_frame.canonical_bgra8,
+    )
+    .map_err(|error| format!("confirm competitive Pass visible postcondition: {error}"))?;
+    if checked_postcondition.event_kind() != prepared_commitments.event_kind
+        || checked_postcondition.game_number() != prepared_commitments.game_number
+        || checked_postcondition.after_frame_id() != after_frame_id
+        || checked_postcondition.after_frame_sequence() != after_frame_sequence
+    {
+        return Err("competitive Pass confirmation changed its exact event or frame".to_owned());
+    }
+    let event_kind_json = serde_json::to_vec(&prepared_commitments.event_kind)
+        .map_err(|error| format!("serialize confirmed competitive event kind: {error}"))?;
+    let checked_postcondition_commitment_sha256 = checked_postcondition
+        .confirmation_commitment_sha256()
+        .to_owned();
+    let opaque_confirmation_commitment_sha256 = commitment_v1(
+        DUEL_OPAQUE_COMPETITIVE_PASS_CONFIRMATION_DOMAIN_V1,
+        &[
+            prepared_commitments
+                .preparation_commitment_sha256
+                .as_bytes(),
+            prepared_commitments
+                .before_input_postcondition_verification_commitment_sha256
+                .as_bytes(),
+            after_capture
+                .source_capture
+                .capture_commitment_sha256
+                .as_bytes(),
+            checked_postcondition
+                .confirmation_commitment_sha256()
+                .as_bytes(),
+            event_kind_json.as_slice(),
+            &[prepared_commitments.game_number],
+            &after_frame_id.to_be_bytes(),
+            &after_frame_sequence.to_be_bytes(),
+            b"opaque_visible_postcondition_confirmed_no_input_or_event_entry_authority",
+        ],
+    );
+    Ok(OpaqueMtgoConfirmedCompetitiveDuelPassV1 {
+        _before_input_postcondition: before_input_postcondition,
+        _checked_postcondition: checked_postcondition,
+        _after_frame: after_frame,
+        commitments: MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1 {
+            before_input_verification_commitment_sha256: prepared_commitments
+                .before_input_postcondition_verification_commitment_sha256,
+            after_capture_commitment_sha256: after_capture.source_capture.capture_commitment_sha256,
+            checked_postcondition_commitment_sha256,
+            opaque_confirmation_commitment_sha256,
+            event_kind: prepared_commitments.event_kind,
+            game_number: prepared_commitments.game_number,
+            after_frame_id,
+            after_frame_sequence,
+        },
     })
 }
 

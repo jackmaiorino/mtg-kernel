@@ -1,8 +1,13 @@
 use crate::{
+    check_untrusted_profile_bound_action_postcondition_pixels_v1,
+    check_untrusted_profile_bound_postcondition_before_input_pixels_v1,
     validate_authorization_for_mode_v1, CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
-    CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1, MtgoAuthorizationScopeV1,
+    CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1,
+    CheckedUntrustedMtgoProfileBoundActionPostconditionV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1, MtgoContractErrorV1,
-    MtgoProfileBoundActionPostconditionPlanCommitmentsV1, MtgoRuntimeModeV1,
+    MtgoProfileBoundActionPostconditionPlanCommitmentsV1,
+    MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoRuntimeModeV1,
 };
 use mtg_kernel::rl::ActionSemanticV1;
 use serde::{Deserialize, Serialize};
@@ -13,6 +18,10 @@ const COMPETITIVE_GAMEPLAY_SCOPE_COMMITMENT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-gameplay-action-scope-v1";
 const COMPETITIVE_MODE_AUTHORIZATION_COMMITMENT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-mode-authorization-v1";
+const COMPETITIVE_GAMEPLAY_POSTCONDITION_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-gameplay-postcondition-v1";
+const COMPETITIVE_GAMEPLAY_BEFORE_INPUT_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-gameplay-before-input-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,6 +59,7 @@ pub struct CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1 {
     _lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     event_kind: MtgoCompetitiveEventKindV1,
     game_number: u8,
+    gameplay_authorization_valid_through_frame_sequence: u64,
     mode_authorization_commitment_sha256: String,
     authorization_commitment_sha256: String,
     competitive_scope_commitment_sha256: String,
@@ -66,6 +76,10 @@ impl CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1 {
 
     pub fn game_number(&self) -> u8 {
         self.game_number
+    }
+
+    pub fn gameplay_authorization_valid_through_frame_sequence(&self) -> u64 {
+        self.gameplay_authorization_valid_through_frame_sequence
     }
 
     pub fn postcondition_plan_commitment_sha256(&self) -> &str {
@@ -95,6 +109,77 @@ impl CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1 {
     }
 
     pub fn permits_event_entry(&self) -> bool {
+        false
+    }
+}
+
+/// One exact competitive action whose complete calibrated pixel regions
+/// changed on a newer frame. This remains checked-untrusted until an opaque
+/// capture path supplies the bytes and metadata.
+pub struct CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
+    _postcondition: CheckedUntrustedMtgoProfileBoundActionPostconditionV1,
+    event_kind: MtgoCompetitiveEventKindV1,
+    game_number: u8,
+    after_frame_id: u64,
+    after_frame_sequence: u64,
+    confirmation_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
+    pub fn event_kind(&self) -> MtgoCompetitiveEventKindV1 {
+        self.event_kind
+    }
+
+    pub fn game_number(&self) -> u8 {
+        self.game_number
+    }
+
+    pub fn after_frame_id(&self) -> u64 {
+        self.after_frame_id
+    }
+
+    pub fn after_frame_sequence(&self) -> u64 {
+        self.after_frame_sequence
+    }
+
+    pub fn confirmation_commitment_sha256(&self) -> &str {
+        &self.confirmation_commitment_sha256
+    }
+
+    pub fn safe_for_additional_input(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry(&self) -> bool {
+        false
+    }
+}
+
+pub struct CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1 {
+    frame_id: u64,
+    frame_sequence: u64,
+    canonical_bgra8_sha256: String,
+    verification_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1 {
+    pub fn frame_id(&self) -> u64 {
+        self.frame_id
+    }
+
+    pub fn frame_sequence(&self) -> u64 {
+        self.frame_sequence
+    }
+
+    pub fn canonical_bgra8_sha256(&self) -> &str {
+        &self.canonical_bgra8_sha256
+    }
+
+    pub fn verification_commitment_sha256(&self) -> &str {
+        &self.verification_commitment_sha256
+    }
+
+    pub fn safe_for_input(&self) -> bool {
         false
     }
 }
@@ -130,16 +215,8 @@ pub fn bind_profile_bound_action_plan_to_competitive_match_v1(
     }
     validate_gameplay_authorization_v1(&lifecycle, mode_authorization, gameplay_authorization)?;
 
-    let authorization_bytes = serde_json::to_vec(gameplay_authorization).map_err(|error| {
-        error_v1(
-            "competitive_gameplay_authorization_serialization",
-            error.to_string(),
-        )
-    })?;
-    let authorization_commitment_sha256 = commitment_v1(
-        b"mtgo-competitive-match-gameplay-authorization-v1",
-        &[authorization_bytes.as_slice()],
-    );
+    let authorization_commitment_sha256 =
+        competitive_match_gameplay_authorization_commitment_v1(gameplay_authorization)?;
     let mode_bytes = serde_json::to_vec(mode_authorization)
         .map_err(|error| error_v1("competitive_gameplay_mode_serialization", error.to_string()))?;
     let competitive_scope_commitment_sha256 = commitment_v1(
@@ -158,6 +235,8 @@ pub fn bind_profile_bound_action_plan_to_competitive_match_v1(
         game_number: lifecycle
             .game_number_v1()
             .expect("validated match phase has a game"),
+        gameplay_authorization_valid_through_frame_sequence: gameplay_authorization
+            .valid_through_frame_sequence,
         plan,
         _lifecycle: lifecycle,
         mode_authorization_commitment_sha256,
@@ -190,6 +269,106 @@ pub fn competitive_mode_authorization_commitment_v1(
         COMPETITIVE_MODE_AUTHORIZATION_COMMITMENT_DOMAIN_V1,
         &[scope_bytes.as_slice(), event_kind_bytes.as_slice()],
     ))
+}
+
+pub fn competitive_match_gameplay_authorization_commitment_v1(
+    authorization: &MtgoCompetitiveMatchGameplayAuthorizationV1,
+) -> Result<String, MtgoContractErrorV1> {
+    let authorization_bytes = serde_json::to_vec(authorization).map_err(|error| {
+        error_v1(
+            "competitive_gameplay_authorization_serialization",
+            error.to_string(),
+        )
+    })?;
+    Ok(commitment_v1(
+        b"mtgo-competitive-match-gameplay-authorization-v1",
+        &[authorization_bytes.as_slice()],
+    ))
+}
+
+pub fn check_untrusted_competitive_gameplay_postcondition_pixels_v1(
+    competitive: CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
+    metadata: MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1, MtgoContractErrorV1> {
+    let event_kind = competitive.event_kind;
+    let game_number = competitive.game_number;
+    let mode_authorization_commitment_sha256 =
+        competitive.mode_authorization_commitment_sha256.clone();
+    let authorization_commitment_sha256 = competitive.authorization_commitment_sha256.clone();
+    let competitive_scope_commitment_sha256 =
+        competitive.competitive_scope_commitment_sha256.clone();
+    let postcondition = check_untrusted_profile_bound_action_postcondition_pixels_v1(
+        competitive.plan,
+        metadata,
+        canonical_bgra8,
+    )?;
+    let after_frame_id = postcondition.after_frame_id();
+    let after_frame_sequence = postcondition.after_frame_sequence();
+    let event_kind_bytes = serde_json::to_vec(&event_kind).map_err(|error| {
+        error_v1(
+            "competitive_gameplay_postcondition_event_serialization",
+            error.to_string(),
+        )
+    })?;
+    let confirmation_commitment_sha256 = commitment_v1(
+        COMPETITIVE_GAMEPLAY_POSTCONDITION_COMMITMENT_DOMAIN_V1,
+        &[
+            mode_authorization_commitment_sha256.as_bytes(),
+            authorization_commitment_sha256.as_bytes(),
+            competitive_scope_commitment_sha256.as_bytes(),
+            postcondition.confirmation_commitment_sha256().as_bytes(),
+            event_kind_bytes.as_slice(),
+            &[game_number],
+            &after_frame_id.to_le_bytes(),
+            &after_frame_sequence.to_le_bytes(),
+            b"checked_untrusted_no_additional_input_or_event_entry",
+        ],
+    );
+    Ok(CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
+        _postcondition: postcondition,
+        event_kind,
+        game_number,
+        after_frame_id,
+        after_frame_sequence,
+        confirmation_commitment_sha256,
+    })
+}
+
+pub fn check_untrusted_competitive_gameplay_before_input_pixels_v1(
+    competitive: &CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
+    before: MtgoProfileBoundPostconditionBeforeInputFrameV1,
+    canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1, MtgoContractErrorV1> {
+    let checked = check_untrusted_profile_bound_postcondition_before_input_pixels_v1(
+        &competitive.plan,
+        before,
+        canonical_bgra8,
+    )?;
+    let event_kind_bytes = serde_json::to_vec(&competitive.event_kind).map_err(|error| {
+        error_v1(
+            "competitive_gameplay_before_input_event_serialization",
+            error.to_string(),
+        )
+    })?;
+    let verification_commitment_sha256 = commitment_v1(
+        COMPETITIVE_GAMEPLAY_BEFORE_INPUT_COMMITMENT_DOMAIN_V1,
+        &[
+            competitive.mode_authorization_commitment_sha256.as_bytes(),
+            competitive.authorization_commitment_sha256.as_bytes(),
+            competitive.competitive_scope_commitment_sha256.as_bytes(),
+            checked.verification_commitment_sha256().as_bytes(),
+            event_kind_bytes.as_slice(),
+            &[competitive.game_number],
+            b"checked_untrusted_before_input_no_input_or_event_entry_authority",
+        ],
+    );
+    Ok(CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1 {
+        frame_id: checked.frame_id(),
+        frame_sequence: checked.frame_sequence(),
+        canonical_bgra8_sha256: checked.canonical_bgra8_sha256().to_owned(),
+        verification_commitment_sha256,
+    })
 }
 
 fn validate_gameplay_authorization_v1(
@@ -594,5 +773,51 @@ mod tests {
                 "competitive_gameplay_authorization_record_reuse"
             );
         }
+    }
+
+    #[test]
+    fn competitive_postcondition_recomputes_private_regions_from_exact_pixels() {
+        let plan = plan_v1();
+        let sequence = plan.source_frame_sequence_v1();
+        let lifecycle = lifecycle_v1(&plan, 0, MtgoCompetitiveEventKindV1::League);
+        let competitive = bind_profile_bound_action_plan_to_competitive_match_v1(
+            plan,
+            lifecycle,
+            &mode_v1(),
+            &authorization_v1(sequence, MtgoCompetitiveEventKindV1::League),
+        )
+        .unwrap();
+        let plan_commitments = competitive.plan.commitments_v1();
+        let size = plan_commitments.source_client_size_px.clone();
+        let metadata = MtgoProfileBoundPostconditionAfterFrameMetadataV1 {
+            schema_version: crate::MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
+            plan_commitment_sha256: competitive.plan.plan_commitment_sha256().to_owned(),
+            frame_id: competitive.plan.source_frame_id_v1() + 1,
+            frame_sequence: competitive.plan.source_frame_sequence_v1() + 1,
+            manifest_sha256: "a".repeat(64),
+            output_identity_sha256: plan_commitments.source_output_identity_sha256,
+            perception_profile_admission_commitment_sha256: plan_commitments
+                .perception_profile_admission_commitment_sha256,
+            client_size_px: size.clone(),
+            capture_role: crate::MtgoDxgiCaptureRoleV2::ActingPlayerDuel,
+        };
+        let pixels =
+            vec![
+                31_u8;
+                usize::try_from(size.width).unwrap() * usize::try_from(size.height).unwrap() * 4
+            ];
+        let confirmed = check_untrusted_competitive_gameplay_postcondition_pixels_v1(
+            competitive,
+            metadata,
+            &pixels,
+        )
+        .unwrap();
+        assert_eq!(confirmed.event_kind(), MtgoCompetitiveEventKindV1::League);
+        assert_eq!(confirmed.game_number(), 1);
+        assert_eq!(confirmed.after_frame_id(), 2);
+        assert_eq!(confirmed.after_frame_sequence(), 2);
+        assert_eq!(confirmed.confirmation_commitment_sha256().len(), 64);
+        assert!(!confirmed.safe_for_additional_input());
+        assert!(!confirmed.permits_event_entry());
     }
 }
