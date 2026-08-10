@@ -139,11 +139,17 @@ All live-input flags default to false. League, Challenge, and other prize-event 
 8. Reconfirm focus, prompt, and timer, perform exactly one authorized input, then require a visible postcondition before another input.
 9. Stop on layout drift, an unknown prompt, low confidence, timer danger, focus loss, action-set disagreement, or missing postcondition.
 
+## External model scoring envelope
+
+The adapter now defines the coordinate-free half of step 6. `MtgoExternalScoringRequestV1` binds one validated decision commitment, the exact `ObservationV5`, the complete ordered `ActionSemanticV1` vector, action count, and an expected checkpoint deployment commitment. The deployment identity includes the run, checkpoint manifest, checkpoint payload, train-state, model-parameter, generation, and scorer-contract identities exposed by the native checkpoint handle.
+
+`MtgoExternalModelScoreResponseV1` returns exact f32 policy-logit and value bits bound to that request. Validation requires one finite logit per legal action and a finite value, then uses the kernel scorer's deterministic `total_cmp` argmax with lower-index ties. The resulting opaque selection can create only an offline intent for the exact source decision. It has no coordinates or live-input authority. The remaining core work is an implementation of `MtgoExternalObservationScorerV1` backed by the native checkpoint scorer.
+
 ## Deliberate seam after this tranche
 
 The existing checkpoint shadow service owns a simulated `FastActorSessionV1`. It cannot score an arbitrary observation reconstructed from MTGO. Its flat scoring view and inference output accessors are crate-private.
 
-The next kernel-facing change should be a small external-observation scoring API that consumes a validated `ObservationV5` plus the exact ordered `ActionSemanticV1` vector and returns scores bound to the decision commitment. That change should be made only after Fable's current science branch is reconciled, because it touches core scoring code.
+The next kernel-facing change is now narrower: expose a small native checkpoint method that consumes an exact `ObservationV5` plus ordered `ActionSemanticV1` vector and returns finite logits and value. The adapter-side request, deployment, response, deterministic selection, and offline-intent bindings are already implemented. The core change should be made only after Fable's current science branch is reconciled because it touches core scoring code.
 
 ## Isolation and merge
 
