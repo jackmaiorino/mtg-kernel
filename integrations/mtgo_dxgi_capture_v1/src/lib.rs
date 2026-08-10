@@ -21,16 +21,18 @@ pub use probe::{
     build_pregame_action_plan_v3, build_pregame_scoring_request_v3,
     capture_mtgo_dxgi_frame_candidate_v3, confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
-    measure_mtgo_dxgi_bottom_six_initial_candidate_v3, measure_mtgo_dxgi_first_main_candidate_v3,
+    measure_mtgo_dxgi_bottom_six_initial_candidate_v3,
+    measure_mtgo_dxgi_bottom_six_state_candidate_v3, measure_mtgo_dxgi_first_main_candidate_v3,
     measure_mtgo_dxgi_mulligan_ladder_candidate_v3, pregame_scoring_request_commitment_v3,
     run_cli_v3, score_and_select_pregame_model_v3, validate_pregame_score_response_v3,
     MtgoDxgiCaptureRequestV3, MtgoDxgiFrameCommitmentsV3, MtgoExternalPregameScorerV3,
     MtgoPlannedPregamePostconditionV3, MtgoPregameScoreResponseV3, MtgoPregameScoringRequestV3,
     OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, OpaqueMtgoConfirmedKeepToFirstMainTransitionV3,
     OpaqueMtgoConfirmedMulliganTransitionV3, OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
-    OpaqueMtgoDxgiFirstMainMeasurementV3, OpaqueMtgoDxgiFrameCandidateV3,
-    OpaqueMtgoDxgiMulliganMeasurementV3, OpaqueMtgoPregameActionPlanV3,
-    OpaqueMtgoPregameModelSelectionV3, MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3,
+    OpaqueMtgoDxgiBottomSixStateMeasurementV3, OpaqueMtgoDxgiFirstMainMeasurementV3,
+    OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoDxgiMulliganMeasurementV3,
+    OpaqueMtgoPregameActionPlanV3, OpaqueMtgoPregameModelSelectionV3,
+    MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

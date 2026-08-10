@@ -98,6 +98,11 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
     assert!(source.contains(
         "pub fn measure_mtgo_dxgi_bottom_six_initial_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
     ));
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_bottom_six_state_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
+    ));
+    assert!(source.contains("pub struct OpaqueMtgoDxgiBottomSixStateMeasurementV3 {"));
+    assert!(source.contains("measurement: CheckedUntrustedMtgoOfflineBottomSixStateCandidateV1,"));
     assert!(source.contains("fn build_pregame_action_plan_parts_v3("));
     assert!(source.contains("fn validate_mulligan_postcondition_parts_v3("));
     assert!(source.contains("fn validate_keep_first_main_postcondition_parts_v3("));
