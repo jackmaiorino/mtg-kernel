@@ -107,6 +107,10 @@ impl CheckedUntrustedMtgoObservationReconstructionAuditV1 {
         &self.record.frame.frame_sha256
     }
 
+    pub fn source_manifest_sha256(&self) -> &str {
+        &self.record.frame.manifest_sha256
+    }
+
     pub fn blocking_groups(&self) -> &[MtgoObservationReconstructionGroupV1] {
         &self.blocking_groups
     }

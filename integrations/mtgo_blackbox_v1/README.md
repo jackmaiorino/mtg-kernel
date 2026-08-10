@@ -261,6 +261,8 @@ The fixed no-cost deck `mtgo-solitaire-fixed-basics-v1` narrows that universe to
 
 `derive_checked_untrusted_first_main_legal_actions_v1` closes the next supported-deck bookkeeping gap. It accepts only the unchanged, source-bound local P0 ledger for eight exact Forest or Island hand objects. It produces the kernel surface order internally: eight distinct `PlayLand` semantics in arena order followed by `Pass`. The opaque result exposes counts and commitments only. It does not expose the stable references or actions, and it remains unsafe for `ObservationV5`, policy scoring, or input because Solitaire still cannot supply a complete two-player observation.
 
+`refine_checked_untrusted_first_main_reconstruction_v1` binds that complete action result and the eight-object ledger back to the exact six-blocker Solitaire reconstruction audit for the same manifest and frame. It closes only `object_incarnations_and_card_db` and `complete_ordered_legal_actions`. The remaining blockers are distinct duel participants, second-player public state, distinct opponent zones, and kernel decision-history context. The refined wrapper still cannot create an observation, a model request, or input authority.
+
 ```powershell
 cargo run --bin classify_mtgo_offline_mulligan_visible_card_identities_v1 -- `
   C:\absolute\artifact-directory `
