@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "trace_id": "solitaire_pass_to_combat_20260809_2008",
+  "before_frame": {
+    "sequence": 1,
+    "manifest_sha256": "11b051460e9321902b3cc7c8912e0dbcd8293786d6c637dce0784fd4552d26a6",
+    "frame_sha256": "dc391839b56e5354a8ec5aa5e8fbea0da148d7ba4237e56edd7c963e8a312a69",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "capture_role": "acting_player_solitaire",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "action": { "action_kind": "pass", "actor": "p0" },
+  "action_control_before": {
+    "rect_client_px": { "x": 29, "y": 155, "width": 81, "height": 29 },
+    "bgra8_sha256": "5041966b52b18ec028dd88d941be5eac4e42dd979e233830b2ca3bab5165816a"
+  },
+  "after_frame": {
+    "sequence": 2,
+    "manifest_sha256": "27d8e1ca11d311b189e12aae3889e920cb244910eb72cda67c2879f8acd4660d",
+    "frame_sha256": "d8acdc25ff3172c9ad3be2344587c1ddb80ecb9c6c52e9e22dc645e41f01c070",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "capture_role": "acting_player_solitaire",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "visible_postconditions": [
+    {
+      "change": "prompt_changed",
+      "rect_client_px": { "x": 10, "y": 32, "width": 200, "height": 165 },
+      "before_bgra8_sha256": "a71c0c88be43cec0e5b404ba7240147b6503868f5cd81fab5c10933f6da99924",
+      "after_bgra8_sha256": "552ffcaccd17d899573a85a951081bd02f9560c03c00cdeddc9befc68b7cdeac"
+    },
+    {
+      "change": "phase_bar_changed",
+      "rect_client_px": { "x": 310, "y": 695, "width": 851, "height": 35 },
+      "before_bgra8_sha256": "afcf18f8dbee5592aa7cebbadcedd04712554e11ed4146909f049e65c316c56e",
+      "after_bgra8_sha256": "7b0fd0e606ba3142635f9d0d3b5a21d76426f961c62b0b6b3c837205eb2d04a9"
+    }
+  ]
+}

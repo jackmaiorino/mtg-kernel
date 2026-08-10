@@ -55,6 +55,21 @@ The digest-only fixture is `fixtures/solitaire_keep_transition_v1.json`. Its reg
 
 The current kernel `ActionSemanticV1` does not contain Keep or Mulligan. The trace therefore uses a separate adapter-only pregame semantic and makes no claim that the RL model can score mulligan decisions.
 
+## Supervised kernel Pass candidate
+
+One manual click on the visible Combat control was bracketed by another strict preview pair:
+
+| State | Capture | Frame SHA-256 |
+| --- | --- | --- |
+| First main, before Combat | `D:\mtgo-solitaire-before-combat-strict-20260809-2008` | `DC391839B56E5354A8EC5AA5E8FBEA0DA148D7BA4237E56EDD7C963E8A312A69` |
+| Second main, after Combat | `D:\mtgo-solitaire-after-combat-strict-20260809-2009` | `D8ACDC25FF3172C9AD3BE2344587C1DDB80ECB9C6C52E9E22DC645E41F01C070` |
+
+The prompt changed from first-main guidance with a Combat button to second-main guidance with an End Step button. The phase-bar highlight moved from the first Main marker to the second Main marker. Hand count, library count, life, battlefield, and visible log remained stable.
+
+The digest-only fixture is `fixtures/solitaire_pass_to_combat_transition_v1.json`. It uses a strict adapter action wrapper that accepts only local-seat Pass and rejects unknown fields or embedded coordinates before constructing `ActionSemanticV1::Pass { actor: P0 }`.
+
+This is an untrusted semantic-alignment candidate. MTGO's Combat control is a phase shortcut and may represent multiple internal priority transitions in a state with attackers, triggers, responses, or another player. The trace proves only that this empty-board Solitaire click produced the recorded visible transition.
+
 ## Visible layout observations
 
 - The current decision is explicit in the upper-left prompt: keep seven cards or mulligan to six.

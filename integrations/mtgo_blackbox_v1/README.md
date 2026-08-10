@@ -72,6 +72,10 @@ The checked result is deliberately named `CheckedUntrustedMtgoPregameCalibration
 
 This local semantic is separate because the current kernel `ActionSemanticV1` does not represent Keep or Mulligan. The first live trace therefore establishes adapter calibration and a visible postcondition, not model support for mulligan decisions.
 
+`MtgoGameplayCalibrationTraceV1` records the first adapter label that maps to a kernel semantic. V1 accepts only a local-seat `Pass`, binds the visible action-control region, and requires distinct prompt and phase-bar postconditions. Its strict adapter wrapper rejects coordinates or unknown fields inside the action label before constructing the exact kernel `ActionSemanticV1::Pass` value.
+
+The checked gameplay trace is still not a validated decision. It lacks a complete `ObservationV5`, complete ordered legal-action set, object bindings, trusted pixels, and measured semantic recognition. In particular, the MTGO Combat phase shortcut may correspond to more than one internal priority transition in some states. The current trace is a supervised alignment candidate, not proof of universal one-to-one action equivalence.
+
 ## Reviewed capture contract
 
 The Rust crate now defines an untrusted structural contract for the later production capture backend without implementing that backend. A calibration profile binds the exact bytes and decoded pixels of one manually reviewed preview, exact client identity, DPI, client size, monitor-output identity, canonical BGRA8 format, and stable pixel anchors. A separate review record must bind the profile and source preview and explicitly confirm that the preview is client-only, unobscured, cursor-free, identity-matched, and anchor-reviewed.
