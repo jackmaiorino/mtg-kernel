@@ -1,13 +1,15 @@
 use super::{
     build_card_aware_pregame_action_plan_v4, canonical_json_commitment_v3, capture_commitment_v3,
-    capture_mtgo_dxgi_frame_candidate_v3, measure_mtgo_dxgi_mulligan_ladder_candidate_v3,
+    capture_mtgo_dxgi_frame_candidate_v3, measure_mtgo_dxgi_first_main_candidate_v3,
+    measure_mtgo_dxgi_mulligan_ladder_candidate_v3,
     measure_mtgo_dxgi_mulligan_visible_hand_candidate_v3,
     score_and_select_card_aware_pregame_model_v4, sha256_hex_v1, CaptureManifestV2,
     CaptureWindowModeV2, MtgoDxgiCaptureRequestV3, MtgoDxgiFrameCommitmentsV3,
     MtgoExpectedModelDeploymentV1, MtgoExternalCardAwarePregameScorerV4,
-    MtgoOfflineMulliganLadderClassificationV1, MtgoOfflineVisibleCardIdentityClassificationV1,
-    MtgoOfflineVisibleCardIdentityV1, MtgoPlannedPregamePostconditionV3,
-    MtgoPregameActionSemanticV1, OpaqueMtgoCardAwarePregameModelSelectionV4,
+    MtgoOfflineFirstMainClassificationV1, MtgoOfflineMulliganLadderClassificationV1,
+    MtgoOfflineVisibleCardIdentityClassificationV1, MtgoOfflineVisibleCardIdentityV1,
+    MtgoPlannedPregamePostconditionV3, MtgoPregameActionSemanticV1,
+    OpaqueMtgoCardAwarePregameModelSelectionV4, OpaqueMtgoDxgiFirstMainMeasurementV3,
     OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoDxgiMulliganMeasurementV3,
     OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3, OpaqueMtgoPregameActionPlanV3, SignedRectV1,
 };
@@ -116,6 +118,82 @@ impl OpaqueMtgoPinnedSolitaireVisibleFrameV1 {
     pub fn into_checked_untrusted_perception_candidate_v1(self) -> OpaqueMtgoDxgiFrameCandidateV3 {
         self.source_frame
     }
+}
+
+/// A Turn 1 first-main measurement that preserves possession of the exact
+/// source-pinned Solitaire capture profile.
+///
+/// This is the first gameplay-state consumer of the pinned frame. The current
+/// classifier recognizes only the reviewed empty-battlefield first-main
+/// layout. The opaque value grants no semantic, observation, policy-scoring,
+/// or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1;
+/// let _forged = OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1>();
+/// ```
+pub struct OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1 {
+    profile_commitment_sha256: String,
+    measurement: OpaqueMtgoDxgiFirstMainMeasurementV3,
+}
+
+impl OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1 {
+    pub fn profile_commitment_sha256_v1(&self) -> &str {
+        &self.profile_commitment_sha256
+    }
+
+    pub fn source_capture_commitments_v1(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.measurement.source_capture_commitments_v3()
+    }
+
+    pub fn classification_v1(&self) -> MtgoOfflineFirstMainClassificationV1 {
+        self.measurement.classification_v3()
+    }
+
+    pub fn perception_profile_commitment_sha256_v1(&self) -> &str {
+        self.measurement.profile_commitment_sha256_v3()
+    }
+
+    pub fn measurement_commitment_sha256_v1(&self) -> &str {
+        self.measurement.measurement_commitment_sha256_v3()
+    }
+
+    pub fn safe_for_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_pinned_current_solitaire_first_main_v1(
+    source: OpaqueMtgoPinnedSolitaireVisibleFrameV1,
+) -> Result<OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1, String> {
+    let OpaqueMtgoPinnedSolitaireVisibleFrameV1 {
+        source_frame,
+        profile_commitment_sha256,
+    } = source;
+    require_current_pinned_profile_commitment_v1(&profile_commitment_sha256)?;
+    let measurement = measure_mtgo_dxgi_first_main_candidate_v3(source_frame)?;
+    Ok(OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1 {
+        profile_commitment_sha256,
+        measurement,
+    })
 }
 
 /// A mulligan-prompt measurement that preserves possession of the exact
