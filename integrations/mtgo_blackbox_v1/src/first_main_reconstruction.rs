@@ -201,6 +201,33 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 }
 
 #[cfg(test)]
+pub(crate) fn complete_first_main_reconstruction_for_test_v1(
+) -> CheckedUntrustedMtgoFirstMainReconstructionRefinementV1 {
+    use crate::{
+        complete_island_coverage_for_test_v1, derive_checked_untrusted_first_main_legal_actions_v1,
+        start_checked_untrusted_first_main_hand_object_ledger_v1,
+        validate_observation_reconstruction_audit_v1, MtgoObservationReconstructionAuditV1,
+    };
+    use mtg_kernel::rl::PlayerSeatV1;
+
+    let mut record: MtgoObservationReconstructionAuditV1 = serde_json::from_str(include_str!(
+        "../fixtures/solitaire_observation_reconstruction_audit_v1.json"
+    ))
+    .unwrap();
+    record.audit_id = "supported_first_main_reconstruction_test_v1".to_owned();
+    record.frame.manifest_sha256 = "2".repeat(64);
+    record.frame.frame_sha256 = "3".repeat(64);
+    let base = validate_observation_reconstruction_audit_v1(record).unwrap();
+    let coverage = complete_island_coverage_for_test_v1();
+    let ledger =
+        start_checked_untrusted_first_main_hand_object_ledger_v1(&coverage, PlayerSeatV1::P0)
+            .unwrap();
+    let actions = derive_checked_untrusted_first_main_legal_actions_v1(&coverage, &ledger).unwrap();
+    refine_checked_untrusted_first_main_reconstruction_v1(&base, &coverage, &ledger, &actions)
+        .unwrap()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
@@ -224,17 +251,7 @@ mod tests {
 
     #[test]
     fn exact_source_chain_resolves_only_objects_and_actions() {
-        let base = base_audit_v1();
-        let coverage = complete_island_coverage_for_test_v1();
-        let ledger =
-            start_checked_untrusted_first_main_hand_object_ledger_v1(&coverage, PlayerSeatV1::P0)
-                .unwrap();
-        let actions =
-            derive_checked_untrusted_first_main_legal_actions_v1(&coverage, &ledger).unwrap();
-        let refined = refine_checked_untrusted_first_main_reconstruction_v1(
-            &base, &coverage, &ledger, &actions,
-        )
-        .unwrap();
+        let refined = complete_first_main_reconstruction_for_test_v1();
 
         assert_eq!(refined.resolved_groups(), RESOLVED_GROUPS_V1);
         assert_eq!(refined.remaining_blocking_groups(), REMAINING_BLOCKERS_V1);

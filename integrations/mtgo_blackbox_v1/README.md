@@ -263,6 +263,8 @@ The fixed no-cost deck `mtgo-solitaire-fixed-basics-v1` narrows that universe to
 
 `refine_checked_untrusted_first_main_reconstruction_v1` binds that complete action result and the eight-object ledger back to the exact six-blocker Solitaire reconstruction audit for the same manifest and frame. It closes only `object_incarnations_and_card_db` and `complete_ordered_legal_actions`. The remaining blockers are distinct duel participants, second-player public state, distinct opponent zones, and kernel decision-history context. The refined wrapper still cannot create an observation, a model request, or input authority.
 
+`derive_checked_untrusted_first_main_kernel_context_v1` closes the kernel decision-history group only for that same exact reset-state first-main slice. Its engine, harness-surface, and policy-surface reset templates are pinned by a test against the kernel's own first `Main1` decision. It exposes only context hashes and leaves the three distinct-opponent observation groups blocked, so model readiness and input safety remain false.
+
 ```powershell
 cargo run --bin classify_mtgo_offline_mulligan_visible_card_identities_v1 -- `
   C:\absolute\artifact-directory `
