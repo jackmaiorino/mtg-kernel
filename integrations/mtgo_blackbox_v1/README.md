@@ -54,6 +54,14 @@ Example for an already-open spectated Standard game:
 
 Spectator-game output uses artifact kind `mtgo_visible_spectator_gameplay_calibration_preview_v1` and records `capture_role = spectator`. It is still only a local calibration preview. It is not accepted by the reviewed desktop-preview contract and grants no OCR, evidence, scoring, or input authority. A spectator frame may inform duel-window identity and coarse battlefield layout, but it must not calibrate player hand, prompt, priority, legal-action, target-selection, or input regions.
 
+The retained spectator reconstruction audit makes that separation executable:
+it can close visible duel participants and map the turn/phase layout, but it
+keeps acting-player priority, private knowledge, and the complete legal-action
+set blocked for every spectator source. The current Solitaire first-main
+calibration is also not a duel-state substitute. Solitaire has eight cards at
+that screen, while the kernel's trained starting-player first main correctly
+has seven after the first-turn draw skip.
+
 Example for an already-open Freeform Solitaire game:
 
 ```powershell

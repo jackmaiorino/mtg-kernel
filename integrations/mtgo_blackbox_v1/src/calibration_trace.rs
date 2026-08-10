@@ -57,12 +57,18 @@ pub enum MtgoCalibrationPreviewStatusV1 {
 pub enum MtgoCalibrationPreviewKindV1 {
     #[serde(rename = "mtgo_visible_solitaire_gameplay_calibration_preview_v1")]
     SolitaireGameplayCalibrationPreviewV1,
+    #[serde(rename = "mtgo_visible_spectator_gameplay_calibration_preview_v1")]
+    SpectatorGameplayCalibrationPreviewV1,
+    #[serde(rename = "mtgo_visible_acting_player_duel_gameplay_calibration_preview_v1")]
+    ActingPlayerDuelGameplayCalibrationPreviewV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MtgoCalibrationCaptureRoleV1 {
     ActingPlayerSolitaire,
+    Spectator,
+    ActingPlayerDuel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

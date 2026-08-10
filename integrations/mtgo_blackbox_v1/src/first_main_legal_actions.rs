@@ -19,6 +19,11 @@ const FIRST_MAIN_ACTION_COUNT_V1: usize = FIRST_MAIN_HAND_COUNT_V1 + 1;
 /// the unchanged object ledger. The action order matches the kernel surface:
 /// eight `PlayLand` candidates in object order, followed by `Pass`.
 ///
+/// The eight-card multiplicity is Solitaire-specific. The kernel correctly
+/// skips the starting player's first-turn draw in a duel, so its starting
+/// player reaches first main with seven cards. This checked value cannot be
+/// reused as a two-player starting-first-main legal-action set.
+///
 /// This type deliberately exposes only counts and commitments. It is not a
 /// complete MTGO decision because no two-player `ObservationV5`, current-frame
 /// provenance, or visible control set exists yet.
@@ -61,6 +66,10 @@ impl CheckedUntrustedMtgoFirstMainLegalActionsV1 {
 
     pub fn action_set_commitment_sha256(&self) -> &str {
         &self.action_set_commitment_sha256
+    }
+
+    pub fn compatible_with_two_player_starting_first_main(&self) -> bool {
+        false
     }
 
     pub fn safe_for_observation_v5(&self) -> bool {
@@ -219,6 +228,7 @@ mod tests {
         assert!(!actions.safe_for_observation_v5());
         assert!(!actions.safe_for_policy_scoring());
         assert!(!actions.safe_for_input());
+        assert!(!actions.compatible_with_two_player_starting_first_main());
     }
 
     #[test]

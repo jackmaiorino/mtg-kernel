@@ -1,6 +1,6 @@
 use crate::{
-    MtgoCalibrationFrameReferenceV1, MtgoContractErrorV1, MtgoRectPxV1,
-    MtgoVisibleRegionCommitmentV1,
+    MtgoCalibrationCaptureRoleV1, MtgoCalibrationFrameReferenceV1, MtgoCalibrationPreviewKindV1,
+    MtgoContractErrorV1, MtgoRectPxV1, MtgoVisibleRegionCommitmentV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -111,6 +111,10 @@ impl CheckedUntrustedMtgoObservationReconstructionAuditV1 {
         &self.record.frame.manifest_sha256
     }
 
+    pub fn capture_role(&self) -> MtgoCalibrationCaptureRoleV1 {
+        self.record.frame.capture_role
+    }
+
     pub fn blocking_groups(&self) -> &[MtgoObservationReconstructionGroupV1] {
         &self.blocking_groups
     }
@@ -143,6 +147,7 @@ pub fn validate_observation_reconstruction_audit_v1(
     }
     validate_safe_identifier_v1(&record.audit_id, "reconstruction_audit_id_invalid", 128)?;
     validate_frame_v1(&record.frame)?;
+    validate_topology_frame_role_v1(record.topology, &record.frame)?;
 
     if record.groups.len() != REQUIRED_GROUPS_V1.len() {
         return Err(MtgoContractErrorV1::new(
@@ -174,6 +179,23 @@ pub fn validate_observation_reconstruction_audit_v1(
             group.group == MtgoObservationReconstructionGroupV1::CompleteOrderedLegalActions
         })
         .expect("required canonical group exists");
+    if record.frame.capture_role == MtgoCalibrationCaptureRoleV1::Spectator {
+        validate_spectator_limit_v1(
+            &record,
+            MtgoObservationReconstructionGroupV1::TurnPhaseAndPriority,
+            "spectator_priority_not_acting_player_equivalent",
+        )?;
+        validate_spectator_limit_v1(
+            &record,
+            MtgoObservationReconstructionGroupV1::ActingPlayerPrivateKnowledge,
+            "spectator_role_cannot_supply_acting_private_knowledge",
+        )?;
+        validate_spectator_limit_v1(
+            &record,
+            MtgoObservationReconstructionGroupV1::CompleteOrderedLegalActions,
+            "spectator_role_cannot_supply_acting_legal_actions",
+        )?;
+    }
     let legal_action_set_complete =
         legal_group.status == MtgoReconstructionStatusV1::VisibleComplete;
     let observation_complete = record.topology == MtgoReconstructionTopologyV1::TwoPlayerDuel
@@ -223,6 +245,62 @@ pub fn validate_observation_reconstruction_audit_v1(
         blocking_groups,
         audit_commitment_sha256,
     })
+}
+
+fn validate_topology_frame_role_v1(
+    topology: MtgoReconstructionTopologyV1,
+    frame: &MtgoCalibrationFrameReferenceV1,
+) -> Result<(), MtgoContractErrorV1> {
+    let compatible = matches!(
+        (topology, frame.artifact_kind, frame.capture_role),
+        (
+            MtgoReconstructionTopologyV1::SolitaireCalibration,
+            MtgoCalibrationPreviewKindV1::SolitaireGameplayCalibrationPreviewV1,
+            MtgoCalibrationCaptureRoleV1::ActingPlayerSolitaire,
+        ) | (
+            MtgoReconstructionTopologyV1::TwoPlayerDuel,
+            MtgoCalibrationPreviewKindV1::SpectatorGameplayCalibrationPreviewV1,
+            MtgoCalibrationCaptureRoleV1::Spectator,
+        ) | (
+            MtgoReconstructionTopologyV1::TwoPlayerDuel,
+            MtgoCalibrationPreviewKindV1::ActingPlayerDuelGameplayCalibrationPreviewV1,
+            MtgoCalibrationCaptureRoleV1::ActingPlayerDuel,
+        )
+    );
+    if !compatible {
+        return Err(MtgoContractErrorV1::new(
+            "reconstruction_audit_frame_role_mismatch",
+            format!(
+                "topology={topology:?},artifact={:?},role={:?}",
+                frame.artifact_kind, frame.capture_role
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_spectator_limit_v1(
+    record: &MtgoObservationReconstructionAuditV1,
+    group: MtgoObservationReconstructionGroupV1,
+    required_reason: &'static str,
+) -> Result<(), MtgoContractErrorV1> {
+    let group_audit = record
+        .groups
+        .iter()
+        .find(|candidate| candidate.group == group)
+        .expect("required canonical group exists");
+    if group_audit.status != MtgoReconstructionStatusV1::Incomplete
+        || !group_audit
+            .missing_reason_codes
+            .iter()
+            .any(|reason| reason == required_reason)
+    {
+        return Err(MtgoContractErrorV1::new(
+            "reconstruction_audit_spectator_authority_forbidden",
+            format!("group={group:?},required_reason={required_reason}"),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_group_audit_v1(

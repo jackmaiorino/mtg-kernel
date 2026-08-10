@@ -10,6 +10,8 @@ use mtg_kernel::rl::{
 use sha2::{Digest, Sha256};
 
 const FIRST_MAIN_KERNEL_CONTEXT_DOMAIN_V1: &[u8] = b"mtgo-first-main-kernel-context-v1";
+const SOLITAIRE_FIRST_MAIN_HAND_COUNT_V1: u8 = 8;
+const KERNEL_STARTING_PLAYER_FIRST_MAIN_HAND_COUNT_V1: u8 = 7;
 
 const EXPECTED_INPUT_BLOCKERS_V1: [MtgoObservationReconstructionGroupV1; 4] = [
     MtgoObservationReconstructionGroupV1::DuelParticipants,
@@ -29,8 +31,11 @@ const REMAINING_BLOCKERS_V1: [MtgoObservationReconstructionGroupV1; 3] = [
 ///
 /// The template is tested against the kernel's own first policy decision. It
 /// records the reset engine, harness-surface, and policy-surface commitments
-/// without exposing those structs. Distinct opponent state remains absent, so
-/// the result cannot create an `ObservationV5`, a model request, or input.
+/// without exposing those structs. Only the context shape transfers. MTGO
+/// Solitaire reaches this screen with eight cards, while the kernel's trained
+/// two-player starting player correctly skips the first-turn draw and has
+/// seven. Distinct opponent state also remains absent, so the result cannot
+/// create an `ObservationV5`, a model request, or input.
 ///
 /// ```compile_fail
 /// use mtgo_blackbox_v1::CheckedUntrustedMtgoFirstMainKernelContextV1;
@@ -91,6 +96,18 @@ impl CheckedUntrustedMtgoFirstMainKernelContextV1 {
 
     pub fn context_commitment_sha256(&self) -> &str {
         &self.context_commitment_sha256
+    }
+
+    pub fn solitaire_source_hand_count(&self) -> u8 {
+        SOLITAIRE_FIRST_MAIN_HAND_COUNT_V1
+    }
+
+    pub fn kernel_starting_player_first_main_hand_count(&self) -> u8 {
+        KERNEL_STARTING_PLAYER_FIRST_MAIN_HAND_COUNT_V1
+    }
+
+    pub fn full_decision_compatible_with_two_player_starting_first_main(&self) -> bool {
+        false
     }
 
     pub fn safe_for_input(&self) -> bool {
@@ -248,6 +265,14 @@ mod tests {
             observation.projection.policy_surface_context,
             initial_policy_surface_context_v1()
         );
+        assert_eq!(
+            observation.own_hand.len(),
+            usize::from(KERNEL_STARTING_PLAYER_FIRST_MAIN_HAND_COUNT_V1)
+        );
+        assert_eq!(
+            observation.projection.surface.hand_counts[0],
+            usize::from(KERNEL_STARTING_PLAYER_FIRST_MAIN_HAND_COUNT_V1)
+        );
     }
 
     #[test]
@@ -264,6 +289,9 @@ mod tests {
         assert!(!context.observation_complete());
         assert!(!context.ready_for_model_scoring());
         assert!(!context.safe_for_input());
+        assert_eq!(context.solitaire_source_hand_count(), 8);
+        assert_eq!(context.kernel_starting_player_first_main_hand_count(), 7);
+        assert!(!context.full_decision_compatible_with_two_player_starting_first_main());
         assert_eq!(context.context_commitment_sha256().len(), 64);
     }
 }

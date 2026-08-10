@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "audit_id": "spectator_duel_observation_gap_audit_20260809_182554",
+  "topology": "two_player_duel",
+  "frame": {
+    "sequence": 1,
+    "manifest_sha256": "a2be0a5603261ec3108f16287366f2b359fe8aacef68593119255c45a21da259",
+    "frame_sha256": "608711889a7ba21c6228653a6ebbd0f1ed9634b8b61fc7cb298aa920d9f2ec2f",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_spectator_gameplay_calibration_preview_v1",
+    "capture_role": "spectator",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "groups": [
+    {
+      "group": "duel_participants",
+      "status": "visible_complete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 260, "y": 0, "width": 900, "height": 30 },
+          "bgra8_sha256": "e7de305ab063202865a3fb9baabad0ee9fe94204b34209a0279dec3327faabc9"
+        }
+      ],
+      "missing_reason_codes": []
+    },
+    {
+      "group": "turn_phase_and_priority",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 10, "y": 340, "width": 200, "height": 204 },
+          "bgra8_sha256": "4ad8566a105f51f1e689b47d44fe7a7ffc1b0f7daabe2dd7ce49a1e1ecd6f42f"
+        },
+        {
+          "rect_client_px": { "x": 310, "y": 688, "width": 990, "height": 45 },
+          "bgra8_sha256": "019e27d8bae8a60539c906cbd2cb5fb9e513ac197ea43445ec84783ac40afc88"
+        }
+      ],
+      "missing_reason_codes": [
+        "spectator_priority_not_acting_player_equivalent"
+      ]
+    },
+    {
+      "group": "player_public_state",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 10, "y": 31, "width": 200, "height": 245 },
+          "bgra8_sha256": "b0f7872b866efb3ed73153185615aa6322896595d917b9ac08feb6e03c50674f"
+        },
+        {
+          "rect_client_px": { "x": 10, "y": 545, "width": 200, "height": 245 },
+          "bgra8_sha256": "0f3b123ad24d52e0d921754b3291b7844b5fadfb81736cfa3ec2a903626fcbf2"
+        }
+      ],
+      "missing_reason_codes": [
+        "mana_pools_not_reconstructed",
+        "player_status_history_not_reconstructed"
+      ]
+    },
+    {
+      "group": "public_objects_and_zones",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 310, "y": 31, "width": 990, "height": 657 },
+          "bgra8_sha256": "016838545efce779ca2781a4a565638e501cf1b147f62c75a0724d8306e0edb1"
+        }
+      ],
+      "missing_reason_codes": [
+        "object_identity_and_zone_membership_not_complete",
+        "stacked_card_multiplicity_not_reconstructed"
+      ]
+    },
+    {
+      "group": "acting_player_private_knowledge",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 210, "y": 31, "width": 100, "height": 759 },
+          "bgra8_sha256": "f13b221ae2f2ec22e61ac9bc05e982f12f3b5c66712ddea7fe845d7630977e6f"
+        }
+      ],
+      "missing_reason_codes": [
+        "spectator_role_cannot_supply_acting_private_knowledge",
+        "spectator_frame_exposes_both_private_hands"
+      ]
+    },
+    {
+      "group": "stack_combat_and_pending_choices",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 310, "y": 31, "width": 990, "height": 657 },
+          "bgra8_sha256": "016838545efce779ca2781a4a565638e501cf1b147f62c75a0724d8306e0edb1"
+        }
+      ],
+      "missing_reason_codes": [
+        "pending_choice_not_observable_in_spectator_role",
+        "combat_assignments_not_reconstructed"
+      ]
+    },
+    {
+      "group": "kernel_decision_history_context",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 1307, "y": 31, "width": 233, "height": 884 },
+          "bgra8_sha256": "fff8f8d0b3ce7c71137d21ff480ea6a0c8e2bd59ae364202c0267e603a42e36c"
+        }
+      ],
+      "missing_reason_codes": [
+        "kernel_priority_history_not_reconstructed",
+        "kernel_recent_activity_context_not_reconstructed"
+      ]
+    },
+    {
+      "group": "object_incarnations_and_card_db",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 310, "y": 31, "width": 990, "height": 657 },
+          "bgra8_sha256": "016838545efce779ca2781a4a565638e501cf1b147f62c75a0724d8306e0edb1"
+        }
+      ],
+      "missing_reason_codes": [
+        "stable_object_bindings_not_complete",
+        "zone_change_incarnations_not_complete",
+        "visible_cards_not_bound_to_kernel_card_db"
+      ]
+    },
+    {
+      "group": "complete_ordered_legal_actions",
+      "status": "incomplete",
+      "visible_regions": [
+        {
+          "rect_client_px": { "x": 0, "y": 0, "width": 1550, "height": 925 },
+          "bgra8_sha256": "608711889a7ba21c6228653a6ebbd0f1ed9634b8b61fc7cb298aa920d9f2ec2f"
+        }
+      ],
+      "missing_reason_codes": [
+        "spectator_role_cannot_supply_acting_legal_actions",
+        "enabled_controls_not_visible_for_acting_player"
+      ]
+    },
+    {
+      "group": "kernel_contract_metadata",
+      "status": "local_derived_complete",
+      "visible_regions": [],
+      "missing_reason_codes": []
+    }
+  ],
+  "observation_complete": false,
+  "legal_action_set_complete": false,
+  "ready_for_model_scoring": false
+}
