@@ -1,0 +1,82 @@
+{
+  "schema_version": 2,
+  "corpus_id": "freeform-solitaire-first-main-binary-controls-three-games-20260810-v2",
+  "profile_commitment_sha256": "6949549bfcfa6ea2d339996d5d9b252f4a60b4c79b0a14cf55584f1efde2810f",
+  "samples": [
+    {
+      "sample_id": "game-958659998-first-main-after-bottom-six",
+      "human_label": "turn_one_first_main",
+      "manifest_sha256": "a78ae07ccdddcb716b2d2245aa979101227e18bd75a58215906a75a846a1b33a",
+      "canonical_bgra8_sha256": "e21fa4450c302e7027083136edd9e8f7180354a3ea2fbd1f7645c2d2920c6395",
+      "preview_png_sha256": "626211583f10eb0f8181feb598f3af3444ee541e45e11ad952f9cff93544d231",
+      "classification": "match",
+      "matched_feature_count": 4,
+      "candidate_commitment_sha256": "c3b5f7be1b709cd9f32429c49b1b351b290a935c41e2df6cd065d4413fb56caf"
+    },
+    {
+      "sample_id": "fixed-deck-game1-first-main",
+      "human_label": "turn_one_first_main",
+      "manifest_sha256": "c7d9b18811fb7e996e914b95872644cb32b744d6cfe92e62379f6ccef2cc9325",
+      "canonical_bgra8_sha256": "5648e5da210040f1438edc31d30e232e4fc746ab5cc852c9b531166c4f934e2a",
+      "preview_png_sha256": "5f20d1e0926dda119729a151385e283e38d6ded4c6412ce397a365483cba5859",
+      "classification": "match",
+      "matched_feature_count": 4,
+      "candidate_commitment_sha256": "cabf5bd8112a9cca7a8a62d468c4635f4603c7bd473a4beb6907f3e277e97de7"
+    },
+    {
+      "sample_id": "fixed-deck-game2-opening-seven",
+      "human_label": "not_turn_one_first_main",
+      "manifest_sha256": "a29887b9b64d96cccab3eb2e49f16261155aa1d9bc8a04706a63e3b1f9a50c78",
+      "canonical_bgra8_sha256": "06c484c27bde548dc573fb59de615454c01095a5fb41988561324cbc9dc1ee81",
+      "preview_png_sha256": "1c35be0da4c0694560fba535f85c3aa405ea3ba2f0fea0dc3dd064430bfdce47",
+      "classification": "no_match",
+      "matched_feature_count": 2,
+      "candidate_commitment_sha256": "02937d797be0d7aa7f403b5259a28fdb7c65665a12fd89c4f3038bc76437ab2d"
+    },
+    {
+      "sample_id": "fixed-deck-game2-mulligan-one",
+      "human_label": "not_turn_one_first_main",
+      "manifest_sha256": "3efecce94d1a0f55eb6779aefc43d7c0f475c35fd22f8682008c5eb8fac467c1",
+      "canonical_bgra8_sha256": "555af1e8df2952096b078b6c406076bdae6befd03df08c9cdd8b996d30deb5a9",
+      "preview_png_sha256": "b3c2614e0f2e468aa8fddaa012948eb584eb72480d7f73a47733016177ba949e",
+      "classification": "no_match",
+      "matched_feature_count": 2,
+      "candidate_commitment_sha256": "3ae6700b0841a4df360d0f093eaf3dfc4486711f94362e3f0e7c879c03c213ca"
+    },
+    {
+      "sample_id": "fixed-deck-game2-bottoming-zero",
+      "human_label": "not_turn_one_first_main",
+      "manifest_sha256": "f84f48a323768ca91d99ba2edd95500b0eb9e1ebc090c644550bb2fc353b5845",
+      "canonical_bgra8_sha256": "02c41555ccbc807a6010fdcaaf730892a199578da204362dc5e34345132ea847",
+      "preview_png_sha256": "2fb59198a75863d9e91a7f552fe5f2b6461c90d3a9e1d67d75257006eeedf843",
+      "classification": "no_match",
+      "matched_feature_count": 2,
+      "candidate_commitment_sha256": "31460bbc5bfad94378ccfd34787fafd4b8480d4870fb08d6e5e814a3d8014a91"
+    },
+    {
+      "sample_id": "fixed-deck-game1-bottoming-six",
+      "human_label": "not_turn_one_first_main",
+      "manifest_sha256": "6a7d6f4eb4e0817bfe7c671d5a91a3444bffb041b7006063c4b29c0bff28db50",
+      "canonical_bgra8_sha256": "d5c085584d67d9a3d297aa16f006ade2f6308df7d642999dc4f7e9f4d992b942",
+      "preview_png_sha256": "fccc5a75d45cbb21d4af2a397b1879bdfa96fe45fb05191ec3090eb979dbb61c",
+      "classification": "no_match",
+      "matched_feature_count": 2,
+      "candidate_commitment_sha256": "9414d7c9af0630483299450bf2ab773daeb73d26582c1339b6ee6bbe238005f2"
+    }
+  ],
+  "confusion": {
+    "true_positive": 2,
+    "true_negative": 4,
+    "false_positive": 0,
+    "false_negative": 0
+  },
+  "distinct_games": 3,
+  "positive_game_count": 2,
+  "sample_count": 6,
+  "nonclaim": "Two positive games and four nearby negatives are narrow one-layout robustness evidence, not an accuracy estimate or evidence for a populated battlefield, another phase, another layout, or competitive play.",
+  "safe_for_live_frame": false,
+  "safe_for_semantic_evidence": false,
+  "safe_for_observation_v5": false,
+  "safe_for_policy_scoring": false,
+  "safe_for_input": false
+}

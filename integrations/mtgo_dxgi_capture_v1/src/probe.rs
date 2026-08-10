@@ -10,11 +10,11 @@ use mtgo_blackbox_v1::{
     classify_untrusted_offline_bottom_six_reflow_candidate_v2,
     classify_untrusted_offline_bottom_six_state_candidate_v3,
     classify_untrusted_offline_bottom_six_visible_card_identities_v3,
-    classify_untrusted_offline_first_main_candidate_v1,
+    classify_untrusted_offline_first_main_candidate_v2,
     classify_untrusted_offline_mulligan_ladder_candidate_v2, model_deployment_commitment_v1,
     CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1,
     CheckedUntrustedMtgoOfflineBottomSixStateCandidateV3,
-    CheckedUntrustedMtgoOfflineFirstMainCandidateV1,
+    CheckedUntrustedMtgoOfflineFirstMainCandidateV2,
     CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1,
     CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV3,
     CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1, MtgoExpectedModelDeploymentV1,
@@ -773,7 +773,7 @@ pub fn measure_mtgo_dxgi_bottom_six_reflow_candidate_v3(
 /// ```
 pub struct OpaqueMtgoDxgiFirstMainMeasurementV3 {
     source_frame: OpaqueMtgoDxgiFrameCandidateV3,
-    measurement: CheckedUntrustedMtgoOfflineFirstMainCandidateV1,
+    measurement: CheckedUntrustedMtgoOfflineFirstMainCandidateV2,
 }
 
 impl OpaqueMtgoDxgiFirstMainMeasurementV3 {
@@ -821,7 +821,7 @@ pub fn measure_mtgo_dxgi_first_main_candidate_v3(
     )
     .map_err(|error| format!("check opaque first-main capture: {error}"))?;
     let measurement =
-        classify_untrusted_offline_first_main_candidate_v1(&checked, &source_frame.canonical_bgra8)
+        classify_untrusted_offline_first_main_candidate_v2(&checked, &source_frame.canonical_bgra8)
             .map_err(|error| format!("classify opaque first-main capture: {error}"))?;
     Ok(OpaqueMtgoDxgiFirstMainMeasurementV3 {
         source_frame,

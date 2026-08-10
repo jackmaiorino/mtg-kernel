@@ -95,6 +95,7 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
     assert!(source.contains(
         "pub fn measure_mtgo_dxgi_first_main_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
     ));
+    assert!(source.contains("measurement: CheckedUntrustedMtgoOfflineFirstMainCandidateV2,"));
     assert!(source.contains(
         "pub fn measure_mtgo_dxgi_bottom_six_initial_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
     ));
@@ -120,6 +121,7 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
         "classify_untrusted_offline_bottom_six_state_candidate_v3",
         "classify_untrusted_offline_bottom_six_reflow_candidate_v2",
         "classify_untrusted_offline_bottom_six_visible_card_identities_v3",
+        "classify_untrusted_offline_first_main_candidate_v2",
     ] {
         assert!(
             source.contains(current_classifier),

@@ -162,13 +162,15 @@ cargo run --bin classify_mtgo_offline_mulligan_ladder_candidate_v2 -- 'C:\absolu
 
 `classify_untrusted_offline_first_main_candidate_v1` recognizes one narrow post-Keep outcome. Its fixed exact-pixel profile binds the visible first-main prompt, Combat control, Turn 1 label, and empty upper battlefield. Those four regions were identical in two reviewed acting-player Solitaire captures: one after a seven-card Keep and one after completing a six-card London bottoming sequence. The result is checked-untrusted, retains no pixels or coordinates, and does not create `ObservationV5`, policy, or input authority.
 
+`classify_untrusted_offline_first_main_candidate_v2` preserves the exact Turn 1 and empty-battlefield regions and replaces only the prompt and Combat control with dark-core binary ink masks at threshold 182. The two raw regions drifted in a later fixed-deck first-main capture while both binary masks and the other two exact regions remained unchanged.
+
 The read-only classifier can be run on an offline artifact with:
 
 ```powershell
-cargo run --bin classify_mtgo_offline_first_main_candidate_v1 -- 'C:\absolute\artifact-directory'
+cargo run --bin classify_mtgo_offline_first_main_candidate_v2 -- 'C:\absolute\artifact-directory'
 ```
 
-The first-main corpus is `fixtures/offline_first_main_classifier_corpus_20260810_v1.json`: two positive and two negative manually inspected frames from two no-cost Freeform Solitaire games. Both first-main frames matched, while an opening-hand prompt and a bottoming prompt did not. A later fixed-deck first-main frame matched only two of the four exact regions, so the v1 matcher correctly returned `NoMatch` and that frame was not promoted into the positive corpus. This is wiring evidence, not an accuracy estimate or evidence of generalization. The empty-battlefield anchor also deliberately limits this profile to the current basic-land Solitaire calibration scenario.
+The historical exact-pixel corpus remains `fixtures/offline_first_main_classifier_corpus_20260810_v1.json`. The v2 corpus is `fixtures/offline_first_main_classifier_corpus_20260810_v2.json`: two positive first-main frames across two games and four opening, mulligan, or bottoming negatives across three games total. The later fixed-deck positive is the renderer-drift frame that v1 rejected. All six v2 classifications matched their supervised labels. This is wiring and narrow robustness evidence, not an accuracy estimate or evidence of generalization. The exact empty-battlefield anchor deliberately limits this profile to the current basic-land Solitaire calibration scenario.
 
 Exactly one of the seven prompt profiles must match before the result exposes a prospective keep size and ordered adapter-local actions. A zero-match or multi-match result exposes no actions. Every result retains no pixels or coordinates and remains unsafe for a live frame, semantic evidence, `ObservationV5`, policy scoring, or input.
 
