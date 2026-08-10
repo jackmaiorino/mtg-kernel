@@ -1606,8 +1606,8 @@ struct PregameActionPlanPartsV3 {
     action_plan_commitment_sha256: String,
 }
 
-/// A coordinate-private plan for one model-selected pregame
-/// control. The plan binds the exact source capture, measured prompt, model
+/// A coordinate-private plan for one scorer-selected pregame
+/// control. The plan binds the exact source capture, measured prompt, scorer
 /// selection, fixed client layout, observed control pixels, and required
 /// visible postcondition. It cannot perform or authorize input by itself.
 ///
@@ -1629,8 +1629,36 @@ struct PregameActionPlanPartsV3 {
 /// }
 /// ```
 pub struct OpaqueMtgoPregameActionPlanV3 {
-    selection: OpaqueMtgoPregameModelSelectionV3,
+    selection: PregameActionPlanSelectionV3,
     parts: PregameActionPlanPartsV3,
+}
+
+enum PregameActionPlanSelectionV3 {
+    PromptOnly(Box<OpaqueMtgoPregameModelSelectionV3>),
+    CardAware(Box<OpaqueMtgoCardAwarePregameModelSelectionV4>),
+}
+
+impl PregameActionPlanSelectionV3 {
+    fn measurement_v3(&self) -> &OpaqueMtgoDxgiMulliganMeasurementV3 {
+        match self {
+            Self::PromptOnly(selection) => &selection.measurement,
+            Self::CardAware(selection) => &selection.measurement.source,
+        }
+    }
+
+    fn selected_semantic_v3(&self) -> &MtgoPregameActionSemanticV1 {
+        match self {
+            Self::PromptOnly(selection) => selection.selected_semantic_v3(),
+            Self::CardAware(selection) => selection.selected_semantic_v4(),
+        }
+    }
+
+    fn selection_commitment_sha256_v3(&self) -> &str {
+        match self {
+            Self::PromptOnly(selection) => selection.selection_commitment_sha256_v3(),
+            Self::CardAware(selection) => selection.selection_commitment_sha256_v4(),
+        }
+    }
 }
 
 pub(crate) struct PreparedPregameActuationV3 {
@@ -1670,7 +1698,7 @@ impl OpaqueMtgoPregameActionPlanV3 {
     pub fn source_capture_commitment_sha256_v3(&self) -> &str {
         &self
             .selection
-            .measurement
+            .measurement_v3()
             .source_frame
             .capture_commitment_sha256
     }
@@ -1835,7 +1863,37 @@ pub fn build_pregame_action_plan_v3(
         &source_transition_identity_sha256,
         &measurement.source_frame.canonical_bgra8,
     )?;
-    Ok(OpaqueMtgoPregameActionPlanV3 { selection, parts })
+    Ok(OpaqueMtgoPregameActionPlanV3 {
+        selection: PregameActionPlanSelectionV3::PromptOnly(Box::new(selection)),
+        parts,
+    })
+}
+
+/// Builds the same coordinate-private pregame plan from a card-aware v4
+/// selection. The v4 selection commitment already binds all seven visible
+/// labels and the exact scorer response. This function adds no input authority.
+pub fn build_card_aware_pregame_action_plan_v4(
+    selection: OpaqueMtgoCardAwarePregameModelSelectionV4,
+) -> Result<OpaqueMtgoPregameActionPlanV3, String> {
+    let measurement = &selection.measurement;
+    let source = &measurement.source;
+    let capture = source.source_capture_commitments_v3();
+    let source_transition_identity_sha256 =
+        pregame_transition_identity_commitment_v3(&source.source_frame.manifest)?;
+    let parts = build_pregame_action_plan_parts_v3(
+        selection.selected_semantic_v4(),
+        measurement.prospective_keep_size_v3(),
+        measurement.mulligan_profile_set_commitment_sha256_v3(),
+        selection.selection_commitment_sha256_v4(),
+        measurement.mulligan_measurement_commitment_sha256_v3(),
+        &capture,
+        &source_transition_identity_sha256,
+        &source.source_frame.canonical_bgra8,
+    )?;
+    Ok(OpaqueMtgoPregameActionPlanV3 {
+        selection: PregameActionPlanSelectionV3::CardAware(Box::new(selection)),
+        parts,
+    })
 }
 
 pub(crate) fn prepare_pregame_actuation_v3(
@@ -1848,7 +1906,7 @@ pub(crate) fn prepare_pregame_actuation_v3(
     {
         return Err("the visible account alias is invalid".to_owned());
     }
-    let source = &plan.selection.measurement.source_frame;
+    let source = &plan.selection.measurement_v3().source_frame;
     let expected_title = format!("(Solitaire): Freeform: Vs. {account_alias}");
     if source.manifest.pre.title != expected_title
         || source.manifest.post.title != expected_title
@@ -1878,7 +1936,7 @@ pub(crate) fn prepare_pregame_actuation_v3(
         &current_frame.canonical_bgra8,
         &current_frame.preview_png,
     )?;
-    let source_measurement = &plan.selection.measurement.measurement;
+    let source_measurement = &plan.selection.measurement_v3().measurement;
     if current_measurement.classification() != MtgoOfflineMulliganLadderClassificationV1::Match
         || current_measurement.prospective_keep_size() != source_measurement.prospective_keep_size()
         || current_measurement.ordered_actions() != source_measurement.ordered_actions()
@@ -1891,6 +1949,34 @@ pub(crate) fn prepare_pregame_actuation_v3(
             "the immediate visible prompt, legal actions, identity, or capture order changed"
                 .to_owned(),
         );
+    }
+    if let PregameActionPlanSelectionV3::CardAware(selection) = &plan.selection {
+        let source_card_measurement = &selection.measurement.measurement;
+        let checked_current = check_untrusted_dxgi_capture_artifact_v1(
+            &serialize_manifest_v2(&current_frame.manifest)?,
+            &current_frame.canonical_bgra8,
+            &current_frame.preview_png,
+        )
+        .map_err(|error| format!("check immediate card-aware pregame capture: {error}"))?;
+        let current_card_measurement =
+            classify_untrusted_offline_mulligan_visible_card_identities_v1(
+                &checked_current,
+                &current_frame.canonical_bgra8,
+                &selection.measurement.profile,
+            )
+            .map_err(|error| format!("classify immediate card-aware pregame hand: {error}"))?;
+        if current_card_measurement.classification()
+            != MtgoOfflineVisibleCardIdentityClassificationV1::Match
+            || current_card_measurement.prospective_keep_size()
+                != source_card_measurement.prospective_keep_size()
+            || current_card_measurement.profile_commitment_sha256()
+                != source_card_measurement.profile_commitment_sha256()
+            || current_card_measurement.identities() != source_card_measurement.identities()
+        {
+            return Err(
+                "the immediate visible card identities changed after card-aware scoring".to_owned(),
+            );
+        }
     }
 
     let current_control_region_sha256 = hash_bgra_region_for_plan_v3(
@@ -1941,7 +2027,7 @@ pub(crate) fn prepare_pregame_actuation_v3(
         current_capture_commitment_sha256: current_frame.capture_commitment_sha256,
         current_captured_at_unix_millis: current_frame.manifest.captured_at_unix_millis,
         action_plan_commitment_sha256: plan.parts.action_plan_commitment_sha256.clone(),
-        selected_semantic: plan.selection.selected_semantic.clone(),
+        selected_semantic: plan.selection.selected_semantic_v3().clone(),
         planned_postcondition: plan.parts.planned_postcondition.clone(),
     })
 }
@@ -1978,7 +2064,10 @@ pub fn confirm_pregame_mulligan_transition_v3(
     plan: OpaqueMtgoPregameActionPlanV3,
     after: OpaqueMtgoDxgiMulliganMeasurementV3,
 ) -> Result<OpaqueMtgoConfirmedMulliganTransitionV3, String> {
-    let source_capture = plan.selection.measurement.source_capture_commitments_v3();
+    let source_capture = plan
+        .selection
+        .measurement_v3()
+        .source_capture_commitments_v3();
     let after_capture = after.source_capture_commitments_v3();
     let after_transition_identity_sha256 =
         pregame_transition_identity_commitment_v3(&after.source_frame.manifest)?;
@@ -2009,7 +2098,10 @@ pub fn confirm_pregame_keep_to_bottom_six_transition_v3(
     plan: OpaqueMtgoPregameActionPlanV3,
     after: OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
 ) -> Result<OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, String> {
-    let source_capture = plan.selection.measurement.source_capture_commitments_v3();
+    let source_capture = plan
+        .selection
+        .measurement_v3()
+        .source_capture_commitments_v3();
     let after_capture = after.source_capture_commitments_v3();
     let after_transition_identity_sha256 =
         pregame_transition_identity_commitment_v3(&after.source_frame.manifest)?;
@@ -2037,7 +2129,10 @@ pub fn confirm_pregame_keep_to_first_main_transition_v3(
     plan: OpaqueMtgoPregameActionPlanV3,
     after: OpaqueMtgoDxgiFirstMainMeasurementV3,
 ) -> Result<OpaqueMtgoConfirmedKeepToFirstMainTransitionV3, String> {
-    let source_capture = plan.selection.measurement.source_capture_commitments_v3();
+    let source_capture = plan
+        .selection
+        .measurement_v3()
+        .source_capture_commitments_v3();
     let after_capture = after.source_capture_commitments_v3();
     let after_transition_identity_sha256 =
         pregame_transition_identity_commitment_v3(&after.source_frame.manifest)?;

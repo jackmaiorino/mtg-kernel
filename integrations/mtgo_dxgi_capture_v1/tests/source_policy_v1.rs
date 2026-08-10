@@ -134,7 +134,13 @@ fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
         "pub fn validate_card_aware_pregame_score_response_v4(\n    measurement: OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,"
     ));
     assert!(source.contains("ordered_visible_card_names: Vec<String>"));
-    assert!(!source.contains("pub fn build_pregame_action_plan_v4"));
+    assert!(source.contains(
+        "pub fn build_card_aware_pregame_action_plan_v4(\n    selection: OpaqueMtgoCardAwarePregameModelSelectionV4,"
+    ));
+    assert!(source.contains("CardAware(Box<OpaqueMtgoCardAwarePregameModelSelectionV4>)"));
+    assert!(
+        source.contains("the immediate visible card identities changed after card-aware scoring")
+    );
     for required in [
         "pub fn start_card_aware_bottoming_session_v5(",
         "pub fn score_and_select_card_aware_bottoming_model_v5<",

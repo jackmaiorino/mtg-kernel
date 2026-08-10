@@ -19,9 +19,9 @@ pub use actuator::{
 #[cfg(target_os = "windows")]
 pub use probe::{
     build_card_aware_bottoming_action_plan_v5, build_card_aware_bottoming_scoring_request_v5,
-    build_card_aware_pregame_scoring_request_v4, build_pregame_action_plan_v3,
-    build_pregame_scoring_request_v3, capture_mtgo_dxgi_frame_candidate_v3,
-    capture_pinned_current_solitaire_visible_frame_v1,
+    build_card_aware_pregame_action_plan_v4, build_card_aware_pregame_scoring_request_v4,
+    build_pregame_action_plan_v3, build_pregame_scoring_request_v3,
+    capture_mtgo_dxgi_frame_candidate_v3, capture_pinned_current_solitaire_visible_frame_v1,
     card_aware_bottoming_scoring_request_commitment_v5,
     card_aware_pregame_scoring_request_commitment_v4, confirm_card_aware_bottom_selection_v5,
     confirm_card_aware_bottoming_cancel_plan_v5, confirm_card_aware_bottoming_selection_plan_v5,
