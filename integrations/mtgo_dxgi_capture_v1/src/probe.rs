@@ -10,17 +10,20 @@ use mtgo_blackbox_v1::{
     classify_untrusted_offline_bottom_six_initial_candidate_v1,
     classify_untrusted_offline_bottom_six_reflow_candidate_v1,
     classify_untrusted_offline_bottom_six_state_candidate_v1,
+    classify_untrusted_offline_bottom_six_visible_card_identities_v1,
     classify_untrusted_offline_first_main_candidate_v1,
     classify_untrusted_offline_mulligan_ladder_candidate_v1, model_deployment_commitment_v1,
     CheckedUntrustedMtgoOfflineBottomSixInitialCandidateV1,
     CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1,
     CheckedUntrustedMtgoOfflineBottomSixStateCandidateV1,
     CheckedUntrustedMtgoOfflineFirstMainCandidateV1,
-    CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1, MtgoExpectedModelDeploymentV1,
+    CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1,
+    CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV1,
+    CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1, MtgoExpectedModelDeploymentV1,
     MtgoOfflineBottomSixInitialClassificationV1, MtgoOfflineBottomSixReflowClassificationV1,
     MtgoOfflineBottomSixStateClassificationV1, MtgoOfflineFirstMainClassificationV1,
-    MtgoOfflineMulliganLadderClassificationV1, MtgoPregameActionSemanticV1, MtgoRectPxV1,
-    MtgoSizePxV1,
+    MtgoOfflineMulliganLadderClassificationV1, MtgoOfflineVisibleCardIdentityClassificationV1,
+    MtgoOfflineVisibleCardIdentityV1, MtgoPregameActionSemanticV1, MtgoRectPxV1, MtgoSizePxV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -543,6 +546,98 @@ pub fn measure_mtgo_dxgi_bottom_six_state_candidate_v3(
     .map_err(|error| format!("classify opaque bottom-six state capture: {error}"))?;
     Ok(OpaqueMtgoDxgiBottomSixStateMeasurementV3 {
         source_frame,
+        measurement,
+    })
+}
+
+/// A direct in-process complete-hand identity candidate over one opaque
+/// bottom-six state and one checked-untrusted deck template profile. The
+/// profile labels remain caller supplied and unratified. Both source pixels
+/// and template pixels stay private, and the result grants no semantic,
+/// observation, scoring, coordinate, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3;
+/// let _forged = OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3>();
+/// ```
+pub struct OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3 {
+    source: OpaqueMtgoDxgiBottomSixStateMeasurementV3,
+    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+    measurement: CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV1,
+}
+
+impl OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3 {
+    pub fn source_capture_commitments_v3(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.source.source_frame.commitments_v3()
+    }
+
+    pub fn classification_v3(&self) -> MtgoOfflineVisibleCardIdentityClassificationV1 {
+        self.measurement.classification()
+    }
+
+    pub fn visible_hand_count_v3(&self) -> Option<u8> {
+        self.measurement.visible_hand_count()
+    }
+
+    pub fn matched_identity_count_v3(&self) -> u8 {
+        self.measurement.matched_identity_count()
+    }
+
+    pub fn identities_v3(&self) -> &[MtgoOfflineVisibleCardIdentityV1] {
+        self.measurement.identities()
+    }
+
+    pub fn profile_commitment_sha256_v3(&self) -> &str {
+        self.profile.profile_commitment_sha256()
+    }
+
+    pub fn measurement_commitment_sha256_v3(&self) -> &str {
+        self.measurement.candidate_commitment_sha256()
+    }
+
+    pub fn safe_for_semantic_evidence_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v3(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_mtgo_dxgi_bottom_six_visible_card_identities_candidate_v3(
+    source: OpaqueMtgoDxgiBottomSixStateMeasurementV3,
+    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+) -> Result<OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3, String> {
+    let manifest_bytes = serialize_manifest_v2(&source.source_frame.manifest)?;
+    let checked = check_untrusted_dxgi_capture_artifact_v1(
+        &manifest_bytes,
+        &source.source_frame.canonical_bgra8,
+        &source.source_frame.preview_png,
+    )
+    .map_err(|error| format!("check opaque visible-card identity capture: {error}"))?;
+    let measurement = classify_untrusted_offline_bottom_six_visible_card_identities_v1(
+        &checked,
+        &source.source_frame.canonical_bgra8,
+        &profile,
+    )
+    .map_err(|error| format!("classify opaque visible-card identities: {error}"))?;
+    Ok(OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3 {
+        source,
+        profile,
         measurement,
     })
 }

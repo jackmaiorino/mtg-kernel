@@ -217,7 +217,9 @@ pub fn classify_untrusted_offline_bottom_six_reflow_candidate_v1(
     })
 }
 
-fn card_art_regions_v1(hand_count: u8) -> Result<Vec<MtgoRectPxV1>, MtgoContractErrorV1> {
+pub(crate) fn card_art_regions_v1(
+    hand_count: u8,
+) -> Result<Vec<MtgoRectPxV1>, MtgoContractErrorV1> {
     let left_edges: Vec<u32> = match hand_count {
         7 => vec![323, 442, 561, 679, 798, 917, 1_035],
         1..=6 => (0..u32::from(hand_count))
