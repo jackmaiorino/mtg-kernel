@@ -9,10 +9,12 @@ mod calibration_trace;
 mod capture_contract;
 mod contract;
 mod mock;
+mod reconstruction_audit;
 mod validation;
 
 pub use calibration_trace::*;
 pub use capture_contract::*;
 pub use contract::*;
 pub use mock::*;
+pub use reconstruction_audit::*;
 pub use validation::*;

@@ -98,6 +98,21 @@ The Island rotated to its tapped presentation and the battlefield showed one flo
 
 The digest-only fixture is `fixtures/solitaire_activate_island_mana_transition_v1.json`. It records an adapter-local battlefield object, `mana_choice = null` for the single-output Island interaction, and visible blue mana added. As with PlayLand, it does not construct the kernel semantic until a complete observation supplies the exact stable object binding.
 
+## Observation reconstruction result
+
+The latest strict frame was audited against the fixed groups needed to build an exact `ObservationV5` and complete ordered action vector. The fixture is `fixtures/solitaire_observation_reconstruction_audit_v1.json`.
+
+Visible calibration coverage is strong for the local prompt, turn phase, local player totals, local hand, local battlefield, empty stack presentation, and current visible mana. It is not sufficient for model scoring. The audit has six blockers:
+
+1. Solitaire has no distinct second participant.
+2. Second-player public state is absent.
+3. Distinct opponent zones are absent.
+4. Kernel decision-history context has not been reconstructed.
+5. Stable object bindings and zone-change incarnations are incomplete.
+6. The complete ordered legal-action set has not been proven.
+
+The fourth blocker is architectural rather than OCR-only. Kernel `ObservationV5` includes priority-pass history, recent stack and mana activity, and policy-surface state that are not all directly displayed in a single MTGO frame. They require a versioned adapter history profile derived only from prior visible frames and visibly confirmed actions. Solitaire remains suitable for interface and action calibration, but it must not be used as a two-player scoring observation.
+
 ## Visible layout observations
 
 - The current decision is explicit in the upper-left prompt: keep seven cards or mulligan to six.

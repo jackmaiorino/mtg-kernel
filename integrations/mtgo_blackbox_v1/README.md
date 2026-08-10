@@ -82,6 +82,16 @@ The same trace contract also covers a supervised Island mana activation. It requ
 
 The live input check also demonstrated that Windows input geometry must be Per-Monitor V2 DPI-aware before any coordinate is interpreted. A future actuator must additionally bind the physical point to the expected foreground MTGO HWND and PID with `WindowFromPoint` immediately before input. The calibration record contains no input coordinate or callable input path.
 
+## Observation reconstruction audit
+
+`MtgoObservationReconstructionAuditV1` turns the next integration gap into a fixed ten-group inventory. It separately accounts for duel participants, turn/phase/priority, public player state, public objects and zones, acting-player private knowledge, stack/combat/pending choices, kernel decision-history context, object incarnations and card-database bindings, the complete ordered legal-action set, and local kernel contract metadata.
+
+Each group must be visibly complete, locally derived complete only where explicitly permitted, or incomplete with stable reason codes. The validator requires canonical group order, source-frame and region commitments, exact readiness declarations, and all preview safety flags false. A Solitaire topology can never claim a complete two-player observation or model-scoring readiness.
+
+The live Solitaire audit is `fixtures/solitaire_observation_reconstruction_audit_v1.json`. It records six blockers: no distinct opponent, no second-player public state, no distinct opponent zones, missing reconstruction of kernel decision-history context, incomplete stable object incarnations, and no proof of the complete ordered legal-action set. The checked wrapper exposes those blocker categories but cannot produce an `ObservationV5`, actions, pixels, scores, or input.
+
+This audit also makes a core compatibility issue explicit. `ObservationV5` contains kernel-specific history fields such as priority-pass history, recent stack and mana activity, and policy-surface context. Those are not all directly visible in a single MTGO frame. A production adapter needs a versioned history-reconstruction profile based only on prior visible frames and confirmed visible actions, with any unreconciled field blocking scoring.
+
 ## Reviewed capture contract
 
 The Rust crate now defines an untrusted structural contract for the later production capture backend without implementing that backend. A calibration profile binds the exact bytes and decoded pixels of one manually reviewed preview, exact client identity, DPI, client size, monitor-output identity, canonical BGRA8 format, and stable pixel anchors. A separate review record must bind the profile and source preview and explicitly confirm that the preview is client-only, unobscured, cursor-free, identity-matched, and anchor-reviewed.
