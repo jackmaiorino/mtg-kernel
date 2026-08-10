@@ -198,6 +198,8 @@ The corresponding corpus is `fixtures/offline_bottom_six_state_classifier_corpus
 
 `classify_untrusted_offline_bottom_six_reflow_candidate_v1` compares two consecutive matched stages using only the unchanged visible card-art band above the keyboard overlay. It evaluates every possible order-preserving single-card deletion. A Match requires exactly one deletion whose every remaining-card mean absolute BGR difference is at most 25.000 intensity levels. No deletion or multiple plausible deletions fails closed. The six observed transitions had matched differences from 0.433 through 19.571 while incorrect pairings in the exploratory matrix began above 46. The corresponding corpus is `fixtures/offline_bottom_six_reflow_corpus_20260810_v1.json`.
 
+`fixtures/offline_visible_card_public_reference_probe_20260810_v1.json` records the first visible-card identity feasibility probe. Seven manually read card labels in one opening hand were compared against six pinned public print templates. Every ordinal selected the corresponding visible name; the weakest winning correlation was 0.6441 and the weakest margin over another template was 0.2105. The public image hashes and print identifiers are recorded, but the images remain in a local cache and are not committed. The source capture is still pending visual review, the candidate universe is manually constrained, and every authority flag remains false. This is not an accuracy estimate or a kernel card binding. The proposed calibration and runtime boundary is specified in `MTGO-VISIBLE-CARD-IDENTITY-V1-DESIGN.md`.
+
 ```powershell
 cargo run --bin classify_mtgo_offline_bottom_six_reflow_candidate_v1 -- `
   'C:\absolute\before-artifact-directory' `

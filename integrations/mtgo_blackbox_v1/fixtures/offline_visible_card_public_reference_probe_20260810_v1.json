@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "probe_id": "one-opening-hand-six-public-print-templates-20260810-v1",
+  "source_capture": {
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "status": "pending_visual_review",
+    "manifest_sha256": "ec2e8dc5eaab2d467bdc6becfef65e4e111c509954e702b850d42fa1c0e1c311",
+    "frame_png_sha256": "67b90282864d2a57710db6c18d2d607b4a4cc0d1c45f51447285cac064b5da05",
+    "client_width_px": 1550,
+    "client_height_px": 925
+  },
+  "method": {
+    "target_crop_top_px": 764,
+    "target_crop_width_px": 100,
+    "target_crop_height_px": 68,
+    "target_left_edges_px": [330, 449, 568, 686, 805, 924, 1042],
+    "comparison_width_px": 64,
+    "comparison_height_px": 48,
+    "resampler": "lanczos",
+    "score": "mean_three_channel_zero_normalized_correlation",
+    "candidate_universe": "six_manually_reviewed_public_print_templates"
+  },
+  "public_print_templates": [
+    {
+      "template_id": "lci-402",
+      "visible_card_name": "Forest",
+      "scryfall_id": "1069841a-0642-4fb6-b831-d45ff7fda3af",
+      "oracle_id": "b34bb2dc-c1af-4d77-b0b3-a0fb342a5fc6",
+      "set_code": "lci",
+      "collector_number": "402",
+      "public_small_image_sha256": "08dcf4b2510afe40c68024a93d01773ca99d37d371f35a3ecdecfebbfe0acfcf"
+    },
+    {
+      "template_id": "dsk-281",
+      "visible_card_name": "Swamp",
+      "scryfall_id": "3c51de66-a3ed-4ca9-befb-9813e96c4ade",
+      "oracle_id": "56719f6a-1a6c-4c0a-8d21-18f7d7350b68",
+      "set_code": "dsk",
+      "collector_number": "281",
+      "public_small_image_sha256": "ba1b0318a76b57a05a74c3eebcfc1b1ba55324d8ab998726dabd238e28f3c455"
+    },
+    {
+      "template_id": "dmu-278",
+      "visible_card_name": "Island",
+      "scryfall_id": "e67477a4-6878-4356-8037-807f41590ad1",
+      "oracle_id": "b2c6aa39-2d2a-459c-a555-fb48ba993373",
+      "set_code": "dmu",
+      "collector_number": "278",
+      "public_small_image_sha256": "9e4e7b52976f11ed8a188fb37563e3b8dbfb9b532a00eecf4e8b23db14601bfa"
+    },
+    {
+      "template_id": "lci-395",
+      "visible_card_name": "Island",
+      "scryfall_id": "23e3ed2c-342b-44aa-8e3e-0c53602397c3",
+      "oracle_id": "b2c6aa39-2d2a-459c-a555-fb48ba993373",
+      "set_code": "lci",
+      "collector_number": "395",
+      "public_small_image_sha256": "239b4754862b529750013f953b7748ff6a3a101b836adcef093318b6dc679c62"
+    },
+    {
+      "template_id": "dsk-277",
+      "visible_card_name": "Plains",
+      "scryfall_id": "1b499b37-efaf-4484-95e8-a70a9778c804",
+      "oracle_id": "bc71ebf6-2056-41f7-be35-b2e5c34afa99",
+      "set_code": "dsk",
+      "collector_number": "277",
+      "public_small_image_sha256": "70745c58aef51f1086ffe893b4012c953e6ae0997977cfe618276a7d6c0b6034"
+    },
+    {
+      "template_id": "dsk-284",
+      "visible_card_name": "Mountain",
+      "scryfall_id": "1a44d8a4-21de-497d-9eed-702d7b592728",
+      "oracle_id": "a3fb7228-e76b-4e96-a40e-20b5fed75685",
+      "set_code": "dsk",
+      "collector_number": "284",
+      "public_small_image_sha256": "2a74933e5f513582ae1b3e69ebf1746784d9fae06e7eb14ba3380552d4ea8c4d"
+    }
+  ],
+  "observations": [
+    {"ordinal": 0, "human_visible_name": "Forest", "winning_template_id": "lci-402", "winning_score_bps": 8423, "runner_up_template_id": "dsk-277", "runner_up_score_bps": 2847, "margin_bps": 5576},
+    {"ordinal": 1, "human_visible_name": "Swamp", "winning_template_id": "dsk-281", "winning_score_bps": 8131, "runner_up_template_id": "dsk-284", "runner_up_score_bps": 1411, "margin_bps": 6720},
+    {"ordinal": 2, "human_visible_name": "Island", "winning_template_id": "dmu-278", "winning_score_bps": 6441, "runner_up_template_id": "dsk-284", "runner_up_score_bps": 2803, "margin_bps": 3638},
+    {"ordinal": 3, "human_visible_name": "Island", "winning_template_id": "lci-395", "winning_score_bps": 8249, "runner_up_template_id": "dsk-284", "runner_up_score_bps": 4752, "margin_bps": 3497},
+    {"ordinal": 4, "human_visible_name": "Plains", "winning_template_id": "dsk-277", "winning_score_bps": 9528, "runner_up_template_id": "dsk-284", "runner_up_score_bps": 4275, "margin_bps": 5253},
+    {"ordinal": 5, "human_visible_name": "Plains", "winning_template_id": "dsk-277", "winning_score_bps": 9309, "runner_up_template_id": "dsk-284", "runner_up_score_bps": 4054, "margin_bps": 5255},
+    {"ordinal": 6, "human_visible_name": "Mountain", "winning_template_id": "dsk-284", "winning_score_bps": 7159, "runner_up_template_id": "lci-395", "runner_up_score_bps": 5054, "margin_bps": 2105}
+  ],
+  "minimum_winning_score_bps": 6441,
+  "minimum_margin_bps": 2105,
+  "human_label_agreement_count": 7,
+  "observation_count": 7,
+  "distinct_visible_card_name_count": 5,
+  "distinct_print_template_count": 6,
+  "nonclaim": "One opening hand and a six-template manually reviewed candidate universe establish feasibility only. This is not an accuracy estimate, an exhaustive-print search, a ratified deck profile, or evidence for other cards, zones, games, layouts, selected states, or occlusions.",
+  "safe_for_semantic_evidence": false,
+  "safe_for_observation_v5": false,
+  "safe_for_policy_scoring": false,
+  "safe_for_input": false
+}
