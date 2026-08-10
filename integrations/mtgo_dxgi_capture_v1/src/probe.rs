@@ -18,11 +18,13 @@ use mtgo_blackbox_v1::{
     classify_untrusted_offline_bottom_six_state_candidate_v3,
     classify_untrusted_offline_bottom_six_visible_card_identities_v3,
     classify_untrusted_offline_first_main_candidate_v2,
+    classify_untrusted_offline_first_main_visible_card_identities_v1,
     classify_untrusted_offline_mulligan_ladder_candidate_v2,
     classify_untrusted_offline_mulligan_visible_card_identities_v1, model_deployment_commitment_v1,
     CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1,
     CheckedUntrustedMtgoOfflineBottomSixStateCandidateV3,
     CheckedUntrustedMtgoOfflineFirstMainCandidateV2,
+    CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1,
     CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1,
     CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1,
     CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV3,
@@ -948,6 +950,102 @@ pub fn measure_mtgo_dxgi_first_main_candidate_v3(
             .map_err(|error| format!("classify opaque first-main capture: {error}"))?;
     Ok(OpaqueMtgoDxgiFirstMainMeasurementV3 {
         source_frame,
+        measurement,
+    })
+}
+
+/// A complete eight-card identity candidate over one opaque Turn 1 first-main
+/// measurement and one checked-untrusted template profile. The source frame,
+/// pixels, coordinates, and template bytes remain private. The result grants no
+/// semantic evidence, observation, model-scoring, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1;
+/// let _forged = OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1>();
+/// ```
+pub struct OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1 {
+    source: OpaqueMtgoDxgiFirstMainMeasurementV3,
+    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+    measurement: CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1,
+}
+
+impl OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1 {
+    pub fn source_capture_commitments_v1(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.source.source_frame.commitments_v3()
+    }
+
+    pub fn classification_v1(&self) -> MtgoOfflineVisibleCardIdentityClassificationV1 {
+        self.measurement.classification()
+    }
+
+    pub fn visible_hand_count_v1(&self) -> Option<u8> {
+        self.measurement.visible_hand_count()
+    }
+
+    pub fn matched_identity_count_v1(&self) -> u8 {
+        self.measurement.matched_identity_count()
+    }
+
+    pub fn identities_v1(&self) -> &[MtgoOfflineVisibleCardIdentityV1] {
+        self.measurement.identities()
+    }
+
+    pub fn first_main_measurement_commitment_sha256_v1(&self) -> &str {
+        self.source.measurement_commitment_sha256_v3()
+    }
+
+    pub fn visible_card_profile_commitment_sha256_v1(&self) -> &str {
+        self.profile.profile_commitment_sha256()
+    }
+
+    pub fn visible_identity_measurement_commitment_sha256_v1(&self) -> &str {
+        self.measurement.candidate_commitment_sha256()
+    }
+
+    pub fn safe_for_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_mtgo_dxgi_first_main_visible_hand_candidate_v1(
+    source: OpaqueMtgoDxgiFirstMainMeasurementV3,
+    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+) -> Result<OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1, String> {
+    let manifest_bytes = serialize_manifest_v2(&source.source_frame.manifest)?;
+    let checked = check_untrusted_dxgi_capture_artifact_v1(
+        &manifest_bytes,
+        &source.source_frame.canonical_bgra8,
+        &source.source_frame.preview_png,
+    )
+    .map_err(|error| format!("check opaque first-main visible-hand capture: {error}"))?;
+    let measurement = classify_untrusted_offline_first_main_visible_card_identities_v1(
+        &checked,
+        &source.source_frame.canonical_bgra8,
+        &source.measurement,
+        &profile,
+    )
+    .map_err(|error| format!("classify opaque first-main visible hand: {error}"))?;
+    Ok(OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1 {
+        source,
+        profile,
         measurement,
     })
 }

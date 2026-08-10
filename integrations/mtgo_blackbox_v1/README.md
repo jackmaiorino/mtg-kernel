@@ -166,6 +166,8 @@ cargo run --bin classify_mtgo_offline_mulligan_ladder_candidate_v2 -- 'C:\absolu
 
 `classify_untrusted_offline_first_main_candidate_v2` preserves the exact Turn 1 and empty-battlefield regions and replaces only the prompt and Combat control with dark-core binary ink masks at threshold 182. The two raw regions drifted in a later fixed-deck first-main capture while both binary masks and the other two exact regions remained unchanged.
 
+`classify_untrusted_offline_first_main_visible_card_identities_v1` accepts only that exact v2 first-main result, the same checked capture, and a checked-untrusted visible-card template profile. It evaluates the reviewed eight-card overlap geometry after the acting-player draw and exposes names only when every ordinal clears both fixed template thresholds. Partial matches expose only a count. The current one-game supervised check matched all eight fixed-deck basics, but it remains a caller-labelled calibration result with no semantic-evidence, `ObservationV5`, model-scoring, object-binding, coordinate, or input authority.
+
 The read-only classifier can be run on an offline artifact with:
 
 ```powershell

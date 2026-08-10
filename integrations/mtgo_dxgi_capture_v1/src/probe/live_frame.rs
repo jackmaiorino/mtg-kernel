@@ -1,6 +1,7 @@
 use super::{
     build_card_aware_pregame_action_plan_v4, canonical_json_commitment_v3, capture_commitment_v3,
     capture_mtgo_dxgi_frame_candidate_v3, measure_mtgo_dxgi_first_main_candidate_v3,
+    measure_mtgo_dxgi_first_main_visible_hand_candidate_v1,
     measure_mtgo_dxgi_mulligan_ladder_candidate_v3,
     measure_mtgo_dxgi_mulligan_visible_hand_candidate_v3,
     score_and_select_card_aware_pregame_model_v4, sha256_hex_v1, CaptureManifestV2,
@@ -10,8 +11,9 @@ use super::{
     MtgoOfflineVisibleCardIdentityClassificationV1, MtgoOfflineVisibleCardIdentityV1,
     MtgoPlannedPregamePostconditionV3, MtgoPregameActionSemanticV1,
     OpaqueMtgoCardAwarePregameModelSelectionV4, OpaqueMtgoDxgiFirstMainMeasurementV3,
-    OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoDxgiMulliganMeasurementV3,
-    OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3, OpaqueMtgoPregameActionPlanV3, SignedRectV1,
+    OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1, OpaqueMtgoDxgiFrameCandidateV3,
+    OpaqueMtgoDxgiMulliganMeasurementV3, OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,
+    OpaqueMtgoPregameActionPlanV3, SignedRectV1,
 };
 use mtgo_blackbox_v1::CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1;
 use serde::Serialize;
@@ -191,6 +193,95 @@ pub fn measure_pinned_current_solitaire_first_main_v1(
     require_current_pinned_profile_commitment_v1(&profile_commitment_sha256)?;
     let measurement = measure_mtgo_dxgi_first_main_candidate_v3(source_frame)?;
     Ok(OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1 {
+        profile_commitment_sha256,
+        measurement,
+    })
+}
+
+/// A complete checked-untrusted visible-hand measurement that retains both the
+/// exact pinned capture profile and the caller-supplied template profile.
+///
+/// The eight labels are exposed only when the exact first-main state and every
+/// fixed card-art region match. This opaque value grants no semantic evidence,
+/// observation, model-scoring, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1;
+/// let _forged = OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1>();
+/// ```
+pub struct OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1 {
+    profile_commitment_sha256: String,
+    measurement: OpaqueMtgoDxgiFirstMainVisibleHandMeasurementV1,
+}
+
+impl OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1 {
+    pub fn profile_commitment_sha256_v1(&self) -> &str {
+        &self.profile_commitment_sha256
+    }
+
+    pub fn source_capture_commitments_v1(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.measurement.source_capture_commitments_v1()
+    }
+
+    pub fn classification_v1(&self) -> MtgoOfflineVisibleCardIdentityClassificationV1 {
+        self.measurement.classification_v1()
+    }
+
+    pub fn visible_hand_count_v1(&self) -> Option<u8> {
+        self.measurement.visible_hand_count_v1()
+    }
+
+    pub fn matched_identity_count_v1(&self) -> u8 {
+        self.measurement.matched_identity_count_v1()
+    }
+
+    pub fn identities_v1(&self) -> &[MtgoOfflineVisibleCardIdentityV1] {
+        self.measurement.identities_v1()
+    }
+
+    pub fn visible_card_profile_commitment_sha256_v1(&self) -> &str {
+        self.measurement.visible_card_profile_commitment_sha256_v1()
+    }
+
+    pub fn visible_identity_measurement_commitment_sha256_v1(&self) -> &str {
+        self.measurement
+            .visible_identity_measurement_commitment_sha256_v1()
+    }
+
+    pub fn safe_for_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_pinned_current_solitaire_first_main_visible_hand_v1(
+    source: OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1,
+    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+) -> Result<OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1, String> {
+    let OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1 {
+        profile_commitment_sha256,
+        measurement,
+    } = source;
+    require_current_pinned_profile_commitment_v1(&profile_commitment_sha256)?;
+    let measurement = measure_mtgo_dxgi_first_main_visible_hand_candidate_v1(measurement, profile)?;
+    Ok(OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1 {
         profile_commitment_sha256,
         measurement,
     })
@@ -840,7 +931,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the pinned MTGO Solitaire first-main window to be foreground and unobscured"]
+    #[ignore = "requires the pinned MTGO Solitaire first-main window plus MTGO_VISIBLE_CARD_TEMPLATE_PROFILE_V1"]
     fn live_capture_reaches_profile_bound_first_main_measurement() {
         let frame = capture_pinned_current_solitaire_visible_frame_v1(2_000).unwrap();
         let measurement = measure_pinned_current_solitaire_first_main_v1(frame).unwrap();
@@ -857,5 +948,34 @@ mod tests {
         assert!(!measurement.safe_for_observation_v5_v1());
         assert!(!measurement.safe_for_policy_scoring_v1());
         assert!(!measurement.safe_for_input_v1());
+
+        let profile_path = std::env::var("MTGO_VISIBLE_CARD_TEMPLATE_PROFILE_V1").unwrap();
+        let profile_bytes = std::fs::read(profile_path).unwrap();
+        let profile: mtgo_blackbox_v1::MtgoOfflineVisibleCardTemplateProfileV1 =
+            serde_json::from_slice(&profile_bytes).unwrap();
+        let profile =
+            mtgo_blackbox_v1::check_untrusted_offline_visible_card_template_profile_v1(profile)
+                .unwrap();
+        let visible_hand =
+            measure_pinned_current_solitaire_first_main_visible_hand_v1(measurement, profile)
+                .unwrap();
+        assert_eq!(
+            visible_hand.classification_v1(),
+            MtgoOfflineVisibleCardIdentityClassificationV1::Match
+        );
+        assert_eq!(visible_hand.visible_hand_count_v1(), Some(8));
+        assert_eq!(visible_hand.matched_identity_count_v1(), 8);
+        assert_eq!(
+            visible_hand
+                .identities_v1()
+                .iter()
+                .map(MtgoOfflineVisibleCardIdentityV1::visible_card_name)
+                .collect::<Vec<_>>(),
+            ["Island", "Island", "Plains", "Island", "Plains", "Plains", "Island", "Island"]
+        );
+        assert!(!visible_hand.safe_for_semantic_evidence_v1());
+        assert!(!visible_hand.safe_for_observation_v5_v1());
+        assert!(!visible_hand.safe_for_policy_scoring_v1());
+        assert!(!visible_hand.safe_for_input_v1());
     }
 }

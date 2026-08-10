@@ -38,6 +38,8 @@ No default value may stand in for an unmeasured or unreconstructed field. Uncert
 
 The current checked-untrusted ledger covers one exact observed chain only: the retained Island PlayLand calibration followed by the retained Island mana-activation calibration. It deterministically seeds adapter-local arena identifiers, preserves the Island's arena identifier through the Hand-to-Battlefield transition, increments its zone-change count exactly once, and leaves the same battlefield reference unchanged when mana is activated. It rejects frame discontinuity, missing or mismatched source identity, wrong owner or controller, wrong source zone, duplicate replacement identifiers, and a replacement identifier on a non-zone-changing mana activation.
 
+The pinned gameplay capture now reaches an exact Turn 1 empty-battlefield first-main measurement and an all-or-nothing eight-card visible-hand identity measurement. One supervised fixed-deck frame matched `Island, Island, Plains, Island, Plains, Plains, Island, Island`. The template profile remains caller-labelled and checked-untrusted, and the exact Plains label currently fails the kernel correspondence gate. This proves the capture-to-visible-label shape while also demonstrating that perception success does not bypass card coverage.
+
 This does not yet reconstruct a duel. Seed labels and calibration transitions remain caller-supplied checked-untrusted data. Production object bindings are withheld, and the ledger cannot create an observation, legal-action set, score, or input command. The next lineage step is deriving canonical visible objects from admitted current-frame measurements and reconciling arbitrary visible additions, removals, and zone changes without identity ambiguity.
 
 ## Card coverage gate

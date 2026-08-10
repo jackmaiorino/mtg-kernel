@@ -4,8 +4,9 @@ use crate::{
     classify_untrusted_offline_bottom_six_state_candidate_v3,
     classify_untrusted_offline_mulligan_ladder_candidate_v2,
     offline_bottom_six_reflow::card_art_regions_v1, CheckedUntrustedMtgoDxgiCaptureArtifactV1,
-    MtgoContractErrorV1, MtgoOfflineBottomSixStateClassificationV1,
-    MtgoOfflineBottomSixStateClassificationV2, MtgoOfflineBottomSixStateClassificationV3,
+    CheckedUntrustedMtgoOfflineFirstMainCandidateV2, MtgoContractErrorV1,
+    MtgoOfflineBottomSixStateClassificationV1, MtgoOfflineBottomSixStateClassificationV2,
+    MtgoOfflineBottomSixStateClassificationV3, MtgoOfflineFirstMainClassificationV1,
     MtgoOfflineMulliganLadderClassificationV1, MtgoRectPxV1, MtgoSizePxV1,
 };
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,8 @@ const CANDIDATE_DOMAIN_V2: &[u8] = b"mtgo-offline-visible-card-identity-candidat
 const CANDIDATE_DOMAIN_V3: &[u8] = b"mtgo-offline-visible-card-identity-candidate-v3";
 const MULLIGAN_CANDIDATE_DOMAIN_V1: &[u8] =
     b"mtgo-offline-mulligan-visible-card-identity-candidate-v1";
+const FIRST_MAIN_CANDIDATE_DOMAIN_V1: &[u8] =
+    b"mtgo-offline-first-main-visible-card-identity-candidate-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -239,6 +242,25 @@ pub struct CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1 {
     candidate_commitment_sha256: String,
 }
 
+/// Checked-untrusted identity coverage for all eight cards visible after the
+/// acting player draws in the reviewed Turn 1 first-main Solitaire layout.
+///
+/// Labels are exposed only when the exact first-main classifier matches and
+/// all eight fixed art regions pass the template distance and distinct-name
+/// margin contract. The result retains no pixels or coordinates and grants no
+/// semantic evidence, observation, model-scoring, or input authority.
+pub struct CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1 {
+    classification: MtgoOfflineVisibleCardIdentityClassificationV1,
+    source_manifest_sha256: String,
+    source_frame_sha256: String,
+    source_first_main_commitment_sha256: String,
+    profile_commitment_sha256: String,
+    visible_hand_count: Option<u8>,
+    matched_identity_count: u8,
+    identities: Vec<MtgoOfflineVisibleCardIdentityV1>,
+    candidate_commitment_sha256: String,
+}
+
 impl CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1 {
     pub fn classification(&self) -> MtgoOfflineVisibleCardIdentityClassificationV1 {
         self.classification
@@ -262,6 +284,60 @@ impl CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1 {
 
     pub fn prospective_keep_size(&self) -> Option<u8> {
         self.prospective_keep_size
+    }
+
+    pub fn visible_hand_count(&self) -> Option<u8> {
+        self.visible_hand_count
+    }
+
+    pub fn matched_identity_count(&self) -> u8 {
+        self.matched_identity_count
+    }
+
+    pub fn identities(&self) -> &[MtgoOfflineVisibleCardIdentityV1] {
+        &self.identities
+    }
+
+    pub fn candidate_commitment_sha256(&self) -> &str {
+        &self.candidate_commitment_sha256
+    }
+
+    pub fn safe_for_semantic_evidence(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input(&self) -> bool {
+        false
+    }
+}
+
+impl CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1 {
+    pub fn classification(&self) -> MtgoOfflineVisibleCardIdentityClassificationV1 {
+        self.classification
+    }
+
+    pub fn source_manifest_sha256(&self) -> &str {
+        &self.source_manifest_sha256
+    }
+
+    pub fn source_frame_sha256(&self) -> &str {
+        &self.source_frame_sha256
+    }
+
+    pub fn source_first_main_commitment_sha256(&self) -> &str {
+        &self.source_first_main_commitment_sha256
+    }
+
+    pub fn profile_commitment_sha256(&self) -> &str {
+        &self.profile_commitment_sha256
     }
 
     pub fn visible_hand_count(&self) -> Option<u8> {
@@ -558,6 +634,85 @@ pub fn classify_untrusted_offline_mulligan_visible_card_identities_v1(
     )
 }
 
+pub fn classify_untrusted_offline_first_main_visible_card_identities_v1(
+    checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    canonical_bgra8: &[u8],
+    first_main: &CheckedUntrustedMtgoOfflineFirstMainCandidateV2,
+    profile: &CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+) -> Result<CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1, MtgoContractErrorV1>
+{
+    if checked.client_size_px() != &profile.profile.client_size_px
+        || checked.output_identity_sha256() != profile.profile.output_identity_sha256
+    {
+        return Err(error_v1(
+            "offline_first_main_visible_card_profile_layout",
+            "capture layout and output must match the template profile",
+        ));
+    }
+    if first_main.source_manifest_sha256() != checked.manifest_sha256()
+        || first_main.source_frame_sha256() != checked.canonical_bgra8_sha256()
+    {
+        return Err(error_v1(
+            "offline_first_main_visible_card_source",
+            "first-main measurement must bind the exact checked capture",
+        ));
+    }
+
+    let first_main_matches =
+        first_main.classification() == MtgoOfflineFirstMainClassificationV1::Match;
+    let visible_hand_count = first_main_matches.then_some(8);
+    let (matched_identity_count, mut identities) = if first_main_matches {
+        classify_first_main_card_art_regions_v1(
+            canonical_bgra8,
+            checked.client_size_px(),
+            &profile.profile.templates,
+        )?
+    } else {
+        (0, Vec::new())
+    };
+    let full_match = visible_hand_count == Some(8) && matched_identity_count == 8;
+    let classification = if full_match {
+        MtgoOfflineVisibleCardIdentityClassificationV1::Match
+    } else {
+        identities.clear();
+        MtgoOfflineVisibleCardIdentityClassificationV1::NoMatch
+    };
+
+    let mut parts: Vec<Vec<u8>> = vec![
+        checked.manifest_sha256().as_bytes().to_vec(),
+        checked.canonical_bgra8_sha256().as_bytes().to_vec(),
+        first_main.candidate_commitment_sha256().as_bytes().to_vec(),
+        profile.profile_commitment_sha256.as_bytes().to_vec(),
+        match classification {
+            MtgoOfflineVisibleCardIdentityClassificationV1::Match => b"match".to_vec(),
+            MtgoOfflineVisibleCardIdentityClassificationV1::NoMatch => b"no_match".to_vec(),
+        },
+        vec![visible_hand_count.unwrap_or(u8::MAX)],
+        vec![matched_identity_count],
+    ];
+    for identity in &identities {
+        parts.push(identity_commitment_ordinal_v2(identity));
+    }
+    let borrowed: Vec<_> = parts.iter().map(Vec::as_slice).collect();
+    let candidate_commitment_sha256 = commitment_v1(FIRST_MAIN_CANDIDATE_DOMAIN_V1, &borrowed);
+
+    Ok(
+        CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1 {
+            classification,
+            source_manifest_sha256: checked.manifest_sha256().to_owned(),
+            source_frame_sha256: checked.canonical_bgra8_sha256().to_owned(),
+            source_first_main_commitment_sha256: first_main
+                .candidate_commitment_sha256()
+                .to_owned(),
+            profile_commitment_sha256: profile.profile_commitment_sha256.clone(),
+            visible_hand_count,
+            matched_identity_count,
+            identities,
+            candidate_commitment_sha256,
+        },
+    )
+}
+
 pub fn classify_untrusted_offline_bottom_six_visible_card_identities_v1(
     checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
     canonical_bgra8: &[u8],
@@ -827,6 +982,42 @@ fn identity_commitment_ordinal_v2(identity: &MtgoOfflineVisibleCardIdentityV1) -
         bytes.extend_from_slice(part);
     }
     bytes
+}
+
+fn first_main_card_art_regions_v1() -> [MtgoRectPxV1; 8] {
+    [330_u32, 432, 534, 636, 738, 840, 942, 1_044].map(|x| MtgoRectPxV1 {
+        x,
+        y: 760,
+        width: ART_WIDTH_V1,
+        height: ART_HEIGHT_V1,
+    })
+}
+
+fn classify_first_main_card_art_regions_v1(
+    canonical_bgra8: &[u8],
+    size: &MtgoSizePxV1,
+    templates: &[MtgoOfflineVisibleCardTemplateV1],
+) -> Result<(u8, Vec<MtgoOfflineVisibleCardIdentityV1>), MtgoContractErrorV1> {
+    let mut identities = Vec::new();
+    for (ordinal, rect) in first_main_card_art_regions_v1().iter().enumerate() {
+        let Some(identity) = classify_region_v1(canonical_bgra8, size, rect, templates)? else {
+            continue;
+        };
+        identities.push(MtgoOfflineVisibleCardIdentityV1 {
+            ordinal: u8::try_from(ordinal).map_err(|_| {
+                error_v1(
+                    "offline_first_main_visible_card_ordinal",
+                    "card ordinal overflow",
+                )
+            })?,
+            ..identity
+        });
+    }
+    let matched_identity_count = u8::try_from(identities.len()).unwrap_or(u8::MAX);
+    if matched_identity_count != 8 {
+        identities.clear();
+    }
+    Ok((matched_identity_count, identities))
 }
 
 fn validate_profile_v1(
@@ -1166,12 +1357,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn first_main_eight_card_art_regions_are_exact_and_in_bounds() {
+        let regions = first_main_card_art_regions_v1();
+        assert_eq!(
+            regions.iter().map(|rect| rect.x).collect::<Vec<_>>(),
+            [330, 432, 534, 636, 738, 840, 942, 1_044]
+        );
+        assert!(regions.iter().all(|rect| {
+            rect.y == 760
+                && rect.width == 96
+                && rect.height == 60
+                && rect.x + rect.width <= 1_550
+                && rect.y + rect.height <= 925
+        }));
+        assert!(regions.windows(2).all(|pair| pair[0].x < pair[1].x));
+    }
+
     fn observed_frame_v1(rect: &MtgoRectPxV1, value: u8) -> Vec<u8> {
         let size = MtgoSizePxV1 {
             width: 1_550,
             height: 925,
         };
         let mut pixels = vec![0_u8; 1_550 * 925 * 4];
+        paint_region_v1(&mut pixels, &size, rect, value);
+        pixels
+    }
+
+    fn paint_region_v1(pixels: &mut [u8], size: &MtgoSizePxV1, rect: &MtgoRectPxV1, value: u8) {
         for row in rect.y..rect.y + rect.height {
             for column in rect.x..rect.x + rect.width {
                 let offset = (usize::try_from(row).unwrap() * usize::try_from(size.width).unwrap()
@@ -1181,7 +1394,31 @@ mod tests {
                 pixels[offset + 3] = 255;
             }
         }
-        pixels
+    }
+
+    #[test]
+    fn first_main_labels_are_all_or_nothing() {
+        let profile = profile_v1();
+        let size = profile.client_size_px.clone();
+        let regions = first_main_card_art_regions_v1();
+        let mut pixels = vec![0_u8; 1_550 * 925 * 4];
+        for rect in &regions {
+            paint_region_v1(&mut pixels, &size, rect, 10);
+        }
+
+        let (matched, identities) =
+            classify_first_main_card_art_regions_v1(&pixels, &size, &profile.templates).unwrap();
+        assert_eq!(matched, 8);
+        assert_eq!(identities.len(), 8);
+        assert!(identities
+            .iter()
+            .all(|identity| identity.visible_card_name() == "Dark Card"));
+
+        paint_region_v1(&mut pixels, &size, &regions[3], 100);
+        let (matched, identities) =
+            classify_first_main_card_art_regions_v1(&pixels, &size, &profile.templates).unwrap();
+        assert_eq!(matched, 7);
+        assert!(identities.is_empty());
     }
 
     #[test]

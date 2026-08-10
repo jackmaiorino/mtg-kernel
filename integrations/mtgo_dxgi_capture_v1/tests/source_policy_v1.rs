@@ -71,6 +71,8 @@ fn pinned_live_frame_binds_source_identity_and_layout_without_downstream_authori
         "OpaqueMtgoPinnedSolitaireVisibleFrameV1",
         "measure_pinned_current_solitaire_first_main_v1",
         "OpaqueMtgoPinnedSolitaireFirstMainMeasurementV1",
+        "measure_pinned_current_solitaire_first_main_visible_hand_v1",
+        "OpaqueMtgoPinnedSolitaireFirstMainVisibleHandV1",
         "measure_pinned_current_solitaire_mulligan_ladder_v1",
         "OpaqueMtgoPinnedSolitaireMulliganMeasurementV1",
         "measure_pinned_current_solitaire_mulligan_visible_hand_v1",
