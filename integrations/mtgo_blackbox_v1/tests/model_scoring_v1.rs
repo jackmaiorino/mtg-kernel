@@ -326,3 +326,13 @@ fn selection_cannot_be_reused_for_another_validated_decision() {
         "external_scoring_selection_decision_mismatch"
     );
 }
+
+#[test]
+fn native_checkpoint_scorer_contract_is_stable_and_implements_the_closed_bridge() {
+    fn require_scorer<T: MtgoExternalObservationScorerV1>() {}
+    require_scorer::<MtgoNativeCheckpointObservationScorerV1<'static>>();
+    assert_eq!(
+        native_checkpoint_scorer_contract_sha256_v1(),
+        "81ebe29ecdb1768ef92c8e1d27aba04d370cce82c34825c9ae07ddaf523fd985"
+    );
+}

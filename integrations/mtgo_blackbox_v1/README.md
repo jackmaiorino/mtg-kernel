@@ -2,7 +2,7 @@
 
 Current end-to-end competitive wiring status and the shortest critical path are tracked in `COMPETITIVE_WIRING_STATUS_2026-08-09.md`.
 
-This directory is an isolated, offline-first boundary between player-visible MTGO state and the existing `mtg-kernel` policy types. The Rust contract contains no live capture, UI Automation enumeration, process inspection, network inspection, client-file parsing, synthetic input, or checkpoint scoring. A separate calibration-preview script and sibling DXGI candidate executable perform the narrow live operations documented below.
+This directory is an isolated, offline-first boundary between player-visible MTGO state and the existing `mtg-kernel` policy types. The Rust contract contains no live capture, UI Automation enumeration, process inspection, network inspection, client-file parsing, or synthetic input. It can score an already validated exact public decision through an independently pinned immutable native checkpoint handle, but that path has no capture or input authority. A separate calibration-preview script and sibling DXGI candidate executable perform the narrow live operations documented below.
 
 The read-only installation findings and capture implications are recorded in `CLIENT_INVENTORY_2026-08-08.md`.
 
@@ -310,7 +310,9 @@ All live-input flags default to false. League, Challenge, and other prize-event 
 
 The adapter now defines the coordinate-free half of step 6. `MtgoExternalScoringRequestV1` binds one validated decision commitment, the exact `ObservationV5`, the complete ordered `ActionSemanticV1` vector, action count, and an expected checkpoint deployment commitment. The deployment identity includes the run, checkpoint manifest, checkpoint payload, train-state, model-parameter, generation, and scorer-contract identities exposed by the native checkpoint handle.
 
-`MtgoExternalModelScoreResponseV1` returns exact f32 policy-logit and value bits bound to that request. Validation requires one finite logit per legal action and a finite value, then uses the kernel scorer's deterministic `total_cmp` argmax with lower-index ties. The resulting opaque selection can create only an offline intent for the exact source decision. It has no coordinates or live-input authority. The remaining core work is an implementation of `MtgoExternalObservationScorerV1` backed by the native checkpoint scorer.
+`MtgoExternalModelScoreResponseV1` returns exact f32 policy-logit and value bits bound to that request. Validation requires one finite logit per legal action and a finite value, then uses the kernel scorer's deterministic `total_cmp` argmax with lower-index ties. The resulting opaque selection can create only an offline intent for the exact source decision. It has no coordinates or live-input authority.
+
+`MtgoNativeCheckpointObservationScorerV1` is the concrete implementation. Construction requires an independently supplied expected deployment whose run, checkpoint manifest, checkpoint payload, train state, model parameters, generation, and scorer-contract digest all match the immutable loaded handle. It calls the kernel's external public-observation seam, returns exact score bits, and rebinds them to the adapter request. It cannot derive or self-approve an expected deployment.
 
 ## Current-frame semantic control resolution
 
@@ -326,15 +328,15 @@ User-driven transitions and server-driven transitions are separate. User actions
 
 League and Challenge mode authorization remain independent. Entry confirmation additionally requires a separate exact `MtgoCompetitiveEntryAuthorizationV1` bound to the same account and written permission, the visible event identity, the exact visible entry terms, and one existing-resource amount. The contract contains no purchase action or resource-acquisition path. All lifecycle intents are offline and coordinate-free, and even a checked transition reports `safe_for_live_input = false`.
 
-## Deliberate seam after this tranche
+## External Flat V2 core seam
 
-The existing checkpoint shadow service owns a simulated `FastActorSessionV1`. It cannot score an arbitrary observation reconstructed from MTGO. Its flat scoring view and inference output accessors are crate-private.
+`NativeCheckpointInferenceV1::score_external_observation_v1` accepts one exact full `ObservationV5` and ordered `ActionSemanticV1` vector. The producer validates the kernel and card-database identity, visible projection hash, policy-stage structure, action uniqueness and ranges, and every referenced object against the public observation. It creates only the existing scorer-visible Flat V2 view. It cannot create a `PolicyActionV5`, fast-actor session binding, consume token, coordinate, input, or match-entry authority.
 
-The next kernel-facing change is now narrower: expose a small native checkpoint method that consumes an exact `ObservationV5` plus ordered `ActionSemanticV1` vector and returns finite logits and value. The adapter-side request, deployment, response, deterministic selection, and offline-intent bindings are already implemented. The core change should be made only after Fable's current science branch is reconciled because it touches core scoring code.
+The native inference implementation is unchanged. A parity test proves all eleven Flat V2 table families exactly equal the simulator-owned encoder for the same decision, and a real fixture checkpoint produces bit-identical logits and value. Invalid observation hashes, empty action sets, forged stable references, and action kinds absent from the executable training path fail before inference.
 
 ## Isolation and merge
 
-This standalone workspace changes only `integrations/mtgo_blackbox_v1/**`. It does not modify the root Cargo workspace, root lockfile, trainer, Store, rollout, scorer, or experiment files. Before landing, rebase this branch onto the then-current `main`, compare changed paths with Fable's landing diff, and merge as a focused commit or pull request.
+Most adapter work remains isolated under `integrations/mtgo_blackbox_v1/**` and `integrations/mtgo_dxgi_capture_v1/**`. The external scorer tranche also adds one reviewed public-observation sibling seam in `mtg-kernel` and advances the source-bound Flat V2 overlay digest. It does not change tensor shapes, mappings, inference, trainer, Store, rollout, or experiment code. Before landing, rebase this branch onto the then-current `main`, compare changed paths with Fable's landing diff, and merge as focused commits or a pull request.
 
 Focused validation from this directory:
 

@@ -2,6 +2,7 @@ use crate::{
     make_offline_intent_v1, MtgoContractErrorV1, MtgoOfflineActionIntentV1,
     ValidatedMtgoObservedDecisionV1,
 };
+use mtg_kernel::native_checkpoint_inference_v1::NativeCheckpointInferenceV1;
 use mtg_kernel::rl::{ActionSemanticV1, ObservationV5};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,6 +14,8 @@ const OBSERVATION_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-scoring-observation-v1";
 const ORDERED_ACTIONS_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-scoring-ordered-actions-v1";
 const REQUEST_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-external-scoring-request-v1";
 const SELECTION_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-external-model-selection-v1";
+const NATIVE_SCORER_CONTRACT_DOMAIN_V1: &[u8] = b"mtgo-native-checkpoint-scorer-contract-v1";
+const NATIVE_SCORER_CONTRACT_TEXT_V1: &str = "validated ObservationV5 plus exact ordered ActionSemanticV1 rows; mtg-kernel external Flat V2 encoder; unchanged NativeCheckpointInferenceV1 scoring; raw finite logits and value only; no action consume or input authority";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,7 +57,8 @@ pub struct MtgoExternalModelScoreResponseV1 {
     pub value_f32_bits: u32,
 }
 
-/// In-process bridge implemented later by the exact kernel checkpoint scorer.
+/// In-process bridge for exact observation scorers. The native checkpoint
+/// implementation below is one concrete producer.
 ///
 /// The scorer receives immutable exact kernel types and a request commitment.
 /// It receives no pixels, process handles, coordinates, authorization, or input
@@ -66,6 +70,124 @@ pub trait MtgoExternalObservationScorerV1 {
         observation: &ObservationV5,
         ordered_legal_actions: &[ActionSemanticV1],
     ) -> Result<MtgoExternalModelScoreResponseV1, MtgoContractErrorV1>;
+}
+
+/// Exact in-process scorer backed by one independently pinned native
+/// checkpoint deployment.
+///
+/// Construction compares every checkpoint identity field and the scorer
+/// contract digest against the caller-supplied deployment. It cannot self-mint
+/// an expected deployment and carries no capture, authorization, or input
+/// capability.
+pub struct MtgoNativeCheckpointObservationScorerV1<'a> {
+    inference: &'a NativeCheckpointInferenceV1,
+    deployment_commitment_sha256: String,
+}
+
+impl<'a> MtgoNativeCheckpointObservationScorerV1<'a> {
+    pub fn new_v1(
+        inference: &'a NativeCheckpointInferenceV1,
+        expected_deployment: &MtgoExpectedModelDeploymentV1,
+    ) -> Result<Self, MtgoContractErrorV1> {
+        let deployment_commitment_sha256 = model_deployment_commitment_v1(expected_deployment)?;
+        if expected_deployment.scorer_contract_sha256
+            != native_checkpoint_scorer_contract_sha256_v1()
+        {
+            return Err(MtgoContractErrorV1::new(
+                "native_checkpoint_scorer_contract_mismatch",
+                &expected_deployment.scorer_contract_sha256,
+            ));
+        }
+        let actual = MtgoNativeCheckpointIdentityV1 {
+            run_sha256: lower_hex_sha256_v1(inference.run_sha256()),
+            checkpoint_manifest_sha256: lower_hex_sha256_v1(inference.checkpoint_manifest_sha256()),
+            checkpoint_payload_sha256: lower_hex_sha256_v1(inference.checkpoint_payload_sha256()),
+            train_state_sha256: lower_hex_sha256_v1(inference.train_state_sha256()),
+            model_parameter_sha256: lower_hex_sha256_v1(inference.model_parameter_sha256()),
+            generation_index: inference.generation_index(),
+        };
+        if actual != expected_deployment.checkpoint {
+            return Err(MtgoContractErrorV1::new(
+                "native_checkpoint_deployment_identity_mismatch",
+                "loaded checkpoint does not match the independently expected deployment",
+            ));
+        }
+        Ok(Self {
+            inference,
+            deployment_commitment_sha256,
+        })
+    }
+}
+
+impl MtgoExternalObservationScorerV1 for MtgoNativeCheckpointObservationScorerV1<'_> {
+    fn score_observation_v1(
+        &mut self,
+        request: &MtgoExternalScoringRequestV1,
+        observation: &ObservationV5,
+        ordered_legal_actions: &[ActionSemanticV1],
+    ) -> Result<MtgoExternalModelScoreResponseV1, MtgoContractErrorV1> {
+        validate_scoring_request_shape_v1(request)?;
+        let observation_sha256 = canonical_commitment_v1(
+            OBSERVATION_COMMITMENT_DOMAIN_V1,
+            observation,
+            "native_checkpoint_observation_serialization_failed",
+        )?;
+        let ordered_actions_sha256 = canonical_commitment_v1(
+            ORDERED_ACTIONS_COMMITMENT_DOMAIN_V1,
+            ordered_legal_actions,
+            "native_checkpoint_actions_serialization_failed",
+        )?;
+        if request.observation_sha256 != observation_sha256
+            || request.ordered_actions_sha256 != ordered_actions_sha256
+            || usize::try_from(request.action_count).ok() != Some(ordered_legal_actions.len())
+            || request.deployment_commitment_sha256 != self.deployment_commitment_sha256
+        {
+            return Err(MtgoContractErrorV1::new(
+                "native_checkpoint_scoring_request_mismatch",
+                "request does not bind the supplied observation, action order, and deployment",
+            ));
+        }
+        let score = self
+            .inference
+            .score_external_observation_v1(observation, ordered_legal_actions)
+            .map_err(|error| {
+                MtgoContractErrorV1::new(
+                    "native_checkpoint_external_scoring_failed",
+                    format!("{:?}", error.kind()),
+                )
+            })?;
+        if score.run_sha256() != self.inference.run_sha256()
+            || score.checkpoint_manifest_sha256() != self.inference.checkpoint_manifest_sha256()
+            || score.model_parameter_sha256() != self.inference.model_parameter_sha256()
+            || score.generation_index() != self.inference.generation_index()
+            || score.is_input_authority_v1()
+            || score.permits_match_entry_v1()
+        {
+            return Err(MtgoContractErrorV1::new(
+                "native_checkpoint_score_identity_mismatch",
+                "scorer output does not retain the expected checkpoint and no-authority contract",
+            ));
+        }
+        Ok(MtgoExternalModelScoreResponseV1 {
+            schema_version: MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
+            request_commitment_sha256: scoring_request_commitment_v1(request)?,
+            logits_f32_bits: score
+                .action_logits()
+                .iter()
+                .map(|value| value.to_bits())
+                .collect(),
+            value_f32_bits: score.value().to_bits(),
+        })
+    }
+}
+
+pub fn native_checkpoint_scorer_contract_sha256_v1() -> String {
+    canonical_commitment_v1(
+        NATIVE_SCORER_CONTRACT_DOMAIN_V1,
+        NATIVE_SCORER_CONTRACT_TEXT_V1,
+        "native_checkpoint_scorer_contract_serialization_failed",
+    )
+    .expect("static native scorer contract serializes")
 }
 
 /// One structurally checked score response and deterministic action selection.
@@ -357,6 +479,15 @@ fn require_sha256_v1(value: &str, code: &'static str) -> Result<(), MtgoContract
         return Err(MtgoContractErrorV1::new(code, value));
     }
     Ok(())
+}
+
+fn lower_hex_sha256_v1(value: [u8; 32]) -> String {
+    let mut output = String::with_capacity(64);
+    for byte in value {
+        use std::fmt::Write;
+        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    output
 }
 
 fn validate_safe_identifier_v1(value: &str, code: &'static str) -> Result<(), MtgoContractErrorV1> {
