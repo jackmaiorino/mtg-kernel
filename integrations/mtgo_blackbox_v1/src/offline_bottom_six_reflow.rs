@@ -1,11 +1,14 @@
 use crate::{
     classify_untrusted_offline_bottom_six_state_candidate_v1,
+    classify_untrusted_offline_bottom_six_state_candidate_v3,
     CheckedUntrustedMtgoDxgiCaptureArtifactV1, MtgoContractErrorV1,
-    MtgoOfflineBottomSixStateClassificationV1, MtgoRectPxV1, MtgoSizePxV1,
+    MtgoOfflineBottomSixStateClassificationV1, MtgoOfflineBottomSixStateClassificationV3,
+    MtgoRectPxV1, MtgoSizePxV1,
 };
 use sha2::{Digest, Sha256};
 
 const CANDIDATE_DOMAIN_V1: &[u8] = b"mtgo-offline-bottom-six-reflow-candidate-v1";
+const CANDIDATE_DOMAIN_V2: &[u8] = b"mtgo-offline-bottom-six-reflow-candidate-v2";
 const MAX_MATCH_MEAN_ABSOLUTE_DIFFERENCE_MILLI_V1: u32 = 25_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +125,55 @@ pub fn classify_untrusted_offline_bottom_six_reflow_candidate_v1(
     after_checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
     after_canonical_bgra8: &[u8],
 ) -> Result<CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1, MtgoContractErrorV1> {
+    classify_reflow_candidate_v1(
+        before_checked,
+        before_canonical_bgra8,
+        after_checked,
+        after_canonical_bgra8,
+        BottomSixStageClassifierV1::LegacyRawControls,
+    )
+}
+
+/// Classifies one checked-untrusted transition using the binary-control
+/// bottom-six state classifier. The output shape and visual-distance rule are
+/// unchanged from v1, but both endpoint stage commitments are produced by the
+/// current v3 state gate. The result remains offline measurement only and
+/// grants no runtime authority.
+pub fn classify_untrusted_offline_bottom_six_reflow_candidate_v2(
+    before_checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    before_canonical_bgra8: &[u8],
+    after_checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    after_canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1, MtgoContractErrorV1> {
+    classify_reflow_candidate_v1(
+        before_checked,
+        before_canonical_bgra8,
+        after_checked,
+        after_canonical_bgra8,
+        BottomSixStageClassifierV1::BinaryControlsV3,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum BottomSixStageClassifierV1 {
+    LegacyRawControls,
+    BinaryControlsV3,
+}
+
+struct BottomSixStageSummaryV1 {
+    matches: bool,
+    selected_count: Option<u8>,
+    visible_hand_count: Option<u8>,
+    candidate_commitment_sha256: String,
+}
+
+fn classify_reflow_candidate_v1(
+    before_checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    before_canonical_bgra8: &[u8],
+    after_checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    after_canonical_bgra8: &[u8],
+    stage_classifier: BottomSixStageClassifierV1,
+) -> Result<CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1, MtgoContractErrorV1> {
     if before_checked.client_size_px() != after_checked.client_size_px()
         || before_checked.output_identity_sha256() != after_checked.output_identity_sha256()
         || before_checked.captured_at_unix_millis() >= after_checked.captured_at_unix_millis()
@@ -134,22 +186,15 @@ pub fn classify_untrusted_offline_bottom_six_reflow_candidate_v1(
         ));
     }
 
-    let before_stage = classify_untrusted_offline_bottom_six_state_candidate_v1(
-        before_checked,
-        before_canonical_bgra8,
-    )?;
-    let after_stage = classify_untrusted_offline_bottom_six_state_candidate_v1(
-        after_checked,
-        after_canonical_bgra8,
-    )?;
-    let before_selected_count = before_stage.selected_count();
-    let after_selected_count = after_stage.selected_count();
-    let before_hand_count = before_stage.visible_hand_count();
-    let after_hand_count = after_stage.visible_hand_count();
+    let before_stage = classify_stage_v1(before_checked, before_canonical_bgra8, stage_classifier)?;
+    let after_stage = classify_stage_v1(after_checked, after_canonical_bgra8, stage_classifier)?;
+    let before_selected_count = before_stage.selected_count;
+    let after_selected_count = after_stage.selected_count;
+    let before_hand_count = before_stage.visible_hand_count;
+    let after_hand_count = after_stage.visible_hand_count;
 
-    let stages_are_consecutive = before_stage.classification()
-        == MtgoOfflineBottomSixStateClassificationV1::Match
-        && after_stage.classification() == MtgoOfflineBottomSixStateClassificationV1::Match
+    let stages_are_consecutive = before_stage.matches
+        && after_stage.matches
         && before_selected_count
             .is_some_and(|before| after_selected_count == before.checked_add(1) && before < 6)
         && before_hand_count.is_some_and(|before| after_hand_count == before.checked_sub(1));
@@ -178,14 +223,17 @@ pub fn classify_untrusted_offline_bottom_six_reflow_candidate_v1(
     };
 
     let mut hasher = Sha256::new();
-    hasher.update(CANDIDATE_DOMAIN_V1);
+    hasher.update(match stage_classifier {
+        BottomSixStageClassifierV1::LegacyRawControls => CANDIDATE_DOMAIN_V1,
+        BottomSixStageClassifierV1::BinaryControlsV3 => CANDIDATE_DOMAIN_V2,
+    });
     for part in [
         before_checked.manifest_sha256().as_bytes(),
         before_checked.canonical_bgra8_sha256().as_bytes(),
         after_checked.manifest_sha256().as_bytes(),
         after_checked.canonical_bgra8_sha256().as_bytes(),
-        before_stage.candidate_commitment_sha256().as_bytes(),
-        after_stage.candidate_commitment_sha256().as_bytes(),
+        before_stage.candidate_commitment_sha256.as_bytes(),
+        after_stage.candidate_commitment_sha256.as_bytes(),
         match classification {
             MtgoOfflineBottomSixReflowClassificationV1::Match => b"match".as_slice(),
             MtgoOfflineBottomSixReflowClassificationV1::NoMatch => b"no_match".as_slice(),
@@ -206,8 +254,8 @@ pub fn classify_untrusted_offline_bottom_six_reflow_candidate_v1(
         classification,
         before_manifest_sha256: before_checked.manifest_sha256().to_owned(),
         after_manifest_sha256: after_checked.manifest_sha256().to_owned(),
-        before_stage_commitment_sha256: before_stage.candidate_commitment_sha256().to_owned(),
-        after_stage_commitment_sha256: after_stage.candidate_commitment_sha256().to_owned(),
+        before_stage_commitment_sha256: before_stage.candidate_commitment_sha256,
+        after_stage_commitment_sha256: after_stage.candidate_commitment_sha256,
         before_selected_count,
         after_selected_count,
         removed_before_ordinal,
@@ -215,6 +263,35 @@ pub fn classify_untrusted_offline_bottom_six_reflow_candidate_v1(
         passing_deletion_candidate_count: passing_count,
         candidate_commitment_sha256: format!("{:x}", hasher.finalize()),
     })
+}
+
+fn classify_stage_v1(
+    checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    canonical_bgra8: &[u8],
+    classifier: BottomSixStageClassifierV1,
+) -> Result<BottomSixStageSummaryV1, MtgoContractErrorV1> {
+    match classifier {
+        BottomSixStageClassifierV1::LegacyRawControls => {
+            let stage =
+                classify_untrusted_offline_bottom_six_state_candidate_v1(checked, canonical_bgra8)?;
+            Ok(BottomSixStageSummaryV1 {
+                matches: stage.classification() == MtgoOfflineBottomSixStateClassificationV1::Match,
+                selected_count: stage.selected_count(),
+                visible_hand_count: stage.visible_hand_count(),
+                candidate_commitment_sha256: stage.candidate_commitment_sha256().to_owned(),
+            })
+        }
+        BottomSixStageClassifierV1::BinaryControlsV3 => {
+            let stage =
+                classify_untrusted_offline_bottom_six_state_candidate_v3(checked, canonical_bgra8)?;
+            Ok(BottomSixStageSummaryV1 {
+                matches: stage.classification() == MtgoOfflineBottomSixStateClassificationV3::Match,
+                selected_count: stage.selected_count(),
+                visible_hand_count: stage.visible_hand_count(),
+                candidate_commitment_sha256: stage.candidate_commitment_sha256().to_owned(),
+            })
+        }
+    }
 }
 
 pub(crate) fn card_art_regions_v1(

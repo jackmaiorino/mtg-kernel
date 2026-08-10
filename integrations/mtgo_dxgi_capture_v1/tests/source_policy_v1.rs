@@ -102,7 +102,7 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
         "pub fn measure_mtgo_dxgi_bottom_six_state_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
     ));
     assert!(source.contains("pub struct OpaqueMtgoDxgiBottomSixStateMeasurementV3 {"));
-    assert!(source.contains("measurement: CheckedUntrustedMtgoOfflineBottomSixStateCandidateV1,"));
+    assert!(source.contains("measurement: CheckedUntrustedMtgoOfflineBottomSixStateCandidateV3,"));
     assert!(source.contains(
         "pub fn measure_mtgo_dxgi_bottom_six_reflow_candidate_v3(\n    before: OpaqueMtgoDxgiBottomSixStateMeasurementV3,\n    after: OpaqueMtgoDxgiBottomSixStateMeasurementV3,"
     ));
@@ -113,8 +113,19 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
     ));
     assert!(source.contains("pub struct OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3 {"));
     assert!(
-        source.contains("measurement: CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV1,")
+        source.contains("measurement: CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV3,")
     );
+    for current_classifier in [
+        "classify_untrusted_offline_mulligan_ladder_candidate_v2",
+        "classify_untrusted_offline_bottom_six_state_candidate_v3",
+        "classify_untrusted_offline_bottom_six_reflow_candidate_v2",
+        "classify_untrusted_offline_bottom_six_visible_card_identities_v3",
+    ] {
+        assert!(
+            source.contains(current_classifier),
+            "live measurement seam is missing current classifier: {current_classifier}"
+        );
+    }
     assert!(source.contains("fn build_pregame_action_plan_parts_v3("));
     assert!(source.contains("fn validate_mulligan_postcondition_parts_v3("));
     assert!(source.contains("fn validate_keep_first_main_postcondition_parts_v3("));

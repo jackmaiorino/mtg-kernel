@@ -7,21 +7,19 @@ use crate::{
 };
 use mtgo_blackbox_v1::{
     check_untrusted_dxgi_capture_artifact_v1,
-    classify_untrusted_offline_bottom_six_initial_candidate_v1,
-    classify_untrusted_offline_bottom_six_reflow_candidate_v1,
-    classify_untrusted_offline_bottom_six_state_candidate_v1,
-    classify_untrusted_offline_bottom_six_visible_card_identities_v1,
+    classify_untrusted_offline_bottom_six_reflow_candidate_v2,
+    classify_untrusted_offline_bottom_six_state_candidate_v3,
+    classify_untrusted_offline_bottom_six_visible_card_identities_v3,
     classify_untrusted_offline_first_main_candidate_v1,
-    classify_untrusted_offline_mulligan_ladder_candidate_v1, model_deployment_commitment_v1,
-    CheckedUntrustedMtgoOfflineBottomSixInitialCandidateV1,
+    classify_untrusted_offline_mulligan_ladder_candidate_v2, model_deployment_commitment_v1,
     CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1,
-    CheckedUntrustedMtgoOfflineBottomSixStateCandidateV1,
+    CheckedUntrustedMtgoOfflineBottomSixStateCandidateV3,
     CheckedUntrustedMtgoOfflineFirstMainCandidateV1,
     CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1,
-    CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV1,
+    CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV3,
     CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1, MtgoExpectedModelDeploymentV1,
     MtgoOfflineBottomSixInitialClassificationV1, MtgoOfflineBottomSixReflowClassificationV1,
-    MtgoOfflineBottomSixStateClassificationV1, MtgoOfflineFirstMainClassificationV1,
+    MtgoOfflineBottomSixStateClassificationV3, MtgoOfflineFirstMainClassificationV1,
     MtgoOfflineMulliganLadderClassificationV1, MtgoOfflineVisibleCardIdentityClassificationV1,
     MtgoOfflineVisibleCardIdentityV1, MtgoPregameActionSemanticV1, MtgoRectPxV1, MtgoSizePxV1,
 };
@@ -101,9 +99,9 @@ const PREGAME_KEEP_BOTTOM_SIX_CONFIRMATION_DOMAIN_V3: &[u8] =
 const PREGAME_CONTROL_PROFILE_ID_V3: &str =
     "freeform-solitaire-pregame-controls-1550x925-20260810-v3";
 const PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3: &str =
-    "70869ef8cbf9fd38e3b660d9ce03d7258d9e9f556bfd17d939cd8df86dce440a";
+    "82f85cdc4a46008686c5336721c8794ce00479ce06910a8b032f72ac3343326f";
 const PREGAME_BOTTOM_SIX_INITIAL_PROFILE_COMMITMENT_V3: &str =
-    "caafef8397e55e58f97ae24bca403390cb0d86a7ac2dd2fa23f30021f95479a8";
+    "d7536f59f258be66975b3e87a6435ddf509eb67a2ebc01a5bfd5800568afecb4";
 
 #[derive(Debug)]
 struct CliV1 {
@@ -387,7 +385,7 @@ pub fn measure_mtgo_dxgi_mulligan_ladder_candidate_v3(
 /// ```
 pub struct OpaqueMtgoDxgiBottomSixInitialMeasurementV3 {
     source_frame: OpaqueMtgoDxgiFrameCandidateV3,
-    measurement: CheckedUntrustedMtgoOfflineBottomSixInitialCandidateV1,
+    measurement: CheckedUntrustedMtgoOfflineBottomSixStateCandidateV3,
 }
 
 impl OpaqueMtgoDxgiBottomSixInitialMeasurementV3 {
@@ -396,15 +394,23 @@ impl OpaqueMtgoDxgiBottomSixInitialMeasurementV3 {
     }
 
     pub fn classification_v3(&self) -> MtgoOfflineBottomSixInitialClassificationV1 {
-        self.measurement.classification()
+        if self.measurement.classification() == MtgoOfflineBottomSixStateClassificationV3::Match
+            && self.measurement.selected_count() == Some(0)
+        {
+            MtgoOfflineBottomSixInitialClassificationV1::Match
+        } else {
+            MtgoOfflineBottomSixInitialClassificationV1::NoMatch
+        }
     }
 
     pub fn required_bottom_count_v3(&self) -> Option<u8> {
-        self.measurement.required_bottom_count()
+        (self.classification_v3() == MtgoOfflineBottomSixInitialClassificationV1::Match)
+            .then_some(6)
     }
 
     pub fn selected_count_v3(&self) -> Option<u8> {
-        self.measurement.selected_count()
+        (self.classification_v3() == MtgoOfflineBottomSixInitialClassificationV1::Match)
+            .then_some(0)
     }
 
     pub fn profile_commitment_sha256_v3(&self) -> &str {
@@ -442,7 +448,7 @@ pub fn measure_mtgo_dxgi_bottom_six_initial_candidate_v3(
         &source_frame.preview_png,
     )
     .map_err(|error| format!("check opaque bottom-six capture: {error}"))?;
-    let measurement = classify_untrusted_offline_bottom_six_initial_candidate_v1(
+    let measurement = classify_untrusted_offline_bottom_six_state_candidate_v3(
         &checked,
         &source_frame.canonical_bgra8,
     )
@@ -472,7 +478,7 @@ pub fn measure_mtgo_dxgi_bottom_six_initial_candidate_v3(
 /// ```
 pub struct OpaqueMtgoDxgiBottomSixStateMeasurementV3 {
     source_frame: OpaqueMtgoDxgiFrameCandidateV3,
-    measurement: CheckedUntrustedMtgoOfflineBottomSixStateCandidateV1,
+    measurement: CheckedUntrustedMtgoOfflineBottomSixStateCandidateV3,
 }
 
 impl OpaqueMtgoDxgiBottomSixStateMeasurementV3 {
@@ -480,7 +486,7 @@ impl OpaqueMtgoDxgiBottomSixStateMeasurementV3 {
         self.source_frame.commitments_v3()
     }
 
-    pub fn classification_v3(&self) -> MtgoOfflineBottomSixStateClassificationV1 {
+    pub fn classification_v3(&self) -> MtgoOfflineBottomSixStateClassificationV3 {
         self.measurement.classification()
     }
 
@@ -539,7 +545,7 @@ pub fn measure_mtgo_dxgi_bottom_six_state_candidate_v3(
         &source_frame.preview_png,
     )
     .map_err(|error| format!("check opaque bottom-six state capture: {error}"))?;
-    let measurement = classify_untrusted_offline_bottom_six_state_candidate_v1(
+    let measurement = classify_untrusted_offline_bottom_six_state_candidate_v3(
         &checked,
         &source_frame.canonical_bgra8,
     )
@@ -569,7 +575,7 @@ pub fn measure_mtgo_dxgi_bottom_six_state_candidate_v3(
 pub struct OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3 {
     source: OpaqueMtgoDxgiBottomSixStateMeasurementV3,
     profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
-    measurement: CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV1,
+    measurement: CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV3,
 }
 
 impl OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3 {
@@ -629,7 +635,7 @@ pub fn measure_mtgo_dxgi_bottom_six_visible_card_identities_candidate_v3(
         &source.source_frame.preview_png,
     )
     .map_err(|error| format!("check opaque visible-card identity capture: {error}"))?;
-    let measurement = classify_untrusted_offline_bottom_six_visible_card_identities_v1(
+    let measurement = classify_untrusted_offline_bottom_six_visible_card_identities_v3(
         &checked,
         &source.source_frame.canonical_bgra8,
         &profile,
@@ -737,7 +743,7 @@ pub fn measure_mtgo_dxgi_bottom_six_reflow_candidate_v3(
         &after.source_frame.preview_png,
     )
     .map_err(|error| format!("check opaque after-reflow capture: {error}"))?;
-    let measurement = classify_untrusted_offline_bottom_six_reflow_candidate_v1(
+    let measurement = classify_untrusted_offline_bottom_six_reflow_candidate_v2(
         &before_checked,
         &before.source_frame.canonical_bgra8,
         &after_checked,
@@ -2140,7 +2146,7 @@ fn measure_mulligan_ladder_parts_v3(
     let checked =
         check_untrusted_dxgi_capture_artifact_v1(manifest_bytes, canonical_bgra8, preview_png)
             .map_err(|error| format!("check in-process DXGI frame: {error}"))?;
-    classify_untrusted_offline_mulligan_ladder_candidate_v1(&checked, canonical_bgra8)
+    classify_untrusted_offline_mulligan_ladder_candidate_v2(&checked, canonical_bgra8)
         .map_err(|error| format!("measure London mulligan ladder: {error}"))
 }
 

@@ -208,6 +208,8 @@ The exact prompt pixels changed slightly in a later Solitaire game even though t
 
 `classify_untrusted_offline_bottom_six_reflow_candidate_v1` compares two consecutive matched stages using only the unchanged visible card-art band above the keyboard overlay. It evaluates every possible order-preserving single-card deletion. A Match requires exactly one deletion whose every remaining-card mean absolute BGR difference is at most 25.000 intensity levels. No deletion or multiple plausible deletions fails closed. The six observed transitions had matched differences from 0.433 through 19.571 while incorrect pairings in the exploratory matrix began above 46. The corresponding corpus is `fixtures/offline_bottom_six_reflow_corpus_20260810_v1.json`.
 
+`classify_untrusted_offline_bottom_six_reflow_candidate_v2` preserves that deletion rule but requires both endpoints to pass the current v3 binary-control state gate. This prevents an in-process state accepted by the current classifier from being rejected or reinterpreted by the legacy raw-control classifier during the next transition check.
+
 `fixtures/offline_visible_card_public_reference_probe_20260810_v1.json` records the first visible-card identity feasibility probe. Seven manually read card labels in one opening hand were compared against six pinned public print templates. Every ordinal selected the corresponding visible name; the weakest winning correlation was 0.6441 and the weakest margin over another template was 0.2105. The public image hashes and print identifiers are recorded, but the images remain in a local cache and are not committed. The source capture is still pending visual review, the candidate universe is manually constrained, and every authority flag remains false. This is not an accuracy estimate or a kernel card binding. The proposed calibration and runtime boundary is specified in `MTGO-VISIBLE-CARD-IDENTITY-V1-DESIGN.md`.
 
 `check_untrusted_offline_visible_card_template_profile_v1` validates the first local runtime-profile shape. It fixes the reviewed layout, a 96 by 60 BGR template, the 25.000 mean absolute difference ceiling, and a 10.000 distinct-name margin. Template bytes are bound to their visible calibration capture, public print metadata, public-image hash, and deck commitment. `classify_untrusted_offline_bottom_six_visible_card_identities_v1` then requires a matched bottom-six frame and identifies the complete visible hand or returns `NoMatch`; partial results and distinct-name ties are withheld. The checked profile and result expose no template pixels or coordinates, cannot create `CardStableRefV1`, and keep all semantic, observation, scoring, and input authority false. Caller-supplied labels remain untrusted until a separate reviewed deck-profile ratification exists.
@@ -237,7 +239,7 @@ cargo run --bin classify_mtgo_offline_bottom_six_visible_card_identities_v3 -- `
 The predecessor mulligan-ladder corpus contains 25 prompt frames plus one gameplay negative across five games. The v2 dark-core development and heldout records add fourteen fixed-deck prompts across two later games. All seven states matched in the later heldout game. This is still a small, one-layout renderer screen rather than an accuracy estimate.
 
 ```powershell
-cargo run --bin classify_mtgo_offline_bottom_six_reflow_candidate_v1 -- `
+cargo run --bin classify_mtgo_offline_bottom_six_reflow_candidate_v2 -- `
   'C:\absolute\before-artifact-directory' `
   'C:\absolute\after-artifact-directory'
 ```
