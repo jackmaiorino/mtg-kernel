@@ -9,7 +9,8 @@ use mtgo_blackbox_v1::{
     check_untrusted_dxgi_capture_artifact_v1,
     classify_untrusted_offline_mulligan_ladder_candidate_v1, model_deployment_commitment_v1,
     CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1, MtgoExpectedModelDeploymentV1,
-    MtgoOfflineMulliganLadderClassificationV1, MtgoPregameActionSemanticV1,
+    MtgoOfflineMulliganLadderClassificationV1, MtgoPregameActionSemanticV1, MtgoRectPxV1,
+    MtgoSizePxV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -78,6 +79,12 @@ pub const MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3: u32 = 3;
 
 const PREGAME_SCORING_REQUEST_DOMAIN_V3: &[u8] = b"mtgo-pregame-scoring-request-v3";
 const PREGAME_MODEL_SELECTION_DOMAIN_V3: &[u8] = b"mtgo-pregame-model-selection-v3";
+const PREGAME_ACTION_PLAN_DOMAIN_V3: &[u8] = b"mtgo-pregame-action-plan-v3";
+const PREGAME_MULLIGAN_CONFIRMATION_DOMAIN_V3: &[u8] = b"mtgo-pregame-mulligan-confirmation-v3";
+const PREGAME_CONTROL_PROFILE_ID_V3: &str =
+    "freeform-solitaire-pregame-controls-1550x925-20260810-v3";
+const PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3: &str =
+    "bc278fde2cf9e5999bfc8d3dbbf437619ef8974d014b3dff2d4be14b58b28485";
 
 #[derive(Debug)]
 struct CliV1 {
@@ -629,6 +636,586 @@ fn validate_pregame_score_response_parts_v3(
         selected_semantic,
         selection_commitment_sha256,
     ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "postcondition_kind",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum MtgoPlannedPregamePostconditionV3 {
+    NextMulliganPrompt { prospective_keep_size: u8 },
+    LondonBottoming { required_bottom_count: u8 },
+    GameplayFirstMain,
+}
+
+#[derive(Clone, Copy, Serialize)]
+struct ClientPointV3 {
+    x: u32,
+    y: u32,
+}
+
+struct PregameActionPlanPartsV3 {
+    control_profile_commitment_sha256: String,
+    #[allow(dead_code)]
+    control_id: &'static str,
+    #[allow(dead_code)]
+    control_rect_client_px: MtgoRectPxV1,
+    #[allow(dead_code)]
+    target_point_client_px: ClientPointV3,
+    observed_control_region_sha256: String,
+    source_transition_identity_sha256: String,
+    planned_postcondition: MtgoPlannedPregamePostconditionV3,
+    action_plan_commitment_sha256: String,
+}
+
+/// A coordinate-private, non-actionable plan for one model-selected pregame
+/// control. The plan binds the exact source capture, measured prompt, model
+/// selection, fixed client layout, observed control pixels, and required
+/// visible postcondition. It cannot perform or authorize input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPregameActionPlanV3;
+/// let _forged = OpaqueMtgoPregameActionPlanV3 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPregameActionPlanV3;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoPregameActionPlanV3>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPregameActionPlanV3;
+/// fn coordinate_escape(value: &OpaqueMtgoPregameActionPlanV3) {
+///     let _ = value.target_point_client_px_v3();
+/// }
+/// ```
+pub struct OpaqueMtgoPregameActionPlanV3 {
+    selection: OpaqueMtgoPregameModelSelectionV3,
+    parts: PregameActionPlanPartsV3,
+}
+
+impl OpaqueMtgoPregameActionPlanV3 {
+    pub fn selected_semantic_v3(&self) -> &MtgoPregameActionSemanticV1 {
+        self.selection.selected_semantic_v3()
+    }
+
+    pub fn planned_postcondition_v3(&self) -> &MtgoPlannedPregamePostconditionV3 {
+        &self.parts.planned_postcondition
+    }
+
+    pub fn control_profile_commitment_sha256_v3(&self) -> &str {
+        &self.parts.control_profile_commitment_sha256
+    }
+
+    pub fn observed_control_region_sha256_v3(&self) -> &str {
+        &self.parts.observed_control_region_sha256
+    }
+
+    pub fn source_capture_commitment_sha256_v3(&self) -> &str {
+        &self
+            .selection
+            .measurement
+            .source_frame
+            .capture_commitment_sha256
+    }
+
+    pub fn selection_commitment_sha256_v3(&self) -> &str {
+        self.selection.selection_commitment_sha256_v3()
+    }
+
+    pub fn action_plan_commitment_sha256_v3(&self) -> &str {
+        &self.parts.action_plan_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_purchase_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_queue_entry_v3(&self) -> bool {
+        false
+    }
+}
+
+/// A visible next-prompt confirmation for one planned Mulligan transition.
+/// This type proves request binding and exact prompt progression only. It does
+/// not prove that a particular input caused the transition and cannot enable a
+/// later input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoConfirmedMulliganTransitionV3;
+/// let _forged = OpaqueMtgoConfirmedMulliganTransitionV3 {};
+/// ```
+pub struct OpaqueMtgoConfirmedMulliganTransitionV3 {
+    plan: OpaqueMtgoPregameActionPlanV3,
+    after: OpaqueMtgoDxgiMulliganMeasurementV3,
+    resulting_prospective_keep_size: u8,
+    confirmation_commitment_sha256: String,
+}
+
+impl OpaqueMtgoConfirmedMulliganTransitionV3 {
+    pub fn selected_semantic_v3(&self) -> &MtgoPregameActionSemanticV1 {
+        self.plan.selected_semantic_v3()
+    }
+
+    pub fn resulting_prospective_keep_size_v3(&self) -> u8 {
+        self.resulting_prospective_keep_size
+    }
+
+    pub fn source_action_plan_commitment_sha256_v3(&self) -> &str {
+        self.plan.action_plan_commitment_sha256_v3()
+    }
+
+    pub fn resulting_measurement_commitment_sha256_v3(&self) -> &str {
+        self.after.measurement_commitment_sha256_v3()
+    }
+
+    pub fn confirmation_commitment_sha256_v3(&self) -> &str {
+        &self.confirmation_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v3(&self) -> bool {
+        false
+    }
+}
+
+pub fn build_pregame_action_plan_v3(
+    selection: OpaqueMtgoPregameModelSelectionV3,
+) -> Result<OpaqueMtgoPregameActionPlanV3, String> {
+    let measurement = &selection.measurement;
+    let capture = measurement.source_capture_commitments_v3();
+    let source_transition_identity_sha256 =
+        pregame_transition_identity_commitment_v3(&measurement.source_frame.manifest)?;
+    let parts = build_pregame_action_plan_parts_v3(
+        selection.selected_semantic_v3(),
+        measurement.prospective_keep_size_v3(),
+        measurement.profile_set_commitment_sha256_v3(),
+        selection.selection_commitment_sha256_v3(),
+        measurement.measurement_commitment_sha256_v3(),
+        &capture,
+        &source_transition_identity_sha256,
+        &measurement.source_frame.canonical_bgra8,
+    )?;
+    Ok(OpaqueMtgoPregameActionPlanV3 { selection, parts })
+}
+
+pub fn confirm_pregame_mulligan_transition_v3(
+    plan: OpaqueMtgoPregameActionPlanV3,
+    after: OpaqueMtgoDxgiMulliganMeasurementV3,
+) -> Result<OpaqueMtgoConfirmedMulliganTransitionV3, String> {
+    let source_capture = plan.selection.measurement.source_capture_commitments_v3();
+    let after_capture = after.source_capture_commitments_v3();
+    let after_transition_identity_sha256 =
+        pregame_transition_identity_commitment_v3(&after.source_frame.manifest)?;
+    let confirmation_commitment_sha256 = validate_mulligan_postcondition_parts_v3(
+        plan.action_plan_commitment_sha256_v3(),
+        &plan.parts.planned_postcondition,
+        &source_capture,
+        &plan.parts.source_transition_identity_sha256,
+        after.classification_v3(),
+        after.prospective_keep_size_v3(),
+        after.profile_set_commitment_sha256_v3(),
+        after.measurement_commitment_sha256_v3(),
+        &after_capture,
+        &after_transition_identity_sha256,
+    )?;
+    let resulting_prospective_keep_size = after
+        .prospective_keep_size_v3()
+        .ok_or("confirmed next prompt did not retain its prospective keep size")?;
+    Ok(OpaqueMtgoConfirmedMulliganTransitionV3 {
+        plan,
+        after,
+        resulting_prospective_keep_size,
+        confirmation_commitment_sha256,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_pregame_action_plan_parts_v3(
+    selected_semantic: &MtgoPregameActionSemanticV1,
+    prospective_keep_size: Option<u8>,
+    ladder_profile_commitment_sha256: &str,
+    selection_commitment_sha256: &str,
+    measurement_commitment_sha256: &str,
+    source_capture: &MtgoDxgiFrameCommitmentsV3,
+    source_transition_identity_sha256: &str,
+    canonical_bgra8: &[u8],
+) -> Result<PregameActionPlanPartsV3, String> {
+    let prospective_keep_size = prospective_keep_size
+        .filter(|value| (1..=7).contains(value))
+        .ok_or("pregame action plan requires an exact prospective keep size")?;
+    if ladder_profile_commitment_sha256 != PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3 {
+        return Err("pregame action plan requires the reviewed ladder profile".to_owned());
+    }
+    for digest in [
+        selection_commitment_sha256,
+        measurement_commitment_sha256,
+        &source_capture.capture_commitment_sha256,
+        &source_capture.canonical_bgra8_sha256,
+        source_transition_identity_sha256,
+    ] {
+        require_lower_sha256_v3(digest, "pregame action plan commitment")?;
+    }
+    let client_size_px = MtgoSizePxV1 {
+        width: source_capture.canonical_width,
+        height: source_capture.canonical_height,
+    };
+    if client_size_px.width != 1_550 || client_size_px.height != 925 {
+        return Err("pregame action plan requires the reviewed 1550 by 925 client".to_owned());
+    }
+    let expected_len = usize::try_from(client_size_px.width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(client_size_px.height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("pregame action plan pixel length overflow")?;
+    if canonical_bgra8.len() != expected_len
+        || format!("{:x}", Sha256::digest(canonical_bgra8)) != source_capture.canonical_bgra8_sha256
+    {
+        return Err("pregame action plan pixels do not bind the source capture".to_owned());
+    }
+
+    let (control_id, control_rect_client_px, planned_postcondition) = match selected_semantic {
+        MtgoPregameActionSemanticV1::Mulligan { next_hand_size }
+            if next_hand_size.checked_add(1) == Some(prospective_keep_size)
+                && *next_hand_size >= 1 =>
+        {
+            (
+                "mulligan",
+                MtgoRectPxV1 {
+                    x: 29,
+                    y: 153,
+                    width: 82,
+                    height: 33,
+                },
+                MtgoPlannedPregamePostconditionV3::NextMulliganPrompt {
+                    prospective_keep_size: *next_hand_size,
+                },
+            )
+        }
+        MtgoPregameActionSemanticV1::Mulligan { next_hand_size: 0 }
+            if prospective_keep_size == 1 =>
+        {
+            return Err(
+                "zero-card Mulligan is not plannable until its visible prompt is calibrated"
+                    .to_owned(),
+            );
+        }
+        MtgoPregameActionSemanticV1::KeepOpeningHand => {
+            let postcondition = if prospective_keep_size == 7 {
+                MtgoPlannedPregamePostconditionV3::GameplayFirstMain
+            } else {
+                MtgoPlannedPregamePostconditionV3::LondonBottoming {
+                    required_bottom_count: 7 - prospective_keep_size,
+                }
+            };
+            (
+                "keep",
+                MtgoRectPxV1 {
+                    x: 116,
+                    y: 153,
+                    width: 55,
+                    height: 33,
+                },
+                postcondition,
+            )
+        }
+        _ => {
+            return Err(
+                "selected pregame semantic does not match the measured prospective keep size"
+                    .to_owned(),
+            );
+        }
+    };
+    let target_point_client_px = ClientPointV3 {
+        x: control_rect_client_px.x + control_rect_client_px.width / 2,
+        y: control_rect_client_px.y + control_rect_client_px.height / 2,
+    };
+    let observed_control_region_sha256 =
+        hash_bgra_region_for_plan_v3(canonical_bgra8, &client_size_px, &control_rect_client_px)?;
+    let control_profile_commitment_sha256 = pregame_control_profile_commitment_v3()?;
+
+    #[derive(Serialize)]
+    struct ActionPlanRecordV3<'a> {
+        schema_version: u32,
+        control_profile_commitment_sha256: &'a str,
+        ladder_profile_commitment_sha256: &'a str,
+        selection_commitment_sha256: &'a str,
+        measurement_commitment_sha256: &'a str,
+        source_capture_commitment_sha256: &'a str,
+        source_transition_identity_sha256: &'a str,
+        prospective_keep_size: u8,
+        selected_semantic: &'a MtgoPregameActionSemanticV1,
+        control_id: &'a str,
+        control_rect_client_px: &'a MtgoRectPxV1,
+        target_point_client_px: ClientPointV3,
+        observed_control_region_sha256: &'a str,
+        planned_postcondition: &'a MtgoPlannedPregamePostconditionV3,
+    }
+    let action_plan_commitment_sha256 = canonical_json_commitment_v3(
+        PREGAME_ACTION_PLAN_DOMAIN_V3,
+        &ActionPlanRecordV3 {
+            schema_version: MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3,
+            control_profile_commitment_sha256: &control_profile_commitment_sha256,
+            ladder_profile_commitment_sha256,
+            selection_commitment_sha256,
+            measurement_commitment_sha256,
+            source_capture_commitment_sha256: &source_capture.capture_commitment_sha256,
+            source_transition_identity_sha256,
+            prospective_keep_size,
+            selected_semantic,
+            control_id,
+            control_rect_client_px: &control_rect_client_px,
+            target_point_client_px,
+            observed_control_region_sha256: &observed_control_region_sha256,
+            planned_postcondition: &planned_postcondition,
+        },
+    )?;
+    Ok(PregameActionPlanPartsV3 {
+        control_profile_commitment_sha256,
+        control_id,
+        control_rect_client_px,
+        target_point_client_px,
+        observed_control_region_sha256,
+        source_transition_identity_sha256: source_transition_identity_sha256.to_owned(),
+        planned_postcondition,
+        action_plan_commitment_sha256,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_mulligan_postcondition_parts_v3(
+    action_plan_commitment_sha256: &str,
+    planned_postcondition: &MtgoPlannedPregamePostconditionV3,
+    source_capture: &MtgoDxgiFrameCommitmentsV3,
+    source_transition_identity_sha256: &str,
+    after_classification: MtgoOfflineMulliganLadderClassificationV1,
+    after_prospective_keep_size: Option<u8>,
+    after_profile_commitment_sha256: &str,
+    after_measurement_commitment_sha256: &str,
+    after_capture: &MtgoDxgiFrameCommitmentsV3,
+    after_transition_identity_sha256: &str,
+) -> Result<String, String> {
+    let MtgoPlannedPregamePostconditionV3::NextMulliganPrompt {
+        prospective_keep_size,
+    } = planned_postcondition
+    else {
+        return Err(
+            "Keep postconditions require a dedicated bottoming or first-main classifier".to_owned(),
+        );
+    };
+    if after_classification != MtgoOfflineMulliganLadderClassificationV1::Match
+        || after_prospective_keep_size != Some(*prospective_keep_size)
+        || after_profile_commitment_sha256 != PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3
+    {
+        return Err("the visible next prompt does not match the planned Mulligan".to_owned());
+    }
+    for digest in [
+        action_plan_commitment_sha256,
+        source_transition_identity_sha256,
+        after_profile_commitment_sha256,
+        after_measurement_commitment_sha256,
+        &source_capture.capture_commitment_sha256,
+        &source_capture.canonical_bgra8_sha256,
+        &after_capture.capture_commitment_sha256,
+        &after_capture.canonical_bgra8_sha256,
+        after_transition_identity_sha256,
+    ] {
+        require_lower_sha256_v3(digest, "pregame Mulligan confirmation commitment")?;
+    }
+    if source_transition_identity_sha256 != after_transition_identity_sha256
+        || source_capture.canonical_width != after_capture.canonical_width
+        || source_capture.canonical_height != after_capture.canonical_height
+        || source_capture.client_rect_desktop_px != after_capture.client_rect_desktop_px
+    {
+        return Err("the MTGO process, match window, or capture layout changed".to_owned());
+    }
+    if after_capture.captured_at_unix_millis <= source_capture.captured_at_unix_millis
+        || after_capture.capture_commitment_sha256 == source_capture.capture_commitment_sha256
+        || after_capture.canonical_bgra8_sha256 == source_capture.canonical_bgra8_sha256
+    {
+        return Err(
+            "the Mulligan postcondition must use a strictly newer changed frame".to_owned(),
+        );
+    }
+
+    #[derive(Serialize)]
+    struct ConfirmationRecordV3<'a> {
+        action_plan_commitment_sha256: &'a str,
+        source_capture_commitment_sha256: &'a str,
+        source_transition_identity_sha256: &'a str,
+        planned_postcondition: &'a MtgoPlannedPregamePostconditionV3,
+        after_capture_commitment_sha256: &'a str,
+        after_measurement_commitment_sha256: &'a str,
+        after_transition_identity_sha256: &'a str,
+    }
+    canonical_json_commitment_v3(
+        PREGAME_MULLIGAN_CONFIRMATION_DOMAIN_V3,
+        &ConfirmationRecordV3 {
+            action_plan_commitment_sha256,
+            source_capture_commitment_sha256: &source_capture.capture_commitment_sha256,
+            source_transition_identity_sha256,
+            planned_postcondition,
+            after_capture_commitment_sha256: &after_capture.capture_commitment_sha256,
+            after_measurement_commitment_sha256,
+            after_transition_identity_sha256,
+        },
+    )
+}
+
+fn pregame_control_profile_commitment_v3() -> Result<String, String> {
+    #[derive(Serialize)]
+    struct ControlRecordV3<'a> {
+        control_id: &'a str,
+        rect_client_px: MtgoRectPxV1,
+    }
+    #[derive(Serialize)]
+    struct ControlProfileV3<'a> {
+        profile_id: &'a str,
+        ladder_profile_commitment_sha256: &'a str,
+        client_size_px: MtgoSizePxV1,
+        controls: [ControlRecordV3<'a>; 2],
+    }
+    canonical_json_commitment_v3(
+        b"mtgo-pregame-control-profile-v3",
+        &ControlProfileV3 {
+            profile_id: PREGAME_CONTROL_PROFILE_ID_V3,
+            ladder_profile_commitment_sha256: PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            client_size_px: MtgoSizePxV1 {
+                width: 1_550,
+                height: 925,
+            },
+            controls: [
+                ControlRecordV3 {
+                    control_id: "mulligan",
+                    rect_client_px: MtgoRectPxV1 {
+                        x: 29,
+                        y: 153,
+                        width: 82,
+                        height: 33,
+                    },
+                },
+                ControlRecordV3 {
+                    control_id: "keep",
+                    rect_client_px: MtgoRectPxV1 {
+                        x: 116,
+                        y: 153,
+                        width: 55,
+                        height: 33,
+                    },
+                },
+            ],
+        },
+    )
+}
+
+fn hash_bgra_region_for_plan_v3(
+    pixels: &[u8],
+    size: &MtgoSizePxV1,
+    rect: &MtgoRectPxV1,
+) -> Result<String, String> {
+    let right = rect
+        .x
+        .checked_add(rect.width)
+        .ok_or("pregame action control rectangle overflow")?;
+    let bottom = rect
+        .y
+        .checked_add(rect.height)
+        .ok_or("pregame action control rectangle overflow")?;
+    if rect.width == 0 || rect.height == 0 || right > size.width || bottom > size.height {
+        return Err("pregame action control rectangle is outside the client".to_owned());
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"mtgo-pregame-control-bgra-region-v3");
+    for value in [rect.x, rect.y, rect.width, rect.height] {
+        hasher.update(value.to_be_bytes());
+    }
+    let row_bytes = usize::try_from(rect.width)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .ok_or("pregame action control row size overflow")?;
+    for y in rect.y..bottom {
+        let start = usize::try_from(y)
+            .ok()
+            .and_then(|y| {
+                usize::try_from(size.width)
+                    .ok()
+                    .and_then(|width| y.checked_mul(width))
+            })
+            .and_then(|row| {
+                usize::try_from(rect.x)
+                    .ok()
+                    .and_then(|x| row.checked_add(x))
+            })
+            .and_then(|pixel| pixel.checked_mul(4))
+            .ok_or("pregame action control pixel offset overflow")?;
+        let end = start
+            .checked_add(row_bytes)
+            .ok_or("pregame action control row end overflow")?;
+        let row = pixels
+            .get(start..end)
+            .ok_or("pregame action control pixels are incomplete")?;
+        hasher.update(row);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn pregame_transition_identity_commitment_v3(
+    manifest: &CaptureManifestV2,
+) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct TransitionIdentityV3<'a> {
+        schema: &'a str,
+        capture_backend: &'a str,
+        window_mode: &'a str,
+        capture_role: &'a str,
+        expected_game_format: &'a str,
+        title_rule_version: &'a str,
+        hwnd: u64,
+        process_id: u32,
+        process_start_filetime_100ns: u64,
+        process_image: &'a str,
+        executable_sha256: &'a str,
+        signer_thumbprint: &'a str,
+        signer_subject_sha256: &'a str,
+        title: &'a str,
+        dpi: u32,
+        client_rect_desktop_px: SignedRectV1,
+        extended_frame_rect_desktop_px: SignedRectV1,
+        output: &'a OutputIdentityV1,
+    }
+    canonical_json_commitment_v3(
+        b"mtgo-pregame-transition-identity-v3",
+        &TransitionIdentityV3 {
+            schema: manifest.schema,
+            capture_backend: manifest.capture_backend,
+            window_mode: manifest.window_mode,
+            capture_role: manifest.capture_role,
+            expected_game_format: &manifest.expected_game_format,
+            title_rule_version: manifest.title_rule_version,
+            hwnd: manifest.pre.hwnd,
+            process_id: manifest.pre.process_id,
+            process_start_filetime_100ns: manifest.pre.process_start_filetime_100ns,
+            process_image: &manifest.pre.process_image,
+            executable_sha256: &manifest.pre.executable_sha256,
+            signer_thumbprint: &manifest.pre.signer_thumbprint,
+            signer_subject_sha256: &manifest.pre.signer_subject_sha256,
+            title: &manifest.pre.title,
+            dpi: manifest.pre.dpi,
+            client_rect_desktop_px: manifest.pre.client_rect_desktop_px,
+            extended_frame_rect_desktop_px: manifest.pre.extended_frame_rect_desktop_px,
+            output: &manifest.output,
+        },
+    )
 }
 
 fn measure_mulligan_ladder_parts_v3(
@@ -2002,6 +2589,203 @@ mod tests {
     }
 
     #[test]
+    fn pregame_action_plan_binds_exact_control_pixels_and_required_transition() {
+        let pixels = vec![0_u8; 1_550 * 925 * 4];
+        let source = capture_commitments_for_pixels_v3(&pixels, 'a', 100);
+        let mulligan = build_pregame_action_plan_parts_v3(
+            &MtgoPregameActionSemanticV1::Mulligan { next_hand_size: 6 },
+            Some(7),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &source,
+            &"d".repeat(64),
+            &pixels,
+        )
+        .unwrap();
+        assert_eq!(mulligan.control_id, "mulligan");
+        assert_eq!(mulligan.control_rect_client_px.x, 29);
+        assert_eq!(mulligan.target_point_client_px.x, 70);
+        assert_eq!(mulligan.target_point_client_px.y, 169);
+        assert_eq!(mulligan.observed_control_region_sha256.len(), 64);
+        assert_eq!(
+            mulligan.planned_postcondition,
+            MtgoPlannedPregamePostconditionV3::NextMulliganPrompt {
+                prospective_keep_size: 6
+            }
+        );
+        assert_eq!(mulligan.action_plan_commitment_sha256.len(), 64);
+
+        let mut animated_pixels = pixels.clone();
+        let first_control_pixel = (153 * 1_550 + 29) * 4;
+        animated_pixels[first_control_pixel] = 1;
+        let animated_source = capture_commitments_for_pixels_v3(&animated_pixels, 'e', 100);
+        let animated = build_pregame_action_plan_parts_v3(
+            &MtgoPregameActionSemanticV1::Mulligan { next_hand_size: 6 },
+            Some(7),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &animated_source,
+            &"d".repeat(64),
+            &animated_pixels,
+        )
+        .unwrap();
+        assert_ne!(
+            animated.observed_control_region_sha256,
+            mulligan.observed_control_region_sha256
+        );
+        assert_ne!(
+            animated.action_plan_commitment_sha256,
+            mulligan.action_plan_commitment_sha256
+        );
+
+        let keep_seven = build_pregame_action_plan_parts_v3(
+            &MtgoPregameActionSemanticV1::KeepOpeningHand,
+            Some(7),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &source,
+            &"d".repeat(64),
+            &pixels,
+        )
+        .unwrap();
+        assert_eq!(keep_seven.control_id, "keep");
+        assert_eq!(
+            keep_seven.planned_postcondition,
+            MtgoPlannedPregamePostconditionV3::GameplayFirstMain
+        );
+
+        let keep_four = build_pregame_action_plan_parts_v3(
+            &MtgoPregameActionSemanticV1::KeepOpeningHand,
+            Some(4),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &source,
+            &"d".repeat(64),
+            &pixels,
+        )
+        .unwrap();
+        assert_eq!(
+            keep_four.planned_postcondition,
+            MtgoPlannedPregamePostconditionV3::LondonBottoming {
+                required_bottom_count: 3
+            }
+        );
+
+        assert!(build_pregame_action_plan_parts_v3(
+            &MtgoPregameActionSemanticV1::Mulligan { next_hand_size: 0 },
+            Some(1),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &source,
+            &"d".repeat(64),
+            &pixels,
+        )
+        .is_err());
+
+        let mut changed_pixels = pixels.clone();
+        changed_pixels[0] = 1;
+        assert!(build_pregame_action_plan_parts_v3(
+            &MtgoPregameActionSemanticV1::KeepOpeningHand,
+            Some(7),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &source,
+            &"d".repeat(64),
+            &changed_pixels,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn mulligan_confirmation_requires_exact_new_prompt_and_stable_identity() {
+        let pixels = vec![0_u8; 1_550 * 925 * 4];
+        let source = capture_commitments_for_pixels_v3(&pixels, 'a', 100);
+        let mut after = source.clone();
+        after.capture_commitment_sha256 = "e".repeat(64);
+        after.canonical_bgra8_sha256 = "f".repeat(64);
+        after.captured_at_unix_millis = 101;
+        let expected = MtgoPlannedPregamePostconditionV3::NextMulliganPrompt {
+            prospective_keep_size: 6,
+        };
+        let confirmed = validate_mulligan_postcondition_parts_v3(
+            &"1".repeat(64),
+            &expected,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineMulliganLadderClassificationV1::Match,
+            Some(6),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"3".repeat(64),
+            &after,
+            &"2".repeat(64),
+        )
+        .unwrap();
+        assert_eq!(confirmed.len(), 64);
+
+        let mut stale = after.clone();
+        stale.captured_at_unix_millis = 100;
+        assert!(validate_mulligan_postcondition_parts_v3(
+            &"1".repeat(64),
+            &expected,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineMulliganLadderClassificationV1::Match,
+            Some(6),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"3".repeat(64),
+            &stale,
+            &"2".repeat(64),
+        )
+        .is_err());
+        assert!(validate_mulligan_postcondition_parts_v3(
+            &"1".repeat(64),
+            &expected,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineMulliganLadderClassificationV1::Match,
+            Some(5),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"3".repeat(64),
+            &after,
+            &"2".repeat(64),
+        )
+        .is_err());
+        assert!(validate_mulligan_postcondition_parts_v3(
+            &"1".repeat(64),
+            &expected,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineMulliganLadderClassificationV1::Match,
+            Some(6),
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"3".repeat(64),
+            &after,
+            &"4".repeat(64),
+        )
+        .is_err());
+
+        assert!(validate_mulligan_postcondition_parts_v3(
+            &"1".repeat(64),
+            &MtgoPlannedPregamePostconditionV3::GameplayFirstMain,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineMulliganLadderClassificationV1::NoMatch,
+            None,
+            PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
+            &"3".repeat(64),
+            &after,
+            &"2".repeat(64),
+        )
+        .is_err());
+    }
+
+    #[test]
     fn in_process_parts_join_rechecks_capture_and_returns_non_actionable_no_match() {
         let (manifest, mut pixels, png) = synthetic_no_match_artifact_v3();
         let measured = measure_mulligan_ladder_parts_v3(&manifest, &pixels, &png).unwrap();
@@ -2147,6 +2931,27 @@ mod tests {
                 generation_index: 7,
             },
             scorer_contract_sha256: "6".repeat(64),
+        }
+    }
+
+    fn capture_commitments_for_pixels_v3(
+        pixels: &[u8],
+        capture_hash_character: char,
+        captured_at_unix_millis: u128,
+    ) -> MtgoDxgiFrameCommitmentsV3 {
+        MtgoDxgiFrameCommitmentsV3 {
+            capture_commitment_sha256: std::iter::repeat_n(capture_hash_character, 64).collect(),
+            canonical_bgra8_sha256: format!("{:x}", Sha256::digest(pixels)),
+            preview_png_sha256: "9".repeat(64),
+            canonical_width: 1_550,
+            canonical_height: 925,
+            client_rect_desktop_px: SignedRectV1 {
+                left: 0,
+                top: 0,
+                right: 1_550,
+                bottom: 925,
+            },
+            captured_at_unix_millis,
         }
     }
 }

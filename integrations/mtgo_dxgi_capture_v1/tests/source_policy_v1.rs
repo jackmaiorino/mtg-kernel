@@ -76,3 +76,20 @@ fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
     assert!(!source.contains("pub fn validate_pregame_score_response_parts_v3("));
     assert!(!source.contains("pub fn make_live_input"));
 }
+
+#[test]
+fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound() {
+    let source = include_str!("../src/probe.rs");
+    assert!(source.contains(
+        "pub fn build_pregame_action_plan_v3(\n    selection: OpaqueMtgoPregameModelSelectionV3,"
+    ));
+    assert!(source.contains(
+        "pub fn confirm_pregame_mulligan_transition_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    after: OpaqueMtgoDxgiMulliganMeasurementV3,"
+    ));
+    assert!(source.contains("fn build_pregame_action_plan_parts_v3("));
+    assert!(source.contains("fn validate_mulligan_postcondition_parts_v3("));
+    assert!(!source.contains("pub fn build_pregame_action_plan_parts_v3("));
+    assert!(!source.contains("pub fn validate_mulligan_postcondition_parts_v3("));
+    assert!(!source.contains("pub fn target_point_client_px_v3"));
+    assert!(!source.contains("safe_for_live_input_v3(&self) -> bool {\n        true"));
+}
