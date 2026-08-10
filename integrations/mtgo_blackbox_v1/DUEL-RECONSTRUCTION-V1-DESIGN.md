@@ -40,6 +40,8 @@ The current checked-untrusted ledger covers one exact observed chain only: the r
 
 The pinned gameplay capture now reaches an exact Turn 1 empty-battlefield first-main measurement and an all-or-nothing eight-card visible-hand identity measurement. One supervised fixed-deck frame matched `Island, Island, Plains, Island, Plains, Plains, Island, Island`. The template profile remains caller-labelled and checked-untrusted, and the exact Plains label currently fails the kernel correspondence gate. This proves the capture-to-visible-label shape while also demonstrating that perception success does not bypass card coverage.
 
+The first-main coverage report resolves those eight labels ordinal by ordinal against the compile-bound supported profile. Five Islands have full correspondence; Plains at ordinals 2, 4, and 5 is absent from the kernel registry. The report deliberately stops there. It creates no stable references or observation and makes the fixed-hand coverage failure explicit instead of dropping or substituting cards.
+
 This does not yet reconstruct a duel. Seed labels and calibration transitions remain caller-supplied checked-untrusted data. Production object bindings are withheld, and the ledger cannot create an observation, legal-action set, score, or input command. The next lineage step is deriving canonical visible objects from admitted current-frame measurements and reconciling arbitrary visible additions, removals, and zone changes without identity ambiguity.
 
 ## Card coverage gate

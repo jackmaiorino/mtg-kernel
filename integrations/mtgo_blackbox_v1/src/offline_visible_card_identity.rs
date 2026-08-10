@@ -1421,6 +1421,99 @@ mod tests {
         assert!(identities.is_empty());
     }
 
+    fn synthetic_first_main_identity_v1(
+        ordinal: u8,
+        visible_card_name: &str,
+    ) -> MtgoOfflineVisibleCardIdentityV1 {
+        MtgoOfflineVisibleCardIdentityV1 {
+            ordinal,
+            visible_card_name: visible_card_name.to_owned(),
+            winning_template_id: format!("template-{ordinal}"),
+            mean_absolute_difference_milli: 1_000,
+            runner_up_distinct_name: "Runner Up".to_owned(),
+            runner_up_mean_absolute_difference_milli: 50_000,
+            distinct_name_margin_milli: 49_000,
+        }
+    }
+
+    fn synthetic_first_main_identity_candidate_v1(
+        names: &[&str],
+    ) -> CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1 {
+        let identities = names
+            .iter()
+            .enumerate()
+            .map(|(ordinal, name)| {
+                synthetic_first_main_identity_v1(u8::try_from(ordinal).unwrap(), name)
+            })
+            .collect::<Vec<_>>();
+        CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1 {
+            classification: MtgoOfflineVisibleCardIdentityClassificationV1::Match,
+            source_manifest_sha256: "1".repeat(64),
+            source_frame_sha256: "2".repeat(64),
+            source_first_main_commitment_sha256: "3".repeat(64),
+            profile_commitment_sha256: "4".repeat(64),
+            visible_hand_count: Some(8),
+            matched_identity_count: u8::try_from(identities.len()).unwrap(),
+            identities,
+            candidate_commitment_sha256: "5".repeat(64),
+        }
+    }
+
+    #[test]
+    fn first_main_kernel_coverage_reports_each_unsupported_ordinal() {
+        let candidate = synthetic_first_main_identity_candidate_v1(&[
+            "Island", "Island", "Plains", "Island", "Plains", "Plains", "Island", "Island",
+        ]);
+        let coverage =
+            crate::check_untrusted_first_main_kernel_card_coverage_v1(&candidate).unwrap();
+
+        assert_eq!(coverage.fully_supported_count(), 5);
+        assert!(!coverage.coverage_complete());
+        assert_eq!(coverage.entries().len(), 8);
+        assert_eq!(
+            coverage
+                .entries()
+                .iter()
+                .filter(|entry| {
+                    entry.disposition()
+                        == crate::MtgoFirstMainKernelCardCoverageDispositionV1::MissingFromKernelRegistry
+                })
+                .map(|entry| entry.ordinal())
+                .collect::<Vec<_>>(),
+            [2, 4, 5]
+        );
+        assert!(coverage
+            .entries()
+            .iter()
+            .filter(|entry| entry.visible_card_name() == "Island")
+            .all(|entry| entry.has_full_kernel_correspondence()
+                && entry.card_db_id().is_some()
+                && entry.correspondence_commitment_sha256().is_some()));
+        assert!(!coverage.safe_for_object_binding());
+        assert!(!coverage.safe_for_observation_v5());
+        assert!(!coverage.safe_for_policy_scoring());
+        assert!(!coverage.safe_for_input());
+    }
+
+    #[test]
+    fn first_main_kernel_coverage_requires_complete_identity_and_card_coverage() {
+        let all_islands = synthetic_first_main_identity_candidate_v1(&["Island"; 8]);
+        let coverage =
+            crate::check_untrusted_first_main_kernel_card_coverage_v1(&all_islands).unwrap();
+        assert_eq!(coverage.fully_supported_count(), 8);
+        assert!(coverage.coverage_complete());
+        assert_eq!(coverage.coverage_commitment_sha256().len(), 64);
+
+        let mut incomplete = synthetic_first_main_identity_candidate_v1(&["Island"; 8]);
+        incomplete.classification = MtgoOfflineVisibleCardIdentityClassificationV1::NoMatch;
+        incomplete.identities.clear();
+        incomplete.matched_identity_count = 7;
+        let error = crate::check_untrusted_first_main_kernel_card_coverage_v1(&incomplete)
+            .err()
+            .expect("incomplete identity must fail closed");
+        assert_eq!(error.code(), "first_main_visible_identity_incomplete");
+    }
+
     #[test]
     fn checked_profile_binds_exact_fixed_contract_and_bytes() {
         let checked =

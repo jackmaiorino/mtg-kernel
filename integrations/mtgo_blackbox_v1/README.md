@@ -168,6 +168,8 @@ cargo run --bin classify_mtgo_offline_mulligan_ladder_candidate_v2 -- 'C:\absolu
 
 `classify_untrusted_offline_first_main_visible_card_identities_v1` accepts only that exact v2 first-main result, the same checked capture, and a checked-untrusted visible-card template profile. It evaluates the reviewed eight-card overlap geometry after the acting-player draw and exposes names only when every ordinal clears both fixed template thresholds. Partial matches expose only a count. The current one-game supervised check matched all eight fixed-deck basics, but it remains a caller-labelled calibration result with no semantic-evidence, `ObservationV5`, model-scoring, object-binding, coordinate, or input authority.
 
+`check_untrusted_first_main_kernel_card_coverage_v1` composes that complete eight-card identity result with the compile-bound kernel correspondence profile without creating bindings. It reports full support for the five visible Islands and `MissingFromKernelRegistry` at the three visible Plains ordinals in the retained first-main hand. Coverage therefore remains incomplete and the result exposes no object-binding, `ObservationV5`, scoring, or input authority.
+
 The read-only classifier can be run on an offline artifact with:
 
 ```powershell
