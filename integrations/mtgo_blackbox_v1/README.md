@@ -2,6 +2,8 @@
 
 Current end-to-end competitive wiring status and the shortest critical path are tracked in `COMPETITIVE_WIRING_STATUS_2026-08-09.md`.
 
+The exact two-player observation, visible-history, legal-control, and card-coverage plan is `DUEL-RECONSTRUCTION-V1-DESIGN.md`.
+
 This directory is an isolated, offline-first boundary between player-visible MTGO state and the existing `mtg-kernel` policy types. The Rust contract contains no live capture, UI Automation enumeration, process inspection, network inspection, client-file parsing, synthetic input, or checkpoint scoring. A separate calibration-preview script and sibling DXGI candidate executable perform the narrow live operations documented below.
 
 The read-only installation findings and capture implications are recorded in `CLIENT_INVENTORY_2026-08-08.md`.
