@@ -152,6 +152,18 @@ cargo run --bin classify_mtgo_offline_opening_hand_candidate_v1 -- 'C:\absolute\
 
 The first deliberately narrow corpus is `fixtures/offline_opening_hand_classifier_corpus_20260810_v1.json`: five manually inspected frames from two no-cost Freeform Solitaire games. It contains three seven-card opening-hand positives, one post-Keep first-main negative, and one six-card mulligan negative. The exact template produced 3 true positives, 2 true negatives, and no observed errors. This is a wiring and brittleness screen, not a general accuracy claim.
 
+`classify_untrusted_offline_mulligan_ladder_candidate_v1` extends that offline-only slice across every visible London mulligan choice from prospective keep seven through prospective keep one. MTGO continues to display seven cards while the prospective keep size decreases, so the semantic state comes from the visible prompt rather than the displayed hand count. The fixed classifier uses an exact prompt-text interior that excludes the animated cyan border. The checked capture artifact still binds the acting-player Solitaire role, exact client size, output identity, and raw-frame hash before classification.
+
+Exactly one of the seven prompt profiles must match before the result exposes a prospective keep size and ordered adapter-local actions. A zero-match or multi-match result exposes no actions. Every result retains no pixels or coordinates and remains unsafe for a live frame, semantic evidence, `ObservationV5`, policy scoring, or input.
+
+The read-only classifier can be run on an offline artifact with:
+
+```powershell
+cargo run --bin classify_mtgo_offline_mulligan_ladder_candidate_v1 -- 'C:\absolute\artifact-directory'
+```
+
+The ladder corpus is `fixtures/offline_mulligan_ladder_classifier_corpus_20260810_v1.json`: ten manually inspected frames from two no-cost Freeform Solitaire games. It covers every prospective keep size from seven through one, two additional seven-card frames, and one post-Keep first-main negative. All nine prompt frames matched their human label, the gameplay negative did not match, and no result was ambiguous. Sizes six through one are evaluated on the same frames used to define those exact templates, so this is only wiring coverage and a small brittleness screen. It is not an accuracy estimate or evidence of generalization.
+
 The live Keep pair can be rechecked without persisting any additional pixels:
 
 ```powershell
