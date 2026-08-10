@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\common.ps1')
 
-$legacyRoot = 'D:\mtg-kernel-oppoint-a3-legacy-r2'
+$legacyRoot = 'D:\mtg-kernel-oppoint-a3-legacy-r5'
 $storeParent = Join-Path $legacyRoot 'proc-0'
 if (Test-Path -LiteralPath $legacyRoot) { throw 'legacy A3 root must be fresh' }
 
@@ -26,6 +26,17 @@ if (Test-Path -LiteralPath $legacyRoot) { throw 'legacy A3 root must be fresh' }
 # mtg-kernel recompile).
 New-Item -ItemType Directory -Force -Path $storeParent | Out-Null
 $executable = Resolve-PilotExecutable -RepoRoot $RepoRoot -StderrPath (Join-Path $legacyRoot 'cargo-build.stderr.log')
+
+# Ambient-conditions rule (lane log 2026-08-10 ~14:05): dev0 ambient must
+# not exceed the certified basis 1,861 MiB plus the ruled 500 MiB
+# allowance; over-limit holds for the orchestrator, never a silent start.
+$ambient = Invoke-BoundedNvidiaSmi -ArgumentString '--query-gpu=uuid,memory.used --format=csv,noheader,nounits'
+if ($null -eq $ambient) { throw 'ambient census failed or timed out' }
+$dev0Row = @($ambient | Where-Object { $_ -clike 'GPU-3502709e*' })
+if ($dev0Row.Count -ne 1) { throw 'ambient census returned no dev0 reading' }
+$dev0Ambient = [long](($dev0Row[0] -split ',')[1].Trim())
+Set-Content -LiteralPath (Join-Path $legacyRoot 'ambient-mib.txt') -Encoding utf8 -Value "dev0=$dev0Ambient"
+if ($dev0Ambient -gt 2361) { throw "HELD-AMBIENT: dev0 ambient $dev0Ambient MiB exceeds ruled limit 2361 MiB" }
 
 $saved = @{}
 foreach ($name in Get-FullWhitelist) {

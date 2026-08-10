@@ -346,8 +346,34 @@ function Start-RenderedLaunch {
     New-Item -ItemType Directory -Force -Path $LaunchRoot | Out-Null
     $recordPath = Join-Path $LaunchRoot 'launch-record.json'
     $startedUtc = [DateTime]::UtcNow.ToString('o')
+    $ambientMib = [ordered]@{}
     try {
         $inventory = Assert-DeviceInventory -Rendered $Rendered
+        # Ambient-conditions rule (orchestrator directive, lane log
+        # 2026-08-10 ~14:05): census both devices BEFORE spawning children,
+        # record the readings, and hold the leg if ambient exceeds the
+        # certified basis plus allowance. Certified ambient basis per the
+        # Amendment 5 rail derivation: dev0 1,861 MiB, dev1 74 MiB;
+        # allowances 500 / 200 MiB per the directive.
+        $ambientLimits = @{
+            'GPU-3502709e-6aef-8ed7-4abe-562838793e3d' = [long]2361
+            'GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3' = [long]274
+        }
+        $ambientSample = Invoke-BoundedNvidiaSmi -ArgumentString '--query-gpu=uuid,memory.used --format=csv,noheader,nounits'
+        if ($null -eq $ambientSample) { throw 'ambient census failed or timed out' }
+        foreach ($row in $ambientSample) {
+            $parts = $row -split ','
+            if ($parts.Count -lt 2) { continue }
+            $uuid = $parts[0].Trim()
+            if (@($Rendered.processes | Where-Object { $_.device_uuid -ceq $uuid }).Count -eq 0) { continue }
+            $ambientMib[$uuid] = [long]($parts[1].Trim())
+        }
+        foreach ($process in $Rendered.processes) {
+            if (-not $ambientMib.Contains($process.device_uuid)) { throw "ambient census returned no reading for $($process.device_uuid)" }
+            if ($ambientLimits.ContainsKey($process.device_uuid) -and $ambientMib[$process.device_uuid] -gt $ambientLimits[$process.device_uuid]) {
+                throw "HELD-AMBIENT: $($process.device_uuid) ambient $($ambientMib[$process.device_uuid]) MiB exceeds the ruled limit $($ambientLimits[$process.device_uuid]) MiB; leg held for orchestrator call"
+            }
+        }
         $sourceExe = Resolve-PilotExecutable -RepoRoot $RepoRoot -StderrPath (Join-Path $LaunchRoot 'cargo-build.stderr.log')
         # Post-build re-verify: the build takes minutes; the tree must not
         # have moved under it, or the recorded source_commit would be a lie.
@@ -359,14 +385,16 @@ function Start-RenderedLaunch {
     }
     catch {
         try {
+            $preflightDisposition = if ($_.Exception.Message -clike 'HELD-AMBIENT*') { 'HELD-AMBIENT' } else { 'FAILED-PREFLIGHT' }
             $preflightRecord = [ordered]@{
                 schema        = 'multirun-operating-point-launch-record/v1'
                 label         = $Rendered.label
                 config_path   = (Resolve-Path -LiteralPath $ConfigPath).Path
                 config_sha256 = Get-Sha256Hex -Path $ConfigPath
                 source_commit = $head
-                disposition   = 'FAILED-PREFLIGHT'
+                disposition   = $preflightDisposition
                 preflight_error = $_.Exception.Message
+                ambient_mib   = $ambientMib
                 started_utc   = $startedUtc
                 ended_utc     = [DateTime]::UtcNow.ToString('o')
                 processes     = @()
@@ -389,6 +417,7 @@ function Start-RenderedLaunch {
         executable     = $exeCopy
         executable_sha256 = $exeSha
         device_inventory = @($inventory)
+        ambient_mib    = $ambientMib
         monitor        = $Rendered.monitor
         disposition    = 'RUNNING'
         rail_breaches  = @()

@@ -4,7 +4,7 @@
 # so a path-embedding difference (store parent appearing inside record
 # bytes) is distinguishable from real behavioral divergence at a glance.
 param(
-    [string]$LegacyRoot = 'D:\mtg-kernel-oppoint-a3-legacy-r2\proc-0',
+    [string]$LegacyRoot = 'D:\mtg-kernel-oppoint-a3-legacy-r5\proc-0',
     [string]$LauncherRoot = 'D:\mtg-kernel-oppoint-a3-launcher\proc-0'
 )
 Set-StrictMode -Version Latest
