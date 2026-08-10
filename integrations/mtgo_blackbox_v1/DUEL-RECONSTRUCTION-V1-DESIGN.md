@@ -34,6 +34,12 @@ MTGO does not expose a visible AI opponent or separate training mode in the curr
 
 No default value may stand in for an unmeasured or unreconstructed field. Uncertainty produces no observation and no score.
 
+## Implemented lineage slice
+
+The current checked-untrusted ledger covers one exact observed chain only: the retained Island PlayLand calibration followed by the retained Island mana-activation calibration. It deterministically seeds adapter-local arena identifiers, preserves the Island's arena identifier through the Hand-to-Battlefield transition, increments its zone-change count exactly once, and leaves the same battlefield reference unchanged when mana is activated. It rejects frame discontinuity, missing or mismatched source identity, wrong owner or controller, wrong source zone, duplicate replacement identifiers, and a replacement identifier on a non-zone-changing mana activation.
+
+This does not yet reconstruct a duel. Seed labels and calibration transitions remain caller-supplied checked-untrusted data. Production object bindings are withheld, and the ledger cannot create an observation, legal-action set, score, or input command. The next lineage step is deriving canonical visible objects from admitted current-frame measurements and reconciling arbitrary visible additions, removals, and zone changes without identity ambiguity.
+
 ## Card coverage gate
 
 The current kernel registry has 136 definitions. Only 49 have full support, including four tokens. Exact-name correspondence now rejects unknown names, unsupported registered cards, case or whitespace changes, and malformed labels.
