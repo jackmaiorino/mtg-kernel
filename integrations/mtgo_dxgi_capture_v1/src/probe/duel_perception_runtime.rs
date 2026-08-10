@@ -1,6 +1,7 @@
 use super::{
+    capture_admitted_mtgo_duel_visible_frame_v1, choose_cursor_park_point_v3,
     serialize_manifest_v2, sha256_hex_v1, MtgoAdmittedDuelVisibleFrameCommitmentsV1,
-    OpaqueMtgoAdmittedDuelVisibleFrameV1,
+    OpaqueMtgoAdmittedDuelVisibleFrameV1, SignedRectV1,
 };
 use mtgo_blackbox_v1::{
     bind_profile_bound_action_plan_to_competitive_match_v1,
@@ -15,9 +16,9 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
     CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
     CheckedUntrustedMtgoProfileBoundResolvedActionControlV1, MtgoAuthorizationScopeV1,
-    MtgoCompetitiveEventKindV1, MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoEvidenceSourceV1,
-    MtgoExpectedModelDeploymentV1, MtgoExternalObservationScorerV1,
-    MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
+    MtgoCompetitiveEventKindV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
+    MtgoDuelActionFamilyV1, MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1,
+    MtgoExternalObservationScorerV1, MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
     MtgoProfileBoundPostconditionCalibrationV1, MtgoProfileBoundPostconditionRegionSetV1,
     MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
     ValidatedMtgoObservedDecisionV1, MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1,
@@ -40,6 +41,8 @@ const DUEL_OPAQUE_MODEL_SELECTION_DOMAIN_V1: &[u8] = b"mtgo-opaque-duel-model-se
 const DUEL_OPAQUE_CONTROL_RESOLUTION_DOMAIN_V1: &[u8] = b"mtgo-opaque-duel-control-resolution-v1";
 const DUEL_OPAQUE_COMPETITIVE_ACTION_PLAN_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-action-plan-v1";
+const DUEL_OPAQUE_COMPETITIVE_PASS_PREPARATION_DOMAIN_V1: &[u8] =
+    b"mtgo-opaque-competitive-duel-pass-preparation-v1";
 const DUEL_PERCEPTION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_PERCEPTION_V1\0";
 const MAX_RUNTIME_ARTIFACT_BYTES_V1: u64 = 512 * 1024 * 1024;
 const MAX_PERCEPTION_RESPONSE_BYTES_V1: usize = 16 * 1024 * 1024;
@@ -317,7 +320,9 @@ pub struct OpaqueMtgoProfileBoundDuelResolvedControlV1 {
     pub(super) selection: OpaqueMtgoProfileBoundDuelModelSelectionV1,
     resolved: Option<CheckedUntrustedMtgoProfileBoundResolvedActionControlV1>,
     commitments: MtgoOpaqueDuelResolvedControlCommitmentsV1,
+    selected_action_family: MtgoDuelActionFamilyV1,
     selected_semantic_json: Vec<u8>,
+    selected_region_content_sha256: String,
     #[allow(dead_code)]
     pub(super) rect_client_px: MtgoRectPxV1,
 }
@@ -398,6 +403,74 @@ impl OpaqueMtgoCompetitiveDuelActionPlanV1 {
             frame_id: control.frame_id,
             frame_sequence: control.frame_sequence,
         }
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Coordinate-free telemetry for one immediate fresh-frame preparation of a
+/// competitive priority Pass. It proves no input occurred.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
+    pub competitive_action_plan_commitment_sha256: String,
+    pub immediate_capture_commitment_sha256: String,
+    pub immediate_perception_result_commitment_sha256: String,
+    pub preparation_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub game_number: u8,
+    pub immediate_frame_id: u64,
+    pub immediate_frame_sequence: u64,
+    pub immediate_captured_at_unix_millis: u128,
+}
+
+/// A League or Challenge priority Pass plan rechecked against one immediate
+/// fresh opaque capture and classifier result.
+///
+/// The exact target and cursor park point remain private. This value cannot
+/// send input or enter an event. Production duel-profile ratification is empty,
+/// so this path is not currently reachable by a production caller.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPreparedCompetitiveDuelPassV1;
+/// fn cannot_act(value: &OpaqueMtgoPreparedCompetitiveDuelPassV1) {
+///     let _ = value.target_point_client_px();
+///     let _ = value.send_input();
+///     let _ = value.enter_event();
+/// }
+/// ```
+pub struct OpaqueMtgoPreparedCompetitiveDuelPassV1 {
+    _plan: OpaqueMtgoCompetitiveDuelActionPlanV1,
+    _current_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    commitments: MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
+    #[allow(dead_code)]
+    pub(crate) hwnd: u64,
+    #[allow(dead_code)]
+    pub(crate) process_id: u32,
+    #[allow(dead_code)]
+    pub(crate) process_start_filetime_100ns: u64,
+    #[allow(dead_code)]
+    pub(crate) dpi: u32,
+    #[allow(dead_code)]
+    pub(crate) client_rect_desktop_px: SignedRectV1,
+    #[allow(dead_code)]
+    pub(crate) target_x_desktop_px: i32,
+    #[allow(dead_code)]
+    pub(crate) target_y_desktop_px: i32,
+    #[allow(dead_code)]
+    pub(crate) park_x_desktop_px: i32,
+    #[allow(dead_code)]
+    pub(crate) park_y_desktop_px: i32,
+}
+
+impl OpaqueMtgoPreparedCompetitiveDuelPassV1 {
+    pub fn commitments_v1(&self) -> MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
+        self.commitments.clone()
     }
 
     pub fn safe_for_input_v1(&self) -> bool {
@@ -818,6 +891,7 @@ pub fn resolve_opaque_profile_bound_duel_control_v1(
         .ok_or("selected duel action has no retained visible control")?;
     let selected_control_id = selected_candidate.control_id.clone();
     let selected_evidence_id = selected_candidate.frame_region_evidence_id;
+    let selected_semantic_value = selected_semantic.clone();
     let selected_semantic_json = serde_json::to_vec(selected_semantic)
         .map_err(|error| format!("serialize selected duel semantic: {error}"))?;
     let (rect_client_px, region_content_sha256) =
@@ -871,7 +945,9 @@ pub fn resolve_opaque_profile_bound_duel_control_v1(
         selection,
         resolved: Some(resolved),
         commitments,
+        selected_action_family: duel_action_family_v1(&selected_semantic_value),
         selected_semantic_json,
+        selected_region_content_sha256: region_content_sha256,
         rect_client_px,
     })
 }
@@ -904,6 +980,206 @@ pub fn prepare_opaque_competitive_duel_action_plan_v1(
     )
     .map_err(|error| format!("scope opaque duel action to competitive match: {error}"))?;
     bind_opaque_duel_control_to_competitive_action_plan_v1(control, competitive)
+}
+
+/// Recaptures and reclassifies the exact current duel state immediately before
+/// a future one-click priority Pass actuator. The source and fresh decision
+/// payloads, selected visible control, pixels, process incarnation, window,
+/// geometry, and output must all still match.
+///
+/// This function performs no input and returns no coordinate accessor. Other
+/// action families remain unsupported until their exact input gestures are
+/// separately calibrated.
+pub fn prepare_opaque_competitive_duel_pass_actuation_v1(
+    plan: OpaqueMtgoCompetitiveDuelActionPlanV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoPreparedCompetitiveDuelPassV1, String> {
+    if plan.control.selected_action_family != MtgoDuelActionFamilyV1::PriorityPass {
+        return Err(
+            "the current competitive actuator preparation supports priority Pass only".to_owned(),
+        );
+    }
+    let plan_commitments = plan.commitments_v1();
+    let source_perception = &plan.control.selection.perception;
+    let source_manifest = &source_perception.source_frame.source_frame.manifest;
+    if source_perception
+        .source_frame
+        .perception_profile_commitment_sha256
+        != profile.perception_profile_commitment_sha256()
+        || source_perception
+            .source_frame
+            .perception_profile_admission_commitment_sha256
+            != profile.admission_commitment_sha256()
+    {
+        return Err("competitive action plan and duel profile differ before recapture".to_owned());
+    }
+
+    let current_frame = capture_admitted_mtgo_duel_visible_frame_v1(profile, timeout_ms)?;
+    let current_capture = current_frame.commitments_v1();
+    let current_manifest = &current_frame.source_frame.manifest;
+    validate_same_duel_window_incarnation_v1(source_manifest, current_manifest)?;
+    if current_capture.source_capture.captured_at_unix_millis
+        <= source_manifest.captured_at_unix_millis
+        || current_capture.source_capture.capture_commitment_sha256
+            == source_perception
+                .source_frame
+                .source_frame
+                .capture_commitment_sha256
+    {
+        return Err("immediate duel capture is not a strictly newer frame".to_owned());
+    }
+
+    let immediate_frame_sequence = plan_commitments
+        .frame_sequence
+        .checked_add(1)
+        .ok_or("immediate duel frame sequence overflow")?;
+    let immediate_frame_id = frame_id_from_capture_commitment_v1(
+        &current_capture.source_capture.capture_commitment_sha256,
+        plan_commitments.frame_id,
+    )?;
+    let current_perception = perceive_admitted_duel_frame_v1(
+        current_frame,
+        profile,
+        runtime,
+        MtgoDuelPerceptionFrameIdentityV1 {
+            frame_id: immediate_frame_id,
+            frame_sequence: immediate_frame_sequence,
+        },
+        timeout_ms,
+    )?;
+    if current_perception.decision_record.payload != source_perception.decision_record.payload {
+        return Err("the visible duel decision payload changed before Pass input".to_owned());
+    }
+
+    let mut matching_controls = Vec::new();
+    for candidate in &current_perception.visible_controls.controls {
+        let semantic_json = serde_json::to_vec(&candidate.semantic)
+            .map_err(|error| format!("serialize immediate control semantic: {error}"))?;
+        if semantic_json == plan.control.selected_semantic_json {
+            matching_controls.push(candidate);
+        }
+    }
+    if matching_controls.len() != 1
+        || matching_controls[0].control_id != plan.control.commitments.control_id
+    {
+        return Err("the immediate Pass control is ambiguous or changed identity".to_owned());
+    }
+    let selected = matching_controls[0];
+    let (current_rect, current_region_sha256) = frame_region_for_evidence_v1(
+        &current_perception.decision_record,
+        selected.frame_region_evidence_id,
+    )?;
+    if current_rect != &plan.control.rect_client_px
+        || current_region_sha256 != plan.control.selected_region_content_sha256
+    {
+        return Err("the immediate Pass control geometry or pixels changed".to_owned());
+    }
+
+    let client_rect = current_perception
+        .source_frame
+        .source_frame
+        .manifest
+        .pre
+        .client_rect_desktop_px;
+    let target_x_client_px = current_rect
+        .x
+        .checked_add(current_rect.width / 2)
+        .ok_or("immediate Pass target x overflow")?;
+    let target_y_client_px = current_rect
+        .y
+        .checked_add(current_rect.height / 2)
+        .ok_or("immediate Pass target y overflow")?;
+    let target_x_desktop_px = client_rect
+        .left
+        .checked_add(
+            i32::try_from(target_x_client_px)
+                .map_err(|_| "immediate Pass target x does not fit the desktop")?,
+        )
+        .ok_or("immediate Pass desktop x overflow")?;
+    let target_y_desktop_px = client_rect
+        .top
+        .checked_add(
+            i32::try_from(target_y_client_px)
+                .map_err(|_| "immediate Pass target y does not fit the desktop")?,
+        )
+        .ok_or("immediate Pass desktop y overflow")?;
+    if !client_rect.contains_point(target_x_desktop_px, target_y_desktop_px) {
+        return Err("immediate Pass target is outside the current client".to_owned());
+    }
+    let output_bounds = current_perception
+        .source_frame
+        .source_frame
+        .manifest
+        .output
+        .bounds_desktop_px;
+    let (park_x_desktop_px, park_y_desktop_px) =
+        choose_cursor_park_point_v3(&client_rect, &output_bounds)?;
+    let current_perception_commitments = current_perception.commitments_v1();
+    let event_kind_json = serde_json::to_vec(&plan_commitments.event_kind)
+        .map_err(|error| format!("serialize competitive event kind: {error}"))?;
+    let preparation_commitment_sha256 = commitment_v1(
+        DUEL_OPAQUE_COMPETITIVE_PASS_PREPARATION_DOMAIN_V1,
+        &[
+            plan_commitments
+                .opaque_competitive_action_plan_commitment_sha256
+                .as_bytes(),
+            current_capture
+                .source_capture
+                .capture_commitment_sha256
+                .as_bytes(),
+            current_perception_commitments
+                .perception_result_commitment_sha256
+                .as_bytes(),
+            plan.control.commitments.control_id.as_bytes(),
+            &plan.control.selected_semantic_json,
+            &serde_json::to_vec(current_rect)
+                .map_err(|error| format!("serialize immediate Pass rectangle: {error}"))?,
+            current_region_sha256.as_bytes(),
+            &event_kind_json,
+            &[plan_commitments.game_number],
+            b"prepared_no_input_or_event_entry_authority",
+        ],
+    );
+    let commitments = MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
+        competitive_action_plan_commitment_sha256: plan_commitments
+            .opaque_competitive_action_plan_commitment_sha256,
+        immediate_capture_commitment_sha256: current_capture
+            .source_capture
+            .capture_commitment_sha256,
+        immediate_perception_result_commitment_sha256: current_perception_commitments
+            .perception_result_commitment_sha256,
+        preparation_commitment_sha256,
+        event_kind: plan_commitments.event_kind,
+        game_number: plan_commitments.game_number,
+        immediate_frame_id,
+        immediate_frame_sequence,
+        immediate_captured_at_unix_millis: current_capture.source_capture.captured_at_unix_millis,
+    };
+    let (current_hwnd, current_process_id, current_process_start_filetime_100ns, current_dpi) = {
+        let current_snapshot = &current_perception.source_frame.source_frame.manifest.pre;
+        (
+            current_snapshot.hwnd,
+            current_snapshot.process_id,
+            current_snapshot.process_start_filetime_100ns,
+            current_snapshot.dpi,
+        )
+    };
+    Ok(OpaqueMtgoPreparedCompetitiveDuelPassV1 {
+        _plan: plan,
+        _current_perception: current_perception,
+        commitments,
+        hwnd: current_hwnd,
+        process_id: current_process_id,
+        process_start_filetime_100ns: current_process_start_filetime_100ns,
+        dpi: current_dpi,
+        client_rect_desktop_px: client_rect,
+        target_x_desktop_px,
+        target_y_desktop_px,
+        park_x_desktop_px,
+        park_y_desktop_px,
+    })
 }
 
 /// Joins the opaque Windows capture-to-control chain to the separately checked
@@ -1017,6 +1293,70 @@ fn opaque_duel_action_binding_view_v1(
         source_client_size_px: MtgoSizePxV1 { width, height },
         selected_semantic_json: control.selected_semantic_json.clone(),
     })
+}
+
+fn validate_same_duel_window_incarnation_v1(
+    source: &super::CaptureManifestV2,
+    current: &super::CaptureManifestV2,
+) -> Result<(), String> {
+    if source.window_mode != "duel_game"
+        || source.capture_role != "acting_player_duel"
+        || current.window_mode != source.window_mode
+        || current.capture_role != source.capture_role
+        || current.expected_game_format != source.expected_game_format
+        || current.pre.hwnd != source.pre.hwnd
+        || current.post.hwnd != source.post.hwnd
+        || current.pre.process_id != source.pre.process_id
+        || current.post.process_id != source.post.process_id
+        || current.pre.process_start_filetime_100ns != source.pre.process_start_filetime_100ns
+        || current.post.process_start_filetime_100ns != source.post.process_start_filetime_100ns
+        || current.pre.process_image != source.pre.process_image
+        || current.post.process_image != source.post.process_image
+        || current.pre.executable_sha256 != source.pre.executable_sha256
+        || current.post.executable_sha256 != source.post.executable_sha256
+        || current.pre.signer_thumbprint != source.pre.signer_thumbprint
+        || current.post.signer_thumbprint != source.post.signer_thumbprint
+        || current.pre.signer_subject_sha256 != source.pre.signer_subject_sha256
+        || current.post.signer_subject_sha256 != source.post.signer_subject_sha256
+        || current.pre.title != source.pre.title
+        || current.post.title != source.post.title
+        || current.pre.dpi != source.pre.dpi
+        || current.post.dpi != source.post.dpi
+        || current.pre.client_rect_desktop_px != source.pre.client_rect_desktop_px
+        || current.post.client_rect_desktop_px != source.post.client_rect_desktop_px
+        || current.pre.extended_frame_rect_desktop_px != source.pre.extended_frame_rect_desktop_px
+        || current.post.extended_frame_rect_desktop_px != source.post.extended_frame_rect_desktop_px
+        || current.output != source.output
+        || current.frame.source_texture_width != source.frame.source_texture_width
+        || current.frame.source_texture_height != source.frame.source_texture_height
+        || current.frame.source_texture_format != source.frame.source_texture_format
+        || current.frame.canonical_width != source.frame.canonical_width
+        || current.frame.canonical_height != source.frame.canonical_height
+        || current.frame.canonical_stride != source.frame.canonical_stride
+    {
+        return Err(
+            "the immediate capture changed the duel window or process incarnation".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn frame_id_from_capture_commitment_v1(
+    capture_commitment_sha256: &str,
+    source_frame_id: u64,
+) -> Result<u64, String> {
+    if !looks_like_lower_sha256_v1(capture_commitment_sha256) {
+        return Err("immediate capture commitment is not lowercase SHA-256".to_owned());
+    }
+    let mut frame_id = u64::from_str_radix(&capture_commitment_sha256[..16], 16)
+        .map_err(|error| format!("derive immediate frame id: {error}"))?;
+    if frame_id == 0 || frame_id == source_frame_id {
+        frame_id ^= 0xa5a5_5a5a_d3d3_3c3c;
+    }
+    if frame_id == 0 || frame_id == source_frame_id {
+        return Err("immediate capture cannot derive a distinct nonzero frame id".to_owned());
+    }
+    Ok(frame_id)
 }
 
 fn validate_opaque_competitive_action_binding_v1<T: Serialize + ?Sized>(
@@ -1593,6 +1933,26 @@ mod tests {
         let mut changed = pixels;
         changed[4] ^= 1;
         assert!(validate_reconstruction_audit_pixels_v1(&audit, &changed, &size).is_err());
+    }
+
+    #[test]
+    fn immediate_frame_identity_is_capture_bound_nonzero_and_distinct() {
+        let commitment = "0123456789abcdef".to_owned() + &"0".repeat(48);
+        let baseline = frame_id_from_capture_commitment_v1(&commitment, 99).unwrap();
+        assert_eq!(baseline, 0x0123_4567_89ab_cdef);
+        assert_eq!(
+            frame_id_from_capture_commitment_v1(&commitment, baseline).unwrap(),
+            baseline ^ 0xa5a5_5a5a_d3d3_3c3c
+        );
+        assert_ne!(
+            baseline,
+            frame_id_from_capture_commitment_v1(
+                &("1123456789abcdef".to_owned() + &"0".repeat(48)),
+                99,
+            )
+            .unwrap()
+        );
+        assert!(frame_id_from_capture_commitment_v1("not-a-hash", 99).is_err());
     }
 
     #[test]
