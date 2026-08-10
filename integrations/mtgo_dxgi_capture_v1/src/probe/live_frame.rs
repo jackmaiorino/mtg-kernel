@@ -1,8 +1,17 @@
 use super::{
-    canonical_json_commitment_v3, capture_commitment_v3, capture_mtgo_dxgi_frame_candidate_v3,
-    sha256_hex_v1, CaptureManifestV2, CaptureWindowModeV2, MtgoDxgiCaptureRequestV3,
-    MtgoDxgiFrameCommitmentsV3, OpaqueMtgoDxgiFrameCandidateV3, SignedRectV1,
+    build_card_aware_pregame_action_plan_v4, canonical_json_commitment_v3, capture_commitment_v3,
+    capture_mtgo_dxgi_frame_candidate_v3, measure_mtgo_dxgi_mulligan_ladder_candidate_v3,
+    measure_mtgo_dxgi_mulligan_visible_hand_candidate_v3,
+    score_and_select_card_aware_pregame_model_v4, sha256_hex_v1, CaptureManifestV2,
+    CaptureWindowModeV2, MtgoDxgiCaptureRequestV3, MtgoDxgiFrameCommitmentsV3,
+    MtgoExpectedModelDeploymentV1, MtgoExternalCardAwarePregameScorerV4,
+    MtgoOfflineMulliganLadderClassificationV1, MtgoOfflineVisibleCardIdentityClassificationV1,
+    MtgoOfflineVisibleCardIdentityV1, MtgoPlannedPregamePostconditionV3,
+    MtgoPregameActionSemanticV1, OpaqueMtgoCardAwarePregameModelSelectionV4,
+    OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoDxgiMulliganMeasurementV3,
+    OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3, OpaqueMtgoPregameActionPlanV3, SignedRectV1,
 };
+use mtgo_blackbox_v1::CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1;
 use serde::Serialize;
 
 const PINNED_SOLITAIRE_PROFILE_ID_V1: &str =
@@ -107,6 +116,296 @@ impl OpaqueMtgoPinnedSolitaireVisibleFrameV1 {
     pub fn into_checked_untrusted_perception_candidate_v1(self) -> OpaqueMtgoDxgiFrameCandidateV3 {
         self.source_frame
     }
+}
+
+/// A mulligan-prompt measurement that preserves possession of the exact
+/// source-pinned Solitaire capture profile.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireMulliganMeasurementV1;
+/// let _forged = OpaqueMtgoPinnedSolitaireMulliganMeasurementV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireMulliganMeasurementV1;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoPinnedSolitaireMulliganMeasurementV1>();
+/// ```
+pub struct OpaqueMtgoPinnedSolitaireMulliganMeasurementV1 {
+    profile_commitment_sha256: String,
+    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,
+}
+
+impl OpaqueMtgoPinnedSolitaireMulliganMeasurementV1 {
+    pub fn profile_commitment_sha256_v1(&self) -> &str {
+        &self.profile_commitment_sha256
+    }
+
+    pub fn source_capture_commitments_v1(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.measurement.source_capture_commitments_v3()
+    }
+
+    pub fn classification_v1(&self) -> MtgoOfflineMulliganLadderClassificationV1 {
+        self.measurement.classification_v3()
+    }
+
+    pub fn prospective_keep_size_v1(&self) -> Option<u8> {
+        self.measurement.prospective_keep_size_v3()
+    }
+
+    pub fn ordered_actions_v1(&self) -> &[MtgoPregameActionSemanticV1] {
+        self.measurement.ordered_actions_v3()
+    }
+
+    pub fn measurement_commitment_sha256_v1(&self) -> &str {
+        self.measurement.measurement_commitment_sha256_v3()
+    }
+
+    pub fn safe_for_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+/// A complete visible-hand measurement that preserves the exact pinned
+/// capture profile and retains pixels plus template bytes privately.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1;
+/// let _forged = OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1>();
+/// ```
+pub struct OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1 {
+    profile_commitment_sha256: String,
+    measurement: OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,
+}
+
+impl OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1 {
+    pub fn profile_commitment_sha256_v1(&self) -> &str {
+        &self.profile_commitment_sha256
+    }
+
+    pub fn classification_v1(&self) -> MtgoOfflineVisibleCardIdentityClassificationV1 {
+        self.measurement.classification_v3()
+    }
+
+    pub fn prospective_keep_size_v1(&self) -> Option<u8> {
+        self.measurement.prospective_keep_size_v3()
+    }
+
+    pub fn ordered_actions_v1(&self) -> &[MtgoPregameActionSemanticV1] {
+        self.measurement.ordered_actions_v3()
+    }
+
+    pub fn identities_v1(&self) -> &[MtgoOfflineVisibleCardIdentityV1] {
+        self.measurement.identities_v3()
+    }
+
+    pub fn visible_identity_measurement_commitment_sha256_v1(&self) -> &str {
+        self.measurement
+            .visible_identity_measurement_commitment_sha256_v3()
+    }
+
+    pub fn safe_for_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+/// A card-aware scorer selection that remains bound to the exact pinned
+/// capture profile. It cannot be downgraded to a generic selection.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitairePregameSelectionV1;
+/// let _forged = OpaqueMtgoPinnedSolitairePregameSelectionV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitairePregameSelectionV1;
+/// fn require_serialize<T: serde::Serialize>() {}
+/// require_serialize::<OpaqueMtgoPinnedSolitairePregameSelectionV1>();
+/// ```
+pub struct OpaqueMtgoPinnedSolitairePregameSelectionV1 {
+    profile_commitment_sha256: String,
+    selection: OpaqueMtgoCardAwarePregameModelSelectionV4,
+}
+
+impl OpaqueMtgoPinnedSolitairePregameSelectionV1 {
+    pub fn profile_commitment_sha256_v1(&self) -> &str {
+        &self.profile_commitment_sha256
+    }
+
+    pub fn selected_index_v1(&self) -> usize {
+        self.selection.selected_index_v4()
+    }
+
+    pub fn selected_semantic_v1(&self) -> &MtgoPregameActionSemanticV1 {
+        self.selection.selected_semantic_v4()
+    }
+
+    pub fn selected_logit_f32_bits_v1(&self) -> u32 {
+        self.selection.selected_logit_f32_bits_v4()
+    }
+
+    pub fn value_f32_bits_v1(&self) -> u32 {
+        self.selection.value_f32_bits_v4()
+    }
+
+    pub fn selection_commitment_sha256_v1(&self) -> &str {
+        self.selection.selection_commitment_sha256_v4()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+}
+
+/// A coordinate-private pregame plan that retains the exact pinned capture
+/// profile and has no conversion to the production actuator.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitairePregameActionPlanV1;
+/// let _forged = OpaqueMtgoPinnedSolitairePregameActionPlanV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitairePregameActionPlanV1;
+/// fn coordinate_escape(plan: &OpaqueMtgoPinnedSolitairePregameActionPlanV1) {
+///     let _ = plan.target_point_client_px_v1();
+/// }
+/// ```
+pub struct OpaqueMtgoPinnedSolitairePregameActionPlanV1 {
+    profile_commitment_sha256: String,
+    plan: OpaqueMtgoPregameActionPlanV3,
+}
+
+impl OpaqueMtgoPinnedSolitairePregameActionPlanV1 {
+    pub fn profile_commitment_sha256_v1(&self) -> &str {
+        &self.profile_commitment_sha256
+    }
+
+    pub fn selected_semantic_v1(&self) -> &MtgoPregameActionSemanticV1 {
+        self.plan.selected_semantic_v3()
+    }
+
+    pub fn planned_postcondition_v1(&self) -> &MtgoPlannedPregamePostconditionV3 {
+        self.plan.planned_postcondition_v3()
+    }
+
+    pub fn action_plan_commitment_sha256_v1(&self) -> &str {
+        self.plan.action_plan_commitment_sha256_v3()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_purchase_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_queue_entry_v1(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_pinned_current_solitaire_mulligan_ladder_v1(
+    source: OpaqueMtgoPinnedSolitaireVisibleFrameV1,
+) -> Result<OpaqueMtgoPinnedSolitaireMulliganMeasurementV1, String> {
+    let OpaqueMtgoPinnedSolitaireVisibleFrameV1 {
+        source_frame,
+        profile_commitment_sha256,
+    } = source;
+    require_current_pinned_profile_commitment_v1(&profile_commitment_sha256)?;
+    let measurement = measure_mtgo_dxgi_mulligan_ladder_candidate_v3(source_frame)?;
+    Ok(OpaqueMtgoPinnedSolitaireMulliganMeasurementV1 {
+        profile_commitment_sha256,
+        measurement,
+    })
+}
+
+pub fn measure_pinned_current_solitaire_mulligan_visible_hand_v1(
+    source: OpaqueMtgoPinnedSolitaireMulliganMeasurementV1,
+    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+) -> Result<OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1, String> {
+    let OpaqueMtgoPinnedSolitaireMulliganMeasurementV1 {
+        profile_commitment_sha256,
+        measurement,
+    } = source;
+    require_current_pinned_profile_commitment_v1(&profile_commitment_sha256)?;
+    let measurement = measure_mtgo_dxgi_mulligan_visible_hand_candidate_v3(measurement, profile)?;
+    Ok(OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1 {
+        profile_commitment_sha256,
+        measurement,
+    })
+}
+
+pub fn score_and_select_pinned_current_solitaire_pregame_v1<
+    S: MtgoExternalCardAwarePregameScorerV4,
+>(
+    source: OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1,
+    deployment: &MtgoExpectedModelDeploymentV1,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoPinnedSolitairePregameSelectionV1, String> {
+    let OpaqueMtgoPinnedSolitaireMulliganVisibleHandV1 {
+        profile_commitment_sha256,
+        measurement,
+    } = source;
+    require_current_pinned_profile_commitment_v1(&profile_commitment_sha256)?;
+    let selection = score_and_select_card_aware_pregame_model_v4(measurement, deployment, scorer)?;
+    Ok(OpaqueMtgoPinnedSolitairePregameSelectionV1 {
+        profile_commitment_sha256,
+        selection,
+    })
+}
+
+pub fn build_pinned_current_solitaire_pregame_action_plan_v1(
+    source: OpaqueMtgoPinnedSolitairePregameSelectionV1,
+) -> Result<OpaqueMtgoPinnedSolitairePregameActionPlanV1, String> {
+    let OpaqueMtgoPinnedSolitairePregameSelectionV1 {
+        profile_commitment_sha256,
+        selection,
+    } = source;
+    require_current_pinned_profile_commitment_v1(&profile_commitment_sha256)?;
+    let plan = build_card_aware_pregame_action_plan_v4(selection)?;
+    Ok(OpaqueMtgoPinnedSolitairePregameActionPlanV1 {
+        profile_commitment_sha256,
+        plan,
+    })
+}
+
+fn require_current_pinned_profile_commitment_v1(observed: &str) -> Result<(), String> {
+    if observed != PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1 {
+        return Err("the opaque value lost the exact pinned Solitaire profile".to_owned());
+    }
+    Ok(())
 }
 
 /// Captures the visible foreground client using constants pinned in reviewed
