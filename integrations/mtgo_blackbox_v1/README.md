@@ -341,6 +341,17 @@ cargo test --lib `
 
 This is a kernel-generated external-observation wiring probe with explicitly mock frame evidence. It proves the composed validated-decision-to-offline-intent path; it is not evidence that any MTGO pixels have yet been reconstructed into that observation.
 
+For one-shot artifact wiring, `score_mtgo_observed_decision_v1` accepts the native Store root, strict deployment manifest, and strict serialized `MtgoObservedDecisionV1`. It validates the decision before the expensive Store load, then emits only identity commitments, exact score bits, the selected semantic, and the coordinate-free offline intent metadata:
+
+```powershell
+cargo run --bin score_mtgo_observed_decision_v1 -- `
+  'D:\mtg-kernel-ladder-pilot-20260725\pool3\primary' `
+  'fixtures\provisional_promoted2_mtgo_deployment_20260810_v1.json' `
+  '<observed-decision.json>'
+```
+
+This command has no input backend and always reports `safe_for_live_input = false` and `permits_match_entry = false`. A long-running deployment should load the Store once and call the in-process method for each subsequent validated decision.
+
 ## Current-frame semantic control resolution
 
 The adapter-side half of step 7 is also defined. `MtgoVisibleActionControlSetV1` binds a complete, prompt-reconciled set of enabled controls to the exact decision commitment and newest frame. Every candidate carries an exact legal `ActionSemanticV1`, at least 95 percent confidence, and a distinct current-frame pixel-evidence region. Resolution succeeds only when exactly one visible control matches the model-selected semantic.
