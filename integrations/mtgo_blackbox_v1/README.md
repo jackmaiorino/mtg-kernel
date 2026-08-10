@@ -202,6 +202,18 @@ The corresponding corpus is `fixtures/offline_bottom_six_state_classifier_corpus
 
 `check_untrusted_offline_visible_card_template_profile_v1` validates the first local runtime-profile shape. It fixes the reviewed layout, a 96 by 60 BGR template, the 25.000 mean absolute difference ceiling, and a 10.000 distinct-name margin. Template bytes are bound to their visible calibration capture, public print metadata, public-image hash, and deck commitment. `classify_untrusted_offline_bottom_six_visible_card_identities_v1` then requires a matched bottom-six frame and identifies the complete visible hand or returns `NoMatch`; partial results and distinct-name ties are withheld. The checked profile and result expose no template pixels or coordinates, cannot create `CardStableRefV1`, and keep all semantic, observation, scoring, and input authority false. Caller-supplied labels remain untrusted until a separate reviewed deck-profile ratification exists.
 
+The offline CLI accepts one retained DXGI artifact and one bounded local profile JSON:
+
+```powershell
+cargo run --bin classify_mtgo_offline_bottom_six_visible_card_identities_v1 -- `
+  C:\absolute\artifact-directory `
+  C:\absolute\visible-card-profile.json
+```
+
+It performs no network access and emits names, ordinals, distances, margins, and commitments only. The CLI output is checked-untrusted calibration data and all runtime authority remains false.
+
+`fixtures/offline_visible_card_identity_reflow_corpus_20260810_v1.json` records the CLI result across every retained bottom-six state in the same Solitaire game. All 28 visible card positions matched the expected order as the leftmost card was removed, with maximum mean absolute BGR difference 19.666 and minimum distinct-name margin 38.386. The seven templates were derived from the first frame and cover only that observed hand from a visible 280-card deck. This is wiring and threshold-separation evidence, not an accuracy estimate, a complete deck profile, or authority for semantic evidence, scoring, or input.
+
 ```powershell
 cargo run --bin classify_mtgo_offline_bottom_six_reflow_candidate_v1 -- `
   'C:\absolute\before-artifact-directory' `

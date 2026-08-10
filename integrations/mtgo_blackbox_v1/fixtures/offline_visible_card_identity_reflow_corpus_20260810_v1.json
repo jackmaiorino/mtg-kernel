@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "corpus_id": "freeform-solitaire-observed-hand-visible-card-reflow-one-game-20260810-v1",
+  "profile_scope": "one_observed_bottom_six_hand_only",
+  "profile_status": "checked_untrusted_calibration_not_ratified",
+  "profile_file_sha256": "4bfe3d84a8fa54e47a50717feb6d73ef351450bf3ca88e352e8bc87bc1ee0679",
+  "profile_commitment_sha256": "0310ba629a4caf1fca9806f1e135d15bd3ea99417b2c6b92ec79f948ecbe6739",
+  "observed_hand_manifest_sha256": "e7fb908b3fae4d69fd75e773da9c52af32631ae3171860fb63c1f2928fca0072",
+  "source_deck_name": "mtgo-solitaire-owned-lands-v1",
+  "source_deck_visible_card_count": 280,
+  "source_deck_profile_complete": false,
+  "maximum_mean_absolute_difference_milli": 25000,
+  "minimum_distinct_name_margin_milli": 10000,
+  "templates": [
+    {
+      "template_id": "observed-hand-ordinal-0-forest-dmu-276-v1",
+      "visible_card_name": "Forest",
+      "public_print_id": "279ebd05-229a-4a4a-a1c0-c5f24d16dee3",
+      "public_oracle_id": "b34bb2dc-c1af-4d77-b0b3-a0fb342a5fc6",
+      "set_code": "dmu",
+      "collector_number": "276",
+      "public_reference_image_sha256": "37c600f9ee4146d40a2e098302019519b0f0d1321e9ec824082cbf44843b3a6e",
+      "reference_bgr8_sha256": "c782e16609778460badc23cdb862af1ad7e464946d407d68a59149cf65ce37e6"
+    },
+    {
+      "template_id": "observed-hand-ordinal-1-plains-dsk-277-v1",
+      "visible_card_name": "Plains",
+      "public_print_id": "1b499b37-efaf-4484-95e8-a70a9778c804",
+      "public_oracle_id": "bc71ebf6-2056-41f7-be35-b2e5c34afa99",
+      "set_code": "dsk",
+      "collector_number": "277",
+      "public_reference_image_sha256": "70745c58aef51f1086ffe893b4012c953e6ae0997977cfe618276a7d6c0b6034",
+      "reference_bgr8_sha256": "54c59042e61859b076115341cb636c95e5bba5b0fc829932925c2951e083c892"
+    },
+    {
+      "template_id": "observed-hand-ordinal-2-plains-lci-394-v1",
+      "visible_card_name": "Plains",
+      "public_print_id": "e06c72cb-03ce-48eb-b5dc-b2301c6871a2",
+      "public_oracle_id": "bc71ebf6-2056-41f7-be35-b2e5c34afa99",
+      "set_code": "lci",
+      "collector_number": "394",
+      "public_reference_image_sha256": "27158ccdc0d836a9978f5e81150942dabddea1a8d0dfa3e6894280e42947d700",
+      "reference_bgr8_sha256": "a8919453529826a5c4b39da177de193aa1a0e92e1d9bea070d4b0bd6dded98e4"
+    },
+    {
+      "template_id": "observed-hand-ordinal-3-swamp-mom-287-v1",
+      "visible_card_name": "Swamp",
+      "public_print_id": "013612b4-fed9-4112-8018-9267ae608fd7",
+      "public_oracle_id": "56719f6a-1a6c-4c0a-8d21-18f7d7350b68",
+      "set_code": "mom",
+      "collector_number": "287",
+      "public_reference_image_sha256": "5cd6c5ffcb139dbd17411be84b0d7a03b2ffd5e7d939cbf7e23f05c396494c32",
+      "reference_bgr8_sha256": "196ef23c07766a59205a6c4e47ef1e0fba0c69dd73b2038ffef93c79da8668f2"
+    },
+    {
+      "template_id": "observed-hand-ordinal-4-island-dsk-279-v1",
+      "visible_card_name": "Island",
+      "public_print_id": "947702ca-d065-4368-9f26-f859d4642cb6",
+      "public_oracle_id": "b2c6aa39-2d2a-459c-a555-fb48ba993373",
+      "set_code": "dsk",
+      "collector_number": "279",
+      "public_reference_image_sha256": "042b6783b72a182edaaa647815e07d93e51f09ae5fbddfbd96cb77ed10d16c56",
+      "reference_bgr8_sha256": "b43796190681fe262b8477baf4075e98497b7ef3e448ca8e61ede03647089102"
+    },
+    {
+      "template_id": "observed-hand-ordinal-5-plains-mom-282-v1",
+      "visible_card_name": "Plains",
+      "public_print_id": "ee7f525c-d777-4adf-8920-8adfc73bbc55",
+      "public_oracle_id": "bc71ebf6-2056-41f7-be35-b2e5c34afa99",
+      "set_code": "mom",
+      "collector_number": "282",
+      "public_reference_image_sha256": "7670a50ba5a7ef7d712eeb13005d5caa626e22afab0b0a71f9d1a50ca57e9b06",
+      "reference_bgr8_sha256": "bccd83e51ff69367623faf9eff5f8b0f3831e36c2b4dd731a86bfbdf571a40e3"
+    },
+    {
+      "template_id": "observed-hand-ordinal-6-swamp-dsk-281-v1",
+      "visible_card_name": "Swamp",
+      "public_print_id": "3c51de66-a3ed-4ca9-befb-9813e96c4ade",
+      "public_oracle_id": "56719f6a-1a6c-4c0a-8d21-18f7d7350b68",
+      "set_code": "dsk",
+      "collector_number": "281",
+      "public_reference_image_sha256": "ba1b0318a76b57a05a74c3eebcfc1b1ba55324d8ab998726dabd238e28f3c455",
+      "reference_bgr8_sha256": "bf91382950c61da5148b922eac3df0ba82d4730facc11e949a8e71e8832cce2a"
+    }
+  ],
+  "states": [
+    {
+      "selected_count": 0,
+      "source_manifest_sha256": "ac1d01e4cec791112bd942cbaf11060f9905b4108b21bd1cb1d8b471ec9e53e6",
+      "source_stage_commitment_sha256": "dfde8dd171ecb0acb92d003d2bc279e530663bd6e67689668ec57321bff88cc9",
+      "candidate_commitment_sha256": "a84e6df74b71bad37b0b11663acb1a99556204e12bf7af7bdca54241629db9ab",
+      "classification": "match",
+      "visible_card_names": ["Forest", "Plains", "Plains", "Swamp", "Island", "Plains", "Swamp"],
+      "mean_absolute_difference_milli": [0, 0, 0, 0, 0, 0, 0],
+      "distinct_name_margin_milli": [54786, 51693, 64056, 49918, 49918, 73055, 52186]
+    },
+    {
+      "selected_count": 1,
+      "source_manifest_sha256": "e9e67a6bc9657288c2c10f0f5f8893e8223a24082ce84e7346e24994f70c0a3f",
+      "source_stage_commitment_sha256": "de203643170d568fa31aac8419224e47ed439d3e305501056242e64467cc0bb6",
+      "candidate_commitment_sha256": "5aa20c1370095d8486b5c64587a9c3a1249b6cc763b73e49ba11ba58128212d5",
+      "classification": "match",
+      "visible_card_names": ["Plains", "Plains", "Swamp", "Island", "Plains", "Swamp"],
+      "mean_absolute_difference_milli": [5990, 6919, 2530, 4615, 433, 6825],
+      "distinct_name_margin_milli": [45640, 57043, 47557, 45344, 72623, 45252]
+    },
+    {
+      "selected_count": 2,
+      "source_manifest_sha256": "4ca82abf0c7745eba7f80763a73ced9c976a5867bb508a43e205de4a2faf4a0b",
+      "source_stage_commitment_sha256": "69a1e1794d502b262bbfc96d2a5e8ef27819f35024bb7c0725fea1e05e53cd7c",
+      "candidate_commitment_sha256": "da3d5af06c922c10dd5b41fdf31f60652bc3011c6d23bc28cde53d915ba5de48",
+      "classification": "match",
+      "visible_card_names": ["Plains", "Swamp", "Island", "Plains", "Swamp"],
+      "mean_absolute_difference_milli": [9047, 1591, 1493, 2043, 6356],
+      "distinct_name_margin_milli": [54244, 48381, 48478, 71018, 45676]
+    },
+    {
+      "selected_count": 3,
+      "source_manifest_sha256": "13037a3c5e7f86a44074eb15a66700d98ddde9713e546ac4431fe16a087ba3d6",
+      "source_stage_commitment_sha256": "ff6c86e539f10f3cafe2015a8d385ac16e61442f95fc35c0d0c27066cf4259ff",
+      "candidate_commitment_sha256": "766abf5f10817c030e7c2eaf358b9c7a342b11619e9e0e3ca507ccf3a5e322d2",
+      "classification": "match",
+      "visible_card_names": ["Swamp", "Island", "Plains", "Swamp"],
+      "mean_absolute_difference_milli": [548, 2763, 4209, 5734],
+      "distinct_name_margin_milli": [49374, 47091, 68845, 46391]
+    },
+    {
+      "selected_count": 4,
+      "source_manifest_sha256": "49b865b9777375ed962a63e1d72eeb87f41823f0bc5feca7b189905c0f01adaf",
+      "source_stage_commitment_sha256": "3f9c28a499be848453622a4e5547f7de6feec31ac467506b15cbeee6a54260dc",
+      "candidate_commitment_sha256": "3b3aa6d2cc7e832746fabe11dfa1f590dbdc7d75055aef292edb9c1a490f6ec9",
+      "classification": "match",
+      "visible_card_names": ["Island", "Plains", "Swamp"],
+      "mean_absolute_difference_milli": [5560, 6037, 5064],
+      "distinct_name_margin_milli": [44328, 67008, 47145]
+    },
+    {
+      "selected_count": 5,
+      "source_manifest_sha256": "e0d3749fde5025b254c7ed3b8161453460f9b61c196425e6ce1373a6c3a7c391",
+      "source_stage_commitment_sha256": "30fac5b8b77e4e4512e826451cc9e74a0551a44dca7f4cd7846314ac556b1c4d",
+      "candidate_commitment_sha256": "a48074d16135dc686386db6109a1593efceca5f61d2aa1c348bbf2de253bb0db",
+      "classification": "match",
+      "visible_card_names": ["Plains", "Swamp"],
+      "mean_absolute_difference_milli": [7534, 4110],
+      "distinct_name_margin_milli": [65563, 48041]
+    },
+    {
+      "selected_count": 6,
+      "source_manifest_sha256": "2eefee0b3a69a167dd5482b219052bd404c5f74f1263a49ae51cee85636b3e3d",
+      "source_stage_commitment_sha256": "e588cea50c762f9cb9ffc85c9a0f974b28fd1c0e21fb8f731bbf25f990df3244",
+      "candidate_commitment_sha256": "07265711202e619116d559298aabdea5ab5015423f5f8a7183a9af0c0094426e",
+      "classification": "match",
+      "visible_card_names": ["Swamp"],
+      "mean_absolute_difference_milli": [19666],
+      "distinct_name_margin_milli": [38386]
+    }
+  ],
+  "state_count": 7,
+  "distinct_games": 1,
+  "positive_removed_ordinal_count": 1,
+  "maximum_observed_mean_absolute_difference_milli": 19666,
+  "minimum_observed_distinct_name_margin_milli": 38386,
+  "nonclaim": "All states come from one game, every reference template comes from the first frame, the candidate universe covers only the seven observed cards, and every transition removes the leftmost visible card. This is checked wiring and threshold-separation evidence, not an accuracy estimate, not a complete 280-card deck profile, not semantic evidence, and not evidence of generalization.",
+  "safe_for_semantic_evidence": false,
+  "safe_for_observation_v5": false,
+  "safe_for_policy_scoring": false,
+  "safe_for_input": false
+}
