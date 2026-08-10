@@ -246,6 +246,8 @@ The fixed no-cost deck `mtgo-solitaire-fixed-basics-v1` narrows that universe to
 
 `fixtures/offline_kernel_basics_opening_hand_coverage_20260810_v1.json` records the first opening hand from the no-cost 30 Forest plus 30 Island deck `mtgo-solitaire-kernel-basics-v1`. Four exact DSK print templates identify all seven visible cards, and every exact visible name resolves to a fully supported kernel deck-card definition. Three templates were calibrated on this same frame, so the record proves complete wiring coverage only. It is not a heldout identity result and creates no object binding, observation, model decision, or input authority.
 
+`start_checked_untrusted_first_main_hand_object_ledger_v1` is the narrow bridge from a complete eight-card first-main kernel-coverage result into the existing incarnation ledger. It requires exact deck-card correspondence at every ordinal and binds the source coverage commitment into the ledger commitment. Synthetic identifiers are deterministic hand-slot labels, and the ledger remains checked-untrusted with no public object-binding, observation, scoring, or input surface.
+
 ```powershell
 cargo run --bin classify_mtgo_offline_mulligan_visible_card_identities_v1 -- `
   C:\absolute\artifact-directory `

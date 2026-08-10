@@ -12,6 +12,8 @@ use std::collections::HashSet;
 pub const MTGO_VISIBLE_OBJECT_INCARNATION_SCHEMA_V1: u32 = 1;
 
 const OBJECT_LEDGER_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-visible-object-ledger-v1";
+const SOURCE_BOUND_OBJECT_LEDGER_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-object-ledger-source-bound-v1";
 const MAX_VISIBLE_OBJECTS_V1: usize = 1_024;
 const MAX_OBJECT_TRANSITIONS_V1: usize = 1_024;
 const MAX_VISIBLE_OBJECT_ID_BYTES_V1: usize = 128;
@@ -76,6 +78,7 @@ struct MtgoTrackedVisibleObjectV1 {
 /// ```
 pub struct CheckedUntrustedMtgoVisibleObjectLedgerV1 {
     current_frame_sha256: String,
+    seed_source_commitment_sha256: Option<String>,
     objects: Vec<MtgoTrackedVisibleObjectV1>,
     transitions: Vec<MtgoObjectLedgerTransitionV1>,
     ledger_commitment_sha256: String,
@@ -88,6 +91,10 @@ impl CheckedUntrustedMtgoVisibleObjectLedgerV1 {
 
     pub fn object_count(&self) -> usize {
         self.objects.len()
+    }
+
+    pub fn seed_source_commitment_sha256(&self) -> Option<&str> {
+        self.seed_source_commitment_sha256.as_deref()
     }
 
     pub fn transition_count(&self) -> usize {
@@ -126,7 +133,18 @@ pub fn start_checked_untrusted_visible_object_ledger_v1(
     current_frame_sha256: &str,
     seeds: Vec<MtgoVisibleObjectSeedV1>,
 ) -> Result<CheckedUntrustedMtgoVisibleObjectLedgerV1, MtgoContractErrorV1> {
+    start_checked_untrusted_visible_object_ledger_with_source_v1(current_frame_sha256, None, seeds)
+}
+
+pub(crate) fn start_checked_untrusted_visible_object_ledger_with_source_v1(
+    current_frame_sha256: &str,
+    seed_source_commitment_sha256: Option<&str>,
+    seeds: Vec<MtgoVisibleObjectSeedV1>,
+) -> Result<CheckedUntrustedMtgoVisibleObjectLedgerV1, MtgoContractErrorV1> {
     require_sha256_v1(current_frame_sha256, "object_ledger_frame_hash_invalid")?;
+    if let Some(commitment) = seed_source_commitment_sha256 {
+        require_sha256_v1(commitment, "object_ledger_seed_source_hash_invalid")?;
+    }
     if seeds.is_empty() || seeds.len() > MAX_VISIBLE_OBJECTS_V1 {
         return Err(MtgoContractErrorV1::new(
             "object_ledger_seed_count_invalid",
@@ -180,6 +198,7 @@ pub fn start_checked_untrusted_visible_object_ledger_v1(
 
     let mut ledger = CheckedUntrustedMtgoVisibleObjectLedgerV1 {
         current_frame_sha256: current_frame_sha256.to_owned(),
+        seed_source_commitment_sha256: seed_source_commitment_sha256.map(str::to_owned),
         objects,
         transitions: Vec::new(),
         ledger_commitment_sha256: String::new(),
@@ -347,13 +366,20 @@ struct LedgerCommitmentPayloadV1<'a> {
     transitions: &'a [MtgoObjectLedgerTransitionV1],
 }
 
+#[derive(Serialize)]
+struct SourceBoundLedgerCommitmentPayloadV1<'a> {
+    schema_version: u32,
+    current_frame_sha256: &'a str,
+    seed_source_commitment_sha256: &'a str,
+    objects: Vec<LedgerCommitmentObjectV1<'a>>,
+    transitions: &'a [MtgoObjectLedgerTransitionV1],
+}
+
 fn commit_ledger_v1(
     ledger: &CheckedUntrustedMtgoVisibleObjectLedgerV1,
 ) -> Result<String, MtgoContractErrorV1> {
-    let payload = LedgerCommitmentPayloadV1 {
-        schema_version: MTGO_VISIBLE_OBJECT_INCARNATION_SCHEMA_V1,
-        current_frame_sha256: &ledger.current_frame_sha256,
-        objects: ledger
+    let objects = || {
+        ledger
             .objects
             .iter()
             .map(|object| LedgerCommitmentObjectV1 {
@@ -361,14 +387,39 @@ fn commit_ledger_v1(
                 visible_card_name: &object.visible_card_name,
                 stable: &object.stable,
             })
-            .collect(),
-        transitions: &ledger.transitions,
+            .collect()
     };
-    let encoded = serde_json::to_vec(&payload).map_err(|error| {
+    let (domain, encoded) = if let Some(seed_source_commitment_sha256) =
+        ledger.seed_source_commitment_sha256.as_deref()
+    {
+        let payload = SourceBoundLedgerCommitmentPayloadV1 {
+            schema_version: MTGO_VISIBLE_OBJECT_INCARNATION_SCHEMA_V1,
+            current_frame_sha256: &ledger.current_frame_sha256,
+            seed_source_commitment_sha256,
+            objects: objects(),
+            transitions: &ledger.transitions,
+        };
+        (
+            SOURCE_BOUND_OBJECT_LEDGER_COMMITMENT_DOMAIN_V1,
+            serde_json::to_vec(&payload),
+        )
+    } else {
+        let payload = LedgerCommitmentPayloadV1 {
+            schema_version: MTGO_VISIBLE_OBJECT_INCARNATION_SCHEMA_V1,
+            current_frame_sha256: &ledger.current_frame_sha256,
+            objects: objects(),
+            transitions: &ledger.transitions,
+        };
+        (
+            OBJECT_LEDGER_COMMITMENT_DOMAIN_V1,
+            serde_json::to_vec(&payload),
+        )
+    };
+    let encoded = encoded.map_err(|error| {
         MtgoContractErrorV1::new("object_ledger_serialization_failed", error.to_string())
     })?;
     let mut hasher = Sha256::new();
-    hasher.update(OBJECT_LEDGER_COMMITMENT_DOMAIN_V1);
+    hasher.update(domain);
     hasher.update((encoded.len() as u64).to_le_bytes());
     hasher.update(encoded);
     Ok(format!("{:x}", hasher.finalize()))

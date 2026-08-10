@@ -1,10 +1,15 @@
 use crate::{
     mtgo_kernel_supported_card_profile_commitment_v1,
     resolve_checked_untrusted_kernel_card_correspondence_v1,
-    CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1, MtgoContractErrorV1,
+    start_checked_untrusted_visible_object_ledger_with_source_v1,
+    CheckedUntrustedMtgoOfflineFirstMainVisibleCardIdentityCandidateV1,
+    CheckedUntrustedMtgoVisibleObjectLedgerV1, MtgoContractErrorV1,
     MtgoKernelCardCorrespondenceDispositionV1, MtgoOfflineVisibleCardIdentityClassificationV1,
+    MtgoVisibleObjectSeedV1,
 };
 use mtg_kernel::card_def::KERNEL_CARDDB_HASH;
+use mtg_kernel::rl::PlayerSeatV1;
+use mtg_kernel::state::Zone;
 use sha2::{Digest, Sha256};
 
 const FIRST_MAIN_KERNEL_COVERAGE_DOMAIN_V1: &[u8] = b"mtgo-first-main-kernel-card-coverage-v1";
@@ -238,6 +243,75 @@ pub fn check_untrusted_first_main_kernel_card_coverage_v1(
     })
 }
 
+/// Starts a checked-untrusted hand-object ledger from one complete first-main
+/// coverage result.
+///
+/// The source coverage commitment is retained in the ledger commitment. Every
+/// entry must be an exact fully supported deck card. The resulting ledger is
+/// still calibration-only and exposes no object bindings, observation, policy,
+/// or input authority.
+pub fn start_checked_untrusted_first_main_hand_object_ledger_v1(
+    coverage: &CheckedUntrustedMtgoFirstMainKernelCardCoverageV1,
+    actor: PlayerSeatV1,
+) -> Result<CheckedUntrustedMtgoVisibleObjectLedgerV1, MtgoContractErrorV1> {
+    if !coverage.coverage_complete() || coverage.entries.len() != FIRST_MAIN_VISIBLE_HAND_COUNT_V1 {
+        return Err(MtgoContractErrorV1::new(
+            "first_main_object_seed_coverage_incomplete",
+            "object-ledger seeding requires complete eight-card kernel coverage",
+        ));
+    }
+
+    let mut seeds = Vec::with_capacity(FIRST_MAIN_VISIBLE_HAND_COUNT_V1);
+    for (expected_ordinal, entry) in coverage.entries.iter().enumerate() {
+        let expected_ordinal = u8::try_from(expected_ordinal).map_err(|_| {
+            MtgoContractErrorV1::new(
+                "first_main_object_seed_ordinal_overflow",
+                expected_ordinal.to_string(),
+            )
+        })?;
+        if entry.ordinal != expected_ordinal {
+            return Err(MtgoContractErrorV1::new(
+                "first_main_object_seed_ordinal_invalid",
+                format!("expected={expected_ordinal},actual={}", entry.ordinal),
+            ));
+        }
+        if entry.disposition != MtgoFirstMainKernelCardCoverageDispositionV1::FullySupportedDeckCard
+        {
+            return Err(MtgoContractErrorV1::new(
+                "first_main_object_seed_not_deck_card",
+                entry.visible_card_name.as_str(),
+            ));
+        }
+        let correspondence =
+            resolve_checked_untrusted_kernel_card_correspondence_v1(&entry.visible_card_name)?;
+        if correspondence.disposition()
+            != MtgoKernelCardCorrespondenceDispositionV1::FullySupportedDeckCard
+            || entry.card_db_id != Some(correspondence.card_db_id())
+            || entry.correspondence_commitment_sha256.as_deref()
+                != Some(correspondence.correspondence_commitment_sha256())
+        {
+            return Err(MtgoContractErrorV1::new(
+                "first_main_object_seed_correspondence_mismatch",
+                entry.visible_card_name.as_str(),
+            ));
+        }
+        seeds.push(MtgoVisibleObjectSeedV1 {
+            display_ordinal: u32::from(expected_ordinal),
+            visible_object_id: format!("first-main:hand-slot-{expected_ordinal}"),
+            visible_card_name: entry.visible_card_name.clone(),
+            owner: actor,
+            controller: actor,
+            zone: Zone::Hand,
+        });
+    }
+
+    start_checked_untrusted_visible_object_ledger_with_source_v1(
+        &coverage.source_frame_sha256,
+        Some(&coverage.coverage_commitment_sha256),
+        seeds,
+    )
+}
+
 fn coverage_commitment_v1(
     source_identity_candidate_commitment_sha256: &str,
     supported_profile_commitment_sha256: &str,
@@ -283,4 +357,109 @@ fn coverage_commitment_v1(
 fn update_hash_part_v1(hasher: &mut Sha256, bytes: &[u8]) {
     hasher.update((bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn complete_island_coverage_v1() -> CheckedUntrustedMtgoFirstMainKernelCardCoverageV1 {
+        let correspondence = resolve_checked_untrusted_kernel_card_correspondence_v1("Island")
+            .expect("Island must remain a fully supported deck card");
+        let entries = (0..FIRST_MAIN_VISIBLE_HAND_COUNT_V1)
+            .map(|ordinal| MtgoFirstMainKernelCardCoverageEntryV1 {
+                ordinal: u8::try_from(ordinal).unwrap(),
+                visible_card_name: "Island".to_owned(),
+                disposition: MtgoFirstMainKernelCardCoverageDispositionV1::FullySupportedDeckCard,
+                card_db_id: Some(correspondence.card_db_id()),
+                correspondence_commitment_sha256: Some(
+                    correspondence.correspondence_commitment_sha256().to_owned(),
+                ),
+            })
+            .collect();
+        CheckedUntrustedMtgoFirstMainKernelCardCoverageV1 {
+            source_identity_candidate_commitment_sha256: "1".repeat(64),
+            source_manifest_sha256: "2".repeat(64),
+            source_frame_sha256: "3".repeat(64),
+            kernel_card_db_hash: KERNEL_CARDDB_HASH,
+            supported_profile_commitment_sha256: correspondence
+                .supported_profile_commitment_sha256()
+                .to_owned(),
+            fully_supported_count: FIRST_MAIN_VISIBLE_HAND_COUNT_V1 as u8,
+            entries,
+            coverage_commitment_sha256: "4".repeat(64),
+        }
+    }
+
+    #[test]
+    fn complete_deck_card_coverage_seeds_a_source_bound_hand_ledger() {
+        let coverage = complete_island_coverage_v1();
+        let ledger =
+            start_checked_untrusted_first_main_hand_object_ledger_v1(&coverage, PlayerSeatV1::P0)
+                .unwrap();
+
+        assert_eq!(
+            ledger.current_frame_sha256(),
+            coverage.source_frame_sha256()
+        );
+        assert_eq!(
+            ledger.seed_source_commitment_sha256(),
+            Some(coverage.coverage_commitment_sha256())
+        );
+        assert_eq!(ledger.object_count(), FIRST_MAIN_VISIBLE_HAND_COUNT_V1);
+        assert_eq!(ledger.transition_count(), 0);
+        let bindings = ledger.current_object_bindings_v1();
+        assert_eq!(bindings.len(), FIRST_MAIN_VISIBLE_HAND_COUNT_V1);
+        for (ordinal, binding) in bindings.iter().enumerate() {
+            assert_eq!(
+                binding.adapter_object_id,
+                format!("first-main:hand-slot-{ordinal}")
+            );
+            assert_eq!(
+                binding.kernel_ref.arena_id,
+                u32::try_from(ordinal + 1).unwrap()
+            );
+            assert_eq!(binding.kernel_ref.owner, PlayerSeatV1::P0);
+            assert_eq!(binding.kernel_ref.controller, PlayerSeatV1::P0);
+            assert_eq!(binding.kernel_ref.zone, Zone::Hand);
+            assert_eq!(binding.kernel_ref.zone_change_count, 0);
+        }
+        assert!(!ledger.safe_for_observation_v5());
+        assert!(!ledger.safe_for_policy_scoring());
+        assert!(!ledger.safe_for_input());
+    }
+
+    #[test]
+    fn incomplete_token_or_mismatched_coverage_cannot_seed_a_ledger() {
+        let mut incomplete = complete_island_coverage_v1();
+        incomplete.fully_supported_count = 7;
+        assert_eq!(
+            start_checked_untrusted_first_main_hand_object_ledger_v1(&incomplete, PlayerSeatV1::P0)
+                .err()
+                .unwrap()
+                .code(),
+            "first_main_object_seed_coverage_incomplete"
+        );
+
+        let mut token = complete_island_coverage_v1();
+        token.entries[0].disposition =
+            MtgoFirstMainKernelCardCoverageDispositionV1::FullySupportedToken;
+        assert_eq!(
+            start_checked_untrusted_first_main_hand_object_ledger_v1(&token, PlayerSeatV1::P0)
+                .err()
+                .unwrap()
+                .code(),
+            "first_main_object_seed_not_deck_card"
+        );
+
+        let mut mismatch = complete_island_coverage_v1();
+        mismatch.entries[0].card_db_id = Some(u16::MAX);
+        assert_eq!(
+            start_checked_untrusted_first_main_hand_object_ledger_v1(&mismatch, PlayerSeatV1::P0)
+                .err()
+                .unwrap()
+                .code(),
+            "first_main_object_seed_correspondence_mismatch"
+        );
+    }
 }
