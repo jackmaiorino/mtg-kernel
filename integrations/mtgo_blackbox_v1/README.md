@@ -172,6 +172,10 @@ The live fixture is `fixtures/offline_london_bottom_six_trace_20260810_v1.json`,
 
 The record and checked wrapper retain no pixels or coordinates. Manual card labels are not proven by the structural checker, and all live-frame, semantic-evidence, `ObservationV5`, policy-scoring, and input flags remain false. The kernel runtime `ActionSemanticV1` has no Keep, Mulligan, bottom-selection, or bottom-submit variants, so this pregame path currently needs a separate model-supported pregame policy seam before autonomous play is possible.
 
+`validate_untrusted_offline_london_pregame_episode_v1` joins the maximum-depth path into one exact offline episode: seven choice prompts from prospective keep seven through one, Keep at one, seven bottoming states from zero through six selected cards, Submit, and the visible first-main completion. It binds fifteen unique checked artifacts, seven exact choice-classifier commitments, the exact bottoming-trace commitment, one shared layout, strict capture order, and fourteen declared transition actions. Every declared action must be legal in its exact source state and must produce the canonical next stage. The resulting per-stage action counts are `[2,2,2,2,2,2,2,8,7,6,5,4,3,2,0]`.
+
+The episode fixture is `fixtures/offline_london_pregame_episode_20260810_v1.json`, SHA-256 `bb30440d8be3d0133dd43551dd899119389bc619dd4d58d78c3b6dd7d57b9105`. Its exact fifteen-artifact commitment is `03ae235024f2f1482cbf85ffca08c857a57f70bed1ce56c630a9c784b82e68ed`. Swapping the first two source artifacts is rejected. Action and stage labels remain supervised declarations rather than facts proven from pixels, and the checked episode grants no live-frame, observation, scoring, or input authority.
+
 The live Keep pair can be rechecked without persisting any additional pixels:
 
 ```powershell

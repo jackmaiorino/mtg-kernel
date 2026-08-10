@@ -67,6 +67,7 @@ pub struct CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1 {
     classification: MtgoOfflineMulliganLadderClassificationV1,
     profile_set_commitment_sha256: String,
     source_manifest_sha256: String,
+    source_frame_sha256: String,
     matched_profile_count: usize,
     evaluated_profile_count: usize,
     prospective_keep_size: Option<u8>,
@@ -85,6 +86,10 @@ impl CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1 {
 
     pub fn source_manifest_sha256(&self) -> &str {
         &self.source_manifest_sha256
+    }
+
+    pub fn source_frame_sha256(&self) -> &str {
+        &self.source_frame_sha256
     }
 
     pub fn matched_profile_count(&self) -> usize {
@@ -270,6 +275,7 @@ fn classify_with_profile_set_v1(
         classification,
         profile_set_commitment_sha256,
         source_manifest_sha256: checked.manifest_sha256().to_owned(),
+        source_frame_sha256: checked.canonical_bgra8_sha256().to_owned(),
         matched_profile_count: matched_indices.len(),
         evaluated_profile_count: profile_set.profiles.len(),
         prospective_keep_size,

@@ -122,6 +122,28 @@ impl CheckedUntrustedMtgoOfflineLondonBottomingTraceV1 {
         self.record.states.len()
     }
 
+    pub fn state_source_manifest_sha256(&self, state_index: usize) -> Option<&str> {
+        self.record
+            .states
+            .get(state_index)
+            .map(|state| state.source_manifest_sha256.as_str())
+    }
+
+    pub fn state_source_frame_sha256(&self, state_index: usize) -> Option<&str> {
+        self.record
+            .states
+            .get(state_index)
+            .map(|state| state.source_frame_sha256.as_str())
+    }
+
+    pub fn completion_source_manifest_sha256(&self) -> &str {
+        &self.record.completion.source_manifest_sha256
+    }
+
+    pub fn completion_source_frame_sha256(&self) -> &str {
+        &self.record.completion.source_frame_sha256
+    }
+
     pub fn legal_actions_for_state(
         &self,
         state_index: usize,

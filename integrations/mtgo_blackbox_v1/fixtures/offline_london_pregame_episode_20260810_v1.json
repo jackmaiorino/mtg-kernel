@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "episode_id": "game-958659998-full-london-pregame-seven-to-one-v1",
+  "frames": [
+    {
+      "stage": {
+        "stage_kind": "mulligan_choice",
+        "prospective_keep_size": 7
+      },
+      "source_manifest_sha256": "562ac060b1a014b602b2b2e516ae600f14a106371d467aad9f1ffff876dcacb1",
+      "source_frame_sha256": "fc60eae6d3f5bbf2da8e68b998026c0eb71001cc86d1f8f89df30ba98456a9d6"
+    },
+    {
+      "stage": {
+        "stage_kind": "mulligan_choice",
+        "prospective_keep_size": 6
+      },
+      "source_manifest_sha256": "e2128317cf83512c1c1bdf9bfaebf617188017f94b93b8056eb826e6c1b02d3a",
+      "source_frame_sha256": "02623d8e32b0575095c5f5cce87ac0f4f4d7763ac430cd601066f59a34ab551b"
+    },
+    {
+      "stage": {
+        "stage_kind": "mulligan_choice",
+        "prospective_keep_size": 5
+      },
+      "source_manifest_sha256": "a246d3a285dc4c2f96177fd30fefe01a0c4ee8bbe57476846c3c16f858fa2617",
+      "source_frame_sha256": "72c45a8fce5e66bf5e450b2fc944c142d281e7ffd7ed8ca4140b3f4682dbac65"
+    },
+    {
+      "stage": {
+        "stage_kind": "mulligan_choice",
+        "prospective_keep_size": 4
+      },
+      "source_manifest_sha256": "49d6d2fdfc6966f5c5441ef9f427320ff62468328155f7ba1bc2fc4e772ceb80",
+      "source_frame_sha256": "28824ac1fbfc12436c29e9d163de13a292566b82f4c808fe734e08c01b674c0e"
+    },
+    {
+      "stage": {
+        "stage_kind": "mulligan_choice",
+        "prospective_keep_size": 3
+      },
+      "source_manifest_sha256": "c75ebb6a01d466bad7faf952cc5f648d84ccd66160c2b9b814a3f28358976d68",
+      "source_frame_sha256": "df688b724df0c4c180100750c39682aaae2b34da8f84c6ea09d0369640c56256"
+    },
+    {
+      "stage": {
+        "stage_kind": "mulligan_choice",
+        "prospective_keep_size": 2
+      },
+      "source_manifest_sha256": "bdf7315cf9a219385b341679a4cbfce0f920b6af02c5b34b7e374262b1355ce8",
+      "source_frame_sha256": "0ee4a9f8ff05257d36b8aeb9f260037750041a91c61dbdcbdd8fb70b2f5eb3be"
+    },
+    {
+      "stage": {
+        "stage_kind": "mulligan_choice",
+        "prospective_keep_size": 1
+      },
+      "source_manifest_sha256": "7914a3dbd88e004488ba52b49031bbc7383910b140bef9c35f5ebfc54bce6404",
+      "source_frame_sha256": "e618be94ea8c681da1f99ec753d69908fefd35903181be29689fa2de727fc3f4"
+    },
+    {
+      "stage": {
+        "stage_kind": "bottoming",
+        "selected_count": 0
+      },
+      "source_manifest_sha256": "ac1d01e4cec791112bd942cbaf11060f9905b4108b21bd1cb1d8b471ec9e53e6",
+      "source_frame_sha256": "e364e0a7622ae0159f863d47c8163f9e353e35559fa7bc34840c8db205aea41d"
+    },
+    {
+      "stage": {
+        "stage_kind": "bottoming",
+        "selected_count": 1
+      },
+      "source_manifest_sha256": "e9e67a6bc9657288c2c10f0f5f8893e8223a24082ce84e7346e24994f70c0a3f",
+      "source_frame_sha256": "3df0dad98bbf8e7400fe8d8a226ec80749e8d198bda63cc79182fab18172e0ce"
+    },
+    {
+      "stage": {
+        "stage_kind": "bottoming",
+        "selected_count": 2
+      },
+      "source_manifest_sha256": "4ca82abf0c7745eba7f80763a73ced9c976a5867bb508a43e205de4a2faf4a0b",
+      "source_frame_sha256": "0d53fd2be7fc23d9fc83c8f0d04b23999dcff5e6a33649d881d3f4cc1d802f49"
+    },
+    {
+      "stage": {
+        "stage_kind": "bottoming",
+        "selected_count": 3
+      },
+      "source_manifest_sha256": "13037a3c5e7f86a44074eb15a66700d98ddde9713e546ac4431fe16a087ba3d6",
+      "source_frame_sha256": "e5310d7d08f50ac5c70c20da3634b64fc1d4776c831a4bcce077ca349674aa64"
+    },
+    {
+      "stage": {
+        "stage_kind": "bottoming",
+        "selected_count": 4
+      },
+      "source_manifest_sha256": "49b865b9777375ed962a63e1d72eeb87f41823f0bc5feca7b189905c0f01adaf",
+      "source_frame_sha256": "32358841e2aebfb5d2ccf7daa9ae239898fccdbe825c4e907596b1944139ecdb"
+    },
+    {
+      "stage": {
+        "stage_kind": "bottoming",
+        "selected_count": 5
+      },
+      "source_manifest_sha256": "e0d3749fde5025b254c7ed3b8161453460f9b61c196425e6ce1373a6c3a7c391",
+      "source_frame_sha256": "8252a1425e93b678b8aa9cf096c3676d6339beed7e144494f1b9777e15e3c1b4"
+    },
+    {
+      "stage": {
+        "stage_kind": "bottoming",
+        "selected_count": 6
+      },
+      "source_manifest_sha256": "2eefee0b3a69a167dd5482b219052bd404c5f74f1263a49ae51cee85636b3e3d",
+      "source_frame_sha256": "2f9a192449535af5544ad4cec985acecca8ad21069f18714d926705e00e7abdc"
+    },
+    {
+      "stage": {
+        "stage_kind": "gameplay_first_main"
+      },
+      "source_manifest_sha256": "fd6fe2267ed5be7484feb82aaeec6d095d6b4e7447efc37395b1455b7cce515c",
+      "source_frame_sha256": "4e238c922942e103c1037fcadaa818ba4874d2501547c7e6885f4705ceebf2c8"
+    }
+  ],
+  "declared_transition_actions": [
+    {
+      "action_kind": "mulligan",
+      "next_hand_size": 6
+    },
+    {
+      "action_kind": "mulligan",
+      "next_hand_size": 5
+    },
+    {
+      "action_kind": "mulligan",
+      "next_hand_size": 4
+    },
+    {
+      "action_kind": "mulligan",
+      "next_hand_size": 3
+    },
+    {
+      "action_kind": "mulligan",
+      "next_hand_size": 2
+    },
+    {
+      "action_kind": "mulligan",
+      "next_hand_size": 1
+    },
+    {
+      "action_kind": "keep_opening_hand"
+    },
+    {
+      "action_kind": "select_for_bottom",
+      "adapter_object_id": "game-958659998:opening-hand:0",
+      "selection_ordinal": 1
+    },
+    {
+      "action_kind": "select_for_bottom",
+      "adapter_object_id": "game-958659998:opening-hand:1",
+      "selection_ordinal": 2
+    },
+    {
+      "action_kind": "select_for_bottom",
+      "adapter_object_id": "game-958659998:opening-hand:2",
+      "selection_ordinal": 3
+    },
+    {
+      "action_kind": "select_for_bottom",
+      "adapter_object_id": "game-958659998:opening-hand:3",
+      "selection_ordinal": 4
+    },
+    {
+      "action_kind": "select_for_bottom",
+      "adapter_object_id": "game-958659998:opening-hand:4",
+      "selection_ordinal": 5
+    },
+    {
+      "action_kind": "select_for_bottom",
+      "adapter_object_id": "game-958659998:opening-hand:5",
+      "selection_ordinal": 6
+    },
+    {
+      "action_kind": "submit_bottoming"
+    }
+  ],
+  "choice_candidate_commitments_sha256": [
+    "e3d5d0ae6e6917e5703c639a8793c5f969344cfd6fe4521ab4a55ee795a17412",
+    "cb2b72be47c9bf3baf5cefbbc1f1b6678c1a6e370e19ef2397c05e26e5f495e8",
+    "f9378f0865d0bd485809287c8c39094ef4f4bbcb559aa6be91df86d51a8f9315",
+    "b8f649ffc2b6076e489e523f6e3210153c45fe916ba2751f40a4db0b99b06832",
+    "4fae2952306601f72931916bde63e929baae5abf023e784f818479d767ac6042",
+    "4deed84a3d93499c3fed37d1d5776ccdeebff004e9bd754f3d3499174b829bf6",
+    "5dae7ddf1a23411c324cd543dd8de541ab09e8746102becff84387455f1ed852"
+  ],
+  "bottoming_trace_commitment_sha256": "4ab9b5b8710cb017e3734d72c20756768a5bb536ff1a1eb97b7779542d5e9645"
+}
