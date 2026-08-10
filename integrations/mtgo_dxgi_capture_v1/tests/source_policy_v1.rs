@@ -63,6 +63,51 @@ fn acting_player_duel_mode_is_role_explicit_and_still_non_actionable() {
 }
 
 #[test]
+fn admitted_duel_frame_requires_an_opaque_profile_and_retains_no_downstream_authority() {
+    let source = include_str!("../src/probe/duel_profile_frame.rs");
+    for required in [
+        "capture_admitted_mtgo_duel_visible_frame_v1",
+        "AdmittedMtgoDuelPerceptionProfileV1",
+        "OpaqueMtgoAdmittedDuelVisibleFrameV1",
+        "CaptureWindowModeV2::DuelGame",
+        "profile.executable_sha256()",
+        "profile.signer_thumbprint()",
+        "profile.signer_subject_sha256()",
+        "profile.dpi()",
+        "profile.client_size_px()",
+        "profile.output_identity_sha256()",
+        "profile.game_format()",
+        "perception_profile_admission_commitment_sha256",
+        "frame_profile_binding_sha256",
+    ] {
+        assert!(
+            source.contains(required),
+            "admitted duel-frame seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn bind_captured_duel_frame_to_profile_v1",
+        "pub fn canonical_bgra8",
+        "pub fn preview_png",
+        "to_observation",
+        "to_model_request",
+        "to_action_intent",
+        "target_point_client",
+        "safe_for_semantic_evidence_v1(&self) -> bool {\n        true",
+        "safe_for_model_scoring_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "admitted duel-frame seam exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn public_measurement_consumes_only_the_opaque_frame_and_keeps_parts_private() {
     let source = include_str!("../src/probe.rs");
     assert!(source.contains(
