@@ -1,0 +1,26 @@
+{
+  "schema": "multirun-operating-point-gate-a1-golden/v1",
+  "capture_basis": "Legacy manual invocation environment for a plain (uniform-opponent, non-ladder) throughput run of multirun_pilot_v1, as used by the 2026-07-23/24 operating-point and fair-campaign runs: the eight value knobs plus the CUDA placement trio, with every mode knob unset. Captured under the clean-environment precondition: every name in the launcher's full whitelist was unset before capture, so absent-in-legacy means genuinely unset, not inherited. Names outside common.ps1's 20-name EnvironmentNames list were never managed by any legacy launcher; gate A2 (not this fixture) proves the new launcher clears them.",
+  "solo_reference": {
+    "MULTIRUN_RUNS": "1",
+    "MULTIRUN_UPDATES": "64",
+    "MULTIRUN_WORKERS": "2",
+    "MULTIRUN_SESSIONS": "32",
+    "MULTIRUN_BROKER_TARGET": "16",
+    "MULTIRUN_BASE_SEED": "424242",
+    "MULTIRUN_SEED_OFFSET": "0",
+    "MULTIRUN_STORE_PARENT": "D:\\mtg-kernel-oppoint-leg-a-solo\\proc-0",
+    "MULTIRUN_RECORD_ONLY": null,
+    "MULTIRUN_STOP_AFTER_GENERATION": null,
+    "MULTIRUN_EXPECT_RESUME_GENERATION": null,
+    "MULTIRUN_POLICY_ANCHOR_BETA": null,
+    "MULTIRUN_ENVIRONMENT_RANDOMIZATION_V2": null,
+    "MULTIRUN_LADDER": null,
+    "MULTIRUN_LADDER_INIT_STORE": null,
+    "MULTIRUN_LADDER_INIT_GEN": null,
+    "MULTIRUN_LADDER_POOL_DIR": null,
+    "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+    "CUDA_VISIBLE_DEVICES": "GPU-3502709e-6aef-8ed7-4abe-562838793e3d",
+    "MTG_KERNEL_PILOT_CUDA_ORDINAL": "0"
+  }
+}

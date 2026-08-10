@@ -1,0 +1,15 @@
+{
+  "schema": "multirun-operating-point-launch/v1",
+  "label": "leg-b-3plus2-confirmation",
+  "expected_commit": "f9863786fe716272ee3fe4087d15c84a1f5a7bdf",
+  "base_seed": 424242,
+  "updates": 64,
+  "workers": 2,
+  "sessions": 32,
+  "broker_target": 16,
+  "store_parent_root": "D:\\mtg-kernel-oppoint-leg-b-3plus2",
+  "processes": [
+    { "device_uuid": "GPU-3502709e-6aef-8ed7-4abe-562838793e3d", "runs": 3 },
+    { "device_uuid": "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3", "runs": 2 }
+  ]
+}
