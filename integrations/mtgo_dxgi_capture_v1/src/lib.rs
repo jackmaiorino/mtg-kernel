@@ -6,8 +6,9 @@ mod probe;
 
 #[cfg(target_os = "windows")]
 pub use probe::{
-    capture_mtgo_dxgi_frame_candidate_v3, run_cli_v3, MtgoDxgiCaptureRequestV3,
-    MtgoDxgiFrameCommitmentsV3, OpaqueMtgoDxgiFrameCandidateV3,
+    capture_mtgo_dxgi_frame_candidate_v3, measure_mtgo_dxgi_mulligan_ladder_candidate_v3,
+    run_cli_v3, MtgoDxgiCaptureRequestV3, MtgoDxgiFrameCommitmentsV3,
+    OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoDxgiMulliganMeasurementV3,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

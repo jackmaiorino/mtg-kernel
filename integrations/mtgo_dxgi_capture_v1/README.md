@@ -6,6 +6,8 @@ The probe is intentionally separate from `mtgo_blackbox_v1`. It contains the Win
 
 The command-line executable is a thin wrapper over the library capture engine. A successful in-process capture returns `OpaqueMtgoDxgiFrameCandidateV3`. Safe Rust callers cannot construct, clone, format, deserialize, or read pixels from that type. Its public view contains commitments and geometry only. Downstream live wiring must accept the opaque object itself, never a copied commitment or serialized manifest, if it needs proof that the real capture routine ran.
 
+`measure_mtgo_dxgi_mulligan_ladder_candidate_v3` is the first direct perception consumer. It consumes the opaque frame in-process, serializes the probe-owned manifest, rechecks the manifest, PNG, and canonical pixels through `mtgo_blackbox_v1`, then runs the exact seven-state London mulligan prompt classifier. The opaque measurement retains the source frame and exposes only the checked-untrusted classification, optional prospective keep size, adapter-local action labels, and commitments. It has no pixel, coordinate, `ObservationV5`, scorer, action-intent, or input conversion.
+
 ## Admission performed by the probe
 
 Before and after capture, the probe requires:
@@ -36,7 +38,7 @@ Solitaire titles must visibly identify one participant. Spectator titles must vi
 
 ## Deliberate nonclaim
 
-Every artifact is marked `checked_untrusted_not_admitted`, and all OCR, semantic-evidence, policy-scoring, and input flags are false. The opaque v3 candidate does not change those flags. It closes the specific caller-forged manifest and safety-boolean path, but Authenticode and frame checks do not prove that a calibration label matches the pixels. Pre/post z-order audits also cannot eliminate a transient occluder that appears and disappears entirely during one frame acquisition. A later measured-perception entrypoint must consume the opaque candidate directly, bind a manually ratified client profile and anchors, and preserve the nonclaim before any observation can be formed.
+Every artifact is marked `checked_untrusted_not_admitted`, and all OCR, semantic-evidence, policy-scoring, and input flags are false. The opaque v3 candidate and mulligan measurement do not change those flags. They close the specific caller-forged manifest and safety-boolean path, but Authenticode and frame checks do not prove that a calibration label matches the pixels. Pre/post z-order audits also cannot eliminate a transient occluder that appears and disappears entirely during one frame acquisition. The exact prompt templates have only a tiny offline brittleness screen and are not a general accuracy estimate. A later promotion gate must bind a measured client profile and preserve these nonclaims before any observation can be formed.
 
 The probe has no focus, cursor, mouse, keyboard, purchase, queue-entry, or gameplay action API. An attended operator must place MTGO in the foreground and park the cursor before running it.
 

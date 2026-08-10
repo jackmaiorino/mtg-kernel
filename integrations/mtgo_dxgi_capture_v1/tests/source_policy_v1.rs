@@ -41,3 +41,24 @@ fn production_source_uses_composed_desktop_and_excludes_hidden_or_input_apis() {
         );
     }
 }
+
+#[test]
+fn public_measurement_consumes_only_the_opaque_frame_and_keeps_parts_private() {
+    let source = include_str!("../src/probe.rs");
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_mulligan_ladder_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
+    ));
+    assert!(source.contains("fn measure_mulligan_ladder_parts_v3("));
+    assert!(!source.contains("pub fn measure_mulligan_ladder_parts_v3("));
+    for forbidden in [
+        "canonical_pixels_v3",
+        "to_observation_v5",
+        "to_action_intent",
+        "send_input",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "opaque capture seam exposes forbidden downstream conversion: {forbidden}"
+        );
+    }
+}

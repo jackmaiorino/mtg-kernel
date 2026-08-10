@@ -7,6 +7,7 @@ publish = false
 [workspace]
 
 [dependencies]
+mtgo-blackbox-v1 = { path = "../mtgo_blackbox_v1" }
 png = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

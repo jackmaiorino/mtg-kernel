@@ -5,6 +5,12 @@ use crate::{
     copy_tightly_packed_bgra8_v1, sha256_hex_v1, validate_visible_mtgo_title_v2,
     CaptureWindowModeV2, SignedRectV1,
 };
+use mtgo_blackbox_v1::{
+    check_untrusted_dxgi_capture_artifact_v1,
+    classify_untrusted_offline_mulligan_ladder_candidate_v1,
+    CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1,
+    MtgoOfflineMulliganLadderClassificationV1, MtgoPregameActionSemanticV1,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::ffi::c_void;
@@ -252,6 +258,97 @@ impl OpaqueMtgoDxgiFrameCandidateV3 {
             captured_at_unix_millis: self.manifest.captured_at_unix_millis,
         }
     }
+}
+
+/// A direct in-process exact-template measurement over an opaque DXGI frame.
+///
+/// Only `measure_mtgo_dxgi_mulligan_ladder_candidate_v3` can construct this
+/// type in safe production code. The source frame and pixels remain retained
+/// and private. The measurement is checked-untrusted and creates no live-frame,
+/// semantic-evidence, observation, policy, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiMulliganMeasurementV3;
+/// let _forged = OpaqueMtgoDxgiMulliganMeasurementV3 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiMulliganMeasurementV3;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoDxgiMulliganMeasurementV3>();
+/// ```
+pub struct OpaqueMtgoDxgiMulliganMeasurementV3 {
+    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    measurement: CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1,
+}
+
+impl OpaqueMtgoDxgiMulliganMeasurementV3 {
+    pub fn source_capture_commitments_v3(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.source_frame.commitments_v3()
+    }
+
+    pub fn classification_v3(&self) -> MtgoOfflineMulliganLadderClassificationV1 {
+        self.measurement.classification()
+    }
+
+    pub fn prospective_keep_size_v3(&self) -> Option<u8> {
+        self.measurement.prospective_keep_size()
+    }
+
+    pub fn ordered_actions_v3(&self) -> &[MtgoPregameActionSemanticV1] {
+        self.measurement.ordered_actions()
+    }
+
+    pub fn profile_set_commitment_sha256_v3(&self) -> &str {
+        self.measurement.profile_set_commitment_sha256()
+    }
+
+    pub fn measurement_commitment_sha256_v3(&self) -> &str {
+        self.measurement.candidate_commitment_sha256()
+    }
+
+    pub fn safe_for_semantic_evidence_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v3(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_mtgo_dxgi_mulligan_ladder_candidate_v3(
+    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+) -> Result<OpaqueMtgoDxgiMulliganMeasurementV3, String> {
+    let manifest_bytes = serialize_manifest_v2(&source_frame.manifest)?;
+    let measurement = measure_mulligan_ladder_parts_v3(
+        &manifest_bytes,
+        &source_frame.canonical_bgra8,
+        &source_frame.preview_png,
+    )?;
+    Ok(OpaqueMtgoDxgiMulliganMeasurementV3 {
+        source_frame,
+        measurement,
+    })
+}
+
+fn measure_mulligan_ladder_parts_v3(
+    manifest_bytes: &[u8],
+    canonical_bgra8: &[u8],
+    preview_png: &[u8],
+) -> Result<CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1, String> {
+    let checked =
+        check_untrusted_dxgi_capture_artifact_v1(manifest_bytes, canonical_bgra8, preview_png)
+            .map_err(|error| format!("check in-process DXGI frame: {error}"))?;
+    classify_untrusted_offline_mulligan_ladder_candidate_v1(&checked, canonical_bgra8)
+        .map_err(|error| format!("measure London mulligan ladder: {error}"))
 }
 
 struct ProcessHandleV1(windows::Win32::Foundation::HANDLE);
@@ -1318,8 +1415,7 @@ fn persist_atomically(
             .map_err(|error| format!("write canonical pixels: {error}"))?;
         fs::write(partial.join("frame.png"), preview_png)
             .map_err(|error| format!("write preview PNG: {error}"))?;
-        let manifest_bytes = serde_json::to_vec_pretty(manifest)
-            .map_err(|error| format!("serialize manifest: {error}"))?;
+        let manifest_bytes = serialize_manifest_v2(manifest)?;
         fs::write(partial.join("manifest.json"), manifest_bytes)
             .map_err(|error| format!("write manifest: {error}"))?;
         fs::rename(&partial, output)
@@ -1337,9 +1433,12 @@ fn capture_commitment_v3(
     canonical_bgra8: &[u8],
     preview_png: &[u8],
 ) -> ProbeResult<String> {
-    let manifest_bytes = serde_json::to_vec(manifest)
-        .map_err(|error| format!("serialize capture commitment manifest: {error}"))?;
+    let manifest_bytes = serialize_manifest_v2(manifest)?;
     capture_commitment_from_parts_v3(&manifest_bytes, canonical_bgra8, preview_png)
+}
+
+fn serialize_manifest_v2(manifest: &CaptureManifestV2) -> ProbeResult<Vec<u8>> {
+    serde_json::to_vec_pretty(manifest).map_err(|error| format!("serialize manifest: {error}"))
 }
 
 fn capture_commitment_from_parts_v3(
@@ -1427,6 +1526,7 @@ fn utf16_nul(value: &[u16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn request(mode: CaptureWindowModeV2) -> MtgoDxgiCaptureRequestV3 {
         MtgoDxgiCaptureRequestV3 {
@@ -1500,5 +1600,138 @@ mod tests {
             baseline,
             capture_commitment_from_parts_v3(b"pixels", b"manifest", b"png").unwrap()
         );
+    }
+
+    #[test]
+    fn in_process_parts_join_rechecks_capture_and_returns_non_actionable_no_match() {
+        let (manifest, mut pixels, png) = synthetic_no_match_artifact_v3();
+        let measured = measure_mulligan_ladder_parts_v3(&manifest, &pixels, &png).unwrap();
+        assert_eq!(
+            measured.classification(),
+            MtgoOfflineMulliganLadderClassificationV1::NoMatch
+        );
+        assert_eq!(measured.prospective_keep_size(), None);
+        assert!(measured.ordered_actions().is_empty());
+        assert!(!measured.safe_for_live_frame());
+        assert!(!measured.safe_for_semantic_evidence());
+        assert!(!measured.safe_for_observation_v5());
+        assert!(!measured.safe_for_policy_scoring());
+        assert!(!measured.safe_for_input());
+
+        pixels[0] ^= 1;
+        assert!(measure_mulligan_ladder_parts_v3(&manifest, &pixels, &png).is_err());
+    }
+
+    fn synthetic_no_match_artifact_v3() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let width = 1_550_u32;
+        let height = 925_u32;
+        let mut pixels = vec![0_u8; width as usize * height as usize * 4];
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+        let png = encode_preview_png(&pixels, width, height).unwrap();
+        let canonical_sha256 = sha256_hex_v1(&pixels);
+        let png_sha256 = sha256_hex_v1(&png);
+        let signer_subject = "CN=Daybreak Game Company LLC";
+        let signer_subject_sha256 = sha256_hex_v1(signer_subject.as_bytes());
+        let snapshot = json!({
+            "hwnd": 1,
+            "process_id": 2,
+            "mtgo_process_count": 1,
+            "process_start_filetime_100ns": 3,
+            "process_image": "C:\\MTGO.exe",
+            "executable_sha256": "a".repeat(64),
+            "authenticode_valid": true,
+            "signer_thumbprint": "b".repeat(40),
+            "signer_subject": signer_subject,
+            "signer_subject_sha256": signer_subject_sha256,
+            "title": "(Solitaire): Freeform: Vs. test-player",
+            "dpi": 120,
+            "client_rect_desktop_px": {
+                "left": 0,
+                "top": 0,
+                "right": width,
+                "bottom": height
+            },
+            "extended_frame_rect_desktop_px": {
+                "left": 0,
+                "top": 0,
+                "right": width,
+                "bottom": height
+            },
+            "foreground": true,
+            "visible": true,
+            "minimized": false,
+            "cloaked": false,
+            "hung": false,
+            "display_affinity": 0,
+            "desktop_composition_enabled": true,
+            "cursor_showing": true,
+            "cursor_x": 2_500,
+            "cursor_y": 1_400,
+            "cursor_inside_client": false,
+            "occlusion_target_found": true,
+            "occluding_windows_above": 0,
+            "z_order_sha256": "d".repeat(64)
+        });
+        let manifest = json!({
+            "schema": "mtgo-dxgi-visible-frame-candidate/v2",
+            "artifact_kind": "mtgo_untrusted_dxgi_visible_frame_candidate_v2",
+            "status": "checked_untrusted_not_admitted",
+            "capture_backend": "dxgi_desktop_duplication_v1",
+            "window_mode": "solitaire_game",
+            "capture_role": "acting_player_solitaire",
+            "expected_game_format": "Freeform",
+            "title_rule_version": "mtgo_visible_title_rule_v2",
+            "captured_at_unix_millis": 1_786_338_302_650_u64,
+            "safety": {
+                "safe_for_semantic_evidence": false,
+                "safe_for_ocr": false,
+                "safe_for_policy_scoring": false,
+                "safe_for_input": false,
+                "authenticode_verified_in_probe": true
+            },
+            "pre": snapshot.clone(),
+            "post": snapshot,
+            "output": {
+                "adapter_index": 0,
+                "output_index": 0,
+                "adapter_luid_low": 59_989,
+                "adapter_luid_high": 0,
+                "device_name": "\\\\.\\DISPLAY2",
+                "bounds_desktop_px": {
+                    "left": 0,
+                    "top": 0,
+                    "right": 2_560,
+                    "bottom": 1_440
+                },
+                "rotation": 1,
+                "color_space": 0
+            },
+            "frame": {
+                "last_present_time_qpc": 1,
+                "last_mouse_update_time_qpc": 0,
+                "accumulated_frames": 1,
+                "protected_content_masked_out": false,
+                "pointer_visible": false,
+                "pointer_x": 0,
+                "pointer_y": 0,
+                "source_texture_width": 2_560,
+                "source_texture_height": 1_440,
+                "source_texture_format": 87,
+                "canonical_width": width,
+                "canonical_height": height,
+                "canonical_stride": width * 4,
+                "canonical_byte_length": pixels.len(),
+                "canonical_bgra8_sha256": canonical_sha256,
+                "preview_png_sha256": png_sha256
+            },
+            "files": {
+                "canonical_pixels": "frame.bgra",
+                "preview_png": "frame.png",
+                "manifest": "manifest.json"
+            }
+        });
+        (serde_json::to_vec_pretty(&manifest).unwrap(), pixels, png)
     }
 }
