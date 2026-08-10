@@ -113,6 +113,8 @@ Visible calibration coverage is strong for the local prompt, turn phase, local p
 
 The fourth blocker is architectural rather than OCR-only. Kernel `ObservationV5` includes priority-pass history, recent stack and mana activity, and policy-surface state that are not all directly displayed in a single MTGO frame. They require a versioned adapter history profile derived only from prior visible frames and visibly confirmed actions. Solitaire remains suitable for interface and action calibration, but it must not be used as a two-player scoring observation.
 
+The four supervised actions have also been assembled into a structural visible-history ledger. It records two explicit capture gaps, after Keep and before PlayLand, plus one exact frame link from the PlayLand result into the Island mana activation. That yields a two-action trailing contiguous pixel segment, not complete engine history. Exact matching intermediate pixels are necessary but still insufficient to prove that no invisible or visually unchanged transition occurred, so the ledger cannot construct kernel context or authorize scoring.
+
 ## Visible layout observations
 
 - The current decision is explicit in the upper-left prompt: keep seven cards or mulligan to six.

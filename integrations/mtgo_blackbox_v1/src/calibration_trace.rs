@@ -243,6 +243,10 @@ impl CheckedUntrustedMtgoVisibleObjectActionCalibrationV1 {
     pub fn transition_commitment_sha256(&self) -> &str {
         &self.transition_commitment_sha256
     }
+
+    pub(crate) fn client_size_px(&self) -> &MtgoSizePxV1 {
+        &self.record.before_frame.client_size_px
+    }
 }
 
 impl CheckedUntrustedMtgoGameplayCalibrationV1 {
@@ -261,6 +265,10 @@ impl CheckedUntrustedMtgoGameplayCalibrationV1 {
     pub fn transition_commitment_sha256(&self) -> &str {
         &self.transition_commitment_sha256
     }
+
+    pub(crate) fn client_size_px(&self) -> &MtgoSizePxV1 {
+        &self.record.before_frame.client_size_px
+    }
 }
 
 impl CheckedUntrustedMtgoPregameCalibrationV1 {
@@ -278,6 +286,10 @@ impl CheckedUntrustedMtgoPregameCalibrationV1 {
 
     pub fn transition_commitment_sha256(&self) -> &str {
         &self.transition_commitment_sha256
+    }
+
+    pub(crate) fn client_size_px(&self) -> &MtgoSizePxV1 {
+        &self.record.before_frame.client_size_px
     }
 }
 
