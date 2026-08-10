@@ -7,14 +7,15 @@
 
 mod action_resolution;
 mod calibration_trace;
-mod card_correspondence;
 mod capture_contract;
+mod card_correspondence;
 mod competitive_lifecycle;
 mod contract;
+mod duel_perception_evaluation;
 mod dxgi_artifact;
 mod dxgi_observed_decision;
-mod first_main_kernel_coverage;
 mod first_main_kernel_context;
+mod first_main_kernel_coverage;
 mod first_main_legal_actions;
 mod first_main_reconstruction;
 mod mock;
@@ -39,14 +40,15 @@ mod visible_history;
 
 pub use action_resolution::*;
 pub use calibration_trace::*;
-pub use card_correspondence::*;
 pub use capture_contract::*;
+pub use card_correspondence::*;
 pub use competitive_lifecycle::*;
 pub use contract::*;
+pub use duel_perception_evaluation::*;
 pub use dxgi_artifact::*;
 pub use dxgi_observed_decision::*;
-pub use first_main_kernel_coverage::*;
 pub use first_main_kernel_context::*;
+pub use first_main_kernel_coverage::*;
 pub use first_main_legal_actions::*;
 pub use first_main_reconstruction::*;
 pub use mock::*;

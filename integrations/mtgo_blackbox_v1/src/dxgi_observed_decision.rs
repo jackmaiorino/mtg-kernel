@@ -2,7 +2,7 @@ use crate::{
     validate_observed_decision_v1, CheckedUntrustedMtgoDxgiCaptureArtifactV1,
     CheckedUntrustedMtgoObservationReconstructionAuditV1, MtgoCalibrationCaptureRoleV1,
     MtgoContractErrorV1, MtgoDxgiCaptureRoleV2, MtgoObservedDecisionV1,
-    MtgoReconstructionTopologyV1,
+    MtgoReconstructionTopologyV1, ValidatedMtgoObservedDecisionV1,
 };
 use sha2::{Digest, Sha256};
 
@@ -31,8 +31,10 @@ pub struct CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1 {
     source_canonical_bgra8_sha256: String,
     source_output_identity_sha256: String,
     reconstruction_audit_commitment_sha256: String,
+    perception_profile_commitment_sha256: String,
     base_decision_commitment_sha256: String,
     candidate_commitment_sha256: String,
+    validated_decision: ValidatedMtgoObservedDecisionV1,
 }
 
 impl CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1 {
@@ -60,6 +62,10 @@ impl CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1 {
         &self.reconstruction_audit_commitment_sha256
     }
 
+    pub fn perception_profile_commitment_sha256(&self) -> &str {
+        &self.perception_profile_commitment_sha256
+    }
+
     pub fn base_decision_commitment_sha256(&self) -> &str {
         &self.base_decision_commitment_sha256
     }
@@ -75,13 +81,22 @@ impl CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1 {
     pub fn safe_for_input(&self) -> bool {
         false
     }
+
+    pub(crate) fn validated_decision_v1(&self) -> &ValidatedMtgoObservedDecisionV1 {
+        &self.validated_decision
+    }
 }
 
 pub fn check_untrusted_dxgi_observed_decision_candidate_v1(
     source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
     audit: &CheckedUntrustedMtgoObservationReconstructionAuditV1,
+    perception_profile_commitment_sha256: &str,
     record: MtgoObservedDecisionV1,
 ) -> Result<CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1, MtgoContractErrorV1> {
+    validate_lower_hex_sha256_v1(
+        "dxgi_observed_decision_perception_profile",
+        perception_profile_commitment_sha256,
+    )?;
     if source.capture_role() != MtgoDxgiCaptureRoleV2::ActingPlayerDuel
         || audit.topology() != MtgoReconstructionTopologyV1::TwoPlayerDuel
         || audit.capture_role() != MtgoCalibrationCaptureRoleV1::ActingPlayerDuel
@@ -135,13 +150,14 @@ pub fn check_untrusted_dxgi_observed_decision_candidate_v1(
     let frame_id = frame.frame_id;
     let frame_sequence = frame.sequence;
     let validated = validate_observed_decision_v1(record)?;
-    let parts: [&[u8]; 8] = [
+    let parts: [&[u8]; 9] = [
         source.manifest_sha256().as_bytes(),
         source.canonical_bgra8_sha256().as_bytes(),
         source.output_identity_sha256().as_bytes(),
         b"acting_player_duel",
         &source.captured_at_unix_millis().to_le_bytes(),
         audit.audit_commitment_sha256().as_bytes(),
+        perception_profile_commitment_sha256.as_bytes(),
         validated.decision_commitment_sha256().as_bytes(),
         b"checked_untrusted_no_scoring_or_input_authority",
     ];
@@ -159,9 +175,28 @@ pub fn check_untrusted_dxgi_observed_decision_candidate_v1(
         source_canonical_bgra8_sha256: source.canonical_bgra8_sha256().to_owned(),
         source_output_identity_sha256: source.output_identity_sha256().to_owned(),
         reconstruction_audit_commitment_sha256: audit.audit_commitment_sha256().to_owned(),
+        perception_profile_commitment_sha256: perception_profile_commitment_sha256.to_owned(),
         base_decision_commitment_sha256: validated.decision_commitment_sha256().to_owned(),
         candidate_commitment_sha256: format!("{:x}", hasher.finalize()),
+        validated_decision: validated,
     })
+}
+
+fn validate_lower_hex_sha256_v1(
+    field: &'static str,
+    value: &str,
+) -> Result<(), MtgoContractErrorV1> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(error_v1(
+            "dxgi_observed_decision_digest_invalid",
+            format!("{field} must be lowercase SHA-256 hex"),
+        ));
+    }
+    Ok(())
 }
 
 fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV1 {
@@ -169,117 +204,123 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) fn dxgi_observed_decision_record_for_test_v1(
+    source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    sequence: u64,
+) -> MtgoObservedDecisionV1 {
     use crate::{
-        checked_untrusted_dxgi_artifact_for_test_v1,
-        complete_acting_player_duel_audit_record_for_test_v1, local_metadata_commitment_v1,
-        payload_leaf_inventory_v1, validate_dxgi_bound_observation_reconstruction_audit_v1,
-        MtgoDecisionReadinessV1, MtgoEvidenceSourceV1, MtgoLeafProvenanceV1, MtgoMockFrameV1,
-        MtgoObjectBindingV1, MtgoPublicDerivationV1, MtgoReconstructionStatusV1, MtgoRectPxV1,
-        MtgoSemanticDecisionPayloadV1, MtgoVisibleEvidenceV1, MTGO_OBSERVED_DECISION_SCHEMA_V1,
+        local_metadata_commitment_v1, payload_leaf_inventory_v1, MtgoDecisionReadinessV1,
+        MtgoEvidenceSourceV1, MtgoLeafProvenanceV1, MtgoMockFrameV1, MtgoObjectBindingV1,
+        MtgoPublicDerivationV1, MtgoRectPxV1, MtgoSemanticDecisionPayloadV1, MtgoVisibleEvidenceV1,
+        MTGO_OBSERVED_DECISION_SCHEMA_V1,
     };
     use mtg_kernel::rl::ActionSemanticV1;
     use mtg_kernel::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
 
-    fn valid_decision_record_v1(
-        source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
-        sequence: u64,
-    ) -> MtgoObservedDecisionV1 {
-        let (_, observation, pass, land) = (1..=128)
-            .find_map(|seed| {
-                let session = RlEpisodeSessionV1::reset_with_limits(7, seed, 128, 16_384);
-                let RlSessionResponseV1::Decision(decision) = session.current_response() else {
-                    return None;
-                };
-                let pass = decision
-                    .legal_actions
-                    .iter()
-                    .find(|action| matches!(action.semantic, ActionSemanticV1::Pass { .. }))?
-                    .semantic
-                    .clone();
-                let land = decision
-                    .legal_actions
-                    .iter()
-                    .find(|action| matches!(action.semantic, ActionSemanticV1::PlayLand { .. }))?
-                    .semantic
-                    .clone();
-                Some((seed, (*decision.observation).clone(), pass, land))
-            })
-            .unwrap();
-        let source_ref = match &land {
-            ActionSemanticV1::PlayLand { source, .. } => source.clone(),
-            _ => unreachable!(),
-        };
-        let payload = MtgoSemanticDecisionPayloadV1 {
-            observation,
-            legal_actions: vec![pass, land],
-            object_bindings: vec![MtgoObjectBindingV1 {
-                adapter_object_id: "dxgi-candidate:hand:0".to_owned(),
-                kernel_ref: source_ref,
-            }],
-        };
-        let provenance = payload_leaf_inventory_v1(&payload)
-            .unwrap()
-            .into_iter()
-            .filter(|leaf| leaf.requires_visible_evidence)
-            .map(|leaf| MtgoLeafProvenanceV1 {
-                json_pointer: leaf.json_pointer,
-                value_sha256: leaf.value_sha256,
-                evidence_ids: vec![20],
-                confidence_bps: 10_000,
-            })
-            .collect();
-        let local_metadata_sha256 = local_metadata_commitment_v1(&payload).unwrap();
-        MtgoObservedDecisionV1 {
-            schema_version: MTGO_OBSERVED_DECISION_SCHEMA_V1,
-            decision_id: "dxgi-source-bound-decision-candidate-v1".to_owned(),
+    let (observation, pass, land) = (1..=128)
+        .find_map(|seed| {
+            let session = RlEpisodeSessionV1::reset_with_limits(7, seed, 128, 16_384);
+            let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                return None;
+            };
+            let pass = decision
+                .legal_actions
+                .iter()
+                .find(|action| matches!(action.semantic, ActionSemanticV1::Pass { .. }))?
+                .semantic
+                .clone();
+            let land = decision
+                .legal_actions
+                .iter()
+                .find(|action| matches!(action.semantic, ActionSemanticV1::PlayLand { .. }))?
+                .semantic
+                .clone();
+            Some(((*decision.observation).clone(), pass, land))
+        })
+        .expect("a deterministic test seed supplies Pass and PlayLand");
+    let source_ref = match &land {
+        ActionSemanticV1::PlayLand { source, .. } => source.clone(),
+        _ => unreachable!(),
+    };
+    let payload = MtgoSemanticDecisionPayloadV1 {
+        observation,
+        legal_actions: vec![pass, land],
+        object_bindings: vec![MtgoObjectBindingV1 {
+            adapter_object_id: "dxgi-candidate:hand:0".to_owned(),
+            kernel_ref: source_ref,
+        }],
+    };
+    let provenance = payload_leaf_inventory_v1(&payload)
+        .expect("test payload inventory is valid")
+        .into_iter()
+        .filter(|leaf| leaf.requires_visible_evidence)
+        .map(|leaf| MtgoLeafProvenanceV1 {
+            json_pointer: leaf.json_pointer,
+            value_sha256: leaf.value_sha256,
+            evidence_ids: vec![20],
+            confidence_bps: 10_000,
+        })
+        .collect();
+    let local_metadata_sha256 =
+        local_metadata_commitment_v1(&payload).expect("test local metadata is valid");
+    MtgoObservedDecisionV1 {
+        schema_version: MTGO_OBSERVED_DECISION_SCHEMA_V1,
+        decision_id: "dxgi-source-bound-decision-candidate-v1".to_owned(),
+        frame_id: 1,
+        payload,
+        frames: vec![MtgoMockFrameV1 {
             frame_id: 1,
-            payload,
-            frames: vec![MtgoMockFrameV1 {
-                frame_id: 1,
-                sequence,
-                sha256: source.canonical_bgra8_sha256().to_owned(),
-                client_bounds: MtgoRectPxV1 {
-                    x: 0,
-                    y: 0,
-                    width: source.client_size_px().width,
-                    height: source.client_size_px().height,
-                },
-            }],
-            evidence: vec![
-                MtgoVisibleEvidenceV1 {
-                    evidence_id: 10,
-                    sequence,
-                    source: MtgoEvidenceSourceV1::FrameRegion {
-                        frame_id: 1,
-                        rect: MtgoRectPxV1 {
-                            x: 0,
-                            y: 0,
-                            width: source.client_size_px().width,
-                            height: source.client_size_px().height,
-                        },
-                        content_sha256: "5".repeat(64),
-                    },
-                },
-                MtgoVisibleEvidenceV1 {
-                    evidence_id: 20,
-                    sequence: sequence + 1,
-                    source: MtgoEvidenceSourceV1::DerivedPublicFact {
-                        parent_evidence_ids: vec![10],
-                        derivation: MtgoPublicDerivationV1::PublicStateProjection,
-                    },
-                },
-            ],
-            provenance,
-            local_metadata_sha256,
-            readiness: MtgoDecisionReadinessV1 {
-                observation_complete: true,
-                legal_action_set_complete: true,
-                client_prompt_reconciled: true,
+            sequence,
+            sha256: source.canonical_bgra8_sha256().to_owned(),
+            client_bounds: MtgoRectPxV1 {
+                x: 0,
+                y: 0,
+                width: source.client_size_px().width,
+                height: source.client_size_px().height,
             },
-        }
+        }],
+        evidence: vec![
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 10,
+                sequence,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 1,
+                    rect: MtgoRectPxV1 {
+                        x: 0,
+                        y: 0,
+                        width: source.client_size_px().width,
+                        height: source.client_size_px().height,
+                    },
+                    content_sha256: "5".repeat(64),
+                },
+            },
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 20,
+                sequence: sequence + 1,
+                source: MtgoEvidenceSourceV1::DerivedPublicFact {
+                    parent_evidence_ids: vec![10],
+                    derivation: MtgoPublicDerivationV1::PublicStateProjection,
+                },
+            },
+        ],
+        provenance,
+        local_metadata_sha256,
+        readiness: MtgoDecisionReadinessV1 {
+            observation_complete: true,
+            legal_action_set_complete: true,
+            client_prompt_reconciled: true,
+        },
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        checked_untrusted_dxgi_artifact_for_test_v1,
+        complete_acting_player_duel_audit_record_for_test_v1,
+        validate_dxgi_bound_observation_reconstruction_audit_v1, MtgoReconstructionStatusV1,
+    };
 
     fn source_and_audit_v1() -> (
         CheckedUntrustedMtgoDxgiCaptureArtifactV1,
@@ -298,10 +339,13 @@ mod tests {
     #[test]
     fn exact_source_audit_and_decision_bind_without_scoring_authority() {
         let (source, audit) = source_and_audit_v1();
+        let record =
+            dxgi_observed_decision_record_for_test_v1(&source, audit.source_frame_sequence());
         let candidate = check_untrusted_dxgi_observed_decision_candidate_v1(
             &source,
             &audit,
-            valid_decision_record_v1(&source, audit.source_frame_sequence()),
+            &"a".repeat(64),
+            record.clone(),
         )
         .unwrap();
 
@@ -313,6 +357,33 @@ mod tests {
             source.canonical_bgra8_sha256()
         );
         assert_eq!(candidate.candidate_commitment_sha256().len(), 64);
+        assert_eq!(
+            candidate.perception_profile_commitment_sha256(),
+            "a".repeat(64)
+        );
+        let different_profile = check_untrusted_dxgi_observed_decision_candidate_v1(
+            &source,
+            &audit,
+            &"b".repeat(64),
+            record.clone(),
+        )
+        .unwrap();
+        assert_ne!(
+            candidate.candidate_commitment_sha256(),
+            different_profile.candidate_commitment_sha256()
+        );
+        assert_eq!(
+            check_untrusted_dxgi_observed_decision_candidate_v1(
+                &source,
+                &audit,
+                &"A".repeat(64),
+                record,
+            )
+            .err()
+            .unwrap()
+            .code(),
+            "dxgi_observed_decision_digest_invalid"
+        );
         assert!(!candidate.safe_for_model_scoring());
         assert!(!candidate.safe_for_input());
     }
@@ -320,7 +391,8 @@ mod tests {
     #[test]
     fn frame_identity_sequence_hash_and_geometry_substitution_fail() {
         let (source, audit) = source_and_audit_v1();
-        let baseline = valid_decision_record_v1(&source, audit.source_frame_sequence());
+        let baseline =
+            dxgi_observed_decision_record_for_test_v1(&source, audit.source_frame_sequence());
         let mut mutations = Vec::new();
         let mut value = baseline.clone();
         value.frame_id = 2;
@@ -339,10 +411,13 @@ mod tests {
         mutations.push(value);
 
         for mutation in mutations {
-            assert!(
-                check_untrusted_dxgi_observed_decision_candidate_v1(&source, &audit, mutation)
-                    .is_err()
-            );
+            assert!(check_untrusted_dxgi_observed_decision_candidate_v1(
+                &source,
+                &audit,
+                &"a".repeat(64),
+                mutation,
+            )
+            .is_err());
         }
     }
 
@@ -360,7 +435,8 @@ mod tests {
             check_untrusted_dxgi_observed_decision_candidate_v1(
                 &source,
                 &audit,
-                valid_decision_record_v1(&source, audit.source_frame_sequence()),
+                &"a".repeat(64),
+                dxgi_observed_decision_record_for_test_v1(&source, audit.source_frame_sequence(),),
             )
             .err()
             .unwrap()
@@ -383,7 +459,11 @@ mod tests {
             check_untrusted_dxgi_observed_decision_candidate_v1(
                 &acting_source,
                 &incomplete_audit,
-                valid_decision_record_v1(&acting_source, incomplete_audit.source_frame_sequence(),),
+                &"a".repeat(64),
+                dxgi_observed_decision_record_for_test_v1(
+                    &acting_source,
+                    incomplete_audit.source_frame_sequence(),
+                ),
             )
             .err()
             .unwrap()
