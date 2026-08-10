@@ -7,11 +7,11 @@ use crate::{
 };
 use mtgo_blackbox_v1::{
     check_untrusted_dxgi_capture_artifact_v1,
-    classify_untrusted_offline_mulligan_ladder_candidate_v1,
-    CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1,
+    classify_untrusted_offline_mulligan_ladder_candidate_v1, model_deployment_commitment_v1,
+    CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1, MtgoExpectedModelDeploymentV1,
     MtgoOfflineMulliganLadderClassificationV1, MtgoPregameActionSemanticV1,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::c_void;
 use std::fs::{self, File};
@@ -73,6 +73,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 type ProbeResult<T> = Result<T, String>;
+
+pub const MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3: u32 = 3;
+
+const PREGAME_SCORING_REQUEST_DOMAIN_V3: &[u8] = b"mtgo-pregame-scoring-request-v3";
+const PREGAME_MODEL_SELECTION_DOMAIN_V3: &[u8] = b"mtgo-pregame-model-selection-v3";
 
 #[derive(Debug)]
 struct CliV1 {
@@ -337,6 +342,293 @@ pub fn measure_mtgo_dxgi_mulligan_ladder_candidate_v3(
         source_frame,
         measurement,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPregameScoringRequestV3 {
+    pub schema_version: u32,
+    pub source_capture_commitment_sha256: String,
+    pub measurement_commitment_sha256: String,
+    pub profile_set_commitment_sha256: String,
+    pub prospective_keep_size: u8,
+    pub ordered_actions: Vec<MtgoPregameActionSemanticV1>,
+    pub deployment_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPregameScoreResponseV3 {
+    pub schema_version: u32,
+    pub request_commitment_sha256: String,
+    pub logits_f32_bits: Vec<u32>,
+    pub value_f32_bits: u32,
+}
+
+/// External scorers receive only exact visible pregame semantics and model
+/// identity commitments. They receive no pixels, coordinates, process handles,
+/// authorization, or input capability.
+pub trait MtgoExternalPregameScorerV3 {
+    fn score_pregame_v3(
+        &mut self,
+        request: &MtgoPregameScoringRequestV3,
+    ) -> Result<MtgoPregameScoreResponseV3, String>;
+}
+
+/// One request-bound, deterministic model selection over an opaque measured
+/// pregame frame. This is not trusted model authority and cannot be converted
+/// to input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPregameModelSelectionV3;
+/// let _forged = OpaqueMtgoPregameModelSelectionV3 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPregameModelSelectionV3;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoPregameModelSelectionV3>();
+/// ```
+pub struct OpaqueMtgoPregameModelSelectionV3 {
+    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,
+    request: MtgoPregameScoringRequestV3,
+    response: MtgoPregameScoreResponseV3,
+    selected_index: usize,
+    selected_semantic: MtgoPregameActionSemanticV1,
+    selection_commitment_sha256: String,
+}
+
+impl OpaqueMtgoPregameModelSelectionV3 {
+    pub fn selected_index_v3(&self) -> usize {
+        self.selected_index
+    }
+
+    pub fn selected_semantic_v3(&self) -> &MtgoPregameActionSemanticV1 {
+        &self.selected_semantic
+    }
+
+    pub fn selected_logit_f32_bits_v3(&self) -> u32 {
+        self.response.logits_f32_bits[self.selected_index]
+    }
+
+    pub fn value_f32_bits_v3(&self) -> u32 {
+        self.response.value_f32_bits
+    }
+
+    pub fn request_commitment_sha256_v3(&self) -> &str {
+        &self.response.request_commitment_sha256
+    }
+
+    pub fn deployment_commitment_sha256_v3(&self) -> &str {
+        &self.request.deployment_commitment_sha256
+    }
+
+    pub fn measurement_commitment_sha256_v3(&self) -> &str {
+        self.measurement.measurement_commitment_sha256_v3()
+    }
+
+    pub fn selection_commitment_sha256_v3(&self) -> &str {
+        &self.selection_commitment_sha256
+    }
+
+    pub fn safe_for_semantic_evidence_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_live_input_v3(&self) -> bool {
+        false
+    }
+}
+
+pub fn build_pregame_scoring_request_v3(
+    measurement: &OpaqueMtgoDxgiMulliganMeasurementV3,
+    deployment: &MtgoExpectedModelDeploymentV1,
+) -> Result<MtgoPregameScoringRequestV3, String> {
+    let capture = measurement.source_capture_commitments_v3();
+    build_pregame_scoring_request_from_parts_v3(
+        measurement.classification_v3(),
+        measurement.prospective_keep_size_v3(),
+        measurement.ordered_actions_v3(),
+        &capture.capture_commitment_sha256,
+        measurement.measurement_commitment_sha256_v3(),
+        measurement.profile_set_commitment_sha256_v3(),
+        deployment,
+    )
+}
+
+pub fn pregame_scoring_request_commitment_v3(
+    request: &MtgoPregameScoringRequestV3,
+) -> Result<String, String> {
+    validate_pregame_scoring_request_v3(request)?;
+    canonical_json_commitment_v3(PREGAME_SCORING_REQUEST_DOMAIN_V3, request)
+}
+
+pub fn score_and_select_pregame_model_v3<S: MtgoExternalPregameScorerV3>(
+    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,
+    deployment: &MtgoExpectedModelDeploymentV1,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoPregameModelSelectionV3, String> {
+    let request = build_pregame_scoring_request_v3(&measurement, deployment)?;
+    let response = scorer.score_pregame_v3(&request)?;
+    validate_pregame_score_response_v3(measurement, deployment, response)
+}
+
+pub fn validate_pregame_score_response_v3(
+    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,
+    deployment: &MtgoExpectedModelDeploymentV1,
+    response: MtgoPregameScoreResponseV3,
+) -> Result<OpaqueMtgoPregameModelSelectionV3, String> {
+    let request = build_pregame_scoring_request_v3(&measurement, deployment)?;
+    let (selected_index, selected_semantic, selection_commitment_sha256) =
+        validate_pregame_score_response_parts_v3(&request, &response)?;
+    Ok(OpaqueMtgoPregameModelSelectionV3 {
+        measurement,
+        request,
+        response,
+        selected_index,
+        selected_semantic,
+        selection_commitment_sha256,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_pregame_scoring_request_from_parts_v3(
+    classification: MtgoOfflineMulliganLadderClassificationV1,
+    prospective_keep_size: Option<u8>,
+    ordered_actions: &[MtgoPregameActionSemanticV1],
+    source_capture_commitment_sha256: &str,
+    measurement_commitment_sha256: &str,
+    profile_set_commitment_sha256: &str,
+    deployment: &MtgoExpectedModelDeploymentV1,
+) -> Result<MtgoPregameScoringRequestV3, String> {
+    if classification != MtgoOfflineMulliganLadderClassificationV1::Match {
+        return Err("pregame scoring requires exactly one measured prompt match".to_owned());
+    }
+    let prospective_keep_size = prospective_keep_size
+        .filter(|value| (1..=7).contains(value))
+        .ok_or("pregame scoring requires a prospective keep size from one through seven")?;
+    let expected_actions = [
+        MtgoPregameActionSemanticV1::Mulligan {
+            next_hand_size: prospective_keep_size - 1,
+        },
+        MtgoPregameActionSemanticV1::KeepOpeningHand,
+    ];
+    if ordered_actions != expected_actions {
+        return Err(
+            "pregame scoring requires the exact ordered Mulligan and Keep actions".to_owned(),
+        );
+    }
+    for digest in [
+        source_capture_commitment_sha256,
+        measurement_commitment_sha256,
+        profile_set_commitment_sha256,
+    ] {
+        require_lower_sha256_v3(digest, "pregame scoring source commitment")?;
+    }
+    let deployment_commitment_sha256 = model_deployment_commitment_v1(deployment)
+        .map_err(|error| format!("pregame model deployment: {error}"))?;
+    let request = MtgoPregameScoringRequestV3 {
+        schema_version: MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3,
+        source_capture_commitment_sha256: source_capture_commitment_sha256.to_owned(),
+        measurement_commitment_sha256: measurement_commitment_sha256.to_owned(),
+        profile_set_commitment_sha256: profile_set_commitment_sha256.to_owned(),
+        prospective_keep_size,
+        ordered_actions: ordered_actions.to_vec(),
+        deployment_commitment_sha256,
+    };
+    validate_pregame_scoring_request_v3(&request)?;
+    Ok(request)
+}
+
+fn validate_pregame_scoring_request_v3(
+    request: &MtgoPregameScoringRequestV3,
+) -> Result<(), String> {
+    if request.schema_version != MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3
+        || !(1..=7).contains(&request.prospective_keep_size)
+    {
+        return Err("pregame scoring request schema or keep size is invalid".to_owned());
+    }
+    let expected_actions = [
+        MtgoPregameActionSemanticV1::Mulligan {
+            next_hand_size: request.prospective_keep_size - 1,
+        },
+        MtgoPregameActionSemanticV1::KeepOpeningHand,
+    ];
+    if request.ordered_actions != expected_actions {
+        return Err("pregame scoring request actions are not the canonical ordered set".to_owned());
+    }
+    for digest in [
+        &request.source_capture_commitment_sha256,
+        &request.measurement_commitment_sha256,
+        &request.profile_set_commitment_sha256,
+        &request.deployment_commitment_sha256,
+    ] {
+        require_lower_sha256_v3(digest, "pregame scoring request commitment")?;
+    }
+    Ok(())
+}
+
+fn validate_pregame_score_response_parts_v3(
+    request: &MtgoPregameScoringRequestV3,
+    response: &MtgoPregameScoreResponseV3,
+) -> Result<(usize, MtgoPregameActionSemanticV1, String), String> {
+    let request_commitment_sha256 = pregame_scoring_request_commitment_v3(request)?;
+    if response.schema_version != MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3
+        || response.request_commitment_sha256 != request_commitment_sha256
+    {
+        return Err("pregame score response does not bind the exact request".to_owned());
+    }
+    require_lower_sha256_v3(
+        &response.request_commitment_sha256,
+        "pregame score response request commitment",
+    )?;
+    if response.logits_f32_bits.len() != request.ordered_actions.len()
+        || response.logits_f32_bits.is_empty()
+    {
+        return Err("pregame score response logit count is invalid".to_owned());
+    }
+    let logits = response
+        .logits_f32_bits
+        .iter()
+        .map(|bits| f32::from_bits(*bits))
+        .collect::<Vec<_>>();
+    if logits.iter().any(|value| !value.is_finite())
+        || !f32::from_bits(response.value_f32_bits).is_finite()
+    {
+        return Err("pregame score response must contain only finite values".to_owned());
+    }
+    let mut selected_index = 0;
+    for index in 1..logits.len() {
+        if logits[index].total_cmp(&logits[selected_index]).is_gt() {
+            selected_index = index;
+        }
+    }
+    let selected_semantic = request.ordered_actions[selected_index].clone();
+    #[derive(Serialize)]
+    struct SelectionRecordV3<'a> {
+        request: &'a MtgoPregameScoringRequestV3,
+        response: &'a MtgoPregameScoreResponseV3,
+        selected_index: usize,
+        selected_semantic: &'a MtgoPregameActionSemanticV1,
+    }
+    let selection_commitment_sha256 = canonical_json_commitment_v3(
+        PREGAME_MODEL_SELECTION_DOMAIN_V3,
+        &SelectionRecordV3 {
+            request,
+            response,
+            selected_index,
+            selected_semantic: &selected_semantic,
+        },
+    )?;
+    Ok((
+        selected_index,
+        selected_semantic,
+        selection_commitment_sha256,
+    ))
 }
 
 fn measure_mulligan_ladder_parts_v3(
@@ -1456,6 +1748,30 @@ fn capture_commitment_from_parts_v3(
     Ok(format!("{:x}", hash.finalize()))
 }
 
+fn canonical_json_commitment_v3<T: Serialize + ?Sized>(
+    domain: &[u8],
+    value: &T,
+) -> ProbeResult<String> {
+    let encoded = serde_json::to_vec(value)
+        .map_err(|error| format!("serialize canonical commitment: {error}"))?;
+    let mut hash = Sha256::new();
+    hash.update(domain);
+    hash.update((encoded.len() as u64).to_be_bytes());
+    hash.update(encoded);
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+fn require_lower_sha256_v3(value: &str, label: &str) -> ProbeResult<()> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(format!("{label} must be lowercase SHA-256"));
+    }
+    Ok(())
+}
+
 fn encode_preview_png(pixels: &[u8], width: u32, height: u32) -> ProbeResult<Vec<u8>> {
     let expected = usize::try_from(width)
         .ok()
@@ -1526,6 +1842,7 @@ fn utf16_nul(value: &[u16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mtgo_blackbox_v1::{MtgoNativeCheckpointIdentityV1, MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1};
     use serde_json::json;
 
     fn request(mode: CaptureWindowModeV2) -> MtgoDxgiCaptureRequestV3 {
@@ -1600,6 +1917,88 @@ mod tests {
             baseline,
             capture_commitment_from_parts_v3(b"pixels", b"manifest", b"png").unwrap()
         );
+    }
+
+    #[test]
+    fn pregame_scoring_contract_binds_measurement_actions_model_and_finite_scores() {
+        let deployment = deployment_v3();
+        let actions = [
+            MtgoPregameActionSemanticV1::Mulligan { next_hand_size: 6 },
+            MtgoPregameActionSemanticV1::KeepOpeningHand,
+        ];
+        let request = build_pregame_scoring_request_from_parts_v3(
+            MtgoOfflineMulliganLadderClassificationV1::Match,
+            Some(7),
+            &actions,
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &deployment,
+        )
+        .unwrap();
+        let commitment = pregame_scoring_request_commitment_v3(&request).unwrap();
+        let response = MtgoPregameScoreResponseV3 {
+            schema_version: MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3,
+            request_commitment_sha256: commitment.clone(),
+            logits_f32_bits: vec![0.25_f32.to_bits(), 0.75_f32.to_bits()],
+            value_f32_bits: (-0.5_f32).to_bits(),
+        };
+        let (selected_index, selected_semantic, selection_commitment) =
+            validate_pregame_score_response_parts_v3(&request, &response).unwrap();
+        assert_eq!(selected_index, 1);
+        assert_eq!(
+            selected_semantic,
+            MtgoPregameActionSemanticV1::KeepOpeningHand
+        );
+        assert_eq!(selection_commitment.len(), 64);
+
+        let tied = MtgoPregameScoreResponseV3 {
+            logits_f32_bits: vec![1.0_f32.to_bits(), 1.0_f32.to_bits()],
+            ..response.clone()
+        };
+        assert_eq!(
+            validate_pregame_score_response_parts_v3(&request, &tied)
+                .unwrap()
+                .0,
+            0
+        );
+
+        let stale = MtgoPregameScoreResponseV3 {
+            request_commitment_sha256: "d".repeat(64),
+            ..response.clone()
+        };
+        assert!(validate_pregame_score_response_parts_v3(&request, &stale).is_err());
+        let nonfinite = MtgoPregameScoreResponseV3 {
+            logits_f32_bits: vec![f32::NAN.to_bits(), 0.0_f32.to_bits()],
+            ..response.clone()
+        };
+        assert!(validate_pregame_score_response_parts_v3(&request, &nonfinite).is_err());
+        let wrong_count = MtgoPregameScoreResponseV3 {
+            logits_f32_bits: vec![0.0_f32.to_bits()],
+            ..response
+        };
+        assert!(validate_pregame_score_response_parts_v3(&request, &wrong_count).is_err());
+
+        assert!(build_pregame_scoring_request_from_parts_v3(
+            MtgoOfflineMulliganLadderClassificationV1::NoMatch,
+            None,
+            &[],
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &deployment,
+        )
+        .is_err());
+        assert!(build_pregame_scoring_request_from_parts_v3(
+            MtgoOfflineMulliganLadderClassificationV1::Match,
+            Some(7),
+            &[actions[1].clone(), actions[0].clone()],
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &deployment,
+        )
+        .is_err());
     }
 
     #[test]
@@ -1733,5 +2132,21 @@ mod tests {
             }
         });
         (serde_json::to_vec_pretty(&manifest).unwrap(), pixels, png)
+    }
+
+    fn deployment_v3() -> MtgoExpectedModelDeploymentV1 {
+        MtgoExpectedModelDeploymentV1 {
+            schema_version: MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
+            deployment_id: "mtgo-pregame-test-v3".to_owned(),
+            checkpoint: MtgoNativeCheckpointIdentityV1 {
+                run_sha256: "1".repeat(64),
+                checkpoint_manifest_sha256: "2".repeat(64),
+                checkpoint_payload_sha256: "3".repeat(64),
+                train_state_sha256: "4".repeat(64),
+                model_parameter_sha256: "5".repeat(64),
+                generation_index: 7,
+            },
+            scorer_contract_sha256: "6".repeat(64),
+        }
     }
 }

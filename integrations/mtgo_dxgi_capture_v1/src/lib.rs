@@ -6,9 +6,13 @@ mod probe;
 
 #[cfg(target_os = "windows")]
 pub use probe::{
-    capture_mtgo_dxgi_frame_candidate_v3, measure_mtgo_dxgi_mulligan_ladder_candidate_v3,
-    run_cli_v3, MtgoDxgiCaptureRequestV3, MtgoDxgiFrameCommitmentsV3,
-    OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoDxgiMulliganMeasurementV3,
+    build_pregame_scoring_request_v3, capture_mtgo_dxgi_frame_candidate_v3,
+    measure_mtgo_dxgi_mulligan_ladder_candidate_v3, pregame_scoring_request_commitment_v3,
+    run_cli_v3, score_and_select_pregame_model_v3, validate_pregame_score_response_v3,
+    MtgoDxgiCaptureRequestV3, MtgoDxgiFrameCommitmentsV3, MtgoExternalPregameScorerV3,
+    MtgoPregameScoreResponseV3, MtgoPregameScoringRequestV3, OpaqueMtgoDxgiFrameCandidateV3,
+    OpaqueMtgoDxgiMulliganMeasurementV3, OpaqueMtgoPregameModelSelectionV3,
+    MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -127,7 +127,7 @@ pub fn build_external_scoring_request_v1(
     decision: &ValidatedMtgoObservedDecisionV1,
     deployment: &MtgoExpectedModelDeploymentV1,
 ) -> Result<MtgoExternalScoringRequestV1, MtgoContractErrorV1> {
-    let deployment_commitment_sha256 = validate_model_deployment_v1(deployment)?;
+    let deployment_commitment_sha256 = model_deployment_commitment_v1(deployment)?;
     let action_count = u32::try_from(decision.legal_actions().len()).map_err(|_| {
         MtgoContractErrorV1::new(
             "external_scoring_action_count_overflow",
@@ -276,7 +276,9 @@ pub fn make_scored_offline_intent_v1(
     make_offline_intent_v1(decision, selection.selected_index)
 }
 
-fn validate_model_deployment_v1(
+/// Validates and commits the exact model deployment identity shared by
+/// gameplay and pregame scoring adapters.
+pub fn model_deployment_commitment_v1(
     deployment: &MtgoExpectedModelDeploymentV1,
 ) -> Result<String, MtgoContractErrorV1> {
     if deployment.schema_version != MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1 {

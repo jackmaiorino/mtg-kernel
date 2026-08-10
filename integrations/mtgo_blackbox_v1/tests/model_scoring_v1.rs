@@ -165,6 +165,11 @@ impl MtgoExternalObservationScorerV1 for MockScorer {
 fn exact_validated_decision_scores_selects_and_produces_offline_intent() {
     let decision = validate_observed_decision_v1(valid_record()).unwrap();
     let deployment = deployment();
+    let request = build_external_scoring_request_v1(&decision, &deployment).unwrap();
+    assert_eq!(
+        request.deployment_commitment_sha256,
+        model_deployment_commitment_v1(&deployment).unwrap()
+    );
     let mut scorer = MockScorer {
         logits: vec![0.25, 1.5],
         value: -0.125,

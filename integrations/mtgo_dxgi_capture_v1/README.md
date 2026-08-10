@@ -8,6 +8,8 @@ The command-line executable is a thin wrapper over the library capture engine. A
 
 `measure_mtgo_dxgi_mulligan_ladder_candidate_v3` is the first direct perception consumer. It consumes the opaque frame in-process, serializes the probe-owned manifest, rechecks the manifest, PNG, and canonical pixels through `mtgo_blackbox_v1`, then runs the exact seven-state London mulligan prompt classifier. The opaque measurement retains the source frame and exposes only the checked-untrusted classification, optional prospective keep size, adapter-local action labels, and commitments. It has no pixel, coordinate, `ObservationV5`, scorer, action-intent, or input conversion.
 
+The pregame scoring contract binds that opaque Match measurement, the exact ordered Mulligan then Keep actions, and the same validated native-checkpoint deployment commitment used by gameplay scoring. An external scorer returns finite `f32` bit patterns bound to the exact request. Validation deterministically selects the greatest logit, with the first action winning ties, and retains the opaque measurement in `OpaqueMtgoPregameModelSelectionV3`. Stale responses, wrong action counts or order, non-finite values, NoMatch, and Ambiguous measurements fail closed. The selection remains untrusted model output and has no live-input conversion.
+
 ## Admission performed by the probe
 
 Before and after capture, the probe requires:

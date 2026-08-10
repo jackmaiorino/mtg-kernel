@@ -62,3 +62,17 @@ fn public_measurement_consumes_only_the_opaque_frame_and_keeps_parts_private() {
         );
     }
 }
+
+#[test]
+fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
+    let source = include_str!("../src/probe.rs");
+    assert!(source.contains(
+        "pub fn score_and_select_pregame_model_v3<S: MtgoExternalPregameScorerV3>(\n    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,"
+    ));
+    assert!(source.contains(
+        "pub fn validate_pregame_score_response_v3(\n    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,"
+    ));
+    assert!(source.contains("fn validate_pregame_score_response_parts_v3("));
+    assert!(!source.contains("pub fn validate_pregame_score_response_parts_v3("));
+    assert!(!source.contains("pub fn make_live_input"));
+}
