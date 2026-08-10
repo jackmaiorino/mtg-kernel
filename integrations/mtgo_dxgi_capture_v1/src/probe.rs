@@ -3,8 +3,10 @@ compile_error!("mtgo-dxgi-capture-v1 is Windows-only");
 
 mod bottoming_model;
 mod live_frame;
+mod pregame_heuristic;
 pub use bottoming_model::*;
 pub use live_frame::*;
+pub use pregame_heuristic::*;
 
 use crate::{
     copy_tightly_packed_bgra8_v1, sha256_hex_v1, validate_visible_mtgo_title_v2,

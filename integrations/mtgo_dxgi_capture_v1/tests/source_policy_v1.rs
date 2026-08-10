@@ -110,6 +110,7 @@ fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
     let source = include_str!("../src/probe.rs");
     let bottoming = include_str!("../src/probe/bottoming_model.rs");
     let bottoming_plan = include_str!("../src/probe/bottoming_model/action_plan.rs");
+    let heuristic = include_str!("../src/probe/pregame_heuristic.rs");
     assert!(source.contains(
         "pub fn score_and_select_pregame_model_v3<S: MtgoExternalPregameScorerV3>(\n    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,"
     ));
@@ -188,6 +189,39 @@ fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
         assert!(
             !bottoming_plan.contains(forbidden),
             "bottoming action plan exposes forbidden authority: {forbidden}"
+        );
+    }
+    for required in [
+        "pub struct MtgoNonModelPregameHeuristicV1 {",
+        "impl MtgoExternalCardAwarePregameScorerV4 for MtgoNonModelPregameHeuristicV1",
+        "impl MtgoExternalCardAwareBottomingScorerV5 for MtgoNonModelPregameHeuristicV1",
+        "not-a-checkpoint-manifest",
+        "not-model-parameters",
+        "pub fn is_model_backed_v1(&self) -> bool",
+        "pub fn safe_for_live_input_v1(&self) -> bool",
+    ] {
+        assert!(
+            heuristic.contains(required),
+            "non-model pregame heuristic is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "safe_for_live_input_v1(&self) -> bool {\n        true",
+        "is_model_backed_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "target_point_client_px",
+        "OpaqueMtgoPregameActionPlanV3",
+        "OpaqueMtgoBottomingActionPlanV5",
+    ] {
+        assert!(
+            !heuristic.contains(forbidden),
+            "non-model pregame heuristic exposes forbidden authority: {forbidden}"
         );
     }
 }
