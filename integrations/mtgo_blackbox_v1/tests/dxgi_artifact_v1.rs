@@ -1,4 +1,7 @@
-use mtgo_blackbox_v1::{check_untrusted_dxgi_capture_artifact_v1, MtgoDxgiCaptureRoleV2};
+use mtgo_blackbox_v1::{
+    admit_ratified_dxgi_offline_calibration_artifact_v1, check_untrusted_dxgi_capture_artifact_v1,
+    MtgoDxgiCaptureRoleV2,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -160,6 +163,40 @@ fn valid_artifact_is_structurally_checked_but_never_actionable() {
     assert!(!checked.safe_for_ocr());
     assert!(!checked.safe_for_policy_scoring());
     assert!(!checked.safe_for_input());
+}
+
+#[test]
+fn arbitrary_checked_artifact_cannot_mint_offline_calibration_authority() {
+    let (manifest, raw, png) = fixture();
+    let manifest = serde_json::to_vec(&manifest).unwrap();
+    let error = match admit_ratified_dxgi_offline_calibration_artifact_v1(
+        &manifest,
+        raw.into_boxed_slice(),
+        &png,
+    ) {
+        Ok(_) => panic!("synthetic artifact must not match the ratified live artifact"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "dxgi_offline_calibration_role");
+
+    let (v1, raw, png) = fixture();
+    let solitaire = as_v2(
+        v1,
+        "solitaire_game",
+        "acting_player_solitaire",
+        "Freeform",
+        "(Solitaire): Freeform: Vs. local-player",
+    );
+    let manifest = serde_json::to_vec(&solitaire).unwrap();
+    let error = match admit_ratified_dxgi_offline_calibration_artifact_v1(
+        &manifest,
+        raw.into_boxed_slice(),
+        &png,
+    ) {
+        Ok(_) => panic!("unratified acting-player artifact must fail closed"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "dxgi_offline_calibration_not_ratified");
 }
 
 #[test]

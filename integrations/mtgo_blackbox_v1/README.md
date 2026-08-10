@@ -122,6 +122,16 @@ cargo run --bin check_mtgo_dxgi_artifact_v1 -- 'C:\absolute\artifact-directory'
 
 This closes the raw producer-to-adapter file-schema gap. It does not close the trust gap. The manifest safety assertions remain producer claims, the pre/post z-order checks retain a transient-occluder race, and no current profile or live frame is ratified for perception.
 
+The exact manually inspected Freeform acting-player artifact from 2026-08-10 is separately source-ratified as `ActingPlayerSolitaireOnlyV1` for offline calibration. Its domain-separated admission commitment binds the exact manifest, canonical BGRA8, PNG, output identity, dimensions, timestamp, and role. The opaque admitted type retains the pixels only for crate-internal offline calibration code and exposes no raw pixel accessor. It remains unsafe for live OCR, semantic evidence, policy scoring, action selection, and input. Runtime manifests or caller-provided review assertions cannot ratify another artifact.
+
+The read-only admission checker exercises that exact boundary:
+
+```powershell
+cargo run --bin admit_mtgo_dxgi_offline_calibration_v1 -- 'C:\absolute\artifact-directory'
+```
+
+This admits one immutable image for measuring perception. It does not ratify a reusable calibration profile, a later frame, or the producer's live assertions.
+
 ## Current result
 
 The crate accepts a proposed MTGO decision only when all of these conditions hold:

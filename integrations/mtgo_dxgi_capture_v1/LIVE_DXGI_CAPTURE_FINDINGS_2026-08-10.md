@@ -38,6 +38,12 @@ A no-cost one-player Custom Match was then created with the existing 280-basic-l
 
 Manual inspection confirmed the acting-player layout, opening seven-card hand, mulligan prompt, local totals, phase bar, battlefield, and visible game log. No mulligan, keep, card, phase, purchase, queue, League, or Challenge action was sent for this capture.
 
+## Offline calibration ratification
+
+The exact acting-player artifact above is now source-ratified for one scope only: `ActingPlayerSolitaireOnlyV1` offline calibration. The admission commitment is `9b0aef61a6fc31ee6050d9e381fba4c3e1a6b887c62319c8b3e1e13e9523e291`. The production admission checker revalidated the exact manifest, raw BGRA8, decoded PNG, output identity, dimensions, timestamp, and role before returning an opaque value.
+
+The opaque value retains pixels only for crate-internal offline calibration code. It has no public pixel accessor and remains false for live OCR, semantic evidence, policy scoring, and input. This is not a reusable profile, live-frame attestation, or authorization for any action.
+
 ## Nonclaims
 
 This proves that the local backend can acquire and crop a player-visible composed desktop frame while checking the declared live conditions. It does not admit the pixels for OCR, semantic evidence, model scoring, or input. It does not eliminate the transient-occluder race between the two z-order audits. No League, Challenge, purchase, queue, or gameplay action was performed.

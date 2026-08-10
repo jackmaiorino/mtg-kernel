@@ -24,6 +24,13 @@ const MAX_MANIFEST_BYTES_V1: usize = 1_048_576;
 const MAX_PREVIEW_PNG_BYTES_V1: usize = 512 * 1_048_576;
 const MIN_CAPTURE_UNIX_MILLIS_V1: u64 = 1_577_836_800_000;
 const MAX_CAPTURE_UNIX_MILLIS_V1: u64 = 4_102_444_800_000;
+const DXGI_OFFLINE_CALIBRATION_ADMISSION_DOMAIN_V1: &[u8] =
+    b"mtgo-dxgi-offline-calibration-admission-v1";
+const DXGI_OFFLINE_CALIBRATION_SCOPE_V1: &[u8] =
+    b"offline-acting-player-solitaire-calibration-only-v1";
+const DXGI_ACTING_PLAYER_SOLITAIRE_ROLE_V1: &[u8] = b"acting_player_solitaire";
+const RATIFIED_DXGI_OFFLINE_CALIBRATION_ADMISSION_COMMITMENT_V1: Option<&str> =
+    Some("9b0aef61a6fc31ee6050d9e381fba4c3e1a6b887c62319c8b3e1e13e9523e291");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoDxgiCaptureRoleV2 {
@@ -229,6 +236,165 @@ impl CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
     pub fn safe_for_input(&self) -> bool {
         false
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MtgoDxgiOfflineCalibrationScopeV1 {
+    ActingPlayerSolitaireOnlyV1,
+}
+
+/// One exact, manually inspected DXGI artifact admitted for offline calibration.
+///
+/// The source commitment is pinned privately in this crate. Runtime manifests,
+/// caller booleans, and caller-selected review records cannot ratify another
+/// artifact. The retained pixels are available only to crate-internal, separately
+/// reviewed offline calibration code. This type grants no live-frame, semantic-
+/// evidence, policy-scoring, action, or input authority.
+///
+/// It intentionally implements neither `Debug` nor `Clone` and is not serializable.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::AdmittedMtgoDxgiOfflineCalibrationFrameV1;
+/// fn pixel_escape(value: &AdmittedMtgoDxgiOfflineCalibrationFrameV1) {
+///     let _ = value.canonical_pixels_for_offline_calibration_v1();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::AdmittedMtgoDxgiOfflineCalibrationFrameV1;
+/// fn requires_debug<T: core::fmt::Debug>() {}
+/// requires_debug::<AdmittedMtgoDxgiOfflineCalibrationFrameV1>();
+/// ```
+pub struct AdmittedMtgoDxgiOfflineCalibrationFrameV1 {
+    checked: CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    admission_commitment_sha256: String,
+    canonical_bgra8: Box<[u8]>,
+}
+
+impl AdmittedMtgoDxgiOfflineCalibrationFrameV1 {
+    pub fn scope(&self) -> MtgoDxgiOfflineCalibrationScopeV1 {
+        MtgoDxgiOfflineCalibrationScopeV1::ActingPlayerSolitaireOnlyV1
+    }
+
+    pub fn admission_commitment_sha256(&self) -> &str {
+        &self.admission_commitment_sha256
+    }
+
+    pub fn manifest_sha256(&self) -> &str {
+        self.checked.manifest_sha256()
+    }
+
+    pub fn canonical_bgra8_sha256(&self) -> &str {
+        self.checked.canonical_bgra8_sha256()
+    }
+
+    pub fn preview_png_sha256(&self) -> &str {
+        self.checked.preview_png_sha256()
+    }
+
+    pub fn output_identity_sha256(&self) -> &str {
+        self.checked.output_identity_sha256()
+    }
+
+    pub fn client_size_px(&self) -> &MtgoSizePxV1 {
+        self.checked.client_size_px()
+    }
+
+    pub fn captured_at_unix_millis(&self) -> u64 {
+        self.checked.captured_at_unix_millis()
+    }
+
+    pub fn capture_role(&self) -> MtgoDxgiCaptureRoleV2 {
+        self.checked.capture_role()
+    }
+
+    pub fn safe_for_live_ocr(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_semantic_evidence(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input(&self) -> bool {
+        false
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn canonical_pixels_for_offline_calibration_v1(&self) -> &[u8] {
+        &self.canonical_bgra8
+    }
+}
+
+/// Admits only the one exact DXGI artifact pinned by source review.
+///
+/// The admitted scope is offline acting-player Solitaire calibration. It is not
+/// a live-frame attestation and cannot feed a decision, scorer, or actuator.
+pub fn admit_ratified_dxgi_offline_calibration_artifact_v1(
+    manifest_bytes: &[u8],
+    canonical_bgra8: Box<[u8]>,
+    preview_png_bytes: &[u8],
+) -> Result<AdmittedMtgoDxgiOfflineCalibrationFrameV1, MtgoContractErrorV1> {
+    let checked = check_untrusted_dxgi_capture_artifact_v1(
+        manifest_bytes,
+        &canonical_bgra8,
+        preview_png_bytes,
+    )?;
+    if checked.capture_role() != MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire {
+        return Err(error_v1(
+            "dxgi_offline_calibration_role",
+            "only the acting-player Solitaire role can enter this calibration scope",
+        ));
+    }
+    let ratified = RATIFIED_DXGI_OFFLINE_CALIBRATION_ADMISSION_COMMITMENT_V1.ok_or_else(|| {
+        error_v1(
+            "dxgi_offline_calibration_not_ratified",
+            "production contains no ratified DXGI offline-calibration commitment",
+        )
+    })?;
+    validate_lower_hex_v1("dxgi_offline_calibration_ratification", ratified, 64)?;
+    let admission_commitment_sha256 = dxgi_offline_calibration_admission_commitment_v1(&checked);
+    if admission_commitment_sha256 != ratified {
+        return Err(error_v1(
+            "dxgi_offline_calibration_not_ratified",
+            "DXGI artifact does not match the ratified offline-calibration commitment",
+        ));
+    }
+
+    Ok(AdmittedMtgoDxgiOfflineCalibrationFrameV1 {
+        checked,
+        admission_commitment_sha256,
+        canonical_bgra8,
+    })
+}
+
+fn dxgi_offline_calibration_admission_commitment_v1(
+    checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+) -> String {
+    let width = checked.client_size_px().width.to_string();
+    let height = checked.client_size_px().height.to_string();
+    let captured_at = checked.captured_at_unix_millis().to_string();
+    let mut hasher = Sha256::new();
+    hasher.update(DXGI_OFFLINE_CALIBRATION_ADMISSION_DOMAIN_V1);
+    for part in [
+        DXGI_OFFLINE_CALIBRATION_SCOPE_V1,
+        checked.manifest_sha256().as_bytes(),
+        checked.canonical_bgra8_sha256().as_bytes(),
+        checked.preview_png_sha256().as_bytes(),
+        checked.output_identity_sha256().as_bytes(),
+        width.as_bytes(),
+        height.as_bytes(),
+        captured_at.as_bytes(),
+        DXGI_ACTING_PLAYER_SOLITAIRE_ROLE_V1,
+    ] {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 /// Structurally checks one complete output from `mtgo_dxgi_capture_v1`.
@@ -820,4 +986,33 @@ fn sha256_v1(bytes: &[u8]) -> String {
 
 fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV1 {
     MtgoContractErrorV1::new(code, detail)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ratified_offline_calibration_commitment_is_stable() {
+        let checked = CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
+            manifest_sha256: "af62f6392454c74a81ada7ea9bc0f0111164bd95b84d114f03e7d416fc27aee3"
+                .to_owned(),
+            canonical_bgra8_sha256:
+                "72005a726e339c1c803ca7c4604d3b182629e65a792de235ae36e10bfa68162d".to_owned(),
+            preview_png_sha256: "16bdb4dd6a0fb2e724adcd7962486fa730ce939da9fd75a9731bc7f703877b34"
+                .to_owned(),
+            output_identity_sha256:
+                "89c86876d12827c79ef4d746b9cd88c8decaf3e4fae33b41f6ab57c94bf222a6".to_owned(),
+            client_size_px: MtgoSizePxV1 {
+                width: 1550,
+                height: 925,
+            },
+            captured_at_unix_millis: 1_786_337_620_374,
+            capture_role: MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire,
+        };
+        assert_eq!(
+            dxgi_offline_calibration_admission_commitment_v1(&checked),
+            RATIFIED_DXGI_OFFLINE_CALIBRATION_ADMISSION_COMMITMENT_V1.unwrap()
+        );
+    }
 }
