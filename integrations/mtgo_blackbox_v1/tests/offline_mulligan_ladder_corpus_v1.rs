@@ -12,15 +12,15 @@ fn mulligan_ladder_corpus_is_unique_and_internally_consistent() {
         record["matcher_version"],
         "exact_binary_prompt_ink_bgr_sum_below_384-v2"
     );
-    assert_eq!(record["measurement"]["distinct_games"], 3);
-    assert_eq!(record["measurement"]["sample_count"], 12);
+    assert_eq!(record["measurement"]["distinct_games"], 5);
+    assert_eq!(record["measurement"]["sample_count"], 26);
     assert_eq!(
         record["profile_set_commitment_sha256"],
         "70869ef8cbf9fd38e3b660d9ce03d7258d9e9f556bfd17d939cd8df86dce440a"
     );
 
     let samples = record["samples"].as_array().unwrap();
-    assert_eq!(samples.len(), 12);
+    assert_eq!(samples.len(), 26);
     for field in [
         "sample_id",
         "manifest_sha256",
@@ -71,6 +71,7 @@ fn mulligan_ladder_corpus_is_unique_and_internally_consistent() {
         observed_sizes.keys().copied().collect::<HashSet<_>>(),
         HashSet::from([1, 2, 3, 4, 5, 6, 7])
     );
+    assert!(observed_sizes.values().all(|count| *count >= 3));
     assert_eq!(
         record["measurement"]["exact_size_matches"],
         exact_size_matches
