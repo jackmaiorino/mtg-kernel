@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "corpus_id": "freeform-solitaire-fixed-two-print-basic-deck-identity-20260810-v1",
+  "deck": {
+    "visible_name": "mtgo-solitaire-fixed-basics-v1",
+    "total_cards": 60,
+    "cards": [
+      {
+        "visible_card_name": "Plains",
+        "set_code": "dsk",
+        "collector_number": "277",
+        "count": 30,
+        "template_id": "observed-hand-ordinal-1-plains-dsk-277-v1"
+      },
+      {
+        "visible_card_name": "Island",
+        "set_code": "dsk",
+        "collector_number": "279",
+        "count": 30,
+        "template_id": "observed-hand-ordinal-4-island-dsk-279-v1"
+      }
+    ]
+  },
+  "bottom_six_state_profile_commitment_sha256": "d7536f59f258be66975b3e87a6435ddf509eb67a2ebc01a5bfd5800568afecb4",
+  "visible_card_profile_commitment_sha256": "0310ba629a4caf1fca9806f1e135d15bd3ea99417b2c6b92ec79f948ecbe6739",
+  "samples": [
+    {
+      "sample_id": "game-958670600-selected-zero",
+      "manifest_sha256": "b857d864c497d4b9aead4b564ab38e38b5f37786a45dfc35b690cf052f5bf3ee",
+      "frame_sha256": "e4d429fdd4b11baf2846b94e475cc43b46547ef754526f954971d5228dc60844",
+      "state_commitment_sha256": "10b358de273d3d03e0f5f43e80c8e9f64a11c93a74261ad7acf16ca132ec30e0",
+      "selected_count": 0,
+      "visible_hand_count": 7,
+      "done_visible": false,
+      "state_classification": "match",
+      "identity_classification": "match",
+      "identity_commitment_sha256": "e05365bb76814e4f10a3e234c8e516ae5a7d61520635f4c911db4b85a46587e2",
+      "matched_identity_count": 7,
+      "visible_card_names": ["Island", "Island", "Island", "Island", "Plains", "Island", "Island"]
+    },
+    {
+      "sample_id": "game-958670600-selected-one",
+      "manifest_sha256": "d2b206c8c700675643f3e5fdee6f6ba2041fea6f9ddda817a8e9bca332410682",
+      "frame_sha256": "68c44d2bb1c65dd1f88e18c845e75a77ac5fd4d7e7a534b3e9525eb0e0492040",
+      "state_commitment_sha256": "a10df150e19fb9ed548337cc152bd1f54154880d966db05c4c545ac4238f8eed",
+      "selected_count": 1,
+      "visible_hand_count": 6,
+      "done_visible": false,
+      "state_classification": "match",
+      "identity_classification": "match",
+      "identity_commitment_sha256": "7d16d44f4efe78b9d9b049a469a821076ba6f89f564bb0b6b2214de13100a9f4",
+      "matched_identity_count": 6,
+      "visible_card_names": ["Island", "Island", "Island", "Plains", "Island", "Island"]
+    },
+    {
+      "sample_id": "game-958670600-selected-two",
+      "manifest_sha256": "359c593a3fadd21d9ceb2f1ab570bd8eac9f4146365f4b48a53008bfbf79dcef",
+      "frame_sha256": "dae57b0a8a1ac51533cb00aa3ee90cb08636def558765ba3416654b7966445c3",
+      "state_commitment_sha256": "fae035b64146445c8bdda22604c7fdd7ecf81e799ab1f595bc41973861845cd9",
+      "selected_count": 2,
+      "visible_hand_count": 5,
+      "done_visible": false,
+      "state_classification": "match",
+      "identity_classification": "match",
+      "identity_commitment_sha256": "77890e4f0e963cc1e665704ecad4bf6eaa730f5ffc953c30e67fb937da833a97",
+      "matched_identity_count": 5,
+      "visible_card_names": ["Island", "Island", "Plains", "Island", "Island"]
+    },
+    {
+      "sample_id": "game-958670600-selected-three",
+      "manifest_sha256": "0d931bc7f60e132694f73d222533eceae41e9187f46c44ec5ab747cf5f90e4cb",
+      "frame_sha256": "99af15f61ee14e578b97048a01504ead38a598952978c682c99db48e35f3d5b8",
+      "state_commitment_sha256": "df8323e590dedbabddcdf22edd3230c1b877de65c330ef27ebb1490f22df903a",
+      "selected_count": 3,
+      "visible_hand_count": 4,
+      "done_visible": false,
+      "state_classification": "match",
+      "identity_classification": "match",
+      "identity_commitment_sha256": "90fdc42e0f8901e05ed4ae53cb75db62f6b00f0bf08bc9bf9cb0c0329e24c71d",
+      "matched_identity_count": 4,
+      "visible_card_names": ["Island", "Plains", "Island", "Island"]
+    },
+    {
+      "sample_id": "game-958670600-selected-four",
+      "manifest_sha256": "16bcffd5dbb2b0c1a85af8902099eb21d6ccb5cb7a0818e57ff2e7ee20c0f14c",
+      "frame_sha256": "949b626ee71f5e219babbc36fbfbc145623544dd51b4511b35305d9bab249527",
+      "state_commitment_sha256": "211b01e952f5faa3a1dfc96f115b0d83a7d25a448ea5adb577c50e7e584d61db",
+      "selected_count": 4,
+      "visible_hand_count": 3,
+      "done_visible": false,
+      "state_classification": "match",
+      "identity_classification": "match",
+      "identity_commitment_sha256": "b17e1e9cb647ec43aae47b1bea4d2d2fbd22f0ba93416e7590be1a93fc06c968",
+      "matched_identity_count": 3,
+      "visible_card_names": ["Plains", "Island", "Island"]
+    },
+    {
+      "sample_id": "game-958670600-selected-five",
+      "manifest_sha256": "1a1dfe4de707007c924ff233667e2631f2dbced666599f6b6c3d8147020345c4",
+      "frame_sha256": "fc42dee99c61022d6718ff74362d2a63d39851efe81527210cbddfbb70f7ca2d",
+      "state_commitment_sha256": "d1cea630d63010bfe606d8bf0af688de7ca5cae71cc1de5889e09d78b94e2c66",
+      "selected_count": 5,
+      "visible_hand_count": 2,
+      "done_visible": false,
+      "state_classification": "match",
+      "identity_classification": "match",
+      "identity_commitment_sha256": "603e16cef2b7a754aefdd014df32b1bfb8b1f62934be4317262e13296ad78cc5",
+      "matched_identity_count": 2,
+      "visible_card_names": ["Island", "Island"]
+    },
+    {
+      "sample_id": "game-958670600-selected-six",
+      "manifest_sha256": "6a7d6f4eb4e0817bfe7c671d5a91a3444bffb041b7006063c4b29c0bff28db50",
+      "frame_sha256": "d5c085584d67d9a3d297aa16f006ade2f6308df7d642999dc4f7e9f4d992b942",
+      "state_commitment_sha256": "66e69e0e7efa5b49036af4efd278aadf2b129fef86488f01c5c069f28d38c347",
+      "selected_count": 6,
+      "visible_hand_count": 1,
+      "done_visible": true,
+      "state_classification": "match",
+      "identity_classification": "no_match",
+      "identity_commitment_sha256": "8625df68a418f74350179b9c466b7ed1a63d927384e9d0e76aefbc7112e5827a",
+      "matched_identity_count": 0,
+      "visible_card_names": [],
+      "visible_limitation": "MTGO dims the final remaining card after the sixth selection"
+    },
+    {
+      "sample_id": "game-958671960-heldout-selected-zero",
+      "manifest_sha256": "f84f48a323768ca91d99ba2edd95500b0eb9e1ebc090c644550bb2fc353b5845",
+      "frame_sha256": "02c41555ccbc807a6010fdcaaf730892a199578da204362dc5e34345132ea847",
+      "state_commitment_sha256": "68d0a81c0b842bed8625ac9c0d6722891a7073350f3290b1303ace829d589c27",
+      "selected_count": 0,
+      "visible_hand_count": 7,
+      "done_visible": false,
+      "state_classification": "match",
+      "identity_classification": "match",
+      "identity_commitment_sha256": "1d5d00f7d2f8c6b851a42474057242349c69ea21315ece5b62abcdf3cb250a5a",
+      "matched_identity_count": 7,
+      "visible_card_names": ["Plains", "Island", "Island", "Island", "Island", "Plains", "Plains"]
+    }
+  ],
+  "measurement": {
+    "distinct_games": 2,
+    "state_matches": 8,
+    "initial_hand_full_identity_matches": 2,
+    "initial_hand_cards_identified": 14,
+    "direct_identity_match_samples": 7,
+    "direct_cards_identified": 34,
+    "final_dimmed_card_direct_no_matches": 1
+  },
+  "nonclaim": "The fixed deck narrows visible identity to two exact basic-land printings. Two initial hands matched all fourteen cards, and one game matched every card directly through five selections. The final dimmed card did not directly match and is only preserved by the prior order-preserving reflow history. This is narrow wiring evidence, not an accuracy estimate or authority for observation, scoring, or input.",
+  "safe_for_live_frame": false,
+  "safe_for_semantic_evidence": false,
+  "safe_for_observation_v5": false,
+  "safe_for_policy_scoring": false,
+  "safe_for_input": false
+}

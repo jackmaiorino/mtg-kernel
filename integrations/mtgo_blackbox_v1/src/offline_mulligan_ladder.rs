@@ -17,6 +17,15 @@ const OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_V1: &str =
 const OFFLINE_MULLIGAN_LADDER_WIDTH_V1: u32 = 1550;
 const OFFLINE_MULLIGAN_LADDER_HEIGHT_V1: u32 = 925;
 const OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1: u16 = 3 * 128;
+const OFFLINE_MULLIGAN_LADDER_PROFILE_SET_ID_V2: &str =
+    "freeform-solitaire-london-mulligan-ladder-binary-ink-20260810-v3";
+const OFFLINE_MULLIGAN_LADDER_PROFILE_DOMAIN_V2: &[u8] =
+    b"mtgo-offline-mulligan-ladder-profile-set-v3";
+const OFFLINE_MULLIGAN_LADDER_CANDIDATE_DOMAIN_V2: &[u8] =
+    b"mtgo-offline-mulligan-ladder-candidate-v3";
+const OFFLINE_MULLIGAN_PROMPT_INK_MASK_DOMAIN_V2: &[u8] =
+    b"mtgo-offline-mulligan-prompt-ink-mask-v2";
+const OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V2: u16 = 182;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoOfflineMulliganLadderClassificationV1 {
@@ -35,6 +44,10 @@ struct OfflineMulliganPromptProfileV1 {
 #[derive(Clone)]
 struct OfflineMulliganLadderProfileSetV1 {
     profile_set_id: &'static str,
+    profile_domain: &'static [u8],
+    candidate_domain: &'static [u8],
+    prompt_mask_domain: &'static [u8],
+    prompt_ink_sum_threshold: u16,
     client_size_px: MtgoSizePxV1,
     output_identity_sha256: String,
     profiles: Vec<OfflineMulliganPromptProfileV1>,
@@ -148,6 +161,18 @@ pub fn classify_untrusted_offline_mulligan_ladder_candidate_v1(
     classify_with_profile_set_v1(checked, canonical_bgra8, &production_profile_set_v1(), true)
 }
 
+/// Classifies one later, checked-untrusted DXGI artifact with the revised
+/// prompt threshold. The revised threshold retains only the dark core of the
+/// visible glyphs and sits at the midpoint of the widest same-label stability
+/// interval observed in the development corpus. The result remains offline
+/// measurement only and grants no runtime authority.
+pub fn classify_untrusted_offline_mulligan_ladder_candidate_v2(
+    checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1, MtgoContractErrorV1> {
+    classify_with_profile_set_v1(checked, canonical_bgra8, &production_profile_set_v2(), true)
+}
+
 fn production_profile_set_v1() -> OfflineMulliganLadderProfileSetV1 {
     let prompt_rect = MtgoRectPxV1 {
         x: 25,
@@ -187,6 +212,71 @@ fn production_profile_set_v1() -> OfflineMulliganLadderProfileSetV1 {
     ];
     OfflineMulliganLadderProfileSetV1 {
         profile_set_id: OFFLINE_MULLIGAN_LADDER_PROFILE_SET_ID_V1,
+        profile_domain: OFFLINE_MULLIGAN_LADDER_PROFILE_DOMAIN_V1,
+        candidate_domain: OFFLINE_MULLIGAN_LADDER_CANDIDATE_DOMAIN_V1,
+        prompt_mask_domain: OFFLINE_MULLIGAN_PROMPT_INK_MASK_DOMAIN_V1,
+        prompt_ink_sum_threshold: OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1,
+        client_size_px: MtgoSizePxV1 {
+            width: OFFLINE_MULLIGAN_LADDER_WIDTH_V1,
+            height: OFFLINE_MULLIGAN_LADDER_HEIGHT_V1,
+        },
+        output_identity_sha256: OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_V1.to_owned(),
+        profiles: prompt_hashes
+            .into_iter()
+            .map(|(prospective_keep_size, expected_binary_ink_sha256)| {
+                OfflineMulliganPromptProfileV1 {
+                    prospective_keep_size,
+                    prompt_rect: prompt_rect.clone(),
+                    expected_binary_ink_sha256: expected_binary_ink_sha256.to_owned(),
+                }
+            })
+            .collect(),
+    }
+}
+
+fn production_profile_set_v2() -> OfflineMulliganLadderProfileSetV1 {
+    let prompt_rect = MtgoRectPxV1 {
+        x: 25,
+        y: 48,
+        width: 170,
+        height: 90,
+    };
+    let prompt_hashes = [
+        (
+            7,
+            "1b5e66aac82589dbd8807c2351a440233a5c4b8927eab7f1273a8bd091d03135",
+        ),
+        (
+            6,
+            "a86a8314fea7c0846450e42e55b7e1053a5d1a4b75b0f4abbd8c6557cd91faff",
+        ),
+        (
+            5,
+            "6b13119de016b2f663ecfd6fe5c39dfdba6820343a914fa35b8e8e857306da83",
+        ),
+        (
+            4,
+            "ecd4819b7fa708d268196fdbfad078dad7ff821d1e1bb94bc0187d4a1128317d",
+        ),
+        (
+            3,
+            "b3979b0a1d6711ebc9b480637d25eb990b2d0e53f63e0d3318a4c7849c45aece",
+        ),
+        (
+            2,
+            "152407cc7cb11edb51f1b40866914de969c78b34a3863f473840b5663d85c443",
+        ),
+        (
+            1,
+            "72669824b221d5102099654c6dd4c69b77915fe558dc2abe4711b732179e7a62",
+        ),
+    ];
+    OfflineMulliganLadderProfileSetV1 {
+        profile_set_id: OFFLINE_MULLIGAN_LADDER_PROFILE_SET_ID_V2,
+        profile_domain: OFFLINE_MULLIGAN_LADDER_PROFILE_DOMAIN_V2,
+        candidate_domain: OFFLINE_MULLIGAN_LADDER_CANDIDATE_DOMAIN_V2,
+        prompt_mask_domain: OFFLINE_MULLIGAN_PROMPT_INK_MASK_DOMAIN_V2,
+        prompt_ink_sum_threshold: OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V2,
         client_size_px: MtgoSizePxV1 {
             width: OFFLINE_MULLIGAN_LADDER_WIDTH_V1,
             height: OFFLINE_MULLIGAN_LADDER_HEIGHT_V1,
@@ -240,10 +330,12 @@ fn classify_with_profile_set_v1(
         .profiles
         .iter()
         .map(|profile| {
-            hash_prompt_binary_ink_v1(
+            hash_prompt_binary_ink_with_profile_v1(
                 canonical_bgra8,
                 checked.client_size_px(),
                 &profile.prompt_rect,
+                profile_set.prompt_ink_sum_threshold,
+                profile_set.prompt_mask_domain,
             )
         })
         .collect::<Result<_, _>>()?;
@@ -260,7 +352,7 @@ fn classify_with_profile_set_v1(
         classify_matched_profiles_v1(profile_set, &matched_indices);
 
     let mut hasher = Sha256::new();
-    hasher.update(OFFLINE_MULLIGAN_LADDER_CANDIDATE_DOMAIN_V1);
+    hasher.update(profile_set.candidate_domain);
     for part in [
         profile_set_commitment_sha256.as_bytes(),
         checked.manifest_sha256().as_bytes(),
@@ -363,7 +455,7 @@ fn validate_and_commit_profile_set_v1(
     }
 
     let mut hasher = Sha256::new();
-    hasher.update(OFFLINE_MULLIGAN_LADDER_PROFILE_DOMAIN_V1);
+    hasher.update(profile_set.profile_domain);
     for part in [
         profile_set.profile_set_id.as_bytes(),
         &profile_set.client_size_px.width.to_be_bytes(),
@@ -384,7 +476,7 @@ fn validate_and_commit_profile_set_v1(
         update_hash_part_v1(&mut hasher, &[profile.prospective_keep_size]);
         update_hash_part_v1(
             &mut hasher,
-            &OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1.to_be_bytes(),
+            &profile_set.prompt_ink_sum_threshold.to_be_bytes(),
         );
         for value in [
             profile.prompt_rect.x,
@@ -428,10 +520,27 @@ fn validate_pixel_length_v1(size: &MtgoSizePxV1, pixels: &[u8]) -> Result<(), Mt
     Ok(())
 }
 
+#[cfg(test)]
 fn hash_prompt_binary_ink_v1(
     pixels: &[u8],
     size: &MtgoSizePxV1,
     rect: &MtgoRectPxV1,
+) -> Result<String, MtgoContractErrorV1> {
+    hash_prompt_binary_ink_with_profile_v1(
+        pixels,
+        size,
+        rect,
+        OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1,
+        OFFLINE_MULLIGAN_PROMPT_INK_MASK_DOMAIN_V1,
+    )
+}
+
+fn hash_prompt_binary_ink_with_profile_v1(
+    pixels: &[u8],
+    size: &MtgoSizePxV1,
+    rect: &MtgoRectPxV1,
+    threshold: u16,
+    mask_domain: &[u8],
 ) -> Result<String, MtgoContractErrorV1> {
     validate_pixel_length_v1(size, pixels)?;
     validate_region_v1(size, rect)?;
@@ -469,17 +578,13 @@ fn hash_prompt_binary_ink_v1(
             let bgr_sum = u16::from(pixels[pixel_index])
                 + u16::from(pixels[pixel_index + 1])
                 + u16::from(pixels[pixel_index + 2]);
-            mask.push(u8::from(
-                bgr_sum < OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1,
-            ));
+            mask.push(u8::from(bgr_sum < threshold));
         }
     }
     let mut hasher = Sha256::new();
-    hasher.update(OFFLINE_MULLIGAN_PROMPT_INK_MASK_DOMAIN_V1);
+    hasher.update(mask_domain);
     for part in [
-        OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1
-            .to_be_bytes()
-            .as_slice(),
+        threshold.to_be_bytes().as_slice(),
         rect.width.to_be_bytes().as_slice(),
         rect.height.to_be_bytes().as_slice(),
         mask.as_slice(),
@@ -561,6 +666,10 @@ mod tests {
         ];
         OfflineMulliganLadderProfileSetV1 {
             profile_set_id: "synthetic-mulligan-ladder-v1",
+            profile_domain: OFFLINE_MULLIGAN_LADDER_PROFILE_DOMAIN_V1,
+            candidate_domain: OFFLINE_MULLIGAN_LADDER_CANDIDATE_DOMAIN_V1,
+            prompt_mask_domain: OFFLINE_MULLIGAN_PROMPT_INK_MASK_DOMAIN_V1,
+            prompt_ink_sum_threshold: OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1,
             client_size_px: size.clone(),
             output_identity_sha256: "a".repeat(64),
             profiles: [2_u8, 1_u8]
@@ -593,6 +702,25 @@ mod tests {
         assert_eq!(
             validate_and_commit_profile_set_v1(&profile_set, true).unwrap(),
             "70869ef8cbf9fd38e3b660d9ce03d7258d9e9f556bfd17d939cd8df86dce440a"
+        );
+    }
+
+    #[test]
+    fn revised_production_profile_set_is_complete_and_distinct() {
+        let predecessor = production_profile_set_v1();
+        let revised = production_profile_set_v2();
+        assert_eq!(
+            revised
+                .profiles
+                .iter()
+                .map(|profile| profile.prospective_keep_size)
+                .collect::<Vec<_>>(),
+            [7, 6, 5, 4, 3, 2, 1]
+        );
+        assert_eq!(revised.prompt_ink_sum_threshold, 182);
+        assert_ne!(
+            validate_and_commit_profile_set_v1(&predecessor, true).unwrap(),
+            validate_and_commit_profile_set_v1(&revised, true).unwrap()
         );
     }
 

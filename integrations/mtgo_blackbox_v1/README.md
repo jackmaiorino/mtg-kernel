@@ -154,6 +154,12 @@ The first deliberately narrow corpus is `fixtures/offline_opening_hand_classifie
 
 `classify_untrusted_offline_mulligan_ladder_candidate_v1` extends that offline-only slice across every visible London mulligan choice from prospective keep seven through prospective keep one. MTGO continues to display seven cards while the prospective keep size decreases, so the semantic state comes from the visible prompt rather than the displayed hand count. The fixed classifier hashes an exact binary ink mask from the prompt-text interior using a BGR sum threshold of 384 and excluding the animated cyan border. This removes same-side grayscale anti-alias intensity changes, but any changed mask bit still fails closed. The checked capture artifact binds the acting-player Solitaire role, exact client size, output identity, and raw-frame hash before classification.
 
+`classify_untrusted_offline_mulligan_ladder_candidate_v2` preserves the predecessor and uses a separately committed dark-core prompt profile. Its BGR sum threshold of 182 is the midpoint of the widest same-label stability interval measured across a three-game development corpus. It matched all 21 development prompts, rejected four gameplay screens, and then matched every prospective keep size in one later heldout fixed-deck Solitaire game. The retained heldout record is `fixtures/offline_mulligan_ladder_classifier_corpus_20260810_v2.json`. This remains a one-layout brittleness check and grants no runtime authority.
+
+```powershell
+cargo run --bin classify_mtgo_offline_mulligan_ladder_candidate_v2 -- 'C:\absolute\artifact-directory'
+```
+
 `classify_untrusted_offline_first_main_candidate_v1` recognizes one narrow post-Keep outcome. Its fixed exact-pixel profile binds the visible first-main prompt, Combat control, Turn 1 label, and empty upper battlefield. Those four regions were identical in two reviewed acting-player Solitaire captures: one after a seven-card Keep and one after completing a six-card London bottoming sequence. The result is checked-untrusted, retains no pixels or coordinates, and does not create `ObservationV5`, policy, or input authority.
 
 The read-only classifier can be run on an offline artifact with:
@@ -162,7 +168,7 @@ The read-only classifier can be run on an offline artifact with:
 cargo run --bin classify_mtgo_offline_first_main_candidate_v1 -- 'C:\absolute\artifact-directory'
 ```
 
-The first-main corpus is `fixtures/offline_first_main_classifier_corpus_20260810_v1.json`: two positive and two negative manually inspected frames from two no-cost Freeform Solitaire games. Both first-main frames matched, while an opening-hand prompt and a bottoming prompt did not. This is wiring evidence, not an accuracy estimate or evidence of generalization. The empty-battlefield anchor also deliberately limits this profile to the current basic-land Solitaire calibration scenario.
+The first-main corpus is `fixtures/offline_first_main_classifier_corpus_20260810_v1.json`: two positive and two negative manually inspected frames from two no-cost Freeform Solitaire games. Both first-main frames matched, while an opening-hand prompt and a bottoming prompt did not. A later fixed-deck first-main frame matched only two of the four exact regions, so the v1 matcher correctly returned `NoMatch` and that frame was not promoted into the positive corpus. This is wiring evidence, not an accuracy estimate or evidence of generalization. The empty-battlefield anchor also deliberately limits this profile to the current basic-land Solitaire calibration scenario.
 
 Exactly one of the seven prompt profiles must match before the result exposes a prospective keep size and ordered adapter-local actions. A zero-match or multi-match result exposes no actions. Every result retains no pixels or coordinates and remains unsafe for a live frame, semantic evidence, `ObservationV5`, policy scoring, or input.
 
@@ -198,6 +204,8 @@ The corresponding corpus is `fixtures/offline_bottom_six_state_classifier_corpus
 
 The exact prompt pixels changed slightly in a later Solitaire game even though the visible text and all binary ink decisions were unchanged. `classify_untrusted_offline_bottom_six_state_candidate_v2` preserves the v1 role, layout, raw-frame, Turn 1, control, and occupancy measurements but checks the instruction text with an exact binary ink mask at a fixed threshold. `fixtures/offline_bottom_six_state_classifier_corpus_20260810_v2.json` records all seven bottom-six stages from that calibration game, one independently captured zero-selected positive from a second positive game, and four nearby negatives across three games total. It had no observed error in those twelve frames. The held-out positive supports narrow prompt robustness across a second game. It is not an accuracy estimate or evidence for another layout, deck, required bottom count, or later reflow stage in the held-out game.
 
+`classify_untrusted_offline_bottom_six_state_candidate_v3` also replaces the raw Cancel and Done control hashes with exact binary control-ink masks. It matched all seven retained selection stages, two earlier independent zero-selected states, both fixed-deck zero-selected states, and rejected four nearby non-bottom-six states. The state output still contains only counts, commitments, and false authority flags.
+
 `classify_untrusted_offline_bottom_six_reflow_candidate_v1` compares two consecutive matched stages using only the unchanged visible card-art band above the keyboard overlay. It evaluates every possible order-preserving single-card deletion. A Match requires exactly one deletion whose every remaining-card mean absolute BGR difference is at most 25.000 intensity levels. No deletion or multiple plausible deletions fails closed. The six observed transitions had matched differences from 0.433 through 19.571 while incorrect pairings in the exploratory matrix began above 46. The corresponding corpus is `fixtures/offline_bottom_six_reflow_corpus_20260810_v1.json`.
 
 `fixtures/offline_visible_card_public_reference_probe_20260810_v1.json` records the first visible-card identity feasibility probe. Seven manually read card labels in one opening hand were compared against six pinned public print templates. Every ordinal selected the corresponding visible name; the weakest winning correlation was 0.6441 and the weakest margin over another template was 0.2105. The public image hashes and print identifiers are recorded, but the images remain in a local cache and are not committed. The source capture is still pending visual review, the candidate universe is manually constrained, and every authority flag remains false. This is not an accuracy estimate or a kernel card binding. The proposed calibration and runtime boundary is specified in `MTGO-VISIBLE-CARD-IDENTITY-V1-DESIGN.md`.
@@ -218,7 +226,15 @@ It performs no network access and emits names, ordinals, distances, margins, and
 
 `classify_untrusted_offline_bottom_six_visible_card_identities_v2` uses the corrected binary-ink bottom-six state gate and evaluates every visible card slot before deciding whether the complete hand matches. Partial coverage exposes only a count and clears all identity labels. `fixtures/offline_visible_card_identity_coverage_corpus_20260810_v2.json` records two later seven-card hands from games that did not supply the templates. The deliberately incomplete seven-template profile covered 2 of 7 and 4 of 7 visible slots, so neither hand matched and no labels were exposed. This isolates complete deck-template coverage as the current identity bottleneck.
 
-The mulligan-ladder corpus now contains 25 prompt frames plus one gameplay negative across five games. Every prospective keep size from seven through one has its source frame and at least two independent non-source games. All 25 prompt frames selected exactly one correct size and the gameplay negative selected none. This is still a small, one-layout renderer screen rather than an accuracy estimate.
+The fixed no-cost deck `mtgo-solitaire-fixed-basics-v1` narrows that universe to 30 copies each of DSK Plains collector 277 and DSK Island collector 279, both already present in the reviewed seven-template profile. `classify_untrusted_offline_bottom_six_visible_card_identities_v3` uses the v3 state gate. It matched all 14 cards across two independent initial bottom-six hands, including a later heldout game, and directly preserved every visible identity through five leftmost-card reflows in one game. MTGO dims the final remaining card when Done appears, so direct art matching intentionally returns `NoMatch` at that stage. The prior order-preserving reflow history still identifies the survivor, but the direct classifier does not claim that inference. The complete record is `fixtures/offline_fixed_basic_deck_identity_corpus_20260810_v1.json`.
+
+```powershell
+cargo run --bin classify_mtgo_offline_bottom_six_visible_card_identities_v3 -- `
+  C:\absolute\artifact-directory `
+  C:\absolute\visible-card-profile.json
+```
+
+The predecessor mulligan-ladder corpus contains 25 prompt frames plus one gameplay negative across five games. The v2 dark-core development and heldout records add fourteen fixed-deck prompts across two later games. All seven states matched in the later heldout game. This is still a small, one-layout renderer screen rather than an accuracy estimate.
 
 ```powershell
 cargo run --bin classify_mtgo_offline_bottom_six_reflow_candidate_v1 -- `
