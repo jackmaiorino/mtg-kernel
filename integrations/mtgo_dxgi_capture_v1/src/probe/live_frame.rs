@@ -1,0 +1,464 @@
+use super::{
+    canonical_json_commitment_v3, capture_commitment_v3, capture_mtgo_dxgi_frame_candidate_v3,
+    sha256_hex_v1, CaptureManifestV2, CaptureWindowModeV2, MtgoDxgiCaptureRequestV3,
+    MtgoDxgiFrameCommitmentsV3, OpaqueMtgoDxgiFrameCandidateV3, SignedRectV1,
+};
+use serde::Serialize;
+
+const PINNED_SOLITAIRE_PROFILE_ID_V1: &str =
+    "mtgo-freeform-solitaire-visible-capture-identity-layout-20260810-v1";
+const PINNED_SOLITAIRE_PROFILE_DOMAIN_V1: &[u8] =
+    b"mtgo-pinned-solitaire-visible-capture-profile-v1";
+const PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1: &str =
+    "45f73bf432bbed42e1896c4f02e0670115bb891b69fdc7037c89dc780ac91fac";
+
+const PINNED_EXECUTABLE_SHA256_V1: &str =
+    "a672755dad7fe8cd08c7986216d0d0fb2c4dbafe669ad3d2aff2bfa2c21b9c69";
+const PINNED_SIGNER_THUMBPRINT_V1: &str = "e9d9e2b989f90555b04c506fddf889c7aba7ac30";
+const PINNED_SIGNER_SUBJECT_V1: &str =
+    "CN=Daybreak Game Company LLC, O=Daybreak Game Company LLC, L=San Diego, S=California, C=US";
+const PINNED_SIGNER_SUBJECT_SHA256_V1: &str =
+    "89e095d976048cdd8da11e2ff312231867f79e521fa3b5aa6415d2aa59b79cfc";
+const PINNED_VISIBLE_TITLE_V1: &str = "(Solitaire): Freeform: Vs. UnbuckledPie";
+const PINNED_OUTPUT_DEVICE_V1: &str = r"\\.\DISPLAY2";
+
+/// Copyable telemetry for one profile-bound visible frame. Possessing a copy
+/// does not prove capture. Downstream trusted code must accept the opaque frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPinnedSolitaireVisibleFrameCommitmentsV1 {
+    pub profile_id: &'static str,
+    pub profile_commitment_sha256: String,
+    pub source_capture: MtgoDxgiFrameCommitmentsV3,
+}
+
+/// A real in-process DXGI capture bound to the exact currently inspected MTGO
+/// identity and 1550 by 925 Freeform Solitaire layout.
+///
+/// This type proves only capture origin and identity/layout-profile matching.
+/// It deliberately grants no card label, prompt label, semantic evidence,
+/// observation, policy, or input authority. The transient-occluder limitation
+/// of the underlying Desktop Duplication capture remains.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireVisibleFrameV1;
+/// let _forged = OpaqueMtgoPinnedSolitaireVisibleFrameV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireVisibleFrameV1;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoPinnedSolitaireVisibleFrameV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireVisibleFrameV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoPinnedSolitaireVisibleFrameV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireVisibleFrameV1;
+/// fn require_serialize<T: serde::Serialize>() {}
+/// require_serialize::<OpaqueMtgoPinnedSolitaireVisibleFrameV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedSolitaireVisibleFrameV1;
+/// fn expose(frame: &OpaqueMtgoPinnedSolitaireVisibleFrameV1) {
+///     let _ = frame.canonical_bgra8_v1();
+/// }
+/// ```
+pub struct OpaqueMtgoPinnedSolitaireVisibleFrameV1 {
+    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    profile_commitment_sha256: String,
+}
+
+impl OpaqueMtgoPinnedSolitaireVisibleFrameV1 {
+    pub fn commitments_v1(&self) -> MtgoPinnedSolitaireVisibleFrameCommitmentsV1 {
+        MtgoPinnedSolitaireVisibleFrameCommitmentsV1 {
+            profile_id: PINNED_SOLITAIRE_PROFILE_ID_V1,
+            profile_commitment_sha256: self.profile_commitment_sha256.clone(),
+            source_capture: self.source_frame.commitments_v3(),
+        }
+    }
+
+    pub fn matches_pinned_visible_capture_profile_v1(&self) -> bool {
+        true
+    }
+
+    pub fn safe_for_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    /// Deliberately drops the profile-bound wrapper so existing perception can
+    /// continue operating only at its checked-untrusted authority level.
+    pub fn into_checked_untrusted_perception_candidate_v1(self) -> OpaqueMtgoDxgiFrameCandidateV3 {
+        self.source_frame
+    }
+}
+
+/// Captures the visible foreground client using constants pinned in reviewed
+/// source, then binds the opaque result to the exact identity/layout profile.
+/// This function does not focus MTGO and never sends input.
+pub fn capture_pinned_current_solitaire_visible_frame_v1(
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoPinnedSolitaireVisibleFrameV1, String> {
+    let source_frame = capture_mtgo_dxgi_frame_candidate_v3(pinned_capture_request_v1(timeout_ms))?;
+    bind_pinned_current_solitaire_visible_frame_v1(source_frame)
+}
+
+fn pinned_capture_request_v1(timeout_ms: u32) -> MtgoDxgiCaptureRequestV3 {
+    MtgoDxgiCaptureRequestV3 {
+        expected_executable_sha256: PINNED_EXECUTABLE_SHA256_V1.to_owned(),
+        expected_signer_thumbprint: PINNED_SIGNER_THUMBPRINT_V1.to_owned(),
+        expected_signer_subject_sha256: PINNED_SIGNER_SUBJECT_SHA256_V1.to_owned(),
+        window_mode: CaptureWindowModeV2::SolitaireGame,
+        expected_game_format: Some("Freeform".to_owned()),
+        expected_title_contains: Some(PINNED_VISIBLE_TITLE_V1.to_owned()),
+        timeout_ms,
+    }
+}
+
+fn bind_pinned_current_solitaire_visible_frame_v1(
+    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+) -> Result<OpaqueMtgoPinnedSolitaireVisibleFrameV1, String> {
+    let observed = profile_facts_from_manifest_v1(&source_frame.manifest)?;
+    let profile_commitment_sha256 = validate_pinned_profile_facts_v1(&observed)?;
+
+    let expected_pixel_length = source_frame.manifest.frame.canonical_byte_length;
+    if source_frame.canonical_bgra8.len() != expected_pixel_length
+        || sha256_hex_v1(&source_frame.canonical_bgra8)
+            != source_frame.manifest.frame.canonical_bgra8_sha256
+        || sha256_hex_v1(&source_frame.preview_png)
+            != source_frame.manifest.frame.preview_png_sha256
+        || capture_commitment_v3(
+            &source_frame.manifest,
+            &source_frame.canonical_bgra8,
+            &source_frame.preview_png,
+        )? != source_frame.capture_commitment_sha256
+    {
+        return Err("the opaque DXGI frame bytes or commitment changed before binding".to_owned());
+    }
+
+    Ok(OpaqueMtgoPinnedSolitaireVisibleFrameV1 {
+        source_frame,
+        profile_commitment_sha256,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PinnedSolitaireProfileFactsV1 {
+    profile_id: String,
+    manifest_schema: String,
+    artifact_kind: String,
+    status: String,
+    capture_backend: String,
+    window_mode: String,
+    capture_role: String,
+    expected_game_format: String,
+    title_rule_version: String,
+    executable_sha256: String,
+    signer_thumbprint: String,
+    signer_subject: String,
+    signer_subject_sha256: String,
+    visible_title: String,
+    dpi: u32,
+    client_width: u32,
+    client_height: u32,
+    adapter_index: u32,
+    output_index: u32,
+    adapter_luid_low: u32,
+    adapter_luid_high: i32,
+    output_device_name: String,
+    output_bounds_desktop_px: SignedRectV1,
+    output_rotation: i32,
+    output_color_space: i32,
+    source_texture_width: u32,
+    source_texture_height: u32,
+    source_texture_format: i32,
+    canonical_width: u32,
+    canonical_height: u32,
+    canonical_stride: u32,
+    canonical_byte_length: u64,
+    safe_for_semantic_evidence: bool,
+    safe_for_ocr: bool,
+    safe_for_policy_scoring: bool,
+    safe_for_input: bool,
+    authenticode_verified_in_probe: bool,
+}
+
+fn pinned_profile_facts_v1() -> PinnedSolitaireProfileFactsV1 {
+    PinnedSolitaireProfileFactsV1 {
+        profile_id: PINNED_SOLITAIRE_PROFILE_ID_V1.to_owned(),
+        manifest_schema: "mtgo-dxgi-visible-frame-candidate/v2".to_owned(),
+        artifact_kind: "mtgo_untrusted_dxgi_visible_frame_candidate_v2".to_owned(),
+        status: "checked_untrusted_not_admitted".to_owned(),
+        capture_backend: "dxgi_desktop_duplication_v1".to_owned(),
+        window_mode: "solitaire_game".to_owned(),
+        capture_role: "acting_player_solitaire".to_owned(),
+        expected_game_format: "Freeform".to_owned(),
+        title_rule_version: "mtgo_visible_title_rule_v2".to_owned(),
+        executable_sha256: PINNED_EXECUTABLE_SHA256_V1.to_owned(),
+        signer_thumbprint: PINNED_SIGNER_THUMBPRINT_V1.to_owned(),
+        signer_subject: PINNED_SIGNER_SUBJECT_V1.to_owned(),
+        signer_subject_sha256: PINNED_SIGNER_SUBJECT_SHA256_V1.to_owned(),
+        visible_title: PINNED_VISIBLE_TITLE_V1.to_owned(),
+        dpi: 120,
+        client_width: 1_550,
+        client_height: 925,
+        adapter_index: 0,
+        output_index: 0,
+        adapter_luid_low: 59_989,
+        adapter_luid_high: 0,
+        output_device_name: PINNED_OUTPUT_DEVICE_V1.to_owned(),
+        output_bounds_desktop_px: SignedRectV1 {
+            left: 0,
+            top: 0,
+            right: 2_560,
+            bottom: 1_440,
+        },
+        output_rotation: 1,
+        output_color_space: 0,
+        source_texture_width: 2_560,
+        source_texture_height: 1_440,
+        source_texture_format: 87,
+        canonical_width: 1_550,
+        canonical_height: 925,
+        canonical_stride: 6_200,
+        canonical_byte_length: 5_735_000,
+        safe_for_semantic_evidence: false,
+        safe_for_ocr: false,
+        safe_for_policy_scoring: false,
+        safe_for_input: false,
+        authenticode_verified_in_probe: true,
+    }
+}
+
+fn profile_facts_from_manifest_v1(
+    manifest: &CaptureManifestV2,
+) -> Result<PinnedSolitaireProfileFactsV1, String> {
+    if manifest.pre != manifest.post {
+        return Err("the DXGI frame pre/post window snapshots differ".to_owned());
+    }
+    if !manifest
+        .output
+        .bounds_desktop_px
+        .contains(manifest.pre.client_rect_desktop_px)
+    {
+        return Err("the client crop is not contained in the captured output".to_owned());
+    }
+    let client_width = manifest
+        .pre
+        .client_rect_desktop_px
+        .width()
+        .map_err(str::to_owned)?;
+    let client_height = manifest
+        .pre
+        .client_rect_desktop_px
+        .height()
+        .map_err(str::to_owned)?;
+    let canonical_byte_length = u64::try_from(manifest.frame.canonical_byte_length)
+        .map_err(|_| "canonical byte length does not fit u64")?;
+
+    Ok(PinnedSolitaireProfileFactsV1 {
+        profile_id: PINNED_SOLITAIRE_PROFILE_ID_V1.to_owned(),
+        manifest_schema: manifest.schema.to_owned(),
+        artifact_kind: manifest.artifact_kind.to_owned(),
+        status: manifest.status.to_owned(),
+        capture_backend: manifest.capture_backend.to_owned(),
+        window_mode: manifest.window_mode.to_owned(),
+        capture_role: manifest.capture_role.to_owned(),
+        expected_game_format: manifest.expected_game_format.clone(),
+        title_rule_version: manifest.title_rule_version.to_owned(),
+        executable_sha256: manifest.pre.executable_sha256.clone(),
+        signer_thumbprint: manifest.pre.signer_thumbprint.clone(),
+        signer_subject: manifest.pre.signer_subject.clone(),
+        signer_subject_sha256: manifest.pre.signer_subject_sha256.clone(),
+        visible_title: manifest.pre.title.clone(),
+        dpi: manifest.pre.dpi,
+        client_width,
+        client_height,
+        adapter_index: manifest.output.adapter_index,
+        output_index: manifest.output.output_index,
+        adapter_luid_low: manifest.output.adapter_luid_low,
+        adapter_luid_high: manifest.output.adapter_luid_high,
+        output_device_name: manifest.output.device_name.clone(),
+        output_bounds_desktop_px: manifest.output.bounds_desktop_px,
+        output_rotation: manifest.output.rotation,
+        output_color_space: manifest.output.color_space,
+        source_texture_width: manifest.frame.source_texture_width,
+        source_texture_height: manifest.frame.source_texture_height,
+        source_texture_format: manifest.frame.source_texture_format,
+        canonical_width: manifest.frame.canonical_width,
+        canonical_height: manifest.frame.canonical_height,
+        canonical_stride: manifest.frame.canonical_stride,
+        canonical_byte_length,
+        safe_for_semantic_evidence: manifest.safety.safe_for_semantic_evidence,
+        safe_for_ocr: manifest.safety.safe_for_ocr,
+        safe_for_policy_scoring: manifest.safety.safe_for_policy_scoring,
+        safe_for_input: manifest.safety.safe_for_input,
+        authenticode_verified_in_probe: manifest.safety.authenticode_verified_in_probe,
+    })
+}
+
+fn pinned_profile_commitment_v1() -> Result<String, String> {
+    canonical_json_commitment_v3(
+        PINNED_SOLITAIRE_PROFILE_DOMAIN_V1,
+        &pinned_profile_facts_v1(),
+    )
+}
+
+fn validate_pinned_profile_facts_v1(
+    observed: &PinnedSolitaireProfileFactsV1,
+) -> Result<String, String> {
+    if observed != &pinned_profile_facts_v1() {
+        return Err(
+            "the DXGI frame does not match the pinned current MTGO identity and layout profile"
+                .to_owned(),
+        );
+    }
+    let profile_commitment_sha256 = pinned_profile_commitment_v1()?;
+    if profile_commitment_sha256 != PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1 {
+        return Err("the compiled MTGO identity/layout profile commitment drifted".to_owned());
+    }
+    Ok(profile_commitment_sha256)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pinned_profile_commitment_is_stable() {
+        assert_eq!(
+            pinned_profile_commitment_v1().unwrap(),
+            PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1
+        );
+    }
+
+    #[test]
+    fn representative_identity_layout_and_authority_drift_fails_closed() {
+        let expected = pinned_profile_facts_v1();
+        let mut drifts = Vec::new();
+
+        let mut value = expected.clone();
+        value.executable_sha256.replace_range(0..1, "0");
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.signer_thumbprint.replace_range(0..1, "0");
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.signer_subject.push('!');
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.visible_title.push_str(" Match #1 - Game #1");
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.window_mode = "spectator_game".to_owned();
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.expected_game_format = "Standard".to_owned();
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.dpi += 1;
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.client_width += 1;
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.output_device_name = r"\\.\DISPLAY1".to_owned();
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.output_bounds_desktop_px.right += 1;
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.adapter_luid_low += 1;
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.output_rotation += 1;
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.output_color_space += 1;
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.source_texture_format += 1;
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.canonical_stride += 4;
+        drifts.push(value);
+        let mut value = expected.clone();
+        value.safe_for_input = true;
+        drifts.push(value);
+
+        assert!(drifts
+            .iter()
+            .all(|observed| validate_pinned_profile_facts_v1(observed).is_err()));
+        assert_eq!(
+            validate_pinned_profile_facts_v1(&expected).unwrap(),
+            PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1
+        );
+    }
+
+    #[test]
+    fn capture_request_is_source_pinned_and_role_exact() {
+        let request = pinned_capture_request_v1(1_500);
+        assert_eq!(
+            request.expected_executable_sha256,
+            PINNED_EXECUTABLE_SHA256_V1
+        );
+        assert_eq!(
+            request.expected_signer_thumbprint,
+            PINNED_SIGNER_THUMBPRINT_V1
+        );
+        assert_eq!(
+            request.expected_signer_subject_sha256,
+            PINNED_SIGNER_SUBJECT_SHA256_V1
+        );
+        assert_eq!(request.window_mode, CaptureWindowModeV2::SolitaireGame);
+        assert_eq!(request.expected_game_format.as_deref(), Some("Freeform"));
+        assert_eq!(
+            request.expected_title_contains.as_deref(),
+            Some(PINNED_VISIBLE_TITLE_V1)
+        );
+        assert_eq!(request.timeout_ms, 1_500);
+    }
+
+    #[test]
+    fn authority_is_deliberately_absent_from_the_profile() {
+        let profile = pinned_profile_facts_v1();
+        assert!(!profile.safe_for_semantic_evidence);
+        assert!(!profile.safe_for_ocr);
+        assert!(!profile.safe_for_policy_scoring);
+        assert!(!profile.safe_for_input);
+        assert!(profile.authenticode_verified_in_probe);
+    }
+
+    #[test]
+    #[ignore = "requires the pinned MTGO Solitaire window to be foreground and unobscured"]
+    fn live_capture_returns_only_the_profile_bound_opaque_frame() {
+        let frame = capture_pinned_current_solitaire_visible_frame_v1(2_000).unwrap();
+        let commitments = frame.commitments_v1();
+        assert_eq!(commitments.profile_id, PINNED_SOLITAIRE_PROFILE_ID_V1);
+        assert_eq!(
+            commitments.profile_commitment_sha256,
+            PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1
+        );
+        assert!(frame.matches_pinned_visible_capture_profile_v1());
+        assert!(!frame.safe_for_semantic_evidence_v1());
+        assert!(!frame.safe_for_observation_v5_v1());
+        assert!(!frame.safe_for_policy_scoring_v1());
+        assert!(!frame.safe_for_input_v1());
+    }
+}

@@ -64,6 +64,48 @@ fn public_measurement_consumes_only_the_opaque_frame_and_keeps_parts_private() {
 }
 
 #[test]
+fn pinned_live_frame_binds_source_identity_and_layout_without_downstream_authority() {
+    let source = include_str!("../src/probe/live_frame.rs");
+    for required in [
+        "capture_pinned_current_solitaire_visible_frame_v1",
+        "OpaqueMtgoPinnedSolitaireVisibleFrameV1",
+        "PINNED_EXECUTABLE_SHA256_V1",
+        "PINNED_SIGNER_THUMBPRINT_V1",
+        "PINNED_SIGNER_SUBJECT_SHA256_V1",
+        "PINNED_VISIBLE_TITLE_V1",
+        "PINNED_OUTPUT_DEVICE_V1",
+        "PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1",
+        "CaptureWindowModeV2::SolitaireGame",
+        "expected_game_format: Some(\"Freeform\".to_owned())",
+        "capture_commitment_v3(",
+        "into_checked_untrusted_perception_candidate_v1",
+    ] {
+        assert!(
+            source.contains(required),
+            "pinned visible-frame boundary is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "unsafe {",
+        "pub fn bind_pinned_current_solitaire_visible_frame_v1",
+        "pub fn canonical_bgra8_v1",
+        "pub fn preview_png_v1",
+        "safe_for_semantic_evidence_v1(&self) -> bool {\n        true",
+        "safe_for_observation_v5_v1(&self) -> bool {\n        true",
+        "safe_for_policy_scoring_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "pinned visible-frame boundary exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
     let source = include_str!("../src/probe.rs");
     let bottoming = include_str!("../src/probe/bottoming_model.rs");

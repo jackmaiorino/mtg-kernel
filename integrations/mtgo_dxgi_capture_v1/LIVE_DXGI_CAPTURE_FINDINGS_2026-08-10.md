@@ -75,4 +75,10 @@ The final corpus contains five manually inspected frames from two no-cost Freefo
 
 ## Nonclaims
 
-This proves that the local backend can acquire and crop a player-visible composed desktop frame while checking the declared live conditions. It does not admit the pixels for OCR, semantic evidence, model scoring, or input. It does not eliminate the transient-occluder race between the two z-order audits. No League, Challenge, purchase, queue, or gameplay action was performed.
+This proves that the local backend can acquire and crop a player-visible composed desktop frame while checking the declared live conditions. It does not admit the pixels for OCR, semantic evidence, model scoring, or input. It does not eliminate the transient-occluder race between the two z-order audits. No League, Challenge, purchase, queue, or gameplay action was performed in the captures described above.
+
+## Source-pinned live-frame boundary follow-up
+
+The current source now fixes the inspected executable, exact Daybreak signer, local Freeform Solitaire title, 120 DPI, 1550 by 925 client layout, `DISPLAY2` output identity, SDR color space, and canonical BGRA8 geometry in profile commitment `45f73bf432bbed42e1896c4f02e0670115bb891b69fdc7037c89dc780ac91fac`. Only the in-process DXGI candidate can reach the private binder. The returned wrapper cannot be constructed, cloned, formatted, serialized, or used to read pixels, and all semantic, observation, policy, and input accessors remain false.
+
+The opt-in live test was attempted against the running bottom-six Solitaire prompt. A static screen timed out because Desktop Duplication had no fresh desktop presentation. A retry around one reversible card selection reached an MTGO-owned foreground surface whose title did not match the exact acting-player rule. Both attempts returned no wrapper. The calibrated Cancel click restored all seven visible cards at zero selected, and a separate pending-review preview confirmed that state. These are useful fail-closed runtime checks, not a successful live admission claim.
