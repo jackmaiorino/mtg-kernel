@@ -145,6 +145,12 @@ The adapter now defines the coordinate-free half of step 6. `MtgoExternalScoring
 
 `MtgoExternalModelScoreResponseV1` returns exact f32 policy-logit and value bits bound to that request. Validation requires one finite logit per legal action and a finite value, then uses the kernel scorer's deterministic `total_cmp` argmax with lower-index ties. The resulting opaque selection can create only an offline intent for the exact source decision. It has no coordinates or live-input authority. The remaining core work is an implementation of `MtgoExternalObservationScorerV1` backed by the native checkpoint scorer.
 
+## Current-frame semantic control resolution
+
+The adapter-side half of step 7 is also defined. `MtgoVisibleActionControlSetV1` binds a complete, prompt-reconciled set of enabled controls to the exact decision commitment and newest frame. Every candidate carries an exact legal `ActionSemanticV1`, at least 95 percent confidence, and a distinct current-frame pixel-evidence region. Resolution succeeds only when exactly one visible control matches the model-selected semantic.
+
+The resolved control is opaque and retains its rectangle only inside the crate. It exposes no coordinate accessor and remains explicitly unsafe for live input. This prevents callers from turning a stale or ambiguous semantic label into a click. A later trusted actuator must consume the opaque result and independently recheck the live frame, window, prompt, timer, and physical point immediately before one input.
+
 ## Deliberate seam after this tranche
 
 The existing checkpoint shadow service owns a simulated `FastActorSessionV1`. It cannot score an arbitrary observation reconstructed from MTGO. Its flat scoring view and inference output accessors are crate-private.

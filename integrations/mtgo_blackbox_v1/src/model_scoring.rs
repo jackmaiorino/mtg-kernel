@@ -117,6 +117,10 @@ impl CheckedUntrustedMtgoModelSelectionV1 {
     pub fn safe_for_live_input(&self) -> bool {
         false
     }
+
+    pub(crate) fn selected_semantic(&self) -> &ActionSemanticV1 {
+        &self.selected_semantic
+    }
 }
 
 pub fn build_external_scoring_request_v1(

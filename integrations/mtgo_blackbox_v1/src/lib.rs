@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod action_resolution;
 mod calibration_trace;
 mod capture_contract;
 mod contract;
@@ -14,6 +15,7 @@ mod reconstruction_audit;
 mod validation;
 mod visible_history;
 
+pub use action_resolution::*;
 pub use calibration_trace::*;
 pub use capture_contract::*;
 pub use contract::*;
