@@ -60,9 +60,10 @@ Candidate schema v2 assigns every capture one non-interchangeable visible role:
 
 - `main_client` with role `navigation` and no game format;
 - `solitaire_game` with role `acting_player_solitaire` and an exact visible format;
+- `duel_game` with role `acting_player_duel` and an exact visible format;
 - `spectator_game` with role `spectator` and an exact visible format.
 
-Solitaire titles must visibly identify one participant. Spectator titles must visibly identify two. The expected format is part of the title rule, so a Standard spectator window cannot be accepted as Freeform or as an acting-player window. The adapter continues to read the earlier main-client-only v1 artifact but rejects any v1 role fields.
+Solitaire titles must visibly identify one participant. Acting-player duel titles must visibly identify one opponent. Spectator titles must visibly identify two participants. The expected format is part of the title rule, so a Standard spectator window cannot be accepted as Freeform or as an acting-player window. The adapter continues to read the earlier main-client-only v1 artifact but rejects any v1 role fields.
 
 ## Deliberate nonclaim
 
@@ -94,6 +95,8 @@ cargo run --release -- `
   --expected-game-format Freeform `
   --timeout-ms 10000
 ```
+
+An already visible foreground acting-player duel window uses the same source checks with `--window-mode duel_game` and the exact visibly named game format. This mode only creates a checked-untrusted artifact. It does not authorize joining a queue, entering an event, scoring a live decision, or sending input.
 
 ## Verification
 

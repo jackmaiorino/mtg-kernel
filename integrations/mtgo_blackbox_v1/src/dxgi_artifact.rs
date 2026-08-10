@@ -40,6 +40,7 @@ const DXGI_KEEP_TRANSITION_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-dxgi-keep-transi
 pub enum MtgoDxgiCaptureRoleV2 {
     Navigation,
     ActingPlayerSolitaire,
+    ActingPlayerDuel,
     Spectator,
 }
 
@@ -47,6 +48,7 @@ pub enum MtgoDxgiCaptureRoleV2 {
 enum DxgiArtifactModeV2 {
     MainClient,
     SolitaireGame(String),
+    DuelGame(String),
     SpectatorGame(String),
 }
 
@@ -55,6 +57,7 @@ impl DxgiArtifactModeV2 {
         match self {
             Self::MainClient => MtgoDxgiCaptureRoleV2::Navigation,
             Self::SolitaireGame(_) => MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire,
+            Self::DuelGame(_) => MtgoDxgiCaptureRoleV2::ActingPlayerDuel,
             Self::SpectatorGame(_) => MtgoDxgiCaptureRoleV2::Spectator,
         }
     }
@@ -965,6 +968,10 @@ fn validate_header_v1(
                     validate_game_format_v2(format)?;
                     DxgiArtifactModeV2::SolitaireGame(format.to_owned())
                 }
+                (Some("duel_game"), Some("acting_player_duel"), Some(format)) => {
+                    validate_game_format_v2(format)?;
+                    DxgiArtifactModeV2::DuelGame(format.to_owned())
+                }
                 (Some("spectator_game"), Some("spectator"), Some(format)) => {
                     validate_game_format_v2(format)?;
                     DxgiArtifactModeV2::SpectatorGame(format.to_owned())
@@ -1324,6 +1331,16 @@ fn validate_visible_title_v2(
             })?;
             validate_participant_title_v2(participant, false)?;
         }
+        DxgiArtifactModeV2::DuelGame(format) => {
+            let prefix = format!("(1-on-1): {format}: Vs. ");
+            let opponent = title.strip_prefix(&prefix).ok_or_else(|| {
+                error_v1(
+                    "dxgi_artifact_window_title",
+                    "acting-player duel title does not match the exact format prefix",
+                )
+            })?;
+            validate_participant_title_v2(opponent, false)?;
+        }
         DxgiArtifactModeV2::SpectatorGame(format) => {
             let prefix = format!("(1-on-1): {format}: Vs. ");
             let participants = title.strip_prefix(&prefix).ok_or_else(|| {
@@ -1412,7 +1429,7 @@ fn validate_participant_title_v2(
     } else if participant_text.contains(',') {
         return Err(error_v1(
             "dxgi_artifact_window_title",
-            "Solitaire title must identify one visible participant",
+            "acting-player title must identify one visible participant",
         ));
     }
     Ok(())

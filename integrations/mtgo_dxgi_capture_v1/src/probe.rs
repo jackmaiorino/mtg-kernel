@@ -2982,9 +2982,10 @@ fn parse_cli() -> ProbeResult<CliV1> {
                     match value.as_str() {
                         "main_client" => CaptureWindowModeV2::MainClient,
                         "solitaire_game" => CaptureWindowModeV2::SolitaireGame,
+                        "duel_game" => CaptureWindowModeV2::DuelGame,
                         "spectator_game" => CaptureWindowModeV2::SpectatorGame,
                         _ => return Err(
-                            "window mode must be main_client, solitaire_game, or spectator_game"
+                            "window mode must be main_client, solitaire_game, duel_game, or spectator_game"
                                 .to_owned(),
                         ),
                     }
@@ -3048,7 +3049,9 @@ fn validate_capture_request_v3(request: &MtgoDxgiCaptureRequestV3) -> ProbeResul
         CaptureWindowModeV2::MainClient if request.expected_game_format.is_some() => {
             Err("main-client mode cannot declare an expected game format".to_owned())
         }
-        CaptureWindowModeV2::SolitaireGame | CaptureWindowModeV2::SpectatorGame
+        CaptureWindowModeV2::SolitaireGame
+        | CaptureWindowModeV2::DuelGame
+        | CaptureWindowModeV2::SpectatorGame
             if request.expected_game_format.is_none() =>
         {
             Err("game window mode requires an expected game format".to_owned())
@@ -4034,6 +4037,13 @@ mod tests {
         let mut valid_game = request(CaptureWindowModeV2::SolitaireGame);
         valid_game.expected_game_format = Some("Freeform".to_owned());
         assert!(validate_capture_request_v3(&valid_game).is_ok());
+
+        let mut valid_duel = request(CaptureWindowModeV2::DuelGame);
+        valid_duel.expected_game_format = Some("Freeform".to_owned());
+        assert!(validate_capture_request_v3(&valid_duel).is_ok());
+
+        let missing_duel_format = request(CaptureWindowModeV2::DuelGame);
+        assert!(validate_capture_request_v3(&missing_duel_format).is_err());
 
         let mut bad_timeout = request(CaptureWindowModeV2::MainClient);
         bad_timeout.timeout_ms = 99;

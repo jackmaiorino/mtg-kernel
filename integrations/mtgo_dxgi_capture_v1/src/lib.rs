@@ -82,6 +82,7 @@ pub use probe::{
 pub enum CaptureWindowModeV2 {
     MainClient,
     SolitaireGame,
+    DuelGame,
     SpectatorGame,
 }
 
@@ -90,6 +91,7 @@ impl CaptureWindowModeV2 {
         match self {
             Self::MainClient => "main_client",
             Self::SolitaireGame => "solitaire_game",
+            Self::DuelGame => "duel_game",
             Self::SpectatorGame => "spectator_game",
         }
     }
@@ -98,6 +100,7 @@ impl CaptureWindowModeV2 {
         match self {
             Self::MainClient => "navigation",
             Self::SolitaireGame => "acting_player_solitaire",
+            Self::DuelGame => "acting_player_duel",
             Self::SpectatorGame => "spectator",
         }
     }
@@ -127,6 +130,14 @@ pub fn validate_visible_mtgo_title_v2(
                 .strip_prefix(&prefix)
                 .ok_or("Solitaire title does not match the exact format prefix")?;
             validate_participant_text_v2(participant, false)?;
+        }
+        CaptureWindowModeV2::DuelGame => {
+            let format = validate_game_format_v2(expected_game_format)?;
+            let prefix = format!("(1-on-1): {format}: Vs. ");
+            let opponent = title
+                .strip_prefix(&prefix)
+                .ok_or("acting-player duel title does not match the exact format prefix")?;
+            validate_participant_text_v2(opponent, false)?;
         }
         CaptureWindowModeV2::SpectatorGame => {
             let format = validate_game_format_v2(expected_game_format)?;
@@ -186,7 +197,7 @@ fn validate_participant_text_v2(value: &str, require_comma: bool) -> Result<(), 
             return Err("spectator title must contain exactly two visible participants");
         }
     } else if participant_text.contains(',') {
-        return Err("Solitaire title must identify one visible participant");
+        return Err("acting-player title must identify one visible participant");
     }
     Ok(())
 }
@@ -453,6 +464,39 @@ mod tests {
             CaptureWindowModeV2::SpectatorGame,
             Some("Standard"),
             "(1-on-1): Standard: Vs. player-one"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn acting_player_duel_title_requires_exact_format_and_one_opponent() {
+        assert_eq!(CaptureWindowModeV2::DuelGame.manifest_name(), "duel_game");
+        assert_eq!(
+            CaptureWindowModeV2::DuelGame.capture_role(),
+            "acting_player_duel"
+        );
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::DuelGame,
+            Some("Freeform"),
+            "(1-on-1): Freeform: Vs. opponent-name Match #123 - Game #456"
+        )
+        .is_ok());
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::DuelGame,
+            Some("Standard"),
+            "(1-on-1): Freeform: Vs. opponent-name"
+        )
+        .is_err());
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::DuelGame,
+            Some("Freeform"),
+            "(1-on-1): Freeform: Vs. local-player, opponent-name"
+        )
+        .is_err());
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::DuelGame,
+            None,
+            "(1-on-1): Freeform: Vs. opponent-name"
         )
         .is_err());
     }

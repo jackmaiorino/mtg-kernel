@@ -43,6 +43,26 @@ fn production_source_uses_composed_desktop_and_excludes_hidden_or_input_apis() {
 }
 
 #[test]
+fn acting_player_duel_mode_is_role_explicit_and_still_non_actionable() {
+    let library = include_str!("../src/lib.rs");
+    let probe = include_str!("../src/probe.rs");
+    for required in [
+        "CaptureWindowModeV2::DuelGame",
+        "\"duel_game\"",
+        "\"acting_player_duel\"",
+        "safe_for_semantic_evidence: false",
+        "safe_for_ocr: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+    ] {
+        assert!(
+            library.contains(required) || probe.contains(required),
+            "acting-player duel boundary is missing: {required}"
+        );
+    }
+}
+
+#[test]
 fn public_measurement_consumes_only_the_opaque_frame_and_keeps_parts_private() {
     let source = include_str!("../src/probe.rs");
     assert!(source.contains(
