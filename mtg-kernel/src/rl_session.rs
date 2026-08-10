@@ -5376,6 +5376,44 @@ impl FastActorSessionV1 {
         FastActorSessionV1,
         crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1,
     > {
+        self.kernel_search_redeterminized_clone_core_v1(simulation_seed, |_state, _actor| {})
+    }
+
+    /// Test-only entry to the same boundary as
+    /// [`Self::kernel_search_redeterminized_clone_v1`]. `corruption` runs
+    /// once, after the honest hidden-zone resample and before the
+    /// rebuild-and-compare admission check, so it can manufacture a genuine
+    /// post-redetermination mismatch for adversarial tests of that check.
+    /// This function does not exist outside `cfg(test)`; no production call
+    /// site can construct a corrupting closure, so no production path can
+    /// reach it.
+    #[cfg(test)]
+    pub(crate) fn kernel_search_redeterminized_clone_for_test_v1(
+        &self,
+        simulation_seed: u64,
+        corruption: impl FnOnce(&mut crate::state::GameState, PlayerId),
+    ) -> Result<
+        FastActorSessionV1,
+        crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1,
+    > {
+        self.kernel_search_redeterminized_clone_core_v1(simulation_seed, corruption)
+    }
+
+    /// Shared implementation behind
+    /// [`Self::kernel_search_redeterminized_clone_v1`] and its test-only
+    /// sibling above. `post_redetermination_hook` is called once, after
+    /// `redeterminize_hidden_zones_v1` and before the rebuild that produces
+    /// `after_observation` / `after_semantics` / `after_binding`. The
+    /// production wrapper always passes a no-op closure, so this is
+    /// byte-for-byte the same admission logic production runs.
+    fn kernel_search_redeterminized_clone_core_v1(
+        &self,
+        simulation_seed: u64,
+        post_redetermination_hook: impl FnOnce(&mut crate::state::GameState, PlayerId),
+    ) -> Result<
+        FastActorSessionV1,
+        crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1,
+    > {
         use crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1;
 
         if self.flat_action_contract_mode != FlatActionContractModeV1::V2 {
@@ -5401,6 +5439,7 @@ impl FastActorSessionV1 {
             actor,
             simulation_seed,
         )?;
+        post_redetermination_hook(&mut sampled.state, actor);
 
         let mut refreshed = sampled
             .current

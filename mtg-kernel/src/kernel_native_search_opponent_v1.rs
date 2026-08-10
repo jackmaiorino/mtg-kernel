@@ -37,8 +37,12 @@ pub const KERNEL_NATIVE_SEARCH_EVALUATOR_IDENTITY_V1: &str =
 pub const KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1: u16 = 64;
 
 /// Compile-bound seed authority for the first throughput and calibration
-/// panels. Record validation independently checks its embedded `action_seed`;
-/// the two checks are intentionally not collapsed into one inference.
+/// panels. `KernelNativeSearchAuthorityV1::validate` checks the embedded
+/// `action_seed` against this array with a single `.contains()` check; that
+/// one structural check is re-run at every call site that accepts an
+/// authority (construction, digest, and the start of every action
+/// selection), a temporal re-verification of one compile-bound check, not
+/// two distinct checks.
 pub const KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1: [u64; 4] =
     [1_987_001, 1_988_001, 1_989_001, 1_990_001];
 
@@ -1323,6 +1327,49 @@ mod tests {
         for key in ["rng", "environment_randomization_v2"] {
             assert_eq!(randomness_before.get(key), randomness_after.get(key));
         }
+    }
+
+    #[test]
+    fn redeterminized_clone_rejects_a_genuine_post_redetermination_hand_corruption() {
+        // Every other tamper test in this module attacks the authority level
+        // (seed, budget, revision). This test manufactures a real mismatch
+        // inside the boundary's own rebuilt observation/semantics so the
+        // HiddenStateContract rejection in
+        // `kernel_search_redeterminized_clone_v1` actually fires, using the
+        // cfg(test)-only corruption hook to perturb one card identity in the
+        // acting player's own hand after the honest hidden-zone resample
+        // (`redeterminize_hidden_zones_v1`) has already run. The acting
+        // player's own hand is never touched by that resample, so this
+        // corruption is not something legitimate redetermination could ever
+        // produce; the boundary must still catch it before returning the
+        // sample.
+        let session = v2_session_v1("Rally", "Burn", 93_001);
+        let response = session.current_response();
+        let hash = session.privileged_core_environment_hash();
+
+        let corrupted =
+            session.kernel_search_redeterminized_clone_for_test_v1(123_789, |state, actor| {
+                let &hand_object = state.players[actor.index()]
+                    .hand
+                    .first()
+                    .expect("acting player holds at least one card at game start");
+                let object = state.objects.get_mut(hand_object);
+                let corrupted_def = (object.card_def + 1) % CARD_DEFS.len() as u16;
+                object.card_def = corrupted_def;
+                object.name = CARD_DEFS[corrupted_def as usize].name.to_string();
+                object.v4 = ObjectStateV4::from_card_def(corrupted_def);
+            });
+        match corrupted {
+            Err(err) => assert_eq!(err, KernelNativeSearchErrorV1::HiddenStateContract),
+            Ok(_) => {
+                panic!("a post-redetermination hand corruption must be rejected, not admitted")
+            }
+        }
+
+        // The rejected sample must never have touched the authoritative
+        // episode: the boundary operates on `self.clone()`.
+        assert_eq!(session.current_response(), response);
+        assert_eq!(session.privileged_core_environment_hash(), hash);
     }
 
     #[test]
