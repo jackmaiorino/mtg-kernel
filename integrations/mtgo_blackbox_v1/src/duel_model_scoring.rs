@@ -92,6 +92,14 @@ impl CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1 {
     pub fn permits_match_entry(&self) -> bool {
         false
     }
+
+    pub(crate) fn validated_decision_v1(&self) -> &crate::ValidatedMtgoObservedDecisionV1 {
+        self.candidate.validated_decision_v1()
+    }
+
+    pub(crate) fn base_selection_v1(&self) -> &CheckedUntrustedMtgoModelSelectionV1 {
+        &self.selection
+    }
 }
 
 /// Scores one exact source-bound acting-player duel decision through the
@@ -150,54 +158,75 @@ pub fn score_and_select_profile_bound_duel_candidate_v1<S: MtgoExternalObservati
 }
 
 #[cfg(test)]
+pub(crate) struct DeterministicProfileBoundTestScorerV1 {
+    pub corrupt_request_commitment: bool,
+}
+
+#[cfg(test)]
+impl MtgoExternalObservationScorerV1 for DeterministicProfileBoundTestScorerV1 {
+    fn score_observation_v1(
+        &mut self,
+        request: &crate::MtgoExternalScoringRequestV1,
+        _observation: &mtg_kernel::rl::ObservationV5,
+        ordered_legal_actions: &[ActionSemanticV1],
+    ) -> Result<crate::MtgoExternalModelScoreResponseV1, MtgoContractErrorV1> {
+        let mut request_commitment_sha256 = crate::scoring_request_commitment_v1(request)?;
+        if self.corrupt_request_commitment {
+            let replacement = if request_commitment_sha256.starts_with('0') {
+                "1"
+            } else {
+                "0"
+            };
+            request_commitment_sha256.replace_range(0..1, replacement);
+        }
+        Ok(crate::MtgoExternalModelScoreResponseV1 {
+            schema_version: crate::MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
+            request_commitment_sha256,
+            logits_f32_bits: (0..ordered_legal_actions.len())
+                .map(|index| (index as f32).to_bits())
+                .collect(),
+            value_f32_bits: 0.25_f32.to_bits(),
+        })
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn profile_bound_duel_model_selection_for_test_v1(
+) -> CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1 {
+    let payload = crate::duel_perception_runtime_profile_payload_for_test_v1();
+    let candidate_profile =
+        crate::check_untrusted_duel_perception_runtime_profile_v1(payload.clone()).unwrap();
+    let candidate =
+        crate::checked_untrusted_dxgi_decision_candidate_for_test_v1(&candidate_profile);
+    let admitted = crate::duel_perception_profile_admitted_for_test_v1(
+        crate::check_untrusted_duel_perception_runtime_profile_v1(payload).unwrap(),
+    );
+    let deployment: MtgoExpectedModelDeploymentV1 = serde_json::from_str(include_str!(
+        "../fixtures/provisional_promoted2_mtgo_deployment_20260810_v1.json"
+    ))
+    .unwrap();
+    let mut scorer = DeterministicProfileBoundTestScorerV1 {
+        corrupt_request_commitment: false,
+    };
+    score_and_select_profile_bound_duel_candidate_v1(candidate, &admitted, &deployment, &mut scorer)
+        .unwrap()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         build_external_scoring_request_v1, check_untrusted_duel_perception_runtime_profile_v1,
         checked_untrusted_dxgi_decision_candidate_for_test_v1,
         duel_perception_profile_admitted_for_test_v1,
-        duel_perception_runtime_profile_payload_for_test_v1, scoring_request_commitment_v1,
-        MtgoExternalModelScoreResponseV1, MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
+        duel_perception_runtime_profile_payload_for_test_v1,
     };
-    use mtg_kernel::rl::ObservationV5;
 
     fn deployment_v1() -> MtgoExpectedModelDeploymentV1 {
         serde_json::from_str(include_str!(
             "../fixtures/provisional_promoted2_mtgo_deployment_20260810_v1.json"
         ))
         .unwrap()
-    }
-
-    struct DeterministicScorerV1 {
-        corrupt_request_commitment: bool,
-    }
-
-    impl MtgoExternalObservationScorerV1 for DeterministicScorerV1 {
-        fn score_observation_v1(
-            &mut self,
-            request: &crate::MtgoExternalScoringRequestV1,
-            _observation: &ObservationV5,
-            ordered_legal_actions: &[ActionSemanticV1],
-        ) -> Result<MtgoExternalModelScoreResponseV1, MtgoContractErrorV1> {
-            let mut request_commitment_sha256 = scoring_request_commitment_v1(request)?;
-            if self.corrupt_request_commitment {
-                let replacement = if request_commitment_sha256.starts_with('0') {
-                    "1"
-                } else {
-                    "0"
-                };
-                request_commitment_sha256.replace_range(0..1, replacement);
-            }
-            let logits_f32_bits = (0..ordered_legal_actions.len())
-                .map(|index| (index as f32).to_bits())
-                .collect();
-            Ok(MtgoExternalModelScoreResponseV1 {
-                schema_version: MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
-                request_commitment_sha256,
-                logits_f32_bits,
-                value_f32_bits: 0.25_f32.to_bits(),
-            })
-        }
     }
 
     #[test]
@@ -211,7 +240,7 @@ mod tests {
         );
         let deployment = deployment_v1();
         let expected_deployment_commitment = model_deployment_commitment_v1(&deployment).unwrap();
-        let mut scorer = DeterministicScorerV1 {
+        let mut scorer = DeterministicProfileBoundTestScorerV1 {
             corrupt_request_commitment: false,
         };
         let selected = score_and_select_profile_bound_duel_candidate_v1(
@@ -259,7 +288,7 @@ mod tests {
             check_untrusted_duel_perception_runtime_profile_v1(different_payload).unwrap(),
         );
         let deployment = deployment_v1();
-        let mut scorer = DeterministicScorerV1 {
+        let mut scorer = DeterministicProfileBoundTestScorerV1 {
             corrupt_request_commitment: false,
         };
         assert_eq!(
@@ -281,7 +310,7 @@ mod tests {
         let admitted = duel_perception_profile_admitted_for_test_v1(
             check_untrusted_duel_perception_runtime_profile_v1(payload).unwrap(),
         );
-        let mut scorer = DeterministicScorerV1 {
+        let mut scorer = DeterministicProfileBoundTestScorerV1 {
             corrupt_request_commitment: true,
         };
         assert_eq!(

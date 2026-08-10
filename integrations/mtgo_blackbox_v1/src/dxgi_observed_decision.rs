@@ -251,7 +251,7 @@ pub(crate) fn dxgi_observed_decision_record_for_test_v1(
         .map(|leaf| MtgoLeafProvenanceV1 {
             json_pointer: leaf.json_pointer,
             value_sha256: leaf.value_sha256,
-            evidence_ids: vec![20],
+            evidence_ids: vec![20, 30, 40, 50],
             confidence_bps: 10_000,
         })
         .collect();
@@ -294,6 +294,48 @@ pub(crate) fn dxgi_observed_decision_record_for_test_v1(
                 source: MtgoEvidenceSourceV1::DerivedPublicFact {
                     parent_evidence_ids: vec![10],
                     derivation: MtgoPublicDerivationV1::PublicStateProjection,
+                },
+            },
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 30,
+                sequence: sequence + 2,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 1,
+                    rect: MtgoRectPxV1 {
+                        x: 10,
+                        y: 10,
+                        width: 100,
+                        height: 40,
+                    },
+                    content_sha256: "6".repeat(64),
+                },
+            },
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 40,
+                sequence: sequence + 3,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 1,
+                    rect: MtgoRectPxV1 {
+                        x: 120,
+                        y: 10,
+                        width: 80,
+                        height: 40,
+                    },
+                    content_sha256: "7".repeat(64),
+                },
+            },
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 50,
+                sequence: sequence + 4,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 1,
+                    rect: MtgoRectPxV1 {
+                        x: 210,
+                        y: 10,
+                        width: 80,
+                        height: 40,
+                    },
+                    content_sha256: "8".repeat(64),
                 },
             },
         ],

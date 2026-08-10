@@ -1,6 +1,7 @@
 use crate::{
-    CheckedUntrustedMtgoModelSelectionV1, MtgoContractErrorV1, MtgoEvidenceSourceV1, MtgoRectPxV1,
-    ValidatedMtgoObservedDecisionV1, MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1,
+    CheckedUntrustedMtgoModelSelectionV1, CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
+    MtgoContractErrorV1, MtgoEvidenceSourceV1, MtgoRectPxV1, ValidatedMtgoObservedDecisionV1,
+    MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1,
 };
 use mtg_kernel::rl::ActionSemanticV1;
 use serde::{Deserialize, Serialize};
@@ -10,6 +11,8 @@ use std::collections::HashSet;
 pub const MTGO_VISIBLE_ACTION_CONTROL_SET_SCHEMA_V1: u32 = 1;
 
 const RESOLUTION_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-visible-action-resolution-v1";
+const PROFILE_BOUND_RESOLUTION_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-profile-bound-visible-action-resolution-v1";
 const MAX_VISIBLE_CONTROLS_V1: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -107,6 +110,71 @@ impl CheckedUntrustedMtgoResolvedActionControlV1 {
     #[allow(dead_code)]
     pub(crate) fn rect_client_px(&self) -> &MtgoRectPxV1 {
         &self.rect_client_px
+    }
+}
+
+/// One current-frame visible control resolved from a source-bound,
+/// admitted-profile model selection. The complete source, profile, model, and
+/// control chain remains owned and move-only, while the control rectangle
+/// stays private.
+///
+/// This result remains checked-untrusted because the offline crate does not
+/// possess the opaque in-process DXGI frame. It cannot authorize input or
+/// competitive entry.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoProfileBoundResolvedActionControlV1;
+/// fn cannot_input(value: &CheckedUntrustedMtgoProfileBoundResolvedActionControlV1) {
+///     let _ = value.rect_client_px();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct CheckedUntrustedMtgoProfileBoundResolvedActionControlV1 {
+    selection: CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
+    resolved: CheckedUntrustedMtgoResolvedActionControlV1,
+    profile_bound_resolution_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoProfileBoundResolvedActionControlV1 {
+    pub fn source_candidate_commitment_sha256(&self) -> &str {
+        self.selection.source_candidate_commitment_sha256()
+    }
+
+    pub fn perception_profile_admission_commitment_sha256(&self) -> &str {
+        self.selection
+            .perception_profile_admission_commitment_sha256()
+    }
+
+    pub fn deployment_commitment_sha256(&self) -> &str {
+        self.selection.deployment_commitment_sha256()
+    }
+
+    pub fn selected_semantic(&self) -> &ActionSemanticV1 {
+        self.selection.selected_semantic()
+    }
+
+    pub fn control_id(&self) -> &str {
+        self.resolved.control_id()
+    }
+
+    pub fn frame_id(&self) -> u64 {
+        self.resolved.frame_id()
+    }
+
+    pub fn frame_sequence(&self) -> u64 {
+        self.resolved.frame_sequence()
+    }
+
+    pub fn profile_bound_resolution_commitment_sha256(&self) -> &str {
+        &self.profile_bound_resolution_commitment_sha256
+    }
+
+    pub fn safe_for_live_input(&self) -> bool {
+        false
+    }
+
+    pub fn permits_match_entry(&self) -> bool {
+        false
     }
 }
 
@@ -256,6 +324,39 @@ pub fn resolve_selected_visible_control_v1(
     })
 }
 
+pub fn resolve_profile_bound_selected_visible_control_v1(
+    selection: CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
+    control_set: MtgoVisibleActionControlSetV1,
+) -> Result<CheckedUntrustedMtgoProfileBoundResolvedActionControlV1, MtgoContractErrorV1> {
+    let resolved = resolve_selected_visible_control_v1(
+        selection.validated_decision_v1(),
+        selection.base_selection_v1(),
+        control_set,
+    )?;
+    let mut hasher = Sha256::new();
+    hasher.update(PROFILE_BOUND_RESOLUTION_COMMITMENT_DOMAIN_V1);
+    for part in [
+        selection
+            .profile_bound_selection_commitment_sha256()
+            .as_bytes(),
+        resolved.resolution_commitment_sha256().as_bytes(),
+        selection.source_candidate_commitment_sha256().as_bytes(),
+        selection
+            .perception_profile_admission_commitment_sha256()
+            .as_bytes(),
+        selection.deployment_commitment_sha256().as_bytes(),
+        b"checked_untrusted_coordinates_private_no_input_or_event_entry",
+    ] {
+        hasher.update((part.len() as u64).to_le_bytes());
+        hasher.update(part);
+    }
+    Ok(CheckedUntrustedMtgoProfileBoundResolvedActionControlV1 {
+        selection,
+        resolved,
+        profile_bound_resolution_commitment_sha256: format!("{:x}", hasher.finalize()),
+    })
+}
+
 fn exact_current_frame_region_v1<'a>(
     decision: &'a ValidatedMtgoObservedDecisionV1,
     evidence_id: u64,
@@ -308,4 +409,89 @@ fn validate_safe_identifier_v1(value: &str, code: &'static str) -> Result<(), Mt
         return Err(MtgoContractErrorV1::new(code, value));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod profile_bound_tests {
+    use super::*;
+    use crate::profile_bound_duel_model_selection_for_test_v1;
+
+    fn control_set_v1(
+        selection: &CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
+    ) -> MtgoVisibleActionControlSetV1 {
+        let decision = selection.validated_decision_v1();
+        MtgoVisibleActionControlSetV1 {
+            schema_version: MTGO_VISIBLE_ACTION_CONTROL_SET_SCHEMA_V1,
+            decision_commitment_sha256: decision.decision_commitment_sha256().to_owned(),
+            frame_id: decision.frame_id(),
+            frame_sequence: decision.frame_sequence(),
+            prompt_frame_region_evidence_id: 30,
+            prompt_reconciled: true,
+            candidate_set_complete: true,
+            controls: vec![
+                MtgoVisibleActionControlCandidateV1 {
+                    control_id: "priority-pass".to_owned(),
+                    control_kind: MtgoVisibleControlKindV1::PhaseButton,
+                    frame_region_evidence_id: 40,
+                    semantic: decision.legal_actions()[0].clone(),
+                    confidence_bps: 10_000,
+                    visibly_enabled: true,
+                },
+                MtgoVisibleActionControlCandidateV1 {
+                    control_id: "hand-land-0".to_owned(),
+                    control_kind: MtgoVisibleControlKindV1::Card,
+                    frame_region_evidence_id: 50,
+                    semantic: decision.legal_actions()[1].clone(),
+                    confidence_bps: 10_000,
+                    visibly_enabled: true,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn profile_bound_selection_resolves_one_current_control_without_input_authority() {
+        let selection = profile_bound_duel_model_selection_for_test_v1();
+        let control_set = control_set_v1(&selection);
+        let resolved =
+            resolve_profile_bound_selected_visible_control_v1(selection, control_set).unwrap();
+        assert_eq!(resolved.control_id(), "hand-land-0");
+        assert!(matches!(
+            resolved.selected_semantic(),
+            ActionSemanticV1::PlayLand { .. }
+        ));
+        assert_eq!(resolved.frame_id(), 1);
+        assert!(resolved.frame_sequence() > 0);
+        assert_eq!(
+            resolved.profile_bound_resolution_commitment_sha256().len(),
+            64
+        );
+        assert!(!resolved.safe_for_live_input());
+        assert!(!resolved.permits_match_entry());
+    }
+
+    #[test]
+    fn stale_or_ambiguous_profile_bound_control_set_rejects() {
+        let selection = profile_bound_duel_model_selection_for_test_v1();
+        let mut stale = control_set_v1(&selection);
+        stale.frame_sequence += 1;
+        assert_eq!(
+            resolve_profile_bound_selected_visible_control_v1(selection, stale)
+                .err()
+                .unwrap()
+                .code(),
+            "visible_control_set_stale_frame"
+        );
+
+        let selection = profile_bound_duel_model_selection_for_test_v1();
+        let mut ambiguous = control_set_v1(&selection);
+        ambiguous.controls[0].semantic = ambiguous.controls[1].semantic.clone();
+        assert_eq!(
+            resolve_profile_bound_selected_visible_control_v1(selection, ambiguous)
+                .err()
+                .unwrap()
+                .code(),
+            "visible_control_selected_match_count"
+        );
+    }
 }
