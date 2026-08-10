@@ -5,11 +5,13 @@
 
 #![forbid(unsafe_code)]
 
+mod calibration_trace;
 mod capture_contract;
 mod contract;
 mod mock;
 mod validation;
 
+pub use calibration_trace::*;
 pub use capture_contract::*;
 pub use contract::*;
 pub use mock::*;

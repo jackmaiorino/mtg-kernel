@@ -1,0 +1,330 @@
+use crate::{MtgoContractErrorV1, MtgoRectPxV1, MtgoSizePxV1};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::HashSet;
+
+pub const MTGO_PREGAME_CALIBRATION_TRACE_SCHEMA_V1: u32 = 1;
+
+const TRACE_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-pregame-calibration-trace-v1";
+const MAX_CLIENT_DIMENSION_V1: u32 = 16_384;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MtgoCalibrationPreviewStatusV1 {
+    PendingVisualReview,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MtgoCalibrationPreviewKindV1 {
+    #[serde(rename = "mtgo_visible_solitaire_gameplay_calibration_preview_v1")]
+    SolitaireGameplayCalibrationPreviewV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MtgoCalibrationCaptureRoleV1 {
+    ActingPlayerSolitaire,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCalibrationFrameReferenceV1 {
+    pub sequence: u64,
+    pub manifest_sha256: String,
+    pub frame_sha256: String,
+    pub client_size_px: MtgoSizePxV1,
+    pub artifact_kind: MtgoCalibrationPreviewKindV1,
+    pub capture_role: MtgoCalibrationCaptureRoleV1,
+    pub status: MtgoCalibrationPreviewStatusV1,
+    pub safe_for_semantic_evidence: bool,
+    pub safe_for_ocr: bool,
+    pub safe_for_policy_scoring: bool,
+    pub safe_for_input: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action_kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MtgoPregameActionSemanticV1 {
+    KeepOpeningHand,
+    Mulligan { next_hand_size: u8 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MtgoPregameVisibleChangeV1 {
+    PromptChanged,
+    PlayerCountsChanged,
+    VisibleGameLogChanged,
+    PhaseBarChanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleRegionCommitmentV1 {
+    pub rect_client_px: MtgoRectPxV1,
+    pub bgra8_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleRegionTransitionV1 {
+    pub change: MtgoPregameVisibleChangeV1,
+    pub rect_client_px: MtgoRectPxV1,
+    pub before_bgra8_sha256: String,
+    pub after_bgra8_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPregameCalibrationTraceV1 {
+    pub schema_version: u32,
+    pub trace_id: String,
+    pub before_frame: MtgoCalibrationFrameReferenceV1,
+    pub action: MtgoPregameActionSemanticV1,
+    pub action_control_before: MtgoVisibleRegionCommitmentV1,
+    pub after_frame: MtgoCalibrationFrameReferenceV1,
+    pub visible_postconditions: Vec<MtgoVisibleRegionTransitionV1>,
+}
+
+/// Structurally checked supervised calibration data.
+///
+/// This type proves only internal hash, geometry, and transition consistency. It
+/// does not prove that the source pixels were captured truthfully, that a label
+/// matches those pixels, or that any input is authorized. It intentionally has
+/// no region, pixel, evidence, policy, or input accessor.
+pub struct CheckedUntrustedMtgoPregameCalibrationV1 {
+    record: MtgoPregameCalibrationTraceV1,
+    transition_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoPregameCalibrationV1 {
+    pub fn action(&self) -> &MtgoPregameActionSemanticV1 {
+        &self.record.action
+    }
+
+    pub fn before_frame_sha256(&self) -> &str {
+        &self.record.before_frame.frame_sha256
+    }
+
+    pub fn after_frame_sha256(&self) -> &str {
+        &self.record.after_frame.frame_sha256
+    }
+
+    pub fn transition_commitment_sha256(&self) -> &str {
+        &self.transition_commitment_sha256
+    }
+}
+
+pub fn validate_pregame_calibration_trace_v1(
+    record: MtgoPregameCalibrationTraceV1,
+) -> Result<CheckedUntrustedMtgoPregameCalibrationV1, MtgoContractErrorV1> {
+    if record.schema_version != MTGO_PREGAME_CALIBRATION_TRACE_SCHEMA_V1 {
+        return Err(MtgoContractErrorV1::new(
+            "pregame_trace_schema_mismatch",
+            record.schema_version.to_string(),
+        ));
+    }
+    if record.trace_id.is_empty()
+        || record.trace_id.len() > 128
+        || !record
+            .trace_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(MtgoContractErrorV1::new(
+            "pregame_trace_id_invalid",
+            &record.trace_id,
+        ));
+    }
+
+    validate_frame_reference_v1(&record.before_frame)?;
+    validate_frame_reference_v1(&record.after_frame)?;
+    if record.before_frame.sequence >= record.after_frame.sequence {
+        return Err(MtgoContractErrorV1::new(
+            "pregame_trace_frame_order_invalid",
+            format!(
+                "before={},after={}",
+                record.before_frame.sequence, record.after_frame.sequence
+            ),
+        ));
+    }
+    if record.before_frame.client_size_px != record.after_frame.client_size_px {
+        return Err(MtgoContractErrorV1::new(
+            "pregame_trace_client_size_changed",
+            "before and after sizes differ",
+        ));
+    }
+    if record.before_frame.frame_sha256 == record.after_frame.frame_sha256
+        || record.before_frame.manifest_sha256 == record.after_frame.manifest_sha256
+    {
+        return Err(MtgoContractErrorV1::new(
+            "pregame_trace_source_did_not_change",
+            "before and after commitments must differ",
+        ));
+    }
+
+    if let MtgoPregameActionSemanticV1::Mulligan { next_hand_size } = record.action {
+        if next_hand_size > 6 {
+            return Err(MtgoContractErrorV1::new(
+                "pregame_trace_mulligan_hand_size_invalid",
+                next_hand_size.to_string(),
+            ));
+        }
+    }
+
+    validate_rect_v1(
+        &record.action_control_before.rect_client_px,
+        &record.before_frame.client_size_px,
+        "pregame_trace_action_control_invalid",
+    )?;
+    require_sha256_v1(
+        &record.action_control_before.bgra8_sha256,
+        "pregame_trace_action_control_hash_invalid",
+    )?;
+
+    if !(2..=8).contains(&record.visible_postconditions.len()) {
+        return Err(MtgoContractErrorV1::new(
+            "pregame_trace_postcondition_count_invalid",
+            record.visible_postconditions.len().to_string(),
+        ));
+    }
+    let mut changes = HashSet::new();
+    let mut rectangles = HashSet::new();
+    for postcondition in &record.visible_postconditions {
+        if !changes.insert(postcondition.change) {
+            return Err(MtgoContractErrorV1::new(
+                "pregame_trace_duplicate_visible_change",
+                format!("{:?}", postcondition.change),
+            ));
+        }
+        let rect = &postcondition.rect_client_px;
+        validate_rect_v1(
+            rect,
+            &record.before_frame.client_size_px,
+            "pregame_trace_postcondition_rect_invalid",
+        )?;
+        if !rectangles.insert((rect.x, rect.y, rect.width, rect.height)) {
+            return Err(MtgoContractErrorV1::new(
+                "pregame_trace_duplicate_postcondition_rect",
+                format!("{},{},{},{}", rect.x, rect.y, rect.width, rect.height),
+            ));
+        }
+        require_sha256_v1(
+            &postcondition.before_bgra8_sha256,
+            "pregame_trace_postcondition_hash_invalid",
+        )?;
+        require_sha256_v1(
+            &postcondition.after_bgra8_sha256,
+            "pregame_trace_postcondition_hash_invalid",
+        )?;
+        if postcondition.before_bgra8_sha256 == postcondition.after_bgra8_sha256 {
+            return Err(MtgoContractErrorV1::new(
+                "pregame_trace_postcondition_unchanged",
+                format!("{:?}", postcondition.change),
+            ));
+        }
+    }
+
+    let required_changes: &[MtgoPregameVisibleChangeV1] = match record.action {
+        MtgoPregameActionSemanticV1::KeepOpeningHand => &[
+            MtgoPregameVisibleChangeV1::PromptChanged,
+            MtgoPregameVisibleChangeV1::PlayerCountsChanged,
+            MtgoPregameVisibleChangeV1::VisibleGameLogChanged,
+            MtgoPregameVisibleChangeV1::PhaseBarChanged,
+        ],
+        MtgoPregameActionSemanticV1::Mulligan { .. } => &[
+            MtgoPregameVisibleChangeV1::PromptChanged,
+            MtgoPregameVisibleChangeV1::PlayerCountsChanged,
+            MtgoPregameVisibleChangeV1::VisibleGameLogChanged,
+        ],
+    };
+    for required in required_changes {
+        if !changes.contains(required) {
+            return Err(MtgoContractErrorV1::new(
+                "pregame_trace_required_postcondition_missing",
+                format!("{:?}", required),
+            ));
+        }
+    }
+
+    let encoded = serde_json::to_vec(&record).map_err(|error| {
+        MtgoContractErrorV1::new("pregame_trace_serialization_failed", error.to_string())
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(TRACE_COMMITMENT_DOMAIN_V1);
+    hasher.update((encoded.len() as u64).to_le_bytes());
+    hasher.update(&encoded);
+    let transition_commitment_sha256 = format!("{:x}", hasher.finalize());
+
+    Ok(CheckedUntrustedMtgoPregameCalibrationV1 {
+        record,
+        transition_commitment_sha256,
+    })
+}
+
+fn validate_frame_reference_v1(
+    frame: &MtgoCalibrationFrameReferenceV1,
+) -> Result<(), MtgoContractErrorV1> {
+    require_sha256_v1(
+        &frame.manifest_sha256,
+        "pregame_trace_manifest_hash_invalid",
+    )?;
+    require_sha256_v1(&frame.frame_sha256, "pregame_trace_frame_hash_invalid")?;
+    if frame.client_size_px.width == 0
+        || frame.client_size_px.height == 0
+        || frame.client_size_px.width > MAX_CLIENT_DIMENSION_V1
+        || frame.client_size_px.height > MAX_CLIENT_DIMENSION_V1
+    {
+        return Err(MtgoContractErrorV1::new(
+            "pregame_trace_client_size_invalid",
+            format!(
+                "{}x{}",
+                frame.client_size_px.width, frame.client_size_px.height
+            ),
+        ));
+    }
+    if frame.safe_for_semantic_evidence
+        || frame.safe_for_ocr
+        || frame.safe_for_policy_scoring
+        || frame.safe_for_input
+    {
+        return Err(MtgoContractErrorV1::new(
+            "pregame_trace_preview_claims_authority",
+            "calibration preview safety flags must all remain false",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_rect_v1(
+    rect: &MtgoRectPxV1,
+    size: &MtgoSizePxV1,
+    code: &'static str,
+) -> Result<(), MtgoContractErrorV1> {
+    let right = rect.x.checked_add(rect.width);
+    let bottom = rect.y.checked_add(rect.height);
+    if rect.width == 0
+        || rect.height == 0
+        || right.is_none()
+        || bottom.is_none()
+        || right.unwrap() > size.width
+        || bottom.unwrap() > size.height
+    {
+        return Err(MtgoContractErrorV1::new(
+            code,
+            format!("{},{},{},{}", rect.x, rect.y, rect.width, rect.height),
+        ));
+    }
+    Ok(())
+}
+
+fn require_sha256_v1(value: &str, code: &'static str) -> Result<(), MtgoContractErrorV1> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(MtgoContractErrorV1::new(code, value));
+    }
+    Ok(())
+}

@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "trace_id": "solitaire_keep_20260809_1954",
+  "before_frame": {
+    "sequence": 1,
+    "manifest_sha256": "b20ccd98e2427a08bbb74bb6359d845675df28a6bb90ce0cb00b0652bc9ccd83",
+    "frame_sha256": "775c348e5393d0c77ca839c5abad18cd672282c230fd40712fdd9f8015abf0cf",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "capture_role": "acting_player_solitaire",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "action": { "action_kind": "keep_opening_hand" },
+  "action_control_before": {
+    "rect_client_px": { "x": 115, "y": 153, "width": 58, "height": 32 },
+    "bgra8_sha256": "593ef87f26ab354df8187385c3d8cf647adfb74b3edb972b8bc3aa11c9f749dc"
+  },
+  "after_frame": {
+    "sequence": 2,
+    "manifest_sha256": "b35e5bf013d286ed48fc271015ac6bf15e24411b29f84d013b5627140e08e367",
+    "frame_sha256": "1258c6810a040b7c4a99cdac27ac8b6c5e1b28373cf05bf16e0c9ada7db40fa9",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "capture_role": "acting_player_solitaire",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "visible_postconditions": [
+    {
+      "change": "prompt_changed",
+      "rect_client_px": { "x": 10, "y": 32, "width": 200, "height": 165 },
+      "before_bgra8_sha256": "8bbf971ac1e2e5d8a4d58b9826116c18de5c22fed619985a6109ea9956dd6ad9",
+      "after_bgra8_sha256": "ee260b8c6441c33509b61380db95c028d970aae06d7d24e40be1c956b3bee6f9"
+    },
+    {
+      "change": "player_counts_changed",
+      "rect_client_px": { "x": 100, "y": 205, "width": 87, "height": 42 },
+      "before_bgra8_sha256": "fbac5b8f8ebc19fe72a8a4d72c4d8041094a34bb1601df98261a83ca1e60eb04",
+      "after_bgra8_sha256": "53e2d08a11cc8fdb07bde72ffb87d855e28b227da848332dbd0dff4cd63a30a0"
+    },
+    {
+      "change": "visible_game_log_changed",
+      "rect_client_px": { "x": 1168, "y": 72, "width": 371, "height": 245 },
+      "before_bgra8_sha256": "3c6520f70b09c81d31b16203b3f28f677ad5f130bedf9a4f8fe40f20dc8470a8",
+      "after_bgra8_sha256": "c092928164a9459ac16c54ce086908b7c15915d34d68244e81abe6c1158dbf7f"
+    },
+    {
+      "change": "phase_bar_changed",
+      "rect_client_px": { "x": 310, "y": 695, "width": 851, "height": 35 },
+      "before_bgra8_sha256": "f4d9a6530bbe7422a340819be0a5fb1d499df9d32825f9dcc97962fd7350b0c8",
+      "after_bgra8_sha256": "afcf18f8dbee5592aa7cebbadcedd04712554e11ed4146909f049e65c316c56e"
+    }
+  ]
+}

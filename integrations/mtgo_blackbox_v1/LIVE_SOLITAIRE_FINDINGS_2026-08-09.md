@@ -34,6 +34,27 @@ The strict acting-player preview is outside the repository at `D:\mtgo-solitaire
 
 The manifest remains `pending_visual_review`. `safe_for_ocr`, `safe_for_semantic_evidence`, `safe_for_policy_scoring`, and `safe_for_input` are all `false`.
 
+## Supervised Keep transition
+
+The initial game window closed without an input after remaining at the opening prompt while offline engineering work ran. A second one-player, buddies-only, no-watchers game was created. One manual Keep click was then bracketed by fresh strict previews:
+
+| State | Capture | Frame SHA-256 |
+| --- | --- | --- |
+| Before Keep | `D:\mtgo-solitaire-before-keep-strict-20260809-1954` | `775C348E5393D0C77CA839C5ABAD18CD672282C230FD40712FDD9F8015ABF0CF` |
+| After Keep | `D:\mtgo-solitaire-after-keep-strict-20260809-1955` | `1258C6810A040B7C4A99CDAC27AC8B6C5E1B28373CF05BF16E0C9ADA7DB40FA9` |
+
+The visible postcondition was unambiguous:
+
+- The prompt changed from Keep or Mulligan to first-main-phase guidance with a Combat button.
+- The hand count changed from 7 to 8.
+- The library count changed from 273 to 272.
+- The phase bar advanced to Main.
+- The visible game log added the opening-hand, turn, and draw lines.
+
+The digest-only fixture is `fixtures/solitaire_keep_transition_v1.json`. Its region hashes use domain-separated, top-down BGRA8 pixels from the two preview PNGs. The Rust validator checks source ordering, geometry, distinct hashes, required visible-change categories, strict JSON, and the continued absence of OCR, scoring, evidence, or input authority.
+
+The current kernel `ActionSemanticV1` does not contain Keep or Mulligan. The trace therefore uses a separate adapter-only pregame semantic and makes no claim that the RL model can score mulligan decisions.
+
 ## Visible layout observations
 
 - The current decision is explicit in the upper-left prompt: keep seven cards or mulligan to six.
