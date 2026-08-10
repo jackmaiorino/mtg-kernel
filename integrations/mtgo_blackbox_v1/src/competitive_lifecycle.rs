@@ -118,6 +118,30 @@ impl CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1 {
     pub fn snapshot_commitment_sha256(&self) -> &str {
         &self.snapshot_commitment_sha256
     }
+
+    pub(crate) fn frame_id_v1(&self) -> u64 {
+        self.snapshot.frame_id
+    }
+
+    pub(crate) fn frame_sha256_v1(&self) -> &str {
+        &self.snapshot.frame_sha256
+    }
+
+    pub(crate) fn client_bounds_v1(&self) -> &MtgoRectPxV1 {
+        &self.snapshot.client_bounds
+    }
+
+    pub(crate) fn event_identity_sha256_v1(&self) -> Option<&str> {
+        self.snapshot.event_identity_sha256.as_deref()
+    }
+
+    pub(crate) fn match_identity_sha256_v1(&self) -> Option<&str> {
+        self.snapshot.match_identity_sha256.as_deref()
+    }
+
+    pub(crate) fn game_number_v1(&self) -> Option<u8> {
+        self.snapshot.game_number
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -128,6 +128,22 @@ impl CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1 {
     pub fn permits_match_entry(&self) -> bool {
         false
     }
+
+    pub(crate) fn source_frame_id_v1(&self) -> u64 {
+        self.resolution.frame_id()
+    }
+
+    pub(crate) fn source_frame_sequence_v1(&self) -> u64 {
+        self.resolution.frame_sequence()
+    }
+
+    pub(crate) fn source_frame_sha256_v1(&self) -> &str {
+        &self.source_frame_sha256
+    }
+
+    pub(crate) fn source_client_size_px_v1(&self) -> &MtgoSizePxV1 {
+        &self.source_client_size_px
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
