@@ -2,6 +2,120 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureWindowModeV2 {
+    MainClient,
+    SolitaireGame,
+    SpectatorGame,
+}
+
+impl CaptureWindowModeV2 {
+    pub fn manifest_name(self) -> &'static str {
+        match self {
+            Self::MainClient => "main_client",
+            Self::SolitaireGame => "solitaire_game",
+            Self::SpectatorGame => "spectator_game",
+        }
+    }
+
+    pub fn capture_role(self) -> &'static str {
+        match self {
+            Self::MainClient => "navigation",
+            Self::SolitaireGame => "acting_player_solitaire",
+            Self::SpectatorGame => "spectator",
+        }
+    }
+}
+
+pub fn validate_visible_mtgo_title_v2(
+    mode: CaptureWindowModeV2,
+    expected_game_format: Option<&str>,
+    title: &str,
+) -> Result<(), &'static str> {
+    if title.is_empty() || title.len() > 1_024 || title.chars().any(char::is_control) {
+        return Err("window title is empty, too long, or contains control characters");
+    }
+    match mode {
+        CaptureWindowModeV2::MainClient => {
+            if expected_game_format.is_some() {
+                return Err("main-client mode cannot declare a game format");
+            }
+            if !title.contains("Magic: The Gathering Online") {
+                return Err("main-client title does not identify Magic: The Gathering Online");
+            }
+        }
+        CaptureWindowModeV2::SolitaireGame => {
+            let format = validate_game_format_v2(expected_game_format)?;
+            let prefix = format!("(Solitaire): {format}: Vs. ");
+            let participant = title
+                .strip_prefix(&prefix)
+                .ok_or("Solitaire title does not match the exact format prefix")?;
+            validate_participant_text_v2(participant, false)?;
+        }
+        CaptureWindowModeV2::SpectatorGame => {
+            let format = validate_game_format_v2(expected_game_format)?;
+            let prefix = format!("(1-on-1): {format}: Vs. ");
+            let participants = title
+                .strip_prefix(&prefix)
+                .ok_or("spectator title does not match the exact format prefix")?;
+            validate_participant_text_v2(participants, true)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_game_format_v2(value: Option<&str>) -> Result<&str, &'static str> {
+    let value = value.ok_or("game mode requires an expected format")?;
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'-'))
+    {
+        return Err("expected game format is not a safe visible label");
+    }
+    Ok(value)
+}
+
+fn validate_participant_text_v2(value: &str, require_comma: bool) -> Result<(), &'static str> {
+    if value.is_empty() || value.len() > 512 {
+        return Err("participant title text is empty or too long");
+    }
+    let participant_text = if let Some((participants, identity)) = value.split_once(" Match #") {
+        let (match_id, game_id) = identity
+            .split_once(" - Game #")
+            .ok_or("visible match title suffix is malformed")?;
+        if match_id.is_empty()
+            || game_id.is_empty()
+            || !match_id.bytes().all(|byte| byte.is_ascii_digit())
+            || !game_id.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return Err("visible match and game IDs must be decimal integers");
+        }
+        participants
+    } else {
+        if value.contains('#') {
+            return Err("visible match title suffix is malformed");
+        }
+        value
+    };
+    if participant_text.trim() != participant_text || participant_text.is_empty() {
+        return Err("participant title text has invalid surrounding whitespace");
+    }
+    if require_comma {
+        let (left, right) = participant_text
+            .split_once(',')
+            .ok_or("spectator title must visibly identify two participants")?;
+        if left.trim().is_empty() || right.trim().is_empty() || right.contains(',') {
+            return Err("spectator title must contain exactly two visible participants");
+        }
+    } else if participant_text.contains(',') {
+        return Err("Solitaire title must identify one visible participant");
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignedRectV1 {
     pub left: i32,
@@ -211,5 +325,59 @@ mod tests {
             copy_tightly_packed_bgra8_v1(&mapped, 12, 2, 2).unwrap(),
             vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
         );
+    }
+
+    #[test]
+    fn main_client_title_has_no_game_role() {
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::MainClient,
+            None,
+            "Magic: The Gathering Online"
+        )
+        .is_ok());
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::MainClient,
+            Some("Freeform"),
+            "Magic: The Gathering Online"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn solitaire_title_requires_exact_format_and_one_participant() {
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::SolitaireGame,
+            Some("Freeform"),
+            "(Solitaire): Freeform: Vs. local-player Match #123 - Game #456"
+        )
+        .is_ok());
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::SolitaireGame,
+            Some("Standard"),
+            "(Solitaire): Freeform: Vs. local-player"
+        )
+        .is_err());
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::SolitaireGame,
+            Some("Freeform"),
+            "(Solitaire): Freeform: Vs. one, two"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn spectator_title_requires_exact_format_and_two_participants() {
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::SpectatorGame,
+            Some("Standard"),
+            "(1-on-1): Standard: Vs. player-one, player-two"
+        )
+        .is_ok());
+        assert!(validate_visible_mtgo_title_v2(
+            CaptureWindowModeV2::SpectatorGame,
+            Some("Standard"),
+            "(1-on-1): Standard: Vs. player-one"
+        )
+        .is_err());
     }
 }

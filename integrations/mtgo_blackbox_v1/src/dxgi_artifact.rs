@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 
 const DXGI_ARTIFACT_SCHEMA_V1: &str = "mtgo-dxgi-visible-frame-candidate/v1";
 const DXGI_ARTIFACT_KIND_V1: &str = "mtgo_untrusted_dxgi_visible_frame_candidate_v1";
+const DXGI_ARTIFACT_SCHEMA_V2: &str = "mtgo-dxgi-visible-frame-candidate/v2";
+const DXGI_ARTIFACT_KIND_V2: &str = "mtgo_untrusted_dxgi_visible_frame_candidate_v2";
 const DXGI_ARTIFACT_STATUS_V1: &str = "checked_untrusted_not_admitted";
 const DXGI_CAPTURE_BACKEND_V1: &str = "dxgi_desktop_duplication_v1";
 const CANONICAL_PIXELS_FILE_V1: &str = "frame.bgra";
@@ -22,6 +24,30 @@ const MAX_MANIFEST_BYTES_V1: usize = 1_048_576;
 const MAX_PREVIEW_PNG_BYTES_V1: usize = 512 * 1_048_576;
 const MIN_CAPTURE_UNIX_MILLIS_V1: u64 = 1_577_836_800_000;
 const MAX_CAPTURE_UNIX_MILLIS_V1: u64 = 4_102_444_800_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MtgoDxgiCaptureRoleV2 {
+    Navigation,
+    ActingPlayerSolitaire,
+    Spectator,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DxgiArtifactModeV2 {
+    MainClient,
+    SolitaireGame(String),
+    SpectatorGame(String),
+}
+
+impl DxgiArtifactModeV2 {
+    fn role(&self) -> MtgoDxgiCaptureRoleV2 {
+        match self {
+            Self::MainClient => MtgoDxgiCaptureRoleV2::Navigation,
+            Self::SolitaireGame(_) => MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire,
+            Self::SpectatorGame(_) => MtgoDxgiCaptureRoleV2::Spectator,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -124,6 +150,10 @@ struct MtgoDxgiCaptureArtifactManifestV1 {
     artifact_kind: String,
     status: String,
     capture_backend: String,
+    window_mode: Option<String>,
+    capture_role: Option<String>,
+    expected_game_format: Option<String>,
+    title_rule_version: Option<String>,
     captured_at_unix_millis: u64,
     safety: DxgiSafetyFlagsV1,
     pre: DxgiWindowSnapshotV1,
@@ -152,6 +182,7 @@ pub struct CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
     output_identity_sha256: String,
     client_size_px: MtgoSizePxV1,
     captured_at_unix_millis: u64,
+    capture_role: MtgoDxgiCaptureRoleV2,
 }
 
 impl CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
@@ -177,6 +208,10 @@ impl CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
 
     pub fn captured_at_unix_millis(&self) -> u64 {
         self.captured_at_unix_millis
+    }
+
+    pub fn capture_role(&self) -> MtgoDxgiCaptureRoleV2 {
+        self.capture_role
     }
 
     pub fn safe_for_semantic_evidence(&self) -> bool {
@@ -221,14 +256,14 @@ pub fn check_untrusted_dxgi_capture_artifact_v1(
     let manifest: MtgoDxgiCaptureArtifactManifestV1 = serde_json::from_slice(manifest_bytes)
         .map_err(|error| error_v1("dxgi_artifact_manifest", error.to_string()))?;
 
-    validate_header_v1(&manifest)?;
+    let mode = validate_header_v1(&manifest)?;
     if manifest.pre != manifest.post {
         return Err(error_v1(
             "dxgi_artifact_snapshot_drift",
             "pre and post window snapshots must be identical",
         ));
     }
-    validate_window_snapshot_v1(&manifest.pre)?;
+    validate_window_snapshot_v1(&manifest.pre, &mode)?;
     let output_rect = validate_output_v1(&manifest.output, &manifest.pre)?;
     let client_size = validate_frame_v1(
         &manifest.frame,
@@ -257,22 +292,76 @@ pub fn check_untrusted_dxgi_capture_artifact_v1(
         output_identity_sha256,
         client_size_px: client_size,
         captured_at_unix_millis: manifest.captured_at_unix_millis,
+        capture_role: mode.role(),
     })
 }
 
 fn validate_header_v1(
     manifest: &MtgoDxgiCaptureArtifactManifestV1,
-) -> Result<(), MtgoContractErrorV1> {
-    if manifest.schema != DXGI_ARTIFACT_SCHEMA_V1
-        || manifest.artifact_kind != DXGI_ARTIFACT_KIND_V1
-        || manifest.status != DXGI_ARTIFACT_STATUS_V1
+) -> Result<DxgiArtifactModeV2, MtgoContractErrorV1> {
+    if manifest.status != DXGI_ARTIFACT_STATUS_V1
         || manifest.capture_backend != DXGI_CAPTURE_BACKEND_V1
     {
         return Err(error_v1(
             "dxgi_artifact_header",
-            "schema, kind, status, and backend must identify the checked-untrusted DXGI v1 artifact",
+            "status and backend must identify a checked-untrusted DXGI artifact",
         ));
     }
+    let mode = match manifest.schema.as_str() {
+        DXGI_ARTIFACT_SCHEMA_V1 => {
+            if manifest.artifact_kind != DXGI_ARTIFACT_KIND_V1
+                || manifest.window_mode.is_some()
+                || manifest.capture_role.is_some()
+                || manifest.expected_game_format.is_some()
+                || manifest.title_rule_version.is_some()
+            {
+                return Err(error_v1(
+                    "dxgi_artifact_header",
+                    "v1 is the legacy main-client artifact and cannot declare v2 role fields",
+                ));
+            }
+            DxgiArtifactModeV2::MainClient
+        }
+        DXGI_ARTIFACT_SCHEMA_V2 => {
+            if manifest.artifact_kind != DXGI_ARTIFACT_KIND_V2
+                || manifest.title_rule_version.as_deref() != Some("mtgo_visible_title_rule_v2")
+            {
+                return Err(error_v1(
+                    "dxgi_artifact_header",
+                    "v2 kind and title-rule version must be exact",
+                ));
+            }
+            match (
+                manifest.window_mode.as_deref(),
+                manifest.capture_role.as_deref(),
+                manifest.expected_game_format.as_deref(),
+            ) {
+                (Some("main_client"), Some("navigation"), Some("")) => {
+                    DxgiArtifactModeV2::MainClient
+                }
+                (Some("solitaire_game"), Some("acting_player_solitaire"), Some(format)) => {
+                    validate_game_format_v2(format)?;
+                    DxgiArtifactModeV2::SolitaireGame(format.to_owned())
+                }
+                (Some("spectator_game"), Some("spectator"), Some(format)) => {
+                    validate_game_format_v2(format)?;
+                    DxgiArtifactModeV2::SpectatorGame(format.to_owned())
+                }
+                _ => {
+                    return Err(error_v1(
+                        "dxgi_artifact_role",
+                        "window mode, capture role, and expected format must be an exact permitted tuple",
+                    ));
+                }
+            }
+        }
+        _ => {
+            return Err(error_v1(
+                "dxgi_artifact_header",
+                "schema must be the legacy v1 or role-explicit v2 artifact",
+            ));
+        }
+    };
     if manifest.captured_at_unix_millis < MIN_CAPTURE_UNIX_MILLIS_V1
         || manifest.captured_at_unix_millis > MAX_CAPTURE_UNIX_MILLIS_V1
     {
@@ -292,10 +381,13 @@ fn validate_header_v1(
             "all runtime-use flags must be false and probe Authenticode verification must be true",
         ));
     }
-    Ok(())
+    Ok(mode)
 }
 
-fn validate_window_snapshot_v1(snapshot: &DxgiWindowSnapshotV1) -> Result<(), MtgoContractErrorV1> {
+fn validate_window_snapshot_v1(
+    snapshot: &DxgiWindowSnapshotV1,
+    mode: &DxgiArtifactModeV2,
+) -> Result<(), MtgoContractErrorV1> {
     if snapshot.hwnd == 0
         || snapshot.process_id == 0
         || snapshot.mtgo_process_count != 1
@@ -347,16 +439,7 @@ fn validate_window_snapshot_v1(snapshot: &DxgiWindowSnapshotV1) -> Result<(), Mt
             "valid Authenticode and an exact signer subject commitment are required",
         ));
     }
-    if snapshot.title.is_empty()
-        || snapshot.title.len() > 1_024
-        || snapshot.title.chars().any(char::is_control)
-        || !snapshot.title.contains("Magic: The Gathering Online")
-    {
-        return Err(error_v1(
-            "dxgi_artifact_window_title",
-            "visible window title must identify Magic: The Gathering Online",
-        ));
-    }
+    validate_visible_title_v2(mode, &snapshot.title)?;
     if !(96..=480).contains(&snapshot.dpi) {
         return Err(error_v1(
             "dxgi_artifact_dpi",
@@ -585,6 +668,129 @@ fn validate_lower_hex_v1(
         return Err(error_v1(
             code,
             "value must be fixed-length lowercase hexadecimal",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_visible_title_v2(
+    mode: &DxgiArtifactModeV2,
+    title: &str,
+) -> Result<(), MtgoContractErrorV1> {
+    if title.is_empty() || title.len() > 1_024 || title.chars().any(char::is_control) {
+        return Err(error_v1(
+            "dxgi_artifact_window_title",
+            "window title is empty, too long, or contains control characters",
+        ));
+    }
+    match mode {
+        DxgiArtifactModeV2::MainClient => {
+            if !title.contains("Magic: The Gathering Online") {
+                return Err(error_v1(
+                    "dxgi_artifact_window_title",
+                    "main-client title must identify Magic: The Gathering Online",
+                ));
+            }
+        }
+        DxgiArtifactModeV2::SolitaireGame(format) => {
+            let prefix = format!("(Solitaire): {format}: Vs. ");
+            let participant = title.strip_prefix(&prefix).ok_or_else(|| {
+                error_v1(
+                    "dxgi_artifact_window_title",
+                    "Solitaire title does not match the exact format prefix",
+                )
+            })?;
+            validate_participant_title_v2(participant, false)?;
+        }
+        DxgiArtifactModeV2::SpectatorGame(format) => {
+            let prefix = format!("(1-on-1): {format}: Vs. ");
+            let participants = title.strip_prefix(&prefix).ok_or_else(|| {
+                error_v1(
+                    "dxgi_artifact_window_title",
+                    "spectator title does not match the exact format prefix",
+                )
+            })?;
+            validate_participant_title_v2(participants, true)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_game_format_v2(value: &str) -> Result<(), MtgoContractErrorV1> {
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b' ' | b'-'))
+    {
+        return Err(error_v1(
+            "dxgi_artifact_game_format",
+            "expected game format must be a safe visible label",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_participant_title_v2(
+    value: &str,
+    require_comma: bool,
+) -> Result<(), MtgoContractErrorV1> {
+    if value.is_empty() || value.len() > 512 {
+        return Err(error_v1(
+            "dxgi_artifact_window_title",
+            "participant title text is empty or too long",
+        ));
+    }
+    let participant_text = if let Some((participants, identity)) = value.split_once(" Match #") {
+        let (match_id, game_id) = identity.split_once(" - Game #").ok_or_else(|| {
+            error_v1(
+                "dxgi_artifact_window_title",
+                "visible match title suffix is malformed",
+            )
+        })?;
+        if match_id.is_empty()
+            || game_id.is_empty()
+            || !match_id.bytes().all(|byte| byte.is_ascii_digit())
+            || !game_id.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return Err(error_v1(
+                "dxgi_artifact_window_title",
+                "visible match and game IDs must be decimal integers",
+            ));
+        }
+        participants
+    } else {
+        if value.contains('#') {
+            return Err(error_v1(
+                "dxgi_artifact_window_title",
+                "visible match title suffix is malformed",
+            ));
+        }
+        value
+    };
+    if participant_text.trim() != participant_text || participant_text.is_empty() {
+        return Err(error_v1(
+            "dxgi_artifact_window_title",
+            "participant title text has invalid surrounding whitespace",
+        ));
+    }
+    if require_comma {
+        let (left, right) = participant_text.split_once(',').ok_or_else(|| {
+            error_v1(
+                "dxgi_artifact_window_title",
+                "spectator title must visibly identify two participants",
+            )
+        })?;
+        if left.trim().is_empty() || right.trim().is_empty() || right.contains(',') {
+            return Err(error_v1(
+                "dxgi_artifact_window_title",
+                "spectator title must contain exactly two visible participants",
+            ));
+        }
+    } else if participant_text.contains(',') {
+        return Err(error_v1(
+            "dxgi_artifact_window_title",
+            "Solitaire title must identify one visible participant",
         ));
     }
     Ok(())

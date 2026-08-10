@@ -1,7 +1,10 @@
 #[cfg(not(target_os = "windows"))]
 compile_error!("mtgo-dxgi-capture-v1 is Windows-only");
 
-use mtgo_dxgi_capture_v1::{copy_tightly_packed_bgra8_v1, sha256_hex_v1, SignedRectV1};
+use mtgo_dxgi_capture_v1::{
+    copy_tightly_packed_bgra8_v1, sha256_hex_v1, validate_visible_mtgo_title_v2,
+    CaptureWindowModeV2, SignedRectV1,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::ffi::c_void;
@@ -71,7 +74,9 @@ struct CliV1 {
     expected_executable_sha256: String,
     expected_signer_thumbprint: String,
     expected_signer_subject_sha256: String,
-    expected_title_contains: String,
+    window_mode: CaptureWindowModeV2,
+    expected_game_format: Option<String>,
+    expected_title_contains: Option<String>,
     timeout_ms: u32,
 }
 
@@ -140,11 +145,15 @@ struct FrameMetadataV1 {
 }
 
 #[derive(Debug, Serialize)]
-struct CaptureManifestV1 {
+struct CaptureManifestV2 {
     schema: &'static str,
     artifact_kind: &'static str,
     status: &'static str,
     capture_backend: &'static str,
+    window_mode: &'static str,
+    capture_role: &'static str,
+    expected_game_format: String,
+    title_rule_version: &'static str,
     captured_at_unix_millis: u128,
     safety: SafetyFlagsV1,
     pre: WindowSnapshotV1,
@@ -295,11 +304,15 @@ fn run() -> ProbeResult<PathBuf> {
         return Err("DXGI pointer position intersects the client crop".to_owned());
     }
 
-    let manifest = CaptureManifestV1 {
-        schema: "mtgo-dxgi-visible-frame-candidate/v1",
-        artifact_kind: "mtgo_untrusted_dxgi_visible_frame_candidate_v1",
+    let manifest = CaptureManifestV2 {
+        schema: "mtgo-dxgi-visible-frame-candidate/v2",
+        artifact_kind: "mtgo_untrusted_dxgi_visible_frame_candidate_v2",
         status: "checked_untrusted_not_admitted",
         capture_backend: "dxgi_desktop_duplication_v1",
+        window_mode: cli.window_mode.manifest_name(),
+        capture_role: cli.window_mode.capture_role(),
+        expected_game_format: cli.expected_game_format.clone().unwrap_or_default(),
+        title_rule_version: "mtgo_visible_title_rule_v2",
         captured_at_unix_millis: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("system clock is before epoch: {error}"))?
@@ -336,7 +349,9 @@ fn parse_cli() -> ProbeResult<CliV1> {
     let mut expected_executable_sha256 = None;
     let mut expected_signer_thumbprint = None;
     let mut expected_signer_subject_sha256 = None;
-    let mut expected_title_contains = "Magic: The Gathering Online".to_owned();
+    let mut window_mode = CaptureWindowModeV2::MainClient;
+    let mut expected_game_format = None;
+    let mut expected_title_contains = None;
     let mut timeout_ms = 1_500u32;
     while let Some(argument) = args.next() {
         let value = args
@@ -347,7 +362,20 @@ fn parse_cli() -> ProbeResult<CliV1> {
             "--expected-exe-sha256" => expected_executable_sha256 = Some(value),
             "--expected-signer-thumbprint" => expected_signer_thumbprint = Some(value),
             "--expected-signer-subject-sha256" => expected_signer_subject_sha256 = Some(value),
-            "--expected-title-contains" => expected_title_contains = value,
+            "--window-mode" => {
+                window_mode =
+                    match value.as_str() {
+                        "main_client" => CaptureWindowModeV2::MainClient,
+                        "solitaire_game" => CaptureWindowModeV2::SolitaireGame,
+                        "spectator_game" => CaptureWindowModeV2::SpectatorGame,
+                        _ => return Err(
+                            "window mode must be main_client, solitaire_game, or spectator_game"
+                                .to_owned(),
+                        ),
+                    }
+            }
+            "--expected-game-format" => expected_game_format = Some(value),
+            "--expected-title-contains" => expected_title_contains = Some(value),
             "--timeout-ms" => {
                 timeout_ms = value
                     .parse::<u32>()
@@ -359,6 +387,17 @@ fn parse_cli() -> ProbeResult<CliV1> {
             _ => return Err(format!("unknown argument {argument}")),
         }
     }
+    match window_mode {
+        CaptureWindowModeV2::MainClient if expected_game_format.is_some() => {
+            return Err("main-client mode cannot declare an expected game format".to_owned())
+        }
+        CaptureWindowModeV2::SolitaireGame | CaptureWindowModeV2::SpectatorGame
+            if expected_game_format.is_none() =>
+        {
+            return Err("game window mode requires --expected-game-format".to_owned())
+        }
+        _ => {}
+    }
     Ok(CliV1 {
         output_directory: output_directory.ok_or("--output is required")?,
         expected_executable_sha256: expected_executable_sha256
@@ -367,6 +406,8 @@ fn parse_cli() -> ProbeResult<CliV1> {
             .ok_or("--expected-signer-thumbprint is required")?,
         expected_signer_subject_sha256: expected_signer_subject_sha256
             .ok_or("--expected-signer-subject-sha256 is required")?,
+        window_mode,
+        expected_game_format,
         expected_title_contains,
         timeout_ms,
     })
@@ -427,7 +468,17 @@ fn snapshot_window(hwnd: HWND, cli: &CliV1) -> ProbeResult<WindowSnapshotV1> {
             return Err("MTGO signer identity does not match the pinned certificate".to_owned());
         }
         let title = window_title(hwnd);
-        if cli.expected_title_contains.is_empty() || !title.contains(&cli.expected_title_contains) {
+        validate_visible_mtgo_title_v2(
+            cli.window_mode,
+            cli.expected_game_format.as_deref(),
+            &title,
+        )
+        .map_err(str::to_owned)?;
+        if cli
+            .expected_title_contains
+            .as_ref()
+            .is_some_and(|expected| expected.is_empty() || !title.contains(expected))
+        {
             return Err(
                 "foreground title does not match the configured MTGO title rule".to_owned(),
             );
@@ -1147,7 +1198,7 @@ fn persist_atomically(
     output: &Path,
     pixels: &[u8],
     preview_png: &[u8],
-    manifest: &CaptureManifestV1,
+    manifest: &CaptureManifestV2,
 ) -> ProbeResult<()> {
     let parent = output.parent().ok_or("output has no parent")?;
     let partial = parent.join(format!(

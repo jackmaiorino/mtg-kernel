@@ -45,6 +45,7 @@ fn run() -> Result<(), String> {
             "output_identity_sha256": checked.output_identity_sha256(),
             "client_size_px": checked.client_size_px(),
             "captured_at_unix_millis": checked.captured_at_unix_millis(),
+            "capture_role": format!("{:?}", checked.capture_role()),
             "safe_for_semantic_evidence": checked.safe_for_semantic_evidence(),
             "safe_for_ocr": checked.safe_for_ocr(),
             "safe_for_policy_scoring": checked.safe_for_policy_scoring(),

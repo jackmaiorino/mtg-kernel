@@ -1,4 +1,4 @@
-use mtgo_blackbox_v1::check_untrusted_dxgi_capture_artifact_v1;
+use mtgo_blackbox_v1::{check_untrusted_dxgi_capture_artifact_v1, MtgoDxgiCaptureRoleV2};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -125,6 +125,24 @@ fn check(manifest: &Value, raw: &[u8], png: &[u8]) -> Result<(), &'static str> {
         .map_err(|error| error.code())
 }
 
+fn as_v2(
+    mut manifest: Value,
+    window_mode: &str,
+    capture_role: &str,
+    expected_game_format: &str,
+    title: &str,
+) -> Value {
+    manifest["schema"] = json!("mtgo-dxgi-visible-frame-candidate/v2");
+    manifest["artifact_kind"] = json!("mtgo_untrusted_dxgi_visible_frame_candidate_v2");
+    manifest["window_mode"] = json!(window_mode);
+    manifest["capture_role"] = json!(capture_role);
+    manifest["expected_game_format"] = json!(expected_game_format);
+    manifest["title_rule_version"] = json!("mtgo_visible_title_rule_v2");
+    manifest["pre"]["title"] = json!(title);
+    manifest["post"]["title"] = json!(title);
+    manifest
+}
+
 #[test]
 fn valid_artifact_is_structurally_checked_but_never_actionable() {
     let (manifest, raw, png) = fixture();
@@ -137,10 +155,83 @@ fn valid_artifact_is_structurally_checked_but_never_actionable() {
     assert_eq!(checked.client_size_px().width, 8);
     assert_eq!(checked.client_size_px().height, 8);
     assert_eq!(checked.captured_at_unix_millis(), 1_786_333_555_000);
+    assert_eq!(checked.capture_role(), MtgoDxgiCaptureRoleV2::Navigation);
     assert!(!checked.safe_for_semantic_evidence());
     assert!(!checked.safe_for_ocr());
     assert!(!checked.safe_for_policy_scoring());
     assert!(!checked.safe_for_input());
+}
+
+#[test]
+fn v2_main_and_solitaire_roles_are_explicit_and_distinct() {
+    let (v1, raw, png) = fixture();
+    let main = as_v2(
+        v1.clone(),
+        "main_client",
+        "navigation",
+        "",
+        "Magic: The Gathering Online",
+    );
+    let main_bytes = serde_json::to_vec(&main).unwrap();
+    let checked = check_untrusted_dxgi_capture_artifact_v1(&main_bytes, &raw, &png).unwrap();
+    assert_eq!(checked.capture_role(), MtgoDxgiCaptureRoleV2::Navigation);
+
+    let solitaire = as_v2(
+        v1.clone(),
+        "solitaire_game",
+        "acting_player_solitaire",
+        "Freeform",
+        "(Solitaire): Freeform: Vs. local-player Match #123 - Game #456",
+    );
+    let solitaire_bytes = serde_json::to_vec(&solitaire).unwrap();
+    let checked = check_untrusted_dxgi_capture_artifact_v1(&solitaire_bytes, &raw, &png).unwrap();
+    assert_eq!(
+        checked.capture_role(),
+        MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire
+    );
+
+    let mut mislabeled = solitaire;
+    mislabeled["capture_role"] = json!("spectator");
+    assert_eq!(check(&mislabeled, &raw, &png), Err("dxgi_artifact_role"));
+}
+
+#[test]
+fn v2_spectator_requires_two_participants_and_exact_format() {
+    let (v1, raw, png) = fixture();
+    let spectator = as_v2(
+        v1.clone(),
+        "spectator_game",
+        "spectator",
+        "Standard",
+        "(1-on-1): Standard: Vs. player-one, player-two",
+    );
+    let bytes = serde_json::to_vec(&spectator).unwrap();
+    let checked = check_untrusted_dxgi_capture_artifact_v1(&bytes, &raw, &png).unwrap();
+    assert_eq!(checked.capture_role(), MtgoDxgiCaptureRoleV2::Spectator);
+
+    let wrong_title = as_v2(
+        v1.clone(),
+        "spectator_game",
+        "spectator",
+        "Standard",
+        "(1-on-1): Standard: Vs. one-player",
+    );
+    assert_eq!(
+        check(&wrong_title, &raw, &png),
+        Err("dxgi_artifact_window_title")
+    );
+
+    let wrong_format = as_v2(
+        v1,
+        "spectator_game",
+        "spectator",
+        "Modern",
+        "(1-on-1): Standard: Vs. player-one, player-two",
+    );
+    assert_eq!(
+        check(&wrong_format, &raw, &png),
+        Err("dxgi_artifact_window_title")
+    );
 }
 
 #[test]

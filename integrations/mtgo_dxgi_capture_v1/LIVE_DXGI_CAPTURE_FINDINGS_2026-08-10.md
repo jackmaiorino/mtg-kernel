@@ -18,6 +18,12 @@ The probe successfully captured the running foreground MTGO client through DXGI 
 
 The final signer-pinned runtime sample had successful Authenticode checks before and after capture, one real desktop presentation, no protected-content masking, no cursor intersection, no intersecting window above the target, and identical pre/post snapshots. Its artifact remains outside the repository and is not a durable fixture.
 
+## Role-explicit v2 follow-up
+
+The candidate now emits a v2 schema that separates main-client navigation, acting-player Solitaire, and spectator capture roles. Each game role binds an exact visible format and a role-specific title structure. The adapter accepts both the legacy main-client-only v1 artifact and the new v2 role tuples, while preventing a spectator frame from being relabeled as an acting-player frame.
+
+The running main client was deliberately presented to the probe as `solitaire_game` with `Freeform`. The title gate rejected it before frame acquisition and persisted no artifact. A separate main-client v2 attempt reached Desktop Duplication but the static lobby produced no new desktop presentation within the timeout, so it also persisted nothing. No v2 live-success claim is made from that attempt; the earlier signer-pinned v1 frame remains the live positive sample.
+
 ## Nonclaims
 
 This proves that the local backend can acquire and crop a player-visible composed desktop frame while checking the declared live conditions. It does not admit the pixels for OCR, semantic evidence, model scoring, or input. It does not eliminate the transient-occluder race between the two z-order audits. No League, Challenge, purchase, queue, or gameplay action was performed.

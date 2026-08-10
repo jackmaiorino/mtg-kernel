@@ -24,6 +24,14 @@ The DXGI path requires one output to wholly contain the client. It rejects rotat
 
 Artifacts are written to a new absolute directory outside the repository through a private partial directory and one final rename. The output contains `frame.bgra`, a separately hashed `frame.png` for manual review, and `manifest.json`.
 
+Candidate schema v2 assigns every capture one non-interchangeable visible role:
+
+- `main_client` with role `navigation` and no game format;
+- `solitaire_game` with role `acting_player_solitaire` and an exact visible format;
+- `spectator_game` with role `spectator` and an exact visible format.
+
+Solitaire titles must visibly identify one participant. Spectator titles must visibly identify two. The expected format is part of the title rule, so a Standard spectator window cannot be accepted as Freeform or as an acting-player window. The adapter continues to read the earlier main-client-only v1 artifact but rejects any v1 role fields.
+
 ## Deliberate nonclaim
 
 Every artifact is marked `checked_untrusted_not_admitted`, and all OCR, semantic-evidence, policy-scoring, and input flags are false. Authenticode and frame checks do not prove that a caller-supplied calibration label matches the pixels. Pre/post z-order audits also cannot eliminate a transient occluder that appears and disappears entirely during one frame acquisition. A later adapter loader must recompute every file hash, bind a manually ratified client profile and anchors, and retain an opaque frame type before pixels may reach measured perception.
@@ -38,7 +46,20 @@ cargo run --release -- `
   --expected-exe-sha256 '<lowercase-sha256>' `
   --expected-signer-thumbprint '<lowercase-sha1>' `
   --expected-signer-subject-sha256 '<lowercase-sha256>' `
-  --expected-title-contains 'Magic: The Gathering Online' `
+  --window-mode main_client `
+  --timeout-ms 10000
+```
+
+An already visible foreground Solitaire window uses:
+
+```powershell
+cargo run --release -- `
+  --output 'C:\absolute\path\outside\the\repository\new-directory' `
+  --expected-exe-sha256 '<lowercase-sha256>' `
+  --expected-signer-thumbprint '<lowercase-sha1>' `
+  --expected-signer-subject-sha256 '<lowercase-sha256>' `
+  --window-mode solitaire_game `
+  --expected-game-format Freeform `
   --timeout-ms 10000
 ```
 
