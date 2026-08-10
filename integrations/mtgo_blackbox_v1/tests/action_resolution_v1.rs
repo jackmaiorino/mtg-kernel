@@ -361,3 +361,76 @@ fn control_set_json_rejects_coordinates_and_unknown_fields() {
     );
     assert!(serde_json::from_str::<MtgoVisibleActionControlSetV1>(&with_coordinates).is_err());
 }
+
+#[test]
+fn full_shadow_loop_scores_resolves_submits_and_confirms_one_action() {
+    let source_record = valid_record();
+    let mut next_record = valid_record();
+    next_record.decision_id = "action-resolution-postcondition-2".to_owned();
+    next_record.frame_id = 2;
+    next_record.frames[0].frame_id = 2;
+    next_record.frames[0].sequence = 2;
+    next_record.frames[0].sha256 = digest('9');
+    for evidence in &mut next_record.evidence {
+        evidence.sequence += 1;
+        if let MtgoEvidenceSourceV1::FrameRegion { frame_id, .. } = &mut evidence.source {
+            *frame_id = 2;
+        }
+    }
+    next_record.payload.observation.projection.surface.turn += 1;
+    next_record.payload.observation.visible_projection_hash =
+        compute_visible_projection_hash_v5_v1(&next_record.payload.observation).unwrap();
+    next_record.provenance = payload_leaf_inventory_v1(&next_record.payload)
+        .unwrap()
+        .into_iter()
+        .filter(|leaf| leaf.requires_visible_evidence)
+        .enumerate()
+        .map(|(index, leaf)| MtgoLeafProvenanceV1 {
+            json_pointer: leaf.json_pointer,
+            value_sha256: leaf.value_sha256,
+            evidence_ids: vec![[20, 30, 40, 50][index % 4]],
+            confidence_bps: 10_000,
+        })
+        .collect();
+    next_record.local_metadata_sha256 = local_metadata_commitment_v1(&next_record.payload).unwrap();
+
+    let pointer = "/observation/projection/turn";
+    let before = payload_leaf_inventory_v1(&source_record.payload)
+        .unwrap()
+        .into_iter()
+        .find(|leaf| leaf.json_pointer == pointer)
+        .unwrap();
+    let after = payload_leaf_inventory_v1(&next_record.payload)
+        .unwrap()
+        .into_iter()
+        .find(|leaf| leaf.json_pointer == pointer)
+        .unwrap();
+    let postcondition = MtgoMockPostconditionV1 {
+        required_visible_leaf: MtgoExpectedVisibleLeafV1 {
+            json_pointer: pointer.to_owned(),
+            before_value_sha256: before.value_sha256,
+            after_value_sha256: after.value_sha256,
+        },
+    };
+
+    let source = validate_observed_decision_v1(source_record).unwrap();
+    let next = validate_observed_decision_v1(next_record).unwrap();
+    let selection = selection(&source);
+    let resolved =
+        resolve_selected_visible_control_v1(&source, &selection, control_set(&source)).unwrap();
+    assert_eq!(
+        resolved.selection_commitment_sha256(),
+        selection.selection_commitment_sha256()
+    );
+
+    let scored_intent = make_scored_offline_intent_v1(&source, &selection).unwrap();
+    let mut actuator = MtgoMockActuatorV1::default();
+    let submitted = actuator
+        .submit(&source, selection.selected_index(), postcondition)
+        .unwrap();
+    assert_eq!(submitted, scored_intent);
+    assert!(actuator.has_pending_action());
+    actuator.confirm(&next).unwrap();
+    assert!(!actuator.has_pending_action());
+    assert!(!actuator.is_halted());
+}
