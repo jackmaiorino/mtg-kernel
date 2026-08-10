@@ -11,11 +11,13 @@ use mtgo_blackbox_v1::{
     classify_untrusted_offline_bottom_six_state_candidate_v3,
     classify_untrusted_offline_bottom_six_visible_card_identities_v3,
     classify_untrusted_offline_first_main_candidate_v2,
-    classify_untrusted_offline_mulligan_ladder_candidate_v2, model_deployment_commitment_v1,
+    classify_untrusted_offline_mulligan_ladder_candidate_v2,
+    classify_untrusted_offline_mulligan_visible_card_identities_v1, model_deployment_commitment_v1,
     CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1,
     CheckedUntrustedMtgoOfflineBottomSixStateCandidateV3,
     CheckedUntrustedMtgoOfflineFirstMainCandidateV2,
     CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1,
+    CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1,
     CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV3,
     CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1, MtgoExpectedModelDeploymentV1,
     MtgoOfflineBottomSixInitialClassificationV1, MtgoOfflineBottomSixReflowClassificationV1,
@@ -87,9 +89,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
 type ProbeResult<T> = Result<T, String>;
 
 pub const MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3: u32 = 3;
+pub const MTGO_PREGAME_CARD_AWARE_SCORING_SCHEMA_V4: u32 = 4;
 
 const PREGAME_SCORING_REQUEST_DOMAIN_V3: &[u8] = b"mtgo-pregame-scoring-request-v3";
 const PREGAME_MODEL_SELECTION_DOMAIN_V3: &[u8] = b"mtgo-pregame-model-selection-v3";
+const PREGAME_CARD_AWARE_SCORING_REQUEST_DOMAIN_V4: &[u8] =
+    b"mtgo-pregame-card-aware-scoring-request-v4";
+const PREGAME_CARD_AWARE_MODEL_SELECTION_DOMAIN_V4: &[u8] =
+    b"mtgo-pregame-card-aware-model-selection-v4";
 const PREGAME_ACTION_PLAN_DOMAIN_V3: &[u8] = b"mtgo-pregame-action-plan-v3";
 const PREGAME_MULLIGAN_CONFIRMATION_DOMAIN_V3: &[u8] = b"mtgo-pregame-mulligan-confirmation-v3";
 const PREGAME_KEEP_FIRST_MAIN_CONFIRMATION_DOMAIN_V3: &[u8] =
@@ -364,6 +371,115 @@ pub fn measure_mtgo_dxgi_mulligan_ladder_candidate_v3(
     )?;
     Ok(OpaqueMtgoDxgiMulliganMeasurementV3 {
         source_frame,
+        measurement,
+    })
+}
+
+/// A direct in-process complete-hand identity candidate over one opaque London
+/// mulligan measurement and one checked-untrusted deck template profile. The
+/// source frame, pixels, and template bytes remain private. The result is
+/// suitable only for the checked-untrusted external scoring experiment and
+/// grants no semantic evidence, observation, trusted policy, or input
+/// authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3;
+/// let _forged = OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3>();
+/// ```
+pub struct OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3 {
+    source: OpaqueMtgoDxgiMulliganMeasurementV3,
+    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+    measurement: CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1,
+}
+
+impl OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3 {
+    pub fn source_capture_commitments_v3(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.source.source_frame.commitments_v3()
+    }
+
+    pub fn classification_v3(&self) -> MtgoOfflineVisibleCardIdentityClassificationV1 {
+        self.measurement.classification()
+    }
+
+    pub fn prospective_keep_size_v3(&self) -> Option<u8> {
+        self.measurement.prospective_keep_size()
+    }
+
+    pub fn ordered_actions_v3(&self) -> &[MtgoPregameActionSemanticV1] {
+        self.source.ordered_actions_v3()
+    }
+
+    pub fn identities_v3(&self) -> &[MtgoOfflineVisibleCardIdentityV1] {
+        self.measurement.identities()
+    }
+
+    pub fn mulligan_profile_set_commitment_sha256_v3(&self) -> &str {
+        self.source.profile_set_commitment_sha256_v3()
+    }
+
+    pub fn mulligan_measurement_commitment_sha256_v3(&self) -> &str {
+        self.source.measurement_commitment_sha256_v3()
+    }
+
+    pub fn visible_card_profile_commitment_sha256_v3(&self) -> &str {
+        self.profile.profile_commitment_sha256()
+    }
+
+    pub fn visible_identity_measurement_commitment_sha256_v3(&self) -> &str {
+        self.measurement.candidate_commitment_sha256()
+    }
+
+    pub fn safe_for_semantic_evidence_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v3(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_mtgo_dxgi_mulligan_visible_hand_candidate_v3(
+    source: OpaqueMtgoDxgiMulliganMeasurementV3,
+    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+) -> Result<OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3, String> {
+    let manifest_bytes = serialize_manifest_v2(&source.source_frame.manifest)?;
+    let checked = check_untrusted_dxgi_capture_artifact_v1(
+        &manifest_bytes,
+        &source.source_frame.canonical_bgra8,
+        &source.source_frame.preview_png,
+    )
+    .map_err(|error| format!("check opaque mulligan visible-hand capture: {error}"))?;
+    let measurement = classify_untrusted_offline_mulligan_visible_card_identities_v1(
+        &checked,
+        &source.source_frame.canonical_bgra8,
+        &profile,
+    )
+    .map_err(|error| format!("classify opaque mulligan visible hand: {error}"))?;
+    if measurement.source_ladder_commitment_sha256()
+        != source.measurement.candidate_commitment_sha256()
+    {
+        return Err(
+            "mulligan visible-hand measurement does not bind the source ladder measurement"
+                .to_owned(),
+        );
+    }
+    Ok(OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3 {
+        source,
+        profile,
         measurement,
     })
 }
@@ -1103,6 +1219,341 @@ fn validate_pregame_score_response_parts_v3(
     let selection_commitment_sha256 = canonical_json_commitment_v3(
         PREGAME_MODEL_SELECTION_DOMAIN_V3,
         &SelectionRecordV3 {
+            request,
+            response,
+            selected_index,
+            selected_semantic: &selected_semantic,
+        },
+    )?;
+    Ok((
+        selected_index,
+        selected_semantic,
+        selection_commitment_sha256,
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCardAwarePregameScoringRequestV4 {
+    pub schema_version: u32,
+    pub source_capture_commitment_sha256: String,
+    pub mulligan_measurement_commitment_sha256: String,
+    pub visible_identity_measurement_commitment_sha256: String,
+    pub mulligan_profile_set_commitment_sha256: String,
+    pub visible_card_profile_commitment_sha256: String,
+    pub prospective_keep_size: u8,
+    pub ordered_visible_card_names: Vec<String>,
+    pub ordered_actions: Vec<MtgoPregameActionSemanticV1>,
+    pub deployment_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCardAwarePregameScoreResponseV4 {
+    pub schema_version: u32,
+    pub request_commitment_sha256: String,
+    pub logits_f32_bits: Vec<u32>,
+    pub value_f32_bits: u32,
+}
+
+/// External scorers receive the exact ordered visible card labels, prospective
+/// keep size, legal pregame actions, and model identity commitments. They
+/// receive no pixels, template bytes, coordinates, process handles,
+/// authorization, or input capability. Card labels remain checked-untrusted.
+pub trait MtgoExternalCardAwarePregameScorerV4 {
+    fn score_card_aware_pregame_v4(
+        &mut self,
+        request: &MtgoCardAwarePregameScoringRequestV4,
+    ) -> Result<MtgoCardAwarePregameScoreResponseV4, String>;
+}
+
+/// One request-bound deterministic selection from the card-aware external
+/// scorer. It cannot be converted to the v3 action plan or to live input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCardAwarePregameModelSelectionV4;
+/// let _forged = OpaqueMtgoCardAwarePregameModelSelectionV4 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCardAwarePregameModelSelectionV4;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoCardAwarePregameModelSelectionV4>();
+/// ```
+pub struct OpaqueMtgoCardAwarePregameModelSelectionV4 {
+    measurement: OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,
+    request: MtgoCardAwarePregameScoringRequestV4,
+    response: MtgoCardAwarePregameScoreResponseV4,
+    selected_index: usize,
+    selected_semantic: MtgoPregameActionSemanticV1,
+    selection_commitment_sha256: String,
+}
+
+impl OpaqueMtgoCardAwarePregameModelSelectionV4 {
+    pub fn selected_index_v4(&self) -> usize {
+        self.selected_index
+    }
+
+    pub fn selected_semantic_v4(&self) -> &MtgoPregameActionSemanticV1 {
+        &self.selected_semantic
+    }
+
+    pub fn selected_logit_f32_bits_v4(&self) -> u32 {
+        self.response.logits_f32_bits[self.selected_index]
+    }
+
+    pub fn value_f32_bits_v4(&self) -> u32 {
+        self.response.value_f32_bits
+    }
+
+    pub fn request_commitment_sha256_v4(&self) -> &str {
+        &self.response.request_commitment_sha256
+    }
+
+    pub fn deployment_commitment_sha256_v4(&self) -> &str {
+        &self.request.deployment_commitment_sha256
+    }
+
+    pub fn mulligan_measurement_commitment_sha256_v4(&self) -> &str {
+        self.measurement.mulligan_measurement_commitment_sha256_v3()
+    }
+
+    pub fn visible_identity_measurement_commitment_sha256_v4(&self) -> &str {
+        self.measurement
+            .visible_identity_measurement_commitment_sha256_v3()
+    }
+
+    pub fn selection_commitment_sha256_v4(&self) -> &str {
+        &self.selection_commitment_sha256
+    }
+
+    pub fn safe_for_semantic_evidence_v4(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v4(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_live_input_v4(&self) -> bool {
+        false
+    }
+}
+
+pub fn build_card_aware_pregame_scoring_request_v4(
+    measurement: &OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,
+    deployment: &MtgoExpectedModelDeploymentV1,
+) -> Result<MtgoCardAwarePregameScoringRequestV4, String> {
+    if measurement.classification_v3() != MtgoOfflineVisibleCardIdentityClassificationV1::Match {
+        return Err("card-aware pregame scoring requires seven matched identities".to_owned());
+    }
+    let identities = measurement.identities_v3();
+    if identities.len() != 7
+        || identities
+            .iter()
+            .enumerate()
+            .any(|(ordinal, identity)| usize::from(identity.ordinal()) != ordinal)
+    {
+        return Err(
+            "card-aware pregame scoring requires exact ordered ordinals zero through six"
+                .to_owned(),
+        );
+    }
+    let ordered_visible_card_names = identities
+        .iter()
+        .map(|identity| identity.visible_card_name().to_owned())
+        .collect::<Vec<_>>();
+    let capture = measurement.source_capture_commitments_v3();
+    build_card_aware_pregame_scoring_request_from_names_v4(
+        measurement.prospective_keep_size_v3(),
+        &ordered_visible_card_names,
+        measurement.ordered_actions_v3(),
+        &capture.capture_commitment_sha256,
+        measurement.mulligan_measurement_commitment_sha256_v3(),
+        measurement.visible_identity_measurement_commitment_sha256_v3(),
+        measurement.mulligan_profile_set_commitment_sha256_v3(),
+        measurement.visible_card_profile_commitment_sha256_v3(),
+        deployment,
+    )
+}
+
+pub fn card_aware_pregame_scoring_request_commitment_v4(
+    request: &MtgoCardAwarePregameScoringRequestV4,
+) -> Result<String, String> {
+    validate_card_aware_pregame_scoring_request_v4(request)?;
+    canonical_json_commitment_v3(PREGAME_CARD_AWARE_SCORING_REQUEST_DOMAIN_V4, request)
+}
+
+pub fn score_and_select_card_aware_pregame_model_v4<S: MtgoExternalCardAwarePregameScorerV4>(
+    measurement: OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,
+    deployment: &MtgoExpectedModelDeploymentV1,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoCardAwarePregameModelSelectionV4, String> {
+    let request = build_card_aware_pregame_scoring_request_v4(&measurement, deployment)?;
+    let response = scorer.score_card_aware_pregame_v4(&request)?;
+    validate_card_aware_pregame_score_response_v4(measurement, deployment, response)
+}
+
+pub fn validate_card_aware_pregame_score_response_v4(
+    measurement: OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,
+    deployment: &MtgoExpectedModelDeploymentV1,
+    response: MtgoCardAwarePregameScoreResponseV4,
+) -> Result<OpaqueMtgoCardAwarePregameModelSelectionV4, String> {
+    let request = build_card_aware_pregame_scoring_request_v4(&measurement, deployment)?;
+    let (selected_index, selected_semantic, selection_commitment_sha256) =
+        validate_card_aware_pregame_score_response_parts_v4(&request, &response)?;
+    Ok(OpaqueMtgoCardAwarePregameModelSelectionV4 {
+        measurement,
+        request,
+        response,
+        selected_index,
+        selected_semantic,
+        selection_commitment_sha256,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_card_aware_pregame_scoring_request_from_names_v4(
+    prospective_keep_size: Option<u8>,
+    ordered_visible_card_names: &[String],
+    ordered_actions: &[MtgoPregameActionSemanticV1],
+    source_capture_commitment_sha256: &str,
+    mulligan_measurement_commitment_sha256: &str,
+    visible_identity_measurement_commitment_sha256: &str,
+    mulligan_profile_set_commitment_sha256: &str,
+    visible_card_profile_commitment_sha256: &str,
+    deployment: &MtgoExpectedModelDeploymentV1,
+) -> Result<MtgoCardAwarePregameScoringRequestV4, String> {
+    let prospective_keep_size = prospective_keep_size
+        .filter(|value| (1..=7).contains(value))
+        .ok_or("card-aware pregame scoring requires a keep size from one through seven")?;
+    let expected_actions = [
+        MtgoPregameActionSemanticV1::Mulligan {
+            next_hand_size: prospective_keep_size - 1,
+        },
+        MtgoPregameActionSemanticV1::KeepOpeningHand,
+    ];
+    if ordered_actions != expected_actions {
+        return Err(
+            "card-aware pregame scoring requires canonical Mulligan and Keep actions".to_owned(),
+        );
+    }
+    for digest in [
+        source_capture_commitment_sha256,
+        mulligan_measurement_commitment_sha256,
+        visible_identity_measurement_commitment_sha256,
+        mulligan_profile_set_commitment_sha256,
+        visible_card_profile_commitment_sha256,
+    ] {
+        require_lower_sha256_v3(digest, "card-aware pregame scoring source commitment")?;
+    }
+    let deployment_commitment_sha256 = model_deployment_commitment_v1(deployment)
+        .map_err(|error| format!("card-aware pregame model deployment: {error}"))?;
+    let request = MtgoCardAwarePregameScoringRequestV4 {
+        schema_version: MTGO_PREGAME_CARD_AWARE_SCORING_SCHEMA_V4,
+        source_capture_commitment_sha256: source_capture_commitment_sha256.to_owned(),
+        mulligan_measurement_commitment_sha256: mulligan_measurement_commitment_sha256.to_owned(),
+        visible_identity_measurement_commitment_sha256:
+            visible_identity_measurement_commitment_sha256.to_owned(),
+        mulligan_profile_set_commitment_sha256: mulligan_profile_set_commitment_sha256.to_owned(),
+        visible_card_profile_commitment_sha256: visible_card_profile_commitment_sha256.to_owned(),
+        prospective_keep_size,
+        ordered_visible_card_names: ordered_visible_card_names.to_vec(),
+        ordered_actions: ordered_actions.to_vec(),
+        deployment_commitment_sha256,
+    };
+    validate_card_aware_pregame_scoring_request_v4(&request)?;
+    Ok(request)
+}
+
+fn validate_card_aware_pregame_scoring_request_v4(
+    request: &MtgoCardAwarePregameScoringRequestV4,
+) -> Result<(), String> {
+    if request.schema_version != MTGO_PREGAME_CARD_AWARE_SCORING_SCHEMA_V4
+        || !(1..=7).contains(&request.prospective_keep_size)
+    {
+        return Err("card-aware pregame request schema or keep size is invalid".to_owned());
+    }
+    if request.ordered_visible_card_names.len() != 7
+        || request.ordered_visible_card_names.iter().any(|name| {
+            name.is_empty()
+                || name.len() > 256
+                || name.trim() != name
+                || name.chars().any(char::is_control)
+        })
+    {
+        return Err(
+            "card-aware pregame request requires seven bounded visible card names".to_owned(),
+        );
+    }
+    let expected_actions = [
+        MtgoPregameActionSemanticV1::Mulligan {
+            next_hand_size: request.prospective_keep_size - 1,
+        },
+        MtgoPregameActionSemanticV1::KeepOpeningHand,
+    ];
+    if request.ordered_actions != expected_actions {
+        return Err("card-aware pregame request actions are not canonical".to_owned());
+    }
+    for digest in [
+        &request.source_capture_commitment_sha256,
+        &request.mulligan_measurement_commitment_sha256,
+        &request.visible_identity_measurement_commitment_sha256,
+        &request.mulligan_profile_set_commitment_sha256,
+        &request.visible_card_profile_commitment_sha256,
+        &request.deployment_commitment_sha256,
+    ] {
+        require_lower_sha256_v3(digest, "card-aware pregame request commitment")?;
+    }
+    Ok(())
+}
+
+fn validate_card_aware_pregame_score_response_parts_v4(
+    request: &MtgoCardAwarePregameScoringRequestV4,
+    response: &MtgoCardAwarePregameScoreResponseV4,
+) -> Result<(usize, MtgoPregameActionSemanticV1, String), String> {
+    let request_commitment_sha256 = card_aware_pregame_scoring_request_commitment_v4(request)?;
+    if response.schema_version != MTGO_PREGAME_CARD_AWARE_SCORING_SCHEMA_V4
+        || response.request_commitment_sha256 != request_commitment_sha256
+    {
+        return Err("card-aware pregame response does not bind the exact request".to_owned());
+    }
+    require_lower_sha256_v3(
+        &response.request_commitment_sha256,
+        "card-aware pregame response request commitment",
+    )?;
+    if response.logits_f32_bits.len() != request.ordered_actions.len()
+        || response.logits_f32_bits.is_empty()
+    {
+        return Err("card-aware pregame response logit count is invalid".to_owned());
+    }
+    let logits = response
+        .logits_f32_bits
+        .iter()
+        .map(|bits| f32::from_bits(*bits))
+        .collect::<Vec<_>>();
+    if logits.iter().any(|value| !value.is_finite())
+        || !f32::from_bits(response.value_f32_bits).is_finite()
+    {
+        return Err("card-aware pregame response must contain finite values".to_owned());
+    }
+    let mut selected_index = 0;
+    for index in 1..logits.len() {
+        if logits[index].total_cmp(&logits[selected_index]).is_gt() {
+            selected_index = index;
+        }
+    }
+    let selected_semantic = request.ordered_actions[selected_index].clone();
+    #[derive(Serialize)]
+    struct SelectionRecordV4<'a> {
+        request: &'a MtgoCardAwarePregameScoringRequestV4,
+        response: &'a MtgoCardAwarePregameScoreResponseV4,
+        selected_index: usize,
+        selected_semantic: &'a MtgoPregameActionSemanticV1,
+    }
+    let selection_commitment_sha256 = canonical_json_commitment_v3(
+        PREGAME_CARD_AWARE_MODEL_SELECTION_DOMAIN_V4,
+        &SelectionRecordV4 {
             request,
             response,
             selected_index,
@@ -3503,6 +3954,78 @@ mod tests {
             &"a".repeat(64),
             &"b".repeat(64),
             &"c".repeat(64),
+            &deployment,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn card_aware_pregame_scoring_binds_all_seven_cards_and_response() {
+        let deployment = deployment_v3();
+        let actions = [
+            MtgoPregameActionSemanticV1::Mulligan { next_hand_size: 5 },
+            MtgoPregameActionSemanticV1::KeepOpeningHand,
+        ];
+        let names = [
+            "Plains", "Island", "Plains", "Island", "Plains", "Island", "Plains",
+        ]
+        .map(str::to_owned);
+        let request = build_card_aware_pregame_scoring_request_from_names_v4(
+            Some(6),
+            &names,
+            &actions,
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &"d".repeat(64),
+            &"e".repeat(64),
+            &deployment,
+        )
+        .unwrap();
+        assert_eq!(request.ordered_visible_card_names, names);
+        let commitment = card_aware_pregame_scoring_request_commitment_v4(&request).unwrap();
+        let mut reordered = request.clone();
+        reordered.ordered_visible_card_names.swap(0, 1);
+        assert_ne!(
+            commitment,
+            card_aware_pregame_scoring_request_commitment_v4(&reordered).unwrap()
+        );
+
+        let response = MtgoCardAwarePregameScoreResponseV4 {
+            schema_version: MTGO_PREGAME_CARD_AWARE_SCORING_SCHEMA_V4,
+            request_commitment_sha256: commitment,
+            logits_f32_bits: vec![0.75_f32.to_bits(), 0.25_f32.to_bits()],
+            value_f32_bits: 0.5_f32.to_bits(),
+        };
+        let (selected_index, selected_semantic, selection_commitment) =
+            validate_card_aware_pregame_score_response_parts_v4(&request, &response).unwrap();
+        assert_eq!(selected_index, 0);
+        assert_eq!(
+            selected_semantic,
+            MtgoPregameActionSemanticV1::Mulligan { next_hand_size: 5 }
+        );
+        assert_eq!(selection_commitment.len(), 64);
+
+        let stale = MtgoCardAwarePregameScoreResponseV4 {
+            request_commitment_sha256: "f".repeat(64),
+            ..response.clone()
+        };
+        assert!(validate_card_aware_pregame_score_response_parts_v4(&request, &stale).is_err());
+        let nonfinite = MtgoCardAwarePregameScoreResponseV4 {
+            logits_f32_bits: vec![f32::INFINITY.to_bits(), 0.0_f32.to_bits()],
+            ..response
+        };
+        assert!(validate_card_aware_pregame_score_response_parts_v4(&request, &nonfinite).is_err());
+
+        assert!(build_card_aware_pregame_scoring_request_from_names_v4(
+            Some(6),
+            &names[..6],
+            &actions,
+            &"a".repeat(64),
+            &"b".repeat(64),
+            &"c".repeat(64),
+            &"d".repeat(64),
+            &"e".repeat(64),
             &deployment,
         )
         .is_err());

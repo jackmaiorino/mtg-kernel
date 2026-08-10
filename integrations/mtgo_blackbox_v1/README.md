@@ -232,6 +232,14 @@ It performs no network access and emits names, ordinals, distances, margins, and
 
 The fixed no-cost deck `mtgo-solitaire-fixed-basics-v1` narrows that universe to 30 copies each of DSK Plains collector 277 and DSK Island collector 279, both already present in the reviewed seven-template profile. `classify_untrusted_offline_bottom_six_visible_card_identities_v3` uses the v3 state gate. It matched all 14 cards across two independent initial bottom-six hands, including a later heldout game, and directly preserved every visible identity through five leftmost-card reflows in one game. MTGO dims the final remaining card when Done appears, so direct art matching intentionally returns `NoMatch` at that stage. The prior order-preserving reflow history still identifies the survivor, but the direct classifier does not claim that inference. The complete record is `fixtures/offline_fixed_basic_deck_identity_corpus_20260810_v1.json`.
 
+`classify_untrusted_offline_mulligan_visible_card_identities_v1` composes the current v2 mulligan-ladder prompt gate with the same fixed-deck template profile. It evaluates the seven visible card-art regions at every prospective keep size and withholds all labels unless the prompt has exactly one match and every card identity passes. The retained corpus `fixtures/offline_mulligan_visible_card_identity_corpus_20260810_v1.json` covers all seven prospective keep sizes in two fixed-deck Solitaire games. All 14 prompts and all 98 visible card positions matched. This is narrow one-layout wiring evidence for two known prints, not an accuracy estimate or competitive-play evidence.
+
+```powershell
+cargo run --bin classify_mtgo_offline_mulligan_visible_card_identities_v1 -- `
+  C:\absolute\artifact-directory `
+  C:\absolute\visible-card-profile.json
+```
+
 ```powershell
 cargo run --bin classify_mtgo_offline_bottom_six_visible_card_identities_v3 -- `
   C:\absolute\artifact-directory `

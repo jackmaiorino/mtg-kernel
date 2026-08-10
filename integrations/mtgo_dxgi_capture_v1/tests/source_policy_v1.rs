@@ -75,6 +75,21 @@ fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
     assert!(source.contains("fn validate_pregame_score_response_parts_v3("));
     assert!(!source.contains("pub fn validate_pregame_score_response_parts_v3("));
     assert!(!source.contains("pub fn make_live_input"));
+
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_mulligan_visible_hand_candidate_v3(\n    source: OpaqueMtgoDxgiMulliganMeasurementV3,\n    profile: CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,"
+    ));
+    assert!(source.contains(
+        "measurement: CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1,"
+    ));
+    assert!(source.contains(
+        "pub fn score_and_select_card_aware_pregame_model_v4<S: MtgoExternalCardAwarePregameScorerV4>(\n    measurement: OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,"
+    ));
+    assert!(source.contains(
+        "pub fn validate_card_aware_pregame_score_response_v4(\n    measurement: OpaqueMtgoDxgiMulliganVisibleHandMeasurementV3,"
+    ));
+    assert!(source.contains("ordered_visible_card_names: Vec<String>"));
+    assert!(!source.contains("pub fn build_pregame_action_plan_v4"));
 }
 
 #[test]
@@ -118,6 +133,7 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
     );
     for current_classifier in [
         "classify_untrusted_offline_mulligan_ladder_candidate_v2",
+        "classify_untrusted_offline_mulligan_visible_card_identities_v1",
         "classify_untrusted_offline_bottom_six_state_candidate_v3",
         "classify_untrusted_offline_bottom_six_reflow_candidate_v2",
         "classify_untrusted_offline_bottom_six_visible_card_identities_v3",

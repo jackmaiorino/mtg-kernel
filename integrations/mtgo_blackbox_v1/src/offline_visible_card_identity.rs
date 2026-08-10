@@ -2,10 +2,11 @@ use crate::{
     classify_untrusted_offline_bottom_six_state_candidate_v1,
     classify_untrusted_offline_bottom_six_state_candidate_v2,
     classify_untrusted_offline_bottom_six_state_candidate_v3,
+    classify_untrusted_offline_mulligan_ladder_candidate_v2,
     offline_bottom_six_reflow::card_art_regions_v1, CheckedUntrustedMtgoDxgiCaptureArtifactV1,
     MtgoContractErrorV1, MtgoOfflineBottomSixStateClassificationV1,
     MtgoOfflineBottomSixStateClassificationV2, MtgoOfflineBottomSixStateClassificationV3,
-    MtgoRectPxV1, MtgoSizePxV1,
+    MtgoOfflineMulliganLadderClassificationV1, MtgoRectPxV1, MtgoSizePxV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -22,6 +23,8 @@ const PROFILE_DOMAIN_V1: &[u8] = b"mtgo-offline-visible-card-template-profile-v1
 const CANDIDATE_DOMAIN_V1: &[u8] = b"mtgo-offline-visible-card-identity-candidate-v1";
 const CANDIDATE_DOMAIN_V2: &[u8] = b"mtgo-offline-visible-card-identity-candidate-v2";
 const CANDIDATE_DOMAIN_V3: &[u8] = b"mtgo-offline-visible-card-identity-candidate-v3";
+const MULLIGAN_CANDIDATE_DOMAIN_V1: &[u8] =
+    b"mtgo-offline-mulligan-visible-card-identity-candidate-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -214,6 +217,86 @@ pub struct CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV3 {
     candidate_commitment_sha256: String,
 }
 
+/// Checked-untrusted identity coverage for all seven cards visible at one
+/// London mulligan prompt.
+///
+/// MTGO displays seven cards at every prompt while the prospective keep size
+/// descends from seven to one. Labels are exposed only when the current v2
+/// ladder prompt has exactly one match and all seven visible card regions pass
+/// the fixed template distance and distinct-name margin contract. This type
+/// retains no pixels or coordinates and grants no semantic evidence,
+/// observation, model-scoring, or input authority.
+pub struct CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1 {
+    classification: MtgoOfflineVisibleCardIdentityClassificationV1,
+    source_manifest_sha256: String,
+    source_frame_sha256: String,
+    source_ladder_commitment_sha256: String,
+    profile_commitment_sha256: String,
+    prospective_keep_size: Option<u8>,
+    visible_hand_count: Option<u8>,
+    matched_identity_count: u8,
+    identities: Vec<MtgoOfflineVisibleCardIdentityV1>,
+    candidate_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1 {
+    pub fn classification(&self) -> MtgoOfflineVisibleCardIdentityClassificationV1 {
+        self.classification
+    }
+
+    pub fn source_manifest_sha256(&self) -> &str {
+        &self.source_manifest_sha256
+    }
+
+    pub fn source_frame_sha256(&self) -> &str {
+        &self.source_frame_sha256
+    }
+
+    pub fn source_ladder_commitment_sha256(&self) -> &str {
+        &self.source_ladder_commitment_sha256
+    }
+
+    pub fn profile_commitment_sha256(&self) -> &str {
+        &self.profile_commitment_sha256
+    }
+
+    pub fn prospective_keep_size(&self) -> Option<u8> {
+        self.prospective_keep_size
+    }
+
+    pub fn visible_hand_count(&self) -> Option<u8> {
+        self.visible_hand_count
+    }
+
+    pub fn matched_identity_count(&self) -> u8 {
+        self.matched_identity_count
+    }
+
+    pub fn identities(&self) -> &[MtgoOfflineVisibleCardIdentityV1] {
+        &self.identities
+    }
+
+    pub fn candidate_commitment_sha256(&self) -> &str {
+        &self.candidate_commitment_sha256
+    }
+
+    pub fn safe_for_semantic_evidence(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input(&self) -> bool {
+        false
+    }
+}
+
 impl CheckedUntrustedMtgoOfflineVisibleCardIdentityCandidateV3 {
     pub fn classification(&self) -> MtgoOfflineVisibleCardIdentityClassificationV1 {
         self.classification
@@ -386,6 +469,93 @@ pub fn check_untrusted_offline_visible_card_template_profile_v1(
         profile_commitment_sha256,
         distinct_visible_card_name_count,
     })
+}
+
+pub fn classify_untrusted_offline_mulligan_visible_card_identities_v1(
+    checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    canonical_bgra8: &[u8],
+    profile: &CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1,
+) -> Result<CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1, MtgoContractErrorV1>
+{
+    if checked.client_size_px() != &profile.profile.client_size_px
+        || checked.output_identity_sha256() != profile.profile.output_identity_sha256
+    {
+        return Err(error_v1(
+            "offline_visible_card_profile_layout",
+            "capture layout and output must match the template profile",
+        ));
+    }
+
+    let ladder = classify_untrusted_offline_mulligan_ladder_candidate_v2(checked, canonical_bgra8)?;
+    let ladder_matches =
+        ladder.classification() == MtgoOfflineMulliganLadderClassificationV1::Match;
+    let prospective_keep_size = ladder.prospective_keep_size();
+    let visible_hand_count = ladder_matches.then_some(7);
+    let mut identities = Vec::new();
+    if ladder_matches {
+        for (ordinal, rect) in card_art_regions_v1(7)?.iter().enumerate() {
+            let Some(identity) = classify_region_v1(
+                canonical_bgra8,
+                checked.client_size_px(),
+                rect,
+                &profile.profile.templates,
+            )?
+            else {
+                continue;
+            };
+            identities.push(MtgoOfflineVisibleCardIdentityV1 {
+                ordinal: u8::try_from(ordinal).map_err(|_| {
+                    error_v1("offline_visible_card_ordinal", "card ordinal overflow")
+                })?,
+                ..identity
+            });
+        }
+    }
+
+    let matched_identity_count = u8::try_from(identities.len()).unwrap_or(u8::MAX);
+    let full_match = prospective_keep_size.is_some()
+        && visible_hand_count == Some(7)
+        && matched_identity_count == 7;
+    let classification = if full_match {
+        MtgoOfflineVisibleCardIdentityClassificationV1::Match
+    } else {
+        identities.clear();
+        MtgoOfflineVisibleCardIdentityClassificationV1::NoMatch
+    };
+
+    let mut parts: Vec<Vec<u8>> = vec![
+        checked.manifest_sha256().as_bytes().to_vec(),
+        checked.canonical_bgra8_sha256().as_bytes().to_vec(),
+        ladder.candidate_commitment_sha256().as_bytes().to_vec(),
+        profile.profile_commitment_sha256.as_bytes().to_vec(),
+        match classification {
+            MtgoOfflineVisibleCardIdentityClassificationV1::Match => b"match".to_vec(),
+            MtgoOfflineVisibleCardIdentityClassificationV1::NoMatch => b"no_match".to_vec(),
+        },
+        vec![prospective_keep_size.unwrap_or(u8::MAX)],
+        vec![visible_hand_count.unwrap_or(u8::MAX)],
+        vec![matched_identity_count],
+    ];
+    for identity in &identities {
+        parts.push(identity_commitment_ordinal_v2(identity));
+    }
+    let borrowed: Vec<_> = parts.iter().map(Vec::as_slice).collect();
+    let candidate_commitment_sha256 = commitment_v1(MULLIGAN_CANDIDATE_DOMAIN_V1, &borrowed);
+
+    Ok(
+        CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1 {
+            classification,
+            source_manifest_sha256: checked.manifest_sha256().to_owned(),
+            source_frame_sha256: checked.canonical_bgra8_sha256().to_owned(),
+            source_ladder_commitment_sha256: ladder.candidate_commitment_sha256().to_owned(),
+            profile_commitment_sha256: profile.profile_commitment_sha256.clone(),
+            prospective_keep_size,
+            visible_hand_count,
+            matched_identity_count,
+            identities,
+            candidate_commitment_sha256,
+        },
+    )
 }
 
 pub fn classify_untrusted_offline_bottom_six_visible_card_identities_v1(
