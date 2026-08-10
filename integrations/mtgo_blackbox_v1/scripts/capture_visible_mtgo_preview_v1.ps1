@@ -564,9 +564,6 @@ function Get-MtgoPreviewSnapshot {
             [MtgoVisiblePreviewNativeV1]::ProcessIdForWindow($windowHandle) -ne $mtgoProcessId) {
             throw 'MTGO_PREVIEW_FOREGROUND_DIALOG_NOT_OWNED_BY_MTGO'
         }
-        if ($windowHandle -eq [IntPtr]$mainClientWindows[0]) {
-            throw 'MTGO_PREVIEW_FOREGROUND_DIALOG_IS_MAIN_CLIENT'
-        }
         if (-not ($windows -contains $windowHandle)) {
             throw 'MTGO_PREVIEW_FOREGROUND_DIALOG_NOT_IN_VISIBLE_WINDOW_SET'
         }

@@ -1,5 +1,6 @@
 use crate::{
-    hash_bgra_region_v1, AdmittedMtgoDxgiOfflineCalibrationFrameV1, MtgoContractErrorV1,
+    hash_bgra_region_v1, AdmittedMtgoDxgiOfflineCalibrationFrameV1,
+    CheckedUntrustedMtgoDxgiCaptureArtifactV1, MtgoContractErrorV1, MtgoDxgiCaptureRoleV2,
     MtgoPregameActionSemanticV1, MtgoRectPxV1, MtgoSizePxV1,
 };
 use sha2::{Digest, Sha256};
@@ -9,6 +10,8 @@ const OFFLINE_PREGAME_PROFILE_DOMAIN_V1: &[u8] = b"mtgo-offline-pregame-profile-
 const OFFLINE_PREGAME_RECOGNITION_DOMAIN_V1: &[u8] = b"mtgo-offline-pregame-recognition-v1";
 const OFFLINE_PREGAME_SOURCE_ADMISSION_V1: &str =
     "9b0aef61a6fc31ee6050d9e381fba4c3e1a6b887c62319c8b3e1e13e9523e291";
+const OFFLINE_PREGAME_OUTPUT_IDENTITY_V1: &str =
+    "89c86876d12827c79ef4d746b9cd88c8decaf3e4fae33b41f6ab57c94bf222a6";
 const OFFLINE_PREGAME_WIDTH_V1: u32 = 1550;
 const OFFLINE_PREGAME_HEIGHT_V1: u32 = 925;
 const OFFLINE_PREGAME_HAND_SIZE_V1: u8 = 7;
@@ -16,6 +19,12 @@ const OFFLINE_PREGAME_HAND_SIZE_V1: u8 = 7;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoOfflinePregameDecisionKindV1 {
     OpeningHandKeepOrMulligan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MtgoOfflineOpeningHandTemplateClassificationV1 {
+    Match,
+    NoMatch,
 }
 
 #[derive(Clone)]
@@ -40,6 +49,81 @@ struct OfflinePregameSourceV1<'a> {
     canonical_bgra8_sha256: &'a str,
     client_size_px: &'a MtgoSizePxV1,
     canonical_bgra8: &'a [u8],
+}
+
+/// A checked-untrusted offline template result for one role-correct DXGI artifact.
+///
+/// This classifier can evaluate later artifacts with the same pinned client and
+/// output layout, but its source bytes and capture claims remain untrusted. A
+/// match is suitable only for offline accuracy measurement. It grants no live
+/// frame, semantic evidence, model, coordinate, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoOfflineOpeningHandCandidateV1;
+/// fn pixel_escape(value: &CheckedUntrustedMtgoOfflineOpeningHandCandidateV1) {
+///     let _ = value.canonical_pixels_v1();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoOfflineOpeningHandCandidateV1;
+/// fn coordinate_escape(value: &CheckedUntrustedMtgoOfflineOpeningHandCandidateV1) {
+///     let _ = value.matched_rects_v1();
+/// }
+/// ```
+pub struct CheckedUntrustedMtgoOfflineOpeningHandCandidateV1 {
+    classification: MtgoOfflineOpeningHandTemplateClassificationV1,
+    profile_commitment_sha256: String,
+    source_manifest_sha256: String,
+    matched_region_count: usize,
+    region_count: usize,
+    candidate_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoOfflineOpeningHandCandidateV1 {
+    pub fn classification(&self) -> MtgoOfflineOpeningHandTemplateClassificationV1 {
+        self.classification
+    }
+
+    pub fn profile_commitment_sha256(&self) -> &str {
+        &self.profile_commitment_sha256
+    }
+
+    pub fn source_manifest_sha256(&self) -> &str {
+        &self.source_manifest_sha256
+    }
+
+    pub fn matched_region_count(&self) -> usize {
+        self.matched_region_count
+    }
+
+    pub fn region_count(&self) -> usize {
+        self.region_count
+    }
+
+    pub fn candidate_commitment_sha256(&self) -> &str {
+        &self.candidate_commitment_sha256
+    }
+
+    pub fn safe_for_live_frame(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_semantic_evidence(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input(&self) -> bool {
+        false
+    }
 }
 
 /// An exact-artifact, offline-only semantic reading of one reviewed MTGO frame.
@@ -140,6 +224,82 @@ pub fn recognize_ratified_offline_opening_hand_v1(
     recognize_with_profile_v1(&source, &profile)
 }
 
+/// Applies the reviewed four-region template to a later checked-untrusted DXGI
+/// artifact for offline measurement only.
+pub fn classify_untrusted_offline_opening_hand_candidate_v1(
+    checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoOfflineOpeningHandCandidateV1, MtgoContractErrorV1> {
+    let profile = production_profile_v1();
+    let profile_commitment_sha256 = validate_and_commit_profile_v1(&profile)?;
+    if checked.capture_role() != MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire {
+        return Err(error_v1(
+            "offline_pregame_candidate_role",
+            "candidate must have the acting-player Solitaire role",
+        ));
+    }
+    if checked.client_size_px() != &profile.client_size_px
+        || checked.output_identity_sha256() != OFFLINE_PREGAME_OUTPUT_IDENTITY_V1
+    {
+        return Err(error_v1(
+            "offline_pregame_candidate_layout",
+            "candidate must match the reviewed client and output layout",
+        ));
+    }
+    validate_pixel_length_v1(checked.client_size_px(), canonical_bgra8)?;
+    let canonical_bgra8_sha256 = format!("{:x}", Sha256::digest(canonical_bgra8));
+    if canonical_bgra8_sha256 != checked.canonical_bgra8_sha256() {
+        return Err(error_v1(
+            "offline_pregame_candidate_pixels",
+            "candidate raw pixels do not match the checked artifact",
+        ));
+    }
+
+    let observed_region_hashes =
+        observed_region_hashes_v1(canonical_bgra8, checked.client_size_px(), &profile.regions)?;
+    let matched_region_count = observed_region_hashes
+        .iter()
+        .zip(&profile.regions)
+        .filter(|(observed, region)| observed.as_str() == region.expected_bgra8_sha256.as_str())
+        .count();
+    let classification = if matched_region_count == profile.regions.len() {
+        MtgoOfflineOpeningHandTemplateClassificationV1::Match
+    } else {
+        MtgoOfflineOpeningHandTemplateClassificationV1::NoMatch
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"mtgo-offline-opening-hand-candidate-v1");
+    for part in [
+        profile_commitment_sha256.as_bytes(),
+        checked.manifest_sha256().as_bytes(),
+        checked.canonical_bgra8_sha256().as_bytes(),
+        checked.output_identity_sha256().as_bytes(),
+        if matches!(
+            classification,
+            MtgoOfflineOpeningHandTemplateClassificationV1::Match
+        ) {
+            b"match".as_slice()
+        } else {
+            b"no_match".as_slice()
+        },
+    ] {
+        update_hash_part_v1(&mut hasher, part);
+    }
+    for observed in &observed_region_hashes {
+        update_hash_part_v1(&mut hasher, observed.as_bytes());
+    }
+
+    Ok(CheckedUntrustedMtgoOfflineOpeningHandCandidateV1 {
+        classification,
+        profile_commitment_sha256,
+        source_manifest_sha256: checked.manifest_sha256().to_owned(),
+        matched_region_count,
+        region_count: profile.regions.len(),
+        candidate_commitment_sha256: format!("{:x}", hasher.finalize()),
+    })
+}
+
 fn production_profile_v1() -> OfflinePregameProfileV1 {
     OfflinePregameProfileV1 {
         profile_id: OFFLINE_PREGAME_PROFILE_ID_V1,
@@ -153,13 +313,13 @@ fn production_profile_v1() -> OfflinePregameProfileV1 {
             OfflinePregameRegionProfileV1 {
                 label: "prompt_text",
                 rect: MtgoRectPxV1 {
-                    x: 18,
-                    y: 42,
-                    width: 180,
-                    height: 70,
+                    x: 25,
+                    y: 48,
+                    width: 150,
+                    height: 38,
                 },
                 expected_bgra8_sha256:
-                    "fdb8826ca1932edff9aa99731c7abbcf9ac57d07f82f5b7a0467ba6b4cd53593".to_owned(),
+                    "d4313ecc7f3326f909204054d862028add195bb5256550a756d24aa5a2fbbff9".to_owned(),
             },
             OfflinePregameRegionProfileV1 {
                 label: "mulligan_control",
@@ -217,11 +377,13 @@ fn recognize_with_profile_v1(
     }
     validate_pixel_length_v1(source.client_size_px, source.canonical_bgra8)?;
 
-    let mut observed_region_hashes = Vec::with_capacity(profile.regions.len());
-    for region in &profile.regions {
-        let observed =
-            hash_bgra_region_v1(source.canonical_bgra8, source.client_size_px, &region.rect)?;
-        if observed != region.expected_bgra8_sha256 {
+    let observed_region_hashes = observed_region_hashes_v1(
+        source.canonical_bgra8,
+        source.client_size_px,
+        &profile.regions,
+    )?;
+    for (region, observed) in profile.regions.iter().zip(&observed_region_hashes) {
+        if observed.as_str() != region.expected_bgra8_sha256.as_str() {
             return Err(error_v1(
                 "offline_pregame_region_hash",
                 format!(
@@ -230,7 +392,6 @@ fn recognize_with_profile_v1(
                 ),
             ));
         }
-        observed_region_hashes.push(observed);
     }
 
     let actions = vec![
@@ -261,6 +422,17 @@ fn recognize_with_profile_v1(
         actions,
         hand_size: profile.hand_size,
     })
+}
+
+fn observed_region_hashes_v1(
+    canonical_bgra8: &[u8],
+    client_size_px: &MtgoSizePxV1,
+    regions: &[OfflinePregameRegionProfileV1],
+) -> Result<Vec<String>, MtgoContractErrorV1> {
+    regions
+        .iter()
+        .map(|region| hash_bgra_region_v1(canonical_bgra8, client_size_px, &region.rect))
+        .collect()
 }
 
 fn validate_and_commit_profile_v1(

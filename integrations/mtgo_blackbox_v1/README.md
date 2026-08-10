@@ -142,6 +142,16 @@ The read-only recognizer exercises that exact boundary:
 cargo run --bin recognize_mtgo_offline_opening_hand_v1 -- 'C:\absolute\artifact-directory'
 ```
 
+`classify_untrusted_offline_opening_hand_candidate_v1` applies the same four-region profile to later role-correct DXGI artifacts with the exact reviewed client size and output identity. Raw bytes must still match the checked artifact. A result contains only Match or NoMatch, matched-region count, and commitments, with every runtime authority flag false. The first broad prompt region failed on a second true frame because it included an animated cyan glow; the current text-only region removes that unstable pixel area.
+
+The checked-untrusted classifier can be run on an offline artifact with:
+
+```powershell
+cargo run --bin classify_mtgo_offline_opening_hand_candidate_v1 -- 'C:\absolute\artifact-directory'
+```
+
+The first deliberately narrow corpus is `fixtures/offline_opening_hand_classifier_corpus_20260810_v1.json`: five manually inspected frames from two no-cost Freeform Solitaire games. It contains three seven-card opening-hand positives, one post-Keep first-main negative, and one six-card mulligan negative. The exact template produced 3 true positives, 2 true negatives, and no observed errors. This is a wiring and brittleness screen, not a general accuracy claim.
+
 The live Keep pair can be rechecked without persisting any additional pixels:
 
 ```powershell

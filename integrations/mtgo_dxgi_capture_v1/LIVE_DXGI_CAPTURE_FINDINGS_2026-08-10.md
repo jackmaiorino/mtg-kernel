@@ -63,11 +63,15 @@ The region names remain manual labels. The checker proves byte changes at those 
 
 The separately ratified pre-Keep frame now passes one compiled offline-only pixel-to-semantic calibration profile. The profile checks exact hashes for four reviewed regions: prompt text, Mulligan control, Keep control, and hand count. It returns a seven-card opening-hand decision with ordered adapter-local actions Mulligan to six then Keep.
 
-- profile commitment: `5e582e3291e7b598f754cf40c54c74d03a0f6aa431ae7b6dbc16bfcf3d24233f`;
-- recognition commitment: `c312006124e7dac6879920f4d6101a7e3676263a060ac5f04dd1bfbee718857e`;
+- profile commitment: `f57076b8e73261a07fc71a80f6b54eaba0bcae725aa1980869a95f6dbc0392e6`;
+- recognition commitment: `eecfc224dccf5abb1a8e70926a453ba89086e142d5ae87592a14a82304e56726`;
 - source manifest: `af62f6392454c74a81ada7ea9bc0f0111164bd95b84d114f03e7d416fc27aee3`.
 
 The recognized value retains no pixels or coordinates and is false for live-frame, semantic-evidence, `ObservationV5`, policy-scoring, and input use. This is one exact reviewed example, not a reusable recognizer or an accuracy result.
+
+The profile was then applied as a checked-untrusted offline classifier. A second true frame exposed that the original broad prompt region included an animated cyan glow and matched only 3 of 4 regions. The prompt anchor was narrowed to text-only pixels before the final screen.
+
+The final corpus contains five manually inspected frames from two no-cost Freeform Solitaire games: three seven-card opening-hand positives, one first-main post-Keep negative, and one six-card mulligan negative. The classifier produced 3 true positives, 2 true negatives, and no observed errors. All artifacts are independently byte-checked and all classifier authority flags remain false. Five frames from two games establish a useful wiring and brittleness result, not general perception accuracy.
 
 ## Nonclaims
 
