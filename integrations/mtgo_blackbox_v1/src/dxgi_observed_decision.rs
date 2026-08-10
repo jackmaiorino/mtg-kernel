@@ -251,7 +251,7 @@ pub(crate) fn dxgi_observed_decision_record_for_test_v1(
         .map(|leaf| MtgoLeafProvenanceV1 {
             json_pointer: leaf.json_pointer,
             value_sha256: leaf.value_sha256,
-            evidence_ids: vec![20, 30, 40, 50],
+            evidence_ids: vec![20, 30, 40, 50, 60, 70, 80, 90, 100],
             confidence_bps: 10_000,
         })
         .collect();
@@ -336,6 +336,76 @@ pub(crate) fn dxgi_observed_decision_record_for_test_v1(
                         height: 40,
                     },
                     content_sha256: "8".repeat(64),
+                },
+            },
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 60,
+                sequence: sequence + 5,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 1,
+                    rect: MtgoRectPxV1 {
+                        x: 10,
+                        y: 32,
+                        width: 200,
+                        height: 165,
+                    },
+                    content_sha256: "9".repeat(64),
+                },
+            },
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 70,
+                sequence: sequence + 6,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 1,
+                    rect: MtgoRectPxV1 {
+                        x: 110,
+                        y: 203,
+                        width: 78,
+                        height: 38,
+                    },
+                    content_sha256: "a".repeat(64),
+                },
+            },
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 80,
+                sequence: sequence + 7,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 1,
+                    rect: MtgoRectPxV1 {
+                        x: 310,
+                        y: 378,
+                        width: 850,
+                        height: 312,
+                    },
+                    content_sha256: "b".repeat(64),
+                },
+            },
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 90,
+                sequence: sequence + 8,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 1,
+                    rect: MtgoRectPxV1 {
+                        x: 310,
+                        y: 729,
+                        width: 850,
+                        height: 190,
+                    },
+                    content_sha256: "c".repeat(64),
+                },
+            },
+            MtgoVisibleEvidenceV1 {
+                evidence_id: 100,
+                sequence: sequence + 9,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 1,
+                    rect: MtgoRectPxV1 {
+                        x: 1165,
+                        y: 105,
+                        width: 370,
+                        height: 180,
+                    },
+                    content_sha256: "d".repeat(64),
                 },
             },
         ],

@@ -100,6 +100,18 @@ impl CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1 {
     pub(crate) fn base_selection_v1(&self) -> &CheckedUntrustedMtgoModelSelectionV1 {
         &self.selection
     }
+
+    pub(crate) fn source_manifest_sha256_v1(&self) -> &str {
+        self.candidate.source_manifest_sha256()
+    }
+
+    pub(crate) fn source_canonical_bgra8_sha256_v1(&self) -> &str {
+        self.candidate.source_canonical_bgra8_sha256()
+    }
+
+    pub(crate) fn source_output_identity_sha256_v1(&self) -> &str {
+        self.candidate.source_output_identity_sha256()
+    }
 }
 
 /// Scores one exact source-bound acting-player duel decision through the

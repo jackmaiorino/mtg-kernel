@@ -261,6 +261,10 @@ impl CheckedUntrustedMtgoVisibleObjectActionCalibrationV1 {
     pub(crate) fn client_size_px(&self) -> &MtgoSizePxV1 {
         &self.record.before_frame.client_size_px
     }
+
+    pub(crate) fn visible_postconditions_v1(&self) -> &[MtgoGameplayVisibleRegionTransitionV1] {
+        &self.record.visible_postconditions
+    }
 }
 
 impl CheckedUntrustedMtgoGameplayCalibrationV1 {
@@ -282,6 +286,10 @@ impl CheckedUntrustedMtgoGameplayCalibrationV1 {
 
     pub(crate) fn client_size_px(&self) -> &MtgoSizePxV1 {
         &self.record.before_frame.client_size_px
+    }
+
+    pub(crate) fn visible_postconditions_v1(&self) -> &[MtgoGameplayVisibleRegionTransitionV1] {
+        &self.record.visible_postconditions
     }
 }
 

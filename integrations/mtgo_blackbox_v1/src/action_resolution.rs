@@ -176,6 +176,34 @@ impl CheckedUntrustedMtgoProfileBoundResolvedActionControlV1 {
     pub fn permits_match_entry(&self) -> bool {
         false
     }
+
+    pub(crate) fn validated_decision_v1(&self) -> &ValidatedMtgoObservedDecisionV1 {
+        self.selection.validated_decision_v1()
+    }
+
+    pub(crate) fn decision_commitment_sha256_v1(&self) -> &str {
+        self.resolved.decision_commitment_sha256()
+    }
+
+    pub(crate) fn selected_frame_region_evidence_id_v1(&self) -> u64 {
+        self.resolved.frame_region_evidence_id()
+    }
+
+    pub(crate) fn selected_rect_client_px_v1(&self) -> &MtgoRectPxV1 {
+        self.resolved.rect_client_px()
+    }
+
+    pub(crate) fn source_manifest_sha256_v1(&self) -> &str {
+        self.selection.source_manifest_sha256_v1()
+    }
+
+    pub(crate) fn source_canonical_bgra8_sha256_v1(&self) -> &str {
+        self.selection.source_canonical_bgra8_sha256_v1()
+    }
+
+    pub(crate) fn source_output_identity_sha256_v1(&self) -> &str {
+        self.selection.source_output_identity_sha256_v1()
+    }
 }
 
 pub fn resolve_selected_visible_control_v1(
@@ -409,6 +437,41 @@ fn validate_safe_identifier_v1(value: &str, code: &'static str) -> Result<(), Mt
         return Err(MtgoContractErrorV1::new(code, value));
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn profile_bound_resolved_action_control_for_test_v1(
+) -> CheckedUntrustedMtgoProfileBoundResolvedActionControlV1 {
+    let selection = crate::profile_bound_duel_model_selection_for_test_v1();
+    let decision = selection.validated_decision_v1();
+    let control_set = MtgoVisibleActionControlSetV1 {
+        schema_version: MTGO_VISIBLE_ACTION_CONTROL_SET_SCHEMA_V1,
+        decision_commitment_sha256: decision.decision_commitment_sha256().to_owned(),
+        frame_id: decision.frame_id(),
+        frame_sequence: decision.frame_sequence(),
+        prompt_frame_region_evidence_id: 30,
+        prompt_reconciled: true,
+        candidate_set_complete: true,
+        controls: vec![
+            MtgoVisibleActionControlCandidateV1 {
+                control_id: "priority-pass".to_owned(),
+                control_kind: MtgoVisibleControlKindV1::PhaseButton,
+                frame_region_evidence_id: 40,
+                semantic: decision.legal_actions()[0].clone(),
+                confidence_bps: 10_000,
+                visibly_enabled: true,
+            },
+            MtgoVisibleActionControlCandidateV1 {
+                control_id: "hand-land-0".to_owned(),
+                control_kind: MtgoVisibleControlKindV1::Card,
+                frame_region_evidence_id: 50,
+                semantic: decision.legal_actions()[1].clone(),
+                confidence_bps: 10_000,
+                visibly_enabled: true,
+            },
+        ],
+    };
+    resolve_profile_bound_selected_visible_control_v1(selection, control_set).unwrap()
 }
 
 #[cfg(test)]
