@@ -157,6 +157,18 @@ impl CheckedUntrustedMtgoProfileBoundResolvedActionControlV1 {
         self.resolved.control_id()
     }
 
+    pub fn decision_commitment_sha256(&self) -> &str {
+        self.resolved.decision_commitment_sha256()
+    }
+
+    pub fn selection_commitment_sha256(&self) -> &str {
+        self.resolved.selection_commitment_sha256()
+    }
+
+    pub fn control_resolution_commitment_sha256(&self) -> &str {
+        self.resolved.resolution_commitment_sha256()
+    }
+
     pub fn frame_id(&self) -> u64 {
         self.resolved.frame_id()
     }

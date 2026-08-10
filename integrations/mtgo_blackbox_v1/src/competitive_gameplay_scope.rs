@@ -2,7 +2,7 @@ use crate::{
     validate_authorization_for_mode_v1, CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1, MtgoContractErrorV1,
-    MtgoRuntimeModeV1,
+    MtgoProfileBoundActionPostconditionPlanCommitmentsV1, MtgoRuntimeModeV1,
 };
 use mtg_kernel::rl::ActionSemanticV1;
 use serde::{Deserialize, Serialize};
@@ -75,6 +75,12 @@ impl CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1 {
 
     pub fn competitive_scope_commitment_sha256(&self) -> &str {
         &self.competitive_scope_commitment_sha256
+    }
+
+    pub fn postcondition_plan_commitments_v1(
+        &self,
+    ) -> MtgoProfileBoundActionPostconditionPlanCommitmentsV1 {
+        self.plan.commitments_v1()
     }
 
     pub fn safe_for_live_input(&self) -> bool {

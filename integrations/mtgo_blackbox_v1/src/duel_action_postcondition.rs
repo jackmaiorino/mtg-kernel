@@ -104,7 +104,60 @@ pub struct CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1 {
     plan_commitment_sha256: String,
 }
 
+/// Coordinate-free commitments for one exact profile-bound visible action and
+/// its complete calibrated postcondition plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoProfileBoundActionPostconditionPlanCommitmentsV1 {
+    pub profile_bound_resolution_commitment_sha256: String,
+    pub decision_commitment_sha256: String,
+    pub selection_commitment_sha256: String,
+    pub control_resolution_commitment_sha256: String,
+    pub source_candidate_commitment_sha256: String,
+    pub perception_profile_admission_commitment_sha256: String,
+    pub deployment_commitment_sha256: String,
+    pub control_id: String,
+    pub frame_id: u64,
+    pub frame_sequence: u64,
+    pub source_manifest_sha256: String,
+    pub source_frame_sha256: String,
+    pub source_output_identity_sha256: String,
+    pub source_client_size_px: MtgoSizePxV1,
+    pub plan_commitment_sha256: String,
+}
+
 impl CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1 {
+    pub fn commitments_v1(&self) -> MtgoProfileBoundActionPostconditionPlanCommitmentsV1 {
+        MtgoProfileBoundActionPostconditionPlanCommitmentsV1 {
+            profile_bound_resolution_commitment_sha256: self
+                .resolution
+                .profile_bound_resolution_commitment_sha256()
+                .to_owned(),
+            decision_commitment_sha256: self.resolution.decision_commitment_sha256().to_owned(),
+            selection_commitment_sha256: self.resolution.selection_commitment_sha256().to_owned(),
+            control_resolution_commitment_sha256: self
+                .resolution
+                .control_resolution_commitment_sha256()
+                .to_owned(),
+            source_candidate_commitment_sha256: self
+                .resolution
+                .source_candidate_commitment_sha256()
+                .to_owned(),
+            perception_profile_admission_commitment_sha256: self
+                .resolution
+                .perception_profile_admission_commitment_sha256()
+                .to_owned(),
+            deployment_commitment_sha256: self.resolution.deployment_commitment_sha256().to_owned(),
+            control_id: self.resolution.control_id().to_owned(),
+            frame_id: self.resolution.frame_id(),
+            frame_sequence: self.resolution.frame_sequence(),
+            source_manifest_sha256: self.source_manifest_sha256.clone(),
+            source_frame_sha256: self.source_frame_sha256.clone(),
+            source_output_identity_sha256: self.source_output_identity_sha256.clone(),
+            source_client_size_px: self.source_client_size_px.clone(),
+            plan_commitment_sha256: self.plan_commitment_sha256.clone(),
+        }
+    }
+
     pub fn profile_bound_resolution_commitment_sha256(&self) -> &str {
         self.resolution.profile_bound_resolution_commitment_sha256()
     }
