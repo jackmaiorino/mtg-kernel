@@ -320,7 +320,7 @@ pub(crate) fn card_art_regions_v1(
         .collect())
 }
 
-fn pairwise_mean_absolute_difference_milli_v1(
+pub(crate) fn pairwise_mean_absolute_difference_milli_v1(
     before_pixels: &[u8],
     after_pixels: &[u8],
     size: &MtgoSizePxV1,
@@ -391,12 +391,12 @@ fn mean_absolute_difference_milli_v1(
     })
 }
 
-fn select_unique_order_preserving_deletion_v1(
+pub(crate) fn select_unique_order_preserving_deletion_v1(
     matrix: &[Vec<u32>],
     threshold: u32,
 ) -> (Option<u8>, Vec<u32>, u8) {
     if matrix.len() < 2
-        || matrix.len() > 7
+        || matrix.len() > 8
         || matrix.iter().any(|row| row.len() + 1 != matrix.len())
     {
         return (None, Vec::new(), 0);
@@ -508,6 +508,22 @@ mod tests {
         assert_eq!(
             select_unique_order_preserving_deletion_v1(&delete_middle, 25_000),
             (Some(1), vec![1_000, 2_000], 1)
+        );
+    }
+
+    #[test]
+    fn eight_to_seven_order_preserving_deletion_is_supported() {
+        let mut matrix = vec![vec![90_000; 7]; 8];
+        for after in 0..7 {
+            matrix[after + 1][after] = 10_000 + u32::try_from(after).unwrap();
+        }
+        assert_eq!(
+            select_unique_order_preserving_deletion_v1(&matrix, 30_000),
+            (
+                Some(0),
+                vec![10_000, 10_001, 10_002, 10_003, 10_004, 10_005, 10_006],
+                1,
+            )
         );
     }
 

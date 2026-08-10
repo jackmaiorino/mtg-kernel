@@ -224,6 +224,17 @@ The exact prompt pixels changed slightly in a later Solitaire game even though t
 
 `CheckedUntrustedMtgoVisibleObjectLedgerV1` implements the first narrow object-incarnation slice over the retained Solitaire transitions. Canonically ordered seeds receive deterministic adapter-local arena identifiers after exact card correspondence. The checked PlayLand fixture preserves the Island's arena identifier, replaces its visible object identifier, moves Hand to Battlefield, and increments `zone_change_count` from zero to one. The immediately following checked mana activation preserves that battlefield reference without another increment. Frame, actor, controller, card name, source zone, replacement identifier, and action shape mismatches reject. The ledger is still checked-untrusted calibration state: it exposes only counts and commitments, cannot yield object bindings outside crate tests, and grants no observation, scoring, or input authority.
 
+`classify_untrusted_offline_play_land_hand_reflow_v1` now binds that bookkeeping rule to the exact retained 1550 by 925 PlayLand manifests and PNGs. It verifies the pending-preview identity, chronology, foreground, occlusion, cursor, and no-authority fields, decodes the legacy PNGs internally, and compares all eight pre-action card-art regions with all seven post-action regions. Exactly one order-preserving deletion passes: ordinal zero, matching the declared Island source. The widest surviving-card distance is 26.989, the best alternative deletion needs 66.022, and the 39.033 separation exceeds the fixed 10.000 margin. The record is `fixtures/offline_play_land_hand_reflow_20260810_v1.json`.
+
+The historical hand contains kernel-unsupported survivors, so this retained pair calibrates geometry and source-slot alignment only. The opaque result can advance an eight-card supported Kernel Basics ledger in tests, preserving all seven survivor arena identifiers and moving only the played Island to a new battlefield incarnation. A future live supported-deck transition must provide its own complete exact card coverage before that bridge can contribute to an observation. Every semantic-evidence, observation, scoring, and input flag remains false.
+
+```powershell
+cargo run --bin classify_mtgo_offline_play_land_hand_reflow_v1 -- `
+  'C:\absolute\solitaire_play_land_transition_v1.json' `
+  'C:\absolute\before-preview-directory' `
+  'C:\absolute\after-preview-directory'
+```
+
 `check_untrusted_offline_visible_card_template_profile_v1` validates the first local runtime-profile shape. It fixes the reviewed layout, a 96 by 60 BGR template, the 25.000 mean absolute difference ceiling, and a 10.000 distinct-name margin. Template bytes are bound to their visible calibration capture, public print metadata, public-image hash, and deck commitment. `classify_untrusted_offline_bottom_six_visible_card_identities_v1` then requires a matched bottom-six frame and identifies the complete visible hand or returns `NoMatch`; partial results and distinct-name ties are withheld. The checked profile and result expose no template pixels or coordinates, cannot create `CardStableRefV1`, and keep all semantic, observation, scoring, and input authority false. Caller-supplied labels remain untrusted until a separate reviewed deck-profile ratification exists.
 
 The offline CLI accepts one retained DXGI artifact and one bounded local profile JSON:

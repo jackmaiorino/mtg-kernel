@@ -1,7 +1,8 @@
 use crate::{
     resolve_checked_untrusted_kernel_card_correspondence_v1,
+    CheckedUntrustedMtgoOfflinePlayLandHandReflowV1,
     CheckedUntrustedMtgoVisibleObjectActionCalibrationV1, MtgoContractErrorV1,
-    MtgoVisibleObjectCalibrationActionV1,
+    MtgoOfflinePlayLandHandReflowClassificationV1, MtgoVisibleObjectCalibrationActionV1,
 };
 use mtg_kernel::rl::{CardStableRefV1, PlayerSeatV1};
 use mtg_kernel::state::Zone;
@@ -517,6 +518,183 @@ pub fn advance_checked_untrusted_visible_play_land_with_hand_reflow_v1(
     Ok(ledger)
 }
 
+/// Advances a PlayLand transition whose complete 8-to-7 hand reflow was
+/// uniquely matched by the retained offline visual classifier.
+///
+/// The visual result binds the calibration's declared source ordinal to the
+/// ledger's ordered local hand. Post-action visible IDs are derived from the
+/// after-frame hash, so callers cannot relabel surviving objects. The returned
+/// ledger remains checked-untrusted and grants no observation, scoring, or
+/// input authority.
+pub fn advance_checked_untrusted_visible_play_land_from_offline_reflow_v1(
+    mut ledger: CheckedUntrustedMtgoVisibleObjectLedgerV1,
+    calibration: &CheckedUntrustedMtgoVisibleObjectActionCalibrationV1,
+    reflow: &CheckedUntrustedMtgoOfflinePlayLandHandReflowV1,
+) -> Result<CheckedUntrustedMtgoVisibleObjectLedgerV1, MtgoContractErrorV1> {
+    if reflow.classification() != MtgoOfflinePlayLandHandReflowClassificationV1::Match
+        || reflow.calibration_commitment_sha256() != calibration.transition_commitment_sha256()
+        || reflow.before_frame_sha256() != calibration.before_frame_sha256()
+        || reflow.after_frame_sha256() != calibration.after_frame_sha256()
+        || reflow.before_hand_count() != 8
+        || reflow.after_hand_count() != 7
+        || reflow.unique_visual_removed_ordinal() != Some(reflow.expected_source_ordinal())
+    {
+        return Err(MtgoContractErrorV1::new(
+            "object_ledger_offline_reflow_not_matched",
+            "ledger advance requires the exact uniquely matched visual reflow",
+        ));
+    }
+    if ledger.current_frame_sha256 != calibration.before_frame_sha256() {
+        return Err(MtgoContractErrorV1::new(
+            "object_ledger_transition_frame_mismatch",
+            "the calibration does not begin at the ledger's current frame",
+        ));
+    }
+    if ledger.transitions.len() >= MAX_OBJECT_TRANSITIONS_V1 {
+        return Err(MtgoContractErrorV1::new(
+            "object_ledger_transition_count_invalid",
+            ledger.transitions.len().to_string(),
+        ));
+    }
+
+    let (actor, visible_card_name) = match calibration.action() {
+        MtgoVisibleObjectCalibrationActionV1::PlayLand {
+            actor,
+            visible_card_name,
+            ..
+        } => (*actor, visible_card_name.as_str()),
+        MtgoVisibleObjectCalibrationActionV1::ActivateManaAbility { .. } => {
+            return Err(MtgoContractErrorV1::new(
+                "object_ledger_offline_reflow_action_invalid",
+                "offline hand reflow is defined only for PlayLand",
+            ));
+        }
+    };
+    let hand_indices = ledger
+        .objects
+        .iter()
+        .enumerate()
+        .filter_map(|(index, object)| {
+            (object.stable.owner == actor
+                && object.stable.controller == actor
+                && object.stable.zone == Zone::Hand)
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    if hand_indices.len() != usize::from(reflow.before_hand_count()) {
+        return Err(MtgoContractErrorV1::new(
+            "object_ledger_offline_reflow_hand_count_mismatch",
+            format!(
+                "expected={},actual={}",
+                reflow.before_hand_count(),
+                hand_indices.len()
+            ),
+        ));
+    }
+    let played_hand_ordinal = usize::from(reflow.expected_source_ordinal());
+    let played_index = *hand_indices.get(played_hand_ordinal).ok_or_else(|| {
+        MtgoContractErrorV1::new(
+            "object_ledger_offline_reflow_source_missing",
+            reflow.expected_source_ordinal().to_string(),
+        )
+    })?;
+    let played = &ledger.objects[played_index];
+    if played.visible_card_name != visible_card_name || played.stable.zone != Zone::Hand {
+        return Err(MtgoContractErrorV1::new(
+            "object_ledger_offline_reflow_source_mismatch",
+            format!(
+                "expected={visible_card_name},actual={}",
+                played.visible_card_name
+            ),
+        ));
+    }
+
+    let before_zone_change_count = played.stable.zone_change_count;
+    let after_zone_change_count = before_zone_change_count.checked_add(1).ok_or_else(|| {
+        MtgoContractErrorV1::new(
+            "object_ledger_zone_change_count_overflow",
+            played.visible_object_id.as_str(),
+        )
+    })?;
+    let source_visible_object_id = played.visible_object_id.clone();
+    let result_visible_object_id = format!(
+        "frame:{}:battlefield-land:0",
+        calibration.after_frame_sha256()
+    );
+    validate_visible_object_id_v1(&result_visible_object_id)?;
+
+    let remaining_indices = hand_indices
+        .iter()
+        .copied()
+        .filter(|index| *index != played_index)
+        .collect::<Vec<_>>();
+    if remaining_indices.len() != usize::from(reflow.after_hand_count()) {
+        return Err(MtgoContractErrorV1::new(
+            "object_ledger_offline_reflow_remaining_count_mismatch",
+            remaining_indices.len().to_string(),
+        ));
+    }
+    let mut remaining_hand_reflow = Vec::with_capacity(remaining_indices.len());
+    let mut result_ids = HashSet::with_capacity(remaining_indices.len() + 1);
+    result_ids.insert(result_visible_object_id.clone());
+    for (after_ordinal, object_index) in remaining_indices.iter().copied().enumerate() {
+        let result_id = format!(
+            "frame:{}:hand-slot:{}",
+            calibration.after_frame_sha256(),
+            after_ordinal
+        );
+        validate_visible_object_id_v1(&result_id)?;
+        if !result_ids.insert(result_id.clone())
+            || ledger.objects.iter().enumerate().any(|(index, object)| {
+                !hand_indices.contains(&index) && object.visible_object_id == result_id
+            })
+        {
+            return Err(MtgoContractErrorV1::new(
+                "object_ledger_offline_reflow_result_id_invalid",
+                result_id,
+            ));
+        }
+        let object = &ledger.objects[object_index];
+        remaining_hand_reflow.push(MtgoObjectLedgerHandReflowV1 {
+            source_visible_object_id: object.visible_object_id.clone(),
+            result_visible_object_id: result_id,
+            visible_card_name: object.visible_card_name.clone(),
+            arena_id: object.stable.arena_id,
+        });
+    }
+
+    let played_arena_id = ledger.objects[played_index].stable.arena_id;
+    ledger.objects[played_index].visible_object_id = result_visible_object_id.clone();
+    ledger.objects[played_index].stable.zone = Zone::Battlefield;
+    ledger.objects[played_index].stable.zone_change_count = after_zone_change_count;
+    for (&object_index, entry) in remaining_indices.iter().zip(remaining_hand_reflow.iter()) {
+        ledger.objects[object_index].visible_object_id = entry.result_visible_object_id.clone();
+    }
+
+    let sequence = u64::try_from(ledger.transitions.len() + 1).map_err(|_| {
+        MtgoContractErrorV1::new(
+            "object_ledger_transition_sequence_overflow",
+            ledger.transitions.len().to_string(),
+        )
+    })?;
+    ledger.transitions.push(MtgoObjectLedgerTransitionV1 {
+        sequence,
+        kind: MtgoObjectLedgerTransitionKindV1::PlayLandZoneChange,
+        calibration_commitment_sha256: calibration.transition_commitment_sha256().to_owned(),
+        before_frame_sha256: calibration.before_frame_sha256().to_owned(),
+        after_frame_sha256: calibration.after_frame_sha256().to_owned(),
+        source_visible_object_id,
+        result_visible_object_id,
+        arena_id: played_arena_id,
+        before_zone_change_count,
+        after_zone_change_count,
+        remaining_hand_reflow,
+    });
+    ledger.current_frame_sha256 = calibration.after_frame_sha256().to_owned();
+    ledger.ledger_commitment_sha256 = commit_ledger_v1(&ledger)?;
+    Ok(ledger)
+}
+
 #[derive(Serialize)]
 struct LedgerCommitmentObjectV1<'a> {
     visible_object_id: &'a str,
@@ -621,6 +799,7 @@ fn require_sha256_v1(value: &str, code: &'static str) -> Result<(), MtgoContract
 mod tests {
     use super::*;
     use crate::{
+        matched_offline_play_land_reflow_for_test_v1,
         validate_visible_object_action_calibration_trace_v1,
         MtgoVisibleObjectActionCalibrationTraceV1,
     };
@@ -683,6 +862,27 @@ mod tests {
         ]
     }
 
+    fn eight_card_first_main_seed(frame: &str) -> CheckedUntrustedMtgoVisibleObjectLedgerV1 {
+        start_checked_untrusted_visible_object_ledger_v1(
+            frame,
+            [
+                "Island", "Forest", "Forest", "Forest", "Forest", "Forest", "Forest", "Forest",
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, name)| MtgoVisibleObjectSeedV1 {
+                display_ordinal: u32::try_from(ordinal).unwrap(),
+                visible_object_id: format!("first-main:hand-slot-{ordinal}"),
+                visible_card_name: name.to_owned(),
+                owner: PlayerSeatV1::P0,
+                controller: PlayerSeatV1::P0,
+                zone: Zone::Hand,
+            })
+            .collect(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn live_play_land_then_mana_preserves_lineage_and_increments_once() {
         let play_land = calibration(include_str!(
@@ -719,6 +919,71 @@ mod tests {
         assert_eq!(after_mana[0].kernel_ref, after_land[0].kernel_ref);
         assert_eq!(ledger.transition_count(), 2);
         assert_eq!(ledger.current_frame_sha256(), mana.after_frame_sha256());
+    }
+
+    #[test]
+    fn matched_offline_reflow_preserves_seven_survivors_and_moves_played_island() {
+        let play_land = calibration(include_str!(
+            "../fixtures/solitaire_play_land_transition_v1.json"
+        ));
+        let reflow = matched_offline_play_land_reflow_for_test_v1(&play_land);
+        let ledger = eight_card_first_main_seed(play_land.before_frame_sha256());
+        let ledger = advance_checked_untrusted_visible_play_land_from_offline_reflow_v1(
+            ledger, &play_land, &reflow,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ledger.current_frame_sha256(),
+            play_land.after_frame_sha256()
+        );
+        assert_eq!(ledger.object_count(), 8);
+        assert_eq!(ledger.transition_count(), 1);
+        assert!(!ledger.safe_for_observation_v5());
+        assert!(!ledger.safe_for_policy_scoring());
+        assert!(!ledger.safe_for_input());
+
+        let bindings = ledger.current_object_bindings_v1();
+        assert_eq!(bindings.len(), 8);
+        assert_eq!(bindings[0].kernel_ref.arena_id, 1);
+        assert_eq!(bindings[0].kernel_ref.zone, Zone::Battlefield);
+        assert_eq!(bindings[0].kernel_ref.zone_change_count, 1);
+        assert_eq!(
+            bindings[0].kernel_ref.card_db_id,
+            resolve_checked_untrusted_kernel_card_correspondence_v1("Island")
+                .unwrap()
+                .card_db_id()
+        );
+        assert!(bindings[0]
+            .adapter_object_id
+            .ends_with(":battlefield-land:0"));
+        for (ordinal, binding) in bindings.iter().enumerate().skip(1) {
+            assert_eq!(
+                binding.kernel_ref.arena_id,
+                u32::try_from(ordinal + 1).unwrap()
+            );
+            assert_eq!(binding.kernel_ref.zone, Zone::Hand);
+            assert_eq!(binding.kernel_ref.zone_change_count, 0);
+            assert!(binding
+                .adapter_object_id
+                .ends_with(&format!(":hand-slot:{}", ordinal - 1)));
+        }
+    }
+
+    #[test]
+    fn matched_offline_reflow_rejects_a_ledger_with_the_wrong_source_card() {
+        let play_land = calibration(include_str!(
+            "../fixtures/solitaire_play_land_transition_v1.json"
+        ));
+        let reflow = matched_offline_play_land_reflow_for_test_v1(&play_land);
+        let mut ledger = eight_card_first_main_seed(play_land.before_frame_sha256());
+        ledger.objects.swap(0, 1);
+        assert!(
+            advance_checked_untrusted_visible_play_land_from_offline_reflow_v1(
+                ledger, &play_land, &reflow,
+            )
+            .is_err()
+        );
     }
 
     #[test]

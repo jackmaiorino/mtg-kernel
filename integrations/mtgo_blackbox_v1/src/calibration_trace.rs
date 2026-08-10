@@ -236,8 +236,16 @@ impl CheckedUntrustedMtgoVisibleObjectActionCalibrationV1 {
         &self.record.before_frame.frame_sha256
     }
 
+    pub(crate) fn before_manifest_sha256(&self) -> &str {
+        &self.record.before_frame.manifest_sha256
+    }
+
     pub fn after_frame_sha256(&self) -> &str {
         &self.record.after_frame.frame_sha256
+    }
+
+    pub(crate) fn after_manifest_sha256(&self) -> &str {
+        &self.record.after_frame.manifest_sha256
     }
 
     pub fn transition_commitment_sha256(&self) -> &str {

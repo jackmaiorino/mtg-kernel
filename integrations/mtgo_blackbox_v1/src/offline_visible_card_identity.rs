@@ -984,7 +984,7 @@ fn identity_commitment_ordinal_v2(identity: &MtgoOfflineVisibleCardIdentityV1) -
     bytes
 }
 
-fn first_main_card_art_regions_v1() -> [MtgoRectPxV1; 8] {
+pub(crate) fn first_main_card_art_regions_v1() -> [MtgoRectPxV1; 8] {
     [330_u32, 432, 534, 636, 738, 840, 942, 1_044].map(|x| MtgoRectPxV1 {
         x,
         y: 760,
