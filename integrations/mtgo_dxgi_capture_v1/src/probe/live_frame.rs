@@ -838,4 +838,24 @@ mod tests {
         assert!(!frame.safe_for_policy_scoring_v1());
         assert!(!frame.safe_for_input_v1());
     }
+
+    #[test]
+    #[ignore = "requires the pinned MTGO Solitaire first-main window to be foreground and unobscured"]
+    fn live_capture_reaches_profile_bound_first_main_measurement() {
+        let frame = capture_pinned_current_solitaire_visible_frame_v1(2_000).unwrap();
+        let measurement = measure_pinned_current_solitaire_first_main_v1(frame).unwrap();
+        assert_eq!(
+            measurement.profile_commitment_sha256_v1(),
+            PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1
+        );
+        assert_eq!(
+            measurement.classification_v1(),
+            MtgoOfflineFirstMainClassificationV1::Match
+        );
+        assert_eq!(measurement.measurement_commitment_sha256_v1().len(), 64);
+        assert!(!measurement.safe_for_semantic_evidence_v1());
+        assert!(!measurement.safe_for_observation_v5_v1());
+        assert!(!measurement.safe_for_policy_scoring_v1());
+        assert!(!measurement.safe_for_input_v1());
+    }
 }
