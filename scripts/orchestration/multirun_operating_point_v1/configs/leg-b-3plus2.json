@@ -8,6 +8,14 @@
   "sessions": 32,
   "broker_target": 16,
   "store_parent_root": "D:\\mtg-kernel-oppoint-leg-b-3plus2",
+  "monitor": {
+    "census_seconds": 2,
+    "wall_clock_timeout_seconds": 1800,
+    "device_rails": [
+      { "device_uuid": "GPU-3502709e-6aef-8ed7-4abe-562838793e3d", "rail_mib": 11442 },
+      { "device_uuid": "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3", "rail_mib": 5393 }
+    ]
+  },
   "processes": [
     { "device_uuid": "GPU-3502709e-6aef-8ed7-4abe-562838793e3d", "runs": 3 },
     { "device_uuid": "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3", "runs": 2 }

@@ -48,12 +48,14 @@ function Assert-ExactKeySet {
         [Parameter(Mandatory = $true)][string[]]$Expected,
         [Parameter(Mandatory = $true)][string]$Where
     )
+    # Case-sensitive both directions: PS default matching is case-insensitive
+    # and would let 'Schema' or 'PROCESSES' slip the deny-unknown net.
     $actual = @($Object.PSObject.Properties.Name)
     foreach ($key in $actual) {
-        if ($Expected -notcontains $key) { throw "unknown key '$key' in $Where (deny-unknown)" }
+        if ($Expected -cnotcontains $key) { throw "unknown key '$key' in $Where (deny-unknown)" }
     }
     foreach ($key in $Expected) {
-        if ($actual -notcontains $key) { throw "missing key '$key' in $Where (deny-missing)" }
+        if ($actual -cnotcontains $key) { throw "missing key '$key' in $Where (deny-missing)" }
     }
 }
 
@@ -71,11 +73,11 @@ function Read-LaunchConfig {
 
     Assert-ExactKeySet -Object $config -Where 'config root' -Expected @(
         'schema', 'label', 'expected_commit', 'base_seed', 'updates', 'workers',
-        'sessions', 'broker_target', 'store_parent_root', 'processes'
+        'sessions', 'broker_target', 'store_parent_root', 'monitor', 'processes'
     )
-    if ($config.schema -ne $script:SchemaId) { throw "schema must be '$($script:SchemaId)', got '$($config.schema)'" }
-    if ($config.label -notmatch '^[a-z0-9][a-z0-9-]{2,63}$') { throw "label must be kebab-case 3-64 chars, got '$($config.label)'" }
-    if ($config.expected_commit -notmatch '^[0-9a-f]{40}$') { throw 'expected_commit must be a full 40-hex sha' }
+    if ($config.schema -cne $script:SchemaId) { throw "schema must be '$($script:SchemaId)', got '$($config.schema)'" }
+    if ($config.label -cnotmatch '^[a-z0-9][a-z0-9-]{2,63}$') { throw "label must be lowercase kebab-case 3-64 chars, got '$($config.label)'" }
+    if ($config.expected_commit -cnotmatch '^[0-9a-f]{40}$') { throw 'expected_commit must be a full lowercase 40-hex sha' }
     Assert-PositiveInteger -Value $config.base_seed -Name 'base_seed'
     Assert-PositiveInteger -Value $config.updates -Name 'updates'
     Assert-PositiveInteger -Value $config.workers -Name 'workers'
@@ -92,17 +94,49 @@ function Read-LaunchConfig {
     # operating points are 2/32 at K=64.
     if ($actors -ne 64) { throw "v1 requires workers*sessions == 64 (pilot episode accounting contract), got $actors" }
     if ([string]::IsNullOrWhiteSpace($config.store_parent_root)) { throw 'store_parent_root must be non-empty' }
-    if (-not [System.IO.Path]::IsPathRooted($config.store_parent_root)) { throw 'store_parent_root must be absolute' }
+    # IsPathRooted accepts drive-relative 'D:foo'; require a full drive path.
+    if ($config.store_parent_root -cnotmatch '^[A-Za-z]:\\') { throw "store_parent_root must be a full drive-absolute path, got '$($config.store_parent_root)'" }
 
     $processes = @($config.processes)
     if ($processes.Count -lt 1) { throw 'processes must have at least one entry' }
     $seenUuids = @{}
+    $totalRuns = [long]0
     foreach ($process in $processes) {
         Assert-ExactKeySet -Object $process -Where 'process entry' -Expected @('device_uuid', 'runs')
-        if ($process.device_uuid -notmatch '^GPU-[0-9a-f-]{36}$') { throw "device_uuid must be a full GPU-<uuid>, got '$($process.device_uuid)'" }
+        if ($process.device_uuid -cnotmatch '^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw "device_uuid must be a full lowercase GPU-<uuid>, got '$($process.device_uuid)'" }
         if ($seenUuids.ContainsKey($process.device_uuid)) { throw "duplicate device_uuid '$($process.device_uuid)'" }
         $seenUuids[$process.device_uuid] = $true
         Assert-PositiveInteger -Value $process.runs -Name 'process runs'
+        $totalRuns += [long]$process.runs
+    }
+    # Seed arithmetic stays exact everywhere it travels: run seed = base +
+    # offset + ordinal. Bound base_seed to 2^53 so the value survives every
+    # JSON round-trip (PS 5.1 may surface large numbers as doubles) and the
+    # sum can never approach Int64/u64 edges.
+    if ([long]$config.base_seed -gt 9007199254740992) { throw 'base_seed must be <= 2^53 (JSON-exact, overflow-safe band)' }
+
+    # Monitor block: census cadence, hard wall-clock deadline, and one memory
+    # rail per configured device. Rails are pinned IN the config so the leg
+    # files really do carry their abort criteria.
+    Assert-ExactKeySet -Object $config.monitor -Where 'monitor' -Expected @(
+        'census_seconds', 'wall_clock_timeout_seconds', 'device_rails'
+    )
+    Assert-PositiveInteger -Value $config.monitor.census_seconds -Name 'monitor.census_seconds'
+    if ($config.monitor.census_seconds -gt 60) { throw 'monitor.census_seconds must be <= 60' }
+    Assert-PositiveInteger -Value $config.monitor.wall_clock_timeout_seconds -Name 'monitor.wall_clock_timeout_seconds'
+    if ($config.monitor.wall_clock_timeout_seconds -lt 60 -or $config.monitor.wall_clock_timeout_seconds -gt 86400) { throw 'monitor.wall_clock_timeout_seconds must be in 60..86400' }
+    $railUuids = @{}
+    foreach ($rail in @($config.monitor.device_rails)) {
+        Assert-ExactKeySet -Object $rail -Where 'device rail' -Expected @('device_uuid', 'rail_mib')
+        Assert-PositiveInteger -Value $rail.rail_mib -Name 'rail_mib'
+        if ($railUuids.ContainsKey($rail.device_uuid)) { throw "duplicate rail for '$($rail.device_uuid)'" }
+        $railUuids[$rail.device_uuid] = $rail.rail_mib
+    }
+    foreach ($process in $processes) {
+        if (-not $railUuids.ContainsKey($process.device_uuid)) { throw "no memory rail configured for device '$($process.device_uuid)'" }
+    }
+    foreach ($uuid in $railUuids.Keys) {
+        if (-not $seenUuids.ContainsKey($uuid)) { throw "rail configured for unused device '$uuid'" }
     }
     return $config
 }
@@ -120,6 +154,13 @@ function Get-RenderedLaunch {
         runner_test = $script:RunnerTest
         runner_args = @($script:RunnerArgs)
         whitelist  = @(Get-FullWhitelist)
+        monitor    = [pscustomobject][ordered]@{
+            census_seconds = $Config.monitor.census_seconds
+            wall_clock_timeout_seconds = $Config.monitor.wall_clock_timeout_seconds
+            device_rails = @($Config.monitor.device_rails | ForEach-Object {
+                [pscustomobject][ordered]@{ device_uuid = $_.device_uuid; rail_mib = $_.rail_mib }
+            })
+        }
         processes  = @()
     }
     $offset = [long]0
@@ -196,13 +237,25 @@ function Resolve-PilotExecutable {
     $executables = foreach ($line in $jsonLines) {
         try { $item = $line | ConvertFrom-Json } catch { continue }
         if ($null -eq $item) { continue }
-        $hasExecutable = $item.PSObject.Properties.Name -contains 'executable'
-        $hasTarget = $item.PSObject.Properties.Name -contains 'target'
-        if ($hasExecutable -and $hasTarget -and $item.executable -and $item.target.name -eq 'mtg-kernel') { $item.executable }
+        $names = @($item.PSObject.Properties.Name)
+        if ($names -cnotcontains 'executable' -or $names -cnotcontains 'target' -or $names -cnotcontains 'profile') { continue }
+        # target.kind filtering per the stale-binary house rule: accept only
+        # the crate's own lib target compiled as a test harness.
+        if (-not $item.executable) { continue }
+        if ($item.target.name -cne 'mtg-kernel') { continue }
+        if (@($item.target.kind) -cnotcontains 'lib') { continue }
+        if (-not $item.profile.test) { continue }
+        $item.executable
     }
     $executables = @($executables | Select-Object -Unique)
     if ($executables.Count -ne 1) { throw "expected exactly one lib-test executable from cargo JSON, got $($executables.Count)" }
-    return $executables[0]
+    $executable = $executables[0]
+    # Positive execution marker: the resolved binary must itself report that
+    # it carries the pilot test. --list never runs tests and touches no GPU.
+    $listing = & $executable $script:RunnerTest --list --exact 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "execution-marker listing failed (exit $LASTEXITCODE)" }
+    if ($listing -cnotmatch [regex]::Escape($script:RunnerTest)) { throw "resolved executable does not carry $($script:RunnerTest)" }
+    return $executable
 }
 
 function Assert-DeviceInventory {
@@ -240,6 +293,10 @@ function Start-RenderedLaunch {
     New-Item -ItemType Directory -Force -Path $LaunchRoot | Out-Null
     $inventory = Assert-DeviceInventory -Rendered $Rendered
     $sourceExe = Resolve-PilotExecutable -RepoRoot $RepoRoot -StderrPath (Join-Path $LaunchRoot 'cargo-build.stderr.log')
+    # Post-build re-verify: the build takes minutes; the tree must not have
+    # moved under it, or the recorded source_commit would be a lie.
+    $headAfterBuild = (& git -C $RepoRoot rev-parse HEAD).Trim()
+    if ($headAfterBuild -cne $head) { throw "repo HEAD moved during build ($head -> $headAfterBuild)" }
     $exeCopy = Join-Path $LaunchRoot ([System.IO.Path]::GetFileName($sourceExe))
     Copy-Item -LiteralPath $sourceExe -Destination $exeCopy
     $exeSha = Get-Sha256Hex -Path $exeCopy
@@ -249,13 +306,20 @@ function Start-RenderedLaunch {
         label          = $Rendered.label
         config_path    = (Resolve-Path -LiteralPath $ConfigPath).Path
         config_sha256  = Get-Sha256Hex -Path $ConfigPath
+        config_bytes   = (Get-Content -LiteralPath $ConfigPath -Raw)
         source_commit  = $head
         executable     = $exeCopy
         executable_sha256 = $exeSha
         device_inventory = @($inventory)
+        monitor        = $Rendered.monitor
+        disposition    = 'RUNNING'
         started_utc    = [DateTime]::UtcNow.ToString('o')
         processes      = @()
     }
+
+    # OOM signature scan pattern, inherited from the certified fair-campaign
+    # runner's detector.
+    $oomPattern = 'out of (?:device )?memory|\bOOM\b|CUDA_ERROR_OUT_OF_MEMORY|CUDA error.*(?:alloc|memory)|CUDNN_STATUS_ALLOC_FAILED'
 
     $children = @()
     foreach ($process in $Rendered.processes) {
@@ -274,29 +338,109 @@ function Start-RenderedLaunch {
             if ($null -ne $value) { $psi.EnvironmentVariables[$name] = $value }
         }
         $child = [System.Diagnostics.Process]::Start($psi)
-        $stdout = $child.StandardOutput.ReadToEndAsync()
-        $stderr = $child.StandardError.ReadToEndAsync()
         $children += [pscustomobject]@{
-            process = $child; log = $logPath; stdout = $stdout; stderr = $stderr
-            index = $process.process_index; started = [DateTime]::UtcNow.ToString('o')
+            process = $child; log = $logPath
+            stdout = $child.StandardOutput.ReadToEndAsync()
+            stderr = $child.StandardError.ReadToEndAsync()
+            index = $process.process_index
+            device_uuid = $process.device_uuid
+            seed_offset = $process.seed_offset
+            store_parent = $process.store_parent
+            env_map = $process.env
+            started = [DateTime]::UtcNow.ToString('o')
+            start_ticks = $child.StartTime.ToUniversalTime().Ticks
+            disposition = 'RUNNING'
         }
     }
+
+    # Kill with PID-reuse protection: only a process whose StartTime ticks
+    # still match the child we spawned is ours to kill (house watchdog rule).
+    function Stop-OwnedChildren {
+        param($Children, [string]$Disposition)
+        foreach ($child in $Children) {
+            if ($child.process.HasExited) { continue }
+            $live = Get-Process -Id $child.process.Id -ErrorAction SilentlyContinue
+            if ($null -ne $live -and $live.StartTime.ToUniversalTime().Ticks -eq $child.start_ticks) {
+                & taskkill /PID $child.process.Id /T /F 2>&1 | Out-Null
+                $child.disposition = $Disposition
+            }
+        }
+    }
+
+    # Monitor loop: census both rails at the configured cadence, enforce the
+    # wall-clock deadline, exit when every child has exited. Census series
+    # goes to census.csv; the record keeps per-device max and sample count.
+    $censusPath = Join-Path $LaunchRoot 'census.csv'
+    Set-Content -LiteralPath $censusPath -Encoding utf8 -Value 'utc,device_uuid,memory_used_mib'
+    $deadline = [DateTime]::UtcNow.AddSeconds($Rendered.monitor.wall_clock_timeout_seconds)
+    $railByUuid = @{}
+    foreach ($rail in $Rendered.monitor.device_rails) { $railByUuid[$rail.device_uuid] = [long]$rail.rail_mib }
+    $maxByUuid = @{}
+    $censusCount = 0
+    $launchDisposition = 'COMPLETED'
+    while (@($children | Where-Object { -not $_.process.HasExited }).Count -gt 0) {
+        if ([DateTime]::UtcNow -gt $deadline) {
+            Stop-OwnedChildren -Children $children -Disposition 'ABORTED-TIMEOUT'
+            $launchDisposition = 'ABORTED-TIMEOUT'
+            break
+        }
+        $sample = @(& nvidia-smi --query-gpu=uuid,memory.used --format='csv,noheader,nounits' 2>$null)
+        $censusCount += 1
+        $nowIso = [DateTime]::UtcNow.ToString('o')
+        foreach ($row in $sample) {
+            $parts = $row -split ','
+            if ($parts.Count -lt 2) { continue }
+            $uuid = $parts[0].Trim(); $used = [long]($parts[1].Trim())
+            if (-not $railByUuid.ContainsKey($uuid)) { continue }
+            Add-Content -LiteralPath $censusPath -Encoding utf8 -Value "$nowIso,$uuid,$used"
+            if (-not $maxByUuid.ContainsKey($uuid) -or $used -gt $maxByUuid[$uuid]) { $maxByUuid[$uuid] = $used }
+            if ($used -gt $railByUuid[$uuid]) {
+                Stop-OwnedChildren -Children $children -Disposition 'ABORTED-RAIL'
+                $launchDisposition = 'ABORTED-RAIL'
+                $record['rail_breach'] = [ordered]@{ device_uuid = $uuid; measured_mib = $used; rail_mib = $railByUuid[$uuid]; at_utc = $nowIso }
+            }
+        }
+        if ($launchDisposition -cne 'COMPLETED') { break }
+        Start-Sleep -Seconds $Rendered.monitor.census_seconds
+    }
+    foreach ($child in $children) { $child.process.WaitForExit() }
+
     foreach ($child in $children) {
-        $child.process.WaitForExit()
-        Set-Content -LiteralPath $child.log -Encoding utf8 -Value ($child.stdout.Result + "`n--- STDERR ---`n" + $child.stderr.Result)
+        $stdoutText = $child.stdout.Result
+        $stderrText = $child.stderr.Result
+        Set-Content -LiteralPath $child.log -Encoding utf8 -Value ($stdoutText + "`n--- STDERR ---`n" + $stderrText)
+        if ($child.disposition -ceq 'RUNNING') {
+            $child.disposition = if ($child.process.ExitCode -eq 0) { 'COMPLETED' } else { 'FAILED' }
+        }
+        $oomSeen = (($stdoutText + $stderrText) -match $oomPattern)
         $record.processes += [ordered]@{
             process_index = $child.index
+            device_uuid   = $child.device_uuid
+            seed_offset   = $child.seed_offset
+            store_parent  = $child.store_parent
+            env           = $child.env_map
             pid           = $child.process.Id
+            start_utc_ticks = $child.start_ticks
             started_utc   = $child.started
             ended_utc     = [DateTime]::UtcNow.ToString('o')
             exit_code     = $child.process.ExitCode
+            disposition   = $child.disposition
+            oom_signature_seen = [bool]$oomSeen
             log_path      = $child.log
         }
+        if ($oomSeen -and $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
+        if ($child.process.ExitCode -ne 0 -and $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
     }
+    $record.disposition = $launchDisposition
+    $record['census'] = [ordered]@{
+        samples = $censusCount
+        series_path = $censusPath
+        max_memory_used_mib = [ordered]@{}
+    }
+    foreach ($uuid in $maxByUuid.Keys) { $record.census.max_memory_used_mib[$uuid] = $maxByUuid[$uuid] }
     $record.ended_utc = [DateTime]::UtcNow.ToString('o')
     $recordPath = Join-Path $LaunchRoot 'launch-record.json'
-    ($record | ConvertTo-Json -Depth 8) | Out-File -LiteralPath $recordPath -Encoding utf8
-    $failed = @($record.processes | Where-Object { $_.exit_code -ne 0 })
-    if ($failed.Count -gt 0) { throw "launch completed with $($failed.Count) failing process(es); see $recordPath" }
+    ($record | ConvertTo-Json -Depth 10) | Out-File -LiteralPath $recordPath -Encoding utf8
+    if ($launchDisposition -cne 'COMPLETED') { throw "launch disposition $launchDisposition; see $recordPath" }
     return $recordPath
 }
