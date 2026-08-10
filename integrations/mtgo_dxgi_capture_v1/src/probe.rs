@@ -6,11 +6,12 @@ use crate::{
     CaptureWindowModeV2, SignedRectV1,
 };
 use mtgo_blackbox_v1::{
-    check_untrusted_dxgi_capture_artifact_v1,
+    check_untrusted_dxgi_capture_artifact_v1, classify_untrusted_offline_first_main_candidate_v1,
     classify_untrusted_offline_mulligan_ladder_candidate_v1, model_deployment_commitment_v1,
+    CheckedUntrustedMtgoOfflineFirstMainCandidateV1,
     CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1, MtgoExpectedModelDeploymentV1,
-    MtgoOfflineMulliganLadderClassificationV1, MtgoPregameActionSemanticV1, MtgoRectPxV1,
-    MtgoSizePxV1,
+    MtgoOfflineFirstMainClassificationV1, MtgoOfflineMulliganLadderClassificationV1,
+    MtgoPregameActionSemanticV1, MtgoRectPxV1, MtgoSizePxV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -81,6 +82,8 @@ const PREGAME_SCORING_REQUEST_DOMAIN_V3: &[u8] = b"mtgo-pregame-scoring-request-
 const PREGAME_MODEL_SELECTION_DOMAIN_V3: &[u8] = b"mtgo-pregame-model-selection-v3";
 const PREGAME_ACTION_PLAN_DOMAIN_V3: &[u8] = b"mtgo-pregame-action-plan-v3";
 const PREGAME_MULLIGAN_CONFIRMATION_DOMAIN_V3: &[u8] = b"mtgo-pregame-mulligan-confirmation-v3";
+const PREGAME_KEEP_FIRST_MAIN_CONFIRMATION_DOMAIN_V3: &[u8] =
+    b"mtgo-pregame-keep-first-main-confirmation-v3";
 const PREGAME_CONTROL_PROFILE_ID_V3: &str =
     "freeform-solitaire-pregame-controls-1550x925-20260810-v3";
 const PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3: &str =
@@ -346,6 +349,78 @@ pub fn measure_mtgo_dxgi_mulligan_ladder_candidate_v3(
         &source_frame.preview_png,
     )?;
     Ok(OpaqueMtgoDxgiMulliganMeasurementV3 {
+        source_frame,
+        measurement,
+    })
+}
+
+/// A direct in-process exact-template measurement of the visible Turn 1
+/// first-main state. The source frame and pixels remain private, and the result
+/// grants no observation, policy, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiFirstMainMeasurementV3;
+/// let _forged = OpaqueMtgoDxgiFirstMainMeasurementV3 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiFirstMainMeasurementV3;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoDxgiFirstMainMeasurementV3>();
+/// ```
+pub struct OpaqueMtgoDxgiFirstMainMeasurementV3 {
+    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    measurement: CheckedUntrustedMtgoOfflineFirstMainCandidateV1,
+}
+
+impl OpaqueMtgoDxgiFirstMainMeasurementV3 {
+    pub fn source_capture_commitments_v3(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.source_frame.commitments_v3()
+    }
+
+    pub fn classification_v3(&self) -> MtgoOfflineFirstMainClassificationV1 {
+        self.measurement.classification()
+    }
+
+    pub fn profile_commitment_sha256_v3(&self) -> &str {
+        self.measurement.profile_commitment_sha256()
+    }
+
+    pub fn measurement_commitment_sha256_v3(&self) -> &str {
+        self.measurement.candidate_commitment_sha256()
+    }
+
+    pub fn safe_for_semantic_evidence_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v3(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_mtgo_dxgi_first_main_candidate_v3(
+    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+) -> Result<OpaqueMtgoDxgiFirstMainMeasurementV3, String> {
+    let manifest_bytes = serialize_manifest_v2(&source_frame.manifest)?;
+    let checked = check_untrusted_dxgi_capture_artifact_v1(
+        &manifest_bytes,
+        &source_frame.canonical_bgra8,
+        &source_frame.preview_png,
+    )
+    .map_err(|error| format!("check opaque first-main capture: {error}"))?;
+    let measurement =
+        classify_untrusted_offline_first_main_candidate_v1(&checked, &source_frame.canonical_bgra8)
+            .map_err(|error| format!("classify opaque first-main capture: {error}"))?;
+    Ok(OpaqueMtgoDxgiFirstMainMeasurementV3 {
         source_frame,
         measurement,
     })
@@ -785,6 +860,42 @@ impl OpaqueMtgoConfirmedMulliganTransitionV3 {
     }
 }
 
+/// An exact visible Turn 1 first-main confirmation for a planned seven-card
+/// Keep. It does not prove that a particular input caused the transition and
+/// cannot enable a later input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoConfirmedKeepToFirstMainTransitionV3;
+/// let _forged = OpaqueMtgoConfirmedKeepToFirstMainTransitionV3 {};
+/// ```
+pub struct OpaqueMtgoConfirmedKeepToFirstMainTransitionV3 {
+    plan: OpaqueMtgoPregameActionPlanV3,
+    after: OpaqueMtgoDxgiFirstMainMeasurementV3,
+    confirmation_commitment_sha256: String,
+}
+
+impl OpaqueMtgoConfirmedKeepToFirstMainTransitionV3 {
+    pub fn selected_semantic_v3(&self) -> &MtgoPregameActionSemanticV1 {
+        self.plan.selected_semantic_v3()
+    }
+
+    pub fn source_action_plan_commitment_sha256_v3(&self) -> &str {
+        self.plan.action_plan_commitment_sha256_v3()
+    }
+
+    pub fn resulting_measurement_commitment_sha256_v3(&self) -> &str {
+        self.after.measurement_commitment_sha256_v3()
+    }
+
+    pub fn confirmation_commitment_sha256_v3(&self) -> &str {
+        &self.confirmation_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v3(&self) -> bool {
+        false
+    }
+}
+
 pub fn build_pregame_action_plan_v3(
     selection: OpaqueMtgoPregameModelSelectionV3,
 ) -> Result<OpaqueMtgoPregameActionPlanV3, String> {
@@ -832,6 +943,32 @@ pub fn confirm_pregame_mulligan_transition_v3(
         plan,
         after,
         resulting_prospective_keep_size,
+        confirmation_commitment_sha256,
+    })
+}
+
+pub fn confirm_pregame_keep_to_first_main_transition_v3(
+    plan: OpaqueMtgoPregameActionPlanV3,
+    after: OpaqueMtgoDxgiFirstMainMeasurementV3,
+) -> Result<OpaqueMtgoConfirmedKeepToFirstMainTransitionV3, String> {
+    let source_capture = plan.selection.measurement.source_capture_commitments_v3();
+    let after_capture = after.source_capture_commitments_v3();
+    let after_transition_identity_sha256 =
+        pregame_transition_identity_commitment_v3(&after.source_frame.manifest)?;
+    let confirmation_commitment_sha256 = validate_keep_first_main_postcondition_parts_v3(
+        plan.action_plan_commitment_sha256_v3(),
+        &plan.parts.planned_postcondition,
+        &source_capture,
+        &plan.parts.source_transition_identity_sha256,
+        after.classification_v3(),
+        after.profile_commitment_sha256_v3(),
+        after.measurement_commitment_sha256_v3(),
+        &after_capture,
+        &after_transition_identity_sha256,
+    )?;
+    Ok(OpaqueMtgoConfirmedKeepToFirstMainTransitionV3 {
+        plan,
+        after,
         confirmation_commitment_sha256,
     })
 }
@@ -1032,21 +1169,12 @@ fn validate_mulligan_postcondition_parts_v3(
     ] {
         require_lower_sha256_v3(digest, "pregame Mulligan confirmation commitment")?;
     }
-    if source_transition_identity_sha256 != after_transition_identity_sha256
-        || source_capture.canonical_width != after_capture.canonical_width
-        || source_capture.canonical_height != after_capture.canonical_height
-        || source_capture.client_rect_desktop_px != after_capture.client_rect_desktop_px
-    {
-        return Err("the MTGO process, match window, or capture layout changed".to_owned());
-    }
-    if after_capture.captured_at_unix_millis <= source_capture.captured_at_unix_millis
-        || after_capture.capture_commitment_sha256 == source_capture.capture_commitment_sha256
-        || after_capture.canonical_bgra8_sha256 == source_capture.canonical_bgra8_sha256
-    {
-        return Err(
-            "the Mulligan postcondition must use a strictly newer changed frame".to_owned(),
-        );
-    }
+    validate_pregame_capture_progression_v3(
+        source_capture,
+        source_transition_identity_sha256,
+        after_capture,
+        after_transition_identity_sha256,
+    )?;
 
     #[derive(Serialize)]
     struct ConfirmationRecordV3<'a> {
@@ -1070,6 +1198,94 @@ fn validate_mulligan_postcondition_parts_v3(
             after_transition_identity_sha256,
         },
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_keep_first_main_postcondition_parts_v3(
+    action_plan_commitment_sha256: &str,
+    planned_postcondition: &MtgoPlannedPregamePostconditionV3,
+    source_capture: &MtgoDxgiFrameCommitmentsV3,
+    source_transition_identity_sha256: &str,
+    after_classification: MtgoOfflineFirstMainClassificationV1,
+    after_profile_commitment_sha256: &str,
+    after_measurement_commitment_sha256: &str,
+    after_capture: &MtgoDxgiFrameCommitmentsV3,
+    after_transition_identity_sha256: &str,
+) -> Result<String, String> {
+    if planned_postcondition != &MtgoPlannedPregamePostconditionV3::GameplayFirstMain {
+        return Err(
+            "only a seven-card Keep can use the current first-main confirmation".to_owned(),
+        );
+    }
+    if after_classification != MtgoOfflineFirstMainClassificationV1::Match {
+        return Err("the visible result is not the exact reviewed Turn 1 first main".to_owned());
+    }
+    for digest in [
+        action_plan_commitment_sha256,
+        source_transition_identity_sha256,
+        after_profile_commitment_sha256,
+        after_measurement_commitment_sha256,
+        &source_capture.capture_commitment_sha256,
+        &source_capture.canonical_bgra8_sha256,
+        &after_capture.capture_commitment_sha256,
+        &after_capture.canonical_bgra8_sha256,
+        after_transition_identity_sha256,
+    ] {
+        require_lower_sha256_v3(digest, "pregame Keep confirmation commitment")?;
+    }
+    validate_pregame_capture_progression_v3(
+        source_capture,
+        source_transition_identity_sha256,
+        after_capture,
+        after_transition_identity_sha256,
+    )?;
+
+    #[derive(Serialize)]
+    struct ConfirmationRecordV3<'a> {
+        action_plan_commitment_sha256: &'a str,
+        source_capture_commitment_sha256: &'a str,
+        source_transition_identity_sha256: &'a str,
+        planned_postcondition: &'a MtgoPlannedPregamePostconditionV3,
+        after_capture_commitment_sha256: &'a str,
+        after_profile_commitment_sha256: &'a str,
+        after_measurement_commitment_sha256: &'a str,
+        after_transition_identity_sha256: &'a str,
+    }
+    canonical_json_commitment_v3(
+        PREGAME_KEEP_FIRST_MAIN_CONFIRMATION_DOMAIN_V3,
+        &ConfirmationRecordV3 {
+            action_plan_commitment_sha256,
+            source_capture_commitment_sha256: &source_capture.capture_commitment_sha256,
+            source_transition_identity_sha256,
+            planned_postcondition,
+            after_capture_commitment_sha256: &after_capture.capture_commitment_sha256,
+            after_profile_commitment_sha256,
+            after_measurement_commitment_sha256,
+            after_transition_identity_sha256,
+        },
+    )
+}
+
+fn validate_pregame_capture_progression_v3(
+    source_capture: &MtgoDxgiFrameCommitmentsV3,
+    source_transition_identity_sha256: &str,
+    after_capture: &MtgoDxgiFrameCommitmentsV3,
+    after_transition_identity_sha256: &str,
+) -> Result<(), String> {
+    if source_transition_identity_sha256 != after_transition_identity_sha256
+        || source_capture.canonical_width != after_capture.canonical_width
+        || source_capture.canonical_height != after_capture.canonical_height
+        || source_capture.client_rect_desktop_px != after_capture.client_rect_desktop_px
+    {
+        return Err("the MTGO process, match window, or capture layout changed".to_owned());
+    }
+    if after_capture.captured_at_unix_millis <= source_capture.captured_at_unix_millis
+        || after_capture.capture_commitment_sha256 == source_capture.capture_commitment_sha256
+        || after_capture.canonical_bgra8_sha256 == source_capture.canonical_bgra8_sha256
+    {
+        return Err("the postcondition must use a strictly newer changed frame".to_owned());
+    }
+    Ok(())
 }
 
 fn pregame_control_profile_commitment_v3() -> Result<String, String> {
@@ -2780,6 +2996,72 @@ mod tests {
             PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3,
             &"3".repeat(64),
             &after,
+            &"2".repeat(64),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn keep_confirmation_requires_exact_new_turn_one_first_main() {
+        let pixels = vec![0_u8; 1_550 * 925 * 4];
+        let source = capture_commitments_for_pixels_v3(&pixels, 'a', 100);
+        let mut after = source.clone();
+        after.capture_commitment_sha256 = "e".repeat(64);
+        after.canonical_bgra8_sha256 = "f".repeat(64);
+        after.captured_at_unix_millis = 101;
+        let first_main = MtgoPlannedPregamePostconditionV3::GameplayFirstMain;
+        let confirmed = validate_keep_first_main_postcondition_parts_v3(
+            &"1".repeat(64),
+            &first_main,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineFirstMainClassificationV1::Match,
+            &"3".repeat(64),
+            &"4".repeat(64),
+            &after,
+            &"2".repeat(64),
+        )
+        .unwrap();
+        assert_eq!(confirmed.len(), 64);
+
+        assert!(validate_keep_first_main_postcondition_parts_v3(
+            &"1".repeat(64),
+            &first_main,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineFirstMainClassificationV1::NoMatch,
+            &"3".repeat(64),
+            &"4".repeat(64),
+            &after,
+            &"2".repeat(64),
+        )
+        .is_err());
+        assert!(validate_keep_first_main_postcondition_parts_v3(
+            &"1".repeat(64),
+            &MtgoPlannedPregamePostconditionV3::LondonBottoming {
+                required_bottom_count: 1,
+            },
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineFirstMainClassificationV1::Match,
+            &"3".repeat(64),
+            &"4".repeat(64),
+            &after,
+            &"2".repeat(64),
+        )
+        .is_err());
+
+        let mut stale = after.clone();
+        stale.captured_at_unix_millis = 100;
+        assert!(validate_keep_first_main_postcondition_parts_v3(
+            &"1".repeat(64),
+            &first_main,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineFirstMainClassificationV1::Match,
+            &"3".repeat(64),
+            &"4".repeat(64),
+            &stale,
             &"2".repeat(64),
         )
         .is_err());

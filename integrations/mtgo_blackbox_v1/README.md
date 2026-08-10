@@ -154,6 +154,16 @@ The first deliberately narrow corpus is `fixtures/offline_opening_hand_classifie
 
 `classify_untrusted_offline_mulligan_ladder_candidate_v1` extends that offline-only slice across every visible London mulligan choice from prospective keep seven through prospective keep one. MTGO continues to display seven cards while the prospective keep size decreases, so the semantic state comes from the visible prompt rather than the displayed hand count. The fixed classifier uses an exact prompt-text interior that excludes the animated cyan border. The checked capture artifact still binds the acting-player Solitaire role, exact client size, output identity, and raw-frame hash before classification.
 
+`classify_untrusted_offline_first_main_candidate_v1` recognizes one narrow post-Keep outcome. Its fixed exact-pixel profile binds the visible first-main prompt, Combat control, Turn 1 label, and empty upper battlefield. Those four regions were identical in two reviewed acting-player Solitaire captures: one after a seven-card Keep and one after completing a six-card London bottoming sequence. The result is checked-untrusted, retains no pixels or coordinates, and does not create `ObservationV5`, policy, or input authority.
+
+The read-only classifier can be run on an offline artifact with:
+
+```powershell
+cargo run --bin classify_mtgo_offline_first_main_candidate_v1 -- 'C:\absolute\artifact-directory'
+```
+
+The first-main corpus is `fixtures/offline_first_main_classifier_corpus_20260810_v1.json`: two positive and two negative manually inspected frames from two no-cost Freeform Solitaire games. Both first-main frames matched, while an opening-hand prompt and a bottoming prompt did not. This is wiring evidence, not an accuracy estimate or evidence of generalization. The empty-battlefield anchor also deliberately limits this profile to the current basic-land Solitaire calibration scenario.
+
 Exactly one of the seven prompt profiles must match before the result exposes a prospective keep size and ordered adapter-local actions. A zero-match or multi-match result exposes no actions. Every result retains no pixels or coordinates and remains unsafe for a live frame, semantic evidence, `ObservationV5`, policy scoring, or input.
 
 The read-only classifier can be run on an offline artifact with:

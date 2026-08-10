@@ -86,10 +86,18 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
     assert!(source.contains(
         "pub fn confirm_pregame_mulligan_transition_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    after: OpaqueMtgoDxgiMulliganMeasurementV3,"
     ));
+    assert!(source.contains(
+        "pub fn confirm_pregame_keep_to_first_main_transition_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    after: OpaqueMtgoDxgiFirstMainMeasurementV3,"
+    ));
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_first_main_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
+    ));
     assert!(source.contains("fn build_pregame_action_plan_parts_v3("));
     assert!(source.contains("fn validate_mulligan_postcondition_parts_v3("));
+    assert!(source.contains("fn validate_keep_first_main_postcondition_parts_v3("));
     assert!(!source.contains("pub fn build_pregame_action_plan_parts_v3("));
     assert!(!source.contains("pub fn validate_mulligan_postcondition_parts_v3("));
+    assert!(!source.contains("pub fn validate_keep_first_main_postcondition_parts_v3("));
     assert!(!source.contains("pub fn target_point_client_px_v3"));
     assert!(!source.contains("safe_for_live_input_v3(&self) -> bool {\n        true"));
 }
