@@ -51,6 +51,56 @@ pub struct MtgoDuelPerceptionProcessResponseV1 {
     pub visible_controls: MtgoVisibleActionControlSetV1,
 }
 
+/// Canonical JSON header followed by tightly packed BGRA8 bytes in the private
+/// classifier stdin protocol.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoDuelPerceptionRequestHeaderV1 {
+    pub schema_version: u32,
+    pub protocol: String,
+    pub frame_id: u64,
+    pub frame_sequence: u64,
+    pub canonical_width: u32,
+    pub canonical_height: u32,
+    pub canonical_stride: u32,
+    pub canonical_byte_length: usize,
+    pub canonical_bgra8_sha256: String,
+    pub source_capture_commitment_sha256: String,
+    pub source_frame_profile_binding_sha256: String,
+    pub perception_profile_commitment_sha256: String,
+    pub perception_profile_admission_commitment_sha256: String,
+    pub runtime_identity_commitment_sha256: String,
+    pub perception_pipeline_binary_sha256: String,
+    pub classifier_assets_manifest_sha256: String,
+    pub card_database_profile_sha256: String,
+}
+
+/// Structurally checked protocol request metadata. This does not attest that a
+/// caller owns a DXGI frame and it retains no pixels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedUntrustedMtgoDuelPerceptionRequestV1 {
+    header: MtgoDuelPerceptionRequestHeaderV1,
+    request_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoDuelPerceptionRequestV1 {
+    pub fn header_v1(&self) -> &MtgoDuelPerceptionRequestHeaderV1 {
+        &self.header
+    }
+
+    pub fn request_commitment_sha256_v1(&self) -> &str {
+        &self.request_commitment_sha256
+    }
+
+    pub fn grants_capture_authority_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
 /// Copyable commitments for the exact reviewed runtime artifacts. This value
 /// contains no executable path, pixels, observation, action, or input method.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -301,25 +351,78 @@ impl OpaqueMtgoProfileBoundDuelResolvedControlV1 {
     }
 }
 
-#[derive(Serialize)]
-struct DuelPerceptionRequestHeaderV1<'a> {
-    schema_version: u32,
-    protocol: &'static str,
-    frame_id: u64,
-    frame_sequence: u64,
-    canonical_width: u32,
-    canonical_height: u32,
-    canonical_stride: u32,
-    canonical_byte_length: usize,
-    canonical_bgra8_sha256: &'a str,
-    source_capture_commitment_sha256: &'a str,
-    source_frame_profile_binding_sha256: &'a str,
-    perception_profile_commitment_sha256: &'a str,
-    perception_profile_admission_commitment_sha256: &'a str,
-    runtime_identity_commitment_sha256: &'a str,
-    perception_pipeline_binary_sha256: &'a str,
-    classifier_assets_manifest_sha256: &'a str,
-    card_database_profile_sha256: &'a str,
+/// Shared request checker for the capture process and the exact classifier
+/// executable. The header must be the canonical serde JSON encoding of the
+/// public schema, and the following bytes must be the exact declared BGRA8
+/// frame. The result retains commitments only.
+pub fn check_untrusted_duel_perception_request_v1(
+    canonical_header_json: &[u8],
+    canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoDuelPerceptionRequestV1, String> {
+    let header: MtgoDuelPerceptionRequestHeaderV1 =
+        serde_json::from_slice(canonical_header_json)
+            .map_err(|error| format!("parse duel perception request header: {error}"))?;
+    let reencoded = serde_json::to_vec(&header)
+        .map_err(|error| format!("serialize duel perception request header: {error}"))?;
+    if reencoded != canonical_header_json {
+        return Err("duel perception request header is not canonical JSON".to_owned());
+    }
+    if header.schema_version != 1
+        || header.protocol != "mtgo_visible_duel_perception_v1"
+        || header.frame_id == 0
+        || header.frame_sequence == 0
+        || header.canonical_width == 0
+        || header.canonical_height == 0
+        || header.canonical_width > 16_384
+        || header.canonical_height > 16_384
+    {
+        return Err("duel perception request identity or geometry is invalid".to_owned());
+    }
+    let expected_stride = header
+        .canonical_width
+        .checked_mul(4)
+        .ok_or("duel perception request stride overflow")?;
+    let expected_length = usize::try_from(header.canonical_width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(header.canonical_height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("duel perception request byte length overflow")?;
+    if header.canonical_stride != expected_stride
+        || header.canonical_byte_length != expected_length
+        || canonical_bgra8.len() != expected_length
+        || header.canonical_bgra8_sha256 != sha256_hex_v1(canonical_bgra8)
+    {
+        return Err("duel perception request pixels do not match the header".to_owned());
+    }
+    for value in [
+        header.canonical_bgra8_sha256.as_str(),
+        header.source_capture_commitment_sha256.as_str(),
+        header.source_frame_profile_binding_sha256.as_str(),
+        header.perception_profile_commitment_sha256.as_str(),
+        header
+            .perception_profile_admission_commitment_sha256
+            .as_str(),
+        header.runtime_identity_commitment_sha256.as_str(),
+        header.perception_pipeline_binary_sha256.as_str(),
+        header.classifier_assets_manifest_sha256.as_str(),
+        header.card_database_profile_sha256.as_str(),
+    ] {
+        if !looks_like_lower_sha256_v1(value) {
+            return Err("duel perception request contains an invalid commitment".to_owned());
+        }
+    }
+    let request_commitment_sha256 = commitment_v1(
+        DUEL_PERCEPTION_REQUEST_DOMAIN_V1,
+        &[canonical_header_json, canonical_bgra8],
+    );
+    Ok(CheckedUntrustedMtgoDuelPerceptionRequestV1 {
+        header,
+        request_commitment_sha256,
+    })
 }
 
 pub fn verify_duel_perception_runtime_v1(
@@ -430,31 +533,37 @@ pub fn perceive_admitted_duel_frame_v1(
     {
         return Err("opaque source canonical pixels no longer match capture metadata".to_owned());
     }
-    let header = DuelPerceptionRequestHeaderV1 {
+    let header = MtgoDuelPerceptionRequestHeaderV1 {
         schema_version: 1,
-        protocol: "mtgo_visible_duel_perception_v1",
+        protocol: "mtgo_visible_duel_perception_v1".to_owned(),
         frame_id: identity.frame_id,
         frame_sequence: identity.frame_sequence,
         canonical_width: width,
         canonical_height: height,
         canonical_stride: stride,
         canonical_byte_length: source.canonical_bgra8.len(),
-        canonical_bgra8_sha256: &source.manifest.frame.canonical_bgra8_sha256,
-        source_capture_commitment_sha256: &source.capture_commitment_sha256,
-        source_frame_profile_binding_sha256: &source_frame.frame_profile_binding_sha256,
-        perception_profile_commitment_sha256: profile.perception_profile_commitment_sha256(),
-        perception_profile_admission_commitment_sha256: profile.admission_commitment_sha256(),
-        runtime_identity_commitment_sha256: &runtime.commitments.runtime_identity_commitment_sha256,
-        perception_pipeline_binary_sha256: profile.perception_pipeline_binary_sha256(),
-        classifier_assets_manifest_sha256: profile.classifier_assets_manifest_sha256(),
-        card_database_profile_sha256: profile.card_database_profile_sha256(),
+        canonical_bgra8_sha256: source.manifest.frame.canonical_bgra8_sha256.clone(),
+        source_capture_commitment_sha256: source.capture_commitment_sha256.clone(),
+        source_frame_profile_binding_sha256: source_frame.frame_profile_binding_sha256.clone(),
+        perception_profile_commitment_sha256: profile
+            .perception_profile_commitment_sha256()
+            .to_owned(),
+        perception_profile_admission_commitment_sha256: profile
+            .admission_commitment_sha256()
+            .to_owned(),
+        runtime_identity_commitment_sha256: runtime
+            .commitments
+            .runtime_identity_commitment_sha256
+            .clone(),
+        perception_pipeline_binary_sha256: profile.perception_pipeline_binary_sha256().to_owned(),
+        classifier_assets_manifest_sha256: profile.classifier_assets_manifest_sha256().to_owned(),
+        card_database_profile_sha256: profile.card_database_profile_sha256().to_owned(),
     };
     let header_json = serde_json::to_vec(&header)
         .map_err(|error| format!("serialize duel perception request: {error}"))?;
-    let request_commitment_sha256 = commitment_v1(
-        DUEL_PERCEPTION_REQUEST_DOMAIN_V1,
-        &[&header_json, &source.canonical_bgra8],
-    );
+    let checked_request =
+        check_untrusted_duel_perception_request_v1(&header_json, &source.canonical_bgra8)?;
+    let request_commitment_sha256 = checked_request.request_commitment_sha256_v1().to_owned();
     let response = invoke_verified_perception_process_v1(
         runtime,
         &header_json,
@@ -1034,10 +1143,64 @@ fn commitment_v1(domain: &[u8], parts: &[&[u8]]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn looks_like_lower_sha256_v1(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    fn request_header_v1(pixels: &[u8]) -> MtgoDuelPerceptionRequestHeaderV1 {
+        MtgoDuelPerceptionRequestHeaderV1 {
+            schema_version: 1,
+            protocol: "mtgo_visible_duel_perception_v1".to_owned(),
+            frame_id: 7,
+            frame_sequence: 11,
+            canonical_width: 2,
+            canonical_height: 1,
+            canonical_stride: 8,
+            canonical_byte_length: 8,
+            canonical_bgra8_sha256: sha256_hex_v1(pixels),
+            source_capture_commitment_sha256: "1".repeat(64),
+            source_frame_profile_binding_sha256: "2".repeat(64),
+            perception_profile_commitment_sha256: "3".repeat(64),
+            perception_profile_admission_commitment_sha256: "4".repeat(64),
+            runtime_identity_commitment_sha256: "5".repeat(64),
+            perception_pipeline_binary_sha256: "6".repeat(64),
+            classifier_assets_manifest_sha256: "7".repeat(64),
+            card_database_profile_sha256: "8".repeat(64),
+        }
+    }
+
+    #[test]
+    fn shared_request_checker_binds_canonical_header_and_every_pixel() {
+        let pixels = [1_u8, 2, 3, 4, 5, 6, 7, 8];
+        let header = request_header_v1(&pixels);
+        let encoded = serde_json::to_vec(&header).unwrap();
+        let checked = check_untrusted_duel_perception_request_v1(&encoded, &pixels).unwrap();
+        assert_eq!(checked.header_v1(), &header);
+        assert_eq!(checked.request_commitment_sha256_v1().len(), 64);
+        assert!(!checked.grants_capture_authority_v1());
+        assert!(!checked.safe_for_input_v1());
+
+        let mut changed_pixels = pixels;
+        changed_pixels[0] ^= 1;
+        assert!(check_untrusted_duel_perception_request_v1(&encoded, &changed_pixels).is_err());
+        let padded = [&[b' '][..], encoded.as_slice()].concat();
+        assert!(check_untrusted_duel_perception_request_v1(&padded, &pixels).is_err());
+        let mut wrong_stride = header.clone();
+        wrong_stride.canonical_stride = 4;
+        assert!(check_untrusted_duel_perception_request_v1(
+            &serde_json::to_vec(&wrong_stride).unwrap(),
+            &pixels
+        )
+        .is_err());
+    }
 
     #[test]
     fn runtime_and_result_commitments_change_with_every_identity_layer() {
