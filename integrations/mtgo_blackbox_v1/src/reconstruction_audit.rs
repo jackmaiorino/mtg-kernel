@@ -1,6 +1,7 @@
 use crate::{
-    MtgoCalibrationCaptureRoleV1, MtgoCalibrationFrameReferenceV1, MtgoCalibrationPreviewKindV1,
-    MtgoContractErrorV1, MtgoRectPxV1, MtgoVisibleRegionCommitmentV1,
+    CheckedUntrustedMtgoDxgiCaptureArtifactV1, MtgoCalibrationCaptureRoleV1,
+    MtgoCalibrationFrameReferenceV1, MtgoCalibrationPreviewKindV1, MtgoContractErrorV1,
+    MtgoDxgiCaptureRoleV2, MtgoRectPxV1, MtgoVisibleRegionCommitmentV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -247,6 +248,58 @@ pub fn validate_observation_reconstruction_audit_v1(
     })
 }
 
+/// Validates a reconstruction-readiness audit against the exact checked DXGI
+/// artifact that supplied its frame identity.
+///
+/// This closes caller substitution of the manifest hash, pixel hash, client
+/// size, and capture role. The result remains checked-untrusted readiness only.
+/// Region labels and completeness declarations are not proof that their
+/// semantic interpretation matches the pixels, so this function cannot grant
+/// observation, model-scoring, or input authority.
+pub fn validate_dxgi_bound_observation_reconstruction_audit_v1(
+    source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    record: MtgoObservationReconstructionAuditV1,
+) -> Result<CheckedUntrustedMtgoObservationReconstructionAuditV1, MtgoContractErrorV1> {
+    let (expected_kind, expected_role) = match source.capture_role() {
+        MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire => (
+            MtgoCalibrationPreviewKindV1::SolitaireGameplayCalibrationPreviewV1,
+            MtgoCalibrationCaptureRoleV1::ActingPlayerSolitaire,
+        ),
+        MtgoDxgiCaptureRoleV2::ActingPlayerDuel => (
+            MtgoCalibrationPreviewKindV1::ActingPlayerDuelGameplayCalibrationPreviewV1,
+            MtgoCalibrationCaptureRoleV1::ActingPlayerDuel,
+        ),
+        MtgoDxgiCaptureRoleV2::Spectator => (
+            MtgoCalibrationPreviewKindV1::SpectatorGameplayCalibrationPreviewV1,
+            MtgoCalibrationCaptureRoleV1::Spectator,
+        ),
+        MtgoDxgiCaptureRoleV2::Navigation => {
+            return Err(MtgoContractErrorV1::new(
+                "reconstruction_audit_dxgi_source_role_unsupported",
+                "navigation captures cannot source gameplay reconstruction",
+            ));
+        }
+    };
+    if record.frame.sequence == 0 {
+        return Err(MtgoContractErrorV1::new(
+            "reconstruction_audit_dxgi_sequence_invalid",
+            "a source-bound gameplay frame sequence must be nonzero",
+        ));
+    }
+    if record.frame.manifest_sha256 != source.manifest_sha256()
+        || record.frame.frame_sha256 != source.canonical_bgra8_sha256()
+        || &record.frame.client_size_px != source.client_size_px()
+        || record.frame.artifact_kind != expected_kind
+        || record.frame.capture_role != expected_role
+    {
+        return Err(MtgoContractErrorV1::new(
+            "reconstruction_audit_dxgi_source_mismatch",
+            "audit frame identity, geometry, kind, and role must match the checked DXGI source",
+        ));
+    }
+    validate_observation_reconstruction_audit_v1(record)
+}
+
 fn validate_topology_frame_role_v1(
     topology: MtgoReconstructionTopologyV1,
     frame: &MtgoCalibrationFrameReferenceV1,
@@ -453,4 +506,113 @@ fn validate_safe_identifier_v1(
         return Err(MtgoContractErrorV1::new(code, value));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::checked_untrusted_dxgi_artifact_for_test_v1;
+
+    fn complete_acting_player_duel_audit_v1(
+        source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    ) -> MtgoObservationReconstructionAuditV1 {
+        let mut record: MtgoObservationReconstructionAuditV1 = serde_json::from_str(include_str!(
+            "../fixtures/solitaire_observation_reconstruction_audit_v1.json"
+        ))
+        .unwrap();
+        record.audit_id = "dxgi_bound_acting_player_duel_test_v1".to_owned();
+        record.topology = MtgoReconstructionTopologyV1::TwoPlayerDuel;
+        record.frame.sequence = 1;
+        record.frame.manifest_sha256 = source.manifest_sha256().to_owned();
+        record.frame.frame_sha256 = source.canonical_bgra8_sha256().to_owned();
+        record.frame.client_size_px = source.client_size_px().clone();
+        record.frame.artifact_kind =
+            MtgoCalibrationPreviewKindV1::ActingPlayerDuelGameplayCalibrationPreviewV1;
+        record.frame.capture_role = MtgoCalibrationCaptureRoleV1::ActingPlayerDuel;
+        for group in &mut record.groups {
+            match group.group {
+                MtgoObservationReconstructionGroupV1::DuelParticipants
+                | MtgoObservationReconstructionGroupV1::PlayerPublicState
+                | MtgoObservationReconstructionGroupV1::PublicObjectsAndZones
+                | MtgoObservationReconstructionGroupV1::CompleteOrderedLegalActions => {
+                    group.status = MtgoReconstructionStatusV1::VisibleComplete;
+                    group.missing_reason_codes.clear();
+                }
+                MtgoObservationReconstructionGroupV1::KernelDecisionHistoryContext
+                | MtgoObservationReconstructionGroupV1::ObjectIncarnationsAndCardDb => {
+                    group.status = MtgoReconstructionStatusV1::LocalDerivedComplete;
+                    group.visible_regions.clear();
+                    group.missing_reason_codes.clear();
+                }
+                _ => {}
+            }
+        }
+        record.observation_complete = true;
+        record.legal_action_set_complete = true;
+        record.ready_for_model_scoring = false;
+        record
+    }
+
+    #[test]
+    fn exact_acting_player_duel_source_can_only_produce_untrusted_readiness() {
+        let source =
+            checked_untrusted_dxgi_artifact_for_test_v1(MtgoDxgiCaptureRoleV2::ActingPlayerDuel);
+        let checked = validate_dxgi_bound_observation_reconstruction_audit_v1(
+            &source,
+            complete_acting_player_duel_audit_v1(&source),
+        )
+        .unwrap();
+
+        assert_eq!(
+            checked.capture_role(),
+            MtgoCalibrationCaptureRoleV1::ActingPlayerDuel
+        );
+        assert!(checked.observation_complete());
+        assert!(checked.legal_action_set_complete());
+        assert!(!checked.ready_for_model_scoring());
+        assert!(checked.blocking_groups().is_empty());
+    }
+
+    #[test]
+    fn source_identity_geometry_role_and_sequence_substitution_fail() {
+        let source =
+            checked_untrusted_dxgi_artifact_for_test_v1(MtgoDxgiCaptureRoleV2::ActingPlayerDuel);
+        let baseline = complete_acting_player_duel_audit_v1(&source);
+
+        let mut mutations = Vec::new();
+        let mut value = baseline.clone();
+        value.frame.manifest_sha256 = "9".repeat(64);
+        mutations.push(value);
+        let mut value = baseline.clone();
+        value.frame.frame_sha256 = "8".repeat(64);
+        mutations.push(value);
+        let mut value = baseline.clone();
+        value.frame.client_size_px.width += 1;
+        mutations.push(value);
+        let mut value = baseline.clone();
+        value.frame.capture_role = MtgoCalibrationCaptureRoleV1::Spectator;
+        mutations.push(value);
+        let mut value = baseline.clone();
+        value.frame.sequence = 0;
+        mutations.push(value);
+
+        for mutation in mutations {
+            assert!(
+                validate_dxgi_bound_observation_reconstruction_audit_v1(&source, mutation).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn navigation_dxgi_source_cannot_enter_gameplay_reconstruction() {
+        let source = checked_untrusted_dxgi_artifact_for_test_v1(MtgoDxgiCaptureRoleV2::Navigation);
+        let record = complete_acting_player_duel_audit_v1(&source);
+        assert_eq!(
+            validate_dxgi_bound_observation_reconstruction_audit_v1(&source, record)
+                .err()
+                .unwrap()
+                .code(),
+            "reconstruction_audit_dxgi_source_role_unsupported"
+        );
+    }
 }

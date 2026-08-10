@@ -1462,6 +1462,24 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 }
 
 #[cfg(test)]
+pub(crate) fn checked_untrusted_dxgi_artifact_for_test_v1(
+    role: MtgoDxgiCaptureRoleV2,
+) -> CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
+    CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
+        manifest_sha256: "1".repeat(64),
+        canonical_bgra8_sha256: "2".repeat(64),
+        preview_png_sha256: "3".repeat(64),
+        output_identity_sha256: "4".repeat(64),
+        client_size_px: MtgoSizePxV1 {
+            width: 1_550,
+            height: 925,
+        },
+        captured_at_unix_millis: 1_786_338_000_000,
+        capture_role: role,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
