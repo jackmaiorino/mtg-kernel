@@ -316,6 +316,8 @@ The adapter now defines the coordinate-free half of step 6. `MtgoExternalScoring
 
 `load_mtgo_native_checkpoint_deployment_v1` is the deployment loader for that scorer. It reads the selected native Store's `run.json`, validates the complete Store through its latest pointer, rewalks the chain through the requested generation, constructs the unchanged native inference handle, and rechecks every checkpoint and scorer identity against an independently supplied strict deployment manifest. The returned value is move-only and exposes only the scorer plus immutable identity commitments. It has no capture, account, event-entry, match, or live-input authority.
 
+`LoadedMtgoNativeCheckpointDeploymentV1::score_validated_decision_v1` is the composed runtime entry point. It accepts only an existing `ValidatedMtgoObservedDecisionV1`, scores its exact observation and ordered legal actions through the bound checkpoint, and applies the deterministic adapter selection rule. It returns the existing opaque checked-untrusted selection, which can create only a coordinate-free offline intent.
+
 The checked-in `fixtures/provisional_promoted2_mtgo_deployment_20260810_v1.json` pins promoted(2), seed 920012, generation 384 as a provisional wiring checkpoint. This is an exact deployable package identity, not a claim that it is the final or strongest policy. Validate that package from this directory with:
 
 ```powershell
@@ -327,7 +329,7 @@ cargo run --bin check_mtgo_model_deployment_v1 -- `
 
 The command succeeds only after the complete Store walk and emits the exact deployment commitment with `safe_for_live_input` and `permits_match_entry` both false.
 
-An opt-in real-Store regression also sends one deterministic external public decision with ordered Pass and PlayLand actions through the selected checkpoint. It pins both action logits and the value by exact f32 bits while requiring both authority flags to remain false:
+An opt-in real-Store regression also validates one deterministic mock-evidence decision, sends its external public observation with ordered Pass and PlayLand actions through the selected checkpoint, selects PlayLand, and creates the exact coordinate-free offline intent. It pins both action logits and the value by exact f32 bits while requiring all input and match authority flags to remain false:
 
 ```powershell
 $env:CARGO_TARGET_DIR = 'D:\mtgo-model-deployment-target'
@@ -337,7 +339,7 @@ cargo test --lib `
   --ignored --exact
 ```
 
-This is a kernel-generated external-observation wiring probe. It proves that the exact deployment crosses the scorer seam; it is not evidence that any MTGO pixels have yet been reconstructed into that observation.
+This is a kernel-generated external-observation wiring probe with explicitly mock frame evidence. It proves the composed validated-decision-to-offline-intent path; it is not evidence that any MTGO pixels have yet been reconstructed into that observation.
 
 ## Current-frame semantic control resolution
 

@@ -1,6 +1,7 @@
 use crate::{
-    model_deployment_commitment_v1, MtgoContractErrorV1, MtgoExpectedModelDeploymentV1,
-    MtgoNativeCheckpointObservationScorerV1,
+    model_deployment_commitment_v1, score_and_select_external_model_v1,
+    CheckedUntrustedMtgoModelSelectionV1, MtgoContractErrorV1, MtgoExpectedModelDeploymentV1,
+    MtgoNativeCheckpointObservationScorerV1, ValidatedMtgoObservedDecisionV1,
 };
 use mtg_kernel::native_checkpoint_inference_v1::{
     load_native_checkpoint_inference_v1, NativeCheckpointInferenceV1,
@@ -73,6 +74,18 @@ impl LoadedMtgoNativeCheckpointDeploymentV1 {
         &self,
     ) -> Result<MtgoNativeCheckpointObservationScorerV1<'_>, MtgoContractErrorV1> {
         MtgoNativeCheckpointObservationScorerV1::new_v1(&self.inference, &self.expected)
+    }
+
+    /// Scores one exact validated observation and complete ordered legal-action
+    /// vector through this deployment, then applies the adapter's deterministic
+    /// selection rule. The result remains coordinate-free and has no live-input
+    /// or match-entry authority.
+    pub fn score_validated_decision_v1(
+        &self,
+        decision: &ValidatedMtgoObservedDecisionV1,
+    ) -> Result<CheckedUntrustedMtgoModelSelectionV1, MtgoContractErrorV1> {
+        let mut scorer = self.scorer_v1()?;
+        score_and_select_external_model_v1(decision, &self.expected, &mut scorer)
     }
 
     pub fn safe_for_live_input(&self) -> bool {
@@ -162,13 +175,15 @@ fn error_v1(code: &'static str, detail: &'static str) -> MtgoContractErrorV1 {
 mod tests {
     use super::*;
     use crate::{
-        MtgoExternalObservationScorerV1, MtgoExternalScoringRequestV1,
-        MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
+        build_external_scoring_request_v1, local_metadata_commitment_v1,
+        make_scored_offline_intent_v1, payload_leaf_inventory_v1, validate_observed_decision_v1,
+        MtgoEvidenceSourceV1, MtgoExternalObservationScorerV1, MtgoLeafProvenanceV1,
+        MtgoMockFrameV1, MtgoObjectBindingV1, MtgoObservedDecisionV1, MtgoPublicDerivationV1,
+        MtgoRectPxV1, MtgoSemanticDecisionPayloadV1, MtgoVisibleEvidenceV1,
+        MTGO_OBSERVED_DECISION_SCHEMA_V1,
     };
     use mtg_kernel::rl::ActionSemanticV1;
     use mtg_kernel::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
-    use serde::Serialize;
-    use sha2::{Digest, Sha256};
 
     fn provisional_deployment_v1() -> MtgoExpectedModelDeploymentV1 {
         serde_json::from_str(include_str!(
@@ -177,13 +192,105 @@ mod tests {
         .expect("checked-in provisional deployment must parse")
     }
 
-    fn test_commitment_v1<T: Serialize + ?Sized>(domain: &[u8], value: &T) -> String {
-        let encoded = serde_json::to_vec(value).unwrap();
-        let mut hasher = Sha256::new();
-        hasher.update(domain);
-        hasher.update((encoded.len() as u64).to_le_bytes());
-        hasher.update(encoded);
-        format!("{:x}", hasher.finalize())
+    fn fixture_digest_v1(character: char) -> String {
+        std::iter::repeat_n(character, 64).collect()
+    }
+
+    fn external_probe_record_v1() -> MtgoObservedDecisionV1 {
+        let (seed, observation, pass, land) = (1..=128)
+            .find_map(|seed| {
+                let session = RlEpisodeSessionV1::reset_with_limits(7, seed, 128, 16_384);
+                let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                    return None;
+                };
+                let pass = decision
+                    .legal_actions
+                    .iter()
+                    .find(|action| matches!(action.semantic, ActionSemanticV1::Pass { .. }))?
+                    .semantic
+                    .clone();
+                let land = decision
+                    .legal_actions
+                    .iter()
+                    .find(|action| matches!(action.semantic, ActionSemanticV1::PlayLand { .. }))?
+                    .semantic
+                    .clone();
+                Some((seed, (*decision.observation).clone(), pass, land))
+            })
+            .expect("a deterministic opening must expose Pass and PlayLand");
+        assert_eq!(seed, 1);
+        let source = match &land {
+            ActionSemanticV1::PlayLand { source, .. } => source.clone(),
+            _ => unreachable!(),
+        };
+        let payload = MtgoSemanticDecisionPayloadV1 {
+            observation,
+            legal_actions: vec![pass, land],
+            object_bindings: vec![MtgoObjectBindingV1 {
+                adapter_object_id: "deployment-probe:hand:0".to_owned(),
+                kernel_ref: source,
+            }],
+        };
+        let provenance = payload_leaf_inventory_v1(&payload)
+            .unwrap()
+            .into_iter()
+            .filter(|leaf| leaf.requires_visible_evidence)
+            .map(|leaf| MtgoLeafProvenanceV1 {
+                json_pointer: leaf.json_pointer,
+                value_sha256: leaf.value_sha256,
+                evidence_ids: vec![20],
+                confidence_bps: 10_000,
+            })
+            .collect();
+        let local_metadata_sha256 = local_metadata_commitment_v1(&payload).unwrap();
+        MtgoObservedDecisionV1 {
+            schema_version: MTGO_OBSERVED_DECISION_SCHEMA_V1,
+            decision_id: "provisional-deployment-external-probe".to_owned(),
+            frame_id: 1,
+            payload,
+            frames: vec![MtgoMockFrameV1 {
+                frame_id: 1,
+                sequence: 1,
+                sha256: fixture_digest_v1('1'),
+                client_bounds: MtgoRectPxV1 {
+                    x: 0,
+                    y: 0,
+                    width: 1_920,
+                    height: 1_080,
+                },
+            }],
+            evidence: vec![
+                MtgoVisibleEvidenceV1 {
+                    evidence_id: 10,
+                    sequence: 1,
+                    source: MtgoEvidenceSourceV1::FrameRegion {
+                        frame_id: 1,
+                        rect: MtgoRectPxV1 {
+                            x: 0,
+                            y: 0,
+                            width: 1_920,
+                            height: 1_080,
+                        },
+                        content_sha256: fixture_digest_v1('2'),
+                    },
+                },
+                MtgoVisibleEvidenceV1 {
+                    evidence_id: 20,
+                    sequence: 2,
+                    source: MtgoEvidenceSourceV1::DerivedPublicFact {
+                        parent_evidence_ids: vec![10],
+                        derivation: MtgoPublicDerivationV1::PublicStateProjection,
+                    },
+                },
+            ],
+            provenance,
+            local_metadata_sha256,
+            readiness: crate::MtgoDecisionReadinessV1 {
+                observation_complete: true,
+                legal_action_set_complete: true,
+                client_prompt_reconciled: true,
+            },
+        }
     }
 
     #[test]
@@ -226,45 +333,26 @@ mod tests {
         let deployment = provisional_deployment_v1();
         let loaded =
             load_mtgo_native_checkpoint_deployment_v1(store_root, deployment.clone()).unwrap();
-        let (seed, observation, actions) = (1..=128)
-            .find_map(|seed| {
-                let session = RlEpisodeSessionV1::reset_with_limits(7, seed, 128, 16_384);
-                let RlSessionResponseV1::Decision(decision) = session.current_response() else {
-                    return None;
-                };
-                let pass = decision
-                    .legal_actions
-                    .iter()
-                    .find(|action| matches!(action.semantic, ActionSemanticV1::Pass { .. }))?
-                    .semantic
-                    .clone();
-                let land = decision
-                    .legal_actions
-                    .iter()
-                    .find(|action| matches!(action.semantic, ActionSemanticV1::PlayLand { .. }))?
-                    .semantic
-                    .clone();
-                Some((seed, (*decision.observation).clone(), vec![pass, land]))
-            })
-            .expect("a deterministic opening must expose Pass and PlayLand");
-        let request = MtgoExternalScoringRequestV1 {
-            schema_version: MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
-            decision_commitment_sha256: "0".repeat(64),
-            observation_sha256: test_commitment_v1(b"mtgo-scoring-observation-v1", &observation),
-            ordered_actions_sha256: test_commitment_v1(
-                b"mtgo-scoring-ordered-actions-v1",
-                &actions,
-            ),
-            action_count: u32::try_from(actions.len()).unwrap(),
-            deployment_commitment_sha256: model_deployment_commitment_v1(&deployment).unwrap(),
-        };
+        let decision = validate_observed_decision_v1(external_probe_record_v1()).unwrap();
+        let request = build_external_scoring_request_v1(&decision, &deployment).unwrap();
         let mut scorer = loaded.scorer_v1().unwrap();
         let response = scorer
-            .score_observation_v1(&request, &observation, &actions)
+            .score_observation_v1(&request, decision.observation(), decision.legal_actions())
             .unwrap();
-        assert_eq!(seed, 1);
         assert_eq!(response.logits_f32_bits, [3_245_259_304, 1_067_419_264]);
         assert_eq!(response.value_f32_bits, 1_041_311_617);
+        let selection = loaded.score_validated_decision_v1(&decision).unwrap();
+        assert_eq!(selection.selected_index(), 1);
+        assert_eq!(selection.selected_logit_f32_bits(), 1_067_419_264);
+        assert_eq!(selection.value_f32_bits(), 1_041_311_617);
+        assert_eq!(
+            selection.decision_commitment_sha256(),
+            decision.decision_commitment_sha256()
+        );
+        assert!(!selection.safe_for_live_input());
+        let intent = make_scored_offline_intent_v1(&decision, &selection).unwrap();
+        assert_eq!(intent.selected_index, 1);
+        assert_eq!(intent.semantic, decision.legal_actions()[1]);
         assert!(!loaded.safe_for_live_input());
         assert!(!loaded.permits_match_entry());
     }
