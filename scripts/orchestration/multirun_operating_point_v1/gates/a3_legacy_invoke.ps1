@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\common.ps1')
 
-$legacyRoot = 'D:\mtg-kernel-oppoint-a3-legacy-r5'
+$legacyRoot = 'D:\mtg-kernel-oppoint-a3-legacy-r6'
 $storeParent = Join-Path $legacyRoot 'proc-0'
 if (Test-Path -LiteralPath $legacyRoot) { throw 'legacy A3 root must be fresh' }
 

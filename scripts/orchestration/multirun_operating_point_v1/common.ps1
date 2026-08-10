@@ -334,9 +334,19 @@ function Start-RenderedLaunch {
         if (Test-Path -LiteralPath $process.store_parent) { throw "store parent must be fresh, exists: $($process.store_parent)" }
     }
     $head = (& git -C $RepoRoot rev-parse HEAD).Trim()
-    if ($head -cne $Rendered.expected_commit) { throw "repo HEAD $head does not match expected_commit $($Rendered.expected_commit)" }
-    $dirty = (& git -C $RepoRoot status --porcelain) | Where-Object { $_ -cnotmatch '^\?\? scripts/orchestration/' }
-    if ($dirty) { throw 'repo tree is not clean (tracked changes present)' }
+    # expected_commit pins the RUST SOURCE identity, not the branch head:
+    # the lane branch carries countersigned orchestration-script commits on
+    # top of main, so HEAD may differ from expected_commit ONLY if the
+    # mtg-kernel/ tree is identical between them (verified by git diff).
+    if ($head -cne $Rendered.expected_commit) {
+        & git -C $RepoRoot diff --quiet $Rendered.expected_commit HEAD -- mtg-kernel
+        if ($LASTEXITCODE -ne 0) { throw "HEAD $head has Rust-source differences vs expected_commit $($Rendered.expected_commit)" }
+    }
+    # Dirty means: any tracked change anywhere, or any untracked file under
+    # mtg-kernel/ (which could leak into the build). Untracked logs and
+    # orchestration artifacts elsewhere in the worktree are harmless.
+    $dirty = (& git -C $RepoRoot status --porcelain) | Where-Object { $_ -cmatch '^[^?]' -or $_ -cmatch '^\?\? mtg-kernel/' }
+    if ($dirty) { throw 'repo tree is not clean (tracked changes or untracked files under mtg-kernel/)' }
 
     # Everything above this line mutates nothing on disk; a throw there
     # leaves a clean slate for retry. From root creation onward, EVERY exit

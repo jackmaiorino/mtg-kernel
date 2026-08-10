@@ -6,11 +6,17 @@ param(
     [Parameter(Mandatory = $true)][string]$ConfigPath,
     [switch]$RenderOnly,
     [string]$LaunchRoot,
-    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+    [string]$RepoRoot
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+# RepoRoot is derived in the body, not a param default: under
+# powershell -File, $PSScriptRoot proved empty during param-default
+# evaluation (observed live), while it is always set here.
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+}
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $config = Read-LaunchConfig -ConfigPath $ConfigPath
