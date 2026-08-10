@@ -5,6 +5,12 @@
                        "artifact_dir":  "C:\\Users\\Jack\\IdeaProjects\\mtg-kernel-fair-campaign-harness-fable\\artifacts\\fair-sparse-campaign\\20260724T1647536950174Z-fair-sparse-f31-b31-f32-6f53c1e58af1",
                        "campaign_complete_sha256":  "aa6034060597e782c1e2415af103cf333afc04c62bce9ebec5171331eec69173",
                        "runner_starting_sha256":  "d8a35c0f0b87b57ca75caf5de285602078da40df74fd581dca50f3e826de617e",
+                       "device_log_stdout_sha256":  {
+                                                        "f31_device0":  "8ca2cd5082a90b42972a5cc89c63b972d1fd9460226c1fafa8f23b8c8d65781b",
+                                                        "f31_device1":  "eaa9009550c4b7146b3a81c536f7f97a16e1ff2407dbbfbe4c71d048a952b69e",
+                                                        "f32_device0":  "b71a9e3db14ddecf19321175900bf130441c4c00d32448255f80bfff49a597ae",
+                                                        "f32_device1":  "0a4ec3b5c5b9ad49538c0e14e09d96f8558328be2511b472b68b9e7b6ca088fc"
+                                                    },
                        "certified_config_lines":  {
                                                       "f31_device0":  "test native_science_loop_v1::windows_science_loop_tests::multirun_pilot_v1 ... MULTIRUN CONFIG runs=3 updates=64 topology=2x32 broker_target=16",
                                                       "f31_device1":  "test native_science_loop_v1::windows_science_loop_tests::multirun_pilot_v1 ... MULTIRUN CONFIG runs=1 updates=64 topology=2x32 broker_target=16",

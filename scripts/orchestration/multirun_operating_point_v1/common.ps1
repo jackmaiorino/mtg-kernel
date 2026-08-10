@@ -7,6 +7,17 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:SchemaId = 'multirun-operating-point-launch/v1'
+
+# Allocation-failure signature, carried EXACTLY from the certified fair
+# campaign's SHA-pinned runner copy ($AllocationFailurePattern,
+# 00-runner-starting-copy.ps1:109-114). A cold gate re-extracts the pattern
+# from the pinned copy and asserts equality, so drift is impossible.
+$script:AllocationFailurePatternV1 =
+    '(?i)(can''t allocate|cannot allocate|failed to allocate|' +
+    'allocation (?:has )?failed|memory allocation.*fail|' +
+    'out of (?:device )?memory|\bOOM\b|CUDA_ERROR_OUT_OF_MEMORY|' +
+    'CUDA error.*(?:alloc|memory)|CUDNN_STATUS_ALLOC_FAILED|' +
+    'CUBLAS_STATUS_ALLOC_FAILED|cuMemAlloc|insufficient (?:device )?memory)'
 $script:RunnerTest = 'native_science_loop_v1::windows_science_loop_tests::multirun_pilot_v1'
 $script:RunnerArgs = @($script:RunnerTest, '--ignored', '--exact', '--nocapture', '--test-threads=1')
 
@@ -258,14 +269,39 @@ function Resolve-PilotExecutable {
     return $executable
 }
 
+function Invoke-BoundedNvidiaSmi {
+    # Bounded nvidia-smi invocation: a hung driver query must never disable
+    # the deadline or the rail abort. Returns output lines, or $null on any
+    # failure or timeout (the caller counts those fail-closed).
+    param([Parameter(Mandatory = $true)][string]$ArgumentString, [int]$TimeoutMs = 10000)
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'nvidia-smi'
+    $psi.Arguments = $ArgumentString
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    try {
+        $query = [System.Diagnostics.Process]::Start($psi)
+        $stdoutTask = $query.StandardOutput.ReadToEndAsync()
+        [void]$query.StandardError.ReadToEndAsync()
+        if (-not $query.WaitForExit($TimeoutMs)) {
+            try { $query.Kill() } catch {}
+            return $null
+        }
+        if ($query.ExitCode -ne 0) { return $null }
+        return @($stdoutTask.Result -split "`r?`n" | Where-Object { $_ -ne '' })
+    }
+    catch { return $null }
+}
+
 function Assert-DeviceInventory {
     # Launch-mode only: every configured UUID must exist on the host.
     param([Parameter(Mandatory = $true)]$Rendered)
-    $inventory = @(& nvidia-smi --query-gpu=uuid,name,memory.total --format=csv,noheader)
-    if ($LASTEXITCODE -ne 0) { throw 'nvidia-smi inventory query failed' }
+    $inventory = Invoke-BoundedNvidiaSmi -ArgumentString '--query-gpu=uuid,name,memory.total --format=csv,noheader'
+    if ($null -eq $inventory) { throw 'nvidia-smi inventory query failed or timed out' }
     $uuids = @($inventory | ForEach-Object { ($_ -split ',')[0].Trim() })
     foreach ($process in $Rendered.processes) {
-        if ($uuids -notcontains $process.device_uuid) { throw "device_uuid '$($process.device_uuid)' not present in live inventory" }
+        if ($uuids -cnotcontains $process.device_uuid) { throw "device_uuid '$($process.device_uuid)' not present in live inventory" }
     }
     return $inventory
 }
@@ -286,7 +322,7 @@ function Start-RenderedLaunch {
         if (Test-Path -LiteralPath $process.store_parent) { throw "store parent must be fresh, exists: $($process.store_parent)" }
     }
     $head = (& git -C $RepoRoot rev-parse HEAD).Trim()
-    if ($head -ne $Rendered.expected_commit) { throw "repo HEAD $head does not match expected_commit $($Rendered.expected_commit)" }
+    if ($head -cne $Rendered.expected_commit) { throw "repo HEAD $head does not match expected_commit $($Rendered.expected_commit)" }
     $dirty = (& git -C $RepoRoot status --porcelain) | Where-Object { $_ -notmatch '^\?\? scripts/orchestration/' }
     if ($dirty) { throw 'repo tree is not clean (tracked changes present)' }
 
@@ -306,7 +342,7 @@ function Start-RenderedLaunch {
         label          = $Rendered.label
         config_path    = (Resolve-Path -LiteralPath $ConfigPath).Path
         config_sha256  = Get-Sha256Hex -Path $ConfigPath
-        config_bytes   = (Get-Content -LiteralPath $ConfigPath -Raw)
+        config_bytes_base64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($ConfigPath))
         source_commit  = $head
         executable     = $exeCopy
         executable_sha256 = $exeSha
@@ -317,130 +353,197 @@ function Start-RenderedLaunch {
         processes      = @()
     }
 
-    # OOM signature scan pattern, inherited from the certified fair-campaign
-    # runner's detector.
-    $oomPattern = 'out of (?:device )?memory|\bOOM\b|CUDA_ERROR_OUT_OF_MEMORY|CUDA error.*(?:alloc|memory)|CUDNN_STATUS_ALLOC_FAILED'
-
     $children = @()
-    foreach ($process in $Rendered.processes) {
-        $logPath = Join-Path $LaunchRoot ("proc-{0}.log" -f $process.process_index)
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = $exeCopy
-        # Windows PowerShell 5.1 / .NET Framework: no ArgumentList; every
-        # runner arg is space-free so a plain join is unambiguous.
-        $psi.Arguments = ($Rendered.runner_args -join ' ')
-        $psi.UseShellExecute = $false
-        $psi.RedirectStandardOutput = $true
-        $psi.RedirectStandardError = $true
-        foreach ($name in $Rendered.whitelist) {
-            $value = $process.env.$name
-            if ($psi.EnvironmentVariables.ContainsKey($name)) { $psi.EnvironmentVariables.Remove($name) }
-            if ($null -ne $value) { $psi.EnvironmentVariables[$name] = $value }
-        }
-        $child = [System.Diagnostics.Process]::Start($psi)
-        $children += [pscustomobject]@{
-            process = $child; log = $logPath
-            stdout = $child.StandardOutput.ReadToEndAsync()
-            stderr = $child.StandardError.ReadToEndAsync()
-            index = $process.process_index
-            device_uuid = $process.device_uuid
-            seed_offset = $process.seed_offset
-            store_parent = $process.store_parent
-            env_map = $process.env
-            started = [DateTime]::UtcNow.ToString('o')
-            start_ticks = $child.StartTime.ToUniversalTime().Ticks
-            disposition = 'RUNNING'
-        }
-    }
+    $launchDisposition = 'RUNNING'
+    $censusPath = Join-Path $LaunchRoot 'census.csv'
+    $maxByUuid = @{}
+    $censusCount = 0
+    $recordPath = Join-Path $LaunchRoot 'launch-record.json'
 
     # Kill with PID-reuse protection: only a process whose StartTime ticks
     # still match the child we spawned is ours to kill (house watchdog rule).
+    # Per-child try/catch: one refusing child must never shield the others
+    # from the kill (reviewer-reproduced: a redirected native stderr line is
+    # a terminating RemoteException under EAP=Stop in PS 5.1). taskkill exit
+    # is inspected, failure escalates to Stop-Process -Force, and the
+    # post-kill wait is bounded; the outcome is recorded per child.
     function Stop-OwnedChildren {
         param($Children, [string]$Disposition)
-        foreach ($child in $Children) {
-            if ($child.process.HasExited) { continue }
-            $live = Get-Process -Id $child.process.Id -ErrorAction SilentlyContinue
-            if ($null -ne $live -and $live.StartTime.ToUniversalTime().Ticks -eq $child.start_ticks) {
-                & taskkill /PID $child.process.Id /T /F 2>&1 | Out-Null
+        foreach ($child in @($Children)) {
+            try {
+                if ($child.process.HasExited) { continue }
+                $live = Get-Process -Id $child.process.Id -ErrorAction SilentlyContinue
+                if ($null -eq $live -or $live.StartTime.ToUniversalTime().Ticks -ne $child.start_ticks) { continue }
+                $previous = $ErrorActionPreference
+                $ErrorActionPreference = 'Continue'
+                try { & taskkill /PID $child.process.Id /T /F 2>&1 | Out-Null; $killExit = $LASTEXITCODE }
+                finally { $ErrorActionPreference = $previous }
+                if ($killExit -ne 0) {
+                    try { Stop-Process -Id $child.process.Id -Force -ErrorAction Stop; $child.kill_outcome = 'stop-process-escalation' }
+                    catch { $child.kill_outcome = "kill-failed: taskkill exit $killExit; Stop-Process: $($_.Exception.Message)" }
+                }
+                else { $child.kill_outcome = 'taskkill' }
+                if (-not $child.process.WaitForExit(15000)) {
+                    $child.kill_outcome = "$($child.kill_outcome); wait-timeout"
+                }
                 $child.disposition = $Disposition
             }
+            catch { try { $child.kill_outcome = "kill-error: $($_.Exception.Message)" } catch {} }
         }
     }
 
-    # Monitor loop: census both rails at the configured cadence, enforce the
-    # wall-clock deadline, exit when every child has exited. Census series
-    # goes to census.csv; the record keeps per-device max and sample count.
-    $censusPath = Join-Path $LaunchRoot 'census.csv'
-    Set-Content -LiteralPath $censusPath -Encoding utf8 -Value 'utc,device_uuid,memory_used_mib'
-    $deadline = [DateTime]::UtcNow.AddSeconds($Rendered.monitor.wall_clock_timeout_seconds)
-    $railByUuid = @{}
-    foreach ($rail in $Rendered.monitor.device_rails) { $railByUuid[$rail.device_uuid] = [long]$rail.rail_mib }
-    $maxByUuid = @{}
-    $censusCount = 0
-    $launchDisposition = 'COMPLETED'
-    while (@($children | Where-Object { -not $_.process.HasExited }).Count -gt 0) {
-        if ([DateTime]::UtcNow -gt $deadline) {
-            Stop-OwnedChildren -Children $children -Disposition 'ABORTED-TIMEOUT'
-            $launchDisposition = 'ABORTED-TIMEOUT'
-            break
-        }
-        $sample = @(& nvidia-smi --query-gpu=uuid,memory.used --format='csv,noheader,nounits' 2>$null)
-        $censusCount += 1
-        $nowIso = [DateTime]::UtcNow.ToString('o')
-        foreach ($row in $sample) {
-            $parts = $row -split ','
-            if ($parts.Count -lt 2) { continue }
-            $uuid = $parts[0].Trim(); $used = [long]($parts[1].Trim())
-            if (-not $railByUuid.ContainsKey($uuid)) { continue }
-            Add-Content -LiteralPath $censusPath -Encoding utf8 -Value "$nowIso,$uuid,$used"
-            if (-not $maxByUuid.ContainsKey($uuid) -or $used -gt $maxByUuid[$uuid]) { $maxByUuid[$uuid] = $used }
-            if ($used -gt $railByUuid[$uuid]) {
-                Stop-OwnedChildren -Children $children -Disposition 'ABORTED-RAIL'
-                $launchDisposition = 'ABORTED-RAIL'
-                $record['rail_breach'] = [ordered]@{ device_uuid = $uuid; measured_mib = $used; rail_mib = $railByUuid[$uuid]; at_utc = $nowIso }
+    try {
+        foreach ($process in $Rendered.processes) {
+            $logPath = Join-Path $LaunchRoot ("proc-{0}.log" -f $process.process_index)
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $exeCopy
+            # Windows PowerShell 5.1 / .NET Framework: no ArgumentList; every
+            # runner arg is space-free so a plain join is unambiguous.
+            $psi.Arguments = ($Rendered.runner_args -join ' ')
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            foreach ($name in $Rendered.whitelist) {
+                $value = $process.env.$name
+                if ($psi.EnvironmentVariables.ContainsKey($name)) { $psi.EnvironmentVariables.Remove($name) }
+                if ($null -ne $value) { $psi.EnvironmentVariables[$name] = $value }
+            }
+            $child = [System.Diagnostics.Process]::Start($psi)
+            $children += [pscustomobject]@{
+                process = $child; log = $logPath
+                stdout = $child.StandardOutput.ReadToEndAsync()
+                stderr = $child.StandardError.ReadToEndAsync()
+                index = $process.process_index
+                device_uuid = $process.device_uuid
+                seed_offset = $process.seed_offset
+                store_parent = $process.store_parent
+                env_map = $process.env
+                started = [DateTime]::UtcNow.ToString('o')
+                start_ticks = $child.StartTime.ToUniversalTime().Ticks
+                disposition = 'RUNNING'
+                kill_outcome = $null
+                exit_code = $null
+                oom_signature_seen = $null
             }
         }
-        if ($launchDisposition -cne 'COMPLETED') { break }
-        Start-Sleep -Seconds $Rendered.monitor.census_seconds
-    }
-    foreach ($child in $children) { $child.process.WaitForExit() }
 
-    foreach ($child in $children) {
-        $stdoutText = $child.stdout.Result
-        $stderrText = $child.stderr.Result
-        Set-Content -LiteralPath $child.log -Encoding utf8 -Value ($stdoutText + "`n--- STDERR ---`n" + $stderrText)
-        if ($child.disposition -ceq 'RUNNING') {
-            $child.disposition = if ($child.process.ExitCode -eq 0) { 'COMPLETED' } else { 'FAILED' }
+        # Monitor loop: bounded census of both rails at the configured
+        # cadence, wall-clock deadline, fail-closed lost-census counter.
+        Set-Content -LiteralPath $censusPath -Encoding utf8 -Value 'utc,device_uuid,memory_used_mib'
+        $deadline = [DateTime]::UtcNow.AddSeconds($Rendered.monitor.wall_clock_timeout_seconds)
+        $railByUuid = @{}
+        foreach ($rail in $Rendered.monitor.device_rails) { $railByUuid[$rail.device_uuid] = [long]$rail.rail_mib }
+        $lostCensus = 0
+        $launchDisposition = 'COMPLETED'
+        while (@($children | Where-Object { -not $_.process.HasExited }).Count -gt 0) {
+            if ([DateTime]::UtcNow -gt $deadline) {
+                Stop-OwnedChildren -Children $children -Disposition 'ABORTED-TIMEOUT'
+                $launchDisposition = 'ABORTED-TIMEOUT'
+                break
+            }
+            # Per-iteration try/catch: a single census failure must degrade
+            # to the lost-census counter, never abort monitoring silently.
+            $sampleParsed = $false
+            try {
+                $sample = Invoke-BoundedNvidiaSmi -ArgumentString '--query-gpu=uuid,memory.used --format=csv,noheader,nounits'
+                $censusCount += 1
+                if ($null -ne $sample) {
+                    $nowIso = [DateTime]::UtcNow.ToString('o')
+                    foreach ($row in $sample) {
+                        $parts = $row -split ','
+                        if ($parts.Count -lt 2) { continue }
+                        $uuid = $parts[0].Trim(); $used = [long]($parts[1].Trim())
+                        if (-not $railByUuid.ContainsKey($uuid)) { continue }
+                        $sampleParsed = $true
+                        Add-Content -LiteralPath $censusPath -Encoding utf8 -Value "$nowIso,$uuid,$used"
+                        if (-not $maxByUuid.ContainsKey($uuid) -or $used -gt $maxByUuid[$uuid]) { $maxByUuid[$uuid] = $used }
+                        if ($used -gt $railByUuid[$uuid]) {
+                            Stop-OwnedChildren -Children $children -Disposition 'ABORTED-RAIL'
+                            $launchDisposition = 'ABORTED-RAIL'
+                            $record['rail_breach'] = [ordered]@{ device_uuid = $uuid; measured_mib = $used; rail_mib = $railByUuid[$uuid]; at_utc = $nowIso }
+                        }
+                    }
+                }
+            }
+            catch { $sampleParsed = $false }
+            if ($sampleParsed) { $lostCensus = 0 } else { $lostCensus += 1 }
+            if ($lostCensus -ge 5) {
+                # Five consecutive failed/timed-out/malformed samples: the
+                # rails are blind, so the launch aborts fail-closed.
+                Stop-OwnedChildren -Children $children -Disposition 'ABORTED-CENSUS-LOST'
+                $launchDisposition = 'ABORTED-CENSUS-LOST'
+                break
+            }
+            if ($launchDisposition -cne 'COMPLETED') { break }
+            Start-Sleep -Seconds $Rendered.monitor.census_seconds
         }
-        $oomSeen = (($stdoutText + $stderrText) -match $oomPattern)
-        $record.processes += [ordered]@{
-            process_index = $child.index
-            device_uuid   = $child.device_uuid
-            seed_offset   = $child.seed_offset
-            store_parent  = $child.store_parent
-            env           = $child.env_map
-            pid           = $child.process.Id
-            start_utc_ticks = $child.start_ticks
-            started_utc   = $child.started
-            ended_utc     = [DateTime]::UtcNow.ToString('o')
-            exit_code     = $child.process.ExitCode
-            disposition   = $child.disposition
-            oom_signature_seen = [bool]$oomSeen
-            log_path      = $child.log
+
+        foreach ($child in $children) {
+            try {
+                if (-not $child.process.WaitForExit(15000)) {
+                    $child.disposition = 'WAIT-TIMEOUT'
+                    if ($launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
+                    continue
+                }
+                $stdoutText = $child.stdout.Result
+                $stderrText = $child.stderr.Result
+                Set-Content -LiteralPath $child.log -Encoding utf8 -Value ($stdoutText + "`n--- STDERR ---`n" + $stderrText)
+                $child.exit_code = $child.process.ExitCode
+                if ($child.disposition -ceq 'RUNNING') {
+                    $child.disposition = if ($child.exit_code -eq 0) { 'COMPLETED' } else { 'FAILED' }
+                }
+                $child.oom_signature_seen = [bool](($stdoutText + $stderrText) -match $script:AllocationFailurePatternV1)
+                if ($child.oom_signature_seen -and $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
+                if ($child.exit_code -ne 0 -and $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
+            }
+            catch {
+                $child.disposition = "COLLECT-ERROR: $($_.Exception.Message)"
+                if ($launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
+            }
         }
-        if ($oomSeen -and $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
-        if ($child.process.ExitCode -ne 0 -and $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
     }
-    $record.disposition = $launchDisposition
-    $record['census'] = [ordered]@{
-        samples = $censusCount
-        series_path = $censusPath
-        max_memory_used_mib = [ordered]@{}
+    catch {
+        $record['abort_error'] = $_.Exception.Message
+        if ($launchDisposition -ceq 'RUNNING' -or $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'ABORTED-ERROR' }
+        Stop-OwnedChildren -Children $children -Disposition 'ABORTED-ERROR'
+        throw
     }
-    foreach ($uuid in $maxByUuid.Keys) { $record.census.max_memory_used_mib[$uuid] = $maxByUuid[$uuid] }
-    $record.ended_utc = [DateTime]::UtcNow.ToString('o')
-    $recordPath = Join-Path $LaunchRoot 'launch-record.json'
-    ($record | ConvertTo-Json -Depth 10) | Out-File -LiteralPath $recordPath -Encoding utf8
+    finally {
+        # The launch record is written with best-known state on EVERY exit
+        # path; a monitoring failure must never leave a window undocumented.
+        try {
+            foreach ($child in $children) {
+                $record.processes += [ordered]@{
+                    process_index = $child.index
+                    device_uuid   = $child.device_uuid
+                    seed_offset   = $child.seed_offset
+                    store_parent  = $child.store_parent
+                    env           = $child.env_map
+                    pid           = $child.process.Id
+                    start_utc_ticks = $child.start_ticks
+                    started_utc   = $child.started
+                    ended_utc     = [DateTime]::UtcNow.ToString('o')
+                    exit_code     = $child.exit_code
+                    disposition   = $child.disposition
+                    kill_outcome  = $child.kill_outcome
+                    oom_signature_seen = $child.oom_signature_seen
+                    log_path      = $child.log
+                }
+            }
+            $record.disposition = $launchDisposition
+            $record['census'] = [ordered]@{
+                samples = $censusCount
+                series_path = $censusPath
+                max_memory_used_mib = [ordered]@{}
+            }
+            foreach ($uuid in $maxByUuid.Keys) { $record.census.max_memory_used_mib[$uuid] = $maxByUuid[$uuid] }
+            $record.ended_utc = [DateTime]::UtcNow.ToString('o')
+            ($record | ConvertTo-Json -Depth 10) | Out-File -LiteralPath $recordPath -Encoding utf8
+        }
+        catch {
+            try { Set-Content -LiteralPath (Join-Path $LaunchRoot 'launch-record-write-failure.txt') -Encoding utf8 -Value $_.Exception.Message } catch {}
+        }
+    }
     if ($launchDisposition -cne 'COMPLETED') { throw "launch disposition $launchDisposition; see $recordPath" }
     return $recordPath
 }

@@ -50,17 +50,29 @@ if ($runnerText -cnotmatch $envBlockPattern) {
 }
 
 # Pilot-printed CONFIG lines from the certified device logs: the running
-# binary's self-reported parameters, the strongest available record.
+# binary's self-reported parameters, the strongest available record. Every
+# log is hash-verified against campaign-complete.json's recorded
+# device_results[].validation.stdout_sha256 BEFORE any line is trusted.
 $configLinePattern = 'MULTIRUN CONFIG runs=(\d+) updates=(\d+) topology=(\d+)x(\d+) broker_target=(\d+)'
 $configLines = [ordered]@{}
+$logHashes = [ordered]@{}
 foreach ($probe in @(
     @{ arm = 'F31'; device = 0 }, @{ arm = 'F31'; device = 1 },
     @{ arm = 'F32'; device = 0 }, @{ arm = 'F32'; device = 1 }
 )) {
     $logPath = Join-Path $ArtifactDir ("{0}\device{1}.stdout.log" -f $probe.arm, $probe.device)
+    $armEntry = @($campaignComplete.arm_results | Where-Object { $_.arm -ceq $probe.arm })
+    if ($armEntry.Count -ne 1) { throw "expected exactly one arm_results entry for $($probe.arm)" }
+    $deviceEntry = @($armEntry[0].device_results | Where-Object { $_.device_ordinal -eq $probe.device })
+    if ($deviceEntry.Count -ne 1) { throw "expected exactly one device_results entry for $($probe.arm) device $($probe.device)" }
+    $recordedSha = $deviceEntry[0].validation.stdout_sha256.ToLowerInvariant()
+    $actualSha = Get-Sha256HexLocal -Path $logPath
+    if ($actualSha -cne $recordedSha) { throw "device log $logPath sha $actualSha does not match the recorded certified hash $recordedSha" }
+    $key = "{0}_device{1}" -f $probe.arm.ToLowerInvariant(), $probe.device
+    $logHashes[$key] = $actualSha
     $line = (Select-String -LiteralPath $logPath -Pattern $configLinePattern | Select-Object -First 1)
     if ($null -eq $line) { throw "no CONFIG line in $logPath" }
-    $configLines[("{0}_device{1}" -f $probe.arm.ToLowerInvariant(), $probe.device)] = $line.Line.Trim()
+    $configLines[$key] = $line.Line.Trim()
     if ($line.Line -cnotmatch 'updates=64 topology=2x32 broker_target=16') {
         throw "certified CONFIG line in $logPath does not carry the expected 64/2x32/16 parameters"
     }
@@ -73,6 +85,7 @@ $fixture = [ordered]@{
         artifact_dir = $ArtifactDir
         campaign_complete_sha256 = $campaignCompleteSha
         runner_starting_sha256 = $runnerCopySha
+        device_log_stdout_sha256 = $logHashes
         certified_config_lines = $configLines
     }
     certified_env = [ordered]@{

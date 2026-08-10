@@ -128,6 +128,25 @@ Test-Gate 'A1-golden-reproducibility' {
     finally { if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Force -Confirm:$false } }
 }
 
+# --- OOM pattern lock: the launcher's allocation-failure signature must
+# equal, byte for byte, the certified detector extracted live from the
+# SHA-verified pinned runner copy. Drift is impossible while this holds.
+Test-Gate 'OOM-pattern-matches-certified' {
+    $artifactDir = 'C:\Users\Jack\IdeaProjects\mtg-kernel-fair-campaign-harness-fable\artifacts\fair-sparse-campaign\20260724T1647536950174Z-fair-sparse-f31-b31-f32-6f53c1e58af1'
+    $runnerCopy = Join-Path $artifactDir '00-runner-starting-copy.ps1'
+    $campaignComplete = Get-Content -LiteralPath (Join-Path $artifactDir 'campaign-complete.json') -Raw | ConvertFrom-Json
+    $actualSha = (Get-FileHash -LiteralPath $runnerCopy -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualSha -cne $campaignComplete.runner_starting_sha256.ToLowerInvariant()) { throw 'runner copy sha mismatch; refusing to extract pattern from unverified source' }
+    $text = Get-Content -LiteralPath $runnerCopy -Raw
+    $assignment = [regex]::Match($text, '(?s)\$AllocationFailurePattern =\s*(?<literals>(?:''(?:[^'']|'''')*''\s*\+\s*)*''(?:[^'']|'''')*'')')
+    if (-not $assignment.Success) { throw 'AllocationFailurePattern assignment not found in pinned runner copy (shape drift)' }
+    $certified = ''
+    foreach ($literal in [regex]::Matches($assignment.Groups['literals'].Value, "'(?:[^']|'')*'")) {
+        $certified += $literal.Value.Substring(1, $literal.Value.Length - 2).Replace("''", "'")
+    }
+    if ($certified -cne $script:AllocationFailurePatternV1) { throw "launcher pattern differs from certified detector: certified=<$certified>" }
+}
+
 # --- Validator negative checks: every validation rule must fail closed.
 Test-Gate 'validator-fail-closed' {
     $base = Get-Content -LiteralPath (Join-Path $configsDir 'leg-a-solo.json') -Raw | ConvertFrom-Json
@@ -150,6 +169,18 @@ Test-Gate 'validator-fail-closed' {
         @{ name = 'drive-relative-root'; mutate = { param($c) $c.store_parent_root = 'D:relative\path' } },
         @{ name = 'empty-processes'; mutate = { param($c) $c.processes = @() } },
         @{ name = 'seed-overflow'; mutate = { param($c) $c.base_seed = 9223372036854775806 } },
+        @{ name = 'seed-2pow53-plus-1'; mutate = { param($c) $c.base_seed = 9007199254740993 } },
+        @{ name = 'workers-zero'; mutate = { param($c) $c.workers = 0 } },
+        @{ name = 'sessions-zero'; mutate = { param($c) $c.sessions = 0 } },
+        @{ name = 'broker-zero'; mutate = { param($c) $c.broker_target = 0 } },
+        @{ name = 'process-unknown-key'; mutate = { param($c) $c.processes[0] | Add-Member -NotePropertyName 'extra' -NotePropertyValue 1 } },
+        @{ name = 'process-missing-key'; mutate = { param($c) $c.processes[0].PSObject.Properties.Remove('runs') } },
+        @{ name = 'rail-unknown-key'; mutate = { param($c) $c.monitor.device_rails[0] | Add-Member -NotePropertyName 'extra' -NotePropertyValue 1 } },
+        @{ name = 'rail-missing-key'; mutate = { param($c) $c.monitor.device_rails[0].PSObject.Properties.Remove('rail_mib') } },
+        @{ name = 'rail-mib-zero'; mutate = { param($c) $c.monitor.device_rails[0].rail_mib = 0 } },
+        @{ name = 'dup-rail-uuid'; mutate = { param($c) $c.monitor.device_rails = @($c.monitor.device_rails[0], $c.monitor.device_rails[0]) } },
+        @{ name = 'monitor-census-zero'; mutate = { param($c) $c.monitor.census_seconds = 0 } },
+        @{ name = 'monitor-timeout-high'; mutate = { param($c) $c.monitor.wall_clock_timeout_seconds = 86401 } },
         @{ name = 'monitor-missing'; mutate = { param($c) $c.PSObject.Properties.Remove('monitor') } },
         @{ name = 'monitor-unknown-key'; mutate = { param($c) $c.monitor | Add-Member -NotePropertyName 'extra' -NotePropertyValue 1 } },
         @{ name = 'monitor-census-61'; mutate = { param($c) $c.monitor.census_seconds = 61 } },
