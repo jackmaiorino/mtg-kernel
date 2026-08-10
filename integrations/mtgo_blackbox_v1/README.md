@@ -2,7 +2,7 @@
 
 Current end-to-end competitive wiring status and the shortest critical path are tracked in `COMPETITIVE_WIRING_STATUS_2026-08-09.md`.
 
-This directory is an isolated, offline-first boundary between player-visible MTGO state and the existing `mtg-kernel` policy types. The Rust contract contains no live capture, UI Automation enumeration, process inspection, network inspection, client-file parsing, synthetic input, or checkpoint scoring. A separate calibration-preview script performs the narrow live operation documented below.
+This directory is an isolated, offline-first boundary between player-visible MTGO state and the existing `mtg-kernel` policy types. The Rust contract contains no live capture, UI Automation enumeration, process inspection, network inspection, client-file parsing, synthetic input, or checkpoint scoring. A separate calibration-preview script and sibling DXGI candidate executable perform the narrow live operations documented below.
 
 The read-only installation findings and capture implications are recorded in `CLIENT_INVENTORY_2026-08-08.md`.
 
@@ -105,6 +105,18 @@ The public checkers deliberately return `CheckedUntrusted...` types. They recomp
 This structural checker is not proof that a human performed the review or that a producer truthfully evaluated each capture-time assertion. The crate now has a narrow reviewed-preview admission seam, but its private production ratification is deliberately `None`. It therefore admits no current artifact. A later separately reviewed commit may pin one domain-separated commitment binding the exact profile, review, manifest, PNG, and decoded BGRA pixels after manual inspection.
 
 An admitted reviewed-preview value is opaque, retains the exact pixels without exposing them, and has only fixed offline-calibration-preview scope. It is not serializable, cloneable, or debuggable and has no conversion to OCR, semantic evidence, policy scoring, a live frame, an action intent, or input authority. Caller-provided review booleans cannot create it. A production DXGI probe still needs a separate opaque live-frame admission type and trusted capture-time evidence before OCR.
+
+## DXGI candidate artifact ingestion
+
+The separate `../mtgo_dxgi_capture_v1` executable now produces a real composed-desktop DXGI capture candidate with exact executable and signer identity, foreground and geometry snapshots, conservative occlusion and cursor checks, DXGI presentation metadata, tightly packed BGRA8 pixels, and a PNG preview. The probe has no input API and marks every output unsafe for semantic evidence, OCR, policy scoring, and input.
+
+`check_untrusted_dxgi_capture_artifact_v1` strictly parses that manifest, requires identical pre/post snapshots, recomputes both file hashes, decodes the PNG internally, and proves that it represents the exact canonical BGRA8 pixels. It returns only an opaque checked-untrusted value containing commitments and dimensions. It retains no pixels and has no conversion to calibration, OCR, evidence, scoring, an action, or input. A small read-only checker binary exercises the full file boundary:
+
+```powershell
+cargo run --bin check_mtgo_dxgi_artifact_v1 -- 'C:\absolute\artifact-directory'
+```
+
+This closes the raw producer-to-adapter file-schema gap. It does not close the trust gap. The manifest safety assertions remain producer claims, the pre/post z-order checks retain a transient-occluder race, and no current profile or live frame is ratified for perception.
 
 ## Current result
 

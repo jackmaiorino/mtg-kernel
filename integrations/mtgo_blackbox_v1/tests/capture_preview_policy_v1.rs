@@ -65,7 +65,10 @@ fn preview_requires_identity_focus_geometry_and_post_capture_recheck() {
         "MTGO_PREVIEW_PARTIAL_CLEANUP_PATH_REJECTED",
         "Directory]::Delete($partialOutputPath, $true)",
     ] {
-        assert!(PREVIEW_SCRIPT.contains(required), "missing guard: {required}");
+        assert!(
+            PREVIEW_SCRIPT.contains(required),
+            "missing guard: {required}"
+        );
     }
 }
 

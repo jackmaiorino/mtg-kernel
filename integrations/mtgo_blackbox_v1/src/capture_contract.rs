@@ -1140,7 +1140,7 @@ fn validate_source_preview_v1(
     Ok(captured_at)
 }
 
-fn decode_preview_png_to_canonical_bgra8_v1(
+pub(crate) fn decode_preview_png_to_canonical_bgra8_v1(
     frame_bytes: &[u8],
     expected_size: &MtgoSizePxV1,
     expected_len: usize,
