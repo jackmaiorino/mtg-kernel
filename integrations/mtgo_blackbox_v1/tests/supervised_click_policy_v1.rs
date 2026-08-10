@@ -72,6 +72,11 @@ fn click_helper_requires_live_identity_geometry_and_visible_hit_checks() {
             "missing click guard: {required}"
         );
     }
+
+    assert!(
+        !CLICK_SCRIPT.contains("MTGO_CLICK_FOREGROUND_OWNED_WINDOW_IS_MAIN_CLIENT"),
+        "a duel may become Process.MainWindowHandle and must be selected by exact foreground identity"
+    );
 }
 
 #[test]

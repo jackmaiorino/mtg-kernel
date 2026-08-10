@@ -1,8 +1,9 @@
 use crate::{
     decode_preview_png_to_canonical_bgra8_v1, preview_output_identity_commitment_v1,
-    MtgoContractErrorV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1,
+    MtgoContractErrorV1, MtgoPregameActionSemanticV1, MtgoRectPxV1, MtgoSignedRectDesktopPxV1,
+    MtgoSizePxV1,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const DXGI_ARTIFACT_SCHEMA_V1: &str = "mtgo-dxgi-visible-frame-candidate/v1";
@@ -31,8 +32,11 @@ const DXGI_OFFLINE_CALIBRATION_SCOPE_V1: &[u8] =
 const DXGI_ACTING_PLAYER_SOLITAIRE_ROLE_V1: &[u8] = b"acting_player_solitaire";
 const RATIFIED_DXGI_OFFLINE_CALIBRATION_ADMISSION_COMMITMENT_V1: Option<&str> =
     Some("9b0aef61a6fc31ee6050d9e381fba4c3e1a6b887c62319c8b3e1e13e9523e291");
+const DXGI_KEEP_TRANSITION_SCHEMA_V1: u32 = 1;
+const DXGI_KEEP_TRANSITION_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-dxgi-keep-transition-v1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MtgoDxgiCaptureRoleV2 {
     Navigation,
     ActingPlayerSolitaire,
@@ -328,6 +332,458 @@ impl AdmittedMtgoDxgiOfflineCalibrationFrameV1 {
     pub(crate) fn canonical_pixels_for_offline_calibration_v1(&self) -> &[u8] {
         &self.canonical_bgra8
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoDxgiArtifactReferenceV1 {
+    pub manifest_sha256: String,
+    pub canonical_bgra8_sha256: String,
+    pub preview_png_sha256: String,
+    pub output_identity_sha256: String,
+    pub client_size_px: MtgoSizePxV1,
+    pub captured_at_unix_millis: u64,
+    pub capture_role: MtgoDxgiCaptureRoleV2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MtgoDxgiKeepVisibleChangeV1 {
+    PromptChanged,
+    PlayerCountsChanged,
+    VisibleGameLogChanged,
+    PhaseBarChanged,
+    HandChanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoDxgiKeepChangedRegionV1 {
+    pub change: MtgoDxgiKeepVisibleChangeV1,
+    pub rect_client_px: MtgoRectPxV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoDxgiKeepTransitionV1 {
+    pub schema_version: u32,
+    pub trace_id: String,
+    pub before_frame: MtgoDxgiArtifactReferenceV1,
+    pub action: MtgoPregameActionSemanticV1,
+    pub action_control_before: MtgoRectPxV1,
+    pub after_frame: MtgoDxgiArtifactReferenceV1,
+    pub visible_postconditions: Vec<MtgoDxgiKeepChangedRegionV1>,
+}
+
+#[derive(Serialize)]
+struct MtgoDxgiKeepRegionMetricV1 {
+    change: MtgoDxgiKeepVisibleChangeV1,
+    rect_client_px: MtgoRectPxV1,
+    before_bgra8_sha256: String,
+    after_bgra8_sha256: String,
+    changed_pixels: u64,
+    total_pixels: u64,
+}
+
+/// A byte-checked Keep calibration transition between two role-correct DXGI artifacts.
+///
+/// The visible region names remain manual labels. Success proves exact artifact
+/// identity, byte changes in every required region, ordering, geometry, and a
+/// strictly newer after-frame. It does not prove semantic recognition and grants
+/// no live-frame, scoring, action, coordinate, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoDxgiKeepTransitionV1;
+/// fn pixel_escape(value: &CheckedUntrustedMtgoDxgiKeepTransitionV1) {
+///     let _ = value.canonical_pixels_v1();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoDxgiKeepTransitionV1;
+/// fn coordinate_escape(value: &CheckedUntrustedMtgoDxgiKeepTransitionV1) {
+///     let _ = value.action_control_before();
+/// }
+/// ```
+pub struct CheckedUntrustedMtgoDxgiKeepTransitionV1 {
+    record: MtgoDxgiKeepTransitionV1,
+    transition_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoDxgiKeepTransitionV1 {
+    pub fn action(&self) -> MtgoPregameActionSemanticV1 {
+        MtgoPregameActionSemanticV1::KeepOpeningHand
+    }
+
+    pub fn before_manifest_sha256(&self) -> &str {
+        &self.record.before_frame.manifest_sha256
+    }
+
+    pub fn after_manifest_sha256(&self) -> &str {
+        &self.record.after_frame.manifest_sha256
+    }
+
+    pub fn changed_region_count(&self) -> usize {
+        self.record.visible_postconditions.len()
+    }
+
+    pub fn transition_commitment_sha256(&self) -> &str {
+        &self.transition_commitment_sha256
+    }
+
+    pub fn safe_for_semantic_evidence(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input(&self) -> bool {
+        false
+    }
+}
+
+pub fn check_untrusted_dxgi_keep_transition_v1(
+    record: MtgoDxgiKeepTransitionV1,
+    before_checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    before_canonical_bgra8: &[u8],
+    after_checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    after_canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoDxgiKeepTransitionV1, MtgoContractErrorV1> {
+    if record.schema_version != DXGI_KEEP_TRANSITION_SCHEMA_V1 {
+        return Err(error_v1(
+            "dxgi_keep_transition_schema",
+            "DXGI Keep transition schema must be version 1",
+        ));
+    }
+    if record.trace_id.is_empty()
+        || record.trace_id.len() > 128
+        || !record
+            .trace_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+    {
+        return Err(error_v1(
+            "dxgi_keep_transition_trace_id",
+            "trace ID must be 1 to 128 safe identifier characters",
+        ));
+    }
+    if !matches!(record.action, MtgoPregameActionSemanticV1::KeepOpeningHand) {
+        return Err(error_v1(
+            "dxgi_keep_transition_action",
+            "v1 records only KeepOpeningHand",
+        ));
+    }
+    validate_dxgi_artifact_reference_v1(&record.before_frame, before_checked)?;
+    validate_dxgi_artifact_reference_v1(&record.after_frame, after_checked)?;
+    if before_checked.capture_role() != MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire
+        || after_checked.capture_role() != MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire
+    {
+        return Err(error_v1(
+            "dxgi_keep_transition_role",
+            "both artifacts must have the acting-player Solitaire role",
+        ));
+    }
+    if before_checked.client_size_px() != after_checked.client_size_px()
+        || before_checked.output_identity_sha256() != after_checked.output_identity_sha256()
+    {
+        return Err(error_v1(
+            "dxgi_keep_transition_layout",
+            "before and after artifacts must share client and output identity",
+        ));
+    }
+    if after_checked.captured_at_unix_millis() <= before_checked.captured_at_unix_millis()
+        || after_checked.manifest_sha256() == before_checked.manifest_sha256()
+        || after_checked.canonical_bgra8_sha256() == before_checked.canonical_bgra8_sha256()
+    {
+        return Err(error_v1(
+            "dxgi_keep_transition_order",
+            "after artifact must be strictly newer and byte-distinct",
+        ));
+    }
+
+    validate_dxgi_raw_pixels_v1(before_checked, before_canonical_bgra8)?;
+    validate_dxgi_raw_pixels_v1(after_checked, after_canonical_bgra8)?;
+
+    let expected_changes = [
+        MtgoDxgiKeepVisibleChangeV1::PromptChanged,
+        MtgoDxgiKeepVisibleChangeV1::PlayerCountsChanged,
+        MtgoDxgiKeepVisibleChangeV1::VisibleGameLogChanged,
+        MtgoDxgiKeepVisibleChangeV1::PhaseBarChanged,
+        MtgoDxgiKeepVisibleChangeV1::HandChanged,
+    ];
+    let actual_changes: Vec<_> = record
+        .visible_postconditions
+        .iter()
+        .map(|region| region.change)
+        .collect();
+    if actual_changes.as_slice() != expected_changes {
+        return Err(error_v1(
+            "dxgi_keep_transition_postconditions",
+            "Keep requires the canonical prompt, player-counts, game-log, phase-bar, and hand changes",
+        ));
+    }
+
+    let size = before_checked.client_size_px();
+    validate_client_region_v1(&record.action_control_before, size)?;
+    let prompt_rect = &record.visible_postconditions[0].rect_client_px;
+    if !client_rect_contains_v1(prompt_rect, &record.action_control_before) {
+        return Err(error_v1(
+            "dxgi_keep_transition_action_control",
+            "Keep control must be contained in the declared prompt region",
+        ));
+    }
+    let action_changed = count_changed_pixels_v1(
+        before_canonical_bgra8,
+        after_canonical_bgra8,
+        size,
+        &record.action_control_before,
+    )?;
+    let action_total = rect_pixel_count_v1(&record.action_control_before);
+    if action_changed < minimum_changed_pixels_v1(action_total, 10) {
+        return Err(error_v1(
+            "dxgi_keep_transition_action_control",
+            "Keep control region did not change enough after the click",
+        ));
+    }
+
+    let mut metrics = Vec::with_capacity(record.visible_postconditions.len());
+    for (index, region) in record.visible_postconditions.iter().enumerate() {
+        validate_client_region_v1(&region.rect_client_px, size)?;
+        for previous in &record.visible_postconditions[..index] {
+            if client_rects_overlap_v1(&previous.rect_client_px, &region.rect_client_px) {
+                return Err(error_v1(
+                    "dxgi_keep_transition_region_overlap",
+                    "visible postcondition regions must not overlap",
+                ));
+            }
+        }
+        let changed_pixels = count_changed_pixels_v1(
+            before_canonical_bgra8,
+            after_canonical_bgra8,
+            size,
+            &region.rect_client_px,
+        )?;
+        let total_pixels = rect_pixel_count_v1(&region.rect_client_px);
+        if changed_pixels < minimum_changed_pixels_v1(total_pixels, 1) {
+            return Err(error_v1(
+                "dxgi_keep_transition_region_unchanged",
+                "each required visible postcondition must change by at least one percent",
+            ));
+        }
+        metrics.push(MtgoDxgiKeepRegionMetricV1 {
+            change: region.change,
+            rect_client_px: region.rect_client_px.clone(),
+            before_bgra8_sha256: hash_bgra_region_v1(
+                before_canonical_bgra8,
+                size,
+                &region.rect_client_px,
+            )?,
+            after_bgra8_sha256: hash_bgra_region_v1(
+                after_canonical_bgra8,
+                size,
+                &region.rect_client_px,
+            )?,
+            changed_pixels,
+            total_pixels,
+        });
+    }
+
+    let record_bytes = serde_json::to_vec(&record)
+        .map_err(|error| error_v1("dxgi_keep_transition_serialization", error.to_string()))?;
+    let metrics_bytes = serde_json::to_vec(&metrics)
+        .map_err(|error| error_v1("dxgi_keep_transition_serialization", error.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(DXGI_KEEP_TRANSITION_COMMITMENT_DOMAIN_V1);
+    for part in [record_bytes.as_slice(), metrics_bytes.as_slice()] {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+
+    Ok(CheckedUntrustedMtgoDxgiKeepTransitionV1 {
+        record,
+        transition_commitment_sha256: format!("{:x}", hasher.finalize()),
+    })
+}
+
+fn validate_dxgi_artifact_reference_v1(
+    reference: &MtgoDxgiArtifactReferenceV1,
+    checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+) -> Result<(), MtgoContractErrorV1> {
+    if reference.manifest_sha256 != checked.manifest_sha256()
+        || reference.canonical_bgra8_sha256 != checked.canonical_bgra8_sha256()
+        || reference.preview_png_sha256 != checked.preview_png_sha256()
+        || reference.output_identity_sha256 != checked.output_identity_sha256()
+        || &reference.client_size_px != checked.client_size_px()
+        || reference.captured_at_unix_millis != checked.captured_at_unix_millis()
+        || reference.capture_role != checked.capture_role()
+    {
+        return Err(error_v1(
+            "dxgi_keep_transition_artifact_reference",
+            "transition artifact reference does not match the checked artifact",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_dxgi_raw_pixels_v1(
+    checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    canonical_bgra8: &[u8],
+) -> Result<(), MtgoContractErrorV1> {
+    let expected_len = usize::try_from(checked.client_size_px().width)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .and_then(|stride| {
+            usize::try_from(checked.client_size_px().height)
+                .ok()
+                .and_then(|height| stride.checked_mul(height))
+        })
+        .filter(|length| *length <= MAX_CANONICAL_BYTES_V1)
+        .ok_or_else(|| {
+            error_v1(
+                "dxgi_keep_transition_pixel_size",
+                "canonical pixel size overflow",
+            )
+        })?;
+    if canonical_bgra8.len() != expected_len
+        || sha256_v1(canonical_bgra8) != checked.canonical_bgra8_sha256()
+    {
+        return Err(error_v1(
+            "dxgi_keep_transition_pixel_identity",
+            "canonical pixels do not match the checked artifact",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_client_region_v1(
+    rect: &MtgoRectPxV1,
+    size: &MtgoSizePxV1,
+) -> Result<(), MtgoContractErrorV1> {
+    let right = rect.x.checked_add(rect.width);
+    let bottom = rect.y.checked_add(rect.height);
+    if rect.width == 0
+        || rect.height == 0
+        || right.is_none_or(|right| right > size.width)
+        || bottom.is_none_or(|bottom| bottom > size.height)
+    {
+        return Err(error_v1(
+            "dxgi_keep_transition_region_geometry",
+            "visible region must be nonempty and inside the client",
+        ));
+    }
+    Ok(())
+}
+
+fn client_rect_contains_v1(outer: &MtgoRectPxV1, inner: &MtgoRectPxV1) -> bool {
+    let Some(outer_right) = outer.x.checked_add(outer.width) else {
+        return false;
+    };
+    let Some(outer_bottom) = outer.y.checked_add(outer.height) else {
+        return false;
+    };
+    let Some(inner_right) = inner.x.checked_add(inner.width) else {
+        return false;
+    };
+    let Some(inner_bottom) = inner.y.checked_add(inner.height) else {
+        return false;
+    };
+    inner.x >= outer.x
+        && inner.y >= outer.y
+        && inner_right <= outer_right
+        && inner_bottom <= outer_bottom
+}
+
+fn client_rects_overlap_v1(left: &MtgoRectPxV1, right: &MtgoRectPxV1) -> bool {
+    let Some(left_right) = left.x.checked_add(left.width) else {
+        return true;
+    };
+    let Some(left_bottom) = left.y.checked_add(left.height) else {
+        return true;
+    };
+    let Some(right_right) = right.x.checked_add(right.width) else {
+        return true;
+    };
+    let Some(right_bottom) = right.y.checked_add(right.height) else {
+        return true;
+    };
+    left.x < right_right && right.x < left_right && left.y < right_bottom && right.y < left_bottom
+}
+
+fn rect_pixel_count_v1(rect: &MtgoRectPxV1) -> u64 {
+    u64::from(rect.width) * u64::from(rect.height)
+}
+
+fn minimum_changed_pixels_v1(total_pixels: u64, percentage: u64) -> u64 {
+    total_pixels
+        .saturating_mul(percentage)
+        .div_ceil(100)
+        .max(32)
+        .min(total_pixels)
+}
+
+fn count_changed_pixels_v1(
+    before: &[u8],
+    after: &[u8],
+    size: &MtgoSizePxV1,
+    rect: &MtgoRectPxV1,
+) -> Result<u64, MtgoContractErrorV1> {
+    let mut changed = 0_u64;
+    for y in rect.y..rect.y + rect.height {
+        for x in rect.x..rect.x + rect.width {
+            let offset = pixel_offset_v1(size, x, y)?;
+            if before[offset..offset + 4] != after[offset..offset + 4] {
+                changed += 1;
+            }
+        }
+    }
+    Ok(changed)
+}
+
+fn hash_bgra_region_v1(
+    pixels: &[u8],
+    size: &MtgoSizePxV1,
+    rect: &MtgoRectPxV1,
+) -> Result<String, MtgoContractErrorV1> {
+    let mut hasher = Sha256::new();
+    hasher.update(b"mtgo-dxgi-bgra-region-v1");
+    hasher.update(rect.x.to_be_bytes());
+    hasher.update(rect.y.to_be_bytes());
+    hasher.update(rect.width.to_be_bytes());
+    hasher.update(rect.height.to_be_bytes());
+    for y in rect.y..rect.y + rect.height {
+        let start = pixel_offset_v1(size, rect.x, y)?;
+        let row_bytes = usize::try_from(rect.width)
+            .ok()
+            .and_then(|width| width.checked_mul(4))
+            .ok_or_else(|| {
+                error_v1(
+                    "dxgi_keep_transition_region_geometry",
+                    "visible region row size overflow",
+                )
+            })?;
+        hasher.update(&pixels[start..start + row_bytes]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn pixel_offset_v1(size: &MtgoSizePxV1, x: u32, y: u32) -> Result<usize, MtgoContractErrorV1> {
+    usize::try_from(y)
+        .ok()
+        .and_then(|y| {
+            usize::try_from(size.width)
+                .ok()
+                .and_then(|width| y.checked_mul(width))
+        })
+        .and_then(|row| usize::try_from(x).ok().and_then(|x| row.checked_add(x)))
+        .and_then(|pixel| pixel.checked_mul(4))
+        .ok_or_else(|| {
+            error_v1(
+                "dxgi_keep_transition_region_geometry",
+                "visible region pixel offset overflow",
+            )
+        })
 }
 
 /// Admits only the one exact DXGI artifact pinned by source review.
@@ -992,6 +1448,161 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 mod tests {
     use super::*;
 
+    fn synthetic_checked_v1(
+        manifest_byte: char,
+        png_byte: char,
+        output_byte: char,
+        pixels: &[u8],
+        captured_at_unix_millis: u64,
+        role: MtgoDxgiCaptureRoleV2,
+    ) -> CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
+        CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
+            manifest_sha256: manifest_byte.to_string().repeat(64),
+            canonical_bgra8_sha256: sha256_v1(pixels),
+            preview_png_sha256: png_byte.to_string().repeat(64),
+            output_identity_sha256: output_byte.to_string().repeat(64),
+            client_size_px: MtgoSizePxV1 {
+                width: 64,
+                height: 64,
+            },
+            captured_at_unix_millis,
+            capture_role: role,
+        }
+    }
+
+    fn reference_v1(
+        checked: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    ) -> MtgoDxgiArtifactReferenceV1 {
+        MtgoDxgiArtifactReferenceV1 {
+            manifest_sha256: checked.manifest_sha256().to_owned(),
+            canonical_bgra8_sha256: checked.canonical_bgra8_sha256().to_owned(),
+            preview_png_sha256: checked.preview_png_sha256().to_owned(),
+            output_identity_sha256: checked.output_identity_sha256().to_owned(),
+            client_size_px: checked.client_size_px().clone(),
+            captured_at_unix_millis: checked.captured_at_unix_millis(),
+            capture_role: checked.capture_role(),
+        }
+    }
+
+    fn paint_rect_v1(pixels: &mut [u8], rect: &MtgoRectPxV1, value: u8) {
+        for y in rect.y..rect.y + rect.height {
+            for x in rect.x..rect.x + rect.width {
+                let offset = (usize::try_from(y).unwrap() * 64 + usize::try_from(x).unwrap()) * 4;
+                pixels[offset..offset + 4].copy_from_slice(&[value, value, value, 255]);
+            }
+        }
+    }
+
+    fn synthetic_keep_v1() -> (
+        MtgoDxgiKeepTransitionV1,
+        CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+        Vec<u8>,
+        CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+        Vec<u8>,
+    ) {
+        let mut before = vec![0_u8; 64 * 64 * 4];
+        for pixel in before.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
+        let mut after = before.clone();
+        let regions = [
+            (
+                MtgoDxgiKeepVisibleChangeV1::PromptChanged,
+                MtgoRectPxV1 {
+                    x: 0,
+                    y: 0,
+                    width: 16,
+                    height: 16,
+                },
+            ),
+            (
+                MtgoDxgiKeepVisibleChangeV1::PlayerCountsChanged,
+                MtgoRectPxV1 {
+                    x: 16,
+                    y: 0,
+                    width: 8,
+                    height: 8,
+                },
+            ),
+            (
+                MtgoDxgiKeepVisibleChangeV1::VisibleGameLogChanged,
+                MtgoRectPxV1 {
+                    x: 24,
+                    y: 0,
+                    width: 16,
+                    height: 16,
+                },
+            ),
+            (
+                MtgoDxgiKeepVisibleChangeV1::PhaseBarChanged,
+                MtgoRectPxV1 {
+                    x: 0,
+                    y: 16,
+                    width: 32,
+                    height: 8,
+                },
+            ),
+            (
+                MtgoDxgiKeepVisibleChangeV1::HandChanged,
+                MtgoRectPxV1 {
+                    x: 0,
+                    y: 24,
+                    width: 32,
+                    height: 24,
+                },
+            ),
+        ];
+        for (index, (_, rect)) in regions.iter().enumerate() {
+            paint_rect_v1(&mut after, rect, u8::try_from(index + 1).unwrap());
+        }
+        let before_checked = synthetic_checked_v1(
+            'a',
+            'b',
+            'c',
+            &before,
+            1_786_338_000_000,
+            MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire,
+        );
+        let after_checked = synthetic_checked_v1(
+            'd',
+            'e',
+            'c',
+            &after,
+            1_786_338_001_000,
+            MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire,
+        );
+        let record = MtgoDxgiKeepTransitionV1 {
+            schema_version: 1,
+            trace_id: "synthetic-dxgi-keep-v1".to_owned(),
+            before_frame: reference_v1(&before_checked),
+            action: MtgoPregameActionSemanticV1::KeepOpeningHand,
+            action_control_before: MtgoRectPxV1 {
+                x: 4,
+                y: 4,
+                width: 8,
+                height: 8,
+            },
+            after_frame: reference_v1(&after_checked),
+            visible_postconditions: regions
+                .into_iter()
+                .map(|(change, rect_client_px)| MtgoDxgiKeepChangedRegionV1 {
+                    change,
+                    rect_client_px,
+                })
+                .collect(),
+        };
+        (record, before_checked, before, after_checked, after)
+    }
+
+    fn transition_error_code_v1(
+        result: Result<CheckedUntrustedMtgoDxgiKeepTransitionV1, MtgoContractErrorV1>,
+    ) -> &'static str {
+        match result {
+            Ok(_) => panic!("transition unexpectedly validated"),
+            Err(error) => error.code(),
+        }
+    }
+
     #[test]
     fn ratified_offline_calibration_commitment_is_stable() {
         let checked = CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
@@ -1013,6 +1624,117 @@ mod tests {
         assert_eq!(
             dxgi_offline_calibration_admission_commitment_v1(&checked),
             RATIFIED_DXGI_OFFLINE_CALIBRATION_ADMISSION_COMMITMENT_V1.unwrap()
+        );
+    }
+
+    #[test]
+    fn byte_checked_keep_transition_requires_all_visible_changes() {
+        let (record, before_checked, before, after_checked, after) = synthetic_keep_v1();
+        let checked = check_untrusted_dxgi_keep_transition_v1(
+            record,
+            &before_checked,
+            &before,
+            &after_checked,
+            &after,
+        )
+        .unwrap();
+        assert!(matches!(
+            checked.action(),
+            MtgoPregameActionSemanticV1::KeepOpeningHand
+        ));
+        assert_eq!(checked.changed_region_count(), 5);
+        assert_eq!(checked.transition_commitment_sha256().len(), 64);
+        assert!(!checked.safe_for_semantic_evidence());
+        assert!(!checked.safe_for_policy_scoring());
+        assert!(!checked.safe_for_input());
+    }
+
+    #[test]
+    fn keep_transition_rejects_missing_geometry_and_pixel_identity() {
+        let (mut record, before_checked, before, after_checked, after) = synthetic_keep_v1();
+        record.visible_postconditions.pop();
+        assert_eq!(
+            transition_error_code_v1(check_untrusted_dxgi_keep_transition_v1(
+                record,
+                &before_checked,
+                &before,
+                &after_checked,
+                &after,
+            )),
+            "dxgi_keep_transition_postconditions"
+        );
+
+        let (mut record, before_checked, before, after_checked, after) = synthetic_keep_v1();
+        record.action_control_before.x = 48;
+        assert_eq!(
+            transition_error_code_v1(check_untrusted_dxgi_keep_transition_v1(
+                record,
+                &before_checked,
+                &before,
+                &after_checked,
+                &after,
+            )),
+            "dxgi_keep_transition_action_control"
+        );
+
+        let (record, before_checked, mut before, after_checked, after) = synthetic_keep_v1();
+        before[0] ^= 1;
+        assert_eq!(
+            transition_error_code_v1(check_untrusted_dxgi_keep_transition_v1(
+                record,
+                &before_checked,
+                &before,
+                &after_checked,
+                &after,
+            )),
+            "dxgi_keep_transition_pixel_identity"
+        );
+    }
+
+    #[test]
+    fn keep_transition_rejects_unchanged_required_region_and_wrong_role() {
+        let (mut record, before_checked, before, _, mut after) = synthetic_keep_v1();
+        let phase = record.visible_postconditions[3].rect_client_px.clone();
+        paint_rect_v1(&mut after, &phase, 0);
+        let after_checked = synthetic_checked_v1(
+            'd',
+            'e',
+            'c',
+            &after,
+            1_786_338_001_000,
+            MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire,
+        );
+        record.after_frame = reference_v1(&after_checked);
+        assert_eq!(
+            transition_error_code_v1(check_untrusted_dxgi_keep_transition_v1(
+                record,
+                &before_checked,
+                &before,
+                &after_checked,
+                &after,
+            )),
+            "dxgi_keep_transition_region_unchanged"
+        );
+
+        let (mut record, before_checked, before, _, after) = synthetic_keep_v1();
+        let after_checked = synthetic_checked_v1(
+            'd',
+            'e',
+            'c',
+            &after,
+            1_786_338_001_000,
+            MtgoDxgiCaptureRoleV2::Spectator,
+        );
+        record.after_frame = reference_v1(&after_checked);
+        assert_eq!(
+            transition_error_code_v1(check_untrusted_dxgi_keep_transition_v1(
+                record,
+                &before_checked,
+                &before,
+                &after_checked,
+                &after,
+            )),
+            "dxgi_keep_transition_role"
         );
     }
 }

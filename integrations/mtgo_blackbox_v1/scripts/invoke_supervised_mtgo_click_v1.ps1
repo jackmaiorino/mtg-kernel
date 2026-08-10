@@ -308,9 +308,6 @@ try {
     }
     else {
         [IntPtr]$window = [MtgoSupervisedClickNativeV1]::GetForegroundWindow()
-        if ($window -eq $mainWindow) {
-            throw 'MTGO_CLICK_FOREGROUND_OWNED_WINDOW_IS_MAIN_CLIENT'
-        }
     }
     if (-not [MtgoSupervisedClickNativeV1]::IsWindow($window) -or
         -not [MtgoSupervisedClickNativeV1]::IsRootWindow($window) -or

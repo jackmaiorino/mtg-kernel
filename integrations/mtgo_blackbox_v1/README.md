@@ -74,6 +74,8 @@ The attended navigation helper `scripts/invoke_supervised_mtgo_click_v1.ps1` emi
 
 `MtgoPregameCalibrationTraceV1` records a digest-only, adapter-local Keep or Mulligan calibration transition. It binds distinct before and after preview manifests and frames, the visible action-control region before the manual action, and multiple changed visible regions after it. Keep requires changed prompt, player-count, game-log, and phase-bar regions. Mulligan requires changed prompt, player-count, and game-log regions.
 
+The stricter DXGI Keep path is `check_untrusted_dxgi_keep_transition_v1`. It takes two already checked role-explicit artifacts plus their canonical raw bytes and a digest-only transition record. Both frames must be `ActingPlayerSolitaire`, share client and output identity, and be strictly ordered. The Keep control must lie inside the prompt region. Prompt, player counts, visible game log, phase bar, and hand regions must appear in canonical order, be nonoverlapping, and each change by at least one percent of pixels. The checked result retains no pixels or coordinates and remains unsafe for semantic evidence, scoring, or input. The first live record is `fixtures/dxgi_keep_transition_20260810_v1.json`.
+
 The checked result is deliberately named `CheckedUntrustedMtgoPregameCalibrationV1`. It exposes only the adapter-local pregame semantic, source frame hashes, and a transition commitment. It has no region, pixel, kernel-evidence, policy, or input accessor. The source previews remain non-actionable, and caller-provided region labels do not prove visual correctness.
 
 This local semantic is separate because the current kernel `ActionSemanticV1` does not represent Keep or Mulligan. The first live trace therefore establishes adapter calibration and a visible postcondition, not model support for mulligan decisions.
@@ -131,6 +133,15 @@ cargo run --bin admit_mtgo_dxgi_offline_calibration_v1 -- 'C:\absolute\artifact-
 ```
 
 This admits one immutable image for measuring perception. It does not ratify a reusable calibration profile, a later frame, or the producer's live assertions.
+
+The live Keep pair can be rechecked without persisting any additional pixels:
+
+```powershell
+cargo run --bin check_mtgo_dxgi_keep_transition_v1 -- `
+  'C:\absolute\dxgi_keep_transition_v1.json' `
+  'C:\absolute\before-artifact-directory' `
+  'C:\absolute\after-artifact-directory'
+```
 
 ## Current result
 

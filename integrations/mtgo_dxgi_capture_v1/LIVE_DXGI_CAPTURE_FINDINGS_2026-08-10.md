@@ -44,6 +44,21 @@ The exact acting-player artifact above is now source-ratified for one scope only
 
 The opaque value retains pixels only for crate-internal offline calibration code. It has no public pixel accessor and remains false for live OCR, semantic evidence, policy scoring, and input. This is not a reusable profile, live-frame attestation, or authorization for any action.
 
+## Strict DXGI Keep transition
+
+A fresh role-correct frame was captured at the same opening mulligan decision, followed by one guarded click on the visibly inspected Keep control and one role-correct post-frame:
+
+| State | Artifact | Canonical BGRA8 SHA-256 | Manifest SHA-256 |
+| --- | --- | --- | --- |
+| Before Keep | `C:\Users\Jack\AppData\Local\Temp\mtgo-dxgi-before-keep-v2-20260810-010502-316` | `124e37ee6c431a7b40d13a49c5c830a630580741350ce799e482ddc4522ccf31` | `e5f6f170764f6f374587e45a0e5c3c3fbbc98849bd091b305a2e318bbfede49d` |
+| After Keep | `C:\Users\Jack\AppData\Local\Temp\mtgo-dxgi-after-keep-v2-20260810-010607-906` | `4b33db6c50945a1a07320709be7cf2ada1ec513b69748e2e386e1f119864f514` | `018d955305e253460f2e0fd0e51d850f1f6e8684cbf2b7415ce5446d2a818adb` |
+
+Both artifacts independently check as `ActingPlayerSolitaire`, share the exact client and output identity, and remain unsafe for semantic evidence, scoring, and input. The after-frame visibly shows the first-main prompt, Combat control, eight cards in hand, first-main phase highlight, and new game-log entries for keeping seven and drawing a card.
+
+The digest-only fixture `fixtures/dxgi_keep_transition_20260810_v1.json` binds both artifacts, the visible Keep control region, and canonical prompt, player-counts, game-log, phase-bar, and hand regions. The byte checker recomputes each artifact, verifies the exact raw bytes, requires a strictly newer after-frame, and requires at least one percent of pixels to change in every named postcondition. The checked transition commitment is `89bfe0ec667457fe6cb59b5737461b0bf167016b61e64f557d6079cd220f766c`.
+
+The region names remain manual labels. The checker proves byte changes at those locations, not semantic recognition or a general Keep detector. It exposes no pixels or coordinates and grants no subsequent input authority.
+
 ## Nonclaims
 
 This proves that the local backend can acquire and crop a player-visible composed desktop frame while checking the declared live conditions. It does not admit the pixels for OCR, semantic evidence, model scoring, or input. It does not eliminate the transient-occluder race between the two z-order audits. No League, Challenge, purchase, queue, or gameplay action was performed.
