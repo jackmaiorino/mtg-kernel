@@ -67,6 +67,7 @@ fn public_measurement_consumes_only_the_opaque_frame_and_keeps_parts_private() {
 fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
     let source = include_str!("../src/probe.rs");
     let bottoming = include_str!("../src/probe/bottoming_model.rs");
+    let bottoming_plan = include_str!("../src/probe/bottoming_model/action_plan.rs");
     assert!(source.contains(
         "pub fn score_and_select_pregame_model_v3<S: MtgoExternalPregameScorerV3>(\n    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,"
     ));
@@ -117,6 +118,33 @@ fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
         assert!(
             !bottoming.contains(forbidden),
             "bottoming model boundary exposes forbidden authority: {forbidden}"
+        );
+    }
+    for required in [
+        "pub fn build_card_aware_bottoming_action_plan_v5(",
+        "pub fn confirm_card_aware_bottoming_selection_plan_v5(",
+        "pub fn confirm_card_aware_bottoming_submit_plan_v5(",
+        "pub struct OpaqueMtgoBottomingActionPlanV5 {",
+        "pub struct OpaqueMtgoConfirmedBottomingSubmitV5 {",
+        "bottoming Cancel is not plannable until its visible reset transition is calibrated",
+    ] {
+        assert!(
+            bottoming_plan.contains(required),
+            "bottoming action-plan boundary is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "pub(crate) fn prepare_bottoming_actuation",
+        "safe_for_live_input_v5(&self) -> bool {\n        true",
+    ] {
+        assert!(
+            !bottoming_plan.contains(forbidden),
+            "bottoming action plan exposes forbidden authority: {forbidden}"
         );
     }
 }

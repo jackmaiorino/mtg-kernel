@@ -6,6 +6,9 @@ use mtgo_blackbox_v1::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+mod action_plan;
+pub use action_plan::*;
+
 pub const MTGO_BOTTOMING_CARD_AWARE_SCORING_SCHEMA_V5: u32 = 5;
 
 const BOTTOMING_STABLE_OBJECT_DOMAIN_V5: &[u8] = b"mtgo-bottoming-stable-object-v5";
