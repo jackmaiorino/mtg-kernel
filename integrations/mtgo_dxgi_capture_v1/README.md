@@ -4,6 +4,8 @@ This standalone Windows probe captures the foreground MTGO client using DXGI Des
 
 The probe is intentionally separate from `mtgo_blackbox_v1`. It contains the Windows `unsafe` boundary needed for Win32, D3D11, DXGI, DWM, process, and Authenticode calls. The offline adapter remains `#![forbid(unsafe_code)]` and cannot call this executable as an input mechanism.
 
+The command-line executable is a thin wrapper over the library capture engine. A successful in-process capture returns `OpaqueMtgoDxgiFrameCandidateV3`. Safe Rust callers cannot construct, clone, format, deserialize, or read pixels from that type. Its public view contains commitments and geometry only. Downstream live wiring must accept the opaque object itself, never a copied commitment or serialized manifest, if it needs proof that the real capture routine ran.
+
 ## Admission performed by the probe
 
 Before and after capture, the probe requires:
@@ -34,7 +36,7 @@ Solitaire titles must visibly identify one participant. Spectator titles must vi
 
 ## Deliberate nonclaim
 
-Every artifact is marked `checked_untrusted_not_admitted`, and all OCR, semantic-evidence, policy-scoring, and input flags are false. Authenticode and frame checks do not prove that a caller-supplied calibration label matches the pixels. Pre/post z-order audits also cannot eliminate a transient occluder that appears and disappears entirely during one frame acquisition. A later adapter loader must recompute every file hash, bind a manually ratified client profile and anchors, and retain an opaque frame type before pixels may reach measured perception.
+Every artifact is marked `checked_untrusted_not_admitted`, and all OCR, semantic-evidence, policy-scoring, and input flags are false. The opaque v3 candidate does not change those flags. It closes the specific caller-forged manifest and safety-boolean path, but Authenticode and frame checks do not prove that a calibration label matches the pixels. Pre/post z-order audits also cannot eliminate a transient occluder that appears and disappears entirely during one frame acquisition. A later measured-perception entrypoint must consume the opaque candidate directly, bind a manually ratified client profile and anchors, and preserve the nonclaim before any observation can be formed.
 
 The probe has no focus, cursor, mouse, keyboard, purchase, queue-entry, or gameplay action API. An attended operator must place MTGO in the foreground and park the cursor before running it.
 

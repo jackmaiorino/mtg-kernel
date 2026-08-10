@@ -1,6 +1,6 @@
 #[test]
 fn production_source_uses_composed_desktop_and_excludes_hidden_or_input_apis() {
-    let source = include_str!("../src/main.rs");
+    let source = include_str!("../src/probe.rs");
     for forbidden in [
         "PrintWindow",
         "WM_PRINT",

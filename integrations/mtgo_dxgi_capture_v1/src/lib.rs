@@ -1,6 +1,15 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[cfg(target_os = "windows")]
+mod probe;
+
+#[cfg(target_os = "windows")]
+pub use probe::{
+    capture_mtgo_dxgi_frame_candidate_v3, run_cli_v3, MtgoDxgiCaptureRequestV3,
+    MtgoDxgiFrameCommitmentsV3, OpaqueMtgoDxgiFrameCandidateV3,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureWindowModeV2 {
