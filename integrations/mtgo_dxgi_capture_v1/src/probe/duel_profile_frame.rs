@@ -51,10 +51,10 @@ pub struct MtgoAdmittedDuelVisibleFrameCommitmentsV1 {
 /// require_serialize::<OpaqueMtgoAdmittedDuelVisibleFrameV1>();
 /// ```
 pub struct OpaqueMtgoAdmittedDuelVisibleFrameV1 {
-    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
-    perception_profile_commitment_sha256: String,
-    perception_profile_admission_commitment_sha256: String,
-    frame_profile_binding_sha256: String,
+    pub(super) source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    pub(super) perception_profile_commitment_sha256: String,
+    pub(super) perception_profile_admission_commitment_sha256: String,
+    pub(super) frame_profile_binding_sha256: String,
 }
 
 impl OpaqueMtgoAdmittedDuelVisibleFrameV1 {

@@ -805,6 +805,56 @@ pub(crate) fn hash_bgra_region_v1(
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+/// Recomputes the canonical content commitment for one visible client-relative
+/// BGRA8 region. This helper grants no access to pixels and carries no capture,
+/// semantic, scoring, or input authority.
+pub fn visible_frame_region_content_sha256_v1(
+    pixels: &[u8],
+    size: &MtgoSizePxV1,
+    rect: &MtgoRectPxV1,
+) -> Result<String, MtgoContractErrorV1> {
+    let expected_length = usize::try_from(size.width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(size.height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| {
+            error_v1(
+                "visible_frame_region_geometry",
+                "canonical frame byte length overflow",
+            )
+        })?;
+    let right = rect.x.checked_add(rect.width).ok_or_else(|| {
+        error_v1(
+            "visible_frame_region_geometry",
+            "visible region right edge overflow",
+        )
+    })?;
+    let bottom = rect.y.checked_add(rect.height).ok_or_else(|| {
+        error_v1(
+            "visible_frame_region_geometry",
+            "visible region bottom edge overflow",
+        )
+    })?;
+    if pixels.len() != expected_length
+        || size.width == 0
+        || size.height == 0
+        || rect.width == 0
+        || rect.height == 0
+        || right > size.width
+        || bottom > size.height
+    {
+        return Err(error_v1(
+            "visible_frame_region_geometry",
+            "canonical pixels, client size, and visible region must agree",
+        ));
+    }
+    hash_bgra_region_v1(pixels, size, rect)
+}
+
 fn pixel_offset_v1(size: &MtgoSizePxV1, x: u32, y: u32) -> Result<usize, MtgoContractErrorV1> {
     usize::try_from(y)
         .ok()
@@ -1534,6 +1584,34 @@ pub(crate) fn checked_untrusted_dxgi_artifact_for_test_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_visible_region_hash_rejects_mismatched_pixels_and_geometry() {
+        let size = MtgoSizePxV1 {
+            width: 2,
+            height: 2,
+        };
+        let rect = MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        assert_eq!(
+            visible_frame_region_content_sha256_v1(&[0_u8; 16], &size, &rect)
+                .unwrap()
+                .len(),
+            64
+        );
+        assert!(visible_frame_region_content_sha256_v1(&[0_u8; 15], &size, &rect).is_err());
+        let outside = MtgoRectPxV1 {
+            x: 1,
+            y: 1,
+            width: 2,
+            height: 1,
+        };
+        assert!(visible_frame_region_content_sha256_v1(&[0_u8; 16], &size, &outside).is_err());
+    }
 
     fn synthetic_checked_v1(
         manifest_byte: char,

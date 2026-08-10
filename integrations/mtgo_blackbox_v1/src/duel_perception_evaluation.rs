@@ -91,6 +91,18 @@ impl CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1 {
         &self.payload.game_format
     }
 
+    pub fn perception_pipeline_binary_sha256(&self) -> &str {
+        &self.payload.perception_pipeline_binary_sha256
+    }
+
+    pub fn classifier_assets_manifest_sha256(&self) -> &str {
+        &self.payload.classifier_assets_manifest_sha256
+    }
+
+    pub fn card_database_profile_sha256(&self) -> &str {
+        &self.payload.card_database_profile_sha256
+    }
+
     pub fn supported_action_families(&self) -> &[MtgoDuelActionFamilyV1] {
         &self.payload.supported_action_families
     }
@@ -272,6 +284,22 @@ impl AdmittedMtgoDuelPerceptionProfileV1 {
 
     pub fn game_format(&self) -> &str {
         self.profile.game_format()
+    }
+
+    pub fn perception_pipeline_binary_sha256(&self) -> &str {
+        self.profile.perception_pipeline_binary_sha256()
+    }
+
+    pub fn classifier_assets_manifest_sha256(&self) -> &str {
+        self.profile.classifier_assets_manifest_sha256()
+    }
+
+    pub fn card_database_profile_sha256(&self) -> &str {
+        self.profile.card_database_profile_sha256()
+    }
+
+    pub fn supported_action_families(&self) -> &[MtgoDuelActionFamilyV1] {
+        self.profile.supported_action_families()
     }
 
     pub fn safe_for_model_scoring(&self) -> bool {
@@ -498,7 +526,7 @@ pub fn evaluate_untrusted_duel_perception_profile_v1(
         validate_expected_source_v1(case)?;
         let expected = validate_observed_decision_v1(case.expected.clone())?;
         for action in expected.legal_actions() {
-            observed_action_families.insert(action_family_v1(action));
+            observed_action_families.insert(duel_action_family_v1(action));
         }
 
         let mut observation_exact = false;
@@ -761,7 +789,7 @@ fn validate_prediction_source_v1(
     Ok(())
 }
 
-fn action_family_v1(action: &ActionSemanticV1) -> MtgoDuelActionFamilyV1 {
+pub fn duel_action_family_v1(action: &ActionSemanticV1) -> MtgoDuelActionFamilyV1 {
     match action {
         ActionSemanticV1::Pass { .. } => MtgoDuelActionFamilyV1::PriorityPass,
         ActionSemanticV1::PlayLand { .. } => MtgoDuelActionFamilyV1::PlayLand,

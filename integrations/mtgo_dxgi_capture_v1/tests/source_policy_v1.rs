@@ -108,6 +108,56 @@ fn admitted_duel_frame_requires_an_opaque_profile_and_retains_no_downstream_auth
 }
 
 #[test]
+fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_authority() {
+    let source = include_str!("../src/probe/duel_perception_runtime.rs");
+    for required in [
+        "verify_duel_perception_runtime_v1",
+        "perceive_admitted_duel_frame_v1",
+        "score_and_select_opaque_admitted_duel_perception_v1",
+        "OpaqueMtgoVerifiedDuelPerceptionRuntimeV1",
+        "OpaqueMtgoAdmittedDuelPerceptionV1",
+        "OpaqueMtgoProfileBoundDuelModelSelectionV1",
+        "visible_frame_region_content_sha256_v1",
+        "validate_observed_decision_v1",
+        "duel_action_family_v1",
+        "profile.supported_action_families()",
+        "source_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1",
+        "perception: OpaqueMtgoAdmittedDuelPerceptionV1",
+        "env_clear()",
+        "MAX_PERCEPTION_RESPONSE_BYTES_V1",
+        "runtime timed out",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "opaque duel-perception runtime is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn observation",
+        "pub fn legal_actions",
+        "pub fn selected_semantic",
+        "pub fn target_point_client_px",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "UIAutomation",
+        "WinHttp",
+        "WinSock",
+        "SendInput",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "opaque duel-perception runtime exposes a forbidden channel: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn public_measurement_consumes_only_the_opaque_frame_and_keeps_parts_private() {
     let source = include_str!("../src/probe.rs");
     assert!(source.contains(
