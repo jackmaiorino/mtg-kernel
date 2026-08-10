@@ -134,6 +134,14 @@ cargo run --bin admit_mtgo_dxgi_offline_calibration_v1 -- 'C:\absolute\artifact-
 
 This admits one immutable image for measuring perception. It does not ratify a reusable calibration profile, a later frame, or the producer's live assertions.
 
+`recognize_ratified_offline_opening_hand_v1` is the first exact pixel-to-semantic calibration consumer. It is compiled against four reviewed regions in that one admitted frame: prompt text, Mulligan control, Keep control, and hand count. It verifies every region hash and returns a seven-card opening-hand decision with ordered adapter-local actions `Mulligan { next_hand_size: 6 }` then `KeepOpeningHand`. The result retains no pixels or coordinates and remains unsafe for a live frame, semantic evidence, `ObservationV5`, policy scoring, or input. It is one exact example, not an accuracy measurement or a reusable recognizer.
+
+The read-only recognizer exercises that exact boundary:
+
+```powershell
+cargo run --bin recognize_mtgo_offline_opening_hand_v1 -- 'C:\absolute\artifact-directory'
+```
+
 The live Keep pair can be rechecked without persisting any additional pixels:
 
 ```powershell

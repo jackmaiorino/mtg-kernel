@@ -59,6 +59,16 @@ The digest-only fixture `fixtures/dxgi_keep_transition_20260810_v1.json` binds b
 
 The region names remain manual labels. The checker proves byte changes at those locations, not semantic recognition or a general Keep detector. It exposes no pixels or coordinates and grants no subsequent input authority.
 
+## Exact offline opening-hand recognition
+
+The separately ratified pre-Keep frame now passes one compiled offline-only pixel-to-semantic calibration profile. The profile checks exact hashes for four reviewed regions: prompt text, Mulligan control, Keep control, and hand count. It returns a seven-card opening-hand decision with ordered adapter-local actions Mulligan to six then Keep.
+
+- profile commitment: `5e582e3291e7b598f754cf40c54c74d03a0f6aa431ae7b6dbc16bfcf3d24233f`;
+- recognition commitment: `c312006124e7dac6879920f4d6101a7e3676263a060ac5f04dd1bfbee718857e`;
+- source manifest: `af62f6392454c74a81ada7ea9bc0f0111164bd95b84d114f03e7d416fc27aee3`.
+
+The recognized value retains no pixels or coordinates and is false for live-frame, semantic-evidence, `ObservationV5`, policy-scoring, and input use. This is one exact reviewed example, not a reusable recognizer or an accuracy result.
+
 ## Nonclaims
 
 This proves that the local backend can acquire and crop a player-visible composed desktop frame while checking the declared live conditions. It does not admit the pixels for OCR, semantic evidence, model scoring, or input. It does not eliminate the transient-occluder race between the two z-order audits. No League, Challenge, purchase, queue, or gameplay action was performed.

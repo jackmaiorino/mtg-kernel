@@ -741,7 +741,7 @@ fn count_changed_pixels_v1(
     Ok(changed)
 }
 
-fn hash_bgra_region_v1(
+pub(crate) fn hash_bgra_region_v1(
     pixels: &[u8],
     size: &MtgoSizePxV1,
     rect: &MtgoRectPxV1,
