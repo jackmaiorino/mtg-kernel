@@ -453,7 +453,12 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
     let source = include_str!("../src/actuator.rs");
     for required in [
         "RATIFIED_PRIVATE_MATCH_AUTHORIZATION_COMMITMENT_V3: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
         "ratify_private_match_authorization_v3",
+        "ratify_competitive_duel_pass_authorization_v1",
+        "bind_prepared_competitive_duel_pass_authorization_v1",
+        "OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1",
+        "competitive_mode_authorization_commitment_v1",
         "validate_authorization_for_mode_v1",
         "MtgoRuntimeModeV1::PrivateMatchInput",
         "prepare_pregame_actuation_v3",

@@ -349,6 +349,7 @@ pub struct MtgoOpaqueCompetitiveDuelActionPlanCommitmentsV1 {
     pub opaque_control_resolution_commitment_sha256: String,
     pub postcondition_plan_commitment_sha256: String,
     pub competitive_scope_commitment_sha256: String,
+    pub competitive_mode_authorization_commitment_sha256: String,
     pub competitive_authorization_commitment_sha256: String,
     pub opaque_competitive_action_plan_commitment_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
@@ -391,6 +392,10 @@ impl OpaqueMtgoCompetitiveDuelActionPlanV1 {
                 .competitive
                 .competitive_scope_commitment_sha256()
                 .to_owned(),
+            competitive_mode_authorization_commitment_sha256: self
+                .competitive
+                .mode_authorization_commitment_sha256()
+                .to_owned(),
             competitive_authorization_commitment_sha256: self
                 .competitive
                 .authorization_commitment_sha256()
@@ -419,6 +424,7 @@ impl OpaqueMtgoCompetitiveDuelActionPlanV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
     pub competitive_action_plan_commitment_sha256: String,
+    pub competitive_mode_authorization_commitment_sha256: String,
     pub immediate_capture_commitment_sha256: String,
     pub immediate_perception_result_commitment_sha256: String,
     pub preparation_commitment_sha256: String,
@@ -1125,6 +1131,9 @@ pub fn prepare_opaque_competitive_duel_pass_actuation_v1(
             plan_commitments
                 .opaque_competitive_action_plan_commitment_sha256
                 .as_bytes(),
+            plan_commitments
+                .competitive_mode_authorization_commitment_sha256
+                .as_bytes(),
             current_capture
                 .source_capture
                 .capture_commitment_sha256
@@ -1145,6 +1154,8 @@ pub fn prepare_opaque_competitive_duel_pass_actuation_v1(
     let commitments = MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
         competitive_action_plan_commitment_sha256: plan_commitments
             .opaque_competitive_action_plan_commitment_sha256,
+        competitive_mode_authorization_commitment_sha256: plan_commitments
+            .competitive_mode_authorization_commitment_sha256,
         immediate_capture_commitment_sha256: current_capture
             .source_capture
             .capture_commitment_sha256,
@@ -1207,6 +1218,9 @@ pub fn bind_opaque_duel_control_to_competitive_action_plan_v1(
                 .as_bytes(),
             postcondition.plan_commitment_sha256.as_bytes(),
             competitive.competitive_scope_commitment_sha256().as_bytes(),
+            competitive
+                .mode_authorization_commitment_sha256()
+                .as_bytes(),
             competitive.authorization_commitment_sha256().as_bytes(),
             &selected_semantic_json,
             b"opaque_coordinates_and_postconditions_retained_no_input_or_event_entry_authority",

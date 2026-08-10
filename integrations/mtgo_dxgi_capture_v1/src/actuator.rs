@@ -1,14 +1,16 @@
 use crate::probe::{
     confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
-    prepare_pregame_actuation_v3, MtgoPlannedPregamePostconditionV3,
-    OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, OpaqueMtgoConfirmedKeepToFirstMainTransitionV3,
-    OpaqueMtgoConfirmedMulliganTransitionV3, OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
-    OpaqueMtgoDxgiFirstMainMeasurementV3, OpaqueMtgoDxgiMulliganMeasurementV3,
-    OpaqueMtgoPregameActionPlanV3, PreparedPregameActuationV3,
+    prepare_pregame_actuation_v3, MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
+    MtgoPlannedPregamePostconditionV3, OpaqueMtgoConfirmedKeepToBottomSixTransitionV3,
+    OpaqueMtgoConfirmedKeepToFirstMainTransitionV3, OpaqueMtgoConfirmedMulliganTransitionV3,
+    OpaqueMtgoDxgiBottomSixInitialMeasurementV3, OpaqueMtgoDxgiFirstMainMeasurementV3,
+    OpaqueMtgoDxgiMulliganMeasurementV3, OpaqueMtgoPregameActionPlanV3,
+    OpaqueMtgoPreparedCompetitiveDuelPassV1, PreparedPregameActuationV3,
 };
 use mtgo_blackbox_v1::{
-    validate_authorization_for_mode_v1, MtgoAuthorizationScopeV1, MtgoPregameActionSemanticV1,
+    competitive_mode_authorization_commitment_v1, validate_authorization_for_mode_v1,
+    MtgoAuthorizationScopeV1, MtgoCompetitiveEventKindV1, MtgoPregameActionSemanticV1,
     MtgoRuntimeModeV1,
 };
 use sha2::{Digest, Sha256};
@@ -36,6 +38,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const PREGAME_INPUT_RECEIPT_DOMAIN_V3: &[u8] = b"mtgo-private-pregame-input-receipt-v3";
 const PRIVATE_MATCH_AUTHORIZATION_DOMAIN_V3: &[u8] = b"mtgo-private-match-authorization-v3";
 const RATIFIED_PRIVATE_MATCH_AUTHORIZATION_COMMITMENT_V3: Option<&str> = None;
+const COMPETITIVE_DUEL_PASS_AUTHORIZATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-duel-priority-pass-authorization-v1";
+const COMPETITIVE_DUEL_PASS_AUTHORIZATION_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-duel-priority-pass-authorization-binding-v1";
+const RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoPregameInputGateStatusV3 {
@@ -80,6 +87,100 @@ impl RatifiedMtgoPrivateMatchAuthorizationV3 {
 
     pub fn authorization_commitment_sha256_v3(&self) -> &str {
         &self.authorization_commitment_sha256
+    }
+}
+
+/// One separately ratified exact-account authorization for priority Pass in
+/// exactly one of League or Challenge gameplay. Production ratification is
+/// empty until the correspondence bytes and visible account identity are
+/// reviewed and their exact commitment is compiled into the actuator.
+///
+/// This value grants no event-entry or purchase authority. It is not itself an
+/// input command and has no coordinate conversion.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::RatifiedMtgoCompetitiveDuelPassAuthorizationV1;
+/// let _forged = RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {};
+/// ```
+pub struct RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
+    scope: MtgoAuthorizationScopeV1,
+    #[allow(dead_code)]
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    mode_authorization_commitment_sha256: String,
+    authorization_commitment_sha256: String,
+}
+
+impl RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.event_kind
+    }
+
+    pub fn account_alias_sha256_v1(&self) -> &str {
+        &self.scope.account_alias_sha256
+    }
+
+    pub fn written_permission_sha256_v1(&self) -> &str {
+        &self.scope.written_permission_sha256
+    }
+
+    pub fn mode_authorization_commitment_sha256_v1(&self) -> &str {
+        &self.mode_authorization_commitment_sha256
+    }
+
+    pub fn authorization_commitment_sha256_v1(&self) -> &str {
+        &self.authorization_commitment_sha256
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1 {
+    pub preparation_commitment_sha256: String,
+    pub mode_authorization_commitment_sha256: String,
+    pub ratified_authorization_commitment_sha256: String,
+    pub authorization_binding_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub game_number: u8,
+    pub immediate_frame_id: u64,
+    pub immediate_frame_sequence: u64,
+}
+
+/// One prepared priority Pass joined to its separately ratified exact League
+/// or Challenge authority. It still cannot send input or enter an event.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1;
+/// fn cannot_act(value: &OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1) {
+///     let _ = value.target_point_client_px();
+///     let _ = value.send_input();
+///     let _ = value.enter_event();
+/// }
+/// ```
+pub struct OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1 {
+    _prepared: OpaqueMtgoPreparedCompetitiveDuelPassV1,
+    _authorization: RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
+    commitments: MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
+}
+
+impl OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1 {
+    pub fn commitments_v1(&self) -> MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
     }
 }
 
@@ -223,6 +324,67 @@ pub fn ratify_private_match_authorization_v3(
     )
 }
 
+pub fn ratify_competitive_duel_pass_authorization_v1(
+    scope: MtgoAuthorizationScopeV1,
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+) -> Result<RatifiedMtgoCompetitiveDuelPassAuthorizationV1, String> {
+    ratify_competitive_duel_pass_authorization_with_commitment_v1(
+        scope,
+        visible_account_alias,
+        event_kind,
+        RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1,
+    )
+}
+
+pub fn bind_prepared_competitive_duel_pass_authorization_v1(
+    prepared: OpaqueMtgoPreparedCompetitiveDuelPassV1,
+    authorization: RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
+) -> Result<OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1, String> {
+    let prepared_commitments = prepared.commitments_v1();
+    let commitments = competitive_duel_pass_authorization_binding_commitments_v1(
+        &prepared_commitments,
+        &authorization,
+    )?;
+    Ok(OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1 {
+        _prepared: prepared,
+        _authorization: authorization,
+        commitments,
+    })
+}
+
+fn ratify_competitive_duel_pass_authorization_with_commitment_v1(
+    scope: MtgoAuthorizationScopeV1,
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    ratified_commitment_sha256: Option<&str>,
+) -> Result<RatifiedMtgoCompetitiveDuelPassAuthorizationV1, String> {
+    let mode_authorization_commitment_sha256 = validate_competitive_duel_pass_authorization_v1(
+        &scope,
+        &visible_account_alias,
+        event_kind,
+    )?;
+    let authorization_commitment_sha256 = competitive_duel_pass_authorization_commitment_v1(
+        &scope,
+        &visible_account_alias,
+        event_kind,
+        &mode_authorization_commitment_sha256,
+    );
+    if ratified_commitment_sha256 != Some(authorization_commitment_sha256.as_str()) {
+        return Err(
+            "the exact competitive Pass permission correspondence is not ratified in this build"
+                .to_owned(),
+        );
+    }
+    Ok(RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
+        scope,
+        visible_account_alias,
+        event_kind,
+        mode_authorization_commitment_sha256,
+        authorization_commitment_sha256,
+    })
+}
+
 fn ratify_private_match_authorization_with_commitment_v3(
     scope: MtgoAuthorizationScopeV1,
     visible_account_alias: String,
@@ -318,6 +480,14 @@ fn validate_private_match_authorization_v3(
 ) -> Result<(), String> {
     validate_authorization_for_mode_v1(authorization, MtgoRuntimeModeV1::PrivateMatchInput)
         .map_err(|error| format!("private-match authorization rejected: {error}"))?;
+    validate_visible_account_alias_v1(authorization, visible_account_alias)?;
+    Ok(())
+}
+
+fn validate_visible_account_alias_v1(
+    authorization: &MtgoAuthorizationScopeV1,
+    visible_account_alias: &str,
+) -> Result<(), String> {
     if visible_account_alias.is_empty()
         || visible_account_alias.len() > 64
         || visible_account_alias.chars().any(char::is_control)
@@ -327,6 +497,119 @@ fn validate_private_match_authorization_v3(
         return Err("the visible account alias does not match the authorized account".to_owned());
     }
     Ok(())
+}
+
+fn validate_competitive_duel_pass_authorization_v1(
+    authorization: &MtgoAuthorizationScopeV1,
+    visible_account_alias: &str,
+    event_kind: MtgoCompetitiveEventKindV1,
+) -> Result<String, String> {
+    let runtime_mode = match event_kind {
+        MtgoCompetitiveEventKindV1::League => MtgoRuntimeModeV1::LeagueInput,
+        MtgoCompetitiveEventKindV1::Challenge => MtgoRuntimeModeV1::ChallengeInput,
+    };
+    validate_authorization_for_mode_v1(authorization, runtime_mode)
+        .map_err(|error| format!("competitive Pass authorization rejected: {error}"))?;
+    validate_visible_account_alias_v1(authorization, visible_account_alias)?;
+
+    let selected_mode_is_exact = match event_kind {
+        MtgoCompetitiveEventKindV1::League => {
+            authorization.league_input && !authorization.challenge_input
+        }
+        MtgoCompetitiveEventKindV1::Challenge => {
+            authorization.challenge_input && !authorization.league_input
+        }
+    };
+    if !selected_mode_is_exact
+        || authorization.shadow_observation
+        || authorization.private_match_input
+        || authorization.open_play_input
+        || authorization.other_prize_event_input
+    {
+        return Err(
+            "competitive Pass ratification requires exactly one League or Challenge input mode"
+                .to_owned(),
+        );
+    }
+    competitive_mode_authorization_commitment_v1(authorization, event_kind)
+        .map_err(|error| format!("competitive Pass mode commitment rejected: {error}"))
+}
+
+fn competitive_duel_pass_authorization_commitment_v1(
+    authorization: &MtgoAuthorizationScopeV1,
+    visible_account_alias: &str,
+    event_kind: MtgoCompetitiveEventKindV1,
+    mode_authorization_commitment_sha256: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(COMPETITIVE_DUEL_PASS_AUTHORIZATION_DOMAIN_V1);
+    let schema_version = authorization.schema_version.to_be_bytes();
+    let event_kind_bytes: &[u8] = match event_kind {
+        MtgoCompetitiveEventKindV1::League => b"league",
+        MtgoCompetitiveEventKindV1::Challenge => b"challenge",
+    };
+    for part in [
+        schema_version.as_slice(),
+        authorization.account_alias_sha256.as_bytes(),
+        authorization.written_permission_sha256.as_bytes(),
+        visible_account_alias.as_bytes(),
+        event_kind_bytes,
+        mode_authorization_commitment_sha256.as_bytes(),
+        b"priority_pass",
+        b"one_verified_left_click",
+        b"no_event_entry_or_purchase_authority",
+    ] {
+        update_hash_part_v3(&mut hasher, part);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn competitive_duel_pass_authorization_binding_commitments_v1(
+    prepared: &MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
+    authorization: &RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
+) -> Result<MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1, String> {
+    if prepared.event_kind != authorization.event_kind
+        || prepared.competitive_mode_authorization_commitment_sha256
+            != authorization.mode_authorization_commitment_sha256
+    {
+        return Err(
+            "the prepared Pass does not match the ratified competitive mode authority".to_owned(),
+        );
+    }
+    let event_kind_bytes: &[u8] = match prepared.event_kind {
+        MtgoCompetitiveEventKindV1::League => b"league",
+        MtgoCompetitiveEventKindV1::Challenge => b"challenge",
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(COMPETITIVE_DUEL_PASS_AUTHORIZATION_BINDING_DOMAIN_V1);
+    for part in [
+        prepared.preparation_commitment_sha256.as_bytes(),
+        prepared
+            .competitive_mode_authorization_commitment_sha256
+            .as_bytes(),
+        authorization.authorization_commitment_sha256.as_bytes(),
+        event_kind_bytes,
+        &[prepared.game_number],
+        prepared.immediate_frame_id.to_be_bytes().as_slice(),
+        prepared.immediate_frame_sequence.to_be_bytes().as_slice(),
+        b"authorization_bound_no_input_or_event_entry_authority",
+    ] {
+        update_hash_part_v3(&mut hasher, part);
+    }
+    Ok(MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1 {
+        preparation_commitment_sha256: prepared.preparation_commitment_sha256.clone(),
+        mode_authorization_commitment_sha256: prepared
+            .competitive_mode_authorization_commitment_sha256
+            .clone(),
+        ratified_authorization_commitment_sha256: authorization
+            .authorization_commitment_sha256
+            .clone(),
+        authorization_binding_commitment_sha256: format!("{:x}", hasher.finalize()),
+        event_kind: prepared.event_kind,
+        game_number: prepared.game_number,
+        immediate_frame_id: prepared.immediate_frame_id,
+        immediate_frame_sequence: prepared.immediate_frame_sequence,
+    })
 }
 
 fn private_match_authorization_commitment_v3(
@@ -742,6 +1025,44 @@ mod tests {
         }
     }
 
+    fn competitive_scope_v1(
+        alias: &str,
+        event_kind: MtgoCompetitiveEventKindV1,
+    ) -> MtgoAuthorizationScopeV1 {
+        let mut scope = MtgoAuthorizationScopeV1 {
+            account_alias_sha256: format!("{:x}", Sha256::digest(alias.as_bytes())),
+            written_permission_sha256: "b".repeat(64),
+            ..MtgoAuthorizationScopeV1::default()
+        };
+        match event_kind {
+            MtgoCompetitiveEventKindV1::League => scope.league_input = true,
+            MtgoCompetitiveEventKindV1::Challenge => scope.challenge_input = true,
+        }
+        scope
+    }
+
+    fn ratified_competitive_pass_v1(
+        event_kind: MtgoCompetitiveEventKindV1,
+    ) -> RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
+        let scope = competitive_scope_v1("UnbuckledPie", event_kind);
+        let mode_commitment =
+            validate_competitive_duel_pass_authorization_v1(&scope, "UnbuckledPie", event_kind)
+                .unwrap();
+        let expected = competitive_duel_pass_authorization_commitment_v1(
+            &scope,
+            "UnbuckledPie",
+            event_kind,
+            &mode_commitment,
+        );
+        ratify_competitive_duel_pass_authorization_with_commitment_v1(
+            scope,
+            "UnbuckledPie".to_owned(),
+            event_kind,
+            Some(&expected),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn private_match_authorization_binds_the_visible_account() {
         let scope = authorized_scope_v3("UnbuckledPie");
@@ -784,6 +1105,137 @@ mod tests {
         )
         .unwrap();
         assert_eq!(ratified.authorization_commitment_sha256_v3(), expected);
+    }
+
+    #[test]
+    fn production_competitive_pass_ratification_is_empty_but_exact_modes_can_be_reviewed() {
+        for event_kind in [
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveEventKindV1::Challenge,
+        ] {
+            let scope = competitive_scope_v1("UnbuckledPie", event_kind);
+            assert!(ratify_competitive_duel_pass_authorization_v1(
+                scope.clone(),
+                "UnbuckledPie".to_owned(),
+                event_kind,
+            )
+            .is_err());
+
+            let mode_commitment =
+                validate_competitive_duel_pass_authorization_v1(&scope, "UnbuckledPie", event_kind)
+                    .unwrap();
+            let expected = competitive_duel_pass_authorization_commitment_v1(
+                &scope,
+                "UnbuckledPie",
+                event_kind,
+                &mode_commitment,
+            );
+            let ratified = ratify_competitive_duel_pass_authorization_with_commitment_v1(
+                scope,
+                "UnbuckledPie".to_owned(),
+                event_kind,
+                Some(&expected),
+            )
+            .unwrap();
+            assert_eq!(ratified.event_kind_v1(), event_kind);
+            assert_eq!(
+                ratified.mode_authorization_commitment_sha256_v1(),
+                mode_commitment
+            );
+            assert_eq!(ratified.authorization_commitment_sha256_v1(), expected);
+            assert!(!ratified.safe_for_input_v1());
+            assert!(!ratified.permits_event_entry_v1());
+        }
+    }
+
+    #[test]
+    fn competitive_pass_ratification_rejects_alias_mode_and_scope_broadening() {
+        let league = competitive_scope_v1("UnbuckledPie", MtgoCompetitiveEventKindV1::League);
+        assert!(validate_competitive_duel_pass_authorization_v1(
+            &league,
+            "another-account",
+            MtgoCompetitiveEventKindV1::League,
+        )
+        .is_err());
+        assert!(validate_competitive_duel_pass_authorization_v1(
+            &league,
+            "UnbuckledPie",
+            MtgoCompetitiveEventKindV1::Challenge,
+        )
+        .is_err());
+
+        for mutation in 0..4 {
+            let mut broader = league.clone();
+            match mutation {
+                0 => broader.challenge_input = true,
+                1 => broader.private_match_input = true,
+                2 => broader.open_play_input = true,
+                3 => broader.other_prize_event_input = true,
+                _ => unreachable!(),
+            }
+            assert!(validate_competitive_duel_pass_authorization_v1(
+                &broader,
+                "UnbuckledPie",
+                MtgoCompetitiveEventKindV1::League,
+            )
+            .is_err());
+        }
+
+        let challenge = competitive_scope_v1("UnbuckledPie", MtgoCompetitiveEventKindV1::Challenge);
+        let league_mode = validate_competitive_duel_pass_authorization_v1(
+            &league,
+            "UnbuckledPie",
+            MtgoCompetitiveEventKindV1::League,
+        )
+        .unwrap();
+        let challenge_mode = validate_competitive_duel_pass_authorization_v1(
+            &challenge,
+            "UnbuckledPie",
+            MtgoCompetitiveEventKindV1::Challenge,
+        )
+        .unwrap();
+        assert_ne!(league_mode, challenge_mode);
+    }
+
+    #[test]
+    fn prepared_pass_binds_only_to_the_same_ratified_competitive_mode() {
+        let authorization = ratified_competitive_pass_v1(MtgoCompetitiveEventKindV1::League);
+        let mut prepared = MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
+            competitive_action_plan_commitment_sha256: "1".repeat(64),
+            competitive_mode_authorization_commitment_sha256: authorization
+                .mode_authorization_commitment_sha256_v1()
+                .to_owned(),
+            immediate_capture_commitment_sha256: "2".repeat(64),
+            immediate_perception_result_commitment_sha256: "3".repeat(64),
+            preparation_commitment_sha256: "4".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            game_number: 2,
+            immediate_frame_id: 11,
+            immediate_frame_sequence: 12,
+            immediate_captured_at_unix_millis: 13,
+        };
+        let bound =
+            competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &authorization)
+                .unwrap();
+        assert_eq!(bound.event_kind, MtgoCompetitiveEventKindV1::League);
+        assert_eq!(bound.game_number, 2);
+        assert_eq!(bound.immediate_frame_id, 11);
+        assert_eq!(bound.immediate_frame_sequence, 12);
+        assert_eq!(bound.authorization_binding_commitment_sha256.len(), 64);
+
+        prepared.event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
+            &prepared,
+            &authorization,
+        )
+        .is_err());
+        prepared.event_kind = MtgoCompetitiveEventKindV1::League;
+        prepared.competitive_mode_authorization_commitment_sha256 = "5".repeat(64);
+        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
+            &prepared,
+            &authorization,
+        )
+        .is_err());
     }
 
     #[test]

@@ -11,6 +11,8 @@ use sha2::{Digest, Sha256};
 pub const MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1: u32 = 1;
 const COMPETITIVE_GAMEPLAY_SCOPE_COMMITMENT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-gameplay-action-scope-v1";
+const COMPETITIVE_MODE_AUTHORIZATION_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-mode-authorization-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +50,7 @@ pub struct CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1 {
     _lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     event_kind: MtgoCompetitiveEventKindV1,
     game_number: u8,
+    mode_authorization_commitment_sha256: String,
     authorization_commitment_sha256: String,
     competitive_scope_commitment_sha256: String,
 }
@@ -71,6 +74,10 @@ impl CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1 {
 
     pub fn authorization_commitment_sha256(&self) -> &str {
         &self.authorization_commitment_sha256
+    }
+
+    pub fn mode_authorization_commitment_sha256(&self) -> &str {
+        &self.mode_authorization_commitment_sha256
     }
 
     pub fn competitive_scope_commitment_sha256(&self) -> &str {
@@ -98,11 +105,8 @@ pub fn bind_profile_bound_action_plan_to_competitive_match_v1(
     mode_authorization: &MtgoAuthorizationScopeV1,
     gameplay_authorization: &MtgoCompetitiveMatchGameplayAuthorizationV1,
 ) -> Result<CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1, MtgoContractErrorV1> {
-    let runtime_mode = match lifecycle.event_kind() {
-        MtgoCompetitiveEventKindV1::League => MtgoRuntimeModeV1::LeagueInput,
-        MtgoCompetitiveEventKindV1::Challenge => MtgoRuntimeModeV1::ChallengeInput,
-    };
-    validate_authorization_for_mode_v1(mode_authorization, runtime_mode)?;
+    let mode_authorization_commitment_sha256 =
+        competitive_mode_authorization_commitment_v1(mode_authorization, lifecycle.event_kind())?;
     if lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress {
         return Err(error_v1(
             "competitive_gameplay_lifecycle_phase",
@@ -144,6 +148,7 @@ pub fn bind_profile_bound_action_plan_to_competitive_match_v1(
             plan.plan_commitment_sha256().as_bytes(),
             lifecycle.snapshot_commitment_sha256().as_bytes(),
             mode_bytes.as_slice(),
+            mode_authorization_commitment_sha256.as_bytes(),
             authorization_commitment_sha256.as_bytes(),
             b"checked_untrusted_no_input_or_event_entry",
         ],
@@ -155,9 +160,36 @@ pub fn bind_profile_bound_action_plan_to_competitive_match_v1(
             .expect("validated match phase has a game"),
         plan,
         _lifecycle: lifecycle,
+        mode_authorization_commitment_sha256,
         authorization_commitment_sha256,
         competitive_scope_commitment_sha256,
     })
+}
+
+/// Commits one exact authorization document to one competitive runtime mode.
+/// The complete scope is included, so enabling or disabling any other mode
+/// changes this commitment even when the selected mode remains authorized.
+pub fn competitive_mode_authorization_commitment_v1(
+    scope: &MtgoAuthorizationScopeV1,
+    event_kind: MtgoCompetitiveEventKindV1,
+) -> Result<String, MtgoContractErrorV1> {
+    let runtime_mode = match event_kind {
+        MtgoCompetitiveEventKindV1::League => MtgoRuntimeModeV1::LeagueInput,
+        MtgoCompetitiveEventKindV1::Challenge => MtgoRuntimeModeV1::ChallengeInput,
+    };
+    validate_authorization_for_mode_v1(scope, runtime_mode)?;
+    let scope_bytes = serde_json::to_vec(scope)
+        .map_err(|error| error_v1("competitive_gameplay_mode_serialization", error.to_string()))?;
+    let event_kind_bytes = serde_json::to_vec(&event_kind).map_err(|error| {
+        error_v1(
+            "competitive_gameplay_event_kind_serialization",
+            error.to_string(),
+        )
+    })?;
+    Ok(commitment_v1(
+        COMPETITIVE_MODE_AUTHORIZATION_COMMITMENT_DOMAIN_V1,
+        &[scope_bytes.as_slice(), event_kind_bytes.as_slice()],
+    ))
 }
 
 fn validate_gameplay_authorization_v1(
@@ -429,6 +461,7 @@ mod tests {
                 ActionSemanticV1::PlayLand { .. }
             ));
             assert_eq!(scoped.authorization_commitment_sha256().len(), 64);
+            assert_eq!(scoped.mode_authorization_commitment_sha256().len(), 64);
             assert_eq!(scoped.competitive_scope_commitment_sha256().len(), 64);
             assert!(!scoped.safe_for_live_input());
             assert!(!scoped.permits_event_entry());
@@ -507,6 +540,28 @@ mod tests {
             .unwrap()
             .code(),
             "mode_not_authorized"
+        );
+
+        let both = mode_v1();
+        let league =
+            competitive_mode_authorization_commitment_v1(&both, MtgoCompetitiveEventKindV1::League)
+                .unwrap();
+        let challenge = competitive_mode_authorization_commitment_v1(
+            &both,
+            MtgoCompetitiveEventKindV1::Challenge,
+        )
+        .unwrap();
+        assert_ne!(league, challenge);
+
+        let mut league_only = both;
+        league_only.challenge_input = false;
+        assert_ne!(
+            league,
+            competitive_mode_authorization_commitment_v1(
+                &league_only,
+                MtgoCompetitiveEventKindV1::League,
+            )
+            .unwrap()
         );
     }
 
