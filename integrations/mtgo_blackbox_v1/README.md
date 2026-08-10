@@ -248,8 +248,6 @@ The fixed no-cost deck `mtgo-solitaire-fixed-basics-v1` narrows that universe to
 
 `start_checked_untrusted_first_main_hand_object_ledger_v1` is the narrow bridge from a complete eight-card first-main kernel-coverage result into the existing incarnation ledger. It requires exact deck-card correspondence at every ordinal and binds the source coverage commitment into the ledger commitment. Synthetic identifiers are deterministic hand-slot labels, and the ledger remains checked-untrusted with no public object-binding, observation, scoring, or input surface.
 
-`select_checked_untrusted_mtgo_pregame_heuristic_v1` is an explicit non-model stopgap because the current checkpoint vocabulary and observation surface do not represent mulligan decisions. It binds a complete seven-card identity result to a caller-supplied, kernel-validated 60-card deck and selects Keep or Mulligan using a fixed London-compatible land window. An all-land calibration deck keeps because no redraw can improve its land and nonland shape. The result has no coordinates, actuator intent, or input authority and is not a claim of competitive mulligan quality.
-
 ```powershell
 cargo run --bin classify_mtgo_offline_mulligan_visible_card_identities_v1 -- `
   C:\absolute\artifact-directory `
