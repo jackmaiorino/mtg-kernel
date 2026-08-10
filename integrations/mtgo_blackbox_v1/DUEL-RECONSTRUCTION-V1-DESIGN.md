@@ -6,6 +6,24 @@ Produce one exact `ObservationV5` and complete ordered `ActionSemanticV1` set fr
 
 MTGO does not expose a visible AI opponent or separate training mode in the current client. `Custom Match` can create one-player Solitaire, which is useful for layout and action calibration but cannot supply a two-player model observation. Constructed Specialty exposes human lobbies and event queues.
 
+## Two-player corpus route
+
+The official client guide describes Solitaire as a one-player interface-practice mode and explicitly notes that attacks, opponent targets, and some cards behave differently from a duel. It is not valid duel ground truth. Official casual two-player routes are Best-of-One, Best-of-Three, and direct Buddy Challenge matches. Super Jump is currently free and has no prizes, but it is still a League course with live human matchmaking. MTGO publishes no sanctioned AI or bot opponent.
+
+Sources checked 2026-08-10:
+
+- [Gameplay: Duels & Solitaire](https://www.mtgo.com/getting-started/getting-started-gameplay)
+- [May 2025 Play Lobby update](https://www.mtgo.com/news/mtgo05132025)
+- [New Player Events](https://help.mtgo.com/hc/en-us/articles/18513798605723-New-Player-Events)
+- [Account tiers and Buddy Challenge](https://www.mtgo.com/getting-started)
+
+The first acting-player duel corpus therefore requires one of two external arrangements:
+
+1. a Daybreak-provided test counterpart or sandbox that does not expose an uninformed player; or
+2. a direct Buddy Challenge against a fully informed, consenting person who manually controls the opponent account, with that exact human-match mode authorized before launch.
+
+The current scope authorizes neither route. Best-of-One, Best-of-Three, Super Jump, League, Challenge, and open matchmaking must not be used merely to obtain a corpus. A spectator or replay frame may calibrate public duel layout, but it is not acting-player evidence when it exposes both hands or any other information unavailable to the seated player.
+
 ## Runtime loop
 
 1. Capture one foreground duel frame through the pinned DXGI Desktop Duplication backend.
@@ -65,7 +83,7 @@ Any unmatched control, unmatched semantic, duplicate mapping, ambiguous object, 
 
 ## First end-to-end rehearsal
 
-The first valid rehearsal should be a no-stakes, two-player private match against a separately authorized non-human counterpart using decks whose every reachable card and token has full kernel support. Capture begins before the opening hand and remains continuous through the terminal screen.
+The first valid rehearsal should be a no-stakes direct Buddy Challenge against a fully informed, consenting, manually controlled opponent, unless Daybreak supplies a test counterpart or sandbox first. The exact mode and both roles must be authorized before launch. Both decks must contain only cards and tokens with full kernel support. Capture begins before the opening hand and remains continuous through the terminal screen.
 
 Success requires:
 
