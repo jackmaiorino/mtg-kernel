@@ -2,7 +2,18 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[cfg(target_os = "windows")]
+mod actuator;
+
+#[cfg(target_os = "windows")]
 mod probe;
+
+#[cfg(target_os = "windows")]
+pub use actuator::{
+    confirm_pending_pregame_keep_to_first_main_v3, confirm_pending_pregame_mulligan_v3,
+    execute_authorized_private_match_pregame_action_v3, pregame_input_gate_status_v3,
+    ratify_private_match_authorization_v3, MtgoPregameInputGateStatusV3,
+    OpaqueMtgoPendingPregameInputV3, RatifiedMtgoPrivateMatchAuthorizationV3,
+};
 
 #[cfg(target_os = "windows")]
 pub use probe::{

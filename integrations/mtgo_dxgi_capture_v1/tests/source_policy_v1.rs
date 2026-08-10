@@ -101,3 +101,50 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
     assert!(!source.contains("pub fn target_point_client_px_v3"));
     assert!(!source.contains("safe_for_live_input_v3(&self) -> bool {\n        true"));
 }
+
+#[test]
+fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
+    let source = include_str!("../src/actuator.rs");
+    for required in [
+        "RATIFIED_PRIVATE_MATCH_AUTHORIZATION_COMMITMENT_V3: Option<&str> = None",
+        "ratify_private_match_authorization_v3",
+        "validate_authorization_for_mode_v1",
+        "MtgoRuntimeModeV1::PrivateMatchInput",
+        "prepare_pregame_actuation_v3",
+        "SendInput(&inputs",
+        "WindowFromPoint",
+        "AwaitingVisiblePostcondition",
+        "confirm_pending_pregame_mulligan_v3",
+        "confirm_pending_pregame_keep_to_first_main_v3",
+    ] {
+        assert!(
+            source.contains(required),
+            "live actuator is missing required guard: {required}"
+        );
+    }
+    for forbidden in [
+        "INPUT_KEYBOARD",
+        "KEYBDINPUT",
+        "keybd_event",
+        "mouse_event",
+        "PostMessage",
+        "SendMessage",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "UIAutomation",
+        "WinHttp",
+        "WinSock",
+        "safe_for_next_input_v3(&self) -> bool {\n        true",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "live actuator contains a forbidden API or authority path: {forbidden}"
+        );
+    }
+    assert!(source.contains(
+        "pub fn execute_authorized_private_match_pregame_action_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    authorization: RatifiedMtgoPrivateMatchAuthorizationV3,"
+    ));
+    assert!(!source.contains("pub fn target_x_desktop_px"));
+    assert!(!source.contains("pub fn target_y_desktop_px"));
+}

@@ -745,10 +745,10 @@ struct PregameActionPlanPartsV3 {
     action_plan_commitment_sha256: String,
 }
 
-/// A coordinate-private, non-actionable plan for one model-selected pregame
+/// A coordinate-private plan for one model-selected pregame
 /// control. The plan binds the exact source capture, measured prompt, model
 /// selection, fixed client layout, observed control pixels, and required
-/// visible postcondition. It cannot perform or authorize input.
+/// visible postcondition. It cannot perform or authorize input by itself.
 ///
 /// ```compile_fail
 /// use mtgo_dxgi_capture_v1::OpaqueMtgoPregameActionPlanV3;
@@ -770,6 +770,23 @@ struct PregameActionPlanPartsV3 {
 pub struct OpaqueMtgoPregameActionPlanV3 {
     selection: OpaqueMtgoPregameModelSelectionV3,
     parts: PregameActionPlanPartsV3,
+}
+
+pub(crate) struct PreparedPregameActuationV3 {
+    pub hwnd: u64,
+    pub process_id: u32,
+    pub process_start_filetime_100ns: u64,
+    pub dpi: u32,
+    pub client_rect_desktop_px: SignedRectV1,
+    pub target_x_desktop_px: i32,
+    pub target_y_desktop_px: i32,
+    pub park_x_desktop_px: i32,
+    pub park_y_desktop_px: i32,
+    pub current_capture_commitment_sha256: String,
+    pub current_captured_at_unix_millis: u128,
+    pub action_plan_commitment_sha256: String,
+    pub selected_semantic: MtgoPregameActionSemanticV1,
+    pub planned_postcondition: MtgoPlannedPregamePostconditionV3,
 }
 
 impl OpaqueMtgoPregameActionPlanV3 {
@@ -914,6 +931,142 @@ pub fn build_pregame_action_plan_v3(
         &measurement.source_frame.canonical_bgra8,
     )?;
     Ok(OpaqueMtgoPregameActionPlanV3 { selection, parts })
+}
+
+pub(crate) fn prepare_pregame_actuation_v3(
+    plan: &OpaqueMtgoPregameActionPlanV3,
+    account_alias: &str,
+) -> Result<PreparedPregameActuationV3, String> {
+    if account_alias.is_empty()
+        || account_alias.len() > 64
+        || account_alias.chars().any(char::is_control)
+    {
+        return Err("the visible account alias is invalid".to_owned());
+    }
+    let source = &plan.selection.measurement.source_frame;
+    let expected_title = format!("(Solitaire): Freeform: Vs. {account_alias}");
+    if source.manifest.pre.title != expected_title
+        || source.manifest.post.title != expected_title
+        || source.manifest.window_mode != "solitaire_game"
+        || source.manifest.capture_role != "acting_player_solitaire"
+        || source.manifest.expected_game_format != "Freeform"
+    {
+        return Err(
+            "the source plan is not bound to the exact visible authorized Solitaire account"
+                .to_owned(),
+        );
+    }
+
+    let request = MtgoDxgiCaptureRequestV3 {
+        expected_executable_sha256: source.manifest.pre.executable_sha256.clone(),
+        expected_signer_thumbprint: source.manifest.pre.signer_thumbprint.clone(),
+        expected_signer_subject_sha256: source.manifest.pre.signer_subject_sha256.clone(),
+        window_mode: CaptureWindowModeV2::SolitaireGame,
+        expected_game_format: Some("Freeform".to_owned()),
+        expected_title_contains: Some(expected_title),
+        timeout_ms: 1_500,
+    };
+    let current_frame = capture_mtgo_dxgi_frame_candidate_v3(request)?;
+    let current_identity = pregame_transition_identity_commitment_v3(&current_frame.manifest)?;
+    let current_measurement = measure_mulligan_ladder_parts_v3(
+        &serialize_manifest_v2(&current_frame.manifest)?,
+        &current_frame.canonical_bgra8,
+        &current_frame.preview_png,
+    )?;
+    let source_measurement = &plan.selection.measurement.measurement;
+    if current_measurement.classification() != MtgoOfflineMulliganLadderClassificationV1::Match
+        || current_measurement.prospective_keep_size() != source_measurement.prospective_keep_size()
+        || current_measurement.ordered_actions() != source_measurement.ordered_actions()
+        || current_measurement.profile_set_commitment_sha256()
+            != source_measurement.profile_set_commitment_sha256()
+        || current_identity != plan.parts.source_transition_identity_sha256
+        || current_frame.manifest.captured_at_unix_millis <= source.manifest.captured_at_unix_millis
+    {
+        return Err(
+            "the immediate visible prompt, legal actions, identity, or capture order changed"
+                .to_owned(),
+        );
+    }
+
+    let current_control_region_sha256 = hash_bgra_region_for_plan_v3(
+        &current_frame.canonical_bgra8,
+        &MtgoSizePxV1 {
+            width: current_frame.manifest.frame.canonical_width,
+            height: current_frame.manifest.frame.canonical_height,
+        },
+        &plan.parts.control_rect_client_px,
+    )?;
+    if current_control_region_sha256 != plan.parts.observed_control_region_sha256 {
+        return Err("the selected control pixels changed before input".to_owned());
+    }
+
+    let client_rect = current_frame.manifest.pre.client_rect_desktop_px;
+    let target_x_desktop_px = client_rect
+        .left
+        .checked_add(
+            i32::try_from(plan.parts.target_point_client_px.x)
+                .map_err(|_| "pregame target x does not fit the desktop")?,
+        )
+        .ok_or("pregame target x overflow")?;
+    let target_y_desktop_px = client_rect
+        .top
+        .checked_add(
+            i32::try_from(plan.parts.target_point_client_px.y)
+                .map_err(|_| "pregame target y does not fit the desktop")?,
+        )
+        .ok_or("pregame target y overflow")?;
+    if !client_rect.contains_point(target_x_desktop_px, target_y_desktop_px) {
+        return Err("pregame target point is outside the current client".to_owned());
+    }
+    let (park_x_desktop_px, park_y_desktop_px) = choose_cursor_park_point_v3(
+        &client_rect,
+        &current_frame.manifest.output.bounds_desktop_px,
+    )?;
+
+    Ok(PreparedPregameActuationV3 {
+        hwnd: current_frame.manifest.pre.hwnd,
+        process_id: current_frame.manifest.pre.process_id,
+        process_start_filetime_100ns: current_frame.manifest.pre.process_start_filetime_100ns,
+        dpi: current_frame.manifest.pre.dpi,
+        client_rect_desktop_px: client_rect,
+        target_x_desktop_px,
+        target_y_desktop_px,
+        park_x_desktop_px,
+        park_y_desktop_px,
+        current_capture_commitment_sha256: current_frame.capture_commitment_sha256,
+        current_captured_at_unix_millis: current_frame.manifest.captured_at_unix_millis,
+        action_plan_commitment_sha256: plan.parts.action_plan_commitment_sha256.clone(),
+        selected_semantic: plan.selection.selected_semantic.clone(),
+        planned_postcondition: plan.parts.planned_postcondition.clone(),
+    })
+}
+
+pub(crate) fn choose_cursor_park_point_v3(
+    client: &SignedRectV1,
+    output: &SignedRectV1,
+) -> Result<(i32, i32), String> {
+    let right = output
+        .right
+        .checked_sub(2)
+        .ok_or("capture output has no cursor parking width")?;
+    let bottom = output
+        .bottom
+        .checked_sub(2)
+        .ok_or("capture output has no cursor parking height")?;
+    let left = output
+        .left
+        .checked_add(1)
+        .ok_or("capture output cursor parking x overflow")?;
+    let top = output
+        .top
+        .checked_add(1)
+        .ok_or("capture output cursor parking y overflow")?;
+    for (x, y) in [(left, top), (right, top), (left, bottom), (right, bottom)] {
+        if output.contains_point(x, y) && !client.contains_point(x, y) {
+            return Ok((x, y));
+        }
+    }
+    Err("the current output has no cursor parking point outside the client".to_owned())
 }
 
 pub fn confirm_pregame_mulligan_transition_v3(
