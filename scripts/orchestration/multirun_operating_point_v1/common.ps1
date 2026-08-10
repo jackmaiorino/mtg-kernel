@@ -263,8 +263,16 @@ function Resolve-PilotExecutable {
     $executable = $executables[0]
     # Positive execution marker: the resolved binary must itself report that
     # it carries the pilot test. --list never runs tests and touches no GPU.
-    $listing = & $executable $script:RunnerTest --list --exact 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) { throw "execution-marker listing failed (exit $LASTEXITCODE)" }
+    # EAP guard: a redirected native stderr line is a terminating exception
+    # under Stop in PS 5.1 (same class as the taskkill fix).
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $listing = & $executable $script:RunnerTest --list --exact 2>&1 | Out-String
+        $listExit = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $previous }
+    if ($listExit -ne 0) { throw "execution-marker listing failed (exit $listExit)" }
     if ($listing -cnotmatch [regex]::Escape($script:RunnerTest)) { throw "resolved executable does not carry $($script:RunnerTest)" }
     return $executable
 }
@@ -323,19 +331,49 @@ function Start-RenderedLaunch {
     }
     $head = (& git -C $RepoRoot rev-parse HEAD).Trim()
     if ($head -cne $Rendered.expected_commit) { throw "repo HEAD $head does not match expected_commit $($Rendered.expected_commit)" }
-    $dirty = (& git -C $RepoRoot status --porcelain) | Where-Object { $_ -notmatch '^\?\? scripts/orchestration/' }
+    $dirty = (& git -C $RepoRoot status --porcelain) | Where-Object { $_ -cnotmatch '^\?\? scripts/orchestration/' }
     if ($dirty) { throw 'repo tree is not clean (tracked changes present)' }
 
+    # Everything above this line mutates nothing on disk; a throw there
+    # leaves a clean slate for retry. From root creation onward, EVERY exit
+    # path writes a record into the root: pre-flight failures write a
+    # FAILED-PREFLIGHT record, everything later goes through the main
+    # try/catch/finally below.
     New-Item -ItemType Directory -Force -Path $LaunchRoot | Out-Null
-    $inventory = Assert-DeviceInventory -Rendered $Rendered
-    $sourceExe = Resolve-PilotExecutable -RepoRoot $RepoRoot -StderrPath (Join-Path $LaunchRoot 'cargo-build.stderr.log')
-    # Post-build re-verify: the build takes minutes; the tree must not have
-    # moved under it, or the recorded source_commit would be a lie.
-    $headAfterBuild = (& git -C $RepoRoot rev-parse HEAD).Trim()
-    if ($headAfterBuild -cne $head) { throw "repo HEAD moved during build ($head -> $headAfterBuild)" }
-    $exeCopy = Join-Path $LaunchRoot ([System.IO.Path]::GetFileName($sourceExe))
-    Copy-Item -LiteralPath $sourceExe -Destination $exeCopy
-    $exeSha = Get-Sha256Hex -Path $exeCopy
+    $recordPath = Join-Path $LaunchRoot 'launch-record.json'
+    $startedUtc = [DateTime]::UtcNow.ToString('o')
+    try {
+        $inventory = Assert-DeviceInventory -Rendered $Rendered
+        $sourceExe = Resolve-PilotExecutable -RepoRoot $RepoRoot -StderrPath (Join-Path $LaunchRoot 'cargo-build.stderr.log')
+        # Post-build re-verify: the build takes minutes; the tree must not
+        # have moved under it, or the recorded source_commit would be a lie.
+        $headAfterBuild = (& git -C $RepoRoot rev-parse HEAD).Trim()
+        if ($headAfterBuild -cne $head) { throw "repo HEAD moved during build ($head -> $headAfterBuild)" }
+        $exeCopy = Join-Path $LaunchRoot ([System.IO.Path]::GetFileName($sourceExe))
+        Copy-Item -LiteralPath $sourceExe -Destination $exeCopy
+        $exeSha = Get-Sha256Hex -Path $exeCopy
+    }
+    catch {
+        try {
+            $preflightRecord = [ordered]@{
+                schema        = 'multirun-operating-point-launch-record/v1'
+                label         = $Rendered.label
+                config_path   = (Resolve-Path -LiteralPath $ConfigPath).Path
+                config_sha256 = Get-Sha256Hex -Path $ConfigPath
+                source_commit = $head
+                disposition   = 'FAILED-PREFLIGHT'
+                preflight_error = $_.Exception.Message
+                started_utc   = $startedUtc
+                ended_utc     = [DateTime]::UtcNow.ToString('o')
+                processes     = @()
+            }
+            ($preflightRecord | ConvertTo-Json -Depth 6) | Out-File -LiteralPath $recordPath -Encoding utf8
+        }
+        catch {
+            try { Set-Content -LiteralPath (Join-Path $LaunchRoot 'launch-record-write-failure.txt') -Encoding utf8 -Value $_.Exception.Message } catch {}
+        }
+        throw
+    }
 
     $record = [ordered]@{
         schema         = 'multirun-operating-point-launch-record/v1'
@@ -349,7 +387,8 @@ function Start-RenderedLaunch {
         device_inventory = @($inventory)
         monitor        = $Rendered.monitor
         disposition    = 'RUNNING'
-        started_utc    = [DateTime]::UtcNow.ToString('o')
+        rail_breaches  = @()
+        started_utc    = $startedUtc
         processes      = @()
     }
 
@@ -358,7 +397,6 @@ function Start-RenderedLaunch {
     $censusPath = Join-Path $LaunchRoot 'census.csv'
     $maxByUuid = @{}
     $censusCount = 0
-    $recordPath = Join-Path $LaunchRoot 'launch-record.json'
 
     # Kill with PID-reuse protection: only a process whose StartTime ticks
     # still match the child we spawned is ours to kill (house watchdog rule).
@@ -369,26 +407,34 @@ function Start-RenderedLaunch {
     # post-kill wait is bounded; the outcome is recorded per child.
     function Stop-OwnedChildren {
         param($Children, [string]$Disposition)
+        function Add-KillOutcome {
+            param($Child, [string]$Entry)
+            # Append-only: a later failure must never erase an earlier
+            # recorded outcome.
+            if ([string]::IsNullOrEmpty($Child.kill_outcome)) { $Child.kill_outcome = $Entry }
+            else { $Child.kill_outcome = "$($Child.kill_outcome); $Entry" }
+        }
         foreach ($child in @($Children)) {
             try {
                 if ($child.process.HasExited) { continue }
                 $live = Get-Process -Id $child.process.Id -ErrorAction SilentlyContinue
                 if ($null -eq $live -or $live.StartTime.ToUniversalTime().Ticks -ne $child.start_ticks) { continue }
+                # Disposition is set the moment this child is selected for a
+                # kill, before any step that can throw, so a later failure
+                # can never leave it reading RUNNING.
+                $child.disposition = $Disposition
                 $previous = $ErrorActionPreference
                 $ErrorActionPreference = 'Continue'
                 try { & taskkill /PID $child.process.Id /T /F 2>&1 | Out-Null; $killExit = $LASTEXITCODE }
                 finally { $ErrorActionPreference = $previous }
                 if ($killExit -ne 0) {
-                    try { Stop-Process -Id $child.process.Id -Force -ErrorAction Stop; $child.kill_outcome = 'stop-process-escalation' }
-                    catch { $child.kill_outcome = "kill-failed: taskkill exit $killExit; Stop-Process: $($_.Exception.Message)" }
+                    try { Stop-Process -Id $child.process.Id -Force -ErrorAction Stop; Add-KillOutcome $child 'stop-process-escalation' }
+                    catch { Add-KillOutcome $child "kill-failed: taskkill exit $killExit; Stop-Process: $($_.Exception.Message)" }
                 }
-                else { $child.kill_outcome = 'taskkill' }
-                if (-not $child.process.WaitForExit(15000)) {
-                    $child.kill_outcome = "$($child.kill_outcome); wait-timeout"
-                }
-                $child.disposition = $Disposition
+                else { Add-KillOutcome $child 'taskkill' }
+                if (-not $child.process.WaitForExit(15000)) { Add-KillOutcome $child 'wait-timeout' }
             }
-            catch { try { $child.kill_outcome = "kill-error: $($_.Exception.Message)" } catch {} }
+            catch { try { Add-KillOutcome $child "kill-error: $($_.Exception.Message)" } catch {} }
         }
     }
 
@@ -424,6 +470,7 @@ function Start-RenderedLaunch {
                 kill_outcome = $null
                 exit_code = $null
                 oom_signature_seen = $null
+                ended = $null
             }
         }
 
@@ -460,7 +507,9 @@ function Start-RenderedLaunch {
                         if ($used -gt $railByUuid[$uuid]) {
                             Stop-OwnedChildren -Children $children -Disposition 'ABORTED-RAIL'
                             $launchDisposition = 'ABORTED-RAIL'
-                            $record['rail_breach'] = [ordered]@{ device_uuid = $uuid; measured_mib = $used; rail_mib = $railByUuid[$uuid]; at_utc = $nowIso }
+                            # A list, not a scalar: concurrent same-sample
+                            # breaches on both devices must all be recorded.
+                            $record.rail_breaches += [ordered]@{ device_uuid = $uuid; measured_mib = $used; rail_mib = $railByUuid[$uuid]; at_utc = $nowIso }
                         }
                     }
                 }
@@ -481,10 +530,14 @@ function Start-RenderedLaunch {
         foreach ($child in $children) {
             try {
                 if (-not $child.process.WaitForExit(15000)) {
+                    # ended stays null: this child may STILL be running when
+                    # the record is written, and the record must say so
+                    # rather than stamp a fictitious end time.
                     $child.disposition = 'WAIT-TIMEOUT'
                     if ($launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
                     continue
                 }
+                $child.ended = [DateTime]::UtcNow.ToString('o')
                 $stdoutText = $child.stdout.Result
                 $stderrText = $child.stderr.Result
                 Set-Content -LiteralPath $child.log -Encoding utf8 -Value ($stdoutText + "`n--- STDERR ---`n" + $stderrText)
@@ -492,12 +545,16 @@ function Start-RenderedLaunch {
                 if ($child.disposition -ceq 'RUNNING') {
                     $child.disposition = if ($child.exit_code -eq 0) { 'COMPLETED' } else { 'FAILED' }
                 }
+                # Deliberately case-insensitive: the certified detector
+                # carries (?i) and -match honors it; this is a signature
+                # scan, not an identity comparison.
                 $child.oom_signature_seen = [bool](($stdoutText + $stderrText) -match $script:AllocationFailurePatternV1)
                 if ($child.oom_signature_seen -and $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
                 if ($child.exit_code -ne 0 -and $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
             }
             catch {
                 $child.disposition = "COLLECT-ERROR: $($_.Exception.Message)"
+                if ($null -eq $child.ended) { $child.ended = [DateTime]::UtcNow.ToString('o') }
                 if ($launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
             }
         }
@@ -522,7 +579,7 @@ function Start-RenderedLaunch {
                     pid           = $child.process.Id
                     start_utc_ticks = $child.start_ticks
                     started_utc   = $child.started
-                    ended_utc     = [DateTime]::UtcNow.ToString('o')
+                    ended_utc     = $child.ended
                     exit_code     = $child.exit_code
                     disposition   = $child.disposition
                     kill_outcome  = $child.kill_outcome
