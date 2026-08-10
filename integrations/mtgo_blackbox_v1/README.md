@@ -301,7 +301,7 @@ All live-input flags default to false. League, Challenge, and other prize-event 
 3. Parse visible zones, cards, counters, prompts, phase, priority, game log, and timers. Accessibility text may assist only when the same content is visibly corroborated.
 4. Reconcile the visible state into `ObservationV5`, a complete ordered `ActionSemanticV1` vector, and synthetic object incarnations. A zone change creates a new `zone_change_count`.
 5. Validate per-leaf provenance, readiness, actor agreement, action bindings, and confidence through this crate.
-6. Score the validated observation and ordered legal actions through a future external-observation scorer seam.
+6. Score the validated observation and ordered legal actions through the exact native checkpoint external-observation scorer seam.
 7. Resolve the selected semantic action against current visible evidence. Do not use fixed screen coordinates.
 8. Reconfirm focus, prompt, and timer, perform exactly one authorized input, then require a visible postcondition before another input.
 9. Stop on layout drift, an unknown prompt, low confidence, timer danger, focus loss, action-set disagreement, or missing postcondition.
@@ -313,6 +313,19 @@ The adapter now defines the coordinate-free half of step 6. `MtgoExternalScoring
 `MtgoExternalModelScoreResponseV1` returns exact f32 policy-logit and value bits bound to that request. Validation requires one finite logit per legal action and a finite value, then uses the kernel scorer's deterministic `total_cmp` argmax with lower-index ties. The resulting opaque selection can create only an offline intent for the exact source decision. It has no coordinates or live-input authority.
 
 `MtgoNativeCheckpointObservationScorerV1` is the concrete implementation. Construction requires an independently supplied expected deployment whose run, checkpoint manifest, checkpoint payload, train state, model parameters, generation, and scorer-contract digest all match the immutable loaded handle. It calls the kernel's external public-observation seam, returns exact score bits, and rebinds them to the adapter request. It cannot derive or self-approve an expected deployment.
+
+`load_mtgo_native_checkpoint_deployment_v1` is the deployment loader for that scorer. It reads the selected native Store's `run.json`, validates the complete Store through its latest pointer, rewalks the chain through the requested generation, constructs the unchanged native inference handle, and rechecks every checkpoint and scorer identity against an independently supplied strict deployment manifest. The returned value is move-only and exposes only the scorer plus immutable identity commitments. It has no capture, account, event-entry, match, or live-input authority.
+
+The checked-in `fixtures/provisional_promoted2_mtgo_deployment_20260810_v1.json` pins promoted(2), seed 920012, generation 384 as a provisional wiring checkpoint. This is an exact deployable package identity, not a claim that it is the final or strongest policy. Validate that package from this directory with:
+
+```powershell
+$env:CARGO_TARGET_DIR = 'D:\mtgo-model-deployment-target'
+cargo run --bin check_mtgo_model_deployment_v1 -- `
+  'D:\mtg-kernel-ladder-pilot-20260725\pool3\primary' `
+  'fixtures\provisional_promoted2_mtgo_deployment_20260810_v1.json'
+```
+
+The command succeeds only after the complete Store walk and emits the exact deployment commitment with `safe_for_live_input` and `permits_match_entry` both false.
 
 ## Current-frame semantic control resolution
 

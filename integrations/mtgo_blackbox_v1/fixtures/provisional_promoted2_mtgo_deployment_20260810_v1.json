@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "deployment_id": "promoted2-generation384-provisional-mtgo-wiring",
+  "checkpoint": {
+    "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae",
+    "checkpoint_manifest_sha256": "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8",
+    "checkpoint_payload_sha256": "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99",
+    "train_state_sha256": "fc471f85d28293d72b42dc61de628859173bd67426e251a51bfbbe86c7d586d8",
+    "model_parameter_sha256": "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d",
+    "generation_index": 384
+  },
+  "scorer_contract_sha256": "81ebe29ecdb1768ef92c8e1d27aba04d370cce82c34825c9ae07ddaf523fd985"
+}
