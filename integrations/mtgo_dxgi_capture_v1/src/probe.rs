@@ -8,16 +8,19 @@ use crate::{
 use mtgo_blackbox_v1::{
     check_untrusted_dxgi_capture_artifact_v1,
     classify_untrusted_offline_bottom_six_initial_candidate_v1,
+    classify_untrusted_offline_bottom_six_reflow_candidate_v1,
     classify_untrusted_offline_bottom_six_state_candidate_v1,
     classify_untrusted_offline_first_main_candidate_v1,
     classify_untrusted_offline_mulligan_ladder_candidate_v1, model_deployment_commitment_v1,
     CheckedUntrustedMtgoOfflineBottomSixInitialCandidateV1,
+    CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1,
     CheckedUntrustedMtgoOfflineBottomSixStateCandidateV1,
     CheckedUntrustedMtgoOfflineFirstMainCandidateV1,
     CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1, MtgoExpectedModelDeploymentV1,
-    MtgoOfflineBottomSixInitialClassificationV1, MtgoOfflineBottomSixStateClassificationV1,
-    MtgoOfflineFirstMainClassificationV1, MtgoOfflineMulliganLadderClassificationV1,
-    MtgoPregameActionSemanticV1, MtgoRectPxV1, MtgoSizePxV1,
+    MtgoOfflineBottomSixInitialClassificationV1, MtgoOfflineBottomSixReflowClassificationV1,
+    MtgoOfflineBottomSixStateClassificationV1, MtgoOfflineFirstMainClassificationV1,
+    MtgoOfflineMulliganLadderClassificationV1, MtgoPregameActionSemanticV1, MtgoRectPxV1,
+    MtgoSizePxV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -540,6 +543,115 @@ pub fn measure_mtgo_dxgi_bottom_six_state_candidate_v3(
     .map_err(|error| format!("classify opaque bottom-six state capture: {error}"))?;
     Ok(OpaqueMtgoDxgiBottomSixStateMeasurementV3 {
         source_frame,
+        measurement,
+    })
+}
+
+/// A direct in-process visual reflow measurement over two opaque consecutive
+/// bottom-six stages. A Match identifies the unique visible ordinal that
+/// disappeared while retaining both source frames, all pixels, and card-region
+/// geometry privately. It does not identify the card name or grant observation,
+/// scoring, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiBottomSixReflowMeasurementV3;
+/// let _forged = OpaqueMtgoDxgiBottomSixReflowMeasurementV3 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiBottomSixReflowMeasurementV3;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoDxgiBottomSixReflowMeasurementV3>();
+/// ```
+pub struct OpaqueMtgoDxgiBottomSixReflowMeasurementV3 {
+    before: OpaqueMtgoDxgiBottomSixStateMeasurementV3,
+    after: OpaqueMtgoDxgiBottomSixStateMeasurementV3,
+    measurement: CheckedUntrustedMtgoOfflineBottomSixReflowCandidateV1,
+}
+
+impl OpaqueMtgoDxgiBottomSixReflowMeasurementV3 {
+    pub fn before_source_capture_commitments_v3(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.before.source_frame.commitments_v3()
+    }
+
+    pub fn after_source_capture_commitments_v3(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.after.source_frame.commitments_v3()
+    }
+
+    pub fn classification_v3(&self) -> MtgoOfflineBottomSixReflowClassificationV1 {
+        self.measurement.classification()
+    }
+
+    pub fn before_selected_count_v3(&self) -> Option<u8> {
+        self.measurement.before_selected_count()
+    }
+
+    pub fn after_selected_count_v3(&self) -> Option<u8> {
+        self.measurement.after_selected_count()
+    }
+
+    pub fn removed_before_ordinal_v3(&self) -> Option<u8> {
+        self.measurement.removed_before_ordinal()
+    }
+
+    pub fn matched_pair_mean_absolute_difference_milli_v3(&self) -> &[u32] {
+        self.measurement
+            .matched_pair_mean_absolute_difference_milli()
+    }
+
+    pub fn passing_deletion_candidate_count_v3(&self) -> u8 {
+        self.measurement.passing_deletion_candidate_count()
+    }
+
+    pub fn measurement_commitment_sha256_v3(&self) -> &str {
+        self.measurement.candidate_commitment_sha256()
+    }
+
+    pub fn safe_for_semantic_evidence_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v3(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_mtgo_dxgi_bottom_six_reflow_candidate_v3(
+    before: OpaqueMtgoDxgiBottomSixStateMeasurementV3,
+    after: OpaqueMtgoDxgiBottomSixStateMeasurementV3,
+) -> Result<OpaqueMtgoDxgiBottomSixReflowMeasurementV3, String> {
+    let before_manifest = serialize_manifest_v2(&before.source_frame.manifest)?;
+    let after_manifest = serialize_manifest_v2(&after.source_frame.manifest)?;
+    let before_checked = check_untrusted_dxgi_capture_artifact_v1(
+        &before_manifest,
+        &before.source_frame.canonical_bgra8,
+        &before.source_frame.preview_png,
+    )
+    .map_err(|error| format!("check opaque before-reflow capture: {error}"))?;
+    let after_checked = check_untrusted_dxgi_capture_artifact_v1(
+        &after_manifest,
+        &after.source_frame.canonical_bgra8,
+        &after.source_frame.preview_png,
+    )
+    .map_err(|error| format!("check opaque after-reflow capture: {error}"))?;
+    let measurement = classify_untrusted_offline_bottom_six_reflow_candidate_v1(
+        &before_checked,
+        &before.source_frame.canonical_bgra8,
+        &after_checked,
+        &after.source_frame.canonical_bgra8,
+    )
+    .map_err(|error| format!("classify opaque bottom-six reflow: {error}"))?;
+    Ok(OpaqueMtgoDxgiBottomSixReflowMeasurementV3 {
+        before,
+        after,
         measurement,
     })
 }

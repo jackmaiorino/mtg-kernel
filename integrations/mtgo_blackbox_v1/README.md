@@ -196,6 +196,16 @@ cargo run --bin classify_mtgo_offline_bottom_six_state_candidate_v1 -- 'C:\absol
 
 The corresponding corpus is `fixtures/offline_bottom_six_state_classifier_corpus_20260810_v1.json`. It contains all seven positive stages from one Solitaire game plus opening-hand and first-main negatives from two games total. It had no observed error in those nine frames. Because all positive stages come from one game, this is structural wiring evidence only, not an accuracy estimate or evidence of generalization to another game, layout, deck, or required bottom count.
 
+`classify_untrusted_offline_bottom_six_reflow_candidate_v1` compares two consecutive matched stages using only the unchanged visible card-art band above the keyboard overlay. It evaluates every possible order-preserving single-card deletion. A Match requires exactly one deletion whose every remaining-card mean absolute BGR difference is at most 25.000 intensity levels. No deletion or multiple plausible deletions fails closed. The six observed transitions had matched differences from 0.433 through 19.571 while incorrect pairings in the exploratory matrix began above 46. The corresponding corpus is `fixtures/offline_bottom_six_reflow_corpus_20260810_v1.json`.
+
+```powershell
+cargo run --bin classify_mtgo_offline_bottom_six_reflow_candidate_v1 -- `
+  'C:\absolute\before-artifact-directory' `
+  'C:\absolute\after-artifact-directory'
+```
+
+All six positive transitions come from one game and remove the leftmost visible card. The one non-consecutive negative is rejected. This is threshold-separation and wiring evidence, not an accuracy estimate or evidence for another removed ordinal, visually indistinguishable duplicate cards, another deck, or another layout. A Match identifies the removed visible ordinal only. It does not identify the card name.
+
 The record and checked wrapper retain no pixels or coordinates. Manual card labels are not proven by the structural checker, and all live-frame, semantic-evidence, `ObservationV5`, policy-scoring, and input flags remain false. The kernel runtime `ActionSemanticV1` has no Keep, Mulligan, bottom-selection, or bottom-submit variants, so this pregame path currently needs a separate model-supported pregame policy seam before autonomous play is possible.
 
 `validate_untrusted_offline_london_pregame_episode_v1` joins the maximum-depth path into one exact offline episode: seven choice prompts from prospective keep seven through one, Keep at one, seven bottoming states from zero through six selected cards, Submit, and the visible first-main completion. It binds fifteen unique checked artifacts, seven exact choice-classifier commitments, the exact bottoming-trace commitment, one shared layout, strict capture order, and fourteen declared transition actions. Every declared action must be legal in its exact source state and must produce the canonical next stage. The resulting per-stage action counts are `[2,2,2,2,2,2,2,8,7,6,5,4,3,2,0]`.

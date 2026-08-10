@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "corpus_id": "freeform-solitaire-bottom-six-leftmost-reflow-one-game-20260810-v1",
+  "maximum_match_mean_absolute_difference_milli": 25000,
+  "transitions": [
+    {
+      "transition_id": "game-958659998-selected-0-to-1",
+      "human_label": "one_visible_card_removed",
+      "classification": "match",
+      "before_manifest_sha256": "ac1d01e4cec791112bd942cbaf11060f9905b4108b21bd1cb1d8b471ec9e53e6",
+      "after_manifest_sha256": "e9e67a6bc9657288c2c10f0f5f8893e8223a24082ce84e7346e24994f70c0a3f",
+      "before_selected_count": 0,
+      "after_selected_count": 1,
+      "removed_before_ordinal": 0,
+      "matched_pair_mean_absolute_difference_milli": [5990, 6919, 2530, 4615, 433, 6825],
+      "passing_deletion_candidate_count": 1,
+      "candidate_commitment_sha256": "cdf8efb65b78d95c10544e27d6bb561edc3bf7f370a0dcdaf921f91b9c83ec19"
+    },
+    {
+      "transition_id": "game-958659998-selected-1-to-2",
+      "human_label": "one_visible_card_removed",
+      "classification": "match",
+      "before_manifest_sha256": "e9e67a6bc9657288c2c10f0f5f8893e8223a24082ce84e7346e24994f70c0a3f",
+      "after_manifest_sha256": "4ca82abf0c7745eba7f80763a73ced9c976a5867bb508a43e205de4a2faf4a0b",
+      "before_selected_count": 1,
+      "after_selected_count": 2,
+      "removed_before_ordinal": 0,
+      "matched_pair_mean_absolute_difference_milli": [3086, 1029, 3830, 2437, 2412],
+      "passing_deletion_candidate_count": 1,
+      "candidate_commitment_sha256": "b9199629c452f62d6dac4afb8b338f443201530924b464a4c463132448903526"
+    },
+    {
+      "transition_id": "game-958659998-selected-2-to-3",
+      "human_label": "one_visible_card_removed",
+      "classification": "match",
+      "before_manifest_sha256": "4ca82abf0c7745eba7f80763a73ced9c976a5867bb508a43e205de4a2faf4a0b",
+      "after_manifest_sha256": "13037a3c5e7f86a44074eb15a66700d98ddde9713e546ac4431fe16a087ba3d6",
+      "before_selected_count": 2,
+      "after_selected_count": 3,
+      "removed_before_ordinal": 0,
+      "matched_pair_mean_absolute_difference_milli": [1074, 3808, 2404, 2419],
+      "passing_deletion_candidate_count": 1,
+      "candidate_commitment_sha256": "653cc7306e8cfc9f67f3d9334f44e5e811a10698194b5aae54ab035a0621505b"
+    },
+    {
+      "transition_id": "game-958659998-selected-3-to-4",
+      "human_label": "one_visible_card_removed",
+      "classification": "match",
+      "before_manifest_sha256": "13037a3c5e7f86a44074eb15a66700d98ddde9713e546ac4431fe16a087ba3d6",
+      "after_manifest_sha256": "49b865b9777375ed962a63e1d72eeb87f41823f0bc5feca7b189905c0f01adaf",
+      "before_selected_count": 3,
+      "after_selected_count": 4,
+      "removed_before_ordinal": 0,
+      "matched_pair_mean_absolute_difference_milli": [4182, 2336, 2347],
+      "passing_deletion_candidate_count": 1,
+      "candidate_commitment_sha256": "dda090dae1156fddccd633158a96fd6425b7734621e0843bd019e2ad2d3d4579"
+    },
+    {
+      "transition_id": "game-958659998-selected-4-to-5",
+      "human_label": "one_visible_card_removed",
+      "classification": "match",
+      "before_manifest_sha256": "49b865b9777375ed962a63e1d72eeb87f41823f0bc5feca7b189905c0f01adaf",
+      "after_manifest_sha256": "e0d3749fde5025b254c7ed3b8161453460f9b61c196425e6ce1373a6c3a7c391",
+      "before_selected_count": 4,
+      "after_selected_count": 5,
+      "removed_before_ordinal": 0,
+      "matched_pair_mean_absolute_difference_milli": [2347, 2357],
+      "passing_deletion_candidate_count": 1,
+      "candidate_commitment_sha256": "6f34592b5680e9ba957a62c6cdaad71e95e84d894fa6c6aa354b73e87f322eb1"
+    },
+    {
+      "transition_id": "game-958659998-selected-5-to-6",
+      "human_label": "one_visible_card_removed",
+      "classification": "match",
+      "before_manifest_sha256": "e0d3749fde5025b254c7ed3b8161453460f9b61c196425e6ce1373a6c3a7c391",
+      "after_manifest_sha256": "2eefee0b3a69a167dd5482b219052bd404c5f74f1263a49ae51cee85636b3e3d",
+      "before_selected_count": 5,
+      "after_selected_count": 6,
+      "removed_before_ordinal": 0,
+      "matched_pair_mean_absolute_difference_milli": [19571],
+      "passing_deletion_candidate_count": 1,
+      "candidate_commitment_sha256": "2eb62ff852cff0b2c43c68199201e49c67e4f59e7ff35aa7b0e234db26f80d34"
+    },
+    {
+      "transition_id": "game-958659998-selected-0-to-2-negative",
+      "human_label": "not_one_consecutive_visible_card_removal",
+      "classification": "no_match",
+      "before_manifest_sha256": "ac1d01e4cec791112bd942cbaf11060f9905b4108b21bd1cb1d8b471ec9e53e6",
+      "after_manifest_sha256": "4ca82abf0c7745eba7f80763a73ced9c976a5867bb508a43e205de4a2faf4a0b",
+      "before_selected_count": 0,
+      "after_selected_count": 2,
+      "removed_before_ordinal": null,
+      "matched_pair_mean_absolute_difference_milli": [],
+      "passing_deletion_candidate_count": 0,
+      "candidate_commitment_sha256": "b1f31281e3ba6a8633c5b9f3cbbc36c77b9961a3ac84db53186c856d5f74b8e9"
+    }
+  ],
+  "confusion": {
+    "true_positive": 6,
+    "true_negative": 1,
+    "false_positive": 0,
+    "false_negative": 0
+  },
+  "distinct_games": 1,
+  "positive_removed_ordinal_count": 1,
+  "transition_count": 7,
+  "nonclaim": "All positive transitions come from one game and remove the leftmost visible card. This is wiring and threshold-separation evidence, not an accuracy estimate or evidence that another removed ordinal, duplicate-card ambiguity, deck, game, or layout will classify.",
+  "safe_for_semantic_evidence": false,
+  "safe_for_observation_v5": false,
+  "safe_for_policy_scoring": false,
+  "safe_for_input": false
+}
