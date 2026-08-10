@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "corpus_id": "freeform-solitaire-bottom-six-initial-one-positive-20260810-v1",
+  "profile_commitment_sha256": "caafef8397e55e58f97ae24bca403390cb0d86a7ac2dd2fa23f30021f95479a8",
+  "samples": [
+    {
+      "sample_id": "game-958659998-bottom-six-zero-selected",
+      "manifest_sha256": "ac1d01e4cec791112bd942cbaf11060f9905b4108b21bd1cb1d8b471ec9e53e6",
+      "canonical_bgra8_sha256": "e364e0a7622ae0159f863d47c8163f9e353e35559fa7bc34840c8db205aea41d",
+      "preview_png_sha256": "67c980083cc263e2616c2a2e354aa27af5c1c5796ac61683019f0a779955760d",
+      "human_label": "bottom_six_zero_selected",
+      "classification": "match",
+      "matched_exact_region_count": 3,
+      "bright_occupancy_pixel_count": 399,
+      "occupancy_matches": true,
+      "candidate_commitment_sha256": "4dce946fd1a1af819cbffd74bda3e257318cb54276674a702d991e3ec48a0098"
+    },
+    {
+      "sample_id": "game-958659998-bottom-six-one-selected",
+      "manifest_sha256": "e9e67a6bc9657288c2c10f0f5f8893e8223a24082ce84e7346e24994f70c0a3f",
+      "canonical_bgra8_sha256": "3df0dad98bbf8e7400fe8d8a226ec80749e8d198bda63cc79182fab18172e0ce",
+      "preview_png_sha256": "288efa0efddefa87b52b6e93009654fccc04450f84fad8202f884cb877257c8e",
+      "human_label": "not_bottom_six_zero_selected",
+      "classification": "no_match",
+      "matched_exact_region_count": 3,
+      "bright_occupancy_pixel_count": 0,
+      "occupancy_matches": false,
+      "candidate_commitment_sha256": "411d8ce8345c797b369ed829d610d42b80fbf86558600dc88b18122cd67ffa16"
+    },
+    {
+      "sample_id": "game-958659998-bottom-six-six-selected",
+      "manifest_sha256": "2eefee0b3a69a167dd5482b219052bd404c5f74f1263a49ae51cee85636b3e3d",
+      "canonical_bgra8_sha256": "2f9a192449535af5544ad4cec985acecca8ad21069f18714d926705e00e7abdc",
+      "preview_png_sha256": "232e11b973fd2f539fa2d93b9658241a6db98d69c5de9c17c6ad18eccb288913",
+      "human_label": "not_bottom_six_zero_selected",
+      "classification": "no_match",
+      "matched_exact_region_count": 2,
+      "bright_occupancy_pixel_count": 0,
+      "occupancy_matches": false,
+      "candidate_commitment_sha256": "090ac33491dc3ddc2c8452b8dd117b6748264907498cccaabbebd0fd0e6a156b"
+    },
+    {
+      "sample_id": "game-958659998-opening-seven",
+      "manifest_sha256": "562ac060b1a014b602b2b2e516ae600f14a106371d467aad9f1ffff876dcacb1",
+      "canonical_bgra8_sha256": "fc60eae6d3f5bbf2da8e68b998026c0eb71001cc86d1f8f89df30ba98456a9d6",
+      "preview_png_sha256": "f2b4ed4676a3e96febbebd80de749e53b2fdc9b00f46d6373275f3486902bfd4",
+      "human_label": "not_bottom_six_zero_selected",
+      "classification": "no_match",
+      "matched_exact_region_count": 1,
+      "bright_occupancy_pixel_count": 706,
+      "occupancy_matches": true,
+      "candidate_commitment_sha256": "ad0bb34e45f8bdcbb3e43df138a3c8e15b404c423b6032ddb8f9fd808aa3b1b9"
+    },
+    {
+      "sample_id": "game-958658224-first-main-after-keep-seven",
+      "manifest_sha256": "018d955305e253460f2e0fd0e51d850f1f6e8684cbf2b7415ce5446d2a818adb",
+      "canonical_bgra8_sha256": "4b33db6c50945a1a07320709be7cf2ada1ec513b69748e2e386e1f119864f514",
+      "preview_png_sha256": "efa9ec430e2fe4ac8e6836d9acb5f05738f32ec9efa91a6dff69cd0244bf8561",
+      "human_label": "not_bottom_six_zero_selected",
+      "classification": "no_match",
+      "matched_exact_region_count": 1,
+      "bright_occupancy_pixel_count": 604,
+      "occupancy_matches": true,
+      "candidate_commitment_sha256": "ea65aa7c7eb8ffd93b0c1d2c496d3519fe843f0b31a0f697d69401dd58a4453d"
+    }
+  ],
+  "confusion": {
+    "true_positive": 1,
+    "true_negative": 4,
+    "false_positive": 0,
+    "false_negative": 0
+  },
+  "distinct_games": 2,
+  "positive_game_count": 1,
+  "sample_count": 5,
+  "nonclaim": "The sole positive and four negatives are wiring and brittleness evidence, not an accuracy estimate or evidence of generalization to another game or another required bottom count.",
+  "safe_for_live_frame": false,
+  "safe_for_semantic_evidence": false,
+  "safe_for_observation_v5": false,
+  "safe_for_policy_scoring": false,
+  "safe_for_input": false
+}

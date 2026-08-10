@@ -90,14 +90,22 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
         "pub fn confirm_pregame_keep_to_first_main_transition_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    after: OpaqueMtgoDxgiFirstMainMeasurementV3,"
     ));
     assert!(source.contains(
+        "pub fn confirm_pregame_keep_to_bottom_six_transition_v3(\n    plan: OpaqueMtgoPregameActionPlanV3,\n    after: OpaqueMtgoDxgiBottomSixInitialMeasurementV3,"
+    ));
+    assert!(source.contains(
         "pub fn measure_mtgo_dxgi_first_main_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
+    ));
+    assert!(source.contains(
+        "pub fn measure_mtgo_dxgi_bottom_six_initial_candidate_v3(\n    source_frame: OpaqueMtgoDxgiFrameCandidateV3,"
     ));
     assert!(source.contains("fn build_pregame_action_plan_parts_v3("));
     assert!(source.contains("fn validate_mulligan_postcondition_parts_v3("));
     assert!(source.contains("fn validate_keep_first_main_postcondition_parts_v3("));
+    assert!(source.contains("fn validate_keep_bottom_six_postcondition_parts_v3("));
     assert!(!source.contains("pub fn build_pregame_action_plan_parts_v3("));
     assert!(!source.contains("pub fn validate_mulligan_postcondition_parts_v3("));
     assert!(!source.contains("pub fn validate_keep_first_main_postcondition_parts_v3("));
+    assert!(!source.contains("pub fn validate_keep_bottom_six_postcondition_parts_v3("));
     assert!(!source.contains("pub fn target_point_client_px_v3"));
     assert!(!source.contains("safe_for_live_input_v3(&self) -> bool {\n        true"));
 }
@@ -115,6 +123,7 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "WindowFromPoint",
         "AwaitingVisiblePostcondition",
         "confirm_pending_pregame_mulligan_v3",
+        "confirm_pending_pregame_keep_to_bottom_six_v3",
         "confirm_pending_pregame_keep_to_first_main_v3",
     ] {
         assert!(

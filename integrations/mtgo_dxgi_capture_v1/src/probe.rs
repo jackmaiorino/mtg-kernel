@@ -6,12 +6,16 @@ use crate::{
     CaptureWindowModeV2, SignedRectV1,
 };
 use mtgo_blackbox_v1::{
-    check_untrusted_dxgi_capture_artifact_v1, classify_untrusted_offline_first_main_candidate_v1,
+    check_untrusted_dxgi_capture_artifact_v1,
+    classify_untrusted_offline_bottom_six_initial_candidate_v1,
+    classify_untrusted_offline_first_main_candidate_v1,
     classify_untrusted_offline_mulligan_ladder_candidate_v1, model_deployment_commitment_v1,
+    CheckedUntrustedMtgoOfflineBottomSixInitialCandidateV1,
     CheckedUntrustedMtgoOfflineFirstMainCandidateV1,
     CheckedUntrustedMtgoOfflineMulliganLadderCandidateV1, MtgoExpectedModelDeploymentV1,
-    MtgoOfflineFirstMainClassificationV1, MtgoOfflineMulliganLadderClassificationV1,
-    MtgoPregameActionSemanticV1, MtgoRectPxV1, MtgoSizePxV1,
+    MtgoOfflineBottomSixInitialClassificationV1, MtgoOfflineFirstMainClassificationV1,
+    MtgoOfflineMulliganLadderClassificationV1, MtgoPregameActionSemanticV1, MtgoRectPxV1,
+    MtgoSizePxV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -84,10 +88,14 @@ const PREGAME_ACTION_PLAN_DOMAIN_V3: &[u8] = b"mtgo-pregame-action-plan-v3";
 const PREGAME_MULLIGAN_CONFIRMATION_DOMAIN_V3: &[u8] = b"mtgo-pregame-mulligan-confirmation-v3";
 const PREGAME_KEEP_FIRST_MAIN_CONFIRMATION_DOMAIN_V3: &[u8] =
     b"mtgo-pregame-keep-first-main-confirmation-v3";
+const PREGAME_KEEP_BOTTOM_SIX_CONFIRMATION_DOMAIN_V3: &[u8] =
+    b"mtgo-pregame-keep-bottom-six-confirmation-v3";
 const PREGAME_CONTROL_PROFILE_ID_V3: &str =
     "freeform-solitaire-pregame-controls-1550x925-20260810-v3";
 const PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3: &str =
     "bc278fde2cf9e5999bfc8d3dbbf437619ef8974d014b3dff2d4be14b58b28485";
+const PREGAME_BOTTOM_SIX_INITIAL_PROFILE_COMMITMENT_V3: &str =
+    "caafef8397e55e58f97ae24bca403390cb0d86a7ac2dd2fa23f30021f95479a8";
 
 #[derive(Debug)]
 struct CliV1 {
@@ -349,6 +357,89 @@ pub fn measure_mtgo_dxgi_mulligan_ladder_candidate_v3(
         &source_frame.preview_png,
     )?;
     Ok(OpaqueMtgoDxgiMulliganMeasurementV3 {
+        source_frame,
+        measurement,
+    })
+}
+
+/// A direct in-process measurement of the exact visible bottom-six prompt
+/// before any card has been selected. The opaque source frame and pixels remain
+/// private. This recognizes only required bottom count six at selected count
+/// zero and grants no observation, policy, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiBottomSixInitialMeasurementV3;
+/// let _forged = OpaqueMtgoDxgiBottomSixInitialMeasurementV3 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoDxgiBottomSixInitialMeasurementV3;
+/// fn require_debug<T: std::fmt::Debug>() {}
+/// require_debug::<OpaqueMtgoDxgiBottomSixInitialMeasurementV3>();
+/// ```
+pub struct OpaqueMtgoDxgiBottomSixInitialMeasurementV3 {
+    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    measurement: CheckedUntrustedMtgoOfflineBottomSixInitialCandidateV1,
+}
+
+impl OpaqueMtgoDxgiBottomSixInitialMeasurementV3 {
+    pub fn source_capture_commitments_v3(&self) -> MtgoDxgiFrameCommitmentsV3 {
+        self.source_frame.commitments_v3()
+    }
+
+    pub fn classification_v3(&self) -> MtgoOfflineBottomSixInitialClassificationV1 {
+        self.measurement.classification()
+    }
+
+    pub fn required_bottom_count_v3(&self) -> Option<u8> {
+        self.measurement.required_bottom_count()
+    }
+
+    pub fn selected_count_v3(&self) -> Option<u8> {
+        self.measurement.selected_count()
+    }
+
+    pub fn profile_commitment_sha256_v3(&self) -> &str {
+        self.measurement.profile_commitment_sha256()
+    }
+
+    pub fn measurement_commitment_sha256_v3(&self) -> &str {
+        self.measurement.candidate_commitment_sha256()
+    }
+
+    pub fn safe_for_semantic_evidence_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_observation_v5_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v3(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v3(&self) -> bool {
+        false
+    }
+}
+
+pub fn measure_mtgo_dxgi_bottom_six_initial_candidate_v3(
+    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+) -> Result<OpaqueMtgoDxgiBottomSixInitialMeasurementV3, String> {
+    let manifest_bytes = serialize_manifest_v2(&source_frame.manifest)?;
+    let checked = check_untrusted_dxgi_capture_artifact_v1(
+        &manifest_bytes,
+        &source_frame.canonical_bgra8,
+        &source_frame.preview_png,
+    )
+    .map_err(|error| format!("check opaque bottom-six capture: {error}"))?;
+    let measurement = classify_untrusted_offline_bottom_six_initial_candidate_v1(
+        &checked,
+        &source_frame.canonical_bgra8,
+    )
+    .map_err(|error| format!("classify opaque bottom-six capture: {error}"))?;
+    Ok(OpaqueMtgoDxgiBottomSixInitialMeasurementV3 {
         source_frame,
         measurement,
     })
@@ -877,6 +968,50 @@ impl OpaqueMtgoConfirmedMulliganTransitionV3 {
     }
 }
 
+/// An exact visible confirmation that a planned one-card Keep reached the
+/// reviewed bottom-six, zero-selected prompt. It cannot confirm other bottom
+/// counts and cannot enable input by itself.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoConfirmedKeepToBottomSixTransitionV3;
+/// let _forged = OpaqueMtgoConfirmedKeepToBottomSixTransitionV3 {};
+/// ```
+pub struct OpaqueMtgoConfirmedKeepToBottomSixTransitionV3 {
+    plan: OpaqueMtgoPregameActionPlanV3,
+    after: OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
+    confirmation_commitment_sha256: String,
+}
+
+impl OpaqueMtgoConfirmedKeepToBottomSixTransitionV3 {
+    pub fn selected_semantic_v3(&self) -> &MtgoPregameActionSemanticV1 {
+        self.plan.selected_semantic_v3()
+    }
+
+    pub fn required_bottom_count_v3(&self) -> u8 {
+        6
+    }
+
+    pub fn selected_count_v3(&self) -> u8 {
+        0
+    }
+
+    pub fn source_action_plan_commitment_sha256_v3(&self) -> &str {
+        self.plan.action_plan_commitment_sha256_v3()
+    }
+
+    pub fn resulting_measurement_commitment_sha256_v3(&self) -> &str {
+        self.after.measurement_commitment_sha256_v3()
+    }
+
+    pub fn confirmation_commitment_sha256_v3(&self) -> &str {
+        &self.confirmation_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v3(&self) -> bool {
+        false
+    }
+}
+
 /// An exact visible Turn 1 first-main confirmation for a planned seven-card
 /// Keep. It does not prove that a particular input caused the transition and
 /// cannot enable a later input.
@@ -1096,6 +1231,34 @@ pub fn confirm_pregame_mulligan_transition_v3(
         plan,
         after,
         resulting_prospective_keep_size,
+        confirmation_commitment_sha256,
+    })
+}
+
+pub fn confirm_pregame_keep_to_bottom_six_transition_v3(
+    plan: OpaqueMtgoPregameActionPlanV3,
+    after: OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
+) -> Result<OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, String> {
+    let source_capture = plan.selection.measurement.source_capture_commitments_v3();
+    let after_capture = after.source_capture_commitments_v3();
+    let after_transition_identity_sha256 =
+        pregame_transition_identity_commitment_v3(&after.source_frame.manifest)?;
+    let confirmation_commitment_sha256 = validate_keep_bottom_six_postcondition_parts_v3(
+        plan.action_plan_commitment_sha256_v3(),
+        &plan.parts.planned_postcondition,
+        &source_capture,
+        &plan.parts.source_transition_identity_sha256,
+        after.classification_v3(),
+        after.required_bottom_count_v3(),
+        after.selected_count_v3(),
+        after.profile_commitment_sha256_v3(),
+        after.measurement_commitment_sha256_v3(),
+        &after_capture,
+        &after_transition_identity_sha256,
+    )?;
+    Ok(OpaqueMtgoConfirmedKeepToBottomSixTransitionV3 {
+        plan,
+        after,
         confirmation_commitment_sha256,
     })
 }
@@ -1347,6 +1510,82 @@ fn validate_mulligan_postcondition_parts_v3(
             source_transition_identity_sha256,
             planned_postcondition,
             after_capture_commitment_sha256: &after_capture.capture_commitment_sha256,
+            after_measurement_commitment_sha256,
+            after_transition_identity_sha256,
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_keep_bottom_six_postcondition_parts_v3(
+    action_plan_commitment_sha256: &str,
+    planned_postcondition: &MtgoPlannedPregamePostconditionV3,
+    source_capture: &MtgoDxgiFrameCommitmentsV3,
+    source_transition_identity_sha256: &str,
+    after_classification: MtgoOfflineBottomSixInitialClassificationV1,
+    after_required_bottom_count: Option<u8>,
+    after_selected_count: Option<u8>,
+    after_profile_commitment_sha256: &str,
+    after_measurement_commitment_sha256: &str,
+    after_capture: &MtgoDxgiFrameCommitmentsV3,
+    after_transition_identity_sha256: &str,
+) -> Result<String, String> {
+    if planned_postcondition
+        != &(MtgoPlannedPregamePostconditionV3::LondonBottoming {
+            required_bottom_count: 6,
+        })
+    {
+        return Err("only a one-card Keep can use the current bottom-six confirmation".to_owned());
+    }
+    if after_classification != MtgoOfflineBottomSixInitialClassificationV1::Match
+        || after_required_bottom_count != Some(6)
+        || after_selected_count != Some(0)
+        || after_profile_commitment_sha256 != PREGAME_BOTTOM_SIX_INITIAL_PROFILE_COMMITMENT_V3
+    {
+        return Err(
+            "the visible result is not the exact reviewed bottom-six initial state".to_owned(),
+        );
+    }
+    for digest in [
+        action_plan_commitment_sha256,
+        source_transition_identity_sha256,
+        after_profile_commitment_sha256,
+        after_measurement_commitment_sha256,
+        &source_capture.capture_commitment_sha256,
+        &source_capture.canonical_bgra8_sha256,
+        &after_capture.capture_commitment_sha256,
+        &after_capture.canonical_bgra8_sha256,
+        after_transition_identity_sha256,
+    ] {
+        require_lower_sha256_v3(digest, "pregame bottom-six confirmation commitment")?;
+    }
+    validate_pregame_capture_progression_v3(
+        source_capture,
+        source_transition_identity_sha256,
+        after_capture,
+        after_transition_identity_sha256,
+    )?;
+
+    #[derive(Serialize)]
+    struct ConfirmationRecordV3<'a> {
+        action_plan_commitment_sha256: &'a str,
+        source_capture_commitment_sha256: &'a str,
+        source_transition_identity_sha256: &'a str,
+        planned_postcondition: &'a MtgoPlannedPregamePostconditionV3,
+        after_capture_commitment_sha256: &'a str,
+        after_profile_commitment_sha256: &'a str,
+        after_measurement_commitment_sha256: &'a str,
+        after_transition_identity_sha256: &'a str,
+    }
+    canonical_json_commitment_v3(
+        PREGAME_KEEP_BOTTOM_SIX_CONFIRMATION_DOMAIN_V3,
+        &ConfirmationRecordV3 {
+            action_plan_commitment_sha256,
+            source_capture_commitment_sha256: &source_capture.capture_commitment_sha256,
+            source_transition_identity_sha256,
+            planned_postcondition,
+            after_capture_commitment_sha256: &after_capture.capture_commitment_sha256,
+            after_profile_commitment_sha256,
             after_measurement_commitment_sha256,
             after_transition_identity_sha256,
         },
@@ -3214,6 +3453,98 @@ mod tests {
             MtgoOfflineFirstMainClassificationV1::Match,
             &"3".repeat(64),
             &"4".repeat(64),
+            &stale,
+            &"2".repeat(64),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn one_card_keep_confirmation_requires_exact_new_bottom_six_initial_state() {
+        let pixels = vec![0_u8; 1_550 * 925 * 4];
+        let source = capture_commitments_for_pixels_v3(&pixels, 'a', 100);
+        let mut after = source.clone();
+        after.capture_commitment_sha256 = "e".repeat(64);
+        after.canonical_bgra8_sha256 = "f".repeat(64);
+        after.captured_at_unix_millis = 101;
+        let bottom_six = MtgoPlannedPregamePostconditionV3::LondonBottoming {
+            required_bottom_count: 6,
+        };
+        let confirmed = validate_keep_bottom_six_postcondition_parts_v3(
+            &"1".repeat(64),
+            &bottom_six,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineBottomSixInitialClassificationV1::Match,
+            Some(6),
+            Some(0),
+            PREGAME_BOTTOM_SIX_INITIAL_PROFILE_COMMITMENT_V3,
+            &"3".repeat(64),
+            &after,
+            &"2".repeat(64),
+        )
+        .unwrap();
+        assert_eq!(confirmed.len(), 64);
+
+        for (required, selected) in [(Some(5), Some(0)), (Some(6), Some(1))] {
+            assert!(validate_keep_bottom_six_postcondition_parts_v3(
+                &"1".repeat(64),
+                &bottom_six,
+                &source,
+                &"2".repeat(64),
+                MtgoOfflineBottomSixInitialClassificationV1::Match,
+                required,
+                selected,
+                PREGAME_BOTTOM_SIX_INITIAL_PROFILE_COMMITMENT_V3,
+                &"3".repeat(64),
+                &after,
+                &"2".repeat(64),
+            )
+            .is_err());
+        }
+        assert!(validate_keep_bottom_six_postcondition_parts_v3(
+            &"1".repeat(64),
+            &MtgoPlannedPregamePostconditionV3::LondonBottoming {
+                required_bottom_count: 5,
+            },
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineBottomSixInitialClassificationV1::Match,
+            Some(6),
+            Some(0),
+            PREGAME_BOTTOM_SIX_INITIAL_PROFILE_COMMITMENT_V3,
+            &"3".repeat(64),
+            &after,
+            &"2".repeat(64),
+        )
+        .is_err());
+        assert!(validate_keep_bottom_six_postcondition_parts_v3(
+            &"1".repeat(64),
+            &bottom_six,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineBottomSixInitialClassificationV1::NoMatch,
+            None,
+            None,
+            PREGAME_BOTTOM_SIX_INITIAL_PROFILE_COMMITMENT_V3,
+            &"3".repeat(64),
+            &after,
+            &"2".repeat(64),
+        )
+        .is_err());
+
+        let mut stale = after.clone();
+        stale.captured_at_unix_millis = 100;
+        assert!(validate_keep_bottom_six_postcondition_parts_v3(
+            &"1".repeat(64),
+            &bottom_six,
+            &source,
+            &"2".repeat(64),
+            MtgoOfflineBottomSixInitialClassificationV1::Match,
+            Some(6),
+            Some(0),
+            PREGAME_BOTTOM_SIX_INITIAL_PROFILE_COMMITMENT_V3,
+            &"3".repeat(64),
             &stale,
             &"2".repeat(64),
         )

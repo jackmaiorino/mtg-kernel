@@ -1,7 +1,9 @@
 use crate::probe::{
+    confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
     prepare_pregame_actuation_v3, MtgoPlannedPregamePostconditionV3,
-    OpaqueMtgoConfirmedKeepToFirstMainTransitionV3, OpaqueMtgoConfirmedMulliganTransitionV3,
+    OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, OpaqueMtgoConfirmedKeepToFirstMainTransitionV3,
+    OpaqueMtgoConfirmedMulliganTransitionV3, OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
     OpaqueMtgoDxgiFirstMainMeasurementV3, OpaqueMtgoDxgiMulliganMeasurementV3,
     OpaqueMtgoPregameActionPlanV3, PreparedPregameActuationV3,
 };
@@ -267,6 +269,25 @@ pub fn confirm_pending_pregame_mulligan_v3(
             halt_gate_v3()?;
             Err(format!(
                 "pregame Mulligan postcondition failed and the input gate is halted: {error}"
+            ))
+        }
+    }
+}
+
+pub fn confirm_pending_pregame_keep_to_bottom_six_v3(
+    pending: OpaqueMtgoPendingPregameInputV3,
+    after: OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
+) -> Result<OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, String> {
+    require_matching_pending_v3(&pending.input_receipt_sha256)?;
+    match confirm_pregame_keep_to_bottom_six_transition_v3(pending.plan, after) {
+        Ok(confirmed) => {
+            release_confirmed_pending_v3(&pending.input_receipt_sha256)?;
+            Ok(confirmed)
+        }
+        Err(error) => {
+            halt_gate_v3()?;
+            Err(format!(
+                "pregame Keep-to-bottom-six postcondition failed and the input gate is halted: {error}"
             ))
         }
     }
