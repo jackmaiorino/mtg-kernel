@@ -244,6 +244,8 @@ The fixed no-cost deck `mtgo-solitaire-fixed-basics-v1` narrows that universe to
 
 `classify_untrusted_offline_mulligan_visible_card_identities_v1` composes the current v2 mulligan-ladder prompt gate with the same fixed-deck template profile. It evaluates the seven visible card-art regions at every prospective keep size and withholds all labels unless the prompt has exactly one match and every card identity passes. The retained corpus `fixtures/offline_mulligan_visible_card_identity_corpus_20260810_v1.json` covers all seven prospective keep sizes in two fixed-deck Solitaire games. All 14 prompts and all 98 visible card positions matched. This is narrow one-layout wiring evidence for two known prints, not an accuracy estimate or competitive-play evidence.
 
+`fixtures/offline_kernel_basics_opening_hand_coverage_20260810_v1.json` records the first opening hand from the no-cost 30 Forest plus 30 Island deck `mtgo-solitaire-kernel-basics-v1`. Four exact DSK print templates identify all seven visible cards, and every exact visible name resolves to a fully supported kernel deck-card definition. Three templates were calibrated on this same frame, so the record proves complete wiring coverage only. It is not a heldout identity result and creates no object binding, observation, model decision, or input authority.
+
 ```powershell
 cargo run --bin classify_mtgo_offline_mulligan_visible_card_identities_v1 -- `
   C:\absolute\artifact-directory `
