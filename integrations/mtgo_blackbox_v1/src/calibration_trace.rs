@@ -6,9 +6,12 @@ use std::collections::HashSet;
 
 pub const MTGO_PREGAME_CALIBRATION_TRACE_SCHEMA_V1: u32 = 1;
 pub const MTGO_GAMEPLAY_CALIBRATION_TRACE_SCHEMA_V1: u32 = 1;
+pub const MTGO_VISIBLE_OBJECT_ACTION_CALIBRATION_TRACE_SCHEMA_V1: u32 = 1;
 
 const TRACE_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-pregame-calibration-trace-v1";
 const GAMEPLAY_TRACE_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-gameplay-calibration-trace-v1";
+const VISIBLE_OBJECT_ACTION_TRACE_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-object-action-calibration-trace-v1";
 const MAX_CLIENT_DIMENSION_V1: u32 = 16_384;
 
 #[derive(Clone, Copy)]
@@ -33,6 +36,14 @@ const GAMEPLAY_FRAME_ERROR_CODES_V1: MtgoCalibrationFrameErrorCodesV1 =
         pixel_hash_invalid: "gameplay_trace_frame_hash_invalid",
         client_size_invalid: "gameplay_trace_client_size_invalid",
         preview_claims_authority: "gameplay_trace_preview_claims_authority",
+    };
+
+const VISIBLE_OBJECT_ACTION_FRAME_ERROR_CODES_V1: MtgoCalibrationFrameErrorCodesV1 =
+    MtgoCalibrationFrameErrorCodesV1 {
+        manifest_hash_invalid: "visible_object_action_trace_manifest_hash_invalid",
+        pixel_hash_invalid: "visible_object_action_trace_frame_hash_invalid",
+        client_size_invalid: "visible_object_action_trace_client_size_invalid",
+        preview_claims_authority: "visible_object_action_trace_preview_claims_authority",
     };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +140,10 @@ pub struct CheckedUntrustedMtgoPregameCalibrationV1 {
 pub enum MtgoGameplayVisibleChangeV1 {
     PromptChanged,
     PhaseBarChanged,
+    PlayerCountsChanged,
+    BattlefieldChanged,
+    HandChanged,
+    VisibleGameLogChanged,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +182,57 @@ pub struct CheckedUntrustedMtgoGameplayCalibrationV1 {
     record: MtgoGameplayCalibrationTraceV1,
     semantic: ActionSemanticV1,
     transition_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action_kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MtgoVisibleObjectCalibrationActionV1 {
+    PlayLand {
+        actor: PlayerSeatV1,
+        source_adapter_object_id: String,
+        visible_card_name: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleObjectActionCalibrationTraceV1 {
+    pub schema_version: u32,
+    pub trace_id: String,
+    pub before_frame: MtgoCalibrationFrameReferenceV1,
+    pub action: MtgoVisibleObjectCalibrationActionV1,
+    pub action_control_before: MtgoVisibleRegionCommitmentV1,
+    pub after_frame: MtgoCalibrationFrameReferenceV1,
+    pub visible_postconditions: Vec<MtgoGameplayVisibleRegionTransitionV1>,
+}
+
+/// Structurally checked calibration for one visible object action.
+///
+/// V1 accepts only a local-seat PlayLand label with an adapter-local source
+/// object. It does not create `ActionSemanticV1::PlayLand` because the trace
+/// has no complete observation or exact `CardStableRefV1` binding. It has no
+/// region, pixel, evidence, policy, or input accessor.
+pub struct CheckedUntrustedMtgoVisibleObjectActionCalibrationV1 {
+    record: MtgoVisibleObjectActionCalibrationTraceV1,
+    transition_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoVisibleObjectActionCalibrationV1 {
+    pub fn action(&self) -> &MtgoVisibleObjectCalibrationActionV1 {
+        &self.record.action
+    }
+
+    pub fn before_frame_sha256(&self) -> &str {
+        &self.record.before_frame.frame_sha256
+    }
+
+    pub fn after_frame_sha256(&self) -> &str {
+        &self.record.after_frame.frame_sha256
+    }
+
+    pub fn transition_commitment_sha256(&self) -> &str {
+        &self.transition_commitment_sha256
+    }
 }
 
 impl CheckedUntrustedMtgoGameplayCalibrationV1 {
@@ -453,6 +519,116 @@ pub fn validate_gameplay_calibration_trace_v1(
     })
 }
 
+pub fn validate_visible_object_action_calibration_trace_v1(
+    record: MtgoVisibleObjectActionCalibrationTraceV1,
+) -> Result<CheckedUntrustedMtgoVisibleObjectActionCalibrationV1, MtgoContractErrorV1> {
+    if record.schema_version != MTGO_VISIBLE_OBJECT_ACTION_CALIBRATION_TRACE_SCHEMA_V1 {
+        return Err(MtgoContractErrorV1::new(
+            "visible_object_action_trace_schema_mismatch",
+            record.schema_version.to_string(),
+        ));
+    }
+    validate_trace_id_v1(&record.trace_id, "visible_object_action_trace_id_invalid")?;
+    validate_visible_object_action_frame_pair_v1(&record.before_frame, &record.after_frame)?;
+
+    match &record.action {
+        MtgoVisibleObjectCalibrationActionV1::PlayLand {
+            actor: PlayerSeatV1::P0,
+            source_adapter_object_id,
+            visible_card_name,
+        } => {
+            validate_adapter_object_id_v1(source_adapter_object_id)?;
+            validate_visible_card_name_v1(visible_card_name)?;
+        }
+        _ => {
+            return Err(MtgoContractErrorV1::new(
+                "visible_object_action_trace_action_unsupported",
+                "v1 accepts only PlayLand by the local P0 seat",
+            ));
+        }
+    }
+
+    validate_rect_v1(
+        &record.action_control_before.rect_client_px,
+        &record.before_frame.client_size_px,
+        "visible_object_action_trace_action_control_invalid",
+    )?;
+    require_sha256_v1(
+        &record.action_control_before.bgra8_sha256,
+        "visible_object_action_trace_action_control_hash_invalid",
+    )?;
+
+    if !(5..=8).contains(&record.visible_postconditions.len()) {
+        return Err(MtgoContractErrorV1::new(
+            "visible_object_action_trace_postcondition_count_invalid",
+            record.visible_postconditions.len().to_string(),
+        ));
+    }
+    let mut changes = HashSet::new();
+    let mut rectangles = HashSet::new();
+    for postcondition in &record.visible_postconditions {
+        if !changes.insert(postcondition.change) {
+            return Err(MtgoContractErrorV1::new(
+                "visible_object_action_trace_duplicate_visible_change",
+                format!("{:?}", postcondition.change),
+            ));
+        }
+        let rect = &postcondition.rect_client_px;
+        validate_rect_v1(
+            rect,
+            &record.before_frame.client_size_px,
+            "visible_object_action_trace_postcondition_rect_invalid",
+        )?;
+        if !rectangles.insert((rect.x, rect.y, rect.width, rect.height)) {
+            return Err(MtgoContractErrorV1::new(
+                "visible_object_action_trace_duplicate_postcondition_rect",
+                format!("{},{},{},{}", rect.x, rect.y, rect.width, rect.height),
+            ));
+        }
+        require_sha256_v1(
+            &postcondition.before_bgra8_sha256,
+            "visible_object_action_trace_postcondition_hash_invalid",
+        )?;
+        require_sha256_v1(
+            &postcondition.after_bgra8_sha256,
+            "visible_object_action_trace_postcondition_hash_invalid",
+        )?;
+        if postcondition.before_bgra8_sha256 == postcondition.after_bgra8_sha256 {
+            return Err(MtgoContractErrorV1::new(
+                "visible_object_action_trace_postcondition_unchanged",
+                format!("{:?}", postcondition.change),
+            ));
+        }
+    }
+    for required in [
+        MtgoGameplayVisibleChangeV1::PromptChanged,
+        MtgoGameplayVisibleChangeV1::PlayerCountsChanged,
+        MtgoGameplayVisibleChangeV1::BattlefieldChanged,
+        MtgoGameplayVisibleChangeV1::HandChanged,
+        MtgoGameplayVisibleChangeV1::VisibleGameLogChanged,
+    ] {
+        if !changes.contains(&required) {
+            return Err(MtgoContractErrorV1::new(
+                "visible_object_action_trace_required_postcondition_missing",
+                format!("{:?}", required),
+            ));
+        }
+    }
+
+    let encoded = serde_json::to_vec(&record).map_err(|error| {
+        MtgoContractErrorV1::new(
+            "visible_object_action_trace_serialization_failed",
+            error.to_string(),
+        )
+    })?;
+    let transition_commitment_sha256 =
+        transition_commitment_v1(VISIBLE_OBJECT_ACTION_TRACE_COMMITMENT_DOMAIN_V1, &encoded);
+    Ok(CheckedUntrustedMtgoVisibleObjectActionCalibrationV1 {
+        record,
+        transition_commitment_sha256,
+    })
+}
+
 fn validate_frame_reference_v1(
     frame: &MtgoCalibrationFrameReferenceV1,
     error_codes: MtgoCalibrationFrameErrorCodesV1,
@@ -508,6 +684,63 @@ fn validate_gameplay_frame_pair_v1(
         return Err(MtgoContractErrorV1::new(
             "gameplay_trace_source_did_not_change",
             "before and after commitments must differ",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_visible_object_action_frame_pair_v1(
+    before: &MtgoCalibrationFrameReferenceV1,
+    after: &MtgoCalibrationFrameReferenceV1,
+) -> Result<(), MtgoContractErrorV1> {
+    validate_frame_reference_v1(before, VISIBLE_OBJECT_ACTION_FRAME_ERROR_CODES_V1)?;
+    validate_frame_reference_v1(after, VISIBLE_OBJECT_ACTION_FRAME_ERROR_CODES_V1)?;
+    if before.sequence >= after.sequence {
+        return Err(MtgoContractErrorV1::new(
+            "visible_object_action_trace_frame_order_invalid",
+            format!("before={},after={}", before.sequence, after.sequence),
+        ));
+    }
+    if before.client_size_px != after.client_size_px {
+        return Err(MtgoContractErrorV1::new(
+            "visible_object_action_trace_client_size_changed",
+            "before and after sizes differ",
+        ));
+    }
+    if before.frame_sha256 == after.frame_sha256 || before.manifest_sha256 == after.manifest_sha256
+    {
+        return Err(MtgoContractErrorV1::new(
+            "visible_object_action_trace_source_did_not_change",
+            "before and after commitments must differ",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_adapter_object_id_v1(value: &str) -> Result<(), MtgoContractErrorV1> {
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+    {
+        return Err(MtgoContractErrorV1::new(
+            "visible_object_action_trace_source_object_id_invalid",
+            value,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_visible_card_name_v1(value: &str) -> Result<(), MtgoContractErrorV1> {
+    if value.is_empty()
+        || value.len() > 128
+        || value.trim() != value
+        || value.chars().any(char::is_control)
+    {
+        return Err(MtgoContractErrorV1::new(
+            "visible_object_action_trace_card_name_invalid",
+            value,
         ));
     }
     Ok(())

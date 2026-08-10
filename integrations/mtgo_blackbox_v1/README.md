@@ -76,6 +76,10 @@ This local semantic is separate because the current kernel `ActionSemanticV1` do
 
 The checked gameplay trace is still not a validated decision. It lacks a complete `ObservationV5`, complete ordered legal-action set, object bindings, trusted pixels, and measured semantic recognition. In particular, the MTGO Combat phase shortcut may correspond to more than one internal priority transition in some states. The current trace is a supervised alignment candidate, not proof of universal one-to-one action equivalence.
 
+`MtgoVisibleObjectActionCalibrationTraceV1` records the next supervised slice: a visible Island moved from hand to battlefield after one left-click. The trace requires changes in the prompt, player counts, battlefield, hand, and visible game log. It keeps the source as an adapter-local object ID plus visible card name and does not mint a kernel `CardStableRefV1`. A future complete observation must create that exact binding, and the battlefield object must be a new zone-change incarnation.
+
+The live input check also demonstrated that Windows input geometry must be Per-Monitor V2 DPI-aware before any coordinate is interpreted. A future actuator must additionally bind the physical point to the expected foreground MTGO HWND and PID with `WindowFromPoint` immediately before input. The calibration record contains no input coordinate or callable input path.
+
 ## Reviewed capture contract
 
 The Rust crate now defines an untrusted structural contract for the later production capture backend without implementing that backend. A calibration profile binds the exact bytes and decoded pixels of one manually reviewed preview, exact client identity, DPI, client size, monitor-output identity, canonical BGRA8 format, and stable pixel anchors. A separate review record must bind the profile and source preview and explicitly confirm that the preview is client-only, unobscured, cursor-free, identity-matched, and anchor-reviewed.

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "trace_id": "solitaire_play_land_20260809_2041",
+  "before_frame": {
+    "sequence": 1,
+    "manifest_sha256": "c98ad0aba12fcb36c98f0c6381984a7dc798f91d353a58c98619bcc1929060d7",
+    "frame_sha256": "94100954b2c23c14193ebd00641043bdb950c6955504b72ff65efe1cd74efd50",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "capture_role": "acting_player_solitaire",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "action": {
+    "action_kind": "play_land",
+    "actor": "p0",
+    "source_adapter_object_id": "before-frame:hand-slot-0",
+    "visible_card_name": "Island"
+  },
+  "action_control_before": {
+    "rect_client_px": { "x": 326, "y": 741, "width": 112, "height": 86 },
+    "bgra8_sha256": "9008220332f201fb52d75d74f28765abc1af01704ef7f2401b7334957c99e0ba"
+  },
+  "after_frame": {
+    "sequence": 2,
+    "manifest_sha256": "6c4edf9b7ad8340c1c83a5197db522fcab3eb6db6c1ca4b72c4a0c2922252126",
+    "frame_sha256": "b5751cad13425b856a8c5d9394588ade9eb35bd3799aed740e58982929843453",
+    "client_size_px": { "width": 1550, "height": 925 },
+    "artifact_kind": "mtgo_visible_solitaire_gameplay_calibration_preview_v1",
+    "capture_role": "acting_player_solitaire",
+    "status": "pending_visual_review",
+    "safe_for_semantic_evidence": false,
+    "safe_for_ocr": false,
+    "safe_for_policy_scoring": false,
+    "safe_for_input": false
+  },
+  "visible_postconditions": [
+    {
+      "change": "prompt_changed",
+      "rect_client_px": { "x": 10, "y": 32, "width": 200, "height": 165 },
+      "before_bgra8_sha256": "4134212a0ccd6c2b1331dc69cc7cf77f50c78d257214a3afc5f235125d545125",
+      "after_bgra8_sha256": "00739ee5c8f8c6ebcd2796484892cbff943e1a384bf75f2b2f9b12f1f62cac5d"
+    },
+    {
+      "change": "player_counts_changed",
+      "rect_client_px": { "x": 110, "y": 203, "width": 78, "height": 38 },
+      "before_bgra8_sha256": "ecd351ebbd362499e66afcf4465adb683863a8a3569329a7ee4abc15ff8ff253",
+      "after_bgra8_sha256": "81b3ed76cf107cf9031ccbe2414702191cf6d71bd11b835eb3d34d4375d67d25"
+    },
+    {
+      "change": "battlefield_changed",
+      "rect_client_px": { "x": 310, "y": 378, "width": 850, "height": 312 },
+      "before_bgra8_sha256": "3219a9a3b9b094c0000891dc79a4d90290b1ac7e0e5227010cd4355d1040f200",
+      "after_bgra8_sha256": "7c33f63530e356d6015f685f7a1bffcd0d4b7a78f4807a7b6249f5837b48f6d2"
+    },
+    {
+      "change": "hand_changed",
+      "rect_client_px": { "x": 310, "y": 729, "width": 850, "height": 190 },
+      "before_bgra8_sha256": "053cf3efd44f2380e803828b587f344667127b0fbf2b3a0ae2a7cf0f40689ce2",
+      "after_bgra8_sha256": "7596b1fb86ecb05aa271e7400884c538d58897c764055a5cc6b33933a502ee06"
+    },
+    {
+      "change": "visible_game_log_changed",
+      "rect_client_px": { "x": 1165, "y": 105, "width": 370, "height": 180 },
+      "before_bgra8_sha256": "6211d552004eb434ddfbb52c238c0f978d7329a3adf144ea0797701dab1a31b9",
+      "after_bgra8_sha256": "5ab789d46dea0dbfbe4d269c55602ebee7fc0ca01798075b0df3414ff97d938a"
+    }
+  ]
+}

@@ -70,6 +70,21 @@ The digest-only fixture is `fixtures/solitaire_pass_to_combat_transition_v1.json
 
 This is an untrusted semantic-alignment candidate. MTGO's Combat control is a phase shortcut and may represent multiple internal priority transitions in a state with attackers, triggers, responses, or another player. The trace proves only that this empty-board Solitaire click produced the recorded visible transition.
 
+## Supervised visible-object PlayLand calibration
+
+A single visible Island click was bracketed by a strict preview pair:
+
+| State | Capture | Frame SHA-256 |
+| --- | --- | --- |
+| Second main, Island in hand | `D:\mtgo-solitaire-after-playland-strict-20260809-2036` | `94100954B2C23C14193EBD00641043BDB950C6955504B72FF65EFE1CD74EFD50` |
+| Second main, Island on battlefield | `D:\mtgo-solitaire-after-playland-strict-20260809-2041` | `B5751CAD13425B856A8C5D9394588ADE9EB35BD3799AED740E58982929843453` |
+
+The hand count changed from eight to seven, one Island appeared on the battlefield, the prompt stopped offering land play, and the visible log added `UnbuckledPie plays Island.` The phase remained second main.
+
+The digest-only fixture is `fixtures/solitaire_play_land_transition_v1.json`. It binds a frame-local adapter object ID and the visible card name. It deliberately does not construct `ActionSemanticV1::PlayLand`: the complete observation and exact `CardStableRefV1` binding do not exist yet, and the battlefield incarnation must receive a new zone-change count.
+
+The input calibration exposed one concrete Windows requirement. The input process must enter Per-Monitor V2 DPI awareness before interpreting client coordinates. At 125 percent display scaling, a DPI-unaware helper mapped the intended visible card point below the duel window and caused only a focus change. The successful click used physical desktop coordinates, required the expected MTGO HWND and PID to be foreground, required `WindowFromPoint` to resolve to that same HWND immediately before input, and then issued one left-click as described in the official MTGO gameplay guide.
+
 ## Visible layout observations
 
 - The current decision is explicit in the upper-left prompt: keep seven cards or mulligan to six.
