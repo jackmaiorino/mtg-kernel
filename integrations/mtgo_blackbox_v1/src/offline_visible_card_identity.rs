@@ -1318,6 +1318,39 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 }
 
 #[cfg(test)]
+pub(crate) fn mock_complete_mulligan_identity_candidate_v1(
+    names: &[&str],
+    prospective_keep_size: u8,
+) -> CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1 {
+    assert_eq!(names.len(), 7);
+    let identities = names
+        .iter()
+        .enumerate()
+        .map(|(ordinal, name)| MtgoOfflineVisibleCardIdentityV1 {
+            ordinal: u8::try_from(ordinal).unwrap(),
+            visible_card_name: (*name).to_owned(),
+            winning_template_id: format!("mock-template-{ordinal}"),
+            mean_absolute_difference_milli: 1_000,
+            runner_up_distinct_name: "Mock Runner Up".to_owned(),
+            runner_up_mean_absolute_difference_milli: 50_000,
+            distinct_name_margin_milli: 49_000,
+        })
+        .collect();
+    CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1 {
+        classification: MtgoOfflineVisibleCardIdentityClassificationV1::Match,
+        source_manifest_sha256: "1".repeat(64),
+        source_frame_sha256: "2".repeat(64),
+        source_ladder_commitment_sha256: "3".repeat(64),
+        profile_commitment_sha256: "4".repeat(64),
+        prospective_keep_size: Some(prospective_keep_size),
+        visible_hand_count: Some(7),
+        matched_identity_count: 7,
+        identities,
+        candidate_commitment_sha256: "5".repeat(64),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
