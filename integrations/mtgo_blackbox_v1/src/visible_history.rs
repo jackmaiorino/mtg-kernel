@@ -53,11 +53,13 @@ enum MtgoVisibleHistoryEventV1 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
 enum MtgoVisibleHistorySourceKindV1 {
-    PregameCalibration,
-    GameplayCalibration,
-    VisibleObjectCalibration,
+    #[serde(rename = "pregame_calibration")]
+    Pregame,
+    #[serde(rename = "gameplay_calibration")]
+    Gameplay,
+    #[serde(rename = "visible_object_calibration")]
+    VisibleObject,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -263,7 +265,7 @@ impl<'a> MtgoCheckedUntrustedCalibrationTransitionRefV1<'a> {
                     }
                 };
                 Ok(CanonicalTransitionRefV1 {
-                    source_kind: MtgoVisibleHistorySourceKindV1::PregameCalibration,
+                    source_kind: MtgoVisibleHistorySourceKindV1::Pregame,
                     transition_commitment_sha256: source.transition_commitment_sha256(),
                     before_frame_sha256: source.before_frame_sha256(),
                     after_frame_sha256: source.after_frame_sha256(),
@@ -278,7 +280,7 @@ impl<'a> MtgoCheckedUntrustedCalibrationTransitionRefV1<'a> {
                     ));
                 };
                 Ok(CanonicalTransitionRefV1 {
-                    source_kind: MtgoVisibleHistorySourceKindV1::GameplayCalibration,
+                    source_kind: MtgoVisibleHistorySourceKindV1::Gameplay,
                     transition_commitment_sha256: source.transition_commitment_sha256(),
                     before_frame_sha256: source.before_frame_sha256(),
                     after_frame_sha256: source.after_frame_sha256(),
@@ -311,7 +313,7 @@ impl<'a> MtgoCheckedUntrustedCalibrationTransitionRefV1<'a> {
                     },
                 };
                 Ok(CanonicalTransitionRefV1 {
-                    source_kind: MtgoVisibleHistorySourceKindV1::VisibleObjectCalibration,
+                    source_kind: MtgoVisibleHistorySourceKindV1::VisibleObject,
                     transition_commitment_sha256: source.transition_commitment_sha256(),
                     before_frame_sha256: source.before_frame_sha256(),
                     after_frame_sha256: source.after_frame_sha256(),
