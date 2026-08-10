@@ -27,7 +27,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$ExpectedWindowTitle = 'Magic: The Gathering Online',
 
-    [ValidateSet('MainClient', 'ForegroundSpectatorGame', 'ForegroundSolitaireGame')]
+    [ValidateSet('MainClient', 'ForegroundOwnedDialog', 'ForegroundSpectatorGame', 'ForegroundSolitaireGame')]
     [string]$TargetWindowMode = 'MainClient',
 
     [ValidateSet('Standard', 'Pioneer', 'Modern', 'Legacy', 'Vintage', 'Pauper', 'Freeform')]
@@ -552,6 +552,27 @@ function Get-MtgoPreviewSnapshot {
         }
         [IntPtr]$windowHandle = $mainClientWindows[0]
     }
+    elseif ($TargetWindowMode -ceq 'ForegroundOwnedDialog') {
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedGameFormat)) {
+            throw 'MTGO_PREVIEW_DIALOG_FORBIDS_EXPECTED_GAME_FORMAT'
+        }
+        if ($windows.Count -lt 2) {
+            throw "MTGO_PREVIEW_DIALOG_REQUIRES_MAIN_AND_DIALOG_WINDOWS:$($windows.Count)"
+        }
+        [IntPtr]$windowHandle = [MtgoVisiblePreviewNativeV1]::GetForegroundWindow()
+        if ($windowHandle -eq [IntPtr]::Zero -or
+            [MtgoVisiblePreviewNativeV1]::ProcessIdForWindow($windowHandle) -ne $mtgoProcessId) {
+            throw 'MTGO_PREVIEW_FOREGROUND_DIALOG_NOT_OWNED_BY_MTGO'
+        }
+        if ($windowHandle -eq [IntPtr]$mainClientWindows[0]) {
+            throw 'MTGO_PREVIEW_FOREGROUND_DIALOG_IS_MAIN_CLIENT'
+        }
+        if (-not ($windows -contains $windowHandle)) {
+            throw 'MTGO_PREVIEW_FOREGROUND_DIALOG_NOT_IN_VISIBLE_WINDOW_SET'
+        }
+        $captureRole = 'navigation_dialog'
+        $expectedWindowTitleRule = 'nonempty visible foreground top-level window owned by the verified MTGO process'
+    }
     else {
         if ([string]::IsNullOrWhiteSpace($ExpectedGameFormat)) {
             throw 'MTGO_PREVIEW_EXPECTED_GAME_FORMAT_REQUIRED'
@@ -595,6 +616,11 @@ function Get-MtgoPreviewSnapshot {
     if ($TargetWindowMode -ceq 'MainClient') {
         if ($windowTitle -cne $ExpectedWindowTitle) {
             throw "MTGO_PREVIEW_WINDOW_TITLE_MISMATCH:$windowTitle"
+        }
+    }
+    elseif ($TargetWindowMode -ceq 'ForegroundOwnedDialog') {
+        if ([string]::IsNullOrWhiteSpace($windowTitle) -or $windowTitle.Length -gt 256) {
+            throw 'MTGO_PREVIEW_DIALOG_WINDOW_TITLE_INVALID'
         }
     }
     else {
@@ -788,6 +814,7 @@ try {
     $capturedAtUtc = [DateTime]::UtcNow.ToString('O')
 
     $artifactKind = switch ($TargetWindowMode) {
+        'ForegroundOwnedDialog' { 'mtgo_visible_navigation_dialog_inspection_preview_v1' }
         'ForegroundSpectatorGame' { 'mtgo_visible_spectator_gameplay_calibration_preview_v1' }
         'ForegroundSolitaireGame' { 'mtgo_visible_solitaire_gameplay_calibration_preview_v1' }
         default { 'mtgo_visible_desktop_calibration_preview_v1' }

@@ -116,3 +116,23 @@ fn solitaire_preview_has_a_distinct_acting_player_scope() {
         );
     }
 }
+
+#[test]
+fn dialog_preview_is_navigation_only_and_mtgo_owned() {
+    for required in [
+        "ForegroundOwnedDialog",
+        "navigation_dialog",
+        "MTGO_PREVIEW_DIALOG_FORBIDS_EXPECTED_GAME_FORMAT",
+        "MTGO_PREVIEW_DIALOG_REQUIRES_MAIN_AND_DIALOG_WINDOWS",
+        "MTGO_PREVIEW_FOREGROUND_DIALOG_NOT_OWNED_BY_MTGO",
+        "MTGO_PREVIEW_FOREGROUND_DIALOG_IS_MAIN_CLIENT",
+        "MTGO_PREVIEW_FOREGROUND_DIALOG_NOT_IN_VISIBLE_WINDOW_SET",
+        "MTGO_PREVIEW_DIALOG_WINDOW_TITLE_INVALID",
+        "mtgo_visible_navigation_dialog_inspection_preview_v1",
+    ] {
+        assert!(
+            PREVIEW_SCRIPT.contains(required),
+            "missing navigation-dialog preview guard: {required}"
+        );
+    }
+}

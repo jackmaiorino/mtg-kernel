@@ -22,6 +22,8 @@ Every output is marked `pending_visual_review` and explicitly unsafe for semanti
 
 The default `MainClient` mode retains the original single-window requirement. `ForegroundSpectatorGame` mode is only for a manually selected spectated 1-on-1 game. `ForegroundSolitaireGame` is only for a one-player game created through Custom Match. Both gameplay modes require the main client to remain visible, select only the foreground top-level window owned by the same verified MTGO process, pin the expected format, validate the mode-specific title structure, commit the complete visible MTGO top-level window set, and repeat those checks after capture. MTGO sometimes visibly renders numeric match and game IDs in its title bar without including them in `GetWindowText`; that case is recorded as a less specific title identity rather than pretending the IDs were independently verified. Other MTGO panes may remain visible behind the game, but any window intersecting the game above it still rejects the capture.
 
+`ForegroundOwnedDialog` is a separate navigation-only inspection mode for visible MTGO-owned dialogs such as deck selection and Custom Match. It requires the verified main client plus a distinct foreground root window owned by the same process. It records the exact visible window set and repeats every identity, geometry, focus, cursor, and occlusion check. Its output remains an unsafe inspection preview and cannot be consumed as game evidence.
+
 Example after independently verifying the current identity values and placing MTGO unobscured in the foreground with the cursor outside its client area:
 
 ```powershell
@@ -65,6 +67,8 @@ Example for an already-open Freeform Solitaire game:
 ```
 
 Solitaire-game output uses artifact kind `mtgo_visible_solitaire_gameplay_calibration_preview_v1` and records `capture_role = acting_player_solitaire`. The scope label distinguishes an acting-player layout from a spectator layout, but it grants no OCR, evidence, scoring, or input authority. Any future action path still requires a separately trusted live-frame backend, a fully reconciled current decision, explicit authorization, and visible postcondition confirmation.
+
+The attended navigation helper `scripts/invoke_supervised_mtgo_click_v1.ps1` emits exactly one left-click after checking the exact process ID and start time, executable and signer identity, DPI, title, client size, foreground ownership, client-to-screen transform, visible hit-test root, and cursor position. It has no keyboard or text-input path. It does not identify the semantic control at the point, does not verify any postcondition, and is explicitly unsafe for autonomous input, purchases, or queue entry. Every use must be bracketed by manually inspected visible previews and must stop on an unexpected state.
 
 ## Supervised pregame transition
 

@@ -22,7 +22,21 @@ The final signer-pinned runtime sample had successful Authenticode checks before
 
 The candidate now emits a v2 schema that separates main-client navigation, acting-player Solitaire, and spectator capture roles. Each game role binds an exact visible format and a role-specific title structure. The adapter accepts both the legacy main-client-only v1 artifact and the new v2 role tuples, while preventing a spectator frame from being relabeled as an acting-player frame.
 
-The running main client was deliberately presented to the probe as `solitaire_game` with `Freeform`. The title gate rejected it before frame acquisition and persisted no artifact. A separate main-client v2 attempt reached Desktop Duplication but the static lobby produced no new desktop presentation within the timeout, so it also persisted nothing. No v2 live-success claim is made from that attempt; the earlier signer-pinned v1 frame remains the live positive sample.
+The running main client was deliberately presented to the probe as `solitaire_game` with `Freeform`. The title gate rejected it before frame acquisition and persisted no artifact. A separate main-client v2 attempt reached Desktop Duplication but the static lobby produced no new desktop presentation within the timeout, so it also persisted nothing.
+
+A no-cost one-player Custom Match was then created with the existing 280-basic-land deck, Only Buddies, and No Watchers. The strict v2 probe captured the visible Freeform duel at its opening mulligan decision. The adapter independently decoded and compared the PNG to the canonical BGRA bytes and returned:
+
+- role: `ActingPlayerSolitaire`;
+- artifact: `C:\Users\Jack\AppData\Local\Temp\mtgo-dxgi-solitaire-v2-20260810-005340-041`;
+- canonical BGRA8 SHA-256: `72005a726e339c1c803ca7c4604d3b182629e65a792de235ae36e10bfa68162d`;
+- PNG SHA-256: `16bdb4dd6a0fb2e724adcd7962486fa730ce939da9fd75a9731bc7f703877b34`;
+- manifest SHA-256: `af62f6392454c74a81ada7ea9bc0f0111164bd95b84d114f03e7d416fc27aee3`;
+- output identity SHA-256: `89c86876d12827c79ef4d746b9cd88c8decaf3e4fae33b41f6ab57c94bf222a6`;
+- client crop: 1550 by 925;
+- status: `checked_untrusted_not_admitted`;
+- all semantic-evidence, OCR, policy-scoring, and input safety flags: false.
+
+Manual inspection confirmed the acting-player layout, opening seven-card hand, mulligan prompt, local totals, phase bar, battlefield, and visible game log. No mulligan, keep, card, phase, purchase, queue, League, or Challenge action was sent for this capture.
 
 ## Nonclaims
 
