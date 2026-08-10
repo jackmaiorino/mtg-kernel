@@ -259,6 +259,8 @@ The fixed no-cost deck `mtgo-solitaire-fixed-basics-v1` narrows that universe to
 
 `start_checked_untrusted_first_main_hand_object_ledger_v1` is the narrow bridge from a complete eight-card first-main kernel-coverage result into the existing incarnation ledger. It requires exact deck-card correspondence at every ordinal and binds the source coverage commitment into the ledger commitment. Synthetic identifiers are deterministic hand-slot labels, and the ledger remains checked-untrusted with no public object-binding, observation, scoring, or input surface.
 
+`derive_checked_untrusted_first_main_legal_actions_v1` closes the next supported-deck bookkeeping gap. It accepts only the unchanged, source-bound local P0 ledger for eight exact Forest or Island hand objects. It produces the kernel surface order internally: eight distinct `PlayLand` semantics in arena order followed by `Pass`. The opaque result exposes counts and commitments only. It does not expose the stable references or actions, and it remains unsafe for `ObservationV5`, policy scoring, or input because Solitaire still cannot supply a complete two-player observation.
+
 ```powershell
 cargo run --bin classify_mtgo_offline_mulligan_visible_card_identities_v1 -- `
   C:\absolute\artifact-directory `

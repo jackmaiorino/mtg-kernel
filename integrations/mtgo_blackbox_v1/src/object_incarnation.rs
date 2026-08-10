@@ -141,7 +141,6 @@ impl CheckedUntrustedMtgoVisibleObjectLedgerV1 {
         false
     }
 
-    #[cfg(test)]
     pub(crate) fn current_object_bindings_v1(&self) -> Vec<crate::MtgoObjectBindingV1> {
         self.objects
             .iter()

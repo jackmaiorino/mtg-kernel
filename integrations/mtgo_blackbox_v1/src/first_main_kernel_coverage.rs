@@ -360,40 +360,42 @@ fn update_hash_part_v1(hasher: &mut Sha256, bytes: &[u8]) {
 }
 
 #[cfg(test)]
+pub(crate) fn complete_island_coverage_for_test_v1(
+) -> CheckedUntrustedMtgoFirstMainKernelCardCoverageV1 {
+    let correspondence = resolve_checked_untrusted_kernel_card_correspondence_v1("Island")
+        .expect("Island must remain a fully supported deck card");
+    let entries = (0..FIRST_MAIN_VISIBLE_HAND_COUNT_V1)
+        .map(|ordinal| MtgoFirstMainKernelCardCoverageEntryV1 {
+            ordinal: u8::try_from(ordinal).unwrap(),
+            visible_card_name: "Island".to_owned(),
+            disposition: MtgoFirstMainKernelCardCoverageDispositionV1::FullySupportedDeckCard,
+            card_db_id: Some(correspondence.card_db_id()),
+            correspondence_commitment_sha256: Some(
+                correspondence.correspondence_commitment_sha256().to_owned(),
+            ),
+        })
+        .collect();
+    CheckedUntrustedMtgoFirstMainKernelCardCoverageV1 {
+        source_identity_candidate_commitment_sha256: "1".repeat(64),
+        source_manifest_sha256: "2".repeat(64),
+        source_frame_sha256: "3".repeat(64),
+        kernel_card_db_hash: KERNEL_CARDDB_HASH,
+        supported_profile_commitment_sha256: correspondence
+            .supported_profile_commitment_sha256()
+            .to_owned(),
+        fully_supported_count: FIRST_MAIN_VISIBLE_HAND_COUNT_V1 as u8,
+        entries,
+        coverage_commitment_sha256: "4".repeat(64),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    fn complete_island_coverage_v1() -> CheckedUntrustedMtgoFirstMainKernelCardCoverageV1 {
-        let correspondence = resolve_checked_untrusted_kernel_card_correspondence_v1("Island")
-            .expect("Island must remain a fully supported deck card");
-        let entries = (0..FIRST_MAIN_VISIBLE_HAND_COUNT_V1)
-            .map(|ordinal| MtgoFirstMainKernelCardCoverageEntryV1 {
-                ordinal: u8::try_from(ordinal).unwrap(),
-                visible_card_name: "Island".to_owned(),
-                disposition: MtgoFirstMainKernelCardCoverageDispositionV1::FullySupportedDeckCard,
-                card_db_id: Some(correspondence.card_db_id()),
-                correspondence_commitment_sha256: Some(
-                    correspondence.correspondence_commitment_sha256().to_owned(),
-                ),
-            })
-            .collect();
-        CheckedUntrustedMtgoFirstMainKernelCardCoverageV1 {
-            source_identity_candidate_commitment_sha256: "1".repeat(64),
-            source_manifest_sha256: "2".repeat(64),
-            source_frame_sha256: "3".repeat(64),
-            kernel_card_db_hash: KERNEL_CARDDB_HASH,
-            supported_profile_commitment_sha256: correspondence
-                .supported_profile_commitment_sha256()
-                .to_owned(),
-            fully_supported_count: FIRST_MAIN_VISIBLE_HAND_COUNT_V1 as u8,
-            entries,
-            coverage_commitment_sha256: "4".repeat(64),
-        }
-    }
-
     #[test]
     fn complete_deck_card_coverage_seeds_a_source_bound_hand_ledger() {
-        let coverage = complete_island_coverage_v1();
+        let coverage = complete_island_coverage_for_test_v1();
         let ledger =
             start_checked_untrusted_first_main_hand_object_ledger_v1(&coverage, PlayerSeatV1::P0)
                 .unwrap();
@@ -431,7 +433,7 @@ mod tests {
 
     #[test]
     fn incomplete_token_or_mismatched_coverage_cannot_seed_a_ledger() {
-        let mut incomplete = complete_island_coverage_v1();
+        let mut incomplete = complete_island_coverage_for_test_v1();
         incomplete.fully_supported_count = 7;
         assert_eq!(
             start_checked_untrusted_first_main_hand_object_ledger_v1(&incomplete, PlayerSeatV1::P0)
@@ -441,7 +443,7 @@ mod tests {
             "first_main_object_seed_coverage_incomplete"
         );
 
-        let mut token = complete_island_coverage_v1();
+        let mut token = complete_island_coverage_for_test_v1();
         token.entries[0].disposition =
             MtgoFirstMainKernelCardCoverageDispositionV1::FullySupportedToken;
         assert_eq!(
@@ -452,7 +454,7 @@ mod tests {
             "first_main_object_seed_not_deck_card"
         );
 
-        let mut mismatch = complete_island_coverage_v1();
+        let mut mismatch = complete_island_coverage_for_test_v1();
         mismatch.entries[0].card_db_id = Some(u16::MAX);
         assert_eq!(
             start_checked_untrusted_first_main_hand_object_ledger_v1(&mismatch, PlayerSeatV1::P0)
