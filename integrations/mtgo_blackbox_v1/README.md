@@ -327,6 +327,18 @@ cargo run --bin check_mtgo_model_deployment_v1 -- `
 
 The command succeeds only after the complete Store walk and emits the exact deployment commitment with `safe_for_live_input` and `permits_match_entry` both false.
 
+An opt-in real-Store regression also sends one deterministic external public decision with ordered Pass and PlayLand actions through the selected checkpoint. It pins both action logits and the value by exact f32 bits while requiring both authority flags to remain false:
+
+```powershell
+$env:CARGO_TARGET_DIR = 'D:\mtgo-model-deployment-target'
+$env:MTGO_NATIVE_STORE_ROOT_V1 = 'D:\mtg-kernel-ladder-pilot-20260725\pool3\primary'
+cargo test --lib `
+  model_deployment::tests::real_provisional_checkpoint_scores_external_public_decision -- `
+  --ignored --exact
+```
+
+This is a kernel-generated external-observation wiring probe. It proves that the exact deployment crosses the scorer seam; it is not evidence that any MTGO pixels have yet been reconstructed into that observation.
+
 ## Current-frame semantic control resolution
 
 The adapter-side half of step 7 is also defined. `MtgoVisibleActionControlSetV1` binds a complete, prompt-reconciled set of enabled controls to the exact decision commitment and newest frame. Every candidate carries an exact legal `ActionSemanticV1`, at least 95 percent confidence, and a distinct current-frame pixel-evidence region. Resolution succeeds only when exactly one visible control matches the model-selected semantic.

@@ -161,12 +161,29 @@ fn error_v1(code: &'static str, detail: &'static str) -> MtgoContractErrorV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        MtgoExternalObservationScorerV1, MtgoExternalScoringRequestV1,
+        MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
+    };
+    use mtg_kernel::rl::ActionSemanticV1;
+    use mtg_kernel::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
+    use serde::Serialize;
+    use sha2::{Digest, Sha256};
 
     fn provisional_deployment_v1() -> MtgoExpectedModelDeploymentV1 {
         serde_json::from_str(include_str!(
             "../fixtures/provisional_promoted2_mtgo_deployment_20260810_v1.json"
         ))
         .expect("checked-in provisional deployment must parse")
+    }
+
+    fn test_commitment_v1<T: Serialize + ?Sized>(domain: &[u8], value: &T) -> String {
+        let encoded = serde_json::to_vec(value).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(domain);
+        hasher.update((encoded.len() as u64).to_le_bytes());
+        hasher.update(encoded);
+        format!("{:x}", hasher.finalize())
     }
 
     #[test]
@@ -199,5 +216,56 @@ mod tests {
             load_mtgo_native_checkpoint_deployment_v1("this-path-must-not-be-read", deployment)
                 .expect_err("invalid expected identity must fail");
         assert_eq!(error.code(), "external_scoring_deployment_hash_invalid");
+    }
+
+    #[test]
+    #[ignore = "requires MTGO_NATIVE_STORE_ROOT_V1 pointing to the exact 2.33 GB native Store"]
+    fn real_provisional_checkpoint_scores_external_public_decision() {
+        let store_root = std::env::var_os("MTGO_NATIVE_STORE_ROOT_V1")
+            .expect("the opt-in real Store test requires MTGO_NATIVE_STORE_ROOT_V1");
+        let deployment = provisional_deployment_v1();
+        let loaded =
+            load_mtgo_native_checkpoint_deployment_v1(store_root, deployment.clone()).unwrap();
+        let (seed, observation, actions) = (1..=128)
+            .find_map(|seed| {
+                let session = RlEpisodeSessionV1::reset_with_limits(7, seed, 128, 16_384);
+                let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+                    return None;
+                };
+                let pass = decision
+                    .legal_actions
+                    .iter()
+                    .find(|action| matches!(action.semantic, ActionSemanticV1::Pass { .. }))?
+                    .semantic
+                    .clone();
+                let land = decision
+                    .legal_actions
+                    .iter()
+                    .find(|action| matches!(action.semantic, ActionSemanticV1::PlayLand { .. }))?
+                    .semantic
+                    .clone();
+                Some((seed, (*decision.observation).clone(), vec![pass, land]))
+            })
+            .expect("a deterministic opening must expose Pass and PlayLand");
+        let request = MtgoExternalScoringRequestV1 {
+            schema_version: MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
+            decision_commitment_sha256: "0".repeat(64),
+            observation_sha256: test_commitment_v1(b"mtgo-scoring-observation-v1", &observation),
+            ordered_actions_sha256: test_commitment_v1(
+                b"mtgo-scoring-ordered-actions-v1",
+                &actions,
+            ),
+            action_count: u32::try_from(actions.len()).unwrap(),
+            deployment_commitment_sha256: model_deployment_commitment_v1(&deployment).unwrap(),
+        };
+        let mut scorer = loaded.scorer_v1().unwrap();
+        let response = scorer
+            .score_observation_v1(&request, &observation, &actions)
+            .unwrap();
+        assert_eq!(seed, 1);
+        assert_eq!(response.logits_f32_bits, [3_245_259_304, 1_067_419_264]);
+        assert_eq!(response.value_f32_bits, 1_041_311_617);
+        assert!(!loaded.safe_for_live_input());
+        assert!(!loaded.permits_match_entry());
     }
 }
