@@ -7,6 +7,7 @@
 
 mod action_resolution;
 mod calibration_trace;
+mod card_correspondence;
 mod capture_contract;
 mod competitive_lifecycle;
 mod contract;
@@ -30,6 +31,7 @@ mod visible_history;
 
 pub use action_resolution::*;
 pub use calibration_trace::*;
+pub use card_correspondence::*;
 pub use capture_contract::*;
 pub use competitive_lifecycle::*;
 pub use contract::*;
