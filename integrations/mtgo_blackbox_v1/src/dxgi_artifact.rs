@@ -61,6 +61,15 @@ impl DxgiArtifactModeV2 {
             Self::SpectatorGame(_) => MtgoDxgiCaptureRoleV2::Spectator,
         }
     }
+
+    fn game_format(&self) -> Option<&str> {
+        match self {
+            Self::MainClient => None,
+            Self::SolitaireGame(format) | Self::DuelGame(format) | Self::SpectatorGame(format) => {
+                Some(format)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -194,9 +203,14 @@ pub struct CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
     canonical_bgra8_sha256: String,
     preview_png_sha256: String,
     output_identity_sha256: String,
+    executable_sha256: String,
+    signer_thumbprint: String,
+    signer_subject_sha256: String,
+    dpi: u32,
     client_size_px: MtgoSizePxV1,
     captured_at_unix_millis: u64,
     capture_role: MtgoDxgiCaptureRoleV2,
+    game_format: Option<String>,
 }
 
 impl CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
@@ -216,6 +230,22 @@ impl CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
         &self.output_identity_sha256
     }
 
+    pub fn executable_sha256(&self) -> &str {
+        &self.executable_sha256
+    }
+
+    pub fn signer_thumbprint(&self) -> &str {
+        &self.signer_thumbprint
+    }
+
+    pub fn signer_subject_sha256(&self) -> &str {
+        &self.signer_subject_sha256
+    }
+
+    pub fn dpi(&self) -> u32 {
+        self.dpi
+    }
+
     pub fn client_size_px(&self) -> &MtgoSizePxV1 {
         &self.client_size_px
     }
@@ -226,6 +256,10 @@ impl CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
 
     pub fn capture_role(&self) -> MtgoDxgiCaptureRoleV2 {
         self.capture_role
+    }
+
+    pub fn game_format(&self) -> Option<&str> {
+        self.game_format.as_deref()
     }
 
     pub fn safe_for_semantic_evidence(&self) -> bool {
@@ -910,14 +944,20 @@ pub fn check_untrusted_dxgi_capture_artifact_v1(
 
     let output_identity_sha256 =
         preview_output_identity_commitment_v1(&manifest.output.device_name, &output_rect)?;
+    let game_format = mode.game_format().map(str::to_owned);
     Ok(CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
         manifest_sha256: sha256_v1(manifest_bytes),
         canonical_bgra8_sha256: sha256_v1(canonical_bgra8),
         preview_png_sha256: sha256_v1(preview_png_bytes),
         output_identity_sha256,
+        executable_sha256: manifest.pre.executable_sha256,
+        signer_thumbprint: manifest.pre.signer_thumbprint,
+        signer_subject_sha256: manifest.pre.signer_subject_sha256,
+        dpi: manifest.pre.dpi,
         client_size_px: client_size,
         captured_at_unix_millis: manifest.captured_at_unix_millis,
         capture_role: mode.role(),
+        game_format,
     })
 }
 
@@ -1465,17 +1505,29 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 pub(crate) fn checked_untrusted_dxgi_artifact_for_test_v1(
     role: MtgoDxgiCaptureRoleV2,
 ) -> CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
+    let game_format = match role {
+        MtgoDxgiCaptureRoleV2::Navigation => None,
+        MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire | MtgoDxgiCaptureRoleV2::ActingPlayerDuel => {
+            Some("Freeform".to_owned())
+        }
+        MtgoDxgiCaptureRoleV2::Spectator => Some("Standard".to_owned()),
+    };
     CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
         manifest_sha256: "1".repeat(64),
         canonical_bgra8_sha256: "2".repeat(64),
         preview_png_sha256: "3".repeat(64),
         output_identity_sha256: "4".repeat(64),
+        executable_sha256: "a".repeat(64),
+        signer_thumbprint: "b".repeat(40),
+        signer_subject_sha256: "c".repeat(64),
+        dpi: 120,
         client_size_px: MtgoSizePxV1 {
             width: 1_550,
             height: 925,
         },
         captured_at_unix_millis: 1_786_338_000_000,
         capture_role: role,
+        game_format,
     }
 }
 
@@ -1491,17 +1543,28 @@ mod tests {
         captured_at_unix_millis: u64,
         role: MtgoDxgiCaptureRoleV2,
     ) -> CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
+        let game_format = match role {
+            MtgoDxgiCaptureRoleV2::Navigation => None,
+            MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire
+            | MtgoDxgiCaptureRoleV2::ActingPlayerDuel => Some("Freeform".to_owned()),
+            MtgoDxgiCaptureRoleV2::Spectator => Some("Standard".to_owned()),
+        };
         CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
             manifest_sha256: manifest_byte.to_string().repeat(64),
             canonical_bgra8_sha256: sha256_v1(pixels),
             preview_png_sha256: png_byte.to_string().repeat(64),
             output_identity_sha256: output_byte.to_string().repeat(64),
+            executable_sha256: "a".repeat(64),
+            signer_thumbprint: "b".repeat(40),
+            signer_subject_sha256: "c".repeat(64),
+            dpi: 120,
             client_size_px: MtgoSizePxV1 {
                 width: 64,
                 height: 64,
             },
             captured_at_unix_millis,
             capture_role: role,
+            game_format,
         }
     }
 
@@ -1649,12 +1712,19 @@ mod tests {
                 .to_owned(),
             output_identity_sha256:
                 "89c86876d12827c79ef4d746b9cd88c8decaf3e4fae33b41f6ab57c94bf222a6".to_owned(),
+            executable_sha256: "a672755dad7fe8cd08c7986216d0d0fb2c4dbafe669ad3d2aff2bfa2c21b9c69"
+                .to_owned(),
+            signer_thumbprint: "e9d9e2b989f90555b04c506fddf889c7aba7ac30".to_owned(),
+            signer_subject_sha256:
+                "89e095d976048cdd8da11e2ff312231867f79e521fa3b5aa6415d2aa59b79cfc".to_owned(),
+            dpi: 120,
             client_size_px: MtgoSizePxV1 {
                 width: 1550,
                 height: 925,
             },
             captured_at_unix_millis: 1_786_337_620_374,
             capture_role: MtgoDxgiCaptureRoleV2::ActingPlayerSolitaire,
+            game_format: Some("Freeform".to_owned()),
         };
         assert_eq!(
             dxgi_offline_calibration_admission_commitment_v1(&checked),

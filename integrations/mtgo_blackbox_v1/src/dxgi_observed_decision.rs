@@ -1,5 +1,6 @@
 use crate::{
-    validate_observed_decision_v1, CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    validate_observed_decision_v1, CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
+    CheckedUntrustedMtgoDxgiCaptureArtifactV1,
     CheckedUntrustedMtgoObservationReconstructionAuditV1, MtgoCalibrationCaptureRoleV1,
     MtgoContractErrorV1, MtgoDxgiCaptureRoleV2, MtgoObservedDecisionV1,
     MtgoReconstructionTopologyV1, ValidatedMtgoObservedDecisionV1,
@@ -90,13 +91,10 @@ impl CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1 {
 pub fn check_untrusted_dxgi_observed_decision_candidate_v1(
     source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
     audit: &CheckedUntrustedMtgoObservationReconstructionAuditV1,
-    perception_profile_commitment_sha256: &str,
+    perception_profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
     record: MtgoObservedDecisionV1,
 ) -> Result<CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1, MtgoContractErrorV1> {
-    validate_lower_hex_sha256_v1(
-        "dxgi_observed_decision_perception_profile",
-        perception_profile_commitment_sha256,
-    )?;
+    let perception_profile_commitment_sha256 = perception_profile.profile_commitment_sha256();
     if source.capture_role() != MtgoDxgiCaptureRoleV2::ActingPlayerDuel
         || audit.topology() != MtgoReconstructionTopologyV1::TwoPlayerDuel
         || audit.capture_role() != MtgoCalibrationCaptureRoleV1::ActingPlayerDuel
@@ -104,6 +102,19 @@ pub fn check_untrusted_dxgi_observed_decision_candidate_v1(
         return Err(error_v1(
             "dxgi_observed_decision_role",
             "an acting-player duel source and source-bound duel audit are required",
+        ));
+    }
+    if source.executable_sha256() != perception_profile.executable_sha256()
+        || source.signer_thumbprint() != perception_profile.signer_thumbprint()
+        || source.signer_subject_sha256() != perception_profile.signer_subject_sha256()
+        || source.dpi() != perception_profile.dpi()
+        || source.client_size_px() != perception_profile.client_size_px()
+        || source.output_identity_sha256() != perception_profile.output_identity_sha256()
+        || source.game_format() != Some(perception_profile.game_format())
+    {
+        return Err(error_v1(
+            "dxgi_observed_decision_perception_profile_source",
+            "DXGI source identity, geometry, output, and format must match the perception profile",
         ));
     }
     if audit.source_manifest_sha256() != source.manifest_sha256()
@@ -180,23 +191,6 @@ pub fn check_untrusted_dxgi_observed_decision_candidate_v1(
         candidate_commitment_sha256: format!("{:x}", hasher.finalize()),
         validated_decision: validated,
     })
-}
-
-fn validate_lower_hex_sha256_v1(
-    field: &'static str,
-    value: &str,
-) -> Result<(), MtgoContractErrorV1> {
-    if value.len() != 64
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(error_v1(
-            "dxgi_observed_decision_digest_invalid",
-            format!("{field} must be lowercase SHA-256 hex"),
-        ));
-    }
-    Ok(())
 }
 
 fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV1 {
@@ -317,8 +311,11 @@ pub(crate) fn dxgi_observed_decision_record_for_test_v1(
 mod tests {
     use super::*;
     use crate::{
+        check_untrusted_duel_perception_runtime_profile_v1,
         checked_untrusted_dxgi_artifact_for_test_v1,
         complete_acting_player_duel_audit_record_for_test_v1,
+        duel_perception_runtime_profile_for_test_v1,
+        duel_perception_runtime_profile_payload_for_test_v1,
         validate_dxgi_bound_observation_reconstruction_audit_v1, MtgoReconstructionStatusV1,
     };
 
@@ -339,12 +336,13 @@ mod tests {
     #[test]
     fn exact_source_audit_and_decision_bind_without_scoring_authority() {
         let (source, audit) = source_and_audit_v1();
+        let profile = duel_perception_runtime_profile_for_test_v1();
         let record =
             dxgi_observed_decision_record_for_test_v1(&source, audit.source_frame_sequence());
         let candidate = check_untrusted_dxgi_observed_decision_candidate_v1(
             &source,
             &audit,
-            &"a".repeat(64),
+            &profile,
             record.clone(),
         )
         .unwrap();
@@ -359,30 +357,23 @@ mod tests {
         assert_eq!(candidate.candidate_commitment_sha256().len(), 64);
         assert_eq!(
             candidate.perception_profile_commitment_sha256(),
-            "a".repeat(64)
+            profile.profile_commitment_sha256()
         );
-        let different_profile = check_untrusted_dxgi_observed_decision_candidate_v1(
-            &source,
-            &audit,
-            &"b".repeat(64),
-            record.clone(),
-        )
-        .unwrap();
-        assert_ne!(
-            candidate.candidate_commitment_sha256(),
-            different_profile.candidate_commitment_sha256()
-        );
+        let mut mismatched_profile = duel_perception_runtime_profile_payload_for_test_v1();
+        mismatched_profile.dpi += 1;
+        let mismatched_profile =
+            check_untrusted_duel_perception_runtime_profile_v1(mismatched_profile).unwrap();
         assert_eq!(
             check_untrusted_dxgi_observed_decision_candidate_v1(
                 &source,
                 &audit,
-                &"A".repeat(64),
+                &mismatched_profile,
                 record,
             )
             .err()
             .unwrap()
             .code(),
-            "dxgi_observed_decision_digest_invalid"
+            "dxgi_observed_decision_perception_profile_source"
         );
         assert!(!candidate.safe_for_model_scoring());
         assert!(!candidate.safe_for_input());
@@ -391,6 +382,7 @@ mod tests {
     #[test]
     fn frame_identity_sequence_hash_and_geometry_substitution_fail() {
         let (source, audit) = source_and_audit_v1();
+        let profile = duel_perception_runtime_profile_for_test_v1();
         let baseline =
             dxgi_observed_decision_record_for_test_v1(&source, audit.source_frame_sequence());
         let mut mutations = Vec::new();
@@ -412,10 +404,7 @@ mod tests {
 
         for mutation in mutations {
             assert!(check_untrusted_dxgi_observed_decision_candidate_v1(
-                &source,
-                &audit,
-                &"a".repeat(64),
-                mutation,
+                &source, &audit, &profile, mutation,
             )
             .is_err());
         }
@@ -424,6 +413,7 @@ mod tests {
     #[test]
     fn non_duel_source_and_incomplete_audit_fail() {
         let source = checked_untrusted_dxgi_artifact_for_test_v1(MtgoDxgiCaptureRoleV2::Navigation);
+        let profile = duel_perception_runtime_profile_for_test_v1();
         let acting_source =
             checked_untrusted_dxgi_artifact_for_test_v1(MtgoDxgiCaptureRoleV2::ActingPlayerDuel);
         let audit = validate_dxgi_bound_observation_reconstruction_audit_v1(
@@ -435,7 +425,7 @@ mod tests {
             check_untrusted_dxgi_observed_decision_candidate_v1(
                 &source,
                 &audit,
-                &"a".repeat(64),
+                &profile,
                 dxgi_observed_decision_record_for_test_v1(&source, audit.source_frame_sequence(),),
             )
             .err()
@@ -459,7 +449,7 @@ mod tests {
             check_untrusted_dxgi_observed_decision_candidate_v1(
                 &acting_source,
                 &incomplete_audit,
-                &"a".repeat(64),
+                &profile,
                 dxgi_observed_decision_record_for_test_v1(
                     &acting_source,
                     incomplete_audit.source_frame_sequence(),
