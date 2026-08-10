@@ -179,6 +179,7 @@ Test-Gate 'validator-fail-closed' {
         @{ name = 'rail-missing-key'; mutate = { param($c) $c.monitor.device_rails[0].PSObject.Properties.Remove('rail_mib') } },
         @{ name = 'rail-mib-zero'; mutate = { param($c) $c.monitor.device_rails[0].rail_mib = 0 } },
         @{ name = 'dup-rail-uuid'; mutate = { param($c) $c.monitor.device_rails = @($c.monitor.device_rails[0], $c.monitor.device_rails[0]) } },
+        @{ name = 'rail-uuid-uppercase'; mutate = { param($c) $c.monitor.device_rails[0].device_uuid = $c.monitor.device_rails[0].device_uuid.ToUpperInvariant() } },
         @{ name = 'monitor-census-zero'; mutate = { param($c) $c.monitor.census_seconds = 0 } },
         @{ name = 'monitor-timeout-high'; mutate = { param($c) $c.monitor.wall_clock_timeout_seconds = 86401 } },
         @{ name = 'monitor-missing'; mutate = { param($c) $c.PSObject.Properties.Remove('monitor') } },

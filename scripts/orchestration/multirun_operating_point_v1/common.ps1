@@ -139,6 +139,7 @@ function Read-LaunchConfig {
     $railUuids = @{}
     foreach ($rail in @($config.monitor.device_rails)) {
         Assert-ExactKeySet -Object $rail -Where 'device rail' -Expected @('device_uuid', 'rail_mib')
+        if ($rail.device_uuid -cnotmatch '^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw "rail device_uuid must be a full lowercase GPU-<uuid>, got '$($rail.device_uuid)'" }
         Assert-PositiveInteger -Value $rail.rail_mib -Name 'rail_mib'
         if ($railUuids.ContainsKey($rail.device_uuid)) { throw "duplicate rail for '$($rail.device_uuid)'" }
         $railUuids[$rail.device_uuid] = $rail.rail_mib
@@ -416,9 +417,32 @@ function Start-RenderedLaunch {
         }
         foreach ($child in @($Children)) {
             try {
-                if ($child.process.HasExited) { continue }
+                if ($child.process.HasExited) {
+                    # A self-exited child is collected, never skipped: on an
+                    # outer-catch invocation the collection loop does not
+                    # run, and the record must not read RUNNING/null for a
+                    # process that already finished.
+                    try {
+                        if ($null -eq $child.exit_code) { $child.exit_code = $child.process.ExitCode }
+                        if ($null -eq $child.ended) { $child.ended = [DateTime]::UtcNow.ToString('o') }
+                        if ($child.disposition -ceq 'RUNNING') {
+                            $child.disposition = if ($child.exit_code -eq 0) { 'COMPLETED' } else { 'FAILED' }
+                        }
+                    }
+                    catch {}
+                    continue
+                }
                 $live = Get-Process -Id $child.process.Id -ErrorAction SilentlyContinue
-                if ($null -eq $live -or $live.StartTime.ToUniversalTime().Ticks -ne $child.start_ticks) { continue }
+                # Identity read guarded: StartTime can throw on a racing
+                # exit; an unverifiable identity is never killed (PID-reuse
+                # rule) but the reason is recorded.
+                $liveTicks = $null
+                try { if ($null -ne $live) { $liveTicks = $live.StartTime.ToUniversalTime().Ticks } } catch {}
+                if ($null -eq $liveTicks -or $liveTicks -ne $child.start_ticks) {
+                    if ($null -eq $live) { continue }
+                    Add-KillOutcome $child 'identity-unverifiable; not killed'
+                    continue
+                }
                 # Disposition is set the moment this child is selected for a
                 # kill, before any step that can throw, so a later failure
                 # can never leave it reading RUNNING.
@@ -471,6 +495,7 @@ function Start-RenderedLaunch {
                 exit_code = $null
                 oom_signature_seen = $null
                 ended = $null
+                collect_error = $null
             }
         }
 
@@ -537,11 +562,11 @@ function Start-RenderedLaunch {
                     if ($launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
                     continue
                 }
-                $child.ended = [DateTime]::UtcNow.ToString('o')
+                if ($null -eq $child.ended) { $child.ended = [DateTime]::UtcNow.ToString('o') }
                 $stdoutText = $child.stdout.Result
                 $stderrText = $child.stderr.Result
                 Set-Content -LiteralPath $child.log -Encoding utf8 -Value ($stdoutText + "`n--- STDERR ---`n" + $stderrText)
-                $child.exit_code = $child.process.ExitCode
+                if ($null -eq $child.exit_code) { $child.exit_code = $child.process.ExitCode }
                 if ($child.disposition -ceq 'RUNNING') {
                     $child.disposition = if ($child.exit_code -eq 0) { 'COMPLETED' } else { 'FAILED' }
                 }
@@ -553,7 +578,10 @@ function Start-RenderedLaunch {
                 if ($child.exit_code -ne 0 -and $launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
             }
             catch {
-                $child.disposition = "COLLECT-ERROR: $($_.Exception.Message)"
+                # Literal token per the sheet's enumeration; the message
+                # travels in its own detail field.
+                $child.disposition = 'COLLECT-ERROR'
+                $child.collect_error = $_.Exception.Message
                 if ($null -eq $child.ended) { $child.ended = [DateTime]::UtcNow.ToString('o') }
                 if ($launchDisposition -ceq 'COMPLETED') { $launchDisposition = 'FAILED' }
             }
@@ -582,6 +610,7 @@ function Start-RenderedLaunch {
                     ended_utc     = $child.ended
                     exit_code     = $child.exit_code
                     disposition   = $child.disposition
+                    collect_error = $child.collect_error
                     kill_outcome  = $child.kill_outcome
                     oom_signature_seen = $child.oom_signature_seen
                     log_path      = $child.log
