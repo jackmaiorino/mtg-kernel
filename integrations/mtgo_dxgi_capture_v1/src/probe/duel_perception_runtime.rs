@@ -3,14 +3,23 @@ use super::{
     OpaqueMtgoAdmittedDuelVisibleFrameV1,
 };
 use mtgo_blackbox_v1::{
-    duel_action_family_v1, model_deployment_commitment_v1, preview_output_identity_commitment_v1,
-    resolve_selected_visible_control_v1, score_and_select_external_model_v1,
-    validate_observed_decision_v1, visible_frame_region_content_sha256_v1,
-    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
-    CheckedUntrustedMtgoModelSelectionV1, CheckedUntrustedMtgoResolvedActionControlV1,
-    MtgoCompetitiveEventKindV1, MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1,
-    MtgoExternalObservationScorerV1, MtgoObservedDecisionV1, MtgoRectPxV1,
-    MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
+    bind_profile_bound_action_plan_to_competitive_match_v1,
+    check_untrusted_dxgi_capture_artifact_v1, check_untrusted_dxgi_observed_decision_candidate_v1,
+    duel_action_family_v1, prepare_profile_bound_action_postcondition_plan_v1,
+    preview_output_identity_commitment_v1, resolve_profile_bound_selected_visible_control_v1,
+    score_and_select_profile_bound_duel_candidate_v1,
+    validate_dxgi_bound_observation_reconstruction_audit_v1, validate_observed_decision_v1,
+    visible_frame_region_content_sha256_v1, AdmittedMtgoDuelPerceptionProfileV1,
+    CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
+    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
+    CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
+    CheckedUntrustedMtgoProfileBoundResolvedActionControlV1, MtgoAuthorizationScopeV1,
+    MtgoCompetitiveEventKindV1, MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoEvidenceSourceV1,
+    MtgoExpectedModelDeploymentV1, MtgoExternalObservationScorerV1,
+    MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
+    MtgoProfileBoundPostconditionCalibrationV1, MtgoProfileBoundPostconditionRegionSetV1,
+    MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
     ValidatedMtgoObservedDecisionV1, MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1,
     MTGO_VISIBLE_ACTION_CONTROL_SET_SCHEMA_V1,
 };
@@ -52,6 +61,7 @@ pub struct MtgoDuelPerceptionFrameIdentityV1 {
 pub struct MtgoDuelPerceptionProcessResponseV1 {
     pub schema_version: u32,
     pub request_commitment_sha256: String,
+    pub reconstruction_audit: MtgoObservationReconstructionAuditV1,
     pub decision: MtgoObservedDecisionV1,
     pub visible_controls: MtgoVisibleActionControlSetV1,
 }
@@ -192,6 +202,7 @@ pub struct MtgoAdmittedDuelPerceptionCommitmentsV1 {
 pub struct OpaqueMtgoAdmittedDuelPerceptionV1 {
     pub(super) source_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1,
     pub(super) validated_decision: ValidatedMtgoObservedDecisionV1,
+    source_candidate: Option<CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1>,
     pub(super) decision_record: MtgoObservedDecisionV1,
     pub(super) visible_controls: MtgoVisibleActionControlSetV1,
     runtime_identity_commitment_sha256: String,
@@ -257,30 +268,15 @@ pub struct MtgoOpaqueDuelModelSelectionCommitmentsV1 {
 /// ```
 pub struct OpaqueMtgoProfileBoundDuelModelSelectionV1 {
     pub(super) perception: OpaqueMtgoAdmittedDuelPerceptionV1,
-    pub(super) selection: CheckedUntrustedMtgoModelSelectionV1,
+    pub(super) selection: Option<CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1>,
+    commitments: MtgoOpaqueDuelModelSelectionCommitmentsV1,
     deployment_commitment_sha256: String,
     opaque_selection_commitment_sha256: String,
 }
 
 impl OpaqueMtgoProfileBoundDuelModelSelectionV1 {
     pub fn commitments_v1(&self) -> MtgoOpaqueDuelModelSelectionCommitmentsV1 {
-        MtgoOpaqueDuelModelSelectionCommitmentsV1 {
-            perception_result_commitment_sha256: self
-                .perception
-                .perception_result_commitment_sha256
-                .clone(),
-            decision_commitment_sha256: self
-                .perception
-                .validated_decision
-                .decision_commitment_sha256()
-                .to_owned(),
-            deployment_commitment_sha256: self.deployment_commitment_sha256.clone(),
-            selection_commitment_sha256: self.selection.selection_commitment_sha256().to_owned(),
-            opaque_selection_commitment_sha256: self.opaque_selection_commitment_sha256.clone(),
-            selected_index: self.selection.selected_index(),
-            selected_logit_f32_bits: self.selection.selected_logit_f32_bits(),
-            value_f32_bits: self.selection.value_f32_bits(),
-        }
+        self.commitments.clone()
     }
 
     pub fn safe_for_input_v1(&self) -> bool {
@@ -319,32 +315,16 @@ pub struct MtgoOpaqueDuelResolvedControlCommitmentsV1 {
 /// ```
 pub struct OpaqueMtgoProfileBoundDuelResolvedControlV1 {
     pub(super) selection: OpaqueMtgoProfileBoundDuelModelSelectionV1,
-    resolved: CheckedUntrustedMtgoResolvedActionControlV1,
+    resolved: Option<CheckedUntrustedMtgoProfileBoundResolvedActionControlV1>,
+    commitments: MtgoOpaqueDuelResolvedControlCommitmentsV1,
+    selected_semantic_json: Vec<u8>,
     #[allow(dead_code)]
     pub(super) rect_client_px: MtgoRectPxV1,
-    opaque_control_resolution_commitment_sha256: String,
 }
 
 impl OpaqueMtgoProfileBoundDuelResolvedControlV1 {
     pub fn commitments_v1(&self) -> MtgoOpaqueDuelResolvedControlCommitmentsV1 {
-        MtgoOpaqueDuelResolvedControlCommitmentsV1 {
-            opaque_selection_commitment_sha256: self
-                .selection
-                .opaque_selection_commitment_sha256
-                .clone(),
-            decision_commitment_sha256: self.resolved.decision_commitment_sha256().to_owned(),
-            selection_commitment_sha256: self.resolved.selection_commitment_sha256().to_owned(),
-            control_resolution_commitment_sha256: self
-                .resolved
-                .resolution_commitment_sha256()
-                .to_owned(),
-            opaque_control_resolution_commitment_sha256: self
-                .opaque_control_resolution_commitment_sha256
-                .clone(),
-            control_id: self.resolved.control_id().to_owned(),
-            frame_id: self.resolved.frame_id(),
-            frame_sequence: self.resolved.frame_sequence(),
-        }
+        self.commitments.clone()
     }
 
     pub fn safe_for_input_v1(&self) -> bool {
@@ -671,6 +651,35 @@ pub fn perceive_admitted_duel_frame_v1(
         &validated,
         &response.visible_controls,
     )?;
+    validate_reconstruction_audit_pixels_v1(
+        &response.reconstruction_audit,
+        &source.canonical_bgra8,
+        &MtgoSizePxV1 { width, height },
+    )?;
+    let source_manifest_json = serialize_manifest_v2(&source.manifest)
+        .map_err(|error| format!("serialize opaque duel source manifest: {error}"))?;
+    let checked_source = check_untrusted_dxgi_capture_artifact_v1(
+        &source_manifest_json,
+        &source.canonical_bgra8,
+        &source.preview_png,
+    )
+    .map_err(|error| format!("check opaque duel DXGI source: {error}"))?;
+    let checked_audit = validate_dxgi_bound_observation_reconstruction_audit_v1(
+        &checked_source,
+        response.reconstruction_audit.clone(),
+    )
+    .map_err(|error| format!("check opaque duel reconstruction audit: {error}"))?;
+    let source_candidate = check_untrusted_dxgi_observed_decision_candidate_v1(
+        &checked_source,
+        &checked_audit,
+        profile.checked_runtime_profile_v1(),
+        response.decision.clone(),
+    )
+    .map_err(|error| format!("bind opaque duel decision candidate: {error}"))?;
+    if source_candidate.base_decision_commitment_sha256() != validated.decision_commitment_sha256()
+    {
+        return Err("opaque duel source candidate changed the validated decision".to_owned());
+    }
     let perception_result_commitment_sha256 = commitment_v1(
         DUEL_PERCEPTION_RESULT_DOMAIN_V1,
         &[
@@ -681,12 +690,15 @@ pub fn perceive_admitted_duel_frame_v1(
                 .as_bytes(),
             request_commitment_sha256.as_bytes(),
             validated.decision_commitment_sha256().as_bytes(),
+            checked_audit.audit_commitment_sha256().as_bytes(),
+            source_candidate.candidate_commitment_sha256().as_bytes(),
             b"opaque_source_retained_no_input_or_event_entry_authority",
         ],
     );
     Ok(OpaqueMtgoAdmittedDuelPerceptionV1 {
         source_frame,
         validated_decision: validated,
+        source_candidate: Some(source_candidate),
         decision_record: response.decision,
         visible_controls: response.visible_controls,
         runtime_identity_commitment_sha256: runtime
@@ -699,7 +711,7 @@ pub fn perceive_admitted_duel_frame_v1(
 }
 
 pub fn score_and_select_opaque_admitted_duel_perception_v1<S: MtgoExternalObservationScorerV1>(
-    perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    mut perception: OpaqueMtgoAdmittedDuelPerceptionV1,
     profile: &AdmittedMtgoDuelPerceptionProfileV1,
     deployment: &MtgoExpectedModelDeploymentV1,
     scorer: &mut S,
@@ -711,21 +723,31 @@ pub fn score_and_select_opaque_admitted_duel_perception_v1<S: MtgoExternalObserv
     {
         return Err("opaque perception and admitted profile differ at scoring".to_owned());
     }
-    let deployment_commitment_sha256 = model_deployment_commitment_v1(deployment)
-        .map_err(|error| format!("invalid model deployment: {error}"))?;
-    let selection =
-        score_and_select_external_model_v1(&perception.validated_decision, deployment, scorer)
-            .map_err(|error| format!("duel model scoring failed: {error}"))?;
+    let source_candidate = perception
+        .source_candidate
+        .take()
+        .ok_or("opaque duel source candidate was already consumed")?;
+    let selection = score_and_select_profile_bound_duel_candidate_v1(
+        source_candidate,
+        profile,
+        deployment,
+        scorer,
+    )
+    .map_err(|error| format!("profile-bound duel model scoring failed: {error}"))?;
+    let deployment_commitment_sha256 = selection.deployment_commitment_sha256().to_owned();
     if selection.decision_commitment_sha256()
         != perception.validated_decision.decision_commitment_sha256()
         || selection.selected_index() >= perception.validated_decision.legal_actions().len()
     {
         return Err("duel model selection does not bind the retained decision".to_owned());
     }
-    let selected_semantic = serde_json::to_vec(
-        &perception.validated_decision.legal_actions()[selection.selected_index()],
-    )
-    .map_err(|error| format!("serialize selected duel semantic: {error}"))?;
+    let retained_selected_semantic =
+        &perception.validated_decision.legal_actions()[selection.selected_index()];
+    if selection.selected_semantic() != retained_selected_semantic {
+        return Err("profile-bound duel selection changed the retained semantic".to_owned());
+    }
+    let selected_semantic = serde_json::to_vec(retained_selected_semantic)
+        .map_err(|error| format!("serialize selected duel semantic: {error}"))?;
     let opaque_selection_commitment_sha256 = commitment_v1(
         DUEL_OPAQUE_MODEL_SELECTION_DOMAIN_V1,
         &[
@@ -736,13 +758,30 @@ pub fn score_and_select_opaque_admitted_duel_perception_v1<S: MtgoExternalObserv
                 .as_bytes(),
             deployment_commitment_sha256.as_bytes(),
             selection.selection_commitment_sha256().as_bytes(),
+            selection
+                .profile_bound_selection_commitment_sha256()
+                .as_bytes(),
             &selected_semantic,
             b"opaque_source_retained_no_input_or_event_entry_authority",
         ],
     );
+    let commitments = MtgoOpaqueDuelModelSelectionCommitmentsV1 {
+        perception_result_commitment_sha256: perception.perception_result_commitment_sha256.clone(),
+        decision_commitment_sha256: perception
+            .validated_decision
+            .decision_commitment_sha256()
+            .to_owned(),
+        deployment_commitment_sha256: deployment_commitment_sha256.clone(),
+        selection_commitment_sha256: selection.selection_commitment_sha256().to_owned(),
+        opaque_selection_commitment_sha256: opaque_selection_commitment_sha256.clone(),
+        selected_index: selection.selected_index(),
+        selected_logit_f32_bits: selection.selected_logit_f32_bits(),
+        value_f32_bits: selection.value_f32_bits(),
+    };
     Ok(OpaqueMtgoProfileBoundDuelModelSelectionV1 {
         perception,
-        selection,
+        selection: Some(selection),
+        commitments,
         deployment_commitment_sha256,
         opaque_selection_commitment_sha256,
     })
@@ -754,14 +793,22 @@ pub fn score_and_select_opaque_admitted_duel_perception_v1<S: MtgoExternalObserv
 /// unique selected match. This Windows-side wrapper additionally retains the
 /// opaque source frame and its private pixel-region coordinates.
 pub fn resolve_opaque_profile_bound_duel_control_v1(
-    selection: OpaqueMtgoProfileBoundDuelModelSelectionV1,
+    mut selection: OpaqueMtgoProfileBoundDuelModelSelectionV1,
 ) -> Result<OpaqueMtgoProfileBoundDuelResolvedControlV1, String> {
-    let selected_semantic = selection
+    let profile_bound_selection = selection
+        .selection
+        .take()
+        .ok_or("opaque duel model selection was already consumed")?;
+    let selected_semantic = profile_bound_selection.selected_semantic();
+    if selection
         .perception
         .validated_decision
         .legal_actions()
-        .get(selection.selection.selected_index())
-        .ok_or("selected duel action is outside the retained legal-action vector")?;
+        .get(profile_bound_selection.selected_index())
+        != Some(selected_semantic)
+    {
+        return Err("selected duel action is outside the retained legal-action vector".to_owned());
+    }
     let selected_candidate = selection
         .perception
         .visible_controls
@@ -777,9 +824,8 @@ pub fn resolve_opaque_profile_bound_duel_control_v1(
         frame_region_for_evidence_v1(&selection.perception.decision_record, selected_evidence_id)?;
     let rect_client_px = rect_client_px.clone();
     let region_content_sha256 = region_content_sha256.to_owned();
-    let resolved = resolve_selected_visible_control_v1(
-        &selection.perception.validated_decision,
-        &selection.selection,
+    let resolved = resolve_profile_bound_selected_visible_control_v1(
+        profile_bound_selection,
         selection.perception.visible_controls.clone(),
     )
     .map_err(|error| format!("visible duel control resolution failed: {error}"))?;
@@ -787,7 +833,7 @@ pub fn resolve_opaque_profile_bound_duel_control_v1(
         || resolved.frame_id() != selection.perception.validated_decision.frame_id()
         || resolved.frame_sequence() != selection.perception.validated_decision.frame_sequence()
         || resolved.selection_commitment_sha256()
-            != selection.selection.selection_commitment_sha256()
+            != selection.commitments.selection_commitment_sha256
     {
         return Err("resolved duel control does not retain the exact opaque selection".to_owned());
     }
@@ -797,7 +843,10 @@ pub fn resolve_opaque_profile_bound_duel_control_v1(
         DUEL_OPAQUE_CONTROL_RESOLUTION_DOMAIN_V1,
         &[
             selection.opaque_selection_commitment_sha256.as_bytes(),
-            resolved.resolution_commitment_sha256().as_bytes(),
+            resolved.control_resolution_commitment_sha256().as_bytes(),
+            resolved
+                .profile_bound_resolution_commitment_sha256()
+                .as_bytes(),
             selected_control_id.as_bytes(),
             &selected_semantic_json,
             &rect_json,
@@ -805,12 +854,56 @@ pub fn resolve_opaque_profile_bound_duel_control_v1(
             b"opaque_source_retained_coordinates_private_no_input_or_event_entry_authority",
         ],
     );
+    let commitments = MtgoOpaqueDuelResolvedControlCommitmentsV1 {
+        opaque_selection_commitment_sha256: selection.opaque_selection_commitment_sha256.clone(),
+        decision_commitment_sha256: resolved.decision_commitment_sha256().to_owned(),
+        selection_commitment_sha256: resolved.selection_commitment_sha256().to_owned(),
+        control_resolution_commitment_sha256: resolved
+            .control_resolution_commitment_sha256()
+            .to_owned(),
+        opaque_control_resolution_commitment_sha256: opaque_control_resolution_commitment_sha256
+            .clone(),
+        control_id: resolved.control_id().to_owned(),
+        frame_id: resolved.frame_id(),
+        frame_sequence: resolved.frame_sequence(),
+    };
     Ok(OpaqueMtgoProfileBoundDuelResolvedControlV1 {
         selection,
-        resolved,
+        resolved: Some(resolved),
+        commitments,
+        selected_semantic_json,
         rect_client_px,
-        opaque_control_resolution_commitment_sha256,
     })
+}
+
+/// Builds the calibrated visible postcondition and exact League or Challenge
+/// match scope from the same move-only profile-bound control resolution that
+/// was produced by the opaque Windows capture path.
+///
+/// This still creates no input command and grants no event-entry authority.
+pub fn prepare_opaque_competitive_duel_action_plan_v1(
+    mut control: OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    calibration: MtgoProfileBoundPostconditionCalibrationV1,
+    region_set: MtgoProfileBoundPostconditionRegionSetV1,
+    lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    mode_authorization: &MtgoAuthorizationScopeV1,
+    gameplay_authorization: &MtgoCompetitiveMatchGameplayAuthorizationV1,
+) -> Result<OpaqueMtgoCompetitiveDuelActionPlanV1, String> {
+    let resolved = control
+        .resolved
+        .take()
+        .ok_or("opaque duel control resolution was already consumed")?;
+    let postcondition =
+        prepare_profile_bound_action_postcondition_plan_v1(resolved, calibration, region_set)
+            .map_err(|error| format!("prepare opaque duel postcondition plan: {error}"))?;
+    let competitive = bind_profile_bound_action_plan_to_competitive_match_v1(
+        postcondition,
+        lifecycle,
+        mode_authorization,
+        gameplay_authorization,
+    )
+    .map_err(|error| format!("scope opaque duel action to competitive match: {error}"))?;
+    bind_opaque_duel_control_to_competitive_action_plan_v1(control, competitive)
 }
 
 /// Joins the opaque Windows capture-to-control chain to the separately checked
@@ -905,13 +998,6 @@ fn opaque_duel_action_binding_view_v1(
     let output_identity_sha256 =
         preview_output_identity_commitment_v1(&manifest.output.device_name, &output_bounds)
             .map_err(|error| format!("opaque duel output identity is invalid: {error}"))?;
-    let selected_semantic = perception
-        .validated_decision
-        .legal_actions()
-        .get(control.selection.selection.selected_index())
-        .ok_or("opaque duel selected semantic is outside the retained decision")?;
-    let selected_semantic_json = serde_json::to_vec(selected_semantic)
-        .map_err(|error| format!("serialize opaque duel selected semantic: {error}"))?;
     Ok(OpaqueDuelActionBindingViewV1 {
         opaque_control_resolution_commitment_sha256: commitments
             .opaque_control_resolution_commitment_sha256,
@@ -929,7 +1015,7 @@ fn opaque_duel_action_binding_view_v1(
         source_frame_sha256: manifest.frame.canonical_bgra8_sha256.clone(),
         source_output_identity_sha256: output_identity_sha256,
         source_client_size_px: MtgoSizePxV1 { width, height },
-        selected_semantic_json,
+        selected_semantic_json: control.selected_semantic_json.clone(),
     })
 }
 
@@ -1032,6 +1118,29 @@ fn validate_and_bind_perception_record_v1(
         }
     }
     Ok(validated)
+}
+
+fn validate_reconstruction_audit_pixels_v1(
+    audit: &MtgoObservationReconstructionAuditV1,
+    canonical_bgra8: &[u8],
+    size: &MtgoSizePxV1,
+) -> Result<(), String> {
+    for group in &audit.groups {
+        for region in &group.visible_regions {
+            let actual = visible_frame_region_content_sha256_v1(
+                canonical_bgra8,
+                size,
+                &region.rect_client_px,
+            )
+            .map_err(|error| format!("reconstruction audit region is invalid: {error}"))?;
+            if actual != region.bgra8_sha256 {
+                return Err(
+                    "reconstruction audit region hash differs from opaque pixels".to_owned(),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_visible_control_set_candidate_v1(
@@ -1429,6 +1538,61 @@ mod tests {
             &pixels
         )
         .is_err());
+    }
+
+    #[test]
+    fn reconstruction_audit_regions_must_match_retained_opaque_pixels() {
+        let pixels = [1_u8, 2, 3, 255, 5, 6, 7, 255];
+        let size = MtgoSizePxV1 {
+            width: 2,
+            height: 1,
+        };
+        let rect = MtgoRectPxV1 {
+            x: 1,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        let audit = MtgoObservationReconstructionAuditV1 {
+            schema_version: 1,
+            audit_id: "opaque-pixel-binding-test-v1".to_owned(),
+            topology: mtgo_blackbox_v1::MtgoReconstructionTopologyV1::TwoPlayerDuel,
+            frame: mtgo_blackbox_v1::MtgoCalibrationFrameReferenceV1 {
+                sequence: 1,
+                manifest_sha256: "a".repeat(64),
+                frame_sha256: sha256_hex_v1(&pixels),
+                client_size_px: size.clone(),
+                artifact_kind: mtgo_blackbox_v1::MtgoCalibrationPreviewKindV1::ActingPlayerDuelGameplayCalibrationPreviewV1,
+                capture_role: mtgo_blackbox_v1::MtgoCalibrationCaptureRoleV1::ActingPlayerDuel,
+                status: mtgo_blackbox_v1::MtgoCalibrationPreviewStatusV1::PendingVisualReview,
+                safe_for_semantic_evidence: false,
+                safe_for_ocr: false,
+                safe_for_policy_scoring: false,
+                safe_for_input: false,
+            },
+            groups: vec![
+                mtgo_blackbox_v1::MtgoObservationReconstructionGroupAuditV1 {
+                    group: mtgo_blackbox_v1::MtgoObservationReconstructionGroupV1::DuelParticipants,
+                    status: mtgo_blackbox_v1::MtgoReconstructionStatusV1::VisibleComplete,
+                    visible_regions: vec![mtgo_blackbox_v1::MtgoVisibleRegionCommitmentV1 {
+                        rect_client_px: rect.clone(),
+                        bgra8_sha256: visible_frame_region_content_sha256_v1(
+                            &pixels, &size, &rect,
+                        )
+                        .unwrap(),
+                    }],
+                    missing_reason_codes: Vec::new(),
+                },
+            ],
+            observation_complete: false,
+            legal_action_set_complete: false,
+            ready_for_model_scoring: false,
+        };
+        validate_reconstruction_audit_pixels_v1(&audit, &pixels, &size).unwrap();
+
+        let mut changed = pixels;
+        changed[4] ^= 1;
+        assert!(validate_reconstruction_audit_pixels_v1(&audit, &changed, &size).is_err());
     }
 
     #[test]

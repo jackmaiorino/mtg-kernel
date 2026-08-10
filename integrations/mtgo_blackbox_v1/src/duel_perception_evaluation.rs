@@ -250,6 +250,12 @@ impl AdmittedMtgoDuelPerceptionProfileV1 {
         self.profile.profile_commitment_sha256()
     }
 
+    pub fn checked_runtime_profile_v1(
+        &self,
+    ) -> &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1 {
+        &self.profile
+    }
+
     pub fn evaluation_commitment_sha256(&self) -> &str {
         &self.evaluation_commitment_sha256
     }

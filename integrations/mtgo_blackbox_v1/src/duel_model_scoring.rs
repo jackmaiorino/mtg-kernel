@@ -81,6 +81,18 @@ impl CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1 {
         self.selection.selected_index()
     }
 
+    pub fn selected_logit_f32_bits(&self) -> u32 {
+        self.selection.selected_logit_f32_bits()
+    }
+
+    pub fn value_f32_bits(&self) -> u32 {
+        self.selection.value_f32_bits()
+    }
+
+    pub fn decision_commitment_sha256(&self) -> &str {
+        self.selection.decision_commitment_sha256()
+    }
+
     pub fn selected_semantic(&self) -> &ActionSemanticV1 {
         self.selection.selected_semantic()
     }
