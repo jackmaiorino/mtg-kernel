@@ -14,8 +14,18 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\common.ps1')
 
-$storeParent = 'D:\mtg-kernel-oppoint-a3-legacy\proc-0'
-if (Test-Path -LiteralPath 'D:\mtg-kernel-oppoint-a3-legacy') { throw 'legacy A3 root must be fresh' }
+$legacyRoot = 'D:\mtg-kernel-oppoint-a3-legacy-r2'
+$storeParent = Join-Path $legacyRoot 'proc-0'
+if (Test-Path -LiteralPath $legacyRoot) { throw 'legacy A3 root must be fresh' }
+
+# Resolve the executable BEFORE touching the environment: cargo must
+# always run under the ambient env, because CUDA-related build scripts can
+# track variables like CUDA_VISIBLE_DEVICES and a changed value
+# invalidates fingerprints and triggers a full crate rebuild (observed
+# live: the first attempt's env-then-resolve ordering forced a
+# mtg-kernel recompile).
+New-Item -ItemType Directory -Force -Path $storeParent | Out-Null
+$executable = Resolve-PilotExecutable -RepoRoot $RepoRoot -StderrPath (Join-Path $legacyRoot 'cargo-build.stderr.log')
 
 $saved = @{}
 foreach ($name in Get-FullWhitelist) {
@@ -36,13 +46,11 @@ try {
     [Environment]::SetEnvironmentVariable('CUDA_VISIBLE_DEVICES', 'GPU-3502709e-6aef-8ed7-4abe-562838793e3d', 'Process')
     [Environment]::SetEnvironmentVariable('MTG_KERNEL_PILOT_CUDA_ORDINAL', '0', 'Process')
 
-    New-Item -ItemType Directory -Force -Path $storeParent | Out-Null
-    $executable = Resolve-PilotExecutable -RepoRoot $RepoRoot -StderrPath 'D:\mtg-kernel-oppoint-a3-legacy\cargo-build.stderr.log'
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         & $executable $script:RunnerTest --ignored --exact --nocapture --test-threads=1 2>&1 |
-            Tee-Object -FilePath 'D:\mtg-kernel-oppoint-a3-legacy\legacy-invoke.log' | Out-Null
+            Tee-Object -FilePath (Join-Path $legacyRoot 'legacy-invoke.log') | Out-Null
         $pilotExit = $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previous }

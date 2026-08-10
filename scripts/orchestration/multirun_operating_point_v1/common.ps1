@@ -254,7 +254,10 @@ function Resolve-PilotExecutable {
         # target.kind filtering per the stale-binary house rule: accept only
         # the crate's own lib target compiled as a test harness.
         if (-not $item.executable) { continue }
-        if ($item.target.name -cne 'mtg-kernel') { continue }
+        # Cargo lib targets carry the CRATE name: mtg_kernel, underscore,
+        # not the package's hyphenated name (verified against live artifact
+        # JSON; the hyphenated filter matched nothing).
+        if ($item.target.name -cne 'mtg_kernel') { continue }
         if (@($item.target.kind) -cnotcontains 'lib') { continue }
         if (-not $item.profile.test) { continue }
         $item.executable
