@@ -1,5 +1,7 @@
 # MTGO black-box adapter v1
 
+Current end-to-end competitive wiring status and the shortest critical path are tracked in `COMPETITIVE_WIRING_STATUS_2026-08-09.md`.
+
 This directory is an isolated, offline-first boundary between player-visible MTGO state and the existing `mtg-kernel` policy types. The Rust contract contains no live capture, UI Automation enumeration, process inspection, network inspection, client-file parsing, synthetic input, or checkpoint scoring. A separate calibration-preview script performs the narrow live operation documented below.
 
 The read-only installation findings and capture implications are recorded in `CLIENT_INVENTORY_2026-08-08.md`.
