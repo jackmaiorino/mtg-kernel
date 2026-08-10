@@ -66,6 +66,7 @@ fn public_measurement_consumes_only_the_opaque_frame_and_keeps_parts_private() {
 #[test]
 fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
     let source = include_str!("../src/probe.rs");
+    let bottoming = include_str!("../src/probe/bottoming_model.rs");
     assert!(source.contains(
         "pub fn score_and_select_pregame_model_v3<S: MtgoExternalPregameScorerV3>(\n    measurement: OpaqueMtgoDxgiMulliganMeasurementV3,"
     ));
@@ -90,6 +91,34 @@ fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
     ));
     assert!(source.contains("ordered_visible_card_names: Vec<String>"));
     assert!(!source.contains("pub fn build_pregame_action_plan_v4"));
+    for required in [
+        "pub fn start_card_aware_bottoming_session_v5(",
+        "pub fn score_and_select_card_aware_bottoming_model_v5<",
+        "pub fn confirm_card_aware_bottom_selection_v5(",
+        "pub struct OpaqueMtgoCardAwareBottomingSessionV5 {",
+        "pub struct OpaqueMtgoCardAwareBottomingModelSelectionV5 {",
+        "MtgoBottomingCardIdentitySourceV5::ConfirmedActionHistory",
+    ] {
+        assert!(
+            bottoming.contains(required),
+            "bottoming model boundary is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "target_point_client_px",
+        "pub fn build_bottoming_action_plan",
+        "safe_for_live_input_v5(&self) -> bool {\n        true",
+    ] {
+        assert!(
+            !bottoming.contains(forbidden),
+            "bottoming model boundary exposes forbidden authority: {forbidden}"
+        );
+    }
 }
 
 #[test]
