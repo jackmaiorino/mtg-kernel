@@ -8,15 +8,19 @@ const CORPUS: &str =
 fn mulligan_ladder_corpus_is_unique_and_internally_consistent() {
     let record: Value = serde_json::from_str(CORPUS).unwrap();
     assert_eq!(record["schema_version"], 1);
-    assert_eq!(record["measurement"]["distinct_games"], 2);
-    assert_eq!(record["measurement"]["sample_count"], 10);
+    assert_eq!(
+        record["matcher_version"],
+        "exact_binary_prompt_ink_bgr_sum_below_384-v2"
+    );
+    assert_eq!(record["measurement"]["distinct_games"], 3);
+    assert_eq!(record["measurement"]["sample_count"], 12);
     assert_eq!(
         record["profile_set_commitment_sha256"],
-        "bc278fde2cf9e5999bfc8d3dbbf437619ef8974d014b3dff2d4be14b58b28485"
+        "70869ef8cbf9fd38e3b660d9ce03d7258d9e9f556bfd17d939cd8df86dce440a"
     );
 
     let samples = record["samples"].as_array().unwrap();
-    assert_eq!(samples.len(), 10);
+    assert_eq!(samples.len(), 12);
     for field in [
         "sample_id",
         "manifest_sha256",
@@ -82,6 +86,21 @@ fn mulligan_ladder_corpus_is_unique_and_internally_consistent() {
     assert_eq!(
         record["measurement"]["gameplay_negative_no_matches"],
         negative_no_matches
+    );
+    assert_eq!(
+        record["measurement"]["raw_exact_false_negatives_recovered"],
+        1
+    );
+    let recovered = samples
+        .iter()
+        .find(|sample| sample["raw_exact_classifier_before_v2"] == "no_match")
+        .unwrap();
+    assert_eq!(recovered["human_prospective_keep_size"], 6);
+    assert_eq!(recovered["classification"], "match");
+    assert_eq!(recovered["raw_changed_pixel_count_in_prompt_region"], 17);
+    assert_eq!(
+        recovered["binary_ink_changed_pixel_count_in_prompt_region"],
+        0
     );
 }
 

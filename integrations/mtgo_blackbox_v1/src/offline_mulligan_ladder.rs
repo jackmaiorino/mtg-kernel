@@ -1,19 +1,22 @@
 use crate::{
-    hash_bgra_region_v1, CheckedUntrustedMtgoDxgiCaptureArtifactV1, MtgoContractErrorV1,
-    MtgoDxgiCaptureRoleV2, MtgoPregameActionSemanticV1, MtgoRectPxV1, MtgoSizePxV1,
+    CheckedUntrustedMtgoDxgiCaptureArtifactV1, MtgoContractErrorV1, MtgoDxgiCaptureRoleV2,
+    MtgoPregameActionSemanticV1, MtgoRectPxV1, MtgoSizePxV1,
 };
 use sha2::{Digest, Sha256};
 
 const OFFLINE_MULLIGAN_LADDER_PROFILE_SET_ID_V1: &str =
-    "freeform-solitaire-london-mulligan-ladder-20260810-v1";
+    "freeform-solitaire-london-mulligan-ladder-binary-ink-20260810-v2";
 const OFFLINE_MULLIGAN_LADDER_PROFILE_DOMAIN_V1: &[u8] =
-    b"mtgo-offline-mulligan-ladder-profile-set-v1";
+    b"mtgo-offline-mulligan-ladder-profile-set-v2";
 const OFFLINE_MULLIGAN_LADDER_CANDIDATE_DOMAIN_V1: &[u8] =
-    b"mtgo-offline-mulligan-ladder-candidate-v1";
+    b"mtgo-offline-mulligan-ladder-candidate-v2";
+const OFFLINE_MULLIGAN_PROMPT_INK_MASK_DOMAIN_V1: &[u8] =
+    b"mtgo-offline-mulligan-prompt-ink-mask-v1";
 const OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_V1: &str =
     "89c86876d12827c79ef4d746b9cd88c8decaf3e4fae33b41f6ab57c94bf222a6";
 const OFFLINE_MULLIGAN_LADDER_WIDTH_V1: u32 = 1550;
 const OFFLINE_MULLIGAN_LADDER_HEIGHT_V1: u32 = 925;
+const OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1: u16 = 3 * 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoOfflineMulliganLadderClassificationV1 {
@@ -26,7 +29,7 @@ pub enum MtgoOfflineMulliganLadderClassificationV1 {
 struct OfflineMulliganPromptProfileV1 {
     prospective_keep_size: u8,
     prompt_rect: MtgoRectPxV1,
-    expected_bgra8_sha256: String,
+    expected_binary_ink_sha256: String,
 }
 
 #[derive(Clone)]
@@ -40,9 +43,11 @@ struct OfflineMulliganLadderProfileSetV1 {
 /// A checked-untrusted, offline-only classification of an MTGO London
 /// mulligan prompt.
 ///
-/// The classifier evaluates exact prompt-interior templates after the capture
-/// artifact has independently bound the acting-player Solitaire role, client
-/// size, output identity, and canonical raw pixels. Exactly one matching
+/// The classifier evaluates exact binary prompt-ink templates after the
+/// capture artifact has independently bound the acting-player Solitaire role,
+/// client size, output identity, and canonical raw pixels. A fixed BGR sum
+/// threshold removes only same-side grayscale anti-alias intensity variation.
+/// Any changed binary mask bit fails the template. Exactly one matching
 /// template is required before a prospective keep size or ordered adapter-local
 /// pregame actions are exposed. Zero or multiple matches expose neither.
 ///
@@ -153,31 +158,31 @@ fn production_profile_set_v1() -> OfflineMulliganLadderProfileSetV1 {
     let prompt_hashes = [
         (
             7,
-            "675ee3f5ca31c53138ff46ecb1c71742a12e62d6ed6537e7d3fa76707058477c",
+            "2754759f2fb99a15061ca334f3ec9729cd4a140ee6be96379387716dcb9c5ef9",
         ),
         (
             6,
-            "4051845f29a3ce54980d8046c4051cb05484ff437755271f14fc3da8aeafe893",
+            "b2190ec108954d1113c3de026fc3a5f8ebb527d00ae028c38153851e7fa71e9b",
         ),
         (
             5,
-            "d242921ddef9086017829223307236381813cfe4dc28715408af81e1cbc8f999",
+            "490c98b908e90c96f275c257fe35790a4ccd5d455097a137f604fce8c5324775",
         ),
         (
             4,
-            "a86fe92d89a6f77b4a4d5c32470fd256b6d612c15fad2eb01ccdfedcf59ddd61",
+            "b2da242f6594deaa80d421b6c10380a06522a53571d88c930a11a4e3ef449c37",
         ),
         (
             3,
-            "e511318bb91b826bbcae8d09ba4f5c39e7c58e9fc9f14fb24430a9ff970328c9",
+            "8b2a04fa8e36b3c96385f81fe576bb86f88dead2ebce7ae1ff67ef3bc1c0c6d7",
         ),
         (
             2,
-            "305f81ac2524532ec3d352390a99a315441f54e2817ef8be823e5b6488523a80",
+            "6c2cfb341ce26856b5ca04b8bf095c87a91d63173dfbbdee896ee0706aab1818",
         ),
         (
             1,
-            "6408da0846715fba1e8e258cb64245254b54c5350a46e676cdb9473951898c8a",
+            "4e0408989dccd55b3b5d0f71f2e126ad66c7292d2f18a7aa5e0a603ce0cd962e",
         ),
     ];
     OfflineMulliganLadderProfileSetV1 {
@@ -189,13 +194,13 @@ fn production_profile_set_v1() -> OfflineMulliganLadderProfileSetV1 {
         output_identity_sha256: OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_V1.to_owned(),
         profiles: prompt_hashes
             .into_iter()
-            .map(
-                |(prospective_keep_size, expected_bgra8_sha256)| OfflineMulliganPromptProfileV1 {
+            .map(|(prospective_keep_size, expected_binary_ink_sha256)| {
+                OfflineMulliganPromptProfileV1 {
                     prospective_keep_size,
                     prompt_rect: prompt_rect.clone(),
-                    expected_bgra8_sha256: expected_bgra8_sha256.to_owned(),
-                },
-            )
+                    expected_binary_ink_sha256: expected_binary_ink_sha256.to_owned(),
+                }
+            })
             .collect(),
     }
 }
@@ -235,7 +240,7 @@ fn classify_with_profile_set_v1(
         .profiles
         .iter()
         .map(|profile| {
-            hash_bgra_region_v1(
+            hash_prompt_binary_ink_v1(
                 canonical_bgra8,
                 checked.client_size_px(),
                 &profile.prompt_rect,
@@ -247,7 +252,7 @@ fn classify_with_profile_set_v1(
         .zip(&profile_set.profiles)
         .enumerate()
         .filter_map(|(index, (observed, profile))| {
-            (observed == &profile.expected_bgra8_sha256).then_some(index)
+            (observed == &profile.expected_binary_ink_sha256).then_some(index)
         })
         .collect();
 
@@ -370,13 +375,17 @@ fn validate_and_commit_profile_set_v1(
     }
     for profile in &profile_set.profiles {
         validate_region_v1(&profile_set.client_size_px, &profile.prompt_rect)?;
-        if !is_lower_sha256_v1(&profile.expected_bgra8_sha256) {
+        if !is_lower_sha256_v1(&profile.expected_binary_ink_sha256) {
             return Err(error_v1(
                 "offline_mulligan_ladder_profile",
                 "every prompt template requires a lowercase SHA-256",
             ));
         }
         update_hash_part_v1(&mut hasher, &[profile.prospective_keep_size]);
+        update_hash_part_v1(
+            &mut hasher,
+            &OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1.to_be_bytes(),
+        );
         for value in [
             profile.prompt_rect.x,
             profile.prompt_rect.y,
@@ -385,7 +394,7 @@ fn validate_and_commit_profile_set_v1(
         ] {
             update_hash_part_v1(&mut hasher, &value.to_be_bytes());
         }
-        update_hash_part_v1(&mut hasher, profile.expected_bgra8_sha256.as_bytes());
+        update_hash_part_v1(&mut hasher, profile.expected_binary_ink_sha256.as_bytes());
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
@@ -417,6 +426,67 @@ fn validate_pixel_length_v1(size: &MtgoSizePxV1, pixels: &[u8]) -> Result<(), Mt
         ));
     }
     Ok(())
+}
+
+fn hash_prompt_binary_ink_v1(
+    pixels: &[u8],
+    size: &MtgoSizePxV1,
+    rect: &MtgoRectPxV1,
+) -> Result<String, MtgoContractErrorV1> {
+    validate_pixel_length_v1(size, pixels)?;
+    validate_region_v1(size, rect)?;
+    let frame_width = usize::try_from(size.width).map_err(|_| {
+        error_v1(
+            "offline_mulligan_ladder_pixels",
+            "frame width conversion overflow",
+        )
+    })?;
+    let mask_len =
+        usize::try_from(u64::from(rect.width) * u64::from(rect.height)).map_err(|_| {
+            error_v1(
+                "offline_mulligan_ladder_pixels",
+                "prompt mask length overflow",
+            )
+        })?;
+    let mut mask = Vec::with_capacity(mask_len);
+    for row in 0..rect.height {
+        for column in 0..rect.width {
+            let pixel_index = usize::try_from(rect.y + row)
+                .ok()
+                .and_then(|y| y.checked_mul(frame_width))
+                .and_then(|base| {
+                    usize::try_from(rect.x + column)
+                        .ok()
+                        .and_then(|x| base.checked_add(x))
+                })
+                .and_then(|index| index.checked_mul(4))
+                .ok_or_else(|| {
+                    error_v1(
+                        "offline_mulligan_ladder_pixels",
+                        "prompt pixel offset overflow",
+                    )
+                })?;
+            let bgr_sum = u16::from(pixels[pixel_index])
+                + u16::from(pixels[pixel_index + 1])
+                + u16::from(pixels[pixel_index + 2]);
+            mask.push(u8::from(
+                bgr_sum < OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1,
+            ));
+        }
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(OFFLINE_MULLIGAN_PROMPT_INK_MASK_DOMAIN_V1);
+    for part in [
+        OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1
+            .to_be_bytes()
+            .as_slice(),
+        rect.width.to_be_bytes().as_slice(),
+        rect.height.to_be_bytes().as_slice(),
+        mask.as_slice(),
+    ] {
+        update_hash_part_v1(&mut hasher, part);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn validate_region_v1(size: &MtgoSizePxV1, rect: &MtgoRectPxV1) -> Result<(), MtgoContractErrorV1> {
@@ -497,12 +567,12 @@ mod tests {
                 .into_iter()
                 .zip(rects)
                 .map(|(prospective_keep_size, prompt_rect)| {
-                    let expected_bgra8_sha256 =
-                        hash_bgra_region_v1(pixels, size, &prompt_rect).unwrap();
+                    let expected_binary_ink_sha256 =
+                        hash_prompt_binary_ink_v1(pixels, size, &prompt_rect).unwrap();
                     OfflineMulliganPromptProfileV1 {
                         prospective_keep_size,
                         prompt_rect,
-                        expected_bgra8_sha256,
+                        expected_binary_ink_sha256,
                     }
                 })
                 .collect(),
@@ -522,7 +592,7 @@ mod tests {
         );
         assert_eq!(
             validate_and_commit_profile_set_v1(&profile_set, true).unwrap(),
-            "bc278fde2cf9e5999bfc8d3dbbf437619ef8974d014b3dff2d4be14b58b28485"
+            "70869ef8cbf9fd38e3b660d9ce03d7258d9e9f556bfd17d939cd8df86dce440a"
         );
     }
 
@@ -553,6 +623,37 @@ mod tests {
         assert_eq!(no_match, MtgoOfflineMulliganLadderClassificationV1::NoMatch);
         assert_eq!(keep_size, None);
         assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn binary_ink_hash_ignores_same_side_antialias_and_rejects_threshold_crossing() {
+        let size = MtgoSizePxV1 {
+            width: 4,
+            height: 4,
+        };
+        let rect = MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+        };
+        let mut dark = vec![0_u8; 4 * 4 * 4];
+        for pixel in dark.chunks_exact_mut(4) {
+            pixel.copy_from_slice(&[77, 77, 77, 255]);
+        }
+        let mut same_side = dark.clone();
+        same_side[..4].copy_from_slice(&[120, 120, 120, 1]);
+        assert_eq!(
+            hash_prompt_binary_ink_v1(&dark, &size, &rect).unwrap(),
+            hash_prompt_binary_ink_v1(&same_side, &size, &rect).unwrap()
+        );
+
+        let mut threshold_crossing = dark.clone();
+        threshold_crossing[..4].copy_from_slice(&[128, 128, 128, 255]);
+        assert_ne!(
+            hash_prompt_binary_ink_v1(&dark, &size, &rect).unwrap(),
+            hash_prompt_binary_ink_v1(&threshold_crossing, &size, &rect).unwrap()
+        );
     }
 
     #[test]

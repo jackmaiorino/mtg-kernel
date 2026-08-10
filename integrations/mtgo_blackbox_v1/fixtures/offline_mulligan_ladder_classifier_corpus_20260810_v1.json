@@ -1,7 +1,8 @@
 {
   "schema_version": 1,
-  "corpus_id": "freeform-solitaire-london-mulligan-ladder-two-games-20260810-v1",
-  "profile_set_commitment_sha256": "bc278fde2cf9e5999bfc8d3dbbf437619ef8974d014b3dff2d4be14b58b28485",
+  "corpus_id": "freeform-solitaire-london-mulligan-ladder-binary-ink-three-games-20260810-v2",
+  "matcher_version": "exact_binary_prompt_ink_bgr_sum_below_384-v2",
+  "profile_set_commitment_sha256": "70869ef8cbf9fd38e3b660d9ce03d7258d9e9f556bfd17d939cd8df86dce440a",
   "profile_source": {
     "prospective_keep_sizes": [7, 6, 5, 4, 3, 2, 1],
     "manually_inspected_source_frames_per_size": {
@@ -13,7 +14,8 @@
       "2": 1,
       "1": 1
     },
-    "additional_opening_seven_frames": 2,
+    "additional_opening_seven_frames": 3,
+    "additional_prospective_six_frames": 1,
     "gameplay_negative_frames": 1
   },
   "samples": [
@@ -27,7 +29,7 @@
       "classification": "match",
       "observed_prospective_keep_size": 7,
       "matched_profile_count": 1,
-      "candidate_commitment_sha256": "b267cfabb4b1e66ca77eef664ada00f0c72f517110bdaef91935503754ff7ff6"
+      "candidate_commitment_sha256": "8b7a87f00ffa1927b20b755638b6add9571ece50300c992e9561f65abe516b58"
     },
     {
       "sample_id": "game-958658224-opening-seven-b",
@@ -39,7 +41,7 @@
       "classification": "match",
       "observed_prospective_keep_size": 7,
       "matched_profile_count": 1,
-      "candidate_commitment_sha256": "44796557a4adf42834172278263ec6fb1d3df290513c87f76ed1537738d1fa2e"
+      "candidate_commitment_sha256": "a0f8337dcfc6cd240e1292c185a464ab328d8465dc0c2b8d17a912c2788c0939"
     },
     {
       "sample_id": "game-958658224-first-main-after-keep",
@@ -51,7 +53,7 @@
       "classification": "no_match",
       "observed_prospective_keep_size": null,
       "matched_profile_count": 0,
-      "candidate_commitment_sha256": "78878827ad4a50449d54e2d515fb2abd7abb206fd6b271c35221d6f6c6b9bcf2"
+      "candidate_commitment_sha256": "a1f9437d4d255148fef5da2a7c3394fefa1523bbd351907c836367472f4baa83"
     },
     {
       "sample_id": "game-958659998-opening-seven",
@@ -63,7 +65,7 @@
       "classification": "match",
       "observed_prospective_keep_size": 7,
       "matched_profile_count": 1,
-      "candidate_commitment_sha256": "e3d5d0ae6e6917e5703c639a8793c5f969344cfd6fe4521ab4a55ee795a17412"
+      "candidate_commitment_sha256": "5db4612e3d060a36c9c275592797553c5396ea6e09d0ad96a2c81ed64a96b7f1"
     },
     {
       "sample_id": "game-958659998-prospective-six",
@@ -75,7 +77,7 @@
       "classification": "match",
       "observed_prospective_keep_size": 6,
       "matched_profile_count": 1,
-      "candidate_commitment_sha256": "cb2b72be47c9bf3baf5cefbbc1f1b6678c1a6e370e19ef2397c05e26e5f495e8"
+      "candidate_commitment_sha256": "aa028f15df1a0396b0b8b9955e25219e855caf1da15209a13775e32adb431106"
     },
     {
       "sample_id": "game-958659998-prospective-five",
@@ -87,7 +89,7 @@
       "classification": "match",
       "observed_prospective_keep_size": 5,
       "matched_profile_count": 1,
-      "candidate_commitment_sha256": "f9378f0865d0bd485809287c8c39094ef4f4bbcb559aa6be91df86d51a8f9315"
+      "candidate_commitment_sha256": "662da455962ec58e367e9806d5bdc67fb281080a8df38abe314242e66ca76627"
     },
     {
       "sample_id": "game-958659998-prospective-four",
@@ -99,7 +101,7 @@
       "classification": "match",
       "observed_prospective_keep_size": 4,
       "matched_profile_count": 1,
-      "candidate_commitment_sha256": "b8f649ffc2b6076e489e523f6e3210153c45fe916ba2751f40a4db0b99b06832"
+      "candidate_commitment_sha256": "5d5ffb0b9812bf06118833f91a51362394e0c4ab4e60a39b587fd1a25d642a96"
     },
     {
       "sample_id": "game-958659998-prospective-three",
@@ -111,7 +113,7 @@
       "classification": "match",
       "observed_prospective_keep_size": 3,
       "matched_profile_count": 1,
-      "candidate_commitment_sha256": "4fae2952306601f72931916bde63e929baae5abf023e784f818479d767ac6042"
+      "candidate_commitment_sha256": "682641dae78a06b5a30f13ba65f24f44cc0f4fe598d753d8a9c2275d28872de3"
     },
     {
       "sample_id": "game-958659998-prospective-two",
@@ -123,7 +125,7 @@
       "classification": "match",
       "observed_prospective_keep_size": 2,
       "matched_profile_count": 1,
-      "candidate_commitment_sha256": "4deed84a3d93499c3fed37d1d5776ccdeebff004e9bd754f3d3499174b829bf6"
+      "candidate_commitment_sha256": "fdb3d572a56d70beaa38b5617c765190a5e2bf515a30f1cbc67378140ab81622"
     },
     {
       "sample_id": "game-958659998-prospective-one",
@@ -135,21 +137,49 @@
       "classification": "match",
       "observed_prospective_keep_size": 1,
       "matched_profile_count": 1,
-      "candidate_commitment_sha256": "5dae7ddf1a23411c324cd543dd8de541ab09e8746102becff84387455f1ed852"
+      "candidate_commitment_sha256": "0bc3ab3f1de6ebf49120cbae2bf445fc6e46b475cc49b6d36dc4dfff4b6ad865"
+    },
+    {
+      "sample_id": "game-958667784-opening-seven",
+      "captured_at_unix_millis": 1786355196235,
+      "manifest_sha256": "23dc5d52de42d4fc2735e222cfa2f74c91f8cb10522d8c8470aba5648a9c5a46",
+      "canonical_bgra8_sha256": "722112b9f546a1da6c0f783984e4984a8065c1e115ac14277a0166a9b2c72ab9",
+      "preview_png_sha256": "8bb7c3ac603e7ceb2ca76087e3d97abaee23a6d1a1f88baa84199319bab49547",
+      "human_prospective_keep_size": 7,
+      "classification": "match",
+      "observed_prospective_keep_size": 7,
+      "matched_profile_count": 1,
+      "candidate_commitment_sha256": "a8019fe9f9fb7cdbd355901d0fbe27d138d2bb3da0b6850682c9754acce841d3"
+    },
+    {
+      "sample_id": "game-958667784-prospective-six",
+      "captured_at_unix_millis": 1786355244383,
+      "manifest_sha256": "16a88d0bf98757353b051634f77eca5dfc8da0d4d09adf06dd43f99859faa127",
+      "canonical_bgra8_sha256": "25e5033afc4f4e5fcce21b651092adbacfb40ec7c01526f9468f3985d5c27d56",
+      "preview_png_sha256": "c22f3c0673c106b8a4f8bdb1002f3761659520ec03f4c329477cd9e7f27e73e9",
+      "human_prospective_keep_size": 6,
+      "classification": "match",
+      "observed_prospective_keep_size": 6,
+      "matched_profile_count": 1,
+      "raw_exact_classifier_before_v2": "no_match",
+      "raw_changed_pixel_count_in_prompt_region": 17,
+      "binary_ink_changed_pixel_count_in_prompt_region": 0,
+      "candidate_commitment_sha256": "3733544230eecebff8c81906f84c6b228af2485a0af4d965da2949c0d1ce6874"
     }
   ],
   "measurement": {
-    "distinct_games": 2,
-    "sample_count": 10,
-    "prompt_samples": 9,
-    "exact_size_matches": 9,
+    "distinct_games": 3,
+    "sample_count": 12,
+    "prompt_samples": 11,
+    "exact_size_matches": 11,
     "wrong_size_matches": 0,
     "ambiguous_results": 0,
     "gameplay_negative_samples": 1,
     "gameplay_negative_no_matches": 1,
-    "independent_non_source_samples": 3
+    "independent_non_source_prompt_samples": 4,
+    "raw_exact_false_negatives_recovered": 1
   },
-  "nonclaim": "This is a tiny exact-template wiring and brittleness screen. Sizes six through one are measured on their own source frames, so it is not an accuracy estimate or evidence of generalization.",
+  "nonclaim": "This is a tiny exact binary-ink wiring and brittleness screen. Sizes five through one are measured only on their own source frames, and only sizes seven and six have independent non-source samples. It is not an accuracy estimate or evidence of generalization to another layout, client renderer, or prompt.",
   "safe_for_live_frame": false,
   "safe_for_semantic_evidence": false,
   "safe_for_observation_v5": false,
