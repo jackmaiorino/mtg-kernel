@@ -417,7 +417,11 @@ fn validate_bottoming_sequence_v1(
                 "every bottoming stage requires a complete action set",
             )
         })?;
-        let expected_count = if index < 6 { 8 - index } else { 2 };
+        let expected_count = match index {
+            0 => 7,
+            1..=5 => 8 - index,
+            _ => 2,
+        };
         if actions.len() != expected_count
             || (index < 6
                 && !matches!(

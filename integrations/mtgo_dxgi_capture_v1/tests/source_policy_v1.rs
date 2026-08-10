@@ -122,11 +122,12 @@ fn pregame_scoring_consumes_opaque_measurement_and_cannot_mint_input() {
     }
     for required in [
         "pub fn build_card_aware_bottoming_action_plan_v5(",
+        "pub fn confirm_card_aware_bottoming_cancel_plan_v5(",
         "pub fn confirm_card_aware_bottoming_selection_plan_v5(",
         "pub fn confirm_card_aware_bottoming_submit_plan_v5(",
         "pub struct OpaqueMtgoBottomingActionPlanV5 {",
         "pub struct OpaqueMtgoConfirmedBottomingSubmitV5 {",
-        "bottoming Cancel is not plannable until its visible reset transition is calibrated",
+        "AllSelectionsReset",
     ] {
         assert!(
             bottoming_plan.contains(required),

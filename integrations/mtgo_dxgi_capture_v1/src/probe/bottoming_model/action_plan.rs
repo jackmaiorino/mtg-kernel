@@ -3,6 +3,7 @@ use super::*;
 const BOTTOMING_ACTION_PLAN_DOMAIN_V5: &[u8] = b"mtgo-bottoming-action-plan-v5";
 const BOTTOMING_CONTROL_PROFILE_DOMAIN_V5: &[u8] = b"mtgo-bottoming-control-profile-v5";
 const BOTTOMING_PLAN_HISTORY_DOMAIN_V5: &[u8] = b"mtgo-bottoming-plan-bound-history-v5";
+const BOTTOMING_CANCEL_RESET_HISTORY_DOMAIN_V5: &[u8] = b"mtgo-bottoming-cancel-reset-history-v5";
 const BOTTOMING_SUBMIT_CONFIRMATION_DOMAIN_V5: &[u8] = b"mtgo-bottoming-submit-confirmation-v5";
 
 const REVIEWED_CLIENT_WIDTH_V5: u32 = 1_550;
@@ -16,6 +17,11 @@ const REVIEWED_CLIENT_HEIGHT_V5: u32 = 925;
 )]
 pub enum MtgoPlannedBottomingPostconditionV5 {
     OneCardRemoved {
+        expected_selected_count: u8,
+        expected_visible_hand_count: u8,
+    },
+    AllSelectionsReset {
+        prior_selected_count: u8,
         expected_selected_count: u8,
         expected_visible_hand_count: u8,
     },
@@ -41,9 +47,10 @@ struct BottomingActionPlanPartsV5 {
 
 /// A coordinate-private plan for one model-selected London-bottom action.
 /// The plan binds the exact opaque session, model selection, reflowed current
-/// card or Done control, source pixels, and required visible postcondition. It
-/// has no actuator or live-input conversion. Cancel remains unplannable until
-/// its reset transition is calibrated.
+/// card, Cancel control, or Done control, source pixels, and required visible
+/// postcondition. It has no actuator or live-input conversion. A planned
+/// Cancel is available only after one or more selections and requires a newer
+/// complete seven-card, zero-selected identity measurement.
 ///
 /// ```compile_fail
 /// use mtgo_dxgi_capture_v1::OpaqueMtgoBottomingActionPlanV5;
@@ -249,6 +256,120 @@ pub fn confirm_card_aware_bottoming_submit_plan_v5(
     })
 }
 
+pub fn confirm_card_aware_bottoming_cancel_plan_v5(
+    plan: OpaqueMtgoBottomingActionPlanV5,
+    after: OpaqueMtgoDxgiBottomSixVisibleCardIdentityMeasurementV3,
+) -> Result<OpaqueMtgoCardAwareBottomingSessionV5, String> {
+    let OpaqueMtgoBottomingActionPlanV5 { selection, parts } = plan;
+    let prior_selected_count = match parts.planned_postcondition {
+        MtgoPlannedBottomingPostconditionV5::AllSelectionsReset {
+            prior_selected_count,
+            expected_selected_count: 0,
+            expected_visible_hand_count: 7,
+        } if (1..=6).contains(&prior_selected_count) => prior_selected_count,
+        _ => {
+            return Err(
+                "only a calibrated nonzero-stage Cancel plan can confirm a reset".to_owned(),
+            )
+        }
+    };
+    let OpaqueMtgoCardAwareBottomingModelSelectionV5 {
+        session,
+        selected_semantic,
+        ..
+    } = selection;
+    validate_session_state_v5(&session)?;
+    if selected_semantic != MtgoOfflineBottomingActionSemanticV1::CancelBottoming
+        || session.selected_count_v5() != prior_selected_count
+    {
+        return Err("bottoming Cancel plan does not bind the current selected count".to_owned());
+    }
+
+    let source_capture = session.current_state.source_capture_commitments_v3();
+    let after_capture = after.source.source_capture_commitments_v3();
+    let source_transition_identity_sha256 = parts.source_transition_identity_sha256;
+    let after_transition_identity_sha256 =
+        pregame_transition_identity_commitment_v3(&after.source.source_frame.manifest)?;
+    validate_pregame_capture_progression_v3(
+        &source_capture,
+        &source_transition_identity_sha256,
+        &after_capture,
+        &after_transition_identity_sha256,
+    )?;
+
+    let fresh = start_card_aware_bottoming_session_v5(after)?;
+    if fresh.profile.profile_commitment_sha256() != session.profile.profile_commitment_sha256() {
+        return Err("bottoming Cancel reset changed the reviewed card profile".to_owned());
+    }
+
+    let OpaqueMtgoCardAwareBottomingSessionV5 {
+        current_state: _,
+        profile,
+        current_identity: _,
+        current_cards,
+        confirmed_bottomed_cards,
+        history_commitment_sha256,
+    } = session;
+    let restored_cards = restore_original_cards_after_cancel_v5(
+        current_cards,
+        confirmed_bottomed_cards,
+        &fresh.current_cards,
+    )?;
+    let prior_history_commitment_sha256 = history_commitment_sha256;
+    let after_measurement_commitment_sha256 = fresh
+        .current_state
+        .measurement_commitment_sha256_v3()
+        .to_owned();
+    let after_identity_commitment_sha256 = fresh
+        .current_identity
+        .as_ref()
+        .ok_or("bottoming Cancel reset requires all seven visible identities")?
+        .candidate_commitment_sha256()
+        .to_owned();
+
+    #[derive(Serialize)]
+    struct CancelResetHistoryRecordV5<'a> {
+        prior_history_commitment_sha256: &'a str,
+        action_plan_commitment_sha256: &'a str,
+        prior_selected_count: u8,
+        source_capture_commitment_sha256: &'a str,
+        source_transition_identity_sha256: &'a str,
+        after_capture_commitment_sha256: &'a str,
+        after_transition_identity_sha256: &'a str,
+        after_measurement_commitment_sha256: &'a str,
+        after_identity_commitment_sha256: &'a str,
+        restored_cards: &'a [StableBottomingCardV5],
+    }
+    let reset_history_commitment_sha256 = canonical_json_commitment_v3(
+        BOTTOMING_CANCEL_RESET_HISTORY_DOMAIN_V5,
+        &CancelResetHistoryRecordV5 {
+            prior_history_commitment_sha256: &prior_history_commitment_sha256,
+            action_plan_commitment_sha256: &parts.action_plan_commitment_sha256,
+            prior_selected_count,
+            source_capture_commitment_sha256: &source_capture.capture_commitment_sha256,
+            source_transition_identity_sha256: &source_transition_identity_sha256,
+            after_capture_commitment_sha256: &after_capture.capture_commitment_sha256,
+            after_transition_identity_sha256: &after_transition_identity_sha256,
+            after_measurement_commitment_sha256: &after_measurement_commitment_sha256,
+            after_identity_commitment_sha256: &after_identity_commitment_sha256,
+            restored_cards: &restored_cards,
+        },
+    )?;
+    let reset = OpaqueMtgoCardAwareBottomingSessionV5 {
+        current_state: fresh.current_state,
+        profile,
+        current_identity: fresh.current_identity,
+        current_cards: restored_cards,
+        confirmed_bottomed_cards: Vec::new(),
+        history_commitment_sha256: reset_history_commitment_sha256,
+    };
+    validate_session_state_v5(&reset)?;
+    if reset.selected_count_v5() != 0 || reset.visible_card_count_v5() != 7 {
+        return Err("bottoming Cancel did not restore the complete initial hand".to_owned());
+    }
+    Ok(reset)
+}
+
 fn build_bottoming_action_plan_parts_v5(
     selected_semantic: &MtgoOfflineBottomingActionSemanticV1,
     request: &MtgoCardAwareBottomingScoringRequestV5,
@@ -330,10 +451,19 @@ fn build_bottoming_action_plan_parts_v5(
                 began_game_hand_size: 1,
             },
         ),
-        MtgoOfflineBottomingActionSemanticV1::CancelBottoming => return Err(
-            "bottoming Cancel is not plannable until its visible reset transition is calibrated"
-                .to_owned(),
-        ),
+        MtgoOfflineBottomingActionSemanticV1::CancelBottoming
+            if (1..=6).contains(&request.selected_count) =>
+        {
+            (
+                "cancel_bottoming".to_owned(),
+                cancel_control_rect_v5(request.selected_count)?,
+                MtgoPlannedBottomingPostconditionV5::AllSelectionsReset {
+                    prior_selected_count: request.selected_count,
+                    expected_selected_count: 0,
+                    expected_visible_hand_count: 7,
+                },
+            )
+        }
         _ => {
             return Err(
                 "selected bottoming semantic does not match the current measured stage".to_owned(),
@@ -512,6 +642,50 @@ fn done_control_rect_v5() -> MtgoRectPxV1 {
     }
 }
 
+fn cancel_control_rect_v5(selected_count: u8) -> Result<MtgoRectPxV1, String> {
+    match selected_count {
+        1..=5 => Ok(MtgoRectPxV1 {
+            x: 30,
+            y: 176,
+            width: 65,
+            height: 27,
+        }),
+        6 => Ok(MtgoRectPxV1 {
+            x: 92,
+            y: 176,
+            width: 64,
+            height: 27,
+        }),
+        _ => Err("bottoming Cancel is not actionable at zero selected cards".to_owned()),
+    }
+}
+
+fn restore_original_cards_after_cancel_v5(
+    mut current_cards: Vec<StableBottomingCardV5>,
+    confirmed_bottomed_cards: Vec<ConfirmedBottomedCardV5>,
+    observed_cards: &[StableBottomingCardV5],
+) -> Result<Vec<StableBottomingCardV5>, String> {
+    current_cards.extend(
+        confirmed_bottomed_cards
+            .into_iter()
+            .map(|record| record.card),
+    );
+    current_cards.sort_by_key(|card| card.original_hand_ordinal);
+    if current_cards.len() != 7
+        || observed_cards.len() != 7
+        || current_cards.iter().enumerate().any(|(ordinal, card)| {
+            usize::from(card.original_hand_ordinal) != ordinal
+                || card.visible_card_name != observed_cards[ordinal].visible_card_name
+        })
+    {
+        return Err(
+            "bottoming Cancel reset did not restore the original ordered card identities"
+                .to_owned(),
+        );
+    }
+    Ok(current_cards)
+}
+
 fn bottoming_control_profile_commitment_v5() -> Result<String, String> {
     #[derive(Serialize)]
     struct ControlProfileV5 {
@@ -525,6 +699,8 @@ fn bottoming_control_profile_commitment_v5() -> Result<String, String> {
         card_art_width: u32,
         card_art_height: u32,
         done_rect_client_px: MtgoRectPxV1,
+        cancel_only_rect_client_px: MtgoRectPxV1,
+        cancel_after_done_rect_client_px: MtgoRectPxV1,
         cancel_transition_calibrated: bool,
     }
     canonical_json_commitment_v3(
@@ -543,7 +719,9 @@ fn bottoming_control_profile_commitment_v5() -> Result<String, String> {
             card_art_width: 96,
             card_art_height: 60,
             done_rect_client_px: done_control_rect_v5(),
-            cancel_transition_calibrated: false,
+            cancel_only_rect_client_px: cancel_control_rect_v5(1)?,
+            cancel_after_done_rect_client_px: cancel_control_rect_v5(6)?,
+            cancel_transition_calibrated: true,
         },
     )
 }
@@ -685,11 +863,11 @@ mod tests {
     }
 
     #[test]
-    fn plans_reject_cancel_stale_object_wrong_stage_and_pixel_drift() {
+    fn plans_bind_both_cancel_layouts_and_reject_zero_stage_cancel() {
         let (pixels, capture) = pixels_and_capture_v5();
         let request = request_v5(2);
         let cancel = request.ordered_actions.last().unwrap();
-        assert!(build_bottoming_action_plan_parts_v5(
+        let cancel_plan = build_bottoming_action_plan_parts_v5(
             cancel,
             &request,
             &"3".repeat(64),
@@ -697,7 +875,54 @@ mod tests {
             &"4".repeat(64),
             &pixels,
         )
+        .unwrap();
+        assert_eq!(
+            cancel_plan.control_rect_client_px,
+            cancel_control_rect_v5(2).unwrap()
+        );
+        assert_eq!(
+            cancel_plan.planned_postcondition,
+            MtgoPlannedBottomingPostconditionV5::AllSelectionsReset {
+                prior_selected_count: 2,
+                expected_selected_count: 0,
+                expected_visible_hand_count: 7,
+            }
+        );
+
+        let final_request = request_v5(6);
+        let final_cancel = build_bottoming_action_plan_parts_v5(
+            final_request.ordered_actions.last().unwrap(),
+            &final_request,
+            &"3".repeat(64),
+            &capture,
+            &"4".repeat(64),
+            &pixels,
+        )
+        .unwrap();
+        assert_eq!(
+            final_cancel.control_rect_client_px,
+            cancel_control_rect_v5(6).unwrap()
+        );
+
+        let zero = request_v5(0);
+        assert!(!zero
+            .ordered_actions
+            .contains(&MtgoOfflineBottomingActionSemanticV1::CancelBottoming));
+        assert!(build_bottoming_action_plan_parts_v5(
+            &MtgoOfflineBottomingActionSemanticV1::CancelBottoming,
+            &zero,
+            &"3".repeat(64),
+            &capture,
+            &"4".repeat(64),
+            &pixels,
+        )
         .is_err());
+    }
+
+    #[test]
+    fn plans_reject_stale_object_wrong_stage_and_pixel_drift() {
+        let (pixels, capture) = pixels_and_capture_v5();
+        let request = request_v5(2);
         assert!(build_bottoming_action_plan_parts_v5(
             &MtgoOfflineBottomingActionSemanticV1::SelectForBottom {
                 adapter_object_id: "stale-object".to_owned(),
@@ -730,6 +955,54 @@ mod tests {
             &changed_pixels,
         )
         .is_err());
+    }
+
+    #[test]
+    fn cancel_reset_restores_original_stable_objects_and_checks_labels() {
+        fn card(ordinal: u8, name: &str, id_prefix: &str) -> StableBottomingCardV5 {
+            StableBottomingCardV5 {
+                adapter_object_id: format!("{id_prefix}-{ordinal}"),
+                original_hand_ordinal: ordinal,
+                visible_card_name: name.to_owned(),
+            }
+        }
+        let names = [
+            "Plains", "Island", "Plains", "Island", "Plains", "Island", "Plains",
+        ];
+        let current = (2..7)
+            .map(|ordinal| card(ordinal, names[usize::from(ordinal)], "stable"))
+            .collect();
+        let confirmed = (0..2)
+            .map(|ordinal| ConfirmedBottomedCardV5 {
+                card: card(ordinal, names[usize::from(ordinal)], "stable"),
+                selection_ordinal: ordinal + 1,
+            })
+            .collect();
+        let observed = (0..7)
+            .map(|ordinal| card(ordinal, names[usize::from(ordinal)], "fresh"))
+            .collect::<Vec<_>>();
+        let restored =
+            restore_original_cards_after_cancel_v5(current, confirmed, &observed).unwrap();
+        assert_eq!(restored.len(), 7);
+        for (ordinal, restored) in restored.iter().enumerate() {
+            assert_eq!(restored.adapter_object_id, format!("stable-{ordinal}"));
+            assert_eq!(usize::from(restored.original_hand_ordinal), ordinal);
+        }
+
+        let current = (2..7)
+            .map(|ordinal| card(ordinal, names[usize::from(ordinal)], "stable"))
+            .collect();
+        let confirmed = (0..2)
+            .map(|ordinal| ConfirmedBottomedCardV5 {
+                card: card(ordinal, names[usize::from(ordinal)], "stable"),
+                selection_ordinal: ordinal + 1,
+            })
+            .collect();
+        let mut mismatched = (0..7)
+            .map(|ordinal| card(ordinal, names[usize::from(ordinal)], "fresh"))
+            .collect::<Vec<_>>();
+        mismatched[4].visible_card_name = "Mountain".to_owned();
+        assert!(restore_original_cards_after_cancel_v5(current, confirmed, &mismatched).is_err());
     }
 
     #[test]

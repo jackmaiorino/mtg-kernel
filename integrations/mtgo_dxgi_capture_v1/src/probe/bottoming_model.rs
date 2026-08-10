@@ -239,7 +239,7 @@ pub fn start_card_aware_bottoming_session_v5(
         || source.required_bottom_count_v3() != Some(6)
         || source.selected_count_v3() != Some(0)
         || source.visible_hand_count_v3() != Some(7)
-        || source.legal_action_count_v3() != Some(8)
+        || source.legal_action_count_v3() != Some(7)
         || measurement.classification() != MtgoOfflineVisibleCardIdentityClassificationV1::Match
         || measurement.visible_hand_count() != Some(7)
         || measurement.matched_identity_count() != 7
@@ -521,10 +521,10 @@ fn validate_session_state_v5(
             != Some(u8::try_from(session.current_cards.len()).unwrap_or(u8::MAX))
         || session.current_state.done_visible_v3() != Some(selected_count == 6)
         || session.current_state.legal_action_count_v3()
-            != Some(if selected_count == 6 {
-                2
-            } else {
-                u8::try_from(session.current_cards.len() + 1).unwrap_or(u8::MAX)
+            != Some(match selected_count {
+                0 => u8::try_from(session.current_cards.len()).unwrap_or(u8::MAX),
+                6 => 2,
+                _ => u8::try_from(session.current_cards.len() + 1).unwrap_or(u8::MAX),
             })
     {
         return Err("opaque bottoming session state is internally inconsistent".to_owned());
@@ -613,7 +613,7 @@ fn canonical_actions_v5(
             MtgoOfflineBottomingActionSemanticV1::CancelBottoming,
         ];
     }
-    cards
+    let mut actions = cards
         .iter()
         .map(
             |card| MtgoOfflineBottomingActionSemanticV1::SelectForBottom {
@@ -621,10 +621,11 @@ fn canonical_actions_v5(
                 selection_ordinal: selected_count + 1,
             },
         )
-        .chain(std::iter::once(
-            MtgoOfflineBottomingActionSemanticV1::CancelBottoming,
-        ))
-        .collect()
+        .collect::<Vec<_>>();
+    if selected_count > 0 {
+        actions.push(MtgoOfflineBottomingActionSemanticV1::CancelBottoming);
+    }
+    actions
 }
 
 fn validate_card_aware_bottoming_scoring_request_v5(
@@ -940,11 +941,17 @@ mod tests {
             validate_card_aware_bottoming_scoring_request_v5(&request).unwrap();
             assert_eq!(
                 request.ordered_actions.len(),
-                if selected_count == 6 {
-                    2
-                } else {
-                    usize::from(8 - selected_count)
+                match selected_count {
+                    0 => 7,
+                    1..=5 => usize::from(8 - selected_count),
+                    _ => 2,
                 }
+            );
+            assert_eq!(
+                request
+                    .ordered_actions
+                    .contains(&MtgoOfflineBottomingActionSemanticV1::CancelBottoming),
+                selected_count > 0
             );
             assert_eq!(
                 card_aware_bottoming_scoring_request_commitment_v5(&request)

@@ -362,12 +362,18 @@ fn validate_record_structure_v1(
         }
         let actions = legal_actions_for_state_v1(state);
         if state.selected_count < record.required_bottom_count {
-            if actions.len() != state.visible_remaining_object_ids.len() + 1
-                || actions.last() != Some(&MtgoOfflineBottomingActionSemanticV1::CancelBottoming)
+            let expected_count =
+                state.visible_remaining_object_ids.len() + usize::from(state.selected_count > 0);
+            if actions.len() != expected_count
+                || (state.selected_count == 0
+                    && actions.contains(&MtgoOfflineBottomingActionSemanticV1::CancelBottoming))
+                || (state.selected_count > 0
+                    && actions.last()
+                        != Some(&MtgoOfflineBottomingActionSemanticV1::CancelBottoming))
             {
                 return Err(error_v1(
                     "offline_bottoming_state_actions",
-                    "selection states require one action per remaining card plus Cancel",
+                    "selection states require one action per remaining card and Cancel only after a selection",
                 ));
             }
         } else if actions
@@ -419,7 +425,7 @@ fn legal_actions_for_state_v1(
         ];
     }
     let selection_ordinal = state.selected_count + 1;
-    state
+    let mut actions = state
         .visible_remaining_object_ids
         .iter()
         .map(
@@ -428,10 +434,11 @@ fn legal_actions_for_state_v1(
                 selection_ordinal,
             },
         )
-        .chain(std::iter::once(
-            MtgoOfflineBottomingActionSemanticV1::CancelBottoming,
-        ))
-        .collect()
+        .collect::<Vec<_>>();
+    if state.selected_count > 0 {
+        actions.push(MtgoOfflineBottomingActionSemanticV1::CancelBottoming);
+    }
+    actions
 }
 
 fn require_frame_binding_v1(
@@ -555,7 +562,7 @@ mod tests {
         let record = fixture_v1();
         validate_record_structure_v1(&record).unwrap();
         let first = legal_actions_for_state_v1(&record.states[0]);
-        assert_eq!(first.len(), 8);
+        assert_eq!(first.len(), 7);
         assert_eq!(
             first[0],
             MtgoOfflineBottomingActionSemanticV1::SelectForBottom {
@@ -563,10 +570,7 @@ mod tests {
                 selection_ordinal: 1,
             }
         );
-        assert_eq!(
-            first.last(),
-            Some(&MtgoOfflineBottomingActionSemanticV1::CancelBottoming)
-        );
+        assert!(!first.contains(&MtgoOfflineBottomingActionSemanticV1::CancelBottoming));
         assert_eq!(
             legal_actions_for_state_v1(&record.states[6]),
             [

@@ -60,6 +60,8 @@ fn binary_ink_bottom_six_stages_and_nearby_negatives_are_consistent() {
             let selected = sample["selected_count"].as_u64().unwrap();
             let hand = sample["visible_hand_count"].as_u64().unwrap();
             assert_eq!(selected + hand, 7);
+            // V2 is retained as the pre-Cancel-calibration historical record.
+            // Its zero-selected sample still includes the visible no-op Cancel.
             assert_eq!(sample["legal_action_count"], hand + 1);
             assert_eq!(sample["done_visible"], selected == 6);
             observed_stages.insert(selected);

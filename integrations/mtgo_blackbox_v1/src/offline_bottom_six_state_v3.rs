@@ -170,7 +170,11 @@ pub fn classify_untrusted_offline_bottom_six_state_candidate_v3(
         .then_some(structural_hand_count)
         .flatten();
     let selected_count = visible_hand_count.map(|count| 7 - count);
-    let legal_action_count = visible_hand_count.map(|count| if count == 1 { 2 } else { count + 1 });
+    let legal_action_count = visible_hand_count.map(|count| match count {
+        7 => 7,
+        1 => 2,
+        _ => count + 1,
+    });
 
     let mut hasher = Sha256::new();
     hasher.update(CANDIDATE_DOMAIN_V3);
