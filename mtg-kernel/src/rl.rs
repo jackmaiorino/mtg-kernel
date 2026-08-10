@@ -3596,6 +3596,56 @@ fn validate_episode_decision_payload(
     Ok(())
 }
 
+/// Validates an externally reconstructed policy-v5 decision before it can be
+/// encoded for checkpoint scoring.
+///
+/// This accepts only the public observation and ordered semantic action rows.
+/// It deliberately creates no executable policy action and grants no consume
+/// authority. The ordinary episode validator remains the single authority for
+/// observation hashing, policy-stage structure, action uniqueness, and action
+/// metadata invariants.
+pub(crate) fn validate_external_policy_scoring_decision_v1(
+    observation: &ObservationV5,
+    action_semantics: &[ActionSemanticV1],
+) -> Result<()> {
+    if observation.kernel_version != KERNEL_VERSION
+        || observation.card_db_hash != KERNEL_CARDDB_HASH
+    {
+        return Err(RlContractError(
+            "external scoring observation kernel identity mismatch".to_string(),
+        ));
+    }
+    if action_semantics.is_empty() {
+        return Err(RlContractError(
+            "external scoring decision has no legal actions".to_string(),
+        ));
+    }
+
+    let legal_actions = action_semantics
+        .iter()
+        .enumerate()
+        .map(|(index, semantic)| {
+            make_legal_action_v5(
+                u32::try_from(index).map_err(|_| {
+                    RlContractError("external scoring action index exceeds u32".to_string())
+                })?,
+                semantic.clone(),
+                None,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let selected_action_id = legal_actions[0].stable_id.clone();
+    validate_episode_decision_payload(
+        "external scoring",
+        observation.step_index,
+        observation.acting_player,
+        observation,
+        &legal_actions,
+        0,
+        &selected_action_id,
+    )
+}
+
 pub(crate) const fn terminal_tuple_is_valid_v1(
     outcome: TerminalOutcomeV1,
     classification: TerminalClassificationV1,
@@ -5563,7 +5613,7 @@ fn visible_projection_hash_v2(observation: &ObservationV2) -> Result<u64> {
     })
 }
 
-fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
+pub(crate) fn visible_projection_hash_v5(observation: &ObservationV5) -> Result<u64> {
     #[cfg(test)]
     TEST_VISIBLE_PROJECTION_HASH_V5_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
 
