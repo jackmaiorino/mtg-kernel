@@ -1435,3 +1435,43 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         );
     }
 }
+
+#[test]
+fn competitive_operator_bootstrap_cross_checks_resources_without_authority() {
+    let source = include_str!("../src/competitive_operator_bootstrap.rs");
+    for required in [
+        "bind_competitive_operator_resources_v1",
+        "OpaqueMtgoCompetitiveOperatorResourcesV1",
+        "MtgoCompetitiveOperatorResourcesPartsV1",
+        "navigation profile and runtime are crossed",
+        "event evaluations are crossed",
+        "duel perception and lifecycle profiles are crossed",
+        "duel gesture resources are crossed",
+        "listing and checkpoint deployment are crossed",
+        "sideboard resources are crossed",
+        "safe_for_live_capture_v1(&self) -> bool",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "operator resource bootstrap is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "execute_prepared_competitive_entry_v1",
+        "execute_prepared_competitive_duel_gesture_primitive_v1",
+        "ratify_competitive",
+        "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "operator resource bootstrap exposes a forbidden capability: {forbidden}"
+        );
+    }
+}

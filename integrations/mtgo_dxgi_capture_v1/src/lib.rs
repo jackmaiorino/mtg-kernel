@@ -8,6 +8,9 @@ mod actuator;
 mod competitive_wiring_readiness;
 
 #[cfg(target_os = "windows")]
+mod competitive_operator_bootstrap;
+
+#[cfg(target_os = "windows")]
 mod probe;
 
 #[cfg(target_os = "windows")]
@@ -151,6 +154,12 @@ pub use competitive_wiring_readiness::{
     check_competitive_wiring_static_readiness_v1, MtgoCompetitiveKnownWiringGapsV1,
     MtgoCompetitiveStaticReadinessStatusV1, MtgoCompetitiveWiringStaticReadinessV1,
     MTGO_COMPETITIVE_WIRING_STATIC_READINESS_SCHEMA_V1,
+};
+
+#[cfg(target_os = "windows")]
+pub use competitive_operator_bootstrap::{
+    bind_competitive_operator_resources_v1, MtgoCompetitiveOperatorResourceCommitmentsV1,
+    MtgoCompetitiveOperatorResourcesPartsV1, OpaqueMtgoCompetitiveOperatorResourcesV1,
 };
 
 #[cfg(target_os = "windows")]

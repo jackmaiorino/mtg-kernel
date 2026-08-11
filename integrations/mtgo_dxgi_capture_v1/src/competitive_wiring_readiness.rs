@@ -19,9 +19,12 @@ pub enum MtgoCompetitiveStaticReadinessStatusV1 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoCompetitiveKnownWiringGapsV1 {
+    pub operator_resource_bootstrap_present: bool,
     pub end_to_end_operator_loop_present: bool,
     pub native_checkpoint_duel_action_interface_present: bool,
     pub native_checkpoint_pregame_interface_present: bool,
+    pub non_model_pregame_scorer_present: bool,
+    pub competitive_pregame_capture_and_session_bridge_present: bool,
     pub native_checkpoint_changed_sideboard_interface_present: bool,
 }
 
@@ -54,9 +57,12 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
         semantic_ratifications: competitive_semantic_ratification_readiness_v1(),
         authorization_ratifications: competitive_authorization_ratification_readiness_v1(),
         known_wiring_gaps: MtgoCompetitiveKnownWiringGapsV1 {
+            operator_resource_bootstrap_present: true,
             end_to_end_operator_loop_present: false,
             native_checkpoint_duel_action_interface_present: true,
             native_checkpoint_pregame_interface_present: false,
+            non_model_pregame_scorer_present: true,
+            competitive_pregame_capture_and_session_bridge_present: false,
             native_checkpoint_changed_sideboard_interface_present: false,
         },
         status:
@@ -88,6 +94,8 @@ mod tests {
         assert!(!report
             .authorization_ratifications
             .unchanged_sideboard_event_path_present_v1());
+        assert!(report.known_wiring_gaps.operator_resource_bootstrap_present);
+        assert!(!report.known_wiring_gaps.end_to_end_operator_loop_present);
         assert!(
             report
                 .known_wiring_gaps
@@ -97,6 +105,12 @@ mod tests {
             !report
                 .known_wiring_gaps
                 .native_checkpoint_pregame_interface_present
+        );
+        assert!(report.known_wiring_gaps.non_model_pregame_scorer_present);
+        assert!(
+            !report
+                .known_wiring_gaps
+                .competitive_pregame_capture_and_session_bridge_present
         );
         assert!(
             !report
