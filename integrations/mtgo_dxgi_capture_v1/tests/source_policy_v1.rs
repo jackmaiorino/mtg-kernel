@@ -303,6 +303,47 @@ fn competitive_event_record_parser_is_exact_frame_bounded_and_unratified() {
 }
 
 #[test]
+fn competitive_event_monitor_is_move_only_monotonic_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_event_record_runtime.rs");
+    for required in [
+        "OpaqueMtgoCompetitiveEventMonitorV1",
+        "begin_checked_untrusted_competitive_event_monitor_v1",
+        "advance_checked_untrusted_competitive_event_monitor_v1",
+        "validate_event_monitor_advance_v1",
+        "validate_event_monitor_progress_advance_v1",
+        "competitive event monitor identity changed across records",
+        "competitive event monitor requires a changed strictly newer record",
+        "a completed competitive event monitor cannot accept another record",
+        "checked_untrusted_event_monitor_advance_no_entry_no_spending_no_gameplay_no_input",
+        "permits_gameplay_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive event monitor is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "impl Clone for OpaqueMtgoCompetitiveEventMonitorV1",
+        "pub fn canonical_bgra8",
+        "pub fn visible_fact_rectangles",
+        "pub fn input_command",
+        "safe_for_live_classification_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "permits_gameplay_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive event monitor exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_authority() {
     let source = include_str!("../src/probe/duel_perception_runtime.rs");
     for required in [
