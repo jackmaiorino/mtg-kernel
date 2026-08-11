@@ -206,6 +206,7 @@ pub struct CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
     executable_sha256: String,
     signer_thumbprint: String,
     signer_subject_sha256: String,
+    window_title_sha256: String,
     dpi: u32,
     client_size_px: MtgoSizePxV1,
     captured_at_unix_millis: u64,
@@ -240,6 +241,10 @@ impl CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
 
     pub fn signer_subject_sha256(&self) -> &str {
         &self.signer_subject_sha256
+    }
+
+    pub fn window_title_sha256(&self) -> &str {
+        &self.window_title_sha256
     }
 
     pub fn dpi(&self) -> u32 {
@@ -1003,6 +1008,7 @@ pub fn check_untrusted_dxgi_capture_artifact_v1(
         executable_sha256: manifest.pre.executable_sha256,
         signer_thumbprint: manifest.pre.signer_thumbprint,
         signer_subject_sha256: manifest.pre.signer_subject_sha256,
+        window_title_sha256: sha256_v1(manifest.pre.title.as_bytes()),
         dpi: manifest.pre.dpi,
         client_size_px: client_size,
         captured_at_unix_millis: manifest.captured_at_unix_millis,
@@ -1570,6 +1576,7 @@ pub(crate) fn checked_untrusted_dxgi_artifact_for_test_v1(
         executable_sha256: "a".repeat(64),
         signer_thumbprint: "b".repeat(40),
         signer_subject_sha256: "c".repeat(64),
+        window_title_sha256: "9".repeat(64),
         dpi: 120,
         client_size_px: MtgoSizePxV1 {
             width: 1_550,
@@ -1593,6 +1600,7 @@ pub(crate) fn checked_untrusted_dxgi_navigation_artifact_for_test_v1(
         executable_sha256: "a".repeat(64),
         signer_thumbprint: "b".repeat(40),
         signer_subject_sha256: "c".repeat(64),
+        window_title_sha256: "9".repeat(64),
         dpi: 120,
         client_size_px: MtgoSizePxV1 {
             width: 1_550,
@@ -1658,6 +1666,7 @@ mod tests {
             executable_sha256: "a".repeat(64),
             signer_thumbprint: "b".repeat(40),
             signer_subject_sha256: "c".repeat(64),
+            window_title_sha256: "9".repeat(64),
             dpi: 120,
             client_size_px: MtgoSizePxV1 {
                 width: 64,
@@ -1818,6 +1827,7 @@ mod tests {
             signer_thumbprint: "e9d9e2b989f90555b04c506fddf889c7aba7ac30".to_owned(),
             signer_subject_sha256:
                 "89e095d976048cdd8da11e2ff312231867f79e521fa3b5aa6415d2aa59b79cfc".to_owned(),
+            window_title_sha256: "9".repeat(64),
             dpi: 120,
             client_size_px: MtgoSizePxV1 {
                 width: 1550,

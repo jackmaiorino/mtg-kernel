@@ -108,6 +108,56 @@ fn admitted_duel_frame_requires_an_opaque_profile_and_retains_no_downstream_auth
 }
 
 #[test]
+fn competitive_navigation_frame_requires_admitted_profile_and_exact_account_title() {
+    let source = include_str!("../src/probe/competitive_navigation_profile_frame.rs");
+    for required in [
+        "capture_admitted_mtgo_competitive_navigation_frame_v1",
+        "AdmittedMtgoCompetitiveNavigationProfileV1",
+        "OpaqueMtgoAdmittedCompetitiveNavigationFrameV1",
+        "CaptureWindowModeV2::MainClient",
+        "runtime.executable_sha256()",
+        "runtime.signer_thumbprint()",
+        "runtime.signer_subject_sha256()",
+        "runtime.window_title_sha256()",
+        "runtime.approved_account_alias_sha256()",
+        "runtime.account_identity_rect_client_px()",
+        "runtime.account_identity_region_sha256()",
+        "visible_frame_region_content_sha256_v1",
+        "runtime.dpi()",
+        "runtime.client_size_px()",
+        "runtime.output_identity_sha256()",
+        "profile_admission_commitment_sha256",
+        "frame_profile_binding_sha256",
+        "opaque_main_client_navigation_pixels_no_classification_no_entry_no_spending_no_input",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive navigation frame seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn bind_captured_competitive_navigation_frame_to_profile_v1",
+        "pub fn canonical_bgra8",
+        "pub fn preview_png",
+        "to_lifecycle",
+        "join_control",
+        "target_point_client",
+        "safe_for_lifecycle_classification_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive navigation frame seam exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_authority() {
     let source = include_str!("../src/probe/duel_perception_runtime.rs");
     for required in [

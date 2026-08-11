@@ -1,8 +1,9 @@
 use crate::{
-    validate_visible_competitive_lifecycle_snapshot_v1,
-    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, CheckedUntrustedMtgoDxgiCaptureArtifactV1,
-    MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1, MtgoContractErrorV1,
-    MtgoDxgiCaptureRoleV2, MtgoSizePxV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
+    check_untrusted_dxgi_capture_artifact_v1, validate_visible_competitive_lifecycle_snapshot_v1,
+    visible_frame_region_content_sha256_v1, CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    CheckedUntrustedMtgoDxgiCaptureArtifactV1, MtgoCompetitiveEventKindV1,
+    MtgoCompetitiveLifecyclePhaseV1, MtgoContractErrorV1, MtgoDxgiCaptureRoleV2, MtgoRectPxV1,
+    MtgoSizePxV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -16,6 +17,8 @@ const NAVIGATION_EVALUATION_DOMAIN_V1: &[u8] = b"mtgo-competitive-navigation-eva
 const NAVIGATION_PREDICTION_DOMAIN_V1: &[u8] = b"mtgo-competitive-navigation-prediction-v1";
 const NAVIGATION_PROFILE_ADMISSION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-navigation-profile-admission-v1";
+const NAVIGATION_SOURCE_PROFILE_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-navigation-source-profile-binding-v1";
 const RATIFIED_COMPETITIVE_NAVIGATION_EVALUATION_COMMITMENT_V1: Option<&str> = None;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -42,6 +45,10 @@ pub struct MtgoCompetitiveNavigationRuntimeProfileV1 {
     pub executable_sha256: String,
     pub signer_thumbprint: String,
     pub signer_subject_sha256: String,
+    pub window_title_sha256: String,
+    pub approved_account_alias_sha256: String,
+    pub account_identity_rect_client_px: MtgoRectPxV1,
+    pub account_identity_region_sha256: String,
     pub dpi: u32,
     pub client_size_px: MtgoSizePxV1,
     pub output_identity_sha256: String,
@@ -76,6 +83,22 @@ impl CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1 {
         &self.payload.signer_subject_sha256
     }
 
+    pub fn window_title_sha256(&self) -> &str {
+        &self.payload.window_title_sha256
+    }
+
+    pub fn approved_account_alias_sha256(&self) -> &str {
+        &self.payload.approved_account_alias_sha256
+    }
+
+    pub fn account_identity_rect_client_px(&self) -> &MtgoRectPxV1 {
+        &self.payload.account_identity_rect_client_px
+    }
+
+    pub fn account_identity_region_sha256(&self) -> &str {
+        &self.payload.account_identity_region_sha256
+    }
+
     pub fn dpi(&self) -> u32 {
         self.payload.dpi
     }
@@ -98,6 +121,45 @@ impl CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1 {
 
     pub fn supported_slices(&self) -> &[MtgoCompetitiveNavigationSliceV1] {
         &self.payload.supported_slices
+    }
+
+    pub fn safe_for_live_classification(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input(&self) -> bool {
+        false
+    }
+}
+
+/// One structurally checked main-client artifact whose visible account-identity
+/// region was rehashed from the supplied canonical pixels against the exact
+/// navigation profile. The canonical pixels are not retained or exposed.
+pub struct CheckedUntrustedMtgoCompetitiveNavigationSourceV1 {
+    artifact: CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    account_identity_region_sha256: String,
+    source_profile_binding_sha256: String,
+}
+
+impl CheckedUntrustedMtgoCompetitiveNavigationSourceV1 {
+    pub fn manifest_sha256(&self) -> &str {
+        self.artifact.manifest_sha256()
+    }
+
+    pub fn canonical_bgra8_sha256(&self) -> &str {
+        self.artifact.canonical_bgra8_sha256()
+    }
+
+    pub fn source_profile_binding_sha256(&self) -> &str {
+        &self.source_profile_binding_sha256
     }
 
     pub fn safe_for_live_classification(&self) -> bool {
@@ -195,7 +257,7 @@ impl CheckedUntrustedMtgoCompetitiveNavigationPredictionV1 {
 /// result is pinned in production source.
 pub struct MtgoCompetitiveNavigationEvaluationCaseV1<'a> {
     pub case_id: String,
-    pub source: &'a CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    pub source: &'a CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
     pub expected: MtgoVisibleCompetitiveLifecycleSnapshotV1,
     pub prediction: Option<&'a CheckedUntrustedMtgoCompetitiveNavigationPredictionV1>,
 }
@@ -358,6 +420,15 @@ pub fn check_untrusted_competitive_navigation_runtime_profile_v1(
     for (field, value) in [
         ("executable", payload.executable_sha256.as_str()),
         ("signer_subject", payload.signer_subject_sha256.as_str()),
+        ("window_title", payload.window_title_sha256.as_str()),
+        (
+            "approved_account_alias",
+            payload.approved_account_alias_sha256.as_str(),
+        ),
+        (
+            "account_identity_region",
+            payload.account_identity_region_sha256.as_str(),
+        ),
         ("output_identity", payload.output_identity_sha256.as_str()),
         (
             "classifier_binary",
@@ -382,6 +453,36 @@ pub fn check_untrusted_competitive_navigation_runtime_profile_v1(
             "DPI and client size must be bounded and nonzero",
         ));
     }
+    let account_right = payload
+        .account_identity_rect_client_px
+        .x
+        .checked_add(payload.account_identity_rect_client_px.width)
+        .ok_or_else(|| {
+            error_v1(
+                "competitive_navigation_account_identity_geometry",
+                "account identity region right edge overflow",
+            )
+        })?;
+    let account_bottom = payload
+        .account_identity_rect_client_px
+        .y
+        .checked_add(payload.account_identity_rect_client_px.height)
+        .ok_or_else(|| {
+            error_v1(
+                "competitive_navigation_account_identity_geometry",
+                "account identity region bottom edge overflow",
+            )
+        })?;
+    if payload.account_identity_rect_client_px.width < 8
+        || payload.account_identity_rect_client_px.height < 8
+        || account_right > payload.client_size_px.width
+        || account_bottom > payload.client_size_px.height
+    {
+        return Err(error_v1(
+            "competitive_navigation_account_identity_geometry",
+            "reviewed visible account identity region must be nontrivial and inside the client",
+        ));
+    }
     if payload.canonical_pixel_format != CANONICAL_PIXEL_FORMAT_V1 {
         return Err(error_v1(
             "competitive_navigation_profile_pixel_format",
@@ -403,9 +504,68 @@ pub fn check_untrusted_competitive_navigation_runtime_profile_v1(
     })
 }
 
+/// Checks a complete offline DXGI artifact against one exact navigation
+/// profile and recomputes the reviewed account-identity region from the
+/// supplied canonical pixels. Success remains non-authorizing.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoCompetitiveNavigationSourceV1;
+/// fn cannot_extract_pixels(value: &CheckedUntrustedMtgoCompetitiveNavigationSourceV1) {
+///     let _ = value.canonical_pixels_for_ocr_v1();
+/// }
+/// ```
+pub fn check_untrusted_competitive_navigation_source_v1(
+    profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+    manifest_bytes: &[u8],
+    canonical_bgra8: &[u8],
+    preview_png_bytes: &[u8],
+) -> Result<CheckedUntrustedMtgoCompetitiveNavigationSourceV1, MtgoContractErrorV1> {
+    let artifact = check_untrusted_dxgi_capture_artifact_v1(
+        manifest_bytes,
+        canonical_bgra8,
+        preview_png_bytes,
+    )?;
+    bind_checked_competitive_navigation_source_v1(profile, artifact, canonical_bgra8)
+}
+
+fn bind_checked_competitive_navigation_source_v1(
+    profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+    artifact: CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoCompetitiveNavigationSourceV1, MtgoContractErrorV1> {
+    validate_source_artifact_profile_v1(profile, &artifact)?;
+    let account_identity_region_sha256 = visible_frame_region_content_sha256_v1(
+        canonical_bgra8,
+        profile.client_size_px(),
+        profile.account_identity_rect_client_px(),
+    )?;
+    if account_identity_region_sha256 != profile.account_identity_region_sha256() {
+        return Err(error_v1(
+            "competitive_navigation_source_account_identity",
+            "source pixels do not match the reviewed approved-account identity region",
+        ));
+    }
+    let source_profile_binding_sha256 = commitment_v1(
+        NAVIGATION_SOURCE_PROFILE_BINDING_DOMAIN_V1,
+        &[
+            profile.profile_commitment_sha256().as_bytes(),
+            artifact.manifest_sha256().as_bytes(),
+            artifact.canonical_bgra8_sha256().as_bytes(),
+            profile.approved_account_alias_sha256().as_bytes(),
+            account_identity_region_sha256.as_bytes(),
+            b"checked_untrusted_offline_source_no_pixels_no_classification_no_entry_no_spending_no_input",
+        ],
+    );
+    Ok(CheckedUntrustedMtgoCompetitiveNavigationSourceV1 {
+        artifact,
+        account_identity_region_sha256,
+        source_profile_binding_sha256,
+    })
+}
+
 pub fn check_untrusted_competitive_navigation_prediction_v1(
     profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
-    source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    source: &CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
     record: MtgoCompetitiveNavigationPredictionV1,
 ) -> Result<CheckedUntrustedMtgoCompetitiveNavigationPredictionV1, MtgoContractErrorV1> {
     if record.schema_version != MTGO_COMPETITIVE_NAVIGATION_EVALUATION_SCHEMA_V1 {
@@ -700,6 +860,33 @@ fn validate_required_slices_v1(
 
 fn validate_source_profile_v1(
     profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+    source: &CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
+) -> Result<(), MtgoContractErrorV1> {
+    validate_source_artifact_profile_v1(profile, &source.artifact)?;
+    let expected_binding = commitment_v1(
+        NAVIGATION_SOURCE_PROFILE_BINDING_DOMAIN_V1,
+        &[
+            profile.profile_commitment_sha256().as_bytes(),
+            source.artifact.manifest_sha256().as_bytes(),
+            source.artifact.canonical_bgra8_sha256().as_bytes(),
+            profile.approved_account_alias_sha256().as_bytes(),
+            source.account_identity_region_sha256.as_bytes(),
+            b"checked_untrusted_offline_source_no_pixels_no_classification_no_entry_no_spending_no_input",
+        ],
+    );
+    if source.account_identity_region_sha256 != profile.account_identity_region_sha256()
+        || source.source_profile_binding_sha256 != expected_binding
+    {
+        return Err(error_v1(
+            "competitive_navigation_source_profile",
+            "source must retain the exact profile and approved-account pixel binding",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_source_artifact_profile_v1(
+    profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
     source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
 ) -> Result<(), MtgoContractErrorV1> {
     if source.capture_role() != MtgoDxgiCaptureRoleV2::Navigation
@@ -707,6 +894,7 @@ fn validate_source_profile_v1(
         || source.executable_sha256() != profile.executable_sha256()
         || source.signer_thumbprint() != profile.signer_thumbprint()
         || source.signer_subject_sha256() != profile.signer_subject_sha256()
+        || source.window_title_sha256() != profile.window_title_sha256()
         || source.dpi() != profile.dpi()
         || source.client_size_px() != profile.client_size_px()
         || source.output_identity_sha256() != profile.output_identity_sha256()
@@ -721,14 +909,14 @@ fn validate_source_profile_v1(
 
 fn validate_snapshot_source_v1(
     snapshot: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
-    source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    source: &CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
 ) -> Result<(), MtgoContractErrorV1> {
     let bounds = snapshot.client_bounds_v1();
     if snapshot.frame_sha256_v1() != source.canonical_bgra8_sha256()
         || bounds.x != 0
         || bounds.y != 0
-        || bounds.width != source.client_size_px().width
-        || bounds.height != source.client_size_px().height
+        || bounds.width != source.artifact.client_size_px().width
+        || bounds.height != source.artifact.client_size_px().height
     {
         return Err(error_v1(
             "competitive_navigation_snapshot_source",
@@ -829,30 +1017,72 @@ mod tests {
     use crate::{
         checked_untrusted_dxgi_navigation_artifact_for_test_v1, MtgoCompetitiveEntryResourceV1,
         MtgoCompetitiveEntryTermsV1, MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1,
-        MtgoRectPxV1,
     };
 
-    fn profile_v1() -> CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1 {
-        check_untrusted_competitive_navigation_runtime_profile_v1(
-            MtgoCompetitiveNavigationRuntimeProfileV1 {
-                schema_version: MTGO_COMPETITIVE_NAVIGATION_EVALUATION_SCHEMA_V1,
-                profile_id: "competitive-navigation-test-v1".to_owned(),
-                executable_sha256: "a".repeat(64),
-                signer_thumbprint: "b".repeat(40),
-                signer_subject_sha256: "c".repeat(64),
-                dpi: 120,
-                client_size_px: MtgoSizePxV1 {
-                    width: 1_550,
-                    height: 925,
-                },
-                output_identity_sha256: "4".repeat(64),
-                canonical_pixel_format: CANONICAL_PIXEL_FORMAT_V1.to_owned(),
-                classifier_binary_sha256: "5".repeat(64),
-                classifier_assets_manifest_sha256: "6".repeat(64),
-                supported_slices: REQUIRED_NAVIGATION_SLICES_V1.to_vec(),
+    fn profile_payload_v1() -> MtgoCompetitiveNavigationRuntimeProfileV1 {
+        MtgoCompetitiveNavigationRuntimeProfileV1 {
+            schema_version: MTGO_COMPETITIVE_NAVIGATION_EVALUATION_SCHEMA_V1,
+            profile_id: "competitive-navigation-test-v1".to_owned(),
+            executable_sha256: "a".repeat(64),
+            signer_thumbprint: "b".repeat(40),
+            signer_subject_sha256: "c".repeat(64),
+            window_title_sha256: "9".repeat(64),
+            approved_account_alias_sha256: "2".repeat(64),
+            account_identity_rect_client_px: MtgoRectPxV1 {
+                x: 24,
+                y: 24,
+                width: 160,
+                height: 32,
             },
+            account_identity_region_sha256: "3".repeat(64),
+            dpi: 120,
+            client_size_px: MtgoSizePxV1 {
+                width: 1_550,
+                height: 925,
+            },
+            output_identity_sha256: "4".repeat(64),
+            canonical_pixel_format: CANONICAL_PIXEL_FORMAT_V1.to_owned(),
+            classifier_binary_sha256: "5".repeat(64),
+            classifier_assets_manifest_sha256: "6".repeat(64),
+            supported_slices: REQUIRED_NAVIGATION_SLICES_V1.to_vec(),
+        }
+    }
+
+    fn profile_v1() -> CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1 {
+        check_untrusted_competitive_navigation_runtime_profile_v1(profile_payload_v1()).unwrap()
+    }
+
+    fn source_from_artifact_v1(
+        profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+        artifact: CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+    ) -> CheckedUntrustedMtgoCompetitiveNavigationSourceV1 {
+        let account_identity_region_sha256 = profile.account_identity_region_sha256().to_owned();
+        let source_profile_binding_sha256 = commitment_v1(
+            NAVIGATION_SOURCE_PROFILE_BINDING_DOMAIN_V1,
+            &[
+                profile.profile_commitment_sha256().as_bytes(),
+                artifact.manifest_sha256().as_bytes(),
+                artifact.canonical_bgra8_sha256().as_bytes(),
+                profile.approved_account_alias_sha256().as_bytes(),
+                account_identity_region_sha256.as_bytes(),
+                b"checked_untrusted_offline_source_no_pixels_no_classification_no_entry_no_spending_no_input",
+            ],
+        );
+        CheckedUntrustedMtgoCompetitiveNavigationSourceV1 {
+            artifact,
+            account_identity_region_sha256,
+            source_profile_binding_sha256,
+        }
+    }
+
+    fn source_v1(
+        profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+        discriminator: u8,
+    ) -> CheckedUntrustedMtgoCompetitiveNavigationSourceV1 {
+        source_from_artifact_v1(
+            profile,
+            checked_untrusted_dxgi_navigation_artifact_for_test_v1(discriminator),
         )
-        .unwrap()
     }
 
     fn spec_v1(
@@ -935,7 +1165,7 @@ mod tests {
 
     fn prediction_v1(
         profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
-        source: &CheckedUntrustedMtgoDxgiCaptureArtifactV1,
+        source: &CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
         lifecycle: MtgoVisibleCompetitiveLifecycleSnapshotV1,
         discriminator: u8,
     ) -> CheckedUntrustedMtgoCompetitiveNavigationPredictionV1 {
@@ -959,7 +1189,7 @@ mod tests {
     fn four_slice_exact_evaluation_passes_but_production_admission_is_empty() {
         let profile = profile_v1();
         let sources = (1_u8..=4)
-            .map(checked_untrusted_dxgi_navigation_artifact_for_test_v1)
+            .map(|discriminator| source_v1(&profile, discriminator))
             .collect::<Vec<_>>();
         let kinds = [
             (
@@ -1043,7 +1273,7 @@ mod tests {
     fn private_exact_ratification_grants_profile_identity_only() {
         let profile = profile_v1();
         let sources = (1_u8..=4)
-            .map(checked_untrusted_dxgi_navigation_artifact_for_test_v1)
+            .map(|discriminator| source_v1(&profile, discriminator))
             .collect::<Vec<_>>();
         let kinds = [
             (
@@ -1126,7 +1356,7 @@ mod tests {
     #[test]
     fn missing_slice_and_abstention_fail_the_declared_gate() {
         let profile = profile_v1();
-        let source = checked_untrusted_dxgi_navigation_artifact_for_test_v1(1);
+        let source = source_v1(&profile, 1);
         let expected = snapshot_v1(
             MtgoCompetitiveEventKindV1::League,
             MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
@@ -1153,7 +1383,7 @@ mod tests {
     fn aggregate_coverage_cannot_hide_a_zero_coverage_required_slice() {
         let profile = profile_v1();
         let sources = (1_u8..=23)
-            .map(checked_untrusted_dxgi_navigation_artifact_for_test_v1)
+            .map(|discriminator| source_v1(&profile, discriminator))
             .collect::<Vec<_>>();
         let expected = sources
             .iter()
@@ -1219,7 +1449,7 @@ mod tests {
     #[test]
     fn declared_classifier_exchange_is_bound_to_exact_profile_and_source() {
         let profile = profile_v1();
-        let source = checked_untrusted_dxgi_navigation_artifact_for_test_v1(1);
+        let source = source_v1(&profile, 1);
         let lifecycle = snapshot_v1(
             MtgoCompetitiveEventKindV1::League,
             MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
@@ -1245,8 +1475,11 @@ mod tests {
     #[test]
     fn wrong_role_identity_and_source_frame_fail_closed() {
         let profile = profile_v1();
-        let wrong_role = crate::checked_untrusted_dxgi_artifact_for_test_v1(
-            MtgoDxgiCaptureRoleV2::ActingPlayerDuel,
+        let wrong_role = source_from_artifact_v1(
+            &profile,
+            crate::checked_untrusted_dxgi_artifact_for_test_v1(
+                MtgoDxgiCaptureRoleV2::ActingPlayerDuel,
+            ),
         );
         let expected = snapshot_v1(
             MtgoCompetitiveEventKindV1::League,
@@ -1266,7 +1499,7 @@ mod tests {
         )
         .is_err());
 
-        let source = checked_untrusted_dxgi_navigation_artifact_for_test_v1(1);
+        let source = source_v1(&profile, 1);
         let wrong_frame = snapshot_v1(
             MtgoCompetitiveEventKindV1::League,
             MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
@@ -1287,24 +1520,91 @@ mod tests {
     }
 
     #[test]
+    fn main_window_title_drift_fails_closed() {
+        let mut payload = profile_payload_v1();
+        payload.window_title_sha256 = "0".repeat(64);
+        let wrong_account_profile =
+            check_untrusted_competitive_navigation_runtime_profile_v1(payload).unwrap();
+        let source = source_v1(&wrong_account_profile, 1);
+        let expected = snapshot_v1(
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
+            1,
+            source.canonical_bgra8_sha256().to_owned(),
+        );
+        let error = evaluate_untrusted_competitive_navigation_profile_v1(
+            &wrong_account_profile,
+            spec_v1(&wrong_account_profile),
+            vec![MtgoCompetitiveNavigationEvaluationCaseV1 {
+                case_id: "wrong-main-window-title".to_owned(),
+                source: &source,
+                expected,
+                prediction: None,
+            }],
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code(), "competitive_navigation_source_profile");
+    }
+
+    #[test]
+    fn approved_account_identity_region_must_be_bounded_and_committed() {
+        let mut payload = profile_payload_v1();
+        payload.account_identity_rect_client_px.x = 1_549;
+        let error = check_untrusted_competitive_navigation_runtime_profile_v1(payload)
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.code(),
+            "competitive_navigation_account_identity_geometry"
+        );
+    }
+
+    #[test]
+    fn offline_navigation_source_rehashes_the_approved_account_region() {
+        let mut payload = profile_payload_v1();
+        let pixel_count = usize::try_from(payload.client_size_px.width)
+            .unwrap()
+            .checked_mul(usize::try_from(payload.client_size_px.height).unwrap())
+            .unwrap();
+        let mut pixels = vec![0_u8; pixel_count.checked_mul(4).unwrap()];
+        payload.account_identity_region_sha256 = visible_frame_region_content_sha256_v1(
+            &pixels,
+            &payload.client_size_px,
+            &payload.account_identity_rect_client_px,
+        )
+        .unwrap();
+        let profile = check_untrusted_competitive_navigation_runtime_profile_v1(payload).unwrap();
+        let source = bind_checked_competitive_navigation_source_v1(
+            &profile,
+            checked_untrusted_dxgi_navigation_artifact_for_test_v1(1),
+            &pixels,
+        )
+        .unwrap();
+        assert_eq!(source.source_profile_binding_sha256().len(), 64);
+        assert!(!source.safe_for_live_classification());
+        assert!(!source.permits_event_entry());
+        assert!(!source.permits_spending());
+        assert!(!source.safe_for_input());
+
+        let changed_pixel = (24_usize * 1_550 + 24) * 4;
+        pixels[changed_pixel] = 1;
+        let error = bind_checked_competitive_navigation_source_v1(
+            &profile,
+            checked_untrusted_dxgi_navigation_artifact_for_test_v1(1),
+            &pixels,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.code(),
+            "competitive_navigation_source_account_identity"
+        );
+    }
+
+    #[test]
     fn profile_requires_all_four_slices_in_canonical_order() {
-        let mut payload = MtgoCompetitiveNavigationRuntimeProfileV1 {
-            schema_version: MTGO_COMPETITIVE_NAVIGATION_EVALUATION_SCHEMA_V1,
-            profile_id: "competitive-navigation-test-v1".to_owned(),
-            executable_sha256: "a".repeat(64),
-            signer_thumbprint: "b".repeat(40),
-            signer_subject_sha256: "c".repeat(64),
-            dpi: 120,
-            client_size_px: MtgoSizePxV1 {
-                width: 1_550,
-                height: 925,
-            },
-            output_identity_sha256: "4".repeat(64),
-            canonical_pixel_format: CANONICAL_PIXEL_FORMAT_V1.to_owned(),
-            classifier_binary_sha256: "5".repeat(64),
-            classifier_assets_manifest_sha256: "6".repeat(64),
-            supported_slices: REQUIRED_NAVIGATION_SLICES_V1.to_vec(),
-        };
+        let mut payload = profile_payload_v1();
         payload.supported_slices.pop();
         assert!(check_untrusted_competitive_navigation_runtime_profile_v1(payload).is_err());
     }
