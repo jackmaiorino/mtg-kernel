@@ -195,6 +195,77 @@ pub struct MtgoCompetitiveNavigationEvaluationSpecV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct MtgoCompetitiveNavigationCorpusCaseV1 {
+    pub case_id: String,
+    pub slice: MtgoCompetitiveNavigationSliceV1,
+    pub source_manifest_sha256: String,
+    pub source_canonical_bgra8_sha256: String,
+    pub source_profile_binding_sha256: String,
+    pub expected_lifecycle_snapshot_commitment_sha256: String,
+    pub annotator_alias_sha256: String,
+    pub annotation_receipt_sha256: String,
+    pub annotated_at_unix_millis: u64,
+    pub approved_account_identity_visually_confirmed: bool,
+    pub unobscured_frame_visually_confirmed: bool,
+    pub event_kind_visually_confirmed: bool,
+    pub lifecycle_phase_visually_confirmed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCompetitiveNavigationCorpusManifestV1 {
+    pub schema_version: u32,
+    pub corpus_id: String,
+    pub profile_commitment_sha256: String,
+    pub approved_account_alias_sha256: String,
+    pub annotation_protocol_sha256: String,
+    pub cases: Vec<MtgoCompetitiveNavigationCorpusCaseV1>,
+}
+
+/// Structurally checked, profile-bound human annotation manifest. It contains
+/// commitments only and grants no capture, classification, entry, spending,
+/// or input authority.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoCompetitiveNavigationCorpusManifestV1;
+/// fn cannot_enter(value: &CheckedUntrustedMtgoCompetitiveNavigationCorpusManifestV1) {
+///     let _ = value.join_control();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct CheckedUntrustedMtgoCompetitiveNavigationCorpusManifestV1 {
+    manifest: MtgoCompetitiveNavigationCorpusManifestV1,
+    manifest_sha256: String,
+}
+
+impl CheckedUntrustedMtgoCompetitiveNavigationCorpusManifestV1 {
+    pub fn manifest_sha256(&self) -> &str {
+        &self.manifest_sha256
+    }
+
+    pub fn case_count(&self) -> usize {
+        self.manifest.cases.len()
+    }
+
+    pub fn safe_for_live_classification(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MtgoCompetitiveNavigationPredictionV1 {
     pub schema_version: u32,
     pub profile_commitment_sha256: String,
@@ -563,6 +634,103 @@ fn bind_checked_competitive_navigation_source_v1(
     })
 }
 
+pub fn check_untrusted_competitive_navigation_corpus_manifest_v1(
+    profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+    manifest: MtgoCompetitiveNavigationCorpusManifestV1,
+) -> Result<CheckedUntrustedMtgoCompetitiveNavigationCorpusManifestV1, MtgoContractErrorV1> {
+    if manifest.schema_version != MTGO_COMPETITIVE_NAVIGATION_EVALUATION_SCHEMA_V1 {
+        return Err(error_v1(
+            "competitive_navigation_corpus_schema",
+            manifest.schema_version.to_string(),
+        ));
+    }
+    validate_identifier_v1(&manifest.corpus_id, "competitive_navigation_corpus_id")?;
+    if manifest.profile_commitment_sha256 != profile.profile_commitment_sha256()
+        || manifest.approved_account_alias_sha256 != profile.approved_account_alias_sha256()
+    {
+        return Err(error_v1(
+            "competitive_navigation_corpus_profile",
+            "corpus must bind the exact runtime profile and approved account",
+        ));
+    }
+    validate_sha256_v1(
+        "competitive_navigation_annotation_protocol",
+        &manifest.annotation_protocol_sha256,
+    )?;
+    if manifest.cases.is_empty() || manifest.cases.len() > 100_000 {
+        return Err(error_v1(
+            "competitive_navigation_corpus_case_count",
+            manifest.cases.len().to_string(),
+        ));
+    }
+
+    let mut previous_case_id: Option<&str> = None;
+    let mut source_manifests = HashSet::new();
+    let mut source_frames = HashSet::new();
+    for case in &manifest.cases {
+        validate_identifier_v1(&case.case_id, "competitive_navigation_corpus_case_id")?;
+        if previous_case_id.is_some_and(|previous| previous >= case.case_id.as_str()) {
+            return Err(error_v1(
+                "competitive_navigation_corpus_case_order",
+                "corpus case IDs must be unique and strictly increasing",
+            ));
+        }
+        previous_case_id = Some(&case.case_id);
+        for (field, value) in [
+            ("source_manifest", case.source_manifest_sha256.as_str()),
+            (
+                "source_canonical_bgra8",
+                case.source_canonical_bgra8_sha256.as_str(),
+            ),
+            (
+                "source_profile_binding",
+                case.source_profile_binding_sha256.as_str(),
+            ),
+            (
+                "expected_lifecycle_snapshot",
+                case.expected_lifecycle_snapshot_commitment_sha256.as_str(),
+            ),
+            ("annotator_alias", case.annotator_alias_sha256.as_str()),
+            (
+                "annotation_receipt",
+                case.annotation_receipt_sha256.as_str(),
+            ),
+        ] {
+            validate_sha256_v1(field, value)?;
+        }
+        if !source_manifests.insert(case.source_manifest_sha256.as_str())
+            || !source_frames.insert(case.source_canonical_bgra8_sha256.as_str())
+        {
+            return Err(error_v1(
+                "competitive_navigation_corpus_duplicate_source",
+                "corpus source manifests and frame pixels must each be unique",
+            ));
+        }
+        if case.annotated_at_unix_millis == 0
+            || !case.approved_account_identity_visually_confirmed
+            || !case.unobscured_frame_visually_confirmed
+            || !case.event_kind_visually_confirmed
+            || !case.lifecycle_phase_visually_confirmed
+        {
+            return Err(error_v1(
+                "competitive_navigation_corpus_review",
+                "every annotation must have a timestamp and all four visual confirmations",
+            ));
+        }
+    }
+
+    let bytes = serde_json::to_vec(&manifest).map_err(|error| {
+        error_v1(
+            "competitive_navigation_corpus_serialization",
+            error.to_string(),
+        )
+    })?;
+    Ok(CheckedUntrustedMtgoCompetitiveNavigationCorpusManifestV1 {
+        manifest,
+        manifest_sha256: format!("{:x}", Sha256::digest(bytes)),
+    })
+}
+
 pub fn check_untrusted_competitive_navigation_prediction_v1(
     profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
     source: &CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
@@ -603,22 +771,31 @@ pub fn check_untrusted_competitive_navigation_prediction_v1(
 
 pub fn evaluate_untrusted_competitive_navigation_profile_v1(
     profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+    corpus: &CheckedUntrustedMtgoCompetitiveNavigationCorpusManifestV1,
     spec: MtgoCompetitiveNavigationEvaluationSpecV1,
     cases: Vec<MtgoCompetitiveNavigationEvaluationCaseV1<'_>>,
 ) -> Result<CheckedUntrustedMtgoCompetitiveNavigationEvaluationV1, MtgoContractErrorV1> {
     validate_evaluation_spec_v1(&spec)?;
     if spec.profile_commitment_sha256 != profile.profile_commitment_sha256()
         || spec.required_slices != profile.supported_slices()
+        || corpus.manifest.profile_commitment_sha256 != profile.profile_commitment_sha256()
+        || corpus.manifest.approved_account_alias_sha256 != profile.approved_account_alias_sha256()
+        || spec.corpus_manifest_sha256 != corpus.manifest_sha256
+        || spec.annotation_protocol_sha256 != corpus.manifest.annotation_protocol_sha256
     {
         return Err(error_v1(
             "competitive_navigation_evaluation_profile",
-            "evaluation must bind the exact runtime profile and required slices",
+            "evaluation must bind the exact profile, approved account, corpus, annotation protocol, and required slices",
         ));
     }
-    if cases.is_empty() || cases.len() > 100_000 {
+    if cases.is_empty() || cases.len() > 100_000 || cases.len() != corpus.manifest.cases.len() {
         return Err(error_v1(
             "competitive_navigation_case_count",
-            cases.len().to_string(),
+            format!(
+                "evaluation has {} cases while the reviewed corpus has {}",
+                cases.len(),
+                corpus.manifest.cases.len()
+            ),
         ));
     }
 
@@ -640,7 +817,7 @@ pub fn evaluate_untrusted_competitive_navigation_profile_v1(
     let mut prediction_count = 0_u32;
     let mut exact_prediction_count = 0_u32;
 
-    for case in &cases {
+    for (case, reviewed) in cases.iter().zip(&corpus.manifest.cases) {
         validate_identifier_v1(&case.case_id, "competitive_navigation_case_id")?;
         if previous_case_id.is_some_and(|previous| previous >= case.case_id.as_str()) {
             return Err(error_v1(
@@ -665,6 +842,19 @@ pub fn evaluate_untrusted_competitive_navigation_profile_v1(
         let expected = validate_visible_competitive_lifecycle_snapshot_v1(case.expected.clone())?;
         validate_snapshot_source_v1(&expected, case.source)?;
         let slice = navigation_slice_v1(expected.event_kind(), expected.phase())?;
+        if reviewed.case_id != case.case_id
+            || reviewed.slice != slice
+            || reviewed.source_manifest_sha256 != case.source.manifest_sha256()
+            || reviewed.source_canonical_bgra8_sha256 != case.source.canonical_bgra8_sha256()
+            || reviewed.source_profile_binding_sha256 != case.source.source_profile_binding_sha256()
+            || reviewed.expected_lifecycle_snapshot_commitment_sha256
+                != expected.snapshot_commitment_sha256()
+        {
+            return Err(error_v1(
+                "competitive_navigation_corpus_case_binding",
+                "evaluated case does not exactly match its reviewed corpus record",
+            ));
+        }
         *slice_counts.entry(slice).or_insert(0_u32) += 1;
 
         let (prediction_commitment, exact) = if let Some(prediction) = case.prediction {
@@ -1185,6 +1375,65 @@ mod tests {
         .unwrap()
     }
 
+    fn corpus_manifest_payload_v1(
+        profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+        cases: &[MtgoCompetitiveNavigationEvaluationCaseV1<'_>],
+    ) -> MtgoCompetitiveNavigationCorpusManifestV1 {
+        let entries = cases
+            .iter()
+            .map(|case| {
+                let expected =
+                    validate_visible_competitive_lifecycle_snapshot_v1(case.expected.clone())
+                        .unwrap();
+                MtgoCompetitiveNavigationCorpusCaseV1 {
+                    case_id: case.case_id.clone(),
+                    slice: navigation_slice_v1(expected.event_kind(), expected.phase()).unwrap(),
+                    source_manifest_sha256: case.source.manifest_sha256().to_owned(),
+                    source_canonical_bgra8_sha256: case.source.canonical_bgra8_sha256().to_owned(),
+                    source_profile_binding_sha256: case
+                        .source
+                        .source_profile_binding_sha256()
+                        .to_owned(),
+                    expected_lifecycle_snapshot_commitment_sha256: expected
+                        .snapshot_commitment_sha256()
+                        .to_owned(),
+                    annotator_alias_sha256: "a".repeat(64),
+                    annotation_receipt_sha256: commitment_v1(
+                        b"mtgo-competitive-navigation-test-annotation-receipt-v1",
+                        &[case.case_id.as_bytes()],
+                    ),
+                    annotated_at_unix_millis: 1_786_350_000_000,
+                    approved_account_identity_visually_confirmed: true,
+                    unobscured_frame_visually_confirmed: true,
+                    event_kind_visually_confirmed: true,
+                    lifecycle_phase_visually_confirmed: true,
+                }
+            })
+            .collect();
+        MtgoCompetitiveNavigationCorpusManifestV1 {
+            schema_version: MTGO_COMPETITIVE_NAVIGATION_EVALUATION_SCHEMA_V1,
+            corpus_id: "competitive-navigation-test-corpus-v1".to_owned(),
+            profile_commitment_sha256: profile.profile_commitment_sha256().to_owned(),
+            approved_account_alias_sha256: profile.approved_account_alias_sha256().to_owned(),
+            annotation_protocol_sha256: "8".repeat(64),
+            cases: entries,
+        }
+    }
+
+    fn evaluate_v1(
+        profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+        mut spec: MtgoCompetitiveNavigationEvaluationSpecV1,
+        cases: Vec<MtgoCompetitiveNavigationEvaluationCaseV1<'_>>,
+    ) -> Result<CheckedUntrustedMtgoCompetitiveNavigationEvaluationV1, MtgoContractErrorV1> {
+        let corpus = check_untrusted_competitive_navigation_corpus_manifest_v1(
+            profile,
+            corpus_manifest_payload_v1(profile, &cases),
+        )?;
+        spec.corpus_manifest_sha256 = corpus.manifest_sha256().to_owned();
+        spec.annotation_protocol_sha256 = corpus.manifest.annotation_protocol_sha256.clone();
+        evaluate_untrusted_competitive_navigation_profile_v1(profile, &corpus, spec, cases)
+    }
+
     #[test]
     fn four_slice_exact_evaluation_passes_but_production_admission_is_empty() {
         let profile = profile_v1();
@@ -1244,12 +1493,7 @@ mod tests {
                 }
             })
             .collect::<Vec<_>>();
-        let evaluation = evaluate_untrusted_competitive_navigation_profile_v1(
-            &profile,
-            spec_v1(&profile),
-            cases,
-        )
-        .unwrap();
+        let evaluation = evaluate_v1(&profile, spec_v1(&profile), cases).unwrap();
         assert!(evaluation.passes_declared_gate());
         assert_eq!(evaluation.unique_case_count(), 4);
         assert_eq!(evaluation.exact_prediction_count(), 4);
@@ -1328,12 +1572,7 @@ mod tests {
                 }
             })
             .collect::<Vec<_>>();
-        let evaluation = evaluate_untrusted_competitive_navigation_profile_v1(
-            &profile,
-            spec_v1(&profile),
-            cases,
-        )
-        .unwrap();
+        let evaluation = evaluate_v1(&profile, spec_v1(&profile), cases).unwrap();
         let ratification = evaluation.evaluation_commitment_sha256().to_owned();
         let admitted = admit_competitive_navigation_profile_against_ratification_v1(
             profile,
@@ -1363,7 +1602,7 @@ mod tests {
             1,
             source.canonical_bgra8_sha256().to_owned(),
         );
-        let evaluation = evaluate_untrusted_competitive_navigation_profile_v1(
+        let evaluation = evaluate_v1(
             &profile,
             spec_v1(&profile),
             vec![MtgoCompetitiveNavigationEvaluationCaseV1 {
@@ -1377,6 +1616,100 @@ mod tests {
         assert!(!evaluation.passes_declared_gate());
         assert_eq!(evaluation.prediction_coverage_bps(), 0);
         assert_eq!(evaluation.missing_slices().len(), 3);
+    }
+
+    #[test]
+    fn corpus_manifest_requires_complete_visual_review() {
+        let profile = profile_v1();
+        let source = source_v1(&profile, 1);
+        let cases = vec![MtgoCompetitiveNavigationEvaluationCaseV1 {
+            case_id: "case-1".to_owned(),
+            source: &source,
+            expected: snapshot_v1(
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
+                1,
+                source.canonical_bgra8_sha256().to_owned(),
+            ),
+            prediction: None,
+        }];
+        let mut manifest = corpus_manifest_payload_v1(&profile, &cases);
+        manifest.cases[0].unobscured_frame_visually_confirmed = false;
+        let error = check_untrusted_competitive_navigation_corpus_manifest_v1(&profile, manifest)
+            .err()
+            .unwrap();
+        assert_eq!(error.code(), "competitive_navigation_corpus_review");
+
+        let corpus = check_untrusted_competitive_navigation_corpus_manifest_v1(
+            &profile,
+            corpus_manifest_payload_v1(&profile, &cases),
+        )
+        .unwrap();
+        assert_eq!(corpus.case_count(), 1);
+        assert!(!corpus.safe_for_live_classification());
+        assert!(!corpus.permits_event_entry());
+        assert!(!corpus.permits_spending());
+        assert!(!corpus.safe_for_input());
+    }
+
+    #[test]
+    fn evaluation_rejects_a_case_substituted_after_corpus_review() {
+        let profile = profile_v1();
+        let source = source_v1(&profile, 1);
+        let cases = vec![MtgoCompetitiveNavigationEvaluationCaseV1 {
+            case_id: "case-1".to_owned(),
+            source: &source,
+            expected: snapshot_v1(
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
+                1,
+                source.canonical_bgra8_sha256().to_owned(),
+            ),
+            prediction: None,
+        }];
+        let mut manifest = corpus_manifest_payload_v1(&profile, &cases);
+        manifest.cases[0].source_manifest_sha256 = "0".repeat(64);
+        let corpus =
+            check_untrusted_competitive_navigation_corpus_manifest_v1(&profile, manifest).unwrap();
+        let mut spec = spec_v1(&profile);
+        spec.corpus_manifest_sha256 = corpus.manifest_sha256().to_owned();
+        spec.annotation_protocol_sha256 = corpus.manifest.annotation_protocol_sha256.clone();
+        let error =
+            evaluate_untrusted_competitive_navigation_profile_v1(&profile, &corpus, spec, cases)
+                .err()
+                .unwrap();
+        assert_eq!(error.code(), "competitive_navigation_corpus_case_binding");
+    }
+
+    #[test]
+    fn evaluation_rejects_an_unbound_declared_corpus_hash() {
+        let profile = profile_v1();
+        let source = source_v1(&profile, 1);
+        let cases = vec![MtgoCompetitiveNavigationEvaluationCaseV1 {
+            case_id: "case-1".to_owned(),
+            source: &source,
+            expected: snapshot_v1(
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
+                1,
+                source.canonical_bgra8_sha256().to_owned(),
+            ),
+            prediction: None,
+        }];
+        let corpus = check_untrusted_competitive_navigation_corpus_manifest_v1(
+            &profile,
+            corpus_manifest_payload_v1(&profile, &cases),
+        )
+        .unwrap();
+        let error = evaluate_untrusted_competitive_navigation_profile_v1(
+            &profile,
+            &corpus,
+            spec_v1(&profile),
+            cases,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code(), "competitive_navigation_evaluation_profile");
     }
 
     #[test]
@@ -1439,8 +1772,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut spec = spec_v1(&profile);
         spec.minimum_prediction_coverage_bps = 9_500;
-        let evaluation =
-            evaluate_untrusted_competitive_navigation_profile_v1(&profile, spec, cases).unwrap();
+        let evaluation = evaluate_v1(&profile, spec, cases).unwrap();
         assert!(evaluation.prediction_coverage_bps() >= 9_500);
         assert_eq!(evaluation.minimum_prediction_coverage_bps_per_slice(), 0);
         assert!(!evaluation.passes_declared_gate());
@@ -1487,7 +1819,7 @@ mod tests {
             1,
             wrong_role.canonical_bgra8_sha256().to_owned(),
         );
-        assert!(evaluate_untrusted_competitive_navigation_profile_v1(
+        assert!(evaluate_v1(
             &profile,
             spec_v1(&profile),
             vec![MtgoCompetitiveNavigationEvaluationCaseV1 {
@@ -1506,7 +1838,7 @@ mod tests {
             1,
             "0".repeat(64),
         );
-        assert!(evaluate_untrusted_competitive_navigation_profile_v1(
+        assert!(evaluate_v1(
             &profile,
             spec_v1(&profile),
             vec![MtgoCompetitiveNavigationEvaluationCaseV1 {
@@ -1532,7 +1864,7 @@ mod tests {
             1,
             source.canonical_bgra8_sha256().to_owned(),
         );
-        let error = evaluate_untrusted_competitive_navigation_profile_v1(
+        let error = evaluate_v1(
             &wrong_account_profile,
             spec_v1(&wrong_account_profile),
             vec![MtgoCompetitiveNavigationEvaluationCaseV1 {
