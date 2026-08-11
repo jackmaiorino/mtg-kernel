@@ -306,6 +306,7 @@ pub struct MtgoConfirmedCompetitiveDuelPassCommitmentsV1 {
     pub game_number: u8,
     pub after_frame_id: u64,
     pub after_frame_sequence: u64,
+    pub postcondition_candidate_count: u32,
 }
 
 /// One emitted priority Pass with its exact newer visible postcondition
@@ -612,6 +613,7 @@ pub fn confirm_pending_competitive_duel_pass_v1(
             game_number: visible.game_number,
             after_frame_id: visible.after_frame_id,
             after_frame_sequence: visible.after_frame_sequence,
+            postcondition_candidate_count: visible.postcondition_candidate_count,
         },
     })
 }
@@ -1069,6 +1071,10 @@ fn competitive_duel_pass_transition_receipt_v1(
         &[visible.game_number],
         visible.after_frame_id.to_be_bytes().as_slice(),
         visible.after_frame_sequence.to_be_bytes().as_slice(),
+        visible
+            .postcondition_candidate_count
+            .to_be_bytes()
+            .as_slice(),
         b"visible_postcondition_confirmed_shared_input_gate_released",
     ] {
         update_hash_part_v3(&mut hasher, part);
@@ -1893,6 +1899,7 @@ mod tests {
             game_number: 1,
             after_frame_id: 10,
             after_frame_sequence: 11,
+            postcondition_candidate_count: 3,
         };
         let baseline =
             competitive_duel_pass_transition_receipt_v1(&"1".repeat(64), &"2".repeat(64), &visible);
@@ -1909,6 +1916,12 @@ mod tests {
         );
         changed.event_kind = MtgoCompetitiveEventKindV1::League;
         changed.after_frame_sequence = 12;
+        assert_ne!(
+            baseline,
+            competitive_duel_pass_transition_receipt_v1(&"1".repeat(64), &"2".repeat(64), &changed,)
+        );
+        changed.after_frame_sequence = 11;
+        changed.postcondition_candidate_count = 4;
         assert_ne!(
             baseline,
             competitive_duel_pass_transition_receipt_v1(&"1".repeat(64), &"2".repeat(64), &changed,)

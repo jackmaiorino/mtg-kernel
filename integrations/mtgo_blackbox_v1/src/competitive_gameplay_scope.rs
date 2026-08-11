@@ -1,13 +1,15 @@
 use crate::{
     check_untrusted_profile_bound_action_postcondition_pixels_v1,
     check_untrusted_profile_bound_postcondition_before_input_pixels_v1,
+    inspect_untrusted_profile_bound_action_postcondition_candidate_pixels_v1,
     validate_authorization_for_mode_v1, CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1,
     CheckedUntrustedMtgoProfileBoundActionPostconditionV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1, MtgoContractErrorV1,
     MtgoProfileBoundActionPostconditionPlanCommitmentsV1,
     MtgoProfileBoundPostconditionAfterFrameMetadataV1,
-    MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoRuntimeModeV1,
+    MtgoProfileBoundPostconditionBeforeInputFrameV1,
+    MtgoProfileBoundPostconditionCandidateStatusV1, MtgoRuntimeModeV1,
 };
 use mtg_kernel::rl::ActionSemanticV1;
 use serde::{Deserialize, Serialize};
@@ -333,6 +335,21 @@ pub fn check_untrusted_competitive_gameplay_postcondition_pixels_v1(
         after_frame_sequence,
         confirmation_commitment_sha256,
     })
+}
+
+/// Inspects one newer competitive frame without consuming the exact match
+/// plan. Only a still-incomplete visible change is retryable. The result has no
+/// input, event-entry, or next-action authority.
+pub fn inspect_untrusted_competitive_gameplay_postcondition_candidate_pixels_v1(
+    competitive: &CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
+    metadata: MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    canonical_bgra8: &[u8],
+) -> Result<MtgoProfileBoundPostconditionCandidateStatusV1, MtgoContractErrorV1> {
+    inspect_untrusted_profile_bound_action_postcondition_candidate_pixels_v1(
+        &competitive.plan,
+        metadata,
+        canonical_bgra8,
+    )
 }
 
 pub fn check_untrusted_competitive_gameplay_before_input_pixels_v1(

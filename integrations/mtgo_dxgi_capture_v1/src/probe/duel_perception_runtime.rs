@@ -8,8 +8,10 @@ use mtgo_blackbox_v1::{
     check_untrusted_competitive_gameplay_before_input_pixels_v1,
     check_untrusted_competitive_gameplay_postcondition_pixels_v1,
     check_untrusted_dxgi_capture_artifact_v1, check_untrusted_dxgi_observed_decision_candidate_v1,
-    duel_action_family_v1, prepare_profile_bound_action_postcondition_plan_v1,
-    preview_output_identity_commitment_v1, resolve_profile_bound_selected_visible_control_v1,
+    duel_action_family_v1,
+    inspect_untrusted_competitive_gameplay_postcondition_candidate_pixels_v1,
+    prepare_profile_bound_action_postcondition_plan_v1, preview_output_identity_commitment_v1,
+    resolve_profile_bound_selected_visible_control_v1,
     score_and_select_profile_bound_duel_candidate_v1,
     validate_dxgi_bound_observation_reconstruction_audit_v1, validate_observed_decision_v1,
     visible_frame_region_content_sha256_v1, AdmittedMtgoDuelPerceptionProfileV1,
@@ -26,9 +28,10 @@ use mtgo_blackbox_v1::{
     MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
     MtgoProfileBoundPostconditionAfterFrameMetadataV1,
     MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoProfileBoundPostconditionCalibrationV1,
-    MtgoProfileBoundPostconditionRegionSetV1, MtgoRectPxV1, MtgoSignedRectDesktopPxV1,
-    MtgoSizePxV1, MtgoVisibleActionControlSetV1, ValidatedMtgoObservedDecisionV1,
-    MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1, MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
+    MtgoProfileBoundPostconditionCandidateStatusV1, MtgoProfileBoundPostconditionRegionSetV1,
+    MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
+    ValidatedMtgoObservedDecisionV1, MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1,
+    MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
     MTGO_PROFILE_BOUND_POSTCONDITION_BEFORE_INPUT_FRAME_SCHEMA_V1,
     MTGO_VISIBLE_ACTION_CONTROL_SET_SCHEMA_V1,
 };
@@ -515,6 +518,7 @@ pub(crate) struct MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1 {
     pub(crate) game_number: u8,
     pub(crate) after_frame_id: u64,
     pub(crate) after_frame_sequence: u64,
+    pub(crate) postcondition_candidate_count: u32,
 }
 
 pub(crate) struct OpaqueMtgoConfirmedCompetitiveDuelPassV1 {
@@ -1298,6 +1302,14 @@ pub(crate) fn confirm_opaque_competitive_duel_pass_postcondition_v1(
     profile: &AdmittedMtgoDuelPerceptionProfileV1,
     timeout_ms: u32,
 ) -> Result<OpaqueMtgoConfirmedCompetitiveDuelPassV1, String> {
+    if !(100..=10_000).contains(&timeout_ms) {
+        return Err(
+            "competitive Pass confirmation timeout must be between 100 and 10000 ms".to_owned(),
+        );
+    }
+    let deadline = Instant::now()
+        .checked_add(Duration::from_millis(u64::from(timeout_ms)))
+        .ok_or("competitive Pass confirmation deadline overflow")?;
     let prepared_commitments = prepared.commitments_v1();
     let OpaqueMtgoPreparedCompetitiveDuelPassV1 {
         _plan: action_plan,
@@ -1331,48 +1343,67 @@ pub(crate) fn confirm_opaque_competitive_duel_pass_postcondition_v1(
         );
     }
 
-    let after_frame = capture_admitted_mtgo_duel_visible_frame_v1(profile, timeout_ms)?;
-    let after_capture = after_frame.commitments_v1();
     let current_manifest = &current_perception.source_frame.source_frame.manifest;
-    let after_manifest = &after_frame.source_frame.manifest;
-    validate_same_duel_window_incarnation_v1(current_manifest, after_manifest)?;
-    if after_capture.source_capture.captured_at_unix_millis
-        <= prepared_commitments.immediate_captured_at_unix_millis
-        || after_capture.source_capture.capture_commitment_sha256
-            == prepared_commitments.immediate_capture_commitment_sha256
-    {
-        return Err("competitive Pass postcondition frame is not strictly newer".to_owned());
-    }
-    let after_frame_sequence = prepared_commitments
-        .immediate_frame_sequence
-        .checked_add(1)
-        .ok_or("competitive Pass postcondition frame sequence overflow")?;
-    let after_frame_id = frame_id_from_capture_commitment_v1(
-        &after_capture.source_capture.capture_commitment_sha256,
-        prepared_commitments.immediate_frame_id,
-    )?;
-    let after_manifest_json = serialize_manifest_v2(after_manifest)
-        .map_err(|error| format!("serialize competitive Pass after manifest: {error}"))?;
-    let after_output_bounds = MtgoSignedRectDesktopPxV1 {
-        left: after_manifest.output.bounds_desktop_px.left,
-        top: after_manifest.output.bounds_desktop_px.top,
-        width: after_manifest.output.bounds_desktop_px.width()?,
-        height: after_manifest.output.bounds_desktop_px.height()?,
-    };
-    let after_output_identity_sha256 = preview_output_identity_commitment_v1(
-        &after_manifest.output.device_name,
-        &after_output_bounds,
-    )
-    .map_err(|error| format!("competitive Pass after output identity is invalid: {error}"))?;
     let postcondition_plan_commitment_sha256 = action_plan
         .competitive
         .postcondition_plan_commitment_sha256()
         .to_owned();
-    let checked_postcondition = check_untrusted_competitive_gameplay_postcondition_pixels_v1(
-        action_plan.competitive,
-        MtgoProfileBoundPostconditionAfterFrameMetadataV1 {
+    let mut postcondition_candidate_count = 0_u32;
+    let (after_frame, after_capture, after_frame_id, after_frame_sequence, checked_postcondition) = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining < Duration::from_millis(100) {
+            return Err(format!(
+                    "timed out waiting for the complete competitive Pass visible postcondition after {postcondition_candidate_count} admitted candidates"
+                ));
+        }
+        let candidate_timeout_ms = u32::try_from(remaining.as_millis())
+            .unwrap_or(u32::MAX)
+            .clamp(100, 10_000);
+        let after_frame =
+            capture_admitted_mtgo_duel_visible_frame_v1(profile, candidate_timeout_ms)?;
+        postcondition_candidate_count = postcondition_candidate_count
+            .checked_add(1)
+            .ok_or("competitive Pass postcondition candidate count overflow")?;
+        let after_capture = after_frame.commitments_v1();
+        let after_manifest = &after_frame.source_frame.manifest;
+        validate_same_duel_window_incarnation_v1(current_manifest, after_manifest)?;
+        if after_capture.source_capture.captured_at_unix_millis
+            < prepared_commitments.immediate_captured_at_unix_millis
+        {
+            return Err("competitive Pass postcondition clock moved backwards".to_owned());
+        }
+        if after_capture.source_capture.captured_at_unix_millis
+            == prepared_commitments.immediate_captured_at_unix_millis
+            || after_capture.source_capture.capture_commitment_sha256
+                == prepared_commitments.immediate_capture_commitment_sha256
+        {
+            thread::sleep(Duration::from_millis(25));
+            continue;
+        }
+        let after_frame_sequence = prepared_commitments
+            .immediate_frame_sequence
+            .checked_add(u64::from(postcondition_candidate_count))
+            .ok_or("competitive Pass postcondition frame sequence overflow")?;
+        let after_frame_id = frame_id_from_capture_commitment_v1(
+            &after_capture.source_capture.capture_commitment_sha256,
+            prepared_commitments.immediate_frame_id,
+        )?;
+        let after_manifest_json = serialize_manifest_v2(after_manifest)
+            .map_err(|error| format!("serialize competitive Pass after manifest: {error}"))?;
+        let after_output_bounds = MtgoSignedRectDesktopPxV1 {
+            left: after_manifest.output.bounds_desktop_px.left,
+            top: after_manifest.output.bounds_desktop_px.top,
+            width: after_manifest.output.bounds_desktop_px.width()?,
+            height: after_manifest.output.bounds_desktop_px.height()?,
+        };
+        let after_output_identity_sha256 = preview_output_identity_commitment_v1(
+            &after_manifest.output.device_name,
+            &after_output_bounds,
+        )
+        .map_err(|error| format!("competitive Pass after output identity is invalid: {error}"))?;
+        let after_metadata = MtgoProfileBoundPostconditionAfterFrameMetadataV1 {
             schema_version: MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
-            plan_commitment_sha256: postcondition_plan_commitment_sha256,
+            plan_commitment_sha256: postcondition_plan_commitment_sha256.clone(),
             frame_id: after_frame_id,
             frame_sequence: after_frame_sequence,
             manifest_sha256: sha256_hex_v1(&after_manifest_json),
@@ -1385,10 +1416,36 @@ pub(crate) fn confirm_opaque_competitive_duel_pass_postcondition_v1(
                 height: after_manifest.frame.canonical_height,
             },
             capture_role: MtgoDxgiCaptureRoleV2::ActingPlayerDuel,
-        },
-        &after_frame.source_frame.canonical_bgra8,
-    )
-    .map_err(|error| format!("confirm competitive Pass visible postcondition: {error}"))?;
+        };
+        match inspect_untrusted_competitive_gameplay_postcondition_candidate_pixels_v1(
+            &action_plan.competitive,
+            after_metadata.clone(),
+            &after_frame.source_frame.canonical_bgra8,
+        )
+        .map_err(|error| format!("inspect competitive Pass visible postcondition: {error}"))?
+        {
+            MtgoProfileBoundPostconditionCandidateStatusV1::PendingVisibleChange => {
+                thread::sleep(Duration::from_millis(25));
+            }
+            MtgoProfileBoundPostconditionCandidateStatusV1::CompleteVisibleChange => {
+                let checked = check_untrusted_competitive_gameplay_postcondition_pixels_v1(
+                    action_plan.competitive,
+                    after_metadata,
+                    &after_frame.source_frame.canonical_bgra8,
+                )
+                .map_err(|error| {
+                    format!("confirm competitive Pass visible postcondition: {error}")
+                })?;
+                break (
+                    after_frame,
+                    after_capture,
+                    after_frame_id,
+                    after_frame_sequence,
+                    checked,
+                );
+            }
+        }
+    };
     if checked_postcondition.event_kind() != prepared_commitments.event_kind
         || checked_postcondition.game_number() != prepared_commitments.game_number
         || checked_postcondition.after_frame_id() != after_frame_id
@@ -1421,6 +1478,7 @@ pub(crate) fn confirm_opaque_competitive_duel_pass_postcondition_v1(
             &[prepared_commitments.game_number],
             &after_frame_id.to_be_bytes(),
             &after_frame_sequence.to_be_bytes(),
+            &postcondition_candidate_count.to_be_bytes(),
             b"opaque_visible_postcondition_confirmed_no_input_or_event_entry_authority",
         ],
     );
@@ -1438,6 +1496,7 @@ pub(crate) fn confirm_opaque_competitive_duel_pass_postcondition_v1(
             game_number: prepared_commitments.game_number,
             after_frame_id,
             after_frame_sequence,
+            postcondition_candidate_count,
         },
     })
 }

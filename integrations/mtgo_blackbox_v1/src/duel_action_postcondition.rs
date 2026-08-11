@@ -243,6 +243,15 @@ pub struct MtgoProfileBoundPostconditionAfterFrameMetadataV1 {
     pub capture_role: MtgoDxgiCaptureRoleV2,
 }
 
+/// Non-authoritative inspection result for one newer visible frame. A pending
+/// result means the complete calibrated change has not appeared yet. It never
+/// authorizes another input and the move-only plan is retained by the caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MtgoProfileBoundPostconditionCandidateStatusV1 {
+    PendingVisibleChange,
+    CompleteVisibleChange,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoProfileBoundPostconditionBeforeInputFrameV1 {
@@ -480,6 +489,56 @@ pub fn check_untrusted_profile_bound_action_postcondition_v1(
     plan: CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1,
     after: MtgoProfileBoundPostconditionAfterFrameV1,
 ) -> Result<CheckedUntrustedMtgoProfileBoundActionPostconditionV1, MtgoContractErrorV1> {
+    match inspect_profile_bound_action_postcondition_candidate_v1(&plan, &after)? {
+        PrivatePostconditionCandidateStatusV1::CompleteVisibleChange => {}
+        PrivatePostconditionCandidateStatusV1::PendingFullFrame => {
+            return Err(error_v1(
+                "profile_bound_postcondition_after_not_newer",
+                "after frame must be strictly newer and byte-distinct",
+            ));
+        }
+        PrivatePostconditionCandidateStatusV1::PendingRegion(kind) => {
+            return Err(error_v1(
+                "profile_bound_postcondition_after_region_unchanged",
+                format!("{kind:?}"),
+            ));
+        }
+    }
+
+    let after_bytes = serde_json::to_vec(&after).map_err(|error| {
+        error_v1(
+            "profile_bound_postcondition_after_serialization",
+            error.to_string(),
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(POSTCONDITION_CONFIRMATION_COMMITMENT_DOMAIN_V1);
+    for part in [
+        plan.plan_commitment_sha256.as_bytes(),
+        after_bytes.as_slice(),
+        b"checked_untrusted_no_additional_input_or_event_entry",
+    ] {
+        hasher.update((part.len() as u64).to_le_bytes());
+        hasher.update(part);
+    }
+    Ok(CheckedUntrustedMtgoProfileBoundActionPostconditionV1 {
+        _plan: plan,
+        after_frame_id: after.frame_id,
+        after_frame_sequence: after.frame_sequence,
+        confirmation_commitment_sha256: format!("{:x}", hasher.finalize()),
+    })
+}
+
+enum PrivatePostconditionCandidateStatusV1 {
+    PendingFullFrame,
+    PendingRegion(MtgoDuelVisiblePostconditionKindV1),
+    CompleteVisibleChange,
+}
+
+fn inspect_profile_bound_action_postcondition_candidate_v1(
+    plan: &CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1,
+    after: &MtgoProfileBoundPostconditionAfterFrameV1,
+) -> Result<PrivatePostconditionCandidateStatusV1, MtgoContractErrorV1> {
     if after.schema_version != MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1 {
         return Err(error_v1(
             "profile_bound_postcondition_after_schema",
@@ -521,11 +580,10 @@ pub fn check_untrusted_profile_bound_action_postcondition_v1(
     if after.frame_id == plan.resolution.frame_id()
         || after.frame_sequence <= plan.resolution.frame_sequence()
         || after.manifest_sha256 == plan.source_manifest_sha256
-        || after.canonical_bgra8_sha256 == plan.source_frame_sha256
     {
         return Err(error_v1(
             "profile_bound_postcondition_after_not_newer",
-            "after frame must be strictly newer and byte-distinct",
+            "after frame must have a new identity, sequence, and manifest",
         ));
     }
     if after.output_identity_sha256 != plan.source_output_identity_sha256 {
@@ -556,6 +614,7 @@ pub fn check_untrusted_profile_bound_action_postcondition_v1(
             ),
         ));
     }
+    let mut pending_region = None;
     for (observed, required) in after.regions.iter().zip(&plan.regions) {
         require_sha256_v1(
             &observed.after_bgra8_sha256,
@@ -568,35 +627,40 @@ pub fn check_untrusted_profile_bound_action_postcondition_v1(
             ));
         }
         if observed.after_bgra8_sha256 == required.before_bgra8_sha256 {
-            return Err(error_v1(
-                "profile_bound_postcondition_after_region_unchanged",
-                format!("{:?}", observed.kind),
-            ));
+            pending_region.get_or_insert(observed.kind);
         }
     }
-
-    let after_bytes = serde_json::to_vec(&after).map_err(|error| {
-        error_v1(
-            "profile_bound_postcondition_after_serialization",
-            error.to_string(),
-        )
-    })?;
-    let mut hasher = Sha256::new();
-    hasher.update(POSTCONDITION_CONFIRMATION_COMMITMENT_DOMAIN_V1);
-    for part in [
-        plan.plan_commitment_sha256.as_bytes(),
-        after_bytes.as_slice(),
-        b"checked_untrusted_no_additional_input_or_event_entry",
-    ] {
-        hasher.update((part.len() as u64).to_le_bytes());
-        hasher.update(part);
+    if after.canonical_bgra8_sha256 == plan.source_frame_sha256 {
+        Ok(PrivatePostconditionCandidateStatusV1::PendingFullFrame)
+    } else if let Some(kind) = pending_region {
+        Ok(PrivatePostconditionCandidateStatusV1::PendingRegion(kind))
+    } else {
+        Ok(PrivatePostconditionCandidateStatusV1::CompleteVisibleChange)
     }
-    Ok(CheckedUntrustedMtgoProfileBoundActionPostconditionV1 {
-        _plan: plan,
-        after_frame_id: after.frame_id,
-        after_frame_sequence: after.frame_sequence,
-        confirmation_commitment_sha256: format!("{:x}", hasher.finalize()),
-    })
+}
+
+/// Recomputes the complete candidate frame and every private calibrated region
+/// without consuming the move-only plan. Only an unchanged calibrated region
+/// is retryable. Identity, geometry, profile, ordering, and metadata failures
+/// remain fatal.
+pub fn inspect_untrusted_profile_bound_action_postcondition_candidate_pixels_v1(
+    plan: &CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1,
+    metadata: MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    canonical_bgra8: &[u8],
+) -> Result<MtgoProfileBoundPostconditionCandidateStatusV1, MtgoContractErrorV1> {
+    let after =
+        build_profile_bound_postcondition_after_frame_pixels_v1(plan, metadata, canonical_bgra8)?;
+    Ok(
+        match inspect_profile_bound_action_postcondition_candidate_v1(plan, &after)? {
+            PrivatePostconditionCandidateStatusV1::PendingFullFrame
+            | PrivatePostconditionCandidateStatusV1::PendingRegion(_) => {
+                MtgoProfileBoundPostconditionCandidateStatusV1::PendingVisibleChange
+            }
+            PrivatePostconditionCandidateStatusV1::CompleteVisibleChange => {
+                MtgoProfileBoundPostconditionCandidateStatusV1::CompleteVisibleChange
+            }
+        },
+    )
 }
 
 /// Recomputes the complete after-frame and private region hashes from one
@@ -608,6 +672,16 @@ pub fn check_untrusted_profile_bound_action_postcondition_pixels_v1(
     metadata: MtgoProfileBoundPostconditionAfterFrameMetadataV1,
     canonical_bgra8: &[u8],
 ) -> Result<CheckedUntrustedMtgoProfileBoundActionPostconditionV1, MtgoContractErrorV1> {
+    let after =
+        build_profile_bound_postcondition_after_frame_pixels_v1(&plan, metadata, canonical_bgra8)?;
+    check_untrusted_profile_bound_action_postcondition_v1(plan, after)
+}
+
+fn build_profile_bound_postcondition_after_frame_pixels_v1(
+    plan: &CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1,
+    metadata: MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    canonical_bgra8: &[u8],
+) -> Result<MtgoProfileBoundPostconditionAfterFrameV1, MtgoContractErrorV1> {
     let expected_length = usize::try_from(plan.source_client_size_px.width)
         .ok()
         .and_then(|width| {
@@ -647,23 +721,20 @@ pub fn check_untrusted_profile_bound_action_postcondition_pixels_v1(
             })
         })
         .collect::<Result<Vec<_>, MtgoContractErrorV1>>()?;
-    check_untrusted_profile_bound_action_postcondition_v1(
-        plan,
-        MtgoProfileBoundPostconditionAfterFrameV1 {
-            schema_version: metadata.schema_version,
-            plan_commitment_sha256: metadata.plan_commitment_sha256,
-            frame_id: metadata.frame_id,
-            frame_sequence: metadata.frame_sequence,
-            manifest_sha256: metadata.manifest_sha256,
-            canonical_bgra8_sha256: format!("{:x}", Sha256::digest(canonical_bgra8)),
-            output_identity_sha256: metadata.output_identity_sha256,
-            perception_profile_admission_commitment_sha256: metadata
-                .perception_profile_admission_commitment_sha256,
-            client_size_px: metadata.client_size_px,
-            capture_role: metadata.capture_role,
-            regions,
-        },
-    )
+    Ok(MtgoProfileBoundPostconditionAfterFrameV1 {
+        schema_version: metadata.schema_version,
+        plan_commitment_sha256: metadata.plan_commitment_sha256,
+        frame_id: metadata.frame_id,
+        frame_sequence: metadata.frame_sequence,
+        manifest_sha256: metadata.manifest_sha256,
+        canonical_bgra8_sha256: format!("{:x}", Sha256::digest(canonical_bgra8)),
+        output_identity_sha256: metadata.output_identity_sha256,
+        perception_profile_admission_commitment_sha256: metadata
+            .perception_profile_admission_commitment_sha256,
+        client_size_px: metadata.client_size_px,
+        capture_role: metadata.capture_role,
+        regions,
+    })
 }
 
 /// Recomputes every private before-region hash from the last opaque frame
@@ -1169,6 +1240,65 @@ mod tests {
                 .unwrap()
                 .code(),
             "profile_bound_postcondition_after_region_unchanged"
+        );
+    }
+
+    #[test]
+    fn candidate_pixel_inspection_retries_only_until_every_private_region_changes() {
+        let resolution = profile_bound_resolved_action_control_for_test_v1();
+        let region_set = region_set_v1(&resolution);
+        let mut plan = prepare_profile_bound_action_postcondition_plan_v1(
+            resolution,
+            calibration_v1(),
+            region_set,
+        )
+        .unwrap();
+        let byte_length = usize::try_from(plan.source_client_size_px.width).unwrap()
+            * usize::try_from(plan.source_client_size_px.height).unwrap()
+            * 4;
+        let baseline = vec![31_u8; byte_length];
+        for region in &mut plan.regions {
+            region.before_bgra8_sha256 = visible_frame_region_content_sha256_v1(
+                &baseline,
+                &plan.source_client_size_px,
+                &region.rect_client_px,
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            inspect_untrusted_profile_bound_action_postcondition_candidate_pixels_v1(
+                &plan,
+                after_metadata_v1(&plan),
+                &baseline,
+            )
+            .unwrap(),
+            MtgoProfileBoundPostconditionCandidateStatusV1::PendingVisibleChange
+        );
+
+        let changed = vec![47_u8; byte_length];
+        assert_eq!(
+            inspect_untrusted_profile_bound_action_postcondition_candidate_pixels_v1(
+                &plan,
+                after_metadata_v1(&plan),
+                &changed,
+            )
+            .unwrap(),
+            MtgoProfileBoundPostconditionCandidateStatusV1::CompleteVisibleChange
+        );
+
+        let mut wrong_runtime = after_metadata_v1(&plan);
+        wrong_runtime.output_identity_sha256 = "f".repeat(64);
+        assert_eq!(
+            inspect_untrusted_profile_bound_action_postcondition_candidate_pixels_v1(
+                &plan,
+                wrong_runtime,
+                &changed,
+            )
+            .err()
+            .unwrap()
+            .code(),
+            "profile_bound_postcondition_after_output_mismatch"
         );
     }
 
