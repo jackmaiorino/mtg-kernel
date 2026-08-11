@@ -294,6 +294,45 @@ pub fn bind_visible_duel_gesture_stage_v1(
     decision: &ValidatedMtgoObservedDecisionV1,
     target_set: MtgoVisibleDuelGestureTargetSetV1,
 ) -> Result<CheckedUntrustedMtgoDuelGestureStageBindingV1, MtgoContractErrorV1> {
+    bind_visible_duel_gesture_stage_inner_v1(
+        plan,
+        decision,
+        target_set,
+        MtgoDuelGestureStageBindingModeV1::DeclaredFrame,
+    )
+}
+
+/// Rechecks stage zero of an already selected gesture plan against a distinct,
+/// strictly newer visible frame on which the same selected semantic remains
+/// legal. This is a coordinate-private pre-input freshness check only. The
+/// caller must separately prove that the newer decision belongs to the same
+/// process and window incarnation and that its visible payload is unchanged.
+pub fn recheck_visible_duel_gesture_source_stage_v1(
+    plan: &CheckedUntrustedMtgoDuelGesturePlanV1,
+    decision: &ValidatedMtgoObservedDecisionV1,
+    target_set: MtgoVisibleDuelGestureTargetSetV1,
+) -> Result<CheckedUntrustedMtgoDuelGestureStageBindingV1, MtgoContractErrorV1> {
+    bind_visible_duel_gesture_stage_inner_v1(
+        plan,
+        decision,
+        target_set,
+        MtgoDuelGestureStageBindingModeV1::FreshSourceRecheck,
+    )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum MtgoDuelGestureStageBindingModeV1 {
+    DeclaredFrame,
+    FreshSourceRecheck,
+}
+
+fn bind_visible_duel_gesture_stage_inner_v1(
+    plan: &CheckedUntrustedMtgoDuelGesturePlanV1,
+    decision: &ValidatedMtgoObservedDecisionV1,
+    target_set: MtgoVisibleDuelGestureTargetSetV1,
+    binding_mode: MtgoDuelGestureStageBindingModeV1,
+) -> Result<CheckedUntrustedMtgoDuelGestureStageBindingV1, MtgoContractErrorV1> {
     if target_set.schema_version != MTGO_DUEL_GESTURE_TARGET_SET_SCHEMA_V1 {
         return Err(MtgoContractErrorV1::new(
             "duel_gesture_target_schema_mismatch",
@@ -328,25 +367,45 @@ pub fn bind_visible_duel_gesture_stage_v1(
             "target set must bind the supplied visible frame",
         ));
     }
-    match stage.frame_binding {
-        MtgoDuelGestureFrameBindingV1::SourceDecisionFrame => {
-            if target_set.frame_id != plan.plan.frame_id
-                || target_set.frame_sequence != plan.plan.frame_sequence
-                || target_set.decision_commitment_sha256 != plan.plan.decision_commitment_sha256
+    match binding_mode {
+        MtgoDuelGestureStageBindingModeV1::DeclaredFrame => match stage.frame_binding {
+            MtgoDuelGestureFrameBindingV1::SourceDecisionFrame => {
+                if target_set.frame_id != plan.plan.frame_id
+                    || target_set.frame_sequence != plan.plan.frame_sequence
+                    || target_set.decision_commitment_sha256 != plan.plan.decision_commitment_sha256
+                {
+                    return Err(MtgoContractErrorV1::new(
+                        "duel_gesture_source_stage_frame_mismatch",
+                        "source stage must use the exact selected decision frame",
+                    ));
+                }
+            }
+            MtgoDuelGestureFrameBindingV1::StrictlyNewerVisibleContinuation => {
+                if target_set.frame_sequence <= plan.plan.frame_sequence
+                    || target_set.frame_id == plan.plan.frame_id
+                {
+                    return Err(MtgoContractErrorV1::new(
+                        "duel_gesture_continuation_not_newer",
+                        "continuation stage requires a distinct strictly newer visible frame",
+                    ));
+                }
+            }
+        },
+        MtgoDuelGestureStageBindingModeV1::FreshSourceRecheck => {
+            if stage.stage_index != 0
+                || stage.frame_binding != MtgoDuelGestureFrameBindingV1::SourceDecisionFrame
             {
                 return Err(MtgoContractErrorV1::new(
-                    "duel_gesture_source_stage_frame_mismatch",
-                    "source stage must use the exact selected decision frame",
+                    "duel_gesture_source_recheck_stage_invalid",
+                    "fresh source recheck accepts only declared source stage zero",
                 ));
             }
-        }
-        MtgoDuelGestureFrameBindingV1::StrictlyNewerVisibleContinuation => {
             if target_set.frame_sequence <= plan.plan.frame_sequence
                 || target_set.frame_id == plan.plan.frame_id
             {
                 return Err(MtgoContractErrorV1::new(
-                    "duel_gesture_continuation_not_newer",
-                    "continuation stage requires a distinct strictly newer visible frame",
+                    "duel_gesture_source_recheck_not_newer",
+                    "source-stage recheck requires a distinct strictly newer visible frame",
                 ));
             }
         }
@@ -452,11 +511,13 @@ pub fn bind_visible_duel_gesture_stage_v1(
 
     #[derive(Serialize)]
     struct StageBindingRecordV1<'a> {
+        binding_mode: &'a MtgoDuelGestureStageBindingModeV1,
         target_set: &'a MtgoVisibleDuelGestureTargetSetV1,
         stage: &'a MtgoDuelGestureStageV1,
         selected_targets: &'a [PrivateVisibleGestureTargetV1],
     }
     let encoded = serde_json::to_vec(&StageBindingRecordV1 {
+        binding_mode: &binding_mode,
         target_set: &target_set,
         stage,
         selected_targets: &selected_targets,
@@ -1150,6 +1211,17 @@ mod tests {
         assert_eq!(bound.commitments_v1().target_count, 1);
         assert_eq!(bound.commitments_v1().binding_commitment_sha256.len(), 64);
         assert!(!bound.safe_for_live_input());
+        assert_eq!(
+            recheck_visible_duel_gesture_source_stage_v1(
+                &checked_plan,
+                decision,
+                target_set.clone(),
+            )
+            .err()
+            .unwrap()
+            .code(),
+            "duel_gesture_source_recheck_not_newer"
+        );
 
         let mut stale = target_set.clone();
         stale.frame_sequence += 1;

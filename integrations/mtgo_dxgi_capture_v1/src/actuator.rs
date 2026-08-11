@@ -5,6 +5,7 @@ use crate::probe::{
     confirm_opaque_competitive_entry_postcondition_v1,
     confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
+    prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1,
     prepare_pregame_actuation_v3, resolve_competitive_entry_pointer_target_v1,
     validate_classifier_backed_competitive_entry_frame_transition_v1,
     validate_classifier_backed_competitive_entry_immediate_recapture_v1,
@@ -12,18 +13,21 @@ use crate::probe::{
     MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1, MtgoCompetitiveEntryPointerTargetV1,
     MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1, MtgoCompetitiveNavigationFrameIdentityV1,
     MtgoOpaqueCompetitiveDuelGestureSequenceCommitmentsV1,
+    MtgoOpaqueCompetitiveDuelGestureSourcePreparationCommitmentsV1,
     MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
     MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
     MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
     MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1, MtgoPlannedPregamePostconditionV3,
-    OpaqueMtgoClassifiedCompetitiveNavigationFrameV1, OpaqueMtgoCompetitiveDuelGestureSequenceV1,
-    OpaqueMtgoCompetitiveEntryControlDryRunV1, OpaqueMtgoCompetitiveEntryReviewIdentityV1,
-    OpaqueMtgoCompetitiveLaunchIdentityV1, OpaqueMtgoConfirmedCompetitiveDuelPassV1,
-    OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1,
+    OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    OpaqueMtgoCompetitiveDuelGestureSequenceV1, OpaqueMtgoCompetitiveEntryControlDryRunV1,
+    OpaqueMtgoCompetitiveEntryReviewIdentityV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
+    OpaqueMtgoConfirmedCompetitiveDuelPassV1, OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1,
     OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, OpaqueMtgoConfirmedKeepToFirstMainTransitionV3,
     OpaqueMtgoConfirmedMulliganTransitionV3, OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
     OpaqueMtgoDxgiFirstMainMeasurementV3, OpaqueMtgoDxgiMulliganMeasurementV3,
-    OpaqueMtgoPregameActionPlanV3, OpaqueMtgoPreparedCompetitiveDuelPassV1,
+    OpaqueMtgoPregameActionPlanV3,
+    OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 as ProbeOpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1,
+    OpaqueMtgoPreparedCompetitiveDuelPassV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1, PreparedPregameActuationV3,
 };
 use mtgo_blackbox_v1::{
@@ -38,7 +42,8 @@ use mtgo_blackbox_v1::{
     MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
     MtgoDuelActionFamilyV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
-    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
+    MtgoVisibleDuelGestureTargetSetV1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+    MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -104,6 +109,8 @@ const COMPETITIVE_GESTURE_GAME_SESSION_INITIAL_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-gesture-game-session-initial-v1";
 const COMPETITIVE_GESTURE_SESSION_SEQUENCE_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-gesture-session-sequence-binding-v1";
+const COMPETITIVE_GESTURE_SESSION_SOURCE_PREPARATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-gesture-session-source-preparation-v1";
 const ATTENDED_COMPETITIVE_ENTRY_REVIEW_REQUEST_DOMAIN_V1: &[u8] =
     b"mtgo-attended-competitive-entry-review-request-v1";
 const ATTENDED_COMPETITIVE_ENTRY_REVIEW_RECEIPT_DOMAIN_V1: &[u8] =
@@ -1214,6 +1221,70 @@ impl OpaqueMtgoSessionBoundCompetitiveDuelGestureV1 {
     }
 
     pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1 {
+    pub preparation_binding_commitment_sha256: String,
+    pub session_sequence_binding_commitment_sha256: String,
+    pub game_session_commitment_sha256: String,
+    pub gesture_match_launch_commitment_sha256: String,
+    pub source_sequence_commitment_sha256: String,
+    pub competitive_action_plan_commitment_sha256: String,
+    pub gesture_plan_commitment_sha256: String,
+    pub fresh_stage_binding_commitment_sha256: String,
+    pub fresh_capture_commitment_sha256: String,
+    pub fresh_perception_result_commitment_sha256: String,
+    pub primitive_commitment_sha256: String,
+    pub selected_action_family: MtgoDuelActionFamilyV1,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub game_number: u8,
+    pub stage_index: u16,
+    pub gesture_stage_count: u16,
+    pub target_count: u16,
+    pub fresh_frame_id: u64,
+    pub fresh_frame_sequence: u64,
+    pub fresh_captured_at_unix_millis: u128,
+}
+
+/// One session-bound source primitive rechecked against a distinct next-frame
+/// opaque perception and complete current target set. The target set remains
+/// checked-untrusted until the pinned gesture runtime is integrated. This
+/// wrapper has no input method and exposes no target points.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1;
+/// fn cannot_act(value: OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1) {
+///     let _ = value.target_points_desktop_px();
+///     let _ = value.send_input();
+/// }
+/// ```
+pub struct OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 {
+    _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    _prepared: ProbeOpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1,
+    commitments: MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1,
+}
+
+impl OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 {
+    pub fn commitments_v1(&self) -> MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn target_runtime_attested_v1(&self) -> bool {
         false
     }
 
@@ -2789,6 +2860,38 @@ pub fn bind_competitive_duel_gesture_sequence_session_v1(
     Ok(OpaqueMtgoSessionBoundCompetitiveDuelGestureV1 {
         _session: session,
         _sequence: sequence,
+        commitments,
+    })
+}
+
+/// Rechecks the source primitive of one exact session-bound gesture on a
+/// distinct next-frame perception. The supplied target set is fully validated
+/// against retained pixels but is not yet attested to the pinned gesture
+/// runtime. The result cannot send input and exposes no target coordinates.
+pub fn prepare_session_bound_competitive_duel_gesture_source_stage_v1(
+    bound: OpaqueMtgoSessionBoundCompetitiveDuelGestureV1,
+    fresh_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    target_set: MtgoVisibleDuelGestureTargetSetV1,
+) -> Result<OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1, String> {
+    let OpaqueMtgoSessionBoundCompetitiveDuelGestureV1 {
+        _session: session,
+        _sequence: sequence,
+        commitments: bound_commitments,
+    } = bound;
+    let session_commitments = session.commitments_v1();
+    let prepared = prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
+        sequence,
+        fresh_perception,
+        target_set,
+    )?;
+    let commitments = competitive_duel_gesture_source_preparation_from_parts_v1(
+        &bound_commitments,
+        &session_commitments,
+        &prepared.commitments,
+    )?;
+    Ok(OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 {
+        _session: session,
+        _prepared: prepared,
         commitments,
     })
 }
@@ -4711,6 +4814,142 @@ fn competitive_duel_gesture_sequence_session_binding_from_parts_v1(
     })
 }
 
+fn competitive_duel_gesture_source_preparation_from_parts_v1(
+    bound: &MtgoSessionBoundCompetitiveDuelGestureCommitmentsV1,
+    session: &MtgoCompetitiveGestureGameSessionCommitmentsV1,
+    prepared: &MtgoOpaqueCompetitiveDuelGestureSourcePreparationCommitmentsV1,
+) -> Result<MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1, String> {
+    for commitment in [
+        bound.binding_commitment_sha256.as_str(),
+        bound.game_session_commitment_sha256.as_str(),
+        bound.gesture_match_launch_commitment_sha256.as_str(),
+        bound.gesture_sequence_commitment_sha256.as_str(),
+        bound.competitive_action_plan_commitment_sha256.as_str(),
+        bound.gesture_plan_commitment_sha256.as_str(),
+        session.session_commitment_sha256.as_str(),
+        session.mode_authorization_commitment_sha256.as_str(),
+        session
+            .match_gameplay_authorization_commitment_sha256
+            .as_str(),
+        prepared.source_sequence_commitment_sha256.as_str(),
+        prepared.competitive_action_plan_commitment_sha256.as_str(),
+        prepared.gesture_plan_commitment_sha256.as_str(),
+        prepared
+            .competitive_mode_authorization_commitment_sha256
+            .as_str(),
+        prepared
+            .competitive_match_gameplay_authorization_commitment_sha256
+            .as_str(),
+        prepared.fresh_stage_binding_commitment_sha256.as_str(),
+        prepared.fresh_capture_commitment_sha256.as_str(),
+        prepared.fresh_perception_result_commitment_sha256.as_str(),
+        prepared.primitive_commitment_sha256.as_str(),
+        prepared.preparation_commitment_sha256.as_str(),
+    ] {
+        if !is_sha256_v2(commitment) {
+            return Err("gesture source preparation contains an invalid commitment".to_owned());
+        }
+    }
+    let expected_fresh_sequence = bound
+        .source_frame_sequence
+        .checked_add(1)
+        .ok_or("gesture source preparation sequence overflow")?;
+    if bound.game_session_commitment_sha256 != session.session_commitment_sha256
+        || prepared.source_sequence_commitment_sha256 != bound.gesture_sequence_commitment_sha256
+        || prepared.competitive_action_plan_commitment_sha256
+            != bound.competitive_action_plan_commitment_sha256
+        || prepared.gesture_plan_commitment_sha256 != bound.gesture_plan_commitment_sha256
+        || prepared.competitive_mode_authorization_commitment_sha256
+            != session.mode_authorization_commitment_sha256
+        || prepared.competitive_match_gameplay_authorization_commitment_sha256
+            != session.match_gameplay_authorization_commitment_sha256
+        || prepared.selected_action_family != bound.selected_action_family
+        || prepared.event_kind != bound.event_kind
+        || prepared.event_kind != session.event_kind
+        || prepared.game_number != bound.game_number
+        || prepared.game_number != session.game_number
+        || prepared.stage_index != 0
+        || prepared.gesture_stage_count != bound.gesture_stage_count
+        || prepared.target_count == 0
+        || prepared.target_count > 2
+        || prepared.fresh_frame_id == 0
+        || prepared.fresh_frame_sequence != expected_fresh_sequence
+        || prepared.fresh_frame_sequence <= session.last_confirmed_frame_sequence
+        || prepared.fresh_frame_sequence < session.valid_from_frame_sequence
+        || prepared.fresh_frame_sequence > session.valid_through_frame_sequence
+        || prepared.gameplay_authorization_valid_through_frame_sequence
+            != session.valid_through_frame_sequence
+        || prepared.fresh_captured_at_unix_millis == 0
+    {
+        return Err(
+            "fresh gesture source stage does not match the exact competitive session".to_owned(),
+        );
+    }
+    let family_json = serde_json::to_vec(&prepared.selected_action_family)
+        .map_err(|error| format!("serialize prepared session gesture family: {error}"))?;
+    let event_kind_json = serde_json::to_vec(&prepared.event_kind)
+        .map_err(|error| format!("serialize prepared session event kind: {error}"))?;
+    let preparation_binding_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_GESTURE_SESSION_SOURCE_PREPARATION_DOMAIN_V1,
+        &[
+            bound.binding_commitment_sha256.as_bytes(),
+            session.session_commitment_sha256.as_bytes(),
+            session.gesture_match_launch_commitment_sha256.as_bytes(),
+            prepared.source_sequence_commitment_sha256.as_bytes(),
+            prepared
+                .competitive_action_plan_commitment_sha256
+                .as_bytes(),
+            prepared.gesture_plan_commitment_sha256.as_bytes(),
+            prepared.fresh_stage_binding_commitment_sha256.as_bytes(),
+            prepared.fresh_capture_commitment_sha256.as_bytes(),
+            prepared
+                .fresh_perception_result_commitment_sha256
+                .as_bytes(),
+            prepared.primitive_commitment_sha256.as_bytes(),
+            prepared.preparation_commitment_sha256.as_bytes(),
+            &family_json,
+            &event_kind_json,
+            &[prepared.game_number],
+            &prepared.stage_index.to_be_bytes(),
+            &prepared.gesture_stage_count.to_be_bytes(),
+            &prepared.target_count.to_be_bytes(),
+            &prepared.fresh_frame_id.to_be_bytes(),
+            &prepared.fresh_frame_sequence.to_be_bytes(),
+            b"source_primitive_freshly_rechecked_unattested_targets_no_input",
+        ],
+    );
+    Ok(MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1 {
+        preparation_binding_commitment_sha256,
+        session_sequence_binding_commitment_sha256: bound.binding_commitment_sha256.clone(),
+        game_session_commitment_sha256: session.session_commitment_sha256.clone(),
+        gesture_match_launch_commitment_sha256: session
+            .gesture_match_launch_commitment_sha256
+            .clone(),
+        source_sequence_commitment_sha256: prepared.source_sequence_commitment_sha256.clone(),
+        competitive_action_plan_commitment_sha256: prepared
+            .competitive_action_plan_commitment_sha256
+            .clone(),
+        gesture_plan_commitment_sha256: prepared.gesture_plan_commitment_sha256.clone(),
+        fresh_stage_binding_commitment_sha256: prepared
+            .fresh_stage_binding_commitment_sha256
+            .clone(),
+        fresh_capture_commitment_sha256: prepared.fresh_capture_commitment_sha256.clone(),
+        fresh_perception_result_commitment_sha256: prepared
+            .fresh_perception_result_commitment_sha256
+            .clone(),
+        primitive_commitment_sha256: prepared.primitive_commitment_sha256.clone(),
+        selected_action_family: prepared.selected_action_family,
+        event_kind: prepared.event_kind,
+        game_number: prepared.game_number,
+        stage_index: prepared.stage_index,
+        gesture_stage_count: prepared.gesture_stage_count,
+        target_count: prepared.target_count,
+        fresh_frame_id: prepared.fresh_frame_id,
+        fresh_frame_sequence: prepared.fresh_frame_sequence,
+        fresh_captured_at_unix_millis: prepared.fresh_captured_at_unix_millis,
+    })
+}
+
 fn advance_competitive_game_session_v1(
     mut session: OpaqueMtgoCompetitiveGameSessionV1,
     visible: &MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
@@ -6493,6 +6732,118 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn session_bound_gesture_preparation_requires_exact_next_frame_and_authority() {
+        let session = MtgoCompetitiveGestureGameSessionCommitmentsV1 {
+            session_commitment_sha256: "1".repeat(64),
+            general_gesture_permission_commitment_sha256: "2".repeat(64),
+            mode_authorization_commitment_sha256: "3".repeat(64),
+            pass_match_launch_commitment_sha256: "4".repeat(64),
+            match_gameplay_authorization_commitment_sha256: "5".repeat(64),
+            gesture_match_launch_commitment_sha256: "6".repeat(64),
+            gesture_evaluation_commitment_sha256: "7".repeat(64),
+            gesture_profile_admission_commitment_sha256: "8".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::Challenge,
+            game_number: 1,
+            valid_from_frame_sequence: 90,
+            valid_through_frame_sequence: 120,
+            last_confirmed_frame_sequence: 89,
+            confirmed_action_count: 0,
+        };
+        let sequence = MtgoOpaqueCompetitiveDuelGestureSequenceCommitmentsV1 {
+            competitive_action_plan_commitment_sha256: "9".repeat(64),
+            gesture_plan_commitment_sha256: "a".repeat(64),
+            competitive_mode_authorization_commitment_sha256: session
+                .mode_authorization_commitment_sha256
+                .clone(),
+            competitive_match_gameplay_authorization_commitment_sha256: session
+                .match_gameplay_authorization_commitment_sha256
+                .clone(),
+            current_stage_binding_commitment_sha256: "b".repeat(64),
+            current_opaque_stage_commitment_sha256: "c".repeat(64),
+            last_visible_transition_commitment_sha256: None,
+            sequence_commitment_sha256: "d".repeat(64),
+            selected_action_family: MtgoDuelActionFamilyV1::CastOrPlotSpell,
+            event_kind: MtgoCompetitiveEventKindV1::Challenge,
+            game_number: 1,
+            gameplay_authorization_valid_through_frame_sequence: 120,
+            current_stage_index: 0,
+            gesture_stage_count: 2,
+            observed_stage_count: 1,
+            current_frame_id: 90,
+            current_frame_sequence: 90,
+        };
+        let bound =
+            competitive_duel_gesture_sequence_session_binding_from_parts_v1(&sequence, &session)
+                .unwrap();
+        let prepared = MtgoOpaqueCompetitiveDuelGestureSourcePreparationCommitmentsV1 {
+            source_sequence_commitment_sha256: sequence.sequence_commitment_sha256.clone(),
+            competitive_action_plan_commitment_sha256: sequence
+                .competitive_action_plan_commitment_sha256
+                .clone(),
+            gesture_plan_commitment_sha256: sequence.gesture_plan_commitment_sha256.clone(),
+            competitive_mode_authorization_commitment_sha256: session
+                .mode_authorization_commitment_sha256
+                .clone(),
+            competitive_match_gameplay_authorization_commitment_sha256: session
+                .match_gameplay_authorization_commitment_sha256
+                .clone(),
+            fresh_stage_binding_commitment_sha256: "e".repeat(64),
+            fresh_capture_commitment_sha256: "f".repeat(64),
+            fresh_perception_result_commitment_sha256: "0".repeat(64),
+            primitive_commitment_sha256: "1".repeat(64),
+            preparation_commitment_sha256: "2".repeat(64),
+            selected_action_family: MtgoDuelActionFamilyV1::CastOrPlotSpell,
+            event_kind: MtgoCompetitiveEventKindV1::Challenge,
+            game_number: 1,
+            stage_index: 0,
+            gesture_stage_count: 2,
+            target_count: 1,
+            fresh_frame_id: 91,
+            fresh_frame_sequence: 91,
+            fresh_captured_at_unix_millis: 1,
+            gameplay_authorization_valid_through_frame_sequence: 120,
+        };
+        let checked =
+            competitive_duel_gesture_source_preparation_from_parts_v1(&bound, &session, &prepared)
+                .unwrap();
+        assert_eq!(checked.fresh_frame_sequence, 91);
+        assert_eq!(checked.stage_index, 0);
+        assert_eq!(checked.target_count, 1);
+        assert_eq!(checked.preparation_binding_commitment_sha256.len(), 64);
+
+        let mut skipped = prepared.clone();
+        skipped.fresh_frame_sequence = 92;
+        assert!(competitive_duel_gesture_source_preparation_from_parts_v1(
+            &bound, &session, &skipped
+        )
+        .is_err());
+        let mut wrong_authority = prepared.clone();
+        wrong_authority.competitive_match_gameplay_authorization_commitment_sha256 = "a".repeat(64);
+        assert!(competitive_duel_gesture_source_preparation_from_parts_v1(
+            &bound,
+            &session,
+            &wrong_authority
+        )
+        .is_err());
+        let mut continuation = prepared.clone();
+        continuation.stage_index = 1;
+        assert!(competitive_duel_gesture_source_preparation_from_parts_v1(
+            &bound,
+            &session,
+            &continuation
+        )
+        .is_err());
+        let mut too_many_targets = prepared;
+        too_many_targets.target_count = 3;
+        assert!(competitive_duel_gesture_source_preparation_from_parts_v1(
+            &bound,
+            &session,
+            &too_many_targets
+        )
+        .is_err());
     }
 
     #[test]
