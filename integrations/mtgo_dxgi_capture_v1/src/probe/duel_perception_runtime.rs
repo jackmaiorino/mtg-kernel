@@ -866,10 +866,16 @@ impl OpaqueMtgoCompetitiveDuelGestureStageV1 {
 pub struct MtgoOpaqueCompetitiveDuelGestureSequenceCommitmentsV1 {
     pub competitive_action_plan_commitment_sha256: String,
     pub gesture_plan_commitment_sha256: String,
+    pub competitive_mode_authorization_commitment_sha256: String,
+    pub competitive_match_gameplay_authorization_commitment_sha256: String,
     pub current_stage_binding_commitment_sha256: String,
     pub current_opaque_stage_commitment_sha256: String,
     pub last_visible_transition_commitment_sha256: Option<String>,
     pub sequence_commitment_sha256: String,
+    pub selected_action_family: MtgoDuelActionFamilyV1,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub game_number: u8,
+    pub gameplay_authorization_valid_through_frame_sequence: u64,
     pub current_stage_index: u16,
     pub gesture_stage_count: u16,
     pub observed_stage_count: u16,
@@ -1554,6 +1560,7 @@ pub fn begin_opaque_competitive_duel_gesture_sequence_v1(
     source_stage: OpaqueMtgoCompetitiveDuelGestureStageV1,
 ) -> Result<OpaqueMtgoCompetitiveDuelGestureSequenceV1, String> {
     let stage = source_stage.commitments_v1();
+    let action_plan = source_stage._plan.commitments_v1();
     if stage.stage_index != 0 {
         return Err("gesture sequence must begin from stage zero".to_owned());
     }
@@ -1562,6 +1569,10 @@ pub fn begin_opaque_competitive_duel_gesture_sequence_v1(
     if gesture_stage_count == 0 {
         return Err("gesture sequence cannot begin from an empty plan".to_owned());
     }
+    let selected_family_json = serde_json::to_vec(&stage.selected_action_family)
+        .map_err(|error| format!("serialize gesture sequence family: {error}"))?;
+    let event_kind_json = serde_json::to_vec(&action_plan.event_kind)
+        .map_err(|error| format!("serialize gesture sequence mode: {error}"))?;
     let sequence_commitment_sha256 = commitment_v1(
         DUEL_OPAQUE_COMPETITIVE_GESTURE_SEQUENCE_DOMAIN_V1,
         &[
@@ -1569,6 +1580,19 @@ pub fn begin_opaque_competitive_duel_gesture_sequence_v1(
             stage.gesture_plan_commitment_sha256.as_bytes(),
             stage.gesture_stage_binding_commitment_sha256.as_bytes(),
             stage.opaque_gesture_stage_commitment_sha256.as_bytes(),
+            action_plan
+                .competitive_mode_authorization_commitment_sha256
+                .as_bytes(),
+            action_plan
+                .competitive_authorization_commitment_sha256
+                .as_bytes(),
+            selected_family_json.as_slice(),
+            event_kind_json.as_slice(),
+            &[action_plan.game_number],
+            action_plan
+                .gameplay_authorization_valid_through_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
             &gesture_stage_count.to_be_bytes(),
             &1_u16.to_be_bytes(),
             b"source_stage_observed_no_input_or_action_causality",
@@ -1577,10 +1601,19 @@ pub fn begin_opaque_competitive_duel_gesture_sequence_v1(
     let commitments = MtgoOpaqueCompetitiveDuelGestureSequenceCommitmentsV1 {
         competitive_action_plan_commitment_sha256: stage.competitive_action_plan_commitment_sha256,
         gesture_plan_commitment_sha256: stage.gesture_plan_commitment_sha256,
+        competitive_mode_authorization_commitment_sha256: action_plan
+            .competitive_mode_authorization_commitment_sha256,
+        competitive_match_gameplay_authorization_commitment_sha256: action_plan
+            .competitive_authorization_commitment_sha256,
         current_stage_binding_commitment_sha256: stage.gesture_stage_binding_commitment_sha256,
         current_opaque_stage_commitment_sha256: stage.opaque_gesture_stage_commitment_sha256,
         last_visible_transition_commitment_sha256: None,
         sequence_commitment_sha256,
+        selected_action_family: stage.selected_action_family,
+        event_kind: action_plan.event_kind,
+        game_number: action_plan.game_number,
+        gameplay_authorization_valid_through_frame_sequence: action_plan
+            .gameplay_authorization_valid_through_frame_sequence,
         current_stage_index: 0,
         gesture_stage_count,
         observed_stage_count: 1,
@@ -1699,10 +1732,19 @@ pub fn advance_opaque_competitive_duel_gesture_sequence_v1(
             competitive_action_plan_commitment_sha256: next
                 .competitive_action_plan_commitment_sha256,
             gesture_plan_commitment_sha256: next.gesture_plan_commitment_sha256,
+            competitive_mode_authorization_commitment_sha256: prior_sequence
+                .competitive_mode_authorization_commitment_sha256,
+            competitive_match_gameplay_authorization_commitment_sha256: prior_sequence
+                .competitive_match_gameplay_authorization_commitment_sha256,
             current_stage_binding_commitment_sha256: next.gesture_stage_binding_commitment_sha256,
             current_opaque_stage_commitment_sha256: next.opaque_gesture_stage_commitment_sha256,
             last_visible_transition_commitment_sha256: Some(visible_transition_commitment_sha256),
             sequence_commitment_sha256,
+            selected_action_family: prior_sequence.selected_action_family,
+            event_kind: prior_sequence.event_kind,
+            game_number: prior_sequence.game_number,
+            gameplay_authorization_valid_through_frame_sequence: prior_sequence
+                .gameplay_authorization_valid_through_frame_sequence,
             current_stage_index: next.stage_index,
             gesture_stage_count: prior_sequence.gesture_stage_count,
             observed_stage_count,

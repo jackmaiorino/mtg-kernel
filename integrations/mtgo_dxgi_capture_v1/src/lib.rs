@@ -10,6 +10,7 @@ mod probe;
 #[cfg(target_os = "windows")]
 pub use actuator::{
     begin_competitive_game_session_v1, begin_competitive_gesture_game_session_v1,
+    bind_competitive_duel_gesture_sequence_session_v1,
     bind_competitive_entry_postcondition_dry_run_v1,
     bind_prepared_competitive_duel_pass_session_v2, confirm_pending_competitive_duel_pass_v2,
     confirm_pending_competitive_entry_v1, confirm_pending_pregame_keep_to_bottom_six_v3,
@@ -45,12 +46,14 @@ pub use actuator::{
     MtgoReviewedCompetitiveEntryRatificationCandidateV1,
     MtgoReviewedCompetitiveGestureRatificationCandidateV1,
     MtgoReviewedCompetitivePassRatificationCandidateV2,
+    MtgoSessionBoundCompetitiveDuelGestureCommitmentsV1,
     MtgoSourceBoundCompetitiveEntryReviewCommitmentsV2,
     OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1, OpaqueMtgoCompetitiveGameSessionV1,
     OpaqueMtgoCompetitiveGestureGameSessionV1, OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2,
     OpaqueMtgoConfirmedCompetitiveEntryV1, OpaqueMtgoPendingCompetitiveDuelPassV1,
     OpaqueMtgoPendingCompetitiveEntryV1, OpaqueMtgoPendingPregameInputV3,
-    OpaqueMtgoPreparedCompetitiveEntryV1, RatifiedMtgoCompetitiveDuelGestureAuthorizationV1,
+    OpaqueMtgoPreparedCompetitiveEntryV1, OpaqueMtgoSessionBoundCompetitiveDuelGestureV1,
+    RatifiedMtgoCompetitiveDuelGestureAuthorizationV1,
     RatifiedMtgoCompetitiveDuelPassAuthorizationV1, RatifiedMtgoCompetitiveEntryAuthorizationV1,
     RatifiedMtgoCompetitiveGestureMatchLaunchV1, RatifiedMtgoCompetitiveMatchLaunchV1,
     RatifiedMtgoPrivateMatchAuthorizationV3,
