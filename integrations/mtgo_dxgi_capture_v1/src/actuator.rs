@@ -7164,11 +7164,12 @@ pub fn check_competitive_event_pregame_postcondition_dry_run_v1(
     })
 }
 
-/// Emits one left click only from an immediate classifier-rechecked target and
-/// a separately ratified exact-correspondence, exact-mode pregame authority.
-/// The shared process gate remains pending until the declared visible
-/// postcondition is confirmed.
-pub fn execute_prepared_competitive_pregame_action_v1(
+/// Retains the legacy non-model pregame executor for internal validation only.
+/// It is deliberately not exported: League or Challenge pregame input must
+/// remain unavailable until a future opaque native model decision owns the
+/// selected action and its checkpoint provenance.
+#[allow(dead_code)]
+pub(crate) fn execute_prepared_competitive_pregame_action_v1(
     prepared: OpaqueMtgoPreparedCompetitivePregameActionV1,
     authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
 ) -> Result<OpaqueMtgoPendingCompetitivePregameInputV1, String> {

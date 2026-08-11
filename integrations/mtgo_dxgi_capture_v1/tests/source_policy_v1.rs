@@ -1757,7 +1757,9 @@ fn competitive_pregame_preparation_rechecks_fresh_surface_without_input_authorit
         "RATIFIED_COMPETITIVE_EVENT_PREGAME_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
         "review_competitive_pregame_ratification_candidate_from_correspondence_v1",
         "ratify_competitive_pregame_authorization_from_correspondence_v1",
-        "execute_prepared_competitive_pregame_action_v1",
+        "pub(crate) fn execute_prepared_competitive_pregame_action_v1",
+        "League or Challenge pregame input must",
+        "future opaque native model decision owns the",
         "confirm_pending_competitive_pregame_action_v1",
         "OpaqueMtgoPendingCompetitivePregameInputV1",
         "OpaqueMtgoConfirmedCompetitivePregameActionV1",
@@ -1799,6 +1801,8 @@ fn competitive_pregame_preparation_rechecks_fresh_surface_without_input_authorit
             "competitive pregame preparation exposes forbidden authority: {forbidden}"
         );
     }
+    let public_exports = include_str!("../src/lib.rs");
+    assert!(!public_exports.contains("execute_prepared_competitive_pregame_action_v1"));
 }
 
 #[test]
