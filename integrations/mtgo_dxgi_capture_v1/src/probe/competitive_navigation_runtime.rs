@@ -1,5 +1,6 @@
 use super::{
     bind_opaque_navigation_frame_to_competitive_entry_review_identity_with_classification_v1,
+    competitive_entry_window_continuity_commitment_for_frame_v1,
     mtgo_process_continuity_commitment_for_frame_v1, serialize_manifest_v2, sha256_hex_v1,
     MtgoAdmittedCompetitiveNavigationFrameCommitmentsV1,
     OpaqueMtgoAdmittedCompetitiveNavigationFrameV1, OpaqueMtgoCompetitiveEntryReviewIdentityV1,
@@ -260,6 +261,12 @@ impl OpaqueMtgoClassifiedCompetitiveNavigationFrameV1 {
 
     pub(crate) fn process_continuity_commitment_sha256_v1(&self) -> String {
         mtgo_process_continuity_commitment_for_frame_v1(&self._source_frame.source_frame)
+    }
+
+    pub(crate) fn window_continuity_commitment_sha256_v1(&self) -> Result<String, String> {
+        competitive_entry_window_continuity_commitment_for_frame_v1(
+            &self._source_frame.source_frame,
+        )
     }
 
     pub(super) fn into_event_listing_parts_v1(
