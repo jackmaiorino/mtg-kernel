@@ -647,6 +647,8 @@ pub struct MtgoCompetitiveEventRuntimeCommitmentsV1 {
     pub entry_confirmation_receipt_sha256: String,
     pub entry_ratification_commitment_sha256: String,
     pub entry_authorization_sha256: String,
+    pub correspondence_sha256: String,
+    pub permission_review_commitment_sha256: String,
     pub lifecycle_authorization_commitment_sha256: String,
     pub mode_authorization_commitment_sha256: String,
     pub navigation_profile_commitment_sha256: String,
@@ -1428,6 +1430,8 @@ pub struct MtgoCompetitiveGestureGameSessionCommitmentsV1 {
     pub session_commitment_sha256: String,
     pub general_gesture_permission_commitment_sha256: String,
     pub mode_authorization_commitment_sha256: String,
+    pub correspondence_sha256: String,
+    pub permission_review_commitment_sha256: String,
     pub pass_match_launch_commitment_sha256: String,
     pub match_gameplay_authorization_commitment_sha256: String,
     pub gesture_match_launch_commitment_sha256: String,
@@ -1476,6 +1480,17 @@ impl OpaqueMtgoCompetitiveGestureGameSessionV1 {
                 .launch
                 .gesture_authorization
                 .mode_authorization_commitment_sha256
+                .clone(),
+            correspondence_sha256: self
+                .launch
+                .gesture_authorization
+                .scope
+                .written_permission_sha256
+                .clone(),
+            permission_review_commitment_sha256: self
+                .launch
+                .gesture_authorization
+                .permission_review_commitment_sha256
                 .clone(),
             pass_match_launch_commitment_sha256: self
                 .launch
@@ -2705,6 +2720,10 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
     let lifecycle = current_frame.lifecycle_snapshot_v1();
     let entry_ratification = spent_entry_authorization.commitments_v1();
     let lifecycle_ratification = lifecycle_authorization.commitments_v1();
+    validate_competitive_event_authorization_lineage_v1(
+        &entry_ratification,
+        &lifecycle_ratification,
+    )?;
     if current.phase != MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing
         || lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing
         || entry.event_kind != lifecycle_ratification.event_kind
@@ -2722,8 +2741,6 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
             != entry_ratification.event_identity_sha256
         || lifecycle.event_identity_sha256_v1()
             != Some(entry_ratification.event_identity_sha256.as_str())
-        || lifecycle_ratification.approved_account_alias_sha256
-            != entry_ratification.account_alias_sha256
         || lifecycle_ratification.lifecycle_profile_commitment_sha256
             != current.source_frame.profile_commitment_sha256
         || lifecycle_ratification.lifecycle_profile_admission_commitment_sha256
@@ -2741,6 +2758,8 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         entry_confirmation_receipt_sha256: entry.confirmation_receipt_sha256,
         entry_ratification_commitment_sha256: entry_ratification.ratification_commitment_sha256,
         entry_authorization_sha256: entry_ratification.entry_authorization_sha256,
+        correspondence_sha256: entry_ratification.correspondence_sha256,
+        permission_review_commitment_sha256: entry_ratification.permission_review_commitment_sha256,
         lifecycle_authorization_commitment_sha256: lifecycle_ratification
             .ratification_commitment_sha256,
         mode_authorization_commitment_sha256: lifecycle_ratification
@@ -6171,6 +6190,26 @@ fn validate_game_session_against_event_runtime_v1(
     )
 }
 
+fn validate_competitive_event_authorization_lineage_v1(
+    entry: &MtgoReviewedCompetitiveEntryRatificationCandidateV1,
+    lifecycle: &MtgoReviewedCompetitiveLifecycleRatificationCandidateV1,
+) -> Result<(), String> {
+    if lifecycle.event_kind != entry.event_kind
+        || lifecycle.approved_account_alias_sha256 != entry.account_alias_sha256
+        || lifecycle.correspondence_sha256 != entry.correspondence_sha256
+        || lifecycle.permission_review_commitment_sha256
+            != entry.permission_review_commitment_sha256
+        || lifecycle.mode_authorization_commitment_sha256
+            != entry.mode_authorization_commitment_sha256
+    {
+        return Err(
+            "competitive entry and lifecycle authorities do not share one exact reviewed permission lineage"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn validate_game_session_commitments_against_event_runtime_v1(
     runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
     game: &MtgoCompetitiveGestureGameSessionCommitmentsV1,
@@ -6180,6 +6219,8 @@ fn validate_game_session_commitments_against_event_runtime_v1(
         || runtime.current_phase != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
         || game.event_kind != runtime.event_kind
         || game.mode_authorization_commitment_sha256 != runtime.mode_authorization_commitment_sha256
+        || game.correspondence_sha256 != runtime.correspondence_sha256
+        || game.permission_review_commitment_sha256 != runtime.permission_review_commitment_sha256
         || gameplay.account_alias_sha256 != runtime.approved_account_alias_sha256
         || gameplay.entry_authorization_sha256 != runtime.entry_authorization_sha256
         || gameplay.event_identity_sha256 != runtime.bound_event_identity_sha256
@@ -6211,6 +6252,8 @@ fn competitive_event_runtime_commitment_v1(
             value.entry_confirmation_receipt_sha256.as_bytes(),
             value.entry_ratification_commitment_sha256.as_bytes(),
             value.entry_authorization_sha256.as_bytes(),
+            value.correspondence_sha256.as_bytes(),
+            value.permission_review_commitment_sha256.as_bytes(),
             value.lifecycle_authorization_commitment_sha256.as_bytes(),
             value.mode_authorization_commitment_sha256.as_bytes(),
             value.navigation_profile_commitment_sha256.as_bytes(),
@@ -9245,6 +9288,8 @@ mod tests {
             session_commitment_sha256: "1".repeat(64),
             general_gesture_permission_commitment_sha256: "2".repeat(64),
             mode_authorization_commitment_sha256: "3".repeat(64),
+            correspondence_sha256: "c".repeat(64),
+            permission_review_commitment_sha256: "d".repeat(64),
             pass_match_launch_commitment_sha256: "4".repeat(64),
             match_gameplay_authorization_commitment_sha256: "5".repeat(64),
             gesture_match_launch_commitment_sha256: "6".repeat(64),
@@ -9339,6 +9384,8 @@ mod tests {
             session_commitment_sha256: "1".repeat(64),
             general_gesture_permission_commitment_sha256: "2".repeat(64),
             mode_authorization_commitment_sha256: "3".repeat(64),
+            correspondence_sha256: "c".repeat(64),
+            permission_review_commitment_sha256: "d".repeat(64),
             pass_match_launch_commitment_sha256: "4".repeat(64),
             match_gameplay_authorization_commitment_sha256: "5".repeat(64),
             gesture_match_launch_commitment_sha256: "6".repeat(64),
@@ -9689,6 +9736,8 @@ mod tests {
             session_commitment_sha256: "1".repeat(64),
             general_gesture_permission_commitment_sha256: "2".repeat(64),
             mode_authorization_commitment_sha256: "3".repeat(64),
+            correspondence_sha256: "c".repeat(64),
+            permission_review_commitment_sha256: "d".repeat(64),
             pass_match_launch_commitment_sha256: "4".repeat(64),
             match_gameplay_authorization_commitment_sha256: "5".repeat(64),
             gesture_match_launch_commitment_sha256: "6".repeat(64),
@@ -11064,6 +11113,8 @@ mod tests {
             entry_confirmation_receipt_sha256: "1".repeat(64),
             entry_ratification_commitment_sha256: "2".repeat(64),
             entry_authorization_sha256: "d".repeat(64),
+            correspondence_sha256: "e".repeat(64),
+            permission_review_commitment_sha256: "f".repeat(64),
             lifecycle_authorization_commitment_sha256: "3".repeat(64),
             mode_authorization_commitment_sha256: "4".repeat(64),
             navigation_profile_commitment_sha256: "5".repeat(64),
@@ -11156,6 +11207,8 @@ mod tests {
             entry_confirmation_receipt_sha256: "1".repeat(64),
             entry_ratification_commitment_sha256: "2".repeat(64),
             entry_authorization_sha256: "3".repeat(64),
+            correspondence_sha256: "c".repeat(64),
+            permission_review_commitment_sha256: "d".repeat(64),
             lifecycle_authorization_commitment_sha256: "4".repeat(64),
             mode_authorization_commitment_sha256: "5".repeat(64),
             navigation_profile_commitment_sha256: "6".repeat(64),
@@ -11183,6 +11236,10 @@ mod tests {
             general_gesture_permission_commitment_sha256: "d".repeat(64),
             mode_authorization_commitment_sha256: runtime
                 .mode_authorization_commitment_sha256
+                .clone(),
+            correspondence_sha256: runtime.correspondence_sha256.clone(),
+            permission_review_commitment_sha256: runtime
+                .permission_review_commitment_sha256
                 .clone(),
             pass_match_launch_commitment_sha256: "e".repeat(64),
             match_gameplay_authorization_commitment_sha256: "f".repeat(64),
@@ -11218,5 +11275,74 @@ mod tests {
             &runtime, &game, &gameplay,
         )
         .is_err());
+
+        gameplay.entry_authorization_sha256 = runtime.entry_authorization_sha256.clone();
+        let mut mismatched_game = game.clone();
+        mismatched_game.correspondence_sha256 = "6".repeat(64);
+        assert!(validate_game_session_commitments_against_event_runtime_v1(
+            &runtime,
+            &mismatched_game,
+            &gameplay,
+        )
+        .is_err());
+
+        mismatched_game.correspondence_sha256 = runtime.correspondence_sha256.clone();
+        mismatched_game.permission_review_commitment_sha256 = "6".repeat(64);
+        assert!(validate_game_session_commitments_against_event_runtime_v1(
+            &runtime,
+            &mismatched_game,
+            &gameplay,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn competitive_event_rejects_split_entry_and_lifecycle_permission_lineage() {
+        let entry = MtgoReviewedCompetitiveEntryRatificationCandidateV1 {
+            permission_review_commitment_sha256: "1".repeat(64),
+            account_alias_sha256: "2".repeat(64),
+            correspondence_sha256: "3".repeat(64),
+            mode_authorization_commitment_sha256: "4".repeat(64),
+            control_bound_review_commitment_sha256: "5".repeat(64),
+            owner_review_receipt_sha256: "6".repeat(64),
+            entry_authorization_sha256: "7".repeat(64),
+            source_identity_commitment_sha256: "8".repeat(64),
+            source_capture_commitment_sha256: "9".repeat(64),
+            source_navigation_classification_result_commitment_sha256: "a".repeat(64),
+            visible_control_region_sha256: "b".repeat(64),
+            event_identity_sha256: "c".repeat(64),
+            entry_terms_sha256: "d".repeat(64),
+            ratification_commitment_sha256: "e".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::Challenge,
+            resource: MtgoCompetitiveEntryResourceV1::ExistingEventTickets,
+            amount: 25,
+        };
+        let mut lifecycle = MtgoReviewedCompetitiveLifecycleRatificationCandidateV1 {
+            correspondence_sha256: entry.correspondence_sha256.clone(),
+            permission_review_commitment_sha256: entry.permission_review_commitment_sha256.clone(),
+            mode_authorization_commitment_sha256: entry
+                .mode_authorization_commitment_sha256
+                .clone(),
+            approved_account_alias_sha256: entry.account_alias_sha256.clone(),
+            lifecycle_profile_commitment_sha256: "f".repeat(64),
+            lifecycle_profile_admission_commitment_sha256: "0".repeat(64),
+            allowed_actions_commitment_sha256: "1".repeat(64),
+            event_kind: entry.event_kind,
+            ratification_commitment_sha256: "2".repeat(64),
+        };
+
+        validate_competitive_event_authorization_lineage_v1(&entry, &lifecycle).unwrap();
+
+        lifecycle.correspondence_sha256 = "4".repeat(64);
+        assert!(validate_competitive_event_authorization_lineage_v1(&entry, &lifecycle).is_err());
+
+        lifecycle.correspondence_sha256 = entry.correspondence_sha256.clone();
+        lifecycle.permission_review_commitment_sha256 = "4".repeat(64);
+        assert!(validate_competitive_event_authorization_lineage_v1(&entry, &lifecycle).is_err());
+
+        lifecycle.permission_review_commitment_sha256 =
+            entry.permission_review_commitment_sha256.clone();
+        lifecycle.mode_authorization_commitment_sha256 = "5".repeat(64);
+        assert!(validate_competitive_event_authorization_lineage_v1(&entry, &lifecycle).is_err());
     }
 }
