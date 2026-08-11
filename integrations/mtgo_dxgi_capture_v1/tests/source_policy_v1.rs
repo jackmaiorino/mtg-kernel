@@ -384,6 +384,12 @@ fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_a
         "gesture_stage_count",
         "bind_opaque_competitive_duel_source_gesture_stage_v1",
         "bind_opaque_competitive_duel_continuation_gesture_stage_v1",
+        "begin_opaque_competitive_duel_gesture_sequence_v1",
+        "advance_opaque_competitive_duel_gesture_sequence_v1",
+        "MtgoCompetitiveDuelGestureVisibleTransitionProbeV1",
+        "OpaqueMtgoCompetitiveDuelGestureSequenceV1",
+        "gesture visible-transition probe region did not change",
+        "one_adjacent_stage_visible_region_changed_no_input_or_action_causality",
         "bind_visible_duel_gesture_stage_v1",
         "OpaqueMtgoCompetitiveDuelGestureStageV1",
         "target_points_desktop_px",
@@ -396,6 +402,7 @@ fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_a
         "runtime timed out",
         "safe_for_input_v1(&self) -> bool",
         "permits_event_entry_v1(&self) -> bool",
+        "proves_action_causality_v1(&self) -> bool",
     ] {
         assert!(
             source.contains(required),
@@ -411,6 +418,7 @@ fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_a
         "pub fn target_point_client_px",
         "safe_for_input_v1(&self) -> bool {\n        true",
         "permits_event_entry_v1(&self) -> bool {\n        true",
+        "proves_action_causality_v1(&self) -> bool {\n        true",
         "ReadProcessMemory",
         "WriteProcessMemory",
         "CreateRemoteThread",
