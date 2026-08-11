@@ -80,7 +80,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             competitive_pregame_play_draw_context_present: true,
             competitive_pregame_match_score_context_present: true,
             visible_accessibility_exact_text_probe_present: true,
-            visible_accessibility_same_frame_pixel_corroboration_present: false,
+            visible_accessibility_same_frame_pixel_corroboration_present: true,
             terminal_outcome_trained_pregame_head_present: false,
             non_model_pregame_scorer_present: true,
             competitive_pregame_heuristic_deployment_ratification_present:
@@ -162,7 +162,7 @@ mod tests {
                 .visible_accessibility_exact_text_probe_present
         );
         assert!(
-            !report
+            report
                 .known_wiring_gaps
                 .visible_accessibility_same_frame_pixel_corroboration_present
         );

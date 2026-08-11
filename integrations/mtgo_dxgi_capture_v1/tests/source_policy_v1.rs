@@ -1480,7 +1480,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "competitive_pregame_heuristic_deployment_ratification_present:",
         "competitive_pregame_session_ownership_bridge_present: true",
         "visible_accessibility_exact_text_probe_present: true",
-        "visible_accessibility_same_frame_pixel_corroboration_present: false",
+        "visible_accessibility_same_frame_pixel_corroboration_present: true",
         "competitive_pregame_capture_profile_present: false",
         "competitive_pregame_card_and_control_surface_present: true",
         "competitive_pregame_deck_bound_action_planner_present: true",
@@ -1599,6 +1599,60 @@ fn visible_accessibility_probe_is_read_only_private_and_requires_pixel_corrobora
                     .unwrap()
                     .contains(forbidden),
             "visible accessibility probe exposes forbidden operation or raw result: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn visible_accessibility_pixel_corroboration_is_capture_bracketed_and_non_actionable() {
+    let source = include_str!("../src/probe/visible_accessibility.rs");
+    let binary = include_str!("../src/bin/probe_mtgo_visible_accessibility_pixels_v1.rs");
+    for required in [
+        "probe_mtgo_visible_accessibility_exact_text_with_pixel_corroboration_v1",
+        "let before_frame = capture_mtgo_dxgi_frame_candidate_v3",
+        "probe_mtgo_visible_accessibility_exact_text_v1",
+        "let after_frame = capture_mtgo_dxgi_frame_candidate_v3",
+        "before.pre != accessibility_probe._window_snapshot",
+        "after.pre != accessibility_probe._window_snapshot",
+        "before.output != after.output",
+        "before.frame.source_texture_width != after.frame.source_texture_width",
+        "MAX_VISIBLE_ACCESSIBILITY_CAPTURE_BRACKET_MILLIS_V1",
+        "visible_frame_region_content_sha256_v1",
+        "before_hash != after_hash",
+        "total_pixel_corroborated_match_count",
+        "has_pixel_corroborated_match",
+        "matched_regions_pixel_stable_across_bracket: true",
+        "raw_visible_text_exposed: false",
+        "private_match_rectangles_exposed: false",
+        "safe_for_semantic_evidence: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+        "private_pixel_match_set_commitment_sha256",
+    ] {
+        assert!(
+            source.contains(required),
+            "visible accessibility pixel corroboration is missing: {required}"
+        );
+    }
+    assert!(binary.contains("run_visible_accessibility_pixel_corroboration_cli_v1"));
+    for forbidden in [
+        "GetCurrentPattern",
+        ".Invoke(",
+        ".SetFocus(",
+        "SendInput",
+        ".SetValue(",
+        "pub fn canonical_bgra8",
+        "pub fn match_rectangles",
+        "pub rect_client_px",
+    ] {
+        assert!(
+            !binary.contains(forbidden)
+                && !source
+                    .split("#[cfg(test)]")
+                    .next()
+                    .unwrap()
+                    .contains(forbidden),
+            "visible accessibility pixel corroboration exposes forbidden capability: {forbidden}"
         );
     }
 }

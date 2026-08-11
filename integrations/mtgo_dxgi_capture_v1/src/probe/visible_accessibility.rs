@@ -9,13 +9,19 @@ use windows::Win32::System::Com::{
 use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, TreeScope_Subtree};
 
 pub const MTGO_VISIBLE_ACCESSIBILITY_PROBE_SCHEMA_V1: u32 = 1;
+pub const MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CORROBORATION_SCHEMA_V1: u32 = 1;
 
 const MAX_VISIBLE_ACCESSIBILITY_QUERIES_V1: usize = 64;
 const MAX_VISIBLE_ACCESSIBILITY_ELEMENTS_V1: i32 = 4_096;
 const MAX_MATCHES_PER_QUERY_V1: usize = 64;
+const MAX_VISIBLE_ACCESSIBILITY_CAPTURE_BRACKET_MILLIS_V1: u128 = 5_000;
 const VISIBLE_ACCESSIBILITY_WINDOW_DOMAIN_V1: &[u8] = b"mtgo-visible-accessibility-window-v1";
 const VISIBLE_ACCESSIBILITY_MATCH_SET_DOMAIN_V1: &[u8] = b"mtgo-visible-accessibility-match-set-v1";
 const VISIBLE_ACCESSIBILITY_REPORT_DOMAIN_V1: &[u8] = b"mtgo-visible-accessibility-report-v1";
+const VISIBLE_ACCESSIBILITY_PIXEL_MATCH_SET_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-accessibility-pixel-match-set-v1";
+const VISIBLE_ACCESSIBILITY_PIXEL_REPORT_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-accessibility-pixel-report-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,11 +60,52 @@ pub struct MtgoVisibleAccessibilityProbeSummaryV1 {
     pub report_commitment_sha256: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityPixelQueryResultV1 {
+    pub query_id: String,
+    pub expected_visible_text_sha256: String,
+    pub exact_visible_match_count: u32,
+    pub observed_control_type_ids: Vec<i32>,
+    pub private_pixel_match_set_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityPixelCorroborationSummaryV1 {
+    pub schema_version: u32,
+    pub before_capture_commitment_sha256: String,
+    pub after_capture_commitment_sha256: String,
+    pub before_frame_sha256: String,
+    pub after_frame_sha256: String,
+    pub accessibility_report_commitment_sha256: String,
+    pub source_window_identity_commitment_sha256: String,
+    pub query_results: Vec<MtgoVisibleAccessibilityPixelQueryResultV1>,
+    pub total_pixel_corroborated_match_count: u32,
+    pub has_pixel_corroborated_match: bool,
+    pub capture_bracket_identity_confirmed: bool,
+    pub matched_regions_pixel_stable_across_bracket: bool,
+    pub raw_visible_text_exposed: bool,
+    pub private_match_rectangles_exposed: bool,
+    pub safe_for_semantic_evidence: bool,
+    pub safe_for_policy_scoring: bool,
+    pub safe_for_input: bool,
+    pub report_commitment_sha256: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 struct PrivateVisibleAccessibilityMatchV1 {
     query_index: usize,
     control_type_id: i32,
     rect_desktop_px: SignedRectV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PrivateVisibleAccessibilityPixelMatchV1 {
+    query_index: usize,
+    control_type_id: i32,
+    rect_client_px: MtgoRectPxV1,
+    region_bgra8_sha256: String,
 }
 
 /// Read-only exact-text matches from Windows UI Automation. Raw names and
@@ -78,6 +125,7 @@ struct PrivateVisibleAccessibilityMatchV1 {
 pub struct OpaqueMtgoVisibleAccessibilityProbeV1 {
     _queries: Vec<MtgoVisibleAccessibilityExactTextQueryV1>,
     _private_matches: Vec<PrivateVisibleAccessibilityMatchV1>,
+    _window_snapshot: WindowSnapshotV1,
     summary: MtgoVisibleAccessibilityProbeSummaryV1,
 }
 
@@ -88,6 +136,55 @@ impl OpaqueMtgoVisibleAccessibilityProbeV1 {
 
     pub fn grants_capture_authority_v1(&self) -> bool {
         false
+    }
+
+    pub fn safe_for_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+/// A move-only exact-region pixel corroboration of visible UI Automation
+/// matches. The query text, private rectangles, pixels, and both source frames
+/// remain private. The result is still diagnostic because it has no reviewed
+/// label-accuracy profile and grants no semantic, scoring, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoVisibleAccessibilityPixelCorroborationV1;
+/// let _forged = OpaqueMtgoVisibleAccessibilityPixelCorroborationV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoVisibleAccessibilityPixelCorroborationV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoVisibleAccessibilityPixelCorroborationV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoVisibleAccessibilityPixelCorroborationV1;
+/// fn pixels(value: &OpaqueMtgoVisibleAccessibilityPixelCorroborationV1) {
+///     let _ = value.canonical_bgra8();
+///     let _ = value.match_rectangles();
+/// }
+/// ```
+pub struct OpaqueMtgoVisibleAccessibilityPixelCorroborationV1 {
+    _before_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    _accessibility_probe: OpaqueMtgoVisibleAccessibilityProbeV1,
+    _after_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    _private_pixel_matches: Vec<PrivateVisibleAccessibilityPixelMatchV1>,
+    summary: MtgoVisibleAccessibilityPixelCorroborationSummaryV1,
+}
+
+impl OpaqueMtgoVisibleAccessibilityPixelCorroborationV1 {
+    pub fn summary_v1(&self) -> MtgoVisibleAccessibilityPixelCorroborationSummaryV1 {
+        self.summary.clone()
     }
 
     pub fn safe_for_semantic_evidence_v1(&self) -> bool {
@@ -287,6 +384,183 @@ pub fn probe_mtgo_visible_accessibility_exact_text_v1(
     Ok(OpaqueMtgoVisibleAccessibilityProbeV1 {
         _queries: queries,
         _private_matches: private_matches,
+        _window_snapshot: pre,
+        summary,
+    })
+}
+
+/// Captures one admitted composed-desktop frame, performs the read-only UIA
+/// query, then captures a second admitted frame. Every private UIA match region
+/// must contain identical canonical BGRA8 bytes in both exact frames. Window,
+/// process, geometry, cursor, z-order, and output identity must remain stable
+/// throughout the bracket.
+pub fn probe_mtgo_visible_accessibility_exact_text_with_pixel_corroboration_v1(
+    window_request: MtgoDxgiCaptureRequestV3,
+    queries: Vec<MtgoVisibleAccessibilityExactTextQueryV1>,
+) -> Result<OpaqueMtgoVisibleAccessibilityPixelCorroborationV1, String> {
+    validate_capture_request_v3(&window_request)?;
+    validate_queries_v1(&queries)?;
+    let before_frame = capture_mtgo_dxgi_frame_candidate_v3(window_request.clone())?;
+    let accessibility_probe =
+        probe_mtgo_visible_accessibility_exact_text_v1(window_request.clone(), queries)?;
+    let after_frame = capture_mtgo_dxgi_frame_candidate_v3(window_request)?;
+    bind_visible_accessibility_pixel_corroboration_v1(
+        before_frame,
+        accessibility_probe,
+        after_frame,
+    )
+}
+
+fn bind_visible_accessibility_pixel_corroboration_v1(
+    before_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    accessibility_probe: OpaqueMtgoVisibleAccessibilityProbeV1,
+    after_frame: OpaqueMtgoDxgiFrameCandidateV3,
+) -> Result<OpaqueMtgoVisibleAccessibilityPixelCorroborationV1, String> {
+    let before = &before_frame.manifest;
+    let after = &after_frame.manifest;
+    if before.pre != before.post
+        || after.pre != after.post
+        || before.pre != accessibility_probe._window_snapshot
+        || after.pre != accessibility_probe._window_snapshot
+        || before.output != after.output
+        || before.window_mode != after.window_mode
+        || before.capture_role != after.capture_role
+        || before.expected_game_format != after.expected_game_format
+        || before.title_rule_version != after.title_rule_version
+        || before.frame.canonical_width != after.frame.canonical_width
+        || before.frame.canonical_height != after.frame.canonical_height
+        || before.frame.canonical_stride != after.frame.canonical_stride
+        || before.frame.source_texture_width != after.frame.source_texture_width
+        || before.frame.source_texture_height != after.frame.source_texture_height
+        || before.frame.source_texture_format != after.frame.source_texture_format
+        || before.frame.pointer_visible != after.frame.pointer_visible
+        || before.frame.pointer_x != after.frame.pointer_x
+        || before.frame.pointer_y != after.frame.pointer_y
+        || before.captured_at_unix_millis > after.captured_at_unix_millis
+        || after.captured_at_unix_millis - before.captured_at_unix_millis
+            > MAX_VISIBLE_ACCESSIBILITY_CAPTURE_BRACKET_MILLIS_V1
+    {
+        return Err(
+            "MTGO capture bracket changed process, window, geometry, cursor, z-order, output, or role identity"
+                .to_owned(),
+        );
+    }
+    if accessibility_probe.summary.process_id != before.pre.process_id
+        || accessibility_probe.summary.window_handle != before.pre.hwnd
+        || accessibility_probe.summary.dpi != before.pre.dpi
+        || accessibility_probe.summary.client_rect_desktop_sha256
+            != sha256_hex_v1(
+                &serde_json::to_vec(&before.pre.client_rect_desktop_px).map_err(|error| {
+                    format!("serialize corroborated accessibility client bounds: {error}")
+                })?,
+            )
+        || accessibility_probe.summary.report_commitment_sha256
+            != summary_commitment_v1(&accessibility_probe.summary)?
+    {
+        return Err("accessibility report does not bind the exact capture bracket".to_owned());
+    }
+    for (frame, label) in [(&before_frame, "before"), (&after_frame, "after")] {
+        let expected_length = usize::try_from(frame.manifest.frame.canonical_width)
+            .ok()
+            .and_then(|width| {
+                usize::try_from(frame.manifest.frame.canonical_height)
+                    .ok()
+                    .and_then(|height| width.checked_mul(height))
+            })
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| format!("{label} corroboration frame geometry overflows"))?;
+        if frame.canonical_bgra8.len() != expected_length
+            || frame.manifest.frame.canonical_stride
+                != frame
+                    .manifest
+                    .frame
+                    .canonical_width
+                    .checked_mul(4)
+                    .ok_or_else(|| format!("{label} corroboration frame stride overflows"))?
+            || frame.manifest.frame.canonical_bgra8_sha256 != sha256_hex_v1(&frame.canonical_bgra8)
+            || frame.capture_commitment_sha256
+                != capture_commitment_v3(
+                    &frame.manifest,
+                    &frame.canonical_bgra8,
+                    &frame.preview_png,
+                )?
+        {
+            return Err(format!(
+                "{label} corroboration frame bytes or commitment are invalid"
+            ));
+        }
+    }
+
+    let size = MtgoSizePxV1 {
+        width: before.frame.canonical_width,
+        height: before.frame.canonical_height,
+    };
+    if before.pre.client_rect_desktop_px.width()? != size.width
+        || before.pre.client_rect_desktop_px.height()? != size.height
+    {
+        return Err("capture bracket client bounds do not match canonical pixels".to_owned());
+    }
+    let private_pixel_matches = corroborate_private_match_regions_v1(
+        &accessibility_probe._private_matches,
+        before.pre.client_rect_desktop_px,
+        &before_frame.canonical_bgra8,
+        &after_frame.canonical_bgra8,
+        &size,
+    )?;
+    let query_results =
+        build_pixel_query_results_v1(&accessibility_probe._queries, &private_pixel_matches)?;
+    let total_pixel_corroborated_match_count =
+        query_results.iter().try_fold(0_u32, |total, result| {
+            total
+                .checked_add(result.exact_visible_match_count)
+                .ok_or("visible accessibility total pixel match count overflow")
+        })?;
+    let expected_probe_results = build_query_results_v1(
+        &accessibility_probe._queries,
+        &accessibility_probe._private_matches,
+    )?;
+    for (plain, pixel) in expected_probe_results.iter().zip(query_results.iter()) {
+        if plain.query_id != pixel.query_id
+            || plain.expected_visible_text_sha256 != pixel.expected_visible_text_sha256
+            || plain.exact_visible_match_count != pixel.exact_visible_match_count
+            || plain.observed_control_type_ids != pixel.observed_control_type_ids
+        {
+            return Err("pixel corroboration changed the accessibility match inventory".to_owned());
+        }
+    }
+
+    let mut summary = MtgoVisibleAccessibilityPixelCorroborationSummaryV1 {
+        schema_version: MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CORROBORATION_SCHEMA_V1,
+        before_capture_commitment_sha256: before_frame.capture_commitment_sha256.clone(),
+        after_capture_commitment_sha256: after_frame.capture_commitment_sha256.clone(),
+        before_frame_sha256: before.frame.canonical_bgra8_sha256.clone(),
+        after_frame_sha256: after.frame.canonical_bgra8_sha256.clone(),
+        accessibility_report_commitment_sha256: accessibility_probe
+            .summary
+            .report_commitment_sha256
+            .clone(),
+        source_window_identity_commitment_sha256: accessibility_probe
+            .summary
+            .source_window_identity_commitment_sha256
+            .clone(),
+        query_results,
+        total_pixel_corroborated_match_count,
+        has_pixel_corroborated_match: total_pixel_corroborated_match_count != 0,
+        capture_bracket_identity_confirmed: true,
+        matched_regions_pixel_stable_across_bracket: true,
+        raw_visible_text_exposed: false,
+        private_match_rectangles_exposed: false,
+        safe_for_semantic_evidence: false,
+        safe_for_policy_scoring: false,
+        safe_for_input: false,
+        report_commitment_sha256: String::new(),
+    };
+    summary.report_commitment_sha256 = pixel_summary_commitment_v1(&summary)?;
+    Ok(OpaqueMtgoVisibleAccessibilityPixelCorroborationV1 {
+        _before_frame: before_frame,
+        _accessibility_probe: accessibility_probe,
+        _after_frame: after_frame,
+        _private_pixel_matches: private_pixel_matches,
         summary,
     })
 }
@@ -295,6 +569,18 @@ pub fn run_visible_accessibility_probe_cli_v1(
 ) -> Result<MtgoVisibleAccessibilityProbeSummaryV1, String> {
     let (window_request, queries) = parse_cli_v1()?;
     Ok(probe_mtgo_visible_accessibility_exact_text_v1(window_request, queries)?.summary_v1())
+}
+
+pub fn run_visible_accessibility_pixel_corroboration_cli_v1(
+) -> Result<MtgoVisibleAccessibilityPixelCorroborationSummaryV1, String> {
+    let (window_request, queries) = parse_cli_v1()?;
+    Ok(
+        probe_mtgo_visible_accessibility_exact_text_with_pixel_corroboration_v1(
+            window_request,
+            queries,
+        )?
+        .summary_v1(),
+    )
 }
 
 fn validate_queries_v1(queries: &[MtgoVisibleAccessibilityExactTextQueryV1]) -> Result<(), String> {
@@ -364,6 +650,96 @@ fn build_query_results_v1(
         .collect()
 }
 
+fn corroborate_private_match_regions_v1(
+    private_matches: &[PrivateVisibleAccessibilityMatchV1],
+    client_rect_desktop_px: SignedRectV1,
+    before_bgra8: &[u8],
+    after_bgra8: &[u8],
+    size: &MtgoSizePxV1,
+) -> Result<Vec<PrivateVisibleAccessibilityPixelMatchV1>, String> {
+    private_matches
+        .iter()
+        .map(|matched| {
+            let crop = matched
+                .rect_desktop_px
+                .crop_box_within(client_rect_desktop_px)
+                .map_err(|error| format!("convert visible accessibility bounds: {error}"))?;
+            let rect_client_px = MtgoRectPxV1 {
+                x: crop.left,
+                y: crop.top,
+                width: crop.width,
+                height: crop.height,
+            };
+            let before_hash = mtgo_blackbox_v1::visible_frame_region_content_sha256_v1(
+                before_bgra8,
+                size,
+                &rect_client_px,
+            )
+            .map_err(|error| format!("hash before accessibility match region: {error}"))?;
+            let after_hash = mtgo_blackbox_v1::visible_frame_region_content_sha256_v1(
+                after_bgra8,
+                size,
+                &rect_client_px,
+            )
+            .map_err(|error| format!("hash after accessibility match region: {error}"))?;
+            if before_hash != after_hash {
+                return Err(
+                    "visible accessibility match pixels changed across the capture bracket"
+                        .to_owned(),
+                );
+            }
+            Ok(PrivateVisibleAccessibilityPixelMatchV1 {
+                query_index: matched.query_index,
+                control_type_id: matched.control_type_id,
+                rect_client_px,
+                region_bgra8_sha256: before_hash,
+            })
+        })
+        .collect()
+}
+
+fn build_pixel_query_results_v1(
+    queries: &[MtgoVisibleAccessibilityExactTextQueryV1],
+    private_matches: &[PrivateVisibleAccessibilityPixelMatchV1],
+) -> Result<Vec<MtgoVisibleAccessibilityPixelQueryResultV1>, String> {
+    queries
+        .iter()
+        .enumerate()
+        .map(|(query_index, query)| {
+            let matched = private_matches
+                .iter()
+                .filter(|matched| matched.query_index == query_index)
+                .collect::<Vec<_>>();
+            if matched.len() > MAX_MATCHES_PER_QUERY_V1 {
+                return Err(
+                    "visible accessibility query produced too many pixel matches".to_owned(),
+                );
+            }
+            let mut observed_control_type_ids = matched
+                .iter()
+                .map(|matched| matched.control_type_id)
+                .collect::<Vec<_>>();
+            observed_control_type_ids.sort_unstable();
+            observed_control_type_ids.dedup();
+            let expected_visible_text_sha256 =
+                sha256_hex_v1(query.expected_visible_text.as_bytes());
+            let match_bytes = serde_json::to_vec(&matched)
+                .map_err(|error| format!("serialize private pixel match set: {error}"))?;
+            Ok(MtgoVisibleAccessibilityPixelQueryResultV1 {
+                query_id: query.query_id.clone(),
+                expected_visible_text_sha256: expected_visible_text_sha256.clone(),
+                exact_visible_match_count: u32::try_from(matched.len())
+                    .map_err(|_| "visible accessibility pixel match count overflow")?,
+                observed_control_type_ids,
+                private_pixel_match_set_commitment_sha256: commitment_v1(
+                    VISIBLE_ACCESSIBILITY_PIXEL_MATCH_SET_DOMAIN_V1,
+                    &[expected_visible_text_sha256.as_bytes(), &match_bytes],
+                ),
+            })
+        })
+        .collect()
+}
+
 fn summary_commitment_v1(
     summary: &MtgoVisibleAccessibilityProbeSummaryV1,
 ) -> Result<String, String> {
@@ -373,6 +749,19 @@ fn summary_commitment_v1(
         .map_err(|error| format!("serialize visible accessibility summary: {error}"))?;
     Ok(commitment_v1(
         VISIBLE_ACCESSIBILITY_REPORT_DOMAIN_V1,
+        &[&bytes],
+    ))
+}
+
+fn pixel_summary_commitment_v1(
+    summary: &MtgoVisibleAccessibilityPixelCorroborationSummaryV1,
+) -> Result<String, String> {
+    let mut unsigned = summary.clone();
+    unsigned.report_commitment_sha256.clear();
+    let bytes = serde_json::to_vec(&unsigned)
+        .map_err(|error| format!("serialize accessibility pixel summary: {error}"))?;
+    Ok(commitment_v1(
+        VISIBLE_ACCESSIBILITY_PIXEL_REPORT_DOMAIN_V1,
         &[&bytes],
     ))
 }
@@ -603,6 +992,161 @@ mod tests {
             expected[0].private_match_set_commitment_sha256,
             build_query_results_v1(&queries, &changed_type).unwrap()[0]
                 .private_match_set_commitment_sha256
+        );
+    }
+
+    #[test]
+    fn negative_origin_pixel_corroboration_binds_exact_stable_regions() {
+        let queries = queries_v1();
+        let matches = vec![PrivateVisibleAccessibilityMatchV1 {
+            query_index: 1,
+            control_type_id: 50_020,
+            rect_desktop_px: SignedRectV1 {
+                left: -98,
+                top: -48,
+                right: -96,
+                bottom: -46,
+            },
+        }];
+        let mut before = vec![0_u8; 4 * 4 * 4];
+        for (index, byte) in before.iter_mut().enumerate() {
+            *byte = u8::try_from(index).unwrap();
+        }
+        let after = before.clone();
+        let private = corroborate_private_match_regions_v1(
+            &matches,
+            SignedRectV1 {
+                left: -100,
+                top: -50,
+                right: -96,
+                bottom: -46,
+            },
+            &before,
+            &after,
+            &MtgoSizePxV1 {
+                width: 4,
+                height: 4,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            private[0].rect_client_px,
+            MtgoRectPxV1 {
+                x: 2,
+                y: 2,
+                width: 2,
+                height: 2,
+            }
+        );
+        let results = build_pixel_query_results_v1(&queries, &private).unwrap();
+        assert_eq!(results[0].exact_visible_match_count, 0);
+        assert_eq!(results[1].exact_visible_match_count, 1);
+        let json = serde_json::to_string(&results).unwrap();
+        assert!(!json.contains("Premodern"));
+        assert!(!json.contains("rect_client_px"));
+    }
+
+    #[test]
+    fn changed_match_pixels_or_invalid_bounds_reject_but_outside_change_is_allowed() {
+        let matched = PrivateVisibleAccessibilityMatchV1 {
+            query_index: 0,
+            control_type_id: 50_007,
+            rect_desktop_px: SignedRectV1 {
+                left: 10,
+                top: 10,
+                right: 12,
+                bottom: 12,
+            },
+        };
+        let size = MtgoSizePxV1 {
+            width: 4,
+            height: 4,
+        };
+        let client = SignedRectV1 {
+            left: 10,
+            top: 10,
+            right: 14,
+            bottom: 14,
+        };
+        let before = vec![7_u8; 4 * 4 * 4];
+        let mut outside_changed = before.clone();
+        outside_changed[(3 * 4 + 3) * 4] = 8;
+        assert!(corroborate_private_match_regions_v1(
+            std::slice::from_ref(&matched),
+            client,
+            &before,
+            &outside_changed,
+            &size,
+        )
+        .is_ok());
+
+        let mut inside_changed = before.clone();
+        inside_changed[0] = 8;
+        assert!(corroborate_private_match_regions_v1(
+            std::slice::from_ref(&matched),
+            client,
+            &before,
+            &inside_changed,
+            &size,
+        )
+        .is_err());
+
+        let mut off_client = matched;
+        off_client.rect_desktop_px.left = 9;
+        assert!(corroborate_private_match_regions_v1(
+            &[off_client],
+            client,
+            &before,
+            &before,
+            &size,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn pixel_match_commitment_binds_pixels_bounds_control_and_query_text() {
+        let queries = queries_v1();
+        let baseline = vec![PrivateVisibleAccessibilityPixelMatchV1 {
+            query_index: 0,
+            control_type_id: 50_007,
+            rect_client_px: MtgoRectPxV1 {
+                x: 1,
+                y: 2,
+                width: 3,
+                height: 4,
+            },
+            region_bgra8_sha256: "a".repeat(64),
+        }];
+        let expected = build_pixel_query_results_v1(&queries, &baseline).unwrap();
+        for changed in [
+            {
+                let mut value = baseline.clone();
+                value[0].region_bgra8_sha256 = "b".repeat(64);
+                value
+            },
+            {
+                let mut value = baseline.clone();
+                value[0].rect_client_px.x += 1;
+                value
+            },
+            {
+                let mut value = baseline.clone();
+                value[0].control_type_id += 1;
+                value
+            },
+        ] {
+            assert_ne!(
+                expected[0].private_pixel_match_set_commitment_sha256,
+                build_pixel_query_results_v1(&queries, &changed).unwrap()[0]
+                    .private_pixel_match_set_commitment_sha256
+            );
+        }
+        let mut changed_queries = queries;
+        changed_queries[0].expected_visible_text.push('!');
+        assert_ne!(
+            expected[0].private_pixel_match_set_commitment_sha256,
+            build_pixel_query_results_v1(&changed_queries, &baseline).unwrap()[0]
+                .private_pixel_match_set_commitment_sha256
         );
     }
 }
