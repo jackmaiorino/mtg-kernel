@@ -614,7 +614,33 @@ pub(crate) fn run_native_checkpoint_with_population_opponent_eval_v1(
 /// non-test build and can never be reached from a training run record or
 /// the live science loop, so the search authority can never supply learner
 /// reward or promotion reward (the design's own stop-the-lane condition).
+///
+/// `#[allow(dead_code)]`, disclosed here rather than only in a report: this
+/// function has no caller anywhere in this crate right now, under any
+/// feature combination, so the strict clippy gate (`-D warnings`) flags it
+/// as unreachable. It is not reachable from a minimal-fixture test today.
+/// Every test in this file that constructs a `ValidatedTrainRunV2` fails
+/// with `TrainRunV2Error { kind: InvalidLiteral }` -- confirmed pre-existing
+/// on unmodified `c9b192d` and confirmed NOT a stale-fixture-bytes problem:
+/// `validate_frozen_rev3_authorities_v2` (native_training_store_run_v2.rs,
+/// runs unconditionally, independent of any input record's bytes) fails on
+/// `KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2` --
+/// `KERNEL_CARDDB_HASH` (live, `data/cards_v1.json`) has drifted from
+/// `FROZEN_CARD_DB_HASH_U64_V2` (this worktree's card pool has grown
+/// substantially since that rev3 gate was last pinned) and additionally
+/// `RUNTIME_DECK_CATALOG_FILE_SHA256 != FROZEN_RUNTIME_CATALOG_SHA256_V2`.
+/// No fixture regeneration fixes this, since the gate never inspects the
+/// fixture's bytes; reconciling it means editing a frozen validator
+/// constant, out of scope for this branch (would be true even for the
+/// existing ladder/population eval siblings above, which are reachable
+/// only via a feature-gated real test in native_science_loop_v1.rs this
+/// branch does not touch). Rebase plan: once `FROZEN_CARD_DB_HASH_U64_V2`
+/// (and the runtime catalog sha) are reconciled with the current CardDB on
+/// whatever branch owns that change, add a real caller here (a minimal
+/// fixture episode mirroring `fixture_v1()`/`authorities_v1()` above) and
+/// remove this `#[allow(dead_code)]`.
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn run_native_checkpoint_with_search_opponent_eval_v1(
     run: &ValidatedTrainRunV2,
     checkpoint: &CheckpointManifestV3,
@@ -705,21 +731,25 @@ fn run_native_checkpoint_core_v1(
         return Err(NativeCheckpointRunnerErrorV1::InvalidConfig);
     }
     if let Some(search_opponent) = search_opponent.as_ref() {
-        // Checklist item 1 scope (COUNTERSIGN amendment 3): the compile-bound
-        // contract array and the record's embedded seed field are two
-        // distinct validated checks, not one. `.validate()` re-checks the
-        // full canonical record (including the embedded `action_seed`
-        // against the compile-bound allowlist internally); the explicit
-        // `.contains()` re-check immediately below is the second, textually
-        // separate check against that same compile-bound array at this
-        // runtime boundary.
+        // Checklist item 1 scope (COUNTERSIGN amendment 3): two distinct
+        // validated checks at this runtime boundary, not the same check
+        // twice under different names. First: `.validate()`, the record's
+        // own field-by-field check (schema, authority_kind, tier/budget
+        // consistency, evaluator/engine/CardDB/catalog identity, and the
+        // embedded `action_seed` against the compile-bound allowlist).
+        // Second, genuinely distinct: `matches_fresh_reconstruction_v1`,
+        // which independently rebuilds the entire canonical record from
+        // just (tier, action_seed, private_diagnostic_identity) and
+        // compares SHA-256 digests -- a different verification mechanism
+        // (whole-record reconstruction, not per-field equality) that stays
+        // load-bearing even against a corruption `validate()` itself fails
+        // to catch (see the type's own doc comment for why these are
+        // independent, not duplicate, checks).
         search_opponent
             .authority()
             .validate()
             .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?;
-        if !crate::kernel_native_search_opponent_v1::KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1
-            .contains(&search_opponent.authority().action_seed)
-        {
+        if !search_opponent.authority().matches_fresh_reconstruction_v1() {
             return Err(NativeCheckpointRunnerErrorV1::InvalidConfig);
         }
     }
@@ -2453,16 +2483,38 @@ mod tests {
     /// Schema validation rejects a tampered canonical record. Flips exactly
     /// one field (`authority_kind`, the field item 2 of the stage-2 scope is
     /// specifically about: "non-store authority kind") on an otherwise
-    /// valid, freshly constructed authority, and checks that BOTH gates this
-    /// stage wires reject it: `KernelNativeSearchOpponentV1::new` (the
-    /// construction-time gate stage 1 built) and the runner's own
-    /// defense-in-depth `.validate()` re-check added in this stage. The
-    /// second half of this test is mutation-verified in the accompanying
-    /// report: the `.validate()` re-check inside `run_native_checkpoint_core_v1`
-    /// was temporarily removed and this assertion observed to still pass
-    /// only via the first (construction-time) gate, then restored.
+    /// valid, freshly constructed authority.
+    ///
+    /// What this test ACTUALLY verifies, and no more: the record's own
+    /// `.validate()` method rejects the tampered record directly, and
+    /// `KernelNativeSearchOpponentV1::new` (stage 1's construction-time
+    /// gate, which calls `.validate()` internally) also rejects it. Both
+    /// assertions below exercise the SAME underlying `.validate()` call,
+    /// just from two call sites.
+    ///
+    /// What this test does NOT verify: the runner's own defense-in-depth
+    /// re-check inside `run_native_checkpoint_core_v1`
+    /// (`search_opponent.authority().validate()`, added in this stage) is
+    /// NOT exercised or mutation-tested here, or anywhere else in this
+    /// crate right now. Reaching it requires a real `ValidatedTrainRunV2`,
+    /// and every test in this file that constructs one currently fails
+    /// with `TrainRunV2Error { kind: InvalidLiteral }` from
+    /// `validate_frozen_rev3_authorities_v2` -- confirmed pre-existing
+    /// (reproduces identically on unmodified `c9b192d`) and confirmed NOT a
+    /// stale-fixture-bytes issue: the failing comparison is
+    /// `KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2` (this worktree's
+    /// current card pool no longer matches the frozen rev3 CardDB hash
+    /// authority), a crate-wide constant mismatch independent of any
+    /// fixture's bytes and not fixable without editing a frozen validator
+    /// constant, which is out of scope here. The runner-path re-check's
+    /// presence was verified only by reading `run_native_checkpoint_core_v1`
+    /// and by successful compilation of the call
+    /// (`search_opponent.authority().validate()`); it is pending a reachable
+    /// caller once `FROZEN_CARD_DB_HASH_U64_V2` (or the CardDB) is
+    /// reconciled, or once a synthetic non-CardDB-dependent
+    /// `ValidatedTrainRunV2` construction path exists.
     #[test]
-    fn tampered_authority_kind_is_rejected_by_construction_and_by_runtime_revalidation() {
+    fn tampered_authority_kind_is_rejected_at_construction_time() {
         use crate::kernel_native_search_opponent_v1::{
             KernelNativeSearchAuthorityV1, KernelNativeSearchErrorV1, KernelNativeSearchOpponentV1,
             KernelNativeSearchTierV1, KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1,
