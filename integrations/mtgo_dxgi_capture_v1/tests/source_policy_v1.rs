@@ -1586,6 +1586,47 @@ fn preview_ocr_probe_is_offline_expected_text_only_and_non_actuating() {
 }
 
 #[test]
+fn selected_listing_classifier_is_bounded_exact_and_non_actuating() {
+    let source = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
+    for required in [
+        "MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1\\0",
+        "league_and_challenge_selected_listing_exact_semantics_checked_untrusted_v1",
+        "league_and_challenge_selected_listing_windows_ocr_exact_control_v1",
+        "classifier_binary_sha256 != actual_classifier_sha256",
+        "classifier_assets_manifest_sha256 != sha256_hex_v1(assets_json)",
+        "expected exactly one target label inside its reviewed card region",
+        "Open Entry Review control does not match any reviewed enabled reference",
+        "enabled_control_reference_sha256s",
+        "binary_search(&control_region_sha256)",
+        "request_commitment_sha256",
+        "current_exe",
+        "deny_unknown_fields",
+    ] {
+        assert!(
+            source.contains(required),
+            "selected-listing classifier is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "GetForegroundWindow",
+        "capture_mtgo_dxgi_frame_candidate",
+        "SendInput",
+        "SetCursorPos",
+        "mouse_event",
+        "Click",
+        "InvokePattern",
+        "ReadProcessMemory",
+        "TcpStream",
+        "UdpSocket",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "selected-listing classifier exposes a forbidden operation: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn competitive_pregame_public_context_runtime_is_same_frame_profile_and_binary_bound() {
     let source = include_str!("../src/probe/competitive_pregame_runtime.rs");
     let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
