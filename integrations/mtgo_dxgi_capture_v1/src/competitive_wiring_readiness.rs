@@ -101,6 +101,11 @@ mod tests {
         assert!(!report
             .semantic_ratifications
             .unchanged_sideboard_event_path_present_v1());
+        assert!(
+            !report
+                .semantic_ratifications
+                .competitive_pregame_evaluation_present
+        );
         assert!(!report
             .authorization_ratifications
             .unchanged_sideboard_event_path_present_v1());
