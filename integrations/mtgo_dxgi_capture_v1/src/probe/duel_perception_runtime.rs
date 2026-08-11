@@ -17,7 +17,8 @@ use mtgo_blackbox_v1::{
     resolve_profile_bound_selected_visible_control_v1,
     score_and_select_profile_bound_duel_candidate_v1,
     validate_dxgi_bound_observation_reconstruction_audit_v1, validate_observed_decision_v1,
-    validate_profile_bound_duel_gesture_plan_v1, visible_frame_region_content_sha256_v1,
+    validate_profile_bound_duel_gesture_plan_v1,
+    validate_visible_competitive_lifecycle_snapshot_v1, visible_frame_region_content_sha256_v1,
     AdmittedMtgoDuelGestureProfileV1, AdmittedMtgoDuelPerceptionProfileV1,
     CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
     CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
@@ -36,8 +37,9 @@ use mtgo_blackbox_v1::{
     MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoProfileBoundPostconditionCalibrationV1,
     MtgoProfileBoundPostconditionCandidateStatusV1, MtgoProfileBoundPostconditionRegionSetV1,
     MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
-    MtgoVisibleDuelGestureTargetSetV1, ValidatedMtgoObservedDecisionV1,
-    MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1, MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
+    MtgoVisibleCompetitiveLifecycleSnapshotV1, MtgoVisibleDuelGestureTargetSetV1,
+    ValidatedMtgoObservedDecisionV1, MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1,
+    MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
     MTGO_PROFILE_BOUND_POSTCONDITION_BEFORE_INPUT_FRAME_SCHEMA_V1,
     MTGO_VISIBLE_ACTION_CONTROL_SET_SCHEMA_V1,
 };
@@ -106,6 +108,10 @@ pub struct MtgoDuelPerceptionProcessResponseV1 {
     pub reconstruction_audit: MtgoObservationReconstructionAuditV1,
     pub decision: MtgoObservedDecisionV1,
     pub visible_controls: MtgoVisibleActionControlSetV1,
+    /// Present for a League or Challenge duel decision and null outside that
+    /// scope. When present, the runtime binds and rehashes it against the same
+    /// retained frame as the decision and controls.
+    pub competitive_lifecycle: Option<MtgoVisibleCompetitiveLifecycleSnapshotV1>,
 }
 
 /// Canonical JSON header followed by tightly packed BGRA8 bytes in the private
@@ -314,6 +320,7 @@ pub struct MtgoAdmittedDuelPerceptionCommitmentsV1 {
     pub runtime_identity_commitment_sha256: String,
     pub request_commitment_sha256: String,
     pub decision_commitment_sha256: String,
+    pub competitive_lifecycle_snapshot_commitment_sha256: Option<String>,
     pub perception_result_commitment_sha256: String,
     pub frame_id: u64,
     pub frame_sequence: u64,
@@ -345,6 +352,7 @@ pub struct OpaqueMtgoAdmittedDuelPerceptionV1 {
     source_candidate: Option<CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1>,
     pub(super) decision_record: MtgoObservedDecisionV1,
     pub(super) visible_controls: MtgoVisibleActionControlSetV1,
+    competitive_lifecycle: Option<CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1>,
     runtime_identity_commitment_sha256: String,
     request_commitment_sha256: String,
     perception_result_commitment_sha256: String,
@@ -360,6 +368,10 @@ impl OpaqueMtgoAdmittedDuelPerceptionV1 {
                 .validated_decision
                 .decision_commitment_sha256()
                 .to_owned(),
+            competitive_lifecycle_snapshot_commitment_sha256: self
+                .competitive_lifecycle
+                .as_ref()
+                .map(|lifecycle| lifecycle.snapshot_commitment_sha256().to_owned()),
             perception_result_commitment_sha256: self.perception_result_commitment_sha256.clone(),
             frame_id: self.validated_decision.frame_id(),
             frame_sequence: self.validated_decision.frame_sequence(),
@@ -372,6 +384,12 @@ impl OpaqueMtgoAdmittedDuelPerceptionV1 {
 
     pub fn permits_event_entry_v1(&self) -> bool {
         false
+    }
+
+    pub(crate) fn competitive_lifecycle_v1(
+        &self,
+    ) -> Option<&CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1> {
+        self.competitive_lifecycle.as_ref()
     }
 }
 
@@ -470,14 +488,13 @@ impl OpaqueMtgoCompetitiveLaunchIdentityV1 {
 /// performs no OCR and grants no input or event-entry authority.
 pub(crate) fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
     perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
-    lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     event_display_label: String,
     event_label_rect_client_px: MtgoRectPxV1,
     entry_authorization_sha256: String,
 ) -> Result<OpaqueMtgoCompetitiveLaunchIdentityV1, String> {
-    if lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress {
-        return Err("competitive launch identity requires match-in-progress pixels".to_owned());
-    }
+    let lifecycle = perception
+        .competitive_lifecycle_v1()
+        .ok_or("competitive launch identity requires classifier-bound lifecycle pixels")?;
     let perception_commitments = perception.commitments_v1();
     let source = &perception.source_frame.source_frame;
     let source_capture = &perception_commitments.source_frame.source_capture;
@@ -485,33 +502,16 @@ pub(crate) fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
         width: source_capture.canonical_width,
         height: source_capture.canonical_height,
     };
-    let client_bounds = lifecycle.client_bounds_v1();
-    if lifecycle.frame_id_v1() != perception_commitments.frame_id
-        || lifecycle.frame_sequence() != perception_commitments.frame_sequence
-        || lifecycle.frame_sha256_v1() != source_capture.canonical_bgra8_sha256
-        || client_bounds.x != 0
-        || client_bounds.y != 0
-        || client_bounds.width != source_capture.canonical_width
-        || client_bounds.height != source_capture.canonical_height
-    {
-        return Err(
-            "competitive launch lifecycle does not describe the exact opaque perception frame"
-                .to_owned(),
-        );
-    }
-    for fact in lifecycle.visible_facts_v1() {
-        let actual = visible_frame_region_content_sha256_v1(
-            &source.canonical_bgra8,
-            &source_size,
-            &fact.rect_client_px,
-        )
-        .map_err(|error| format!("rehash competitive lifecycle fact pixels: {error}"))?;
-        if actual != fact.content_sha256 {
-            return Err(
-                "competitive lifecycle fact does not match the retained source pixels".to_owned(),
-            );
-        }
-    }
+    validate_competitive_lifecycle_against_duel_pixels_v1(
+        lifecycle,
+        MtgoDuelPerceptionFrameIdentityV1 {
+            frame_id: perception_commitments.frame_id,
+            frame_sequence: perception_commitments.frame_sequence,
+        },
+        &source_capture.canonical_bgra8_sha256,
+        &source_size,
+        &source.canonical_bgra8,
+    )?;
 
     validate_competitive_launch_display_label_v1(&event_display_label, 160, "event display label")?;
     let required_mode_word = match lifecycle.event_kind() {
@@ -641,6 +641,42 @@ pub(crate) fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
         match_identity_sha256,
         entry_authorization_sha256,
     })
+}
+
+fn validate_competitive_lifecycle_against_duel_pixels_v1(
+    lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    identity: MtgoDuelPerceptionFrameIdentityV1,
+    frame_sha256: &str,
+    size: &MtgoSizePxV1,
+    canonical_bgra8: &[u8],
+) -> Result<(), String> {
+    if lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress {
+        return Err("competitive duel lifecycle requires match-in-progress pixels".to_owned());
+    }
+    let client_bounds = lifecycle.client_bounds_v1();
+    if lifecycle.frame_id_v1() != identity.frame_id
+        || lifecycle.frame_sequence() != identity.frame_sequence
+        || lifecycle.frame_sha256_v1() != frame_sha256
+        || client_bounds.x != 0
+        || client_bounds.y != 0
+        || client_bounds.width != size.width
+        || client_bounds.height != size.height
+    {
+        return Err(
+            "competitive lifecycle does not describe the exact opaque duel frame".to_owned(),
+        );
+    }
+    for fact in lifecycle.visible_facts_v1() {
+        let actual =
+            visible_frame_region_content_sha256_v1(canonical_bgra8, size, &fact.rect_client_px)
+                .map_err(|error| format!("rehash competitive lifecycle fact pixels: {error}"))?;
+        if actual != fact.content_sha256 {
+            return Err(
+                "competitive lifecycle fact does not match the retained duel pixels".to_owned(),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn parse_competitive_duel_window_title_v1(
@@ -1684,6 +1720,22 @@ pub fn perceive_admitted_duel_frame_v1(
         response.reconstruction_audit.clone(),
     )
     .map_err(|error| format!("check opaque duel reconstruction audit: {error}"))?;
+    let competitive_lifecycle = response
+        .competitive_lifecycle
+        .clone()
+        .map(|snapshot| {
+            let lifecycle = validate_visible_competitive_lifecycle_snapshot_v1(snapshot)
+                .map_err(|error| format!("validate competitive duel lifecycle: {error}"))?;
+            validate_competitive_lifecycle_against_duel_pixels_v1(
+                &lifecycle,
+                identity,
+                &source.manifest.frame.canonical_bgra8_sha256,
+                &MtgoSizePxV1 { width, height },
+                &source.canonical_bgra8,
+            )?;
+            Ok::<_, String>(lifecycle)
+        })
+        .transpose()?;
     let source_candidate = check_untrusted_dxgi_observed_decision_candidate_v1(
         &checked_source,
         &checked_audit,
@@ -1695,6 +1747,10 @@ pub fn perceive_admitted_duel_frame_v1(
     {
         return Err("opaque duel source candidate changed the validated decision".to_owned());
     }
+    let competitive_lifecycle_binding = competitive_lifecycle
+        .as_ref()
+        .map(CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1::snapshot_commitment_sha256)
+        .unwrap_or("no_competitive_lifecycle");
     let perception_result_commitment_sha256 = commitment_v1(
         DUEL_PERCEPTION_RESULT_DOMAIN_V1,
         &[
@@ -1707,6 +1763,7 @@ pub fn perceive_admitted_duel_frame_v1(
             validated.decision_commitment_sha256().as_bytes(),
             checked_audit.audit_commitment_sha256().as_bytes(),
             source_candidate.candidate_commitment_sha256().as_bytes(),
+            competitive_lifecycle_binding.as_bytes(),
             b"opaque_source_retained_no_input_or_event_entry_authority",
         ],
     );
@@ -1716,6 +1773,7 @@ pub fn perceive_admitted_duel_frame_v1(
         source_candidate: Some(source_candidate),
         decision_record: response.decision,
         visible_controls: response.visible_controls,
+        competitive_lifecycle,
         runtime_identity_commitment_sha256: runtime
             .commitments
             .runtime_identity_commitment_sha256
@@ -1907,7 +1965,6 @@ pub fn prepare_opaque_competitive_duel_action_plan_v1(
     gesture_plan: MtgoDuelGesturePlanV1,
     calibration: MtgoProfileBoundPostconditionCalibrationV1,
     region_set: MtgoProfileBoundPostconditionRegionSetV1,
-    lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     mode_authorization: &MtgoAuthorizationScopeV1,
     gameplay_authorization: &MtgoCompetitiveMatchGameplayAuthorizationV1,
 ) -> Result<OpaqueMtgoCompetitiveDuelActionPlanV1, String> {
@@ -1926,6 +1983,12 @@ pub fn prepare_opaque_competitive_duel_action_plan_v1(
     let postcondition =
         prepare_profile_bound_action_postcondition_plan_v1(resolved, calibration, region_set)
             .map_err(|error| format!("prepare opaque duel postcondition plan: {error}"))?;
+    let lifecycle = control
+        .selection
+        .perception
+        .competitive_lifecycle
+        .take()
+        .ok_or("competitive duel action requires classifier-bound lifecycle pixels")?;
     let competitive = bind_profile_bound_action_plan_to_competitive_match_v1(
         postcondition,
         lifecycle,
@@ -4278,7 +4341,7 @@ pub(crate) fn confirm_opaque_competitive_duel_gesture_postcondition_v1(
 /// Joins the opaque Windows capture-to-control chain to the separately checked
 /// competitive postcondition and authorization plan. Every shared identity is
 /// compared before either move-only input is retained.
-pub fn bind_opaque_duel_control_to_competitive_action_plan_v1(
+pub(crate) fn bind_opaque_duel_control_to_competitive_action_plan_v1(
     control: OpaqueMtgoProfileBoundDuelResolvedControlV1,
     gesture: CheckedUntrustedMtgoDuelGesturePlanV1,
     competitive: CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
@@ -5211,6 +5274,105 @@ mod tests {
             }
         )
         .unwrap());
+    }
+
+    #[test]
+    fn competitive_lifecycle_is_bound_to_the_exact_duel_classifier_frame() {
+        let pixels = [1_u8, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255];
+        let size = MtgoSizePxV1 {
+            width: 3,
+            height: 1,
+        };
+        let fact = |kind, rect: MtgoRectPxV1| mtgo_blackbox_v1::MtgoLifecycleVisibleFactV1 {
+            kind,
+            content_sha256: visible_frame_region_content_sha256_v1(&pixels, &size, &rect).unwrap(),
+            rect_client_px: rect,
+            confidence_bps: 10_000,
+        };
+        let snapshot = MtgoVisibleCompetitiveLifecycleSnapshotV1 {
+            schema_version: 1,
+            snapshot_id: "classifier-bound-duel-lifecycle-v1".to_owned(),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            phase: MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            frame_id: 17,
+            frame_sequence: 23,
+            frame_sha256: sha256_hex_v1(&pixels),
+            client_bounds: MtgoRectPxV1 {
+                x: 0,
+                y: 0,
+                width: 3,
+                height: 1,
+            },
+            event_identity_sha256: Some("1".repeat(64)),
+            match_identity_sha256: Some("2".repeat(64)),
+            game_number: Some(1),
+            entry_terms: None,
+            visible_state_complete: true,
+            facts: vec![
+                fact(
+                    MtgoLifecycleVisibleFactKindV1::MatchSurfaceVisible,
+                    MtgoRectPxV1 {
+                        x: 0,
+                        y: 0,
+                        width: 3,
+                        height: 1,
+                    },
+                ),
+                fact(
+                    MtgoLifecycleVisibleFactKindV1::LocalClockVisible,
+                    MtgoRectPxV1 {
+                        x: 0,
+                        y: 0,
+                        width: 1,
+                        height: 1,
+                    },
+                ),
+                fact(
+                    MtgoLifecycleVisibleFactKindV1::OpponentClockVisible,
+                    MtgoRectPxV1 {
+                        x: 2,
+                        y: 0,
+                        width: 1,
+                        height: 1,
+                    },
+                ),
+            ],
+        };
+        let checked = validate_visible_competitive_lifecycle_snapshot_v1(snapshot).unwrap();
+        let identity = MtgoDuelPerceptionFrameIdentityV1 {
+            frame_id: 17,
+            frame_sequence: 23,
+        };
+        validate_competitive_lifecycle_against_duel_pixels_v1(
+            &checked,
+            identity,
+            &sha256_hex_v1(&pixels),
+            &size,
+            &pixels,
+        )
+        .unwrap();
+
+        let mut changed_pixels = pixels;
+        changed_pixels[0] ^= 1;
+        assert!(validate_competitive_lifecycle_against_duel_pixels_v1(
+            &checked,
+            identity,
+            &sha256_hex_v1(&pixels),
+            &size,
+            &changed_pixels,
+        )
+        .is_err());
+        assert!(validate_competitive_lifecycle_against_duel_pixels_v1(
+            &checked,
+            MtgoDuelPerceptionFrameIdentityV1 {
+                frame_id: 17,
+                frame_sequence: 24,
+            },
+            &sha256_hex_v1(&pixels),
+            &size,
+            &pixels,
+        )
+        .is_err());
     }
 
     fn request_header_v1(pixels: &[u8]) -> MtgoDuelPerceptionRequestHeaderV1 {

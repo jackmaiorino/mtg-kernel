@@ -5679,20 +5679,19 @@ pub fn advance_competitive_event_monitor_in_runtime_v1(
 }
 
 /// Consumes one current main-client event runtime and binds it to a strictly
-/// newer duel-window perception and lifecycle interpretation from the same MTGO
-/// process incarnation. Event, match, game, paid-entry, and account lineage
-/// remain exact across the intentional cross-window handoff. The returned
-/// bridge is still non-authorizing and exposes no input primitive.
+/// newer duel-window perception whose exact classifier response already
+/// contains the same-frame lifecycle interpretation. Event, match, game,
+/// paid-entry, and account lineage remain exact across the intentional
+/// cross-window handoff. The returned bridge is still non-authorizing and
+/// exposes no input primitive.
 pub fn bind_competitive_event_runtime_to_match_launch_identity_v1(
     runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
     perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
-    duel_lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     event_display_label: String,
     event_label_rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1,
 ) -> Result<OpaqueMtgoCompetitiveEventMatchLaunchBindingV1, String> {
     let visible_identity = bind_opaque_duel_perception_to_competitive_launch_identity_v1(
         perception,
-        duel_lifecycle,
         event_display_label,
         event_label_rect_client_px,
         runtime.commitments.entry_authorization_sha256.clone(),

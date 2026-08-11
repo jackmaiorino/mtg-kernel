@@ -654,6 +654,9 @@ fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_a
         "request_commitment_sha256",
         "reconstruction_audit: MtgoObservationReconstructionAuditV1",
         "visible_controls: MtgoVisibleActionControlSetV1",
+        "competitive_lifecycle: Option<MtgoVisibleCompetitiveLifecycleSnapshotV1>",
+        "competitive_lifecycle_snapshot_commitment_sha256: Option<String>",
+        "competitive duel action requires classifier-bound lifecycle pixels",
         "visible_frame_region_content_sha256_v1",
         "validate_observed_decision_v1",
         "check_untrusted_dxgi_capture_artifact_v1",
@@ -702,6 +705,7 @@ fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_a
             "opaque duel-perception runtime is missing: {required}"
         );
     }
+    assert!(!source.contains("pub fn bind_opaque_duel_control_to_competitive_action_plan_v1("));
     for forbidden in [
         "pub fn canonical_bgra8",
         "pub fn observation",

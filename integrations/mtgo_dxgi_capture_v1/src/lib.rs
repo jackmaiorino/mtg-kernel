@@ -156,7 +156,6 @@ pub use probe::{
     bind_classifier_backed_competitive_entry_control_and_deck_dry_run_v2,
     bind_opaque_competitive_duel_continuation_gesture_stage_v1,
     bind_opaque_competitive_duel_source_gesture_stage_v1,
-    bind_opaque_duel_control_to_competitive_action_plan_v1,
     bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1,
     build_card_aware_bottoming_action_plan_v5, build_card_aware_bottoming_scoring_request_v5,
     build_card_aware_pregame_action_plan_v4, build_card_aware_pregame_scoring_request_v4,
