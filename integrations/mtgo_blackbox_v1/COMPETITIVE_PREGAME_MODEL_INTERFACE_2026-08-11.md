@@ -93,4 +93,12 @@ The model path is not wiring-complete until all of the following are true:
 - the heuristic path cannot satisfy the model-backed readiness flag;
 - production roots remain empty until the exact artifacts are reviewed.
 
+The legacy non-model executor is now crate-private and absent from the capture
+crate's public exports. The heuristic may still produce offline comparison
+plans, but it cannot send League or Challenge input even if its legacy review
+root is populated. A future public executor must consume a non-forgeable opaque
+native selection that retains the exact checkpoint and deployment commitment;
+plain actions, indices, logits, serialized records, and caller assertions are
+not sufficient provenance.
+
 This contract changes no training code and performs no live MTGO operation.
