@@ -159,6 +159,43 @@ impl KernelNativeSearchAuthorityV1 {
             serde_json::to_vec(self).map_err(|_| KernelNativeSearchErrorV1::InvalidAuthority)?;
         Ok(Sha256::digest(bytes).into())
     }
+
+    /// Independently reconstructs a fresh authority from just this record's
+    /// three minimal inputs (tier, action seed, private diagnostic
+    /// identity) via `Self::current`, then compares raw canonical-JSON
+    /// SHA-256 digests.
+    ///
+    /// This is a genuinely distinct verification STRATEGY from `validate`,
+    /// not a repeat of the same field checks under a different name:
+    /// `validate` inspects each field of `self` against a live/const
+    /// expected value, term by term; this method never inspects `self`'s
+    /// other fields at all -- it rebuilds the entire canonical record from
+    /// scratch and compares the resulting digest, which covers every byte
+    /// of the canonical JSON, including any field a future `validate` edit
+    /// forgets to check explicitly.
+    ///
+    /// Deliberately hashes `self` directly with `serde_json::to_vec`
+    /// (mirroring `digest`'s own byte-production step) rather than calling
+    /// `self.digest()`: `digest()` calls `self.validate()` first and
+    /// returns `Err` before ever serializing a record `validate` would
+    /// reject, which would make this method's own verdict fully gated by
+    /// `validate` again -- not independent of it, just re-wrapped. Hashing
+    /// the raw bytes here means a record `validate` is buggy enough to
+    /// accept can still be caught by this method on its own, because the
+    /// comparison never asks `validate` for an opinion at all.
+    pub(crate) fn matches_fresh_reconstruction_v1(&self) -> bool {
+        let Ok(reconstructed) = Self::current(
+            self.tier,
+            self.action_seed,
+            &self.private_diagnostic_identity,
+        ) else {
+            return false;
+        };
+        match (serde_json::to_vec(&reconstructed), serde_json::to_vec(self)) {
+            (Ok(a), Ok(b)) => Sha256::digest(a) == Sha256::digest(b),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1086,6 +1123,42 @@ mod tests {
         assert_eq!(KernelNativeSearchTierV1::T2048.transition_budget(), 2_048);
         assert_eq!(KernelNativeSearchTierV1::T8192.transition_budget(), 8_192);
         assert_eq!(KernelNativeSearchTierV1::T32768.transition_budget(), 32_768);
+    }
+
+    /// `matches_fresh_reconstruction_v1` (COUNTERSIGN amendment 3's second,
+    /// genuinely distinct runtime-boundary check, native_checkpoint_runner_v1.rs)
+    /// accepts a genuine record and rejects a directly-tampered one, for
+    /// every one of the four record-shaped fields it can meaningfully
+    /// distinguish: `schema`, `algorithm_identity`, `seed_domain`, and
+    /// `evaluator_sha256`. (`action_seed`, `tier`, and
+    /// `private_diagnostic_identity` are the three inputs reconstruction
+    /// itself is keyed on, so tampering those and then reconstructing from
+    /// the TAMPERED values would just reproduce a different, still-self-
+    /// consistent record; those three are exactly what `.validate()`'s
+    /// explicit allowlist/consistency checks cover instead. This test
+    /// deliberately covers fields validate() checks by simple equality
+    /// against a live/const value, proving reconstruction independently
+    /// reaches the same verdict via a different mechanism.)
+    #[test]
+    fn fresh_reconstruction_check_accepts_genuine_and_rejects_direct_field_tamper() {
+        let authority = authority_v1(KernelNativeSearchTierV1::T512);
+        assert!(authority.matches_fresh_reconstruction_v1());
+
+        macro_rules! assert_tamper_rejected {
+            ($field:ident, $value:expr) => {{
+                let mut tampered = authority.clone();
+                tampered.$field = $value;
+                assert!(
+                    !tampered.matches_fresh_reconstruction_v1(),
+                    "tampering {} must be caught by reconstruction",
+                    stringify!($field)
+                );
+            }};
+        }
+        assert_tamper_rejected!(schema, "wrong-schema/v1".to_owned());
+        assert_tamper_rejected!(algorithm_identity, "wrong-algorithm/v1".to_owned());
+        assert_tamper_rejected!(seed_domain, "wrong-seed-domain/v1".to_owned());
+        assert_tamper_rejected!(evaluator_sha256, "0".repeat(64));
     }
 
     #[test]
