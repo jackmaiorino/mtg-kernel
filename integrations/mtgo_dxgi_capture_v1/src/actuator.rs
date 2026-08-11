@@ -29,7 +29,8 @@ use crate::probe::{
     MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1,
     MtgoCompetitiveEventMonitorCommitmentsV1,
     MtgoCompetitiveLifecycleControlTransitionCommitmentsV1,
-    MtgoCompetitiveNavigationFrameIdentityV1, MtgoCompetitiveSideboardDragPointerTargetV1,
+    MtgoCompetitiveNavigationFrameIdentityV1, MtgoCompetitivePregamePointerTargetV1,
+    MtgoCompetitiveSideboardDragPointerTargetV1,
     MtgoOpaqueCompetitiveDuelGestureConfirmationCommitmentsV1,
     MtgoOpaqueCompetitiveDuelGestureSequenceCommitmentsV1,
     MtgoOpaqueCompetitiveDuelGestureSourcePreparationCommitmentsV1,
@@ -76,14 +77,14 @@ use mtgo_blackbox_v1::{
     MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
     MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
-    MtgoCompetitivePregameStageLabelV1, MtgoCompetitivePregameVisibleControlSemanticV1,
-    MtgoCompetitivePregameVisibleControlV1, MtgoCompetitiveSideboardTransferDirectionV1,
-    MtgoCompetitiveSideboardTransferV1, MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1,
-    MtgoDuelPrimaryActivationV1, MtgoLifecycleVisibleFactKindV1,
-    MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
-    MtgoVisibleCompetitiveSideboardCardV1, MtgoVisibleCompetitiveSideboardZoneV1,
-    ValidatedMtgoCompetitiveDeckManifestV1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
-    MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
+    MtgoCompetitivePregameStageLabelV1, MtgoCompetitivePregameVisibleCardV1,
+    MtgoCompetitivePregameVisibleControlSemanticV1, MtgoCompetitivePregameVisibleControlV1,
+    MtgoCompetitiveSideboardTransferDirectionV1, MtgoCompetitiveSideboardTransferV1,
+    MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1, MtgoDuelPrimaryActivationV1,
+    MtgoLifecycleVisibleFactKindV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
+    MtgoPregameActionSemanticV1, MtgoRuntimeModeV1, MtgoVisibleCompetitiveSideboardCardV1,
+    MtgoVisibleCompetitiveSideboardZoneV1, ValidatedMtgoCompetitiveDeckManifestV1,
+    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -225,6 +226,17 @@ const COMPETITIVE_EVENT_PREGAME_ADVANCE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-pregame-advance-v1";
 const COMPETITIVE_EVENT_PREGAME_ACTION_PLAN_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-pregame-action-plan-v1";
+const COMPETITIVE_EVENT_PREGAME_FRESH_PREPARATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-pregame-fresh-preparation-v1";
+const COMPETITIVE_EVENT_PREGAME_POSTCONDITION_DRY_RUN_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-pregame-postcondition-dry-run-v1";
+const COMPETITIVE_EVENT_PREGAME_AUTHORIZATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-pregame-authorization-v1";
+const RATIFIED_COMPETITIVE_EVENT_PREGAME_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
+const COMPETITIVE_EVENT_PREGAME_INPUT_RECEIPT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-pregame-input-receipt-v1";
+const COMPETITIVE_EVENT_PREGAME_CONFIRMATION_RECEIPT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-pregame-confirmation-receipt-v1";
 const COMPETITIVE_EVENT_PREGAME_COMPLETION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-pregame-completion-v1";
 const COMPETITIVE_EVENT_MATCH_LAUNCH_BINDING_DOMAIN_V1: &[u8] =
@@ -278,6 +290,7 @@ pub struct MtgoCompetitiveAuthorizationRatificationReadinessV1 {
     pub lifecycle_authorization_present: bool,
     pub open_entry_review_authorization_present: bool,
     pub changed_sideboard_automation_authorization_present: bool,
+    pub reviewed_competitive_pregame_authorization_present: bool,
 }
 
 impl MtgoCompetitiveAuthorizationRatificationReadinessV1 {
@@ -286,6 +299,7 @@ impl MtgoCompetitiveAuthorizationRatificationReadinessV1 {
             && self.selected_listing_entry_authorization_present
             && self.lifecycle_authorization_present
             && self.open_entry_review_authorization_present
+            && self.reviewed_competitive_pregame_authorization_present
     }
 
     pub fn changed_sideboard_event_path_present_v1(&self) -> bool {
@@ -314,6 +328,8 @@ pub fn competitive_authorization_ratification_readiness_v1(
             RATIFIED_COMPETITIVE_OPEN_ENTRY_REVIEW_AUTHORIZATION_COMMITMENT_V1.is_some(),
         changed_sideboard_automation_authorization_present:
             RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1.is_some(),
+        reviewed_competitive_pregame_authorization_present:
+            RATIFIED_COMPETITIVE_EVENT_PREGAME_AUTHORIZATION_COMMITMENT_V1.is_some(),
     }
 }
 
@@ -432,6 +448,67 @@ impl MtgoReviewedCompetitivePassRatificationCandidateV2 {
     }
 
     pub fn permits_spending_v2(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoReviewedCompetitivePregameRatificationCandidateV1 {
+    pub permission_review_commitment_sha256: String,
+    pub account_alias_sha256: String,
+    pub correspondence_sha256: String,
+    pub mode_authorization_commitment_sha256: String,
+    pub heuristic_profile_commitment_sha256: String,
+    pub heuristic_algorithm_commitment_sha256: String,
+    pub heuristic_review_commitment_sha256: String,
+    pub heuristic_admission_commitment_sha256: String,
+    pub ratification_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+}
+
+impl MtgoReviewedCompetitivePregameRatificationCandidateV1 {
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Separately ratified exact-correspondence authority for the four competitive
+/// pregame action families under one exact League or Challenge mode. It is
+/// bound to one reviewed heuristic identity and grants no event-entry or
+/// spending authority. The production root is empty.
+pub struct RatifiedMtgoCompetitivePregameAuthorizationV1 {
+    scope: MtgoAuthorizationScopeV1,
+    _permission_correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: String,
+    commitments: MtgoReviewedCompetitivePregameRatificationCandidateV1,
+}
+
+impl RatifiedMtgoCompetitivePregameAuthorizationV1 {
+    pub fn commitments_v1(&self) -> MtgoReviewedCompetitivePregameRatificationCandidateV1 {
+        self.commitments.clone()
+    }
+
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.commitments.event_kind
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
         false
     }
 }
@@ -2069,6 +2146,20 @@ pub enum MtgoCompetitivePregameSelectedActionV1 {
     SubmitBottoming,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "postcondition", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MtgoCompetitivePregameExpectedPostconditionV1 {
+    MulliganChoice {
+        prospective_keep_size: u8,
+    },
+    LondonBottoming {
+        required_bottom_count: u8,
+        selected_bottom_count: u8,
+        newly_selected_card_slot: Option<u8>,
+    },
+    GameplayReady,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoCompetitivePregameActionPlanCommitmentsV1 {
     pub action_plan_commitment_sha256: String,
@@ -2087,6 +2178,7 @@ pub struct MtgoCompetitivePregameActionPlanCommitmentsV1 {
     pub frame_id: u64,
     pub frame_sequence: u64,
     pub selected_action: MtgoCompetitivePregameSelectedActionV1,
+    pub expected_postcondition: MtgoCompetitivePregameExpectedPostconditionV1,
 }
 
 /// One deck-specific deterministic pregame selection over the exact retained
@@ -2115,6 +2207,192 @@ impl OpaqueMtgoCompetitivePregameActionPlanV1 {
     }
 
     pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPreparedCompetitivePregameActionCommitmentsV1 {
+    pub preparation_commitment_sha256: String,
+    pub action_plan_commitment_sha256: String,
+    pub pregame_session_commitment_sha256: String,
+    pub fresh_classification_commitment_sha256: String,
+    pub fresh_visible_interaction_commitment_sha256: String,
+    pub selected_control_visible_content_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub match_identity_sha256: String,
+    pub game_number: u8,
+    pub planned_frame_id: u64,
+    pub planned_frame_sequence: u64,
+    pub fresh_frame_id: u64,
+    pub fresh_frame_sequence: u64,
+    pub fresh_captured_at_unix_millis: u128,
+    pub selected_action: MtgoCompetitivePregameSelectedActionV1,
+    pub expected_postcondition: MtgoCompetitivePregameExpectedPostconditionV1,
+}
+
+/// One action plan rechecked against the immediate next classified frame.
+/// The exact current target is retained privately, but this value deliberately
+/// does not implement the process input-target trait and cannot emit input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPreparedCompetitivePregameActionV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoPreparedCompetitivePregameActionV1>();
+/// ```
+pub struct OpaqueMtgoPreparedCompetitivePregameActionV1 {
+    _plan: OpaqueMtgoCompetitivePregameActionPlanV1,
+    _fresh_classified_frame: OpaqueMtgoClassifiedCompetitivePregameFrameV1,
+    _pointer_target: MtgoCompetitivePregamePointerTargetV1,
+    commitments: MtgoPreparedCompetitivePregameActionCommitmentsV1,
+}
+
+impl OpaqueMtgoPreparedCompetitivePregameActionV1 {
+    pub fn commitments_v1(&self) -> MtgoPreparedCompetitivePregameActionCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCheckedCompetitivePregamePostconditionCommitmentsV1 {
+    pub dry_run_commitment_sha256: String,
+    pub preparation_commitment_sha256: String,
+    pub action_plan_commitment_sha256: String,
+    pub after_classification_commitment_sha256: String,
+    pub after_visible_interaction_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub match_identity_sha256: String,
+    pub game_number: u8,
+    pub before_frame_sequence: u64,
+    pub after_frame_id: u64,
+    pub after_frame_sequence: u64,
+    pub after_captured_at_unix_millis: u128,
+    pub selected_action: MtgoCompetitivePregameSelectedActionV1,
+    pub observed_postcondition: MtgoCompetitivePregameExpectedPostconditionV1,
+}
+
+/// Structurally checks the next visible classified state against a prepared
+/// action's declared postcondition. It has no input receipt, claims no action
+/// causality, and cannot release the shared input gate.
+pub struct CheckedUntrustedMtgoCompetitivePregamePostconditionV1 {
+    _prepared: OpaqueMtgoPreparedCompetitivePregameActionV1,
+    _after_classified_frame: OpaqueMtgoClassifiedCompetitivePregameFrameV1,
+    commitments: MtgoCheckedCompetitivePregamePostconditionCommitmentsV1,
+}
+
+impl CheckedUntrustedMtgoCompetitivePregamePostconditionV1 {
+    pub fn commitments_v1(&self) -> MtgoCheckedCompetitivePregamePostconditionCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn claims_action_causality_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitivePregameInputReceiptCommitmentsV1 {
+    pub input_receipt_sha256: String,
+    pub preparation_commitment_sha256: String,
+    pub action_plan_commitment_sha256: String,
+    pub authorization_ratification_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub match_identity_sha256: String,
+    pub game_number: u8,
+    pub before_frame_id: u64,
+    pub before_frame_sequence: u64,
+    pub input_sent_at_unix_millis: u128,
+    pub cursor_parked_outside_client: bool,
+    pub selected_action: MtgoCompetitivePregameSelectedActionV1,
+}
+
+/// One exact competitive pregame click waiting for its action-specific visible
+/// postcondition. Dropping it cannot release the process-wide input gate.
+pub struct OpaqueMtgoPendingCompetitivePregameInputV1 {
+    prepared: OpaqueMtgoPreparedCompetitivePregameActionV1,
+    authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
+    commitments: MtgoCompetitivePregameInputReceiptCommitmentsV1,
+}
+
+impl OpaqueMtgoPendingCompetitivePregameInputV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitivePregameInputReceiptCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoConfirmedCompetitivePregameActionCommitmentsV1 {
+    pub confirmation_receipt_sha256: String,
+    pub input_receipt_sha256: String,
+    pub preparation_commitment_sha256: String,
+    pub authorization_ratification_commitment_sha256: String,
+    pub postcondition_commitment_sha256: String,
+    pub advanced_pregame_session_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub match_identity_sha256: String,
+    pub game_number: u8,
+    pub after_frame_id: u64,
+    pub after_frame_sequence: u64,
+    pub after_captured_at_unix_millis: u128,
+    pub selected_action: MtgoCompetitivePregameSelectedActionV1,
+    pub observed_postcondition: MtgoCompetitivePregameExpectedPostconditionV1,
+}
+
+/// One receipt-bound competitive pregame transition whose shared input gate
+/// was released only after the exact visible postcondition. The advanced
+/// move-only event pregame session is returned explicitly for the next step.
+pub struct OpaqueMtgoConfirmedCompetitivePregameActionV1 {
+    _authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
+    session: OpaqueMtgoCompetitiveEventPregameSessionV1,
+    commitments: MtgoConfirmedCompetitivePregameActionCommitmentsV1,
+}
+
+impl OpaqueMtgoConfirmedCompetitivePregameActionV1 {
+    pub fn commitments_v1(&self) -> MtgoConfirmedCompetitivePregameActionCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn into_pregame_session_v1(self) -> OpaqueMtgoCompetitiveEventPregameSessionV1 {
+        self.session
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
         false
     }
 
@@ -3729,6 +4007,70 @@ pub fn review_competitive_duel_pass_ratification_candidate_from_correspondence_v
         ratification_commitment_sha256,
         event_kind,
     })
+}
+
+/// Computes the non-authorizing exact-account, one-mode pregame permission
+/// candidate from the reviewed Daybreak correspondence and the separately
+/// admitted deck-bound heuristic. The production root remains empty.
+pub fn review_competitive_pregame_ratification_candidate_from_correspondence_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: &str,
+    event_kind: MtgoCompetitiveEventKindV1,
+    heuristic: &AdmittedMtgoCompetitivePregameHeuristicV1,
+) -> Result<MtgoReviewedCompetitivePregameRatificationCandidateV1, String> {
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(event_kind)
+        .map_err(|error| format!("derive reviewed competitive pregame scope: {error}"))?;
+    let mode_authorization_commitment_sha256 = validate_exact_competitive_mode_authorization_v1(
+        &scope,
+        visible_account_alias,
+        event_kind,
+        "competitive pregame ratification",
+    )?;
+    let heuristic_commitments = heuristic.commitments_v1();
+    let permission_review_commitment_sha256 = correspondence.review_commitment_sha256().to_owned();
+    let ratification_commitment_sha256 = competitive_pregame_authorization_commitment_v1(
+        &scope,
+        visible_account_alias,
+        event_kind,
+        &mode_authorization_commitment_sha256,
+        &permission_review_commitment_sha256,
+        (
+            &heuristic_commitments.heuristic_profile_commitment_sha256,
+            &heuristic_commitments.heuristic_algorithm_commitment_sha256,
+            &heuristic_commitments.review_commitment_sha256,
+            &heuristic_commitments.admission_commitment_sha256,
+        ),
+    );
+    Ok(MtgoReviewedCompetitivePregameRatificationCandidateV1 {
+        permission_review_commitment_sha256,
+        account_alias_sha256: scope.account_alias_sha256,
+        correspondence_sha256: scope.written_permission_sha256,
+        mode_authorization_commitment_sha256,
+        heuristic_profile_commitment_sha256: heuristic_commitments
+            .heuristic_profile_commitment_sha256,
+        heuristic_algorithm_commitment_sha256: heuristic_commitments
+            .heuristic_algorithm_commitment_sha256,
+        heuristic_review_commitment_sha256: heuristic_commitments.review_commitment_sha256,
+        heuristic_admission_commitment_sha256: heuristic_commitments.admission_commitment_sha256,
+        ratification_commitment_sha256,
+        event_kind,
+    })
+}
+
+pub fn ratify_competitive_pregame_authorization_from_correspondence_v1(
+    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    heuristic: &AdmittedMtgoCompetitivePregameHeuristicV1,
+) -> Result<RatifiedMtgoCompetitivePregameAuthorizationV1, String> {
+    ratify_competitive_pregame_authorization_from_correspondence_with_commitment_v1(
+        correspondence,
+        visible_account_alias,
+        event_kind,
+        heuristic,
+        RATIFIED_COMPETITIVE_EVENT_PREGAME_AUTHORIZATION_COMMITMENT_V1,
+    )
 }
 
 /// Computes the non-authorizing production-ratification candidate for the
@@ -6472,8 +6814,12 @@ pub fn plan_competitive_event_pregame_action_v1(
             )
         }
     };
+    let expected_postcondition =
+        competitive_pregame_expected_postcondition_v1(response.stage, &selected_action)?;
     let selected_action_json = serde_json::to_vec(&selected_action)
         .map_err(|error| format!("serialize competitive pregame selected action: {error}"))?;
+    let expected_postcondition_json = serde_json::to_vec(&expected_postcondition)
+        .map_err(|error| format!("serialize competitive pregame postcondition: {error}"))?;
     let selected_control_json = serde_json::to_vec(&selected_control)
         .map_err(|error| format!("serialize competitive pregame selected control: {error}"))?;
     let action_plan_commitment_sha256 = hash_parts_v2(
@@ -6492,6 +6838,7 @@ pub fn plan_competitive_event_pregame_action_v1(
             heuristic_commitments.review_commitment_sha256.as_bytes(),
             heuristic_commitments.admission_commitment_sha256.as_bytes(),
             &selected_action_json,
+            &expected_postcondition_json,
             &selected_control_json,
             current.frame_id.to_be_bytes().as_slice(),
             current.frame_sequence.to_be_bytes().as_slice(),
@@ -6517,6 +6864,7 @@ pub fn plan_competitive_event_pregame_action_v1(
         frame_id: current.frame_id,
         frame_sequence: current.frame_sequence,
         selected_action,
+        expected_postcondition,
     };
     Ok(OpaqueMtgoCompetitivePregameActionPlanV1 {
         _session: session,
@@ -6524,6 +6872,716 @@ pub fn plan_competitive_event_pregame_action_v1(
         _selected_control: selected_control,
         commitments,
     })
+}
+
+/// Rechecks a selected competitive pregame action against the immediate next
+/// classified capture. The current cards must retain their ordered visible
+/// labels, and the exact selected control must retain its semantic, rectangle,
+/// enabled state, and pixel commitment. Coordinates remain private and no
+/// input trait is implemented for the returned value.
+pub fn prepare_fresh_competitive_event_pregame_action_v1(
+    plan: OpaqueMtgoCompetitivePregameActionPlanV1,
+    fresh: OpaqueMtgoClassifiedCompetitivePregameFrameV1,
+) -> Result<OpaqueMtgoPreparedCompetitivePregameActionV1, String> {
+    validate_competitive_event_pregame_session_integrity_v1(&plan._session)?;
+    let planned = plan.commitments_v1();
+    let prior = plan._session.current_observation.commitments_v1();
+    if planned.pregame_session_commitment_sha256
+        != plan._session.commitments.session_commitment_sha256
+        || planned.current_observation_commitment_sha256 != prior.observation_commitment_sha256
+        || planned.pregame_classification_commitment_sha256
+            != prior.pregame_classification_commitment_sha256
+        || planned.visible_interaction_commitment_sha256
+            != prior.visible_interaction_commitment_sha256
+        || planned.frame_id != prior.frame_id
+        || planned.frame_sequence != prior.frame_sequence
+    {
+        return Err("competitive pregame action plan lineage changed".to_owned());
+    }
+    fresh.require_immediate_successor_v1(
+        prior.frame_id,
+        prior.frame_sequence,
+        &prior.source_capture_commitment_sha256,
+        prior.captured_at_unix_millis,
+    )?;
+    let fresh_process = fresh.process_continuity_commitment_sha256_v1();
+    let fresh_window = fresh.window_continuity_commitment_sha256_v1()?;
+    if fresh_process != prior.process_continuity_commitment_sha256
+        || fresh_window != prior.window_continuity_commitment_sha256
+    {
+        return Err(
+            "competitive pregame fresh preparation changed the event process or window".to_owned(),
+        );
+    }
+    let fresh_commitments = fresh.commitments_v1();
+    if fresh_commitments
+        .source_frame
+        .perception_profile_commitment_sha256
+        != prior.duel_perception_profile_commitment_sha256
+        || fresh_commitments
+            .source_frame
+            .perception_profile_admission_commitment_sha256
+            != prior.duel_perception_profile_admission_commitment_sha256
+        || fresh_commitments.classifier_runtime_identity_commitment_sha256
+            != prior.classifier_runtime_commitment_sha256
+        || fresh_commitments.pregame_evaluation_commitment_sha256
+            != prior.pregame_evaluation_commitment_sha256
+        || fresh_commitments.pregame_profile_admission_commitment_sha256
+            != prior.pregame_profile_admission_commitment_sha256
+        || fresh_commitments.frame_sequence
+            > plan
+                ._session
+                .match_launch
+                .authorization
+                .valid_through_frame_sequence
+    {
+        return Err(
+            "competitive pregame fresh preparation changed profile, classifier, authorization, or lifetime"
+                .to_owned(),
+        );
+    }
+    let prior_response = plan
+        ._session
+        .current_observation
+        ._classified_frame
+        .as_ref()
+        .ok_or("competitive pregame action plan lost its classified source")?
+        .response_v1();
+    let fresh_response = fresh.response_v1();
+    if fresh_response.stage != prior_response.stage
+        || !competitive_pregame_visible_card_labels_equal_v1(
+            &prior_response.visible_cards,
+            &fresh_response.visible_cards,
+        )
+    {
+        return Err(
+            "competitive pregame stage or visible card labels changed before preparation"
+                .to_owned(),
+        );
+    }
+    let mut selected_controls = fresh_response
+        .visible_controls
+        .iter()
+        .filter(|control| control.semantic == plan._selected_control.semantic);
+    let fresh_selected_control = selected_controls
+        .next()
+        .cloned()
+        .ok_or("competitive pregame selected control disappeared before preparation")?;
+    if selected_controls.next().is_some() || fresh_selected_control != plan._selected_control {
+        return Err(
+            "competitive pregame selected control semantic, rectangle, state, or pixels changed before preparation"
+                .to_owned(),
+        );
+    }
+    let pointer_target =
+        fresh.resolve_visible_control_pointer_target_v1(&fresh_selected_control)?;
+    let selected_control_json = serde_json::to_vec(&fresh_selected_control)
+        .map_err(|error| format!("serialize fresh competitive pregame control: {error}"))?;
+    let selected_action_json = serde_json::to_vec(&planned.selected_action)
+        .map_err(|error| format!("serialize fresh competitive pregame action: {error}"))?;
+    let expected_postcondition_json = serde_json::to_vec(&planned.expected_postcondition)
+        .map_err(|error| format!("serialize fresh competitive pregame postcondition: {error}"))?;
+    let preparation_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_PREGAME_FRESH_PREPARATION_DOMAIN_V1,
+        &[
+            planned.action_plan_commitment_sha256.as_bytes(),
+            planned.pregame_session_commitment_sha256.as_bytes(),
+            fresh_commitments
+                .classification_commitment_sha256
+                .as_bytes(),
+            fresh_commitments
+                .visible_interaction_commitment_sha256
+                .as_bytes(),
+            fresh_commitments
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+                .as_bytes(),
+            &selected_control_json,
+            &selected_action_json,
+            &expected_postcondition_json,
+            fresh_commitments.frame_id.to_be_bytes().as_slice(),
+            fresh_commitments.frame_sequence.to_be_bytes().as_slice(),
+            fresh_commitments
+                .captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
+            b"immediate_reclassified_same_cards_exact_control_private_target_no_input",
+        ],
+    );
+    let commitments = MtgoPreparedCompetitivePregameActionCommitmentsV1 {
+        preparation_commitment_sha256,
+        action_plan_commitment_sha256: planned.action_plan_commitment_sha256,
+        pregame_session_commitment_sha256: planned.pregame_session_commitment_sha256,
+        fresh_classification_commitment_sha256: fresh_commitments.classification_commitment_sha256,
+        fresh_visible_interaction_commitment_sha256: fresh_commitments
+            .visible_interaction_commitment_sha256,
+        selected_control_visible_content_sha256: fresh_selected_control.visible_content_sha256,
+        event_kind: planned.event_kind,
+        match_identity_sha256: planned.match_identity_sha256,
+        game_number: planned.game_number,
+        planned_frame_id: planned.frame_id,
+        planned_frame_sequence: planned.frame_sequence,
+        fresh_frame_id: fresh_commitments.frame_id,
+        fresh_frame_sequence: fresh_commitments.frame_sequence,
+        fresh_captured_at_unix_millis: fresh_commitments.captured_at_unix_millis,
+        selected_action: planned.selected_action,
+        expected_postcondition: planned.expected_postcondition,
+    };
+    Ok(OpaqueMtgoPreparedCompetitivePregameActionV1 {
+        _plan: plan,
+        _fresh_classified_frame: fresh,
+        _pointer_target: pointer_target,
+        commitments,
+    })
+}
+
+/// Exercises the exact postcondition contract without an input receipt. This
+/// is useful for offline corpus and wiring tests only. It cannot claim that the
+/// planned action caused the next visible state or release the input gate.
+pub fn check_competitive_event_pregame_postcondition_dry_run_v1(
+    prepared: OpaqueMtgoPreparedCompetitivePregameActionV1,
+    after: OpaqueMtgoClassifiedCompetitivePregameFrameV1,
+) -> Result<CheckedUntrustedMtgoCompetitivePregamePostconditionV1, String> {
+    let before = prepared._fresh_classified_frame.commitments_v1();
+    after.require_immediate_successor_v1(
+        before.frame_id,
+        before.frame_sequence,
+        &before.source_frame.source_capture.capture_commitment_sha256,
+        before.captured_at_unix_millis,
+    )?;
+    let prior = prepared._plan._session.current_observation.commitments_v1();
+    let after_process = after.process_continuity_commitment_sha256_v1();
+    let after_window = after.window_continuity_commitment_sha256_v1()?;
+    let after_commitments = after.commitments_v1();
+    if after_process != prior.process_continuity_commitment_sha256
+        || after_window != prior.window_continuity_commitment_sha256
+        || after_commitments
+            .source_frame
+            .perception_profile_commitment_sha256
+            != prior.duel_perception_profile_commitment_sha256
+        || after_commitments
+            .source_frame
+            .perception_profile_admission_commitment_sha256
+            != prior.duel_perception_profile_admission_commitment_sha256
+        || after_commitments.classifier_runtime_identity_commitment_sha256
+            != prior.classifier_runtime_commitment_sha256
+        || after_commitments.pregame_evaluation_commitment_sha256
+            != prior.pregame_evaluation_commitment_sha256
+        || after_commitments.pregame_profile_admission_commitment_sha256
+            != prior.pregame_profile_admission_commitment_sha256
+        || after_commitments.frame_sequence
+            > prepared
+                ._plan
+                ._session
+                .match_launch
+                .authorization
+                .valid_through_frame_sequence
+    {
+        return Err(
+            "competitive pregame dry-run postcondition changed profile, process, window, or authorization"
+                .to_owned(),
+        );
+    }
+    validate_competitive_pregame_expected_postcondition_v1(
+        &prepared.commitments.expected_postcondition,
+        &prepared.commitments.selected_action,
+        prepared._fresh_classified_frame.response_v1(),
+        after.response_v1(),
+    )?;
+    let selected_action_json = serde_json::to_vec(&prepared.commitments.selected_action)
+        .map_err(|error| format!("serialize dry-run competitive pregame action: {error}"))?;
+    let observed_postcondition = prepared.commitments.expected_postcondition.clone();
+    let observed_postcondition_json = serde_json::to_vec(&observed_postcondition)
+        .map_err(|error| format!("serialize dry-run competitive pregame postcondition: {error}"))?;
+    let dry_run_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_PREGAME_POSTCONDITION_DRY_RUN_DOMAIN_V1,
+        &[
+            prepared
+                .commitments
+                .preparation_commitment_sha256
+                .as_bytes(),
+            prepared
+                .commitments
+                .action_plan_commitment_sha256
+                .as_bytes(),
+            after_commitments
+                .classification_commitment_sha256
+                .as_bytes(),
+            after_commitments
+                .visible_interaction_commitment_sha256
+                .as_bytes(),
+            &selected_action_json,
+            &observed_postcondition_json,
+            after_commitments.frame_id.to_be_bytes().as_slice(),
+            after_commitments.frame_sequence.to_be_bytes().as_slice(),
+            after_commitments
+                .captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
+            b"structural_visible_postcondition_only_no_input_receipt_no_causality_no_gate_release",
+        ],
+    );
+    let commitments = MtgoCheckedCompetitivePregamePostconditionCommitmentsV1 {
+        dry_run_commitment_sha256,
+        preparation_commitment_sha256: prepared.commitments.preparation_commitment_sha256.clone(),
+        action_plan_commitment_sha256: prepared.commitments.action_plan_commitment_sha256.clone(),
+        after_classification_commitment_sha256: after_commitments.classification_commitment_sha256,
+        after_visible_interaction_commitment_sha256: after_commitments
+            .visible_interaction_commitment_sha256,
+        event_kind: prepared.commitments.event_kind,
+        match_identity_sha256: prepared.commitments.match_identity_sha256.clone(),
+        game_number: prepared.commitments.game_number,
+        before_frame_sequence: prepared.commitments.fresh_frame_sequence,
+        after_frame_id: after_commitments.frame_id,
+        after_frame_sequence: after_commitments.frame_sequence,
+        after_captured_at_unix_millis: after_commitments.captured_at_unix_millis,
+        selected_action: prepared.commitments.selected_action.clone(),
+        observed_postcondition,
+    };
+    Ok(CheckedUntrustedMtgoCompetitivePregamePostconditionV1 {
+        _prepared: prepared,
+        _after_classified_frame: after,
+        commitments,
+    })
+}
+
+/// Emits one left click only from an immediate classifier-rechecked target and
+/// a separately ratified exact-correspondence, exact-mode pregame authority.
+/// The shared process gate remains pending until the declared visible
+/// postcondition is confirmed.
+pub fn execute_prepared_competitive_pregame_action_v1(
+    prepared: OpaqueMtgoPreparedCompetitivePregameActionV1,
+    authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
+) -> Result<OpaqueMtgoPendingCompetitivePregameInputV1, String> {
+    validate_competitive_pregame_authorization_for_prepared_v1(&authorization, &prepared)?;
+    reserve_input_gate_v3()?;
+    let input_sent_at_unix_millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis(),
+        Err(error) => {
+            release_unattempted_reservation_v3()?;
+            return Err(format!("system clock is before epoch: {error}"));
+        }
+    };
+    if validate_preinput_capture_freshness_v3(
+        prepared.commitments.fresh_captured_at_unix_millis,
+        input_sent_at_unix_millis,
+    )
+    .is_err()
+    {
+        release_unattempted_reservation_v3()?;
+        return Err("the competitive pregame preparation is stale or future-dated".to_owned());
+    }
+    halt_before_input_attempt_v3()?;
+    let cursor_parked_outside_client = send_exactly_one_left_click_v3(&prepared._pointer_target)?;
+    let selected_action_json = serde_json::to_vec(&prepared.commitments.selected_action)
+        .map_err(|error| format!("serialize competitive pregame input action: {error}"))?;
+    let input_receipt_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_PREGAME_INPUT_RECEIPT_DOMAIN_V1,
+        &[
+            prepared
+                .commitments
+                .preparation_commitment_sha256
+                .as_bytes(),
+            prepared
+                .commitments
+                .action_plan_commitment_sha256
+                .as_bytes(),
+            authorization
+                .commitments
+                .ratification_commitment_sha256
+                .as_bytes(),
+            competitive_event_kind_tag_v1(prepared.commitments.event_kind),
+            prepared.commitments.match_identity_sha256.as_bytes(),
+            &[prepared.commitments.game_number],
+            &selected_action_json,
+            prepared.commitments.fresh_frame_id.to_be_bytes().as_slice(),
+            prepared
+                .commitments
+                .fresh_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            input_sent_at_unix_millis.to_be_bytes().as_slice(),
+            &[u8::from(cursor_parked_outside_client)],
+            b"exactly_one_competitive_pregame_left_click_pending_exact_visible_postcondition",
+        ],
+    );
+    set_pending_v3(&input_receipt_sha256)?;
+    let commitments = MtgoCompetitivePregameInputReceiptCommitmentsV1 {
+        input_receipt_sha256,
+        preparation_commitment_sha256: prepared.commitments.preparation_commitment_sha256.clone(),
+        action_plan_commitment_sha256: prepared.commitments.action_plan_commitment_sha256.clone(),
+        authorization_ratification_commitment_sha256: authorization
+            .commitments
+            .ratification_commitment_sha256
+            .clone(),
+        event_kind: prepared.commitments.event_kind,
+        match_identity_sha256: prepared.commitments.match_identity_sha256.clone(),
+        game_number: prepared.commitments.game_number,
+        before_frame_id: prepared.commitments.fresh_frame_id,
+        before_frame_sequence: prepared.commitments.fresh_frame_sequence,
+        input_sent_at_unix_millis,
+        cursor_parked_outside_client,
+        selected_action: prepared.commitments.selected_action.clone(),
+    };
+    Ok(OpaqueMtgoPendingCompetitivePregameInputV1 {
+        prepared,
+        authorization,
+        commitments,
+    })
+}
+
+/// Releases the shared gate and returns the advanced event pregame session
+/// only when the immediate post-input classified frame satisfies the exact
+/// action-specific visible transition.
+pub fn confirm_pending_competitive_pregame_action_v1(
+    pending: OpaqueMtgoPendingCompetitivePregameInputV1,
+    after: OpaqueMtgoClassifiedCompetitivePregameFrameV1,
+) -> Result<OpaqueMtgoConfirmedCompetitivePregameActionV1, String> {
+    require_matching_pending_v3(&pending.commitments.input_receipt_sha256)?;
+    let input = pending.commitments.clone();
+    let checked =
+        match check_competitive_event_pregame_postcondition_dry_run_v1(pending.prepared, after) {
+            Ok(value) => value,
+            Err(error) => {
+                halt_gate_v3()?;
+                return Err(format!(
+                "competitive pregame postcondition failed and the input gate is halted: {error}"
+            ));
+            }
+        };
+    let postcondition = checked.commitments_v1();
+    if postcondition.after_captured_at_unix_millis <= input.input_sent_at_unix_millis
+        || postcondition.before_frame_sequence != input.before_frame_sequence
+        || postcondition.preparation_commitment_sha256 != input.preparation_commitment_sha256
+        || postcondition.action_plan_commitment_sha256 != input.action_plan_commitment_sha256
+        || postcondition.event_kind != input.event_kind
+        || postcondition.match_identity_sha256 != input.match_identity_sha256
+        || postcondition.game_number != input.game_number
+        || postcondition.selected_action != input.selected_action
+    {
+        halt_gate_v3()?;
+        return Err(
+            "competitive pregame postcondition changed input lineage and the gate is halted"
+                .to_owned(),
+        );
+    }
+    let CheckedUntrustedMtgoCompetitivePregamePostconditionV1 {
+        _prepared: prepared,
+        _after_classified_frame: after,
+        commitments: _,
+    } = checked;
+    let OpaqueMtgoPreparedCompetitivePregameActionV1 {
+        _plan: plan,
+        _fresh_classified_frame: _,
+        _pointer_target: _,
+        commitments: _,
+    } = prepared;
+    let OpaqueMtgoCompetitivePregameActionPlanV1 {
+        _session: session,
+        _heuristic: _,
+        _selected_control: _,
+        commitments: _,
+    } = plan;
+    let after_process = after.process_continuity_commitment_sha256_v1();
+    let after_window = match after.window_continuity_commitment_sha256_v1() {
+        Ok(value) => value,
+        Err(error) => {
+            halt_gate_v3()?;
+            return Err(format!(
+                "competitive pregame confirmation window failed and the input gate is halted: {error}"
+            ));
+        }
+    };
+    let after_classified = after.commitments_v1();
+    let next_commitments = match competitive_pregame_observation_from_classified_view_v2(
+        &session.runtime.commitments,
+        CompetitivePregameClassifiedViewV2::from_commitments_v2(
+            &after_classified,
+            &after_process,
+            &after_window,
+        ),
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            halt_gate_v3()?;
+            return Err(format!(
+                "competitive pregame confirmation observation failed and the input gate is halted: {error}"
+            ));
+        }
+    };
+    let next = OpaqueMtgoCompetitivePregameObservationV1 {
+        _classified_frame: Some(after),
+        commitments: next_commitments,
+    };
+    let session = match advance_competitive_event_pregame_observed_v1(session, next) {
+        Ok(value) => value,
+        Err(error) => {
+            halt_gate_v3()?;
+            return Err(format!(
+                "competitive pregame session advance failed and the input gate is halted: {error}"
+            ));
+        }
+    };
+    let confirmation_receipt_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_PREGAME_CONFIRMATION_RECEIPT_DOMAIN_V1,
+        &[
+            input.input_receipt_sha256.as_bytes(),
+            input.preparation_commitment_sha256.as_bytes(),
+            input
+                .authorization_ratification_commitment_sha256
+                .as_bytes(),
+            postcondition.dry_run_commitment_sha256.as_bytes(),
+            session.commitments.session_commitment_sha256.as_bytes(),
+            competitive_event_kind_tag_v1(input.event_kind),
+            input.match_identity_sha256.as_bytes(),
+            &[input.game_number],
+            postcondition.after_frame_id.to_be_bytes().as_slice(),
+            postcondition.after_frame_sequence.to_be_bytes().as_slice(),
+            postcondition
+                .after_captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
+            b"receipt_bound_exact_visible_pregame_transition_shared_gate_released",
+        ],
+    );
+    release_confirmed_pending_v3(&input.input_receipt_sha256)?;
+    let commitments = MtgoConfirmedCompetitivePregameActionCommitmentsV1 {
+        confirmation_receipt_sha256,
+        input_receipt_sha256: input.input_receipt_sha256,
+        preparation_commitment_sha256: input.preparation_commitment_sha256,
+        authorization_ratification_commitment_sha256: input
+            .authorization_ratification_commitment_sha256,
+        postcondition_commitment_sha256: postcondition.dry_run_commitment_sha256,
+        advanced_pregame_session_commitment_sha256: session
+            .commitments
+            .session_commitment_sha256
+            .clone(),
+        event_kind: input.event_kind,
+        match_identity_sha256: input.match_identity_sha256,
+        game_number: input.game_number,
+        after_frame_id: postcondition.after_frame_id,
+        after_frame_sequence: postcondition.after_frame_sequence,
+        after_captured_at_unix_millis: postcondition.after_captured_at_unix_millis,
+        selected_action: input.selected_action,
+        observed_postcondition: postcondition.observed_postcondition,
+    };
+    Ok(OpaqueMtgoConfirmedCompetitivePregameActionV1 {
+        _authorization: pending.authorization,
+        session,
+        commitments,
+    })
+}
+
+fn competitive_pregame_visible_card_labels_equal_v1(
+    left: &[MtgoCompetitivePregameVisibleCardV1],
+    right: &[MtgoCompetitivePregameVisibleCardV1],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.card_slot == right.card_slot && left.visible_card_name == right.visible_card_name
+        })
+}
+
+fn competitive_pregame_expected_postcondition_v1(
+    stage: MtgoCompetitivePregameStageLabelV1,
+    selected_action: &MtgoCompetitivePregameSelectedActionV1,
+) -> Result<MtgoCompetitivePregameExpectedPostconditionV1, String> {
+    match (stage, selected_action) {
+        (
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size: 7,
+            },
+            MtgoCompetitivePregameSelectedActionV1::KeepOpeningHand,
+        ) => Ok(MtgoCompetitivePregameExpectedPostconditionV1::GameplayReady),
+        (
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size,
+            },
+            MtgoCompetitivePregameSelectedActionV1::KeepOpeningHand,
+        ) if prospective_keep_size < 7 => Ok(
+            MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+                required_bottom_count: 7 - prospective_keep_size,
+                selected_bottom_count: 0,
+                newly_selected_card_slot: None,
+            },
+        ),
+        (
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size,
+            },
+            MtgoCompetitivePregameSelectedActionV1::Mulligan { next_hand_size },
+        ) if prospective_keep_size > 0 && *next_hand_size == prospective_keep_size - 1 => Ok(
+            MtgoCompetitivePregameExpectedPostconditionV1::MulliganChoice {
+                prospective_keep_size: *next_hand_size,
+            },
+        ),
+        (
+            MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count,
+                selected_bottom_count,
+            },
+            MtgoCompetitivePregameSelectedActionV1::SelectForBottom { card_slot, .. },
+        ) if selected_bottom_count < required_bottom_count => Ok(
+            MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+                required_bottom_count,
+                selected_bottom_count: selected_bottom_count + 1,
+                newly_selected_card_slot: Some(*card_slot),
+            },
+        ),
+        (
+            MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count,
+                selected_bottom_count,
+            },
+            MtgoCompetitivePregameSelectedActionV1::SubmitBottoming,
+        ) if selected_bottom_count == required_bottom_count => {
+            Ok(MtgoCompetitivePregameExpectedPostconditionV1::GameplayReady)
+        }
+        _ => Err("competitive pregame action is invalid for the classified stage".to_owned()),
+    }
+}
+
+fn validate_competitive_pregame_expected_postcondition_v1(
+    expected: &MtgoCompetitivePregameExpectedPostconditionV1,
+    selected_action: &MtgoCompetitivePregameSelectedActionV1,
+    before: &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1,
+    after: &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1,
+) -> Result<(), String> {
+    let stage_matches = match (expected, after.stage) {
+        (
+            MtgoCompetitivePregameExpectedPostconditionV1::MulliganChoice {
+                prospective_keep_size: expected_size,
+            },
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size: observed_size,
+            },
+        ) => expected_size == &observed_size,
+        (
+            MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+                required_bottom_count: expected_required,
+                selected_bottom_count: expected_selected,
+                ..
+            },
+            MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count: observed_required,
+                selected_bottom_count: observed_selected,
+            },
+        ) => expected_required == &observed_required && expected_selected == &observed_selected,
+        (
+            MtgoCompetitivePregameExpectedPostconditionV1::GameplayReady,
+            MtgoCompetitivePregameStageLabelV1::GameplayReady,
+        ) => true,
+        _ => false,
+    };
+    if !stage_matches {
+        return Err("competitive pregame visible postcondition stage does not match".to_owned());
+    }
+
+    match (expected, selected_action) {
+        (
+            MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+                newly_selected_card_slot,
+                ..
+            },
+            MtgoCompetitivePregameSelectedActionV1::KeepOpeningHand,
+        ) => {
+            if newly_selected_card_slot.is_some()
+                || !competitive_pregame_visible_card_labels_equal_v1(
+                    &before.visible_cards,
+                    &after.visible_cards,
+                )
+            {
+                return Err(
+                    "competitive pregame Keep changed card labels or invented a selected card"
+                        .to_owned(),
+                );
+            }
+        }
+        (
+            MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+                newly_selected_card_slot: Some(expected_slot),
+                ..
+            },
+            MtgoCompetitivePregameSelectedActionV1::SelectForBottom { card_slot, .. },
+        ) if expected_slot == card_slot => {
+            if !competitive_pregame_visible_card_labels_equal_v1(
+                &before.visible_cards,
+                &after.visible_cards,
+            ) {
+                return Err(
+                    "competitive pregame bottom selection changed visible card labels".to_owned(),
+                );
+            }
+            let before_control = before.visible_controls.iter().find(|control| {
+                control.semantic
+                    == MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                        card_slot: *card_slot,
+                        selected: false,
+                    }
+            });
+            let after_control = after.visible_controls.iter().find(|control| {
+                control.semantic
+                    == MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                        card_slot: *card_slot,
+                        selected: true,
+                    }
+            });
+            let (before_control, after_control) = before_control
+                .zip(after_control)
+                .ok_or("competitive pregame selected card did not visibly toggle")?;
+            if before_control.rect_client_px != after_control.rect_client_px
+                || before_control.visible_content_sha256 == after_control.visible_content_sha256
+            {
+                return Err(
+                    "competitive pregame selected card lacks an exact same-rect pixel change"
+                        .to_owned(),
+                );
+            }
+            for other_slot in 0_u8..7 {
+                if other_slot == *card_slot {
+                    continue;
+                }
+                let before_other =
+                    before
+                        .visible_controls
+                        .iter()
+                        .find_map(|control| match &control.semantic {
+                            MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                                card_slot,
+                                selected,
+                            } if *card_slot == other_slot => {
+                                Some((selected, &control.rect_client_px))
+                            }
+                            _ => None,
+                        });
+                let after_other = after
+                    .visible_controls
+                    .iter()
+                    .find_map(|control| match &control.semantic {
+                        MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                            card_slot,
+                            selected,
+                        } if *card_slot == other_slot => Some((selected, &control.rect_client_px)),
+                        _ => None,
+                    });
+                if before_other != after_other {
+                    return Err(
+                        "competitive pregame bottom selection changed another card state or rectangle"
+                            .to_owned(),
+                    );
+                }
+            }
+        }
+        (MtgoCompetitivePregameExpectedPostconditionV1::GameplayReady, _)
+        | (MtgoCompetitivePregameExpectedPostconditionV1::MulliganChoice { .. }, _) => {}
+        _ => {
+            return Err(
+                "competitive pregame selected action does not match its postcondition".to_owned(),
+            )
+        }
+    }
+    Ok(())
 }
 
 /// Advances one exact paid-event pregame session with the immediate next
@@ -8617,6 +9675,36 @@ fn ratify_competitive_duel_pass_authorization_from_correspondence_with_commitmen
         mode_authorization_commitment_sha256: candidate.mode_authorization_commitment_sha256,
         authorization_commitment_sha256: candidate.ratification_commitment_sha256,
         permission_review_commitment_sha256: Some(candidate.permission_review_commitment_sha256),
+    })
+}
+
+fn ratify_competitive_pregame_authorization_from_correspondence_with_commitment_v1(
+    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    heuristic: &AdmittedMtgoCompetitivePregameHeuristicV1,
+    ratified_commitment_sha256: Option<&str>,
+) -> Result<RatifiedMtgoCompetitivePregameAuthorizationV1, String> {
+    let candidate = review_competitive_pregame_ratification_candidate_from_correspondence_v1(
+        &correspondence,
+        &visible_account_alias,
+        event_kind,
+        heuristic,
+    )?;
+    if ratified_commitment_sha256 != Some(candidate.ratification_commitment_sha256.as_str()) {
+        return Err(
+            "the exact reviewed competitive pregame permission is not ratified in this build"
+                .to_owned(),
+        );
+    }
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(event_kind)
+        .map_err(|error| format!("derive reviewed competitive pregame scope: {error}"))?;
+    Ok(RatifiedMtgoCompetitivePregameAuthorizationV1 {
+        scope,
+        _permission_correspondence: correspondence,
+        visible_account_alias,
+        commitments: candidate,
     })
 }
 
@@ -11751,6 +12839,91 @@ fn competitive_duel_pass_authorization_from_review_commitment_v2(
     )
 }
 
+fn competitive_pregame_authorization_commitment_v1(
+    scope: &MtgoAuthorizationScopeV1,
+    visible_account_alias: &str,
+    event_kind: MtgoCompetitiveEventKindV1,
+    mode_authorization_commitment_sha256: &str,
+    permission_review_commitment_sha256: &str,
+    heuristic_commitments: (&str, &str, &str, &str),
+) -> String {
+    hash_parts_v2(
+        COMPETITIVE_EVENT_PREGAME_AUTHORIZATION_DOMAIN_V1,
+        &[
+            scope.account_alias_sha256.as_bytes(),
+            scope.written_permission_sha256.as_bytes(),
+            visible_account_alias.as_bytes(),
+            competitive_event_kind_tag_v1(event_kind),
+            mode_authorization_commitment_sha256.as_bytes(),
+            permission_review_commitment_sha256.as_bytes(),
+            heuristic_commitments.0.as_bytes(),
+            heuristic_commitments.1.as_bytes(),
+            heuristic_commitments.2.as_bytes(),
+            heuristic_commitments.3.as_bytes(),
+            b"keep_mulligan_london_select_submit_one_click_each_no_entry_no_spending",
+        ],
+    )
+}
+
+fn validate_competitive_pregame_authorization_for_prepared_v1(
+    authorization: &RatifiedMtgoCompetitivePregameAuthorizationV1,
+    prepared: &OpaqueMtgoPreparedCompetitivePregameActionV1,
+) -> Result<(), String> {
+    let reviewed = &authorization.commitments;
+    let mode_authorization_commitment_sha256 = validate_exact_competitive_mode_authorization_v1(
+        &authorization.scope,
+        &authorization.visible_account_alias,
+        reviewed.event_kind,
+        "competitive pregame execution",
+    )?;
+    let expected_ratification = competitive_pregame_authorization_commitment_v1(
+        &authorization.scope,
+        &authorization.visible_account_alias,
+        reviewed.event_kind,
+        &mode_authorization_commitment_sha256,
+        authorization
+            ._permission_correspondence
+            .review_commitment_sha256(),
+        (
+            &reviewed.heuristic_profile_commitment_sha256,
+            &reviewed.heuristic_algorithm_commitment_sha256,
+            &reviewed.heuristic_review_commitment_sha256,
+            &reviewed.heuristic_admission_commitment_sha256,
+        ),
+    );
+    let launch = &prepared._plan._session.match_launch;
+    let plan = &prepared._plan.commitments;
+    if reviewed.ratification_commitment_sha256 != expected_ratification
+        || reviewed.permission_review_commitment_sha256
+            != authorization
+                ._permission_correspondence
+                .review_commitment_sha256()
+        || reviewed.account_alias_sha256 != authorization.scope.account_alias_sha256
+        || reviewed.correspondence_sha256 != authorization.scope.written_permission_sha256
+        || reviewed.mode_authorization_commitment_sha256 != mode_authorization_commitment_sha256
+        || reviewed.event_kind != prepared.commitments.event_kind
+        || reviewed.event_kind != launch.authorization.event_kind
+        || reviewed.account_alias_sha256 != launch.authorization.account_alias_sha256
+        || reviewed.correspondence_sha256 != launch.authorization.written_permission_sha256
+        || reviewed.mode_authorization_commitment_sha256
+            != launch.mode_authorization_commitment_sha256
+        || reviewed.heuristic_profile_commitment_sha256 != plan.heuristic_profile_commitment_sha256
+        || reviewed.heuristic_algorithm_commitment_sha256
+            != plan.heuristic_algorithm_commitment_sha256
+        || reviewed.heuristic_review_commitment_sha256 != plan.heuristic_review_commitment_sha256
+        || reviewed.heuristic_admission_commitment_sha256
+            != plan.heuristic_admission_commitment_sha256
+        || prepared.commitments.match_identity_sha256 != launch.authorization.match_identity_sha256
+        || prepared.commitments.game_number != launch.authorization.game_number
+    {
+        return Err(
+            "competitive pregame authority differs from the permission, heuristic, event, match, or game"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn validate_competitive_match_launch_record_v1(
     scope: &MtgoAuthorizationScopeV1,
     authorization: &MtgoCompetitiveMatchGameplayAuthorizationV1,
@@ -13166,6 +14339,44 @@ trait VerifiedPointerTargetV3 {
 }
 
 impl VerifiedPointerTargetV3 for PreparedPregameActuationV3 {
+    fn hwnd_v3(&self) -> u64 {
+        self.hwnd
+    }
+
+    fn process_id_v3(&self) -> u32 {
+        self.process_id
+    }
+
+    fn process_start_filetime_100ns_v3(&self) -> u64 {
+        self.process_start_filetime_100ns
+    }
+
+    fn dpi_v3(&self) -> u32 {
+        self.dpi
+    }
+
+    fn client_rect_desktop_px_v3(&self) -> &crate::SignedRectV1 {
+        &self.client_rect_desktop_px
+    }
+
+    fn target_x_desktop_px_v3(&self) -> i32 {
+        self.target_x_desktop_px
+    }
+
+    fn target_y_desktop_px_v3(&self) -> i32 {
+        self.target_y_desktop_px
+    }
+
+    fn park_x_desktop_px_v3(&self) -> i32 {
+        self.park_x_desktop_px
+    }
+
+    fn park_y_desktop_px_v3(&self) -> i32 {
+        self.park_y_desktop_px
+    }
+}
+
+impl VerifiedPointerTargetV3 for MtgoCompetitivePregamePointerTargetV1 {
     fn hwnd_v3(&self) -> u64 {
         self.hwnd
     }
@@ -18266,5 +19477,254 @@ mod tests {
             };
             assert!(apply_atomic_sideboard_transfer_v1(&configuration, &transfer).is_err());
         }
+    }
+
+    fn competitive_pregame_test_cards_v1() -> Vec<MtgoCompetitivePregameVisibleCardV1> {
+        (0_u8..7)
+            .map(|card_slot| MtgoCompetitivePregameVisibleCardV1 {
+                card_slot,
+                visible_card_name: format!("Card {card_slot}"),
+                rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1 {
+                    x: u32::from(card_slot) * 10,
+                    y: 10,
+                    width: 8,
+                    height: 8,
+                },
+                visible_content_sha256: "a".repeat(64),
+                confidence_bps: 10_000,
+            })
+            .collect()
+    }
+
+    fn competitive_pregame_bottoming_response_v1(
+        required_bottom_count: u8,
+        selected_slots: &[u8],
+    ) -> mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1 {
+        let visible_controls = (0_u8..7)
+            .map(|card_slot| {
+                let selected = selected_slots.contains(&card_slot);
+                MtgoCompetitivePregameVisibleControlV1 {
+                    control_id: format!("bottom_card_{card_slot}"),
+                    semantic: MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                        card_slot,
+                        selected,
+                    },
+                    rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1 {
+                        x: u32::from(card_slot) * 10,
+                        y: 20,
+                        width: 8,
+                        height: 8,
+                    },
+                    visible_content_sha256: if selected {
+                        "b".repeat(64)
+                    } else {
+                        "a".repeat(64)
+                    },
+                    confidence_bps: 10_000,
+                    visibly_enabled: true,
+                }
+            })
+            .collect();
+        mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1 {
+            schema_version: 1,
+            request_commitment_sha256: "c".repeat(64),
+            stage: MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count,
+                selected_bottom_count: u8::try_from(selected_slots.len()).unwrap(),
+            },
+            visible_facts: Vec::new(),
+            visible_cards: competitive_pregame_test_cards_v1(),
+            visible_controls,
+            visible_interaction_commitment_sha256: "d".repeat(64),
+        }
+    }
+
+    #[test]
+    fn competitive_pregame_actions_declare_exact_visible_postconditions() {
+        for (stage, action, expected) in [
+            (
+                MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                    prospective_keep_size: 7,
+                },
+                MtgoCompetitivePregameSelectedActionV1::KeepOpeningHand,
+                MtgoCompetitivePregameExpectedPostconditionV1::GameplayReady,
+            ),
+            (
+                MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                    prospective_keep_size: 6,
+                },
+                MtgoCompetitivePregameSelectedActionV1::KeepOpeningHand,
+                MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+                    required_bottom_count: 1,
+                    selected_bottom_count: 0,
+                    newly_selected_card_slot: None,
+                },
+            ),
+            (
+                MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                    prospective_keep_size: 0,
+                },
+                MtgoCompetitivePregameSelectedActionV1::KeepOpeningHand,
+                MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+                    required_bottom_count: 7,
+                    selected_bottom_count: 0,
+                    newly_selected_card_slot: None,
+                },
+            ),
+            (
+                MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                    prospective_keep_size: 7,
+                },
+                MtgoCompetitivePregameSelectedActionV1::Mulligan { next_hand_size: 6 },
+                MtgoCompetitivePregameExpectedPostconditionV1::MulliganChoice {
+                    prospective_keep_size: 6,
+                },
+            ),
+            (
+                MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                    required_bottom_count: 2,
+                    selected_bottom_count: 0,
+                },
+                MtgoCompetitivePregameSelectedActionV1::SelectForBottom {
+                    card_slot: 3,
+                    visible_card_name: "Card 3".to_owned(),
+                },
+                MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+                    required_bottom_count: 2,
+                    selected_bottom_count: 1,
+                    newly_selected_card_slot: Some(3),
+                },
+            ),
+            (
+                MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                    required_bottom_count: 2,
+                    selected_bottom_count: 2,
+                },
+                MtgoCompetitivePregameSelectedActionV1::SubmitBottoming,
+                MtgoCompetitivePregameExpectedPostconditionV1::GameplayReady,
+            ),
+        ] {
+            assert_eq!(
+                competitive_pregame_expected_postcondition_v1(stage, &action).unwrap(),
+                expected
+            );
+        }
+        assert!(competitive_pregame_expected_postcondition_v1(
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size: 7,
+            },
+            &MtgoCompetitivePregameSelectedActionV1::Mulligan { next_hand_size: 5 },
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn competitive_pregame_permission_is_one_mode_heuristic_bound_and_production_empty() {
+        let heuristic =
+            crate::competitive_pregame_policy::admit_competitive_pregame_heuristic_for_tests_v1();
+        let league = review_competitive_pregame_ratification_candidate_from_correspondence_v1(
+            &checked_competitive_correspondence_v2(),
+            "UnbuckledPie",
+            MtgoCompetitiveEventKindV1::League,
+            &heuristic,
+        )
+        .unwrap();
+        let challenge = review_competitive_pregame_ratification_candidate_from_correspondence_v1(
+            &checked_competitive_correspondence_v2(),
+            "UnbuckledPie",
+            MtgoCompetitiveEventKindV1::Challenge,
+            &heuristic,
+        )
+        .unwrap();
+        assert_ne!(
+            league.ratification_commitment_sha256,
+            challenge.ratification_commitment_sha256
+        );
+        assert_eq!(league.event_kind, MtgoCompetitiveEventKindV1::League);
+        assert_eq!(challenge.event_kind, MtgoCompetitiveEventKindV1::Challenge);
+        assert!(
+            ratify_competitive_pregame_authorization_from_correspondence_v1(
+                checked_competitive_correspondence_v2(),
+                "UnbuckledPie".to_owned(),
+                MtgoCompetitiveEventKindV1::League,
+                &heuristic,
+            )
+            .is_err()
+        );
+
+        let admitted =
+            ratify_competitive_pregame_authorization_from_correspondence_with_commitment_v1(
+                checked_competitive_correspondence_v2(),
+                "UnbuckledPie".to_owned(),
+                MtgoCompetitiveEventKindV1::League,
+                &heuristic,
+                Some(&league.ratification_commitment_sha256),
+            )
+            .unwrap();
+        assert_eq!(
+            admitted.commitments_v1().ratification_commitment_sha256,
+            league.ratification_commitment_sha256
+        );
+        assert!(!admitted.safe_for_input_v1());
+        assert!(!admitted.permits_event_entry_v1());
+        assert!(!admitted.permits_spending_v1());
+    }
+
+    #[test]
+    fn competitive_pregame_bottom_selection_requires_exact_card_toggle() {
+        let before = competitive_pregame_bottoming_response_v1(2, &[]);
+        let mut after = competitive_pregame_bottoming_response_v1(2, &[3]);
+        let action = MtgoCompetitivePregameSelectedActionV1::SelectForBottom {
+            card_slot: 3,
+            visible_card_name: "Card 3".to_owned(),
+        };
+        let expected = MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+            required_bottom_count: 2,
+            selected_bottom_count: 1,
+            newly_selected_card_slot: Some(3),
+        };
+        validate_competitive_pregame_expected_postcondition_v1(&expected, &action, &before, &after)
+            .unwrap();
+
+        after.visible_cards[3].visible_card_name = "Substituted".to_owned();
+        assert!(validate_competitive_pregame_expected_postcondition_v1(
+            &expected, &action, &before, &after,
+        )
+        .is_err());
+        after.visible_cards[3].visible_card_name = "Card 3".to_owned();
+        after.visible_controls[3].visible_content_sha256 = "a".repeat(64);
+        assert!(validate_competitive_pregame_expected_postcondition_v1(
+            &expected, &action, &before, &after,
+        )
+        .is_err());
+        after.visible_controls[3].visible_content_sha256 = "b".repeat(64);
+        after.visible_controls[3].rect_client_px.x += 1;
+        assert!(validate_competitive_pregame_expected_postcondition_v1(
+            &expected, &action, &before, &after,
+        )
+        .is_err());
+
+        let before_one_selected = competitive_pregame_bottoming_response_v1(2, &[0]);
+        let after_exact = competitive_pregame_bottoming_response_v1(2, &[0, 3]);
+        let expected_two = MtgoCompetitivePregameExpectedPostconditionV1::LondonBottoming {
+            required_bottom_count: 2,
+            selected_bottom_count: 2,
+            newly_selected_card_slot: Some(3),
+        };
+        validate_competitive_pregame_expected_postcondition_v1(
+            &expected_two,
+            &action,
+            &before_one_selected,
+            &after_exact,
+        )
+        .unwrap();
+        let after_swapped = competitive_pregame_bottoming_response_v1(2, &[1, 3]);
+        assert!(validate_competitive_pregame_expected_postcondition_v1(
+            &expected_two,
+            &action,
+            &before_one_selected,
+            &after_swapped,
+        )
+        .is_err());
     }
 }

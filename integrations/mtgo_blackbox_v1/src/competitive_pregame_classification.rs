@@ -656,6 +656,12 @@ fn validate_stage_control_set_v1(
         MtgoCompetitivePregameStageLabelV1::MulliganChoice {
             prospective_keep_size,
         } => {
+            if prospective_keep_size > 7 {
+                return Err(error_v1(
+                    "competitive_pregame_stage_invalid",
+                    "prospective keep size must be at most seven",
+                ));
+            }
             let expected_len = if prospective_keep_size == 0 { 1 } else { 2 };
             if controls.len() != expected_len
                 || controls[0].control_id != "keep_opening_hand"
@@ -678,6 +684,14 @@ fn validate_stage_control_set_v1(
             required_bottom_count,
             selected_bottom_count,
         } => {
+            if !(1..=7).contains(&required_bottom_count)
+                || selected_bottom_count > required_bottom_count
+            {
+                return Err(error_v1(
+                    "competitive_pregame_stage_invalid",
+                    "London bottom count must be one through seven and selected cannot exceed required",
+                ));
+            }
             let expected_len =
                 7_usize + usize::from(selected_bottom_count == required_bottom_count);
             if controls.len() != expected_len {
@@ -1311,6 +1325,40 @@ mod tests {
             &serde_json::to_vec(&ready_has_control).unwrap(),
         )
         .is_err());
+    }
+
+    #[test]
+    fn impossible_mulligan_and_bottoming_counts_are_rejected() {
+        let (duel, pregame) = profiles_v1();
+        let pixels = pixels_v1();
+        let header_json = serde_json::to_vec(&header_v1(&duel, &pregame, &pixels)).unwrap();
+        for stage in [
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size: 8,
+            },
+            MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count: 0,
+                selected_bottom_count: 0,
+            },
+            MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count: 8,
+                selected_bottom_count: 0,
+            },
+            MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count: 2,
+                selected_bottom_count: 3,
+            },
+        ] {
+            let response = response_v1(&header_json, &pixels, stage);
+            assert!(check_untrusted_competitive_pregame_classifier_exchange_v1(
+                &duel,
+                &pregame,
+                &header_json,
+                &pixels,
+                &serde_json::to_vec(&response).unwrap(),
+            )
+            .is_err());
+        }
     }
 
     #[test]

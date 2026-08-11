@@ -478,6 +478,33 @@ fn is_lower_sha256_v1(value: &str) -> bool {
 }
 
 #[cfg(test)]
+pub(crate) fn admit_competitive_pregame_heuristic_for_tests_v1(
+) -> AdmittedMtgoCompetitivePregameHeuristicV1 {
+    let checked = check_untrusted_competitive_pregame_heuristic_v1(
+        MtgoNonModelPregameHeuristicV1::kernel_basic_lands_wiring_only_v1().unwrap(),
+        "competitive-pregame-review-v1".to_owned(),
+        "1".repeat(64),
+        "2".repeat(64),
+        "3".repeat(64),
+        "4".repeat(64),
+        "5".repeat(64),
+        MtgoCompetitivePregameHeuristicReviewDeclarationsV1 {
+            exact_deck_manifest_reviewed: true,
+            every_main_deck_card_feature_reviewed: true,
+            mulligan_behavior_reviewed: true,
+            london_bottoming_behavior_reviewed: true,
+            explicitly_non_model: true,
+            league_and_challenge_use_reviewed: true,
+            no_sideboard_policy_claimed: true,
+        },
+    )
+    .unwrap();
+    let ratification = checked.review.review_commitment_sha256.clone();
+    admit_competitive_pregame_heuristic_against_ratification_v1(checked, Some(&ratification))
+        .unwrap()
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::competitive_operator_bootstrap::MtgoCompetitiveOperatorResourceCommitmentsV1;
@@ -509,10 +536,7 @@ mod tests {
     }
 
     fn admitted_v1() -> AdmittedMtgoCompetitivePregameHeuristicV1 {
-        let checked = checked_v1();
-        let ratification = checked.review.review_commitment_sha256.clone();
-        admit_competitive_pregame_heuristic_against_ratification_v1(checked, Some(&ratification))
-            .unwrap()
+        admit_competitive_pregame_heuristic_for_tests_v1()
     }
 
     fn operator_v1() -> MtgoCompetitiveOperatorResourceCommitmentsV1 {

@@ -111,8 +111,7 @@ fn admitted_duel_frame_requires_an_opaque_profile_and_retains_no_downstream_auth
 fn competitive_pregame_classifier_retains_exact_opaque_source_without_input_authority() {
     let source = include_str!("../src/probe/competitive_pregame_runtime.rs");
     let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
-    let contract =
-        include_str!("../../mtgo_blackbox_v1/src/competitive_pregame_classification.rs");
+    let contract = include_str!("../../mtgo_blackbox_v1/src/competitive_pregame_classification.rs");
     for required in [
         "classify_admitted_mtgo_competitive_pregame_frame_v1",
         "OpaqueMtgoAdmittedDuelVisibleFrameV1",
@@ -1481,7 +1480,9 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "competitive_pregame_capture_profile_present: false",
         "competitive_pregame_card_and_control_surface_present: true",
         "competitive_pregame_deck_bound_action_planner_present: true",
-        "competitive_pregame_input_actuator_present: false",
+        "competitive_pregame_immediate_recapture_preparation_present: true",
+        "competitive_pregame_postcondition_contract_present: true",
+        "competitive_pregame_input_actuator_present: true",
         "competitive_pregame_capture_and_session_bridge_present: true",
         "native_checkpoint_changed_sideboard_interface_present: false",
         "safe_for_live_capture: false",
@@ -1585,6 +1586,62 @@ fn competitive_pregame_action_plan_is_deck_bound_coordinate_private_and_non_actu
         assert!(
             !source.contains(forbidden),
             "competitive pregame action plan exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_pregame_preparation_rechecks_fresh_surface_without_input_authority() {
+    let source = include_str!("../src/actuator.rs");
+    let classifier_source = include_str!("../src/probe/competitive_pregame_runtime.rs");
+    for required in [
+        "prepare_fresh_competitive_event_pregame_action_v1",
+        "OpaqueMtgoPreparedCompetitivePregameActionV1",
+        "check_competitive_event_pregame_postcondition_dry_run_v1",
+        "CheckedUntrustedMtgoCompetitivePregamePostconditionV1",
+        "RATIFIED_COMPETITIVE_EVENT_PREGAME_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "review_competitive_pregame_ratification_candidate_from_correspondence_v1",
+        "ratify_competitive_pregame_authorization_from_correspondence_v1",
+        "execute_prepared_competitive_pregame_action_v1",
+        "confirm_pending_competitive_pregame_action_v1",
+        "OpaqueMtgoPendingCompetitivePregameInputV1",
+        "OpaqueMtgoConfirmedCompetitivePregameActionV1",
+        "require_immediate_successor_v1",
+        "competitive_pregame_visible_card_labels_equal_v1",
+        "fresh_selected_control != plan._selected_control",
+        "selected card did not visibly toggle",
+        "same-rect pixel change",
+        "bottom selection changed another card state or rectangle",
+        "claims_action_causality_v1(&self) -> bool {\n        false",
+        "safe_for_next_input_v1(&self) -> bool {\n        false",
+        "structural_visible_postcondition_only_no_input_receipt_no_causality_no_gate_release",
+        "exactly_one_competitive_pregame_left_click_pending_exact_visible_postcondition",
+        "receipt_bound_exact_visible_pregame_transition_shared_gate_released",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame fresh preparation is missing: {required}"
+        );
+    }
+    for required in [
+        "resolve_visible_control_pointer_target_v1",
+        "competitive pregame pointer target is not one exact current visible control",
+        "choose_cursor_park_point_v3",
+    ] {
+        assert!(
+            classifier_source.contains(required),
+            "competitive pregame private target resolution is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "impl VerifiedPointerTargetV3 for OpaqueMtgoPreparedCompetitivePregameActionV1",
+        "pub fn target_x_desktop_px_v1",
+        "pub fn pointer_target_v1",
+        "release_confirmed_pending_v3(&prepared",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame preparation exposes forbidden authority: {forbidden}"
         );
     }
 }

@@ -1,5 +1,5 @@
 use super::{
-    competitive_entry_window_continuity_commitment_for_frame_v1,
+    choose_cursor_park_point_v3, competitive_entry_window_continuity_commitment_for_frame_v1,
     frame_id_from_capture_commitment_v1, invoke_verified_competitive_pregame_process_v1,
     mtgo_process_continuity_commitment_for_frame_v1, sha256_hex_v1,
     verify_duel_perception_runtime_identity_now_v1, MtgoAdmittedDuelVisibleFrameCommitmentsV1,
@@ -12,8 +12,8 @@ use mtgo_blackbox_v1::{
     AdmittedMtgoCompetitivePregameProfileV1, AdmittedMtgoDuelPerceptionProfileV1,
     CheckedUntrustedMtgoCompetitivePregameClassificationV1,
     MtgoCompetitivePregameClassifierRequestHeaderV1, MtgoCompetitivePregameClassifierResponseV1,
-    MtgoCompetitivePregameStageLabelV1, MTGO_COMPETITIVE_PREGAME_CLASSIFIER_PROTOCOL_V1,
-    MTGO_COMPETITIVE_PREGAME_CLASSIFIER_SCHEMA_V1,
+    MtgoCompetitivePregameStageLabelV1, MtgoCompetitivePregameVisibleControlV1,
+    MTGO_COMPETITIVE_PREGAME_CLASSIFIER_PROTOCOL_V1, MTGO_COMPETITIVE_PREGAME_CLASSIFIER_SCHEMA_V1,
 };
 use std::time::Duration;
 
@@ -59,6 +59,18 @@ pub struct OpaqueMtgoClassifiedCompetitivePregameFrameV1 {
     commitments: MtgoClassifiedCompetitivePregameFrameCommitmentsV1,
 }
 
+pub(crate) struct MtgoCompetitivePregamePointerTargetV1 {
+    pub hwnd: u64,
+    pub process_id: u32,
+    pub process_start_filetime_100ns: u64,
+    pub dpi: u32,
+    pub client_rect_desktop_px: crate::SignedRectV1,
+    pub target_x_desktop_px: i32,
+    pub target_y_desktop_px: i32,
+    pub park_x_desktop_px: i32,
+    pub park_y_desktop_px: i32,
+}
+
 impl OpaqueMtgoClassifiedCompetitivePregameFrameV1 {
     pub fn commitments_v1(&self) -> MtgoClassifiedCompetitivePregameFrameCommitmentsV1 {
         self.commitments.clone()
@@ -86,6 +98,82 @@ impl OpaqueMtgoClassifiedCompetitivePregameFrameV1 {
 
     pub(crate) fn response_v1(&self) -> &MtgoCompetitivePregameClassifierResponseV1 {
         &self._response
+    }
+
+    pub(crate) fn resolve_visible_control_pointer_target_v1(
+        &self,
+        control: &MtgoCompetitivePregameVisibleControlV1,
+    ) -> Result<MtgoCompetitivePregamePointerTargetV1, String> {
+        if self
+            ._response
+            .visible_controls
+            .iter()
+            .filter(|candidate| *candidate == control)
+            .count()
+            != 1
+        {
+            return Err(
+                "competitive pregame pointer target is not one exact current visible control"
+                    .to_owned(),
+            );
+        }
+        let raw = &self._source_frame.source_frame;
+        let width = raw.manifest.frame.canonical_width;
+        let height = raw.manifest.frame.canonical_height;
+        let rect = &control.rect_client_px;
+        let right = rect
+            .x
+            .checked_add(rect.width)
+            .ok_or("competitive pregame control x overflow")?;
+        let bottom = rect
+            .y
+            .checked_add(rect.height)
+            .ok_or("competitive pregame control y overflow")?;
+        if rect.width == 0 || rect.height == 0 || right > width || bottom > height {
+            return Err("competitive pregame control is outside the immediate client".to_owned());
+        }
+        let target_x_client_px = rect
+            .x
+            .checked_add(rect.width / 2)
+            .ok_or("competitive pregame control center x overflow")?;
+        let target_y_client_px = rect
+            .y
+            .checked_add(rect.height / 2)
+            .ok_or("competitive pregame control center y overflow")?;
+        let client_rect = raw.manifest.pre.client_rect_desktop_px;
+        let target_x_desktop_px = client_rect
+            .left
+            .checked_add(
+                i32::try_from(target_x_client_px)
+                    .map_err(|_| "competitive pregame target x does not fit the desktop")?,
+            )
+            .ok_or("competitive pregame target x overflow")?;
+        let target_y_desktop_px = client_rect
+            .top
+            .checked_add(
+                i32::try_from(target_y_client_px)
+                    .map_err(|_| "competitive pregame target y does not fit the desktop")?,
+            )
+            .ok_or("competitive pregame target y overflow")?;
+        if !client_rect.contains_point(target_x_desktop_px, target_y_desktop_px) {
+            return Err(
+                "competitive pregame target point is outside the immediate client".to_owned(),
+            );
+        }
+        let (park_x_desktop_px, park_y_desktop_px) =
+            choose_cursor_park_point_v3(&client_rect, &raw.manifest.output.bounds_desktop_px)?;
+        let pre = &raw.manifest.pre;
+        Ok(MtgoCompetitivePregamePointerTargetV1 {
+            hwnd: pre.hwnd,
+            process_id: pre.process_id,
+            process_start_filetime_100ns: pre.process_start_filetime_100ns,
+            dpi: pre.dpi,
+            client_rect_desktop_px: client_rect,
+            target_x_desktop_px,
+            target_y_desktop_px,
+            park_x_desktop_px,
+            park_y_desktop_px,
+        })
     }
 
     pub(crate) fn window_continuity_commitment_sha256_v1(&self) -> Result<String, String> {

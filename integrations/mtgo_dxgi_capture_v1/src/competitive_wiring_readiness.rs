@@ -30,6 +30,8 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub competitive_pregame_capture_profile_present: bool,
     pub competitive_pregame_card_and_control_surface_present: bool,
     pub competitive_pregame_deck_bound_action_planner_present: bool,
+    pub competitive_pregame_immediate_recapture_preparation_present: bool,
+    pub competitive_pregame_postcondition_contract_present: bool,
     pub competitive_pregame_input_actuator_present: bool,
     pub competitive_pregame_capture_and_session_bridge_present: bool,
     pub native_checkpoint_changed_sideboard_interface_present: bool,
@@ -75,7 +77,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             competitive_pregame_capture_profile_present: false,
             competitive_pregame_card_and_control_surface_present: true,
             competitive_pregame_deck_bound_action_planner_present: true,
-            competitive_pregame_input_actuator_present: false,
+            competitive_pregame_immediate_recapture_preparation_present: true,
+            competitive_pregame_postcondition_contract_present: true,
+            competitive_pregame_input_actuator_present: true,
             competitive_pregame_capture_and_session_bridge_present: true,
             native_checkpoint_changed_sideboard_interface_present: false,
         },
@@ -152,7 +156,17 @@ mod tests {
                 .competitive_pregame_deck_bound_action_planner_present
         );
         assert!(
-            !report
+            report
+                .known_wiring_gaps
+                .competitive_pregame_immediate_recapture_preparation_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .competitive_pregame_postcondition_contract_present
+        );
+        assert!(
+            report
                 .known_wiring_gaps
                 .competitive_pregame_input_actuator_present
         );
