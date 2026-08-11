@@ -1549,6 +1549,43 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
 }
 
 #[test]
+fn preview_ocr_probe_is_offline_expected_text_only_and_non_actuating() {
+    let source = include_str!("../src/bin/probe_mtgo_preview_ocr_v1.rs");
+    for required in [
+        "offline_visible_preview_ocr_feasibility_v1",
+        "expected_label_sha256",
+        "exact_normalized_match_count",
+        "raw_ocr_text_emitted: false",
+        "captures_live_client: false",
+        "safe_for_semantic_evidence: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+        "permits_event_entry: false",
+        "permits_spending: false",
+    ] {
+        assert!(
+            source.contains(required),
+            "preview OCR probe is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "GetForegroundWindow",
+        "capture_mtgo_dxgi_frame_candidate",
+        "SendInput",
+        "SetCursorPos",
+        "mouse_event",
+        "Click",
+        "InvokePattern",
+        "ReadProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "preview OCR probe exposes a forbidden operation: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn competitive_pregame_public_context_runtime_is_same_frame_profile_and_binary_bound() {
     let source = include_str!("../src/probe/competitive_pregame_runtime.rs");
     let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
