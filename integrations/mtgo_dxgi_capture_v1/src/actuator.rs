@@ -17,13 +17,16 @@ use mtgo_blackbox_v1::{
     MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
     MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::c_void;
+use std::io::{self, IsTerminal, Write};
 use std::mem::size_of;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -54,6 +57,13 @@ const RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> =
 const COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-match-launch-authorization-v1";
 const RATIFIED_COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
+const ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_DOMAIN_V2: &[u8] =
+    b"mtgo-attended-competitive-match-launch-request-v2";
+const ATTENDED_COMPETITIVE_MATCH_LAUNCH_RECEIPT_DOMAIN_V2: &[u8] =
+    b"mtgo-attended-competitive-match-launch-receipt-v2";
+const ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V2: u64 = 512;
+
+pub const MTGO_ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_SCHEMA_V2: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoPregameInputGateStatusV3 {
@@ -168,6 +178,7 @@ pub struct RatifiedMtgoCompetitiveMatchLaunchV1 {
     mode_authorization_commitment_sha256: String,
     gameplay_authorization_commitment_sha256: String,
     launch_authorization_commitment_sha256: String,
+    valid_from_frame_sequence: u64,
 }
 
 impl RatifiedMtgoCompetitiveMatchLaunchV1 {
@@ -191,9 +202,42 @@ impl RatifiedMtgoCompetitiveMatchLaunchV1 {
         &self.launch_authorization_commitment_sha256
     }
 
+    pub fn valid_from_frame_sequence_v2(&self) -> u64 {
+        self.valid_from_frame_sequence
+    }
+
+    pub fn valid_through_frame_sequence_v1(&self) -> u64 {
+        self.authorization.valid_through_frame_sequence
+    }
+
+    pub fn owner_launch_authorization_sha256_v2(&self) -> &str {
+        &self.authorization.owner_launch_authorization_sha256
+    }
+
+    /// Returns the coordinate-free authorization record needed when building
+    /// the exact visible match plan. The record alone grants no input authority.
+    pub fn gameplay_authorization_record_v2(&self) -> MtgoCompetitiveMatchGameplayAuthorizationV1 {
+        self.authorization.clone()
+    }
+
     pub fn permits_event_entry_v1(&self) -> bool {
         false
     }
+}
+
+/// Coordinate-free facts shown to the account owner before authorizing
+/// gameplay in one exact already-entered League or Challenge game. Event entry
+/// and resource spending are deliberately outside this request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoAttendedCompetitiveMatchLaunchRequestV2 {
+    pub schema_version: u32,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: String,
+    pub match_identity_sha256: String,
+    pub game_number: u8,
+    pub entry_authorization_sha256: String,
+    pub observed_frame_sequence: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -506,6 +550,78 @@ pub fn ratify_competitive_match_launch_v1(
     )
 }
 
+/// Requires a real interactive terminal and an exact owner-entered challenge
+/// before creating one move-only League or Challenge game launch. Redirected
+/// stdin/stdout is rejected. General Daybreak permission remains a separate
+/// compile-pinned prerequisite, and this function grants no event-entry or
+/// resource-spending authority.
+pub fn ratify_competitive_match_launch_attended_v2(
+    scope: &MtgoAuthorizationScopeV1,
+    visible_account_alias: &str,
+    request: MtgoAttendedCompetitiveMatchLaunchRequestV2,
+) -> Result<RatifiedMtgoCompetitiveMatchLaunchV1, String> {
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    if !stdin.is_terminal() || !stdout.is_terminal() {
+        return Err(
+            "attended competitive match launch requires an interactive terminal".to_owned(),
+        );
+    }
+    let mut challenge_nonce = [0_u8; 8];
+    unsafe {
+        BCryptGenRandom(None, &mut challenge_nonce, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+            .ok()
+            .map_err(|error| format!("generate attended launch challenge: {error}"))?;
+    }
+    let issued_at_unix_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before epoch: {error}"))?
+        .as_millis();
+    validate_attended_competitive_match_launch_request_v2(scope, visible_account_alias, &request)?;
+    let expected_phrase = attended_competitive_match_launch_confirmation_phrase_v2(
+        request.event_kind,
+        request.game_number,
+        &challenge_nonce,
+    );
+    let mode_label = competitive_event_kind_label_v2(request.event_kind);
+    let event_prefix = &request.event_identity_sha256[..12];
+    let match_prefix = &request.match_identity_sha256[..12];
+    writeln!(stdout, "MTGO attended competitive match launch")
+        .map_err(|error| format!("write attended launch prompt: {error}"))?;
+    writeln!(stdout, "Account: {visible_account_alias}")
+        .map_err(|error| format!("write attended launch account: {error}"))?;
+    writeln!(
+        stdout,
+        "Mode: {mode_label}; game: {}; event: {event_prefix}; match: {match_prefix}",
+        request.game_number
+    )
+    .map_err(|error| format!("write attended launch identity: {error}"))?;
+    writeln!(
+        stdout,
+        "This authorizes visible priority-Pass gameplay only for this exact already-entered game. It cannot enter an event or spend resources."
+    )
+    .map_err(|error| format!("write attended launch scope: {error}"))?;
+    writeln!(stdout, "Type exactly: {expected_phrase}")
+        .map_err(|error| format!("write attended launch challenge: {error}"))?;
+    stdout
+        .flush()
+        .map_err(|error| format!("flush attended launch prompt: {error}"))?;
+
+    let mut supplied_phrase = String::new();
+    stdin
+        .read_line(&mut supplied_phrase)
+        .map_err(|error| format!("read attended launch confirmation: {error}"))?;
+    let supplied_phrase = supplied_phrase.trim_end_matches(['\r', '\n']);
+    ratify_competitive_match_launch_from_attended_confirmation_v2(
+        scope,
+        visible_account_alias,
+        request,
+        challenge_nonce,
+        issued_at_unix_millis,
+        supplied_phrase,
+    )
+}
+
 pub fn bind_prepared_competitive_duel_pass_authorization_v1(
     prepared: OpaqueMtgoPreparedCompetitiveDuelPassV1,
     authorization: RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
@@ -650,6 +766,167 @@ fn ratify_competitive_duel_pass_authorization_with_commitment_v1(
     })
 }
 
+fn ratify_competitive_match_launch_from_attended_confirmation_v2(
+    scope: &MtgoAuthorizationScopeV1,
+    visible_account_alias: &str,
+    request: MtgoAttendedCompetitiveMatchLaunchRequestV2,
+    challenge_nonce: [u8; 8],
+    issued_at_unix_millis: u128,
+    supplied_phrase: &str,
+) -> Result<RatifiedMtgoCompetitiveMatchLaunchV1, String> {
+    let mode_authorization_commitment_sha256 =
+        validate_attended_competitive_match_launch_request_v2(
+            scope,
+            visible_account_alias,
+            &request,
+        )?;
+    let expected_phrase = attended_competitive_match_launch_confirmation_phrase_v2(
+        request.event_kind,
+        request.game_number,
+        &challenge_nonce,
+    );
+    if supplied_phrase != expected_phrase {
+        return Err("attended competitive match launch challenge did not match".to_owned());
+    }
+    let request_json = serde_json::to_vec(&request)
+        .map_err(|error| format!("serialize attended match launch request: {error}"))?;
+    let request_commitment_sha256 = hash_parts_v2(
+        ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_DOMAIN_V2,
+        &[
+            scope.account_alias_sha256.as_bytes(),
+            scope.written_permission_sha256.as_bytes(),
+            visible_account_alias.as_bytes(),
+            mode_authorization_commitment_sha256.as_bytes(),
+            request_json.as_slice(),
+        ],
+    );
+    let owner_launch_authorization_sha256 = hash_parts_v2(
+        ATTENDED_COMPETITIVE_MATCH_LAUNCH_RECEIPT_DOMAIN_V2,
+        &[
+            request_commitment_sha256.as_bytes(),
+            challenge_nonce.as_slice(),
+            issued_at_unix_millis.to_be_bytes().as_slice(),
+            supplied_phrase.as_bytes(),
+            b"interactive_terminal_owner_confirmation_priority_pass_only",
+        ],
+    );
+    let valid_through_frame_sequence = request
+        .observed_frame_sequence
+        .checked_add(ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V2)
+        .ok_or("attended competitive match frame lifetime overflow")?;
+    let authorization = MtgoCompetitiveMatchGameplayAuthorizationV1 {
+        schema_version: MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
+        account_alias_sha256: scope.account_alias_sha256.clone(),
+        written_permission_sha256: scope.written_permission_sha256.clone(),
+        event_kind: request.event_kind,
+        event_identity_sha256: request.event_identity_sha256,
+        match_identity_sha256: request.match_identity_sha256,
+        game_number: request.game_number,
+        entry_authorization_sha256: request.entry_authorization_sha256,
+        owner_launch_authorization_sha256,
+        exact_match_gameplay_authorized: true,
+        valid_through_frame_sequence,
+    };
+    let gameplay_authorization_commitment_sha256 =
+        competitive_match_gameplay_authorization_commitment_v1(&authorization)
+            .map_err(|error| format!("competitive match authorization commitment: {error}"))?;
+    let launch_authorization_commitment_sha256 = competitive_match_launch_commitment_v1(
+        visible_account_alias,
+        &mode_authorization_commitment_sha256,
+        &gameplay_authorization_commitment_sha256,
+        &authorization,
+    );
+    let mut ratified = ratify_competitive_match_launch_with_commitment_v1(
+        scope,
+        visible_account_alias,
+        authorization,
+        Some(&launch_authorization_commitment_sha256),
+    )?;
+    ratified.valid_from_frame_sequence = request.observed_frame_sequence;
+    Ok(ratified)
+}
+
+fn validate_attended_competitive_match_launch_request_v2(
+    scope: &MtgoAuthorizationScopeV1,
+    visible_account_alias: &str,
+    request: &MtgoAttendedCompetitiveMatchLaunchRequestV2,
+) -> Result<String, String> {
+    if request.schema_version != MTGO_ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_SCHEMA_V2
+        || !(1..=3).contains(&request.game_number)
+        || request.observed_frame_sequence == 0
+    {
+        return Err("attended competitive match launch request is invalid".to_owned());
+    }
+    let mode_authorization_commitment_sha256 = validate_competitive_duel_pass_authorization_v1(
+        scope,
+        visible_account_alias,
+        request.event_kind,
+    )?;
+    for value in [
+        request.event_identity_sha256.as_str(),
+        request.match_identity_sha256.as_str(),
+        request.entry_authorization_sha256.as_str(),
+    ] {
+        if !is_sha256_v2(value) {
+            return Err(
+                "attended competitive match launch contains an invalid commitment".to_owned(),
+            );
+        }
+    }
+    if request.event_identity_sha256 == request.match_identity_sha256
+        || request.event_identity_sha256 == request.entry_authorization_sha256
+        || request.match_identity_sha256 == request.entry_authorization_sha256
+        || request.entry_authorization_sha256 == scope.written_permission_sha256
+    {
+        return Err(
+            "attended event, match, entry, and permission records must be distinct".to_owned(),
+        );
+    }
+    request
+        .observed_frame_sequence
+        .checked_add(ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V2)
+        .ok_or("attended competitive match frame lifetime overflow")?;
+    Ok(mode_authorization_commitment_sha256)
+}
+
+fn attended_competitive_match_launch_confirmation_phrase_v2(
+    event_kind: MtgoCompetitiveEventKindV1,
+    game_number: u8,
+    challenge_nonce: &[u8; 8],
+) -> String {
+    let nonce = challenge_nonce
+        .iter()
+        .map(|value| format!("{value:02X}"))
+        .collect::<String>();
+    format!(
+        "AUTHORIZE MTGO {} GAME {game_number} {nonce}",
+        competitive_event_kind_label_v2(event_kind).to_ascii_uppercase()
+    )
+}
+
+fn competitive_event_kind_label_v2(event_kind: MtgoCompetitiveEventKindV1) -> &'static str {
+    match event_kind {
+        MtgoCompetitiveEventKindV1::League => "League",
+        MtgoCompetitiveEventKindV1::Challenge => "Challenge",
+    }
+}
+
+fn hash_parts_v2(domain: &[u8], parts: &[&[u8]]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    for part in parts {
+        update_hash_part_v3(&mut hasher, part);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn is_sha256_v2(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn ratify_competitive_match_launch_with_commitment_v1(
     scope: &MtgoAuthorizationScopeV1,
     visible_account_alias: &str,
@@ -681,6 +958,7 @@ fn ratify_competitive_match_launch_with_commitment_v1(
         mode_authorization_commitment_sha256,
         gameplay_authorization_commitment_sha256,
         launch_authorization_commitment_sha256,
+        valid_from_frame_sequence: 1,
     })
 }
 
@@ -953,6 +1231,9 @@ fn competitive_duel_pass_authorization_binding_commitments_v1(
             != match_launch.mode_authorization_commitment_sha256
         || prepared.competitive_match_gameplay_authorization_commitment_sha256
             != match_launch.gameplay_authorization_commitment_sha256
+        || prepared.immediate_frame_sequence < match_launch.valid_from_frame_sequence
+        || prepared.immediate_frame_sequence
+            > match_launch.authorization.valid_through_frame_sequence
     {
         return Err(
             "the prepared Pass does not match the ratified competitive mode authority".to_owned(),
@@ -979,6 +1260,15 @@ fn competitive_duel_pass_authorization_binding_commitments_v1(
         prepared
             .competitive_match_gameplay_authorization_commitment_sha256
             .as_bytes(),
+        match_launch
+            .valid_from_frame_sequence
+            .to_be_bytes()
+            .as_slice(),
+        match_launch
+            .authorization
+            .valid_through_frame_sequence
+            .to_be_bytes()
+            .as_slice(),
         event_kind_bytes,
         &[prepared.game_number],
         prepared.immediate_frame_id.to_be_bytes().as_slice(),
@@ -1648,6 +1938,22 @@ mod tests {
         }
     }
 
+    fn attended_match_launch_request_v2(
+        event_kind: MtgoCompetitiveEventKindV1,
+        game_number: u8,
+        observed_frame_sequence: u64,
+    ) -> MtgoAttendedCompetitiveMatchLaunchRequestV2 {
+        MtgoAttendedCompetitiveMatchLaunchRequestV2 {
+            schema_version: MTGO_ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_SCHEMA_V2,
+            event_kind,
+            event_identity_sha256: "c".repeat(64),
+            match_identity_sha256: "d".repeat(64),
+            game_number,
+            entry_authorization_sha256: "e".repeat(64),
+            observed_frame_sequence,
+        }
+    }
+
     fn ratified_match_launch_v1(
         event_kind: MtgoCompetitiveEventKindV1,
         game_number: u8,
@@ -1776,6 +2082,178 @@ mod tests {
             64
         );
         assert!(!ratified.permits_event_entry_v1());
+    }
+
+    #[test]
+    fn attended_match_launch_binds_terminal_challenge_mode_game_and_frame_lifetime() {
+        for event_kind in [
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveEventKindV1::Challenge,
+        ] {
+            let scope = competitive_scope_v1("UnbuckledPie", event_kind);
+            let request = attended_match_launch_request_v2(event_kind, 2, 40);
+            let nonce = [0xabu8; 8];
+            let phrase =
+                attended_competitive_match_launch_confirmation_phrase_v2(event_kind, 2, &nonce);
+            let ratified = ratify_competitive_match_launch_from_attended_confirmation_v2(
+                &scope,
+                "UnbuckledPie",
+                request.clone(),
+                nonce,
+                1_777,
+                &phrase,
+            )
+            .unwrap();
+            let authorization = ratified.gameplay_authorization_record_v2();
+            assert_eq!(ratified.event_kind_v1(), event_kind);
+            assert_eq!(ratified.game_number_v1(), 2);
+            assert_eq!(ratified.valid_from_frame_sequence_v2(), 40);
+            assert_eq!(
+                ratified.valid_through_frame_sequence_v1(),
+                40 + ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V2
+            );
+            assert_eq!(
+                ratified.owner_launch_authorization_sha256_v2(),
+                authorization.owner_launch_authorization_sha256
+            );
+            assert_eq!(
+                authorization.account_alias_sha256,
+                scope.account_alias_sha256
+            );
+            assert_eq!(
+                authorization.written_permission_sha256,
+                scope.written_permission_sha256
+            );
+            assert!(authorization.exact_match_gameplay_authorized);
+            assert!(!ratified.permits_event_entry_v1());
+
+            assert!(
+                ratify_competitive_match_launch_from_attended_confirmation_v2(
+                    &scope,
+                    "UnbuckledPie",
+                    request,
+                    nonce,
+                    1_777,
+                    "AUTHORIZE SOMETHING ELSE",
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn attended_match_launch_cannot_authorize_a_prelaunch_frame() {
+        let event_kind = MtgoCompetitiveEventKindV1::League;
+        let scope = competitive_scope_v1("UnbuckledPie", event_kind);
+        let authorization = ratified_competitive_pass_v1(event_kind);
+        let request = attended_match_launch_request_v2(event_kind, 2, 40);
+        let nonce = [0x31u8; 8];
+        let phrase =
+            attended_competitive_match_launch_confirmation_phrase_v2(event_kind, 2, &nonce);
+        let match_launch = ratify_competitive_match_launch_from_attended_confirmation_v2(
+            &scope,
+            "UnbuckledPie",
+            request,
+            nonce,
+            1_888,
+            &phrase,
+        )
+        .unwrap();
+        let mut prepared = MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
+            competitive_action_plan_commitment_sha256: "1".repeat(64),
+            competitive_mode_authorization_commitment_sha256: authorization
+                .mode_authorization_commitment_sha256_v1()
+                .to_owned(),
+            competitive_match_gameplay_authorization_commitment_sha256: match_launch
+                .gameplay_authorization_commitment_sha256_v1()
+                .to_owned(),
+            before_input_postcondition_verification_commitment_sha256: "6".repeat(64),
+            immediate_capture_commitment_sha256: "2".repeat(64),
+            immediate_perception_result_commitment_sha256: "3".repeat(64),
+            preparation_commitment_sha256: "4".repeat(64),
+            event_kind,
+            game_number: 2,
+            immediate_frame_id: 11,
+            immediate_frame_sequence: 39,
+            immediate_captured_at_unix_millis: 13,
+        };
+        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
+            &prepared,
+            &authorization,
+            &match_launch,
+        )
+        .is_err());
+        prepared.immediate_frame_sequence = 40;
+        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
+            &prepared,
+            &authorization,
+            &match_launch,
+        )
+        .is_ok());
+        prepared.immediate_frame_sequence =
+            40 + ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V2 + 1;
+        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
+            &prepared,
+            &authorization,
+            &match_launch,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn attended_match_launch_rejects_broad_or_malformed_requests() {
+        let event_kind = MtgoCompetitiveEventKindV1::League;
+        let scope = competitive_scope_v1("UnbuckledPie", event_kind);
+        let valid = attended_match_launch_request_v2(event_kind, 1, 40);
+
+        let mut broad_scope = scope.clone();
+        broad_scope.challenge_input = true;
+        assert!(validate_attended_competitive_match_launch_request_v2(
+            &broad_scope,
+            "UnbuckledPie",
+            &valid,
+        )
+        .is_err());
+        assert!(validate_attended_competitive_match_launch_request_v2(
+            &scope,
+            "DifferentAccount",
+            &valid,
+        )
+        .is_err());
+
+        for malformed in [
+            MtgoAttendedCompetitiveMatchLaunchRequestV2 {
+                schema_version: 1,
+                ..valid.clone()
+            },
+            MtgoAttendedCompetitiveMatchLaunchRequestV2 {
+                game_number: 0,
+                ..valid.clone()
+            },
+            MtgoAttendedCompetitiveMatchLaunchRequestV2 {
+                observed_frame_sequence: 0,
+                ..valid.clone()
+            },
+            MtgoAttendedCompetitiveMatchLaunchRequestV2 {
+                event_identity_sha256: "C".repeat(64),
+                ..valid.clone()
+            },
+            MtgoAttendedCompetitiveMatchLaunchRequestV2 {
+                match_identity_sha256: valid.event_identity_sha256.clone(),
+                ..valid.clone()
+            },
+            MtgoAttendedCompetitiveMatchLaunchRequestV2 {
+                observed_frame_sequence: u64::MAX,
+                ..valid
+            },
+        ] {
+            assert!(validate_attended_competitive_match_launch_request_v2(
+                &scope,
+                "UnbuckledPie",
+                &malformed,
+            )
+            .is_err());
+        }
     }
 
     #[test]
