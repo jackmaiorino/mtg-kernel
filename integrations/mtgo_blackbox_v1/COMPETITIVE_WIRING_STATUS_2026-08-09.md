@@ -23,6 +23,14 @@ The account owner reports that Daybreak has now given equivalent approval for bo
 
 The lifecycle evaluation contract now covers all nine client phases for each mode, 18 slices total, instead of only browser, entry review, and entered-waiting. Pairing-ready, sideboarding, match-complete, event-complete, and reconnect classifications must each include the exact enabled control required for the corresponding action. The Windows boundary consumes that classifier-backed frame, rehashes the private control rectangle against the retained composed-desktop pixels, and returns a move-only, coordinate-private control binding for Accept Pairing, Submit Sideboard, Continue After Match, Close Completed Event, or Resume Match. This tranche detects and binds controls only. It does not authorize or emit lifecycle input.
 
+### Selected Open Entry Review update
+
+Commit `d98441d` supersedes the older non-actuating selected-listing descriptions below. A separate Open Entry Review-only ratification candidate now binds the exact reviewed correspondence, one League or Challenge mode, approved account, navigation profile, admitted selected-listing evaluation, deck list, canonical deck manifest, format, and policy. Its production root remains empty and independent of both the five-action lifecycle root and paid-entry confirmation.
+
+The move-only preparation consumes one freshly captured evaluated listing and retains the rehashed enabled Open Entry Review control privately. Execution uses the process-wide one-input gate, requires the capture to be at most two seconds old, rechecks the live foreground process, window, DPI, geometry, and target, and emits exactly one left click. Confirmation releases the gate only after a changed, strictly newer post-input frame from the same client incarnation and output visibly reaches Entry Review for the exact selected event. Any mismatch halts the gate. The confirmed arrival cannot confirm paid entry, spend currency, or provide a second input.
+
+The current capture crate lists 153 all-target tests. All 131 non-ignored unit tests, the review-command test, all 19 source-policy tests, all 145 doctests, and strict no-dependency clippy pass. Two opt-in live tests remain ignored. This update performed no live capture, classification, scoring, event entry, spending, or input.
+
 ## Current evidence
 
 | Wiring segment | Current evidence | Status | Missing proof or implementation |
