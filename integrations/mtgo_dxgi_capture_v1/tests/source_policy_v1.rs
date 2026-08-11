@@ -536,6 +536,8 @@ fn competitive_event_runtime_is_move_only_identity_bound_and_terminal_record_gat
         "LaunchGameplay",
         "AwaitGameOutcome",
         "ResolveSideboard",
+        "SubmitUnchangedSideboard",
+        "MtgoLifecycleVisibleFactKindV1::SideboardNoChangesConfirmed",
         "ContinueAfterMatch",
         "ResumeMatch",
         "ObserveTerminalEventRecord",

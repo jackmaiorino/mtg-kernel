@@ -76,10 +76,11 @@ use mtgo_blackbox_v1::{
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
     MtgoCompetitiveSideboardSelectionV1, MtgoCompetitiveSideboardTransferDirectionV1,
     MtgoCompetitiveSideboardTransferV1, MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1,
-    MtgoDuelPrimaryActivationV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
-    MtgoPregameActionSemanticV1, MtgoRuntimeModeV1, MtgoVisibleCompetitiveSideboardCardV1,
-    MtgoVisibleCompetitiveSideboardZoneV1, ValidatedMtgoCompetitiveDeckManifestV1,
-    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
+    MtgoDuelPrimaryActivationV1, MtgoLifecycleVisibleFactKindV1,
+    MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
+    MtgoVisibleCompetitiveSideboardCardV1, MtgoVisibleCompetitiveSideboardZoneV1,
+    ValidatedMtgoCompetitiveDeckManifestV1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+    MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1094,6 +1095,10 @@ pub enum MtgoCompetitiveEventDriverStepV1 {
         match_identity_sha256: String,
         game_number: u8,
     },
+    SubmitUnchangedSideboard {
+        match_identity_sha256: String,
+        game_number: u8,
+    },
     ContinueAfterMatch,
     ResumeMatch {
         match_identity_sha256: String,
@@ -1121,6 +1126,9 @@ impl MtgoCompetitiveEventDriverDirectiveV1 {
             }
             MtgoCompetitiveEventDriverStepV1::ContinueAfterMatch => {
                 Some(MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch)
+            }
+            MtgoCompetitiveEventDriverStepV1::SubmitUnchangedSideboard { .. } => {
+                Some(MtgoCompetitiveLifecycleActionV1::SubmitSideboard)
             }
             MtgoCompetitiveEventDriverStepV1::ResumeMatch { .. } => {
                 Some(MtgoCompetitiveLifecycleActionV1::ResumeMatch)
@@ -1227,12 +1235,39 @@ impl OpaqueMtgoCompetitiveEventRuntimeV1 {
 pub fn next_competitive_event_driver_directive_v1(
     runtime: &OpaqueMtgoCompetitiveEventRuntimeV1,
 ) -> Result<MtgoCompetitiveEventDriverDirectiveV1, String> {
-    competitive_event_driver_directive_from_commitments_v1(&runtime.commitments)
+    let sideboard_no_changes_visible = runtime.current_frame.lifecycle_snapshot_v1().phase()
+        == MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+        && runtime
+            .current_frame
+            .lifecycle_snapshot_v1()
+            .visible_facts_v1()
+            .iter()
+            .any(|fact| fact.kind == MtgoLifecycleVisibleFactKindV1::SideboardNoChangesConfirmed);
+    competitive_event_driver_directive_from_state_v1(
+        &runtime.commitments,
+        sideboard_no_changes_visible,
+    )
 }
 
+#[cfg(test)]
 fn competitive_event_driver_directive_from_commitments_v1(
     runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
 ) -> Result<MtgoCompetitiveEventDriverDirectiveV1, String> {
+    competitive_event_driver_directive_from_state_v1(runtime, false)
+}
+
+fn competitive_event_driver_directive_from_state_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    sideboard_no_changes_visible: bool,
+) -> Result<MtgoCompetitiveEventDriverDirectiveV1, String> {
+    if runtime.current_phase != MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+        && sideboard_no_changes_visible
+    {
+        return Err(
+            "competitive event driver received a no-change sideboard fact outside sideboarding"
+                .to_owned(),
+        );
+    }
     if runtime.gameplay_lease_count == 0 && runtime.last_returned_gameplay_frame_sequence.is_some()
         || runtime.gameplay_lease_count > 0
             && runtime.last_returned_gameplay_frame_sequence.is_none()
@@ -1291,9 +1326,16 @@ fn competitive_event_driver_directive_from_commitments_v1(
         MtgoCompetitiveLifecyclePhaseV1::Sideboarding => {
             let (match_identity_sha256, game_number) =
                 require_competitive_event_runtime_match_and_game_v1(runtime)?;
-            MtgoCompetitiveEventDriverStepV1::ResolveSideboard {
-                match_identity_sha256,
-                game_number,
+            if sideboard_no_changes_visible {
+                MtgoCompetitiveEventDriverStepV1::SubmitUnchangedSideboard {
+                    match_identity_sha256,
+                    game_number,
+                }
+            } else {
+                MtgoCompetitiveEventDriverStepV1::ResolveSideboard {
+                    match_identity_sha256,
+                    game_number,
+                }
             }
         }
         MtgoCompetitiveLifecyclePhaseV1::MatchComplete => {
@@ -15870,6 +15912,21 @@ mod tests {
             sideboard.step,
             MtgoCompetitiveEventDriverStepV1::ResolveSideboard { game_number: 1, .. }
         ));
+        let unchanged = competitive_event_driver_directive_from_state_v1(
+            &competitive_event_runtime_commitments_fixture_v1(
+                MtgoCompetitiveLifecyclePhaseV1::Sideboarding,
+            ),
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            &unchanged.step,
+            MtgoCompetitiveEventDriverStepV1::SubmitUnchangedSideboard { game_number: 1, .. }
+        ));
+        assert_eq!(
+            unchanged.lifecycle_action_v1(),
+            Some(MtgoCompetitiveLifecycleActionV1::SubmitSideboard)
+        );
 
         let continued = competitive_event_driver_directive_from_commitments_v1(
             &competitive_event_runtime_commitments_fixture_v1(
@@ -15922,6 +15979,7 @@ mod tests {
             MtgoCompetitiveLifecyclePhaseV1::EntryReview,
         );
         assert!(competitive_event_driver_directive_from_commitments_v1(&pre_entry).is_err());
+        assert!(competitive_event_driver_directive_from_state_v1(&pre_entry, true).is_err());
 
         let mut inconsistent = competitive_event_runtime_commitments_fixture_v1(
             MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
