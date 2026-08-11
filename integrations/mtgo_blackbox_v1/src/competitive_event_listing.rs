@@ -76,6 +76,10 @@ pub struct CheckedUntrustedMtgoCompetitiveEventListingSelectionV1 {
 }
 
 impl CheckedUntrustedMtgoCompetitiveEventListingSelectionV1 {
+    pub(crate) fn raw_for_evaluation_v1(&self) -> &MtgoVisibleCompetitiveEventListingSelectionV1 {
+        &self._raw
+    }
+
     pub fn target_commitment_sha256_v1(&self) -> &str {
         &self.target_commitment_sha256
     }
