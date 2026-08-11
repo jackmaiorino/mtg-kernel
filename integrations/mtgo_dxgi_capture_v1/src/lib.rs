@@ -8,6 +8,9 @@ mod actuator;
 mod competitive_wiring_readiness;
 
 #[cfg(target_os = "windows")]
+mod competitive_model_decision_readiness;
+
+#[cfg(target_os = "windows")]
 mod competitive_operator_bootstrap;
 #[cfg(target_os = "windows")]
 mod competitive_pregame_policy;
@@ -180,6 +183,12 @@ pub use competitive_wiring_readiness::{
     check_competitive_wiring_static_readiness_v1, MtgoCompetitiveKnownWiringGapsV1,
     MtgoCompetitiveStaticReadinessStatusV1, MtgoCompetitiveWiringStaticReadinessV1,
     MTGO_COMPETITIVE_WIRING_STATIC_READINESS_SCHEMA_V1,
+};
+
+#[cfg(target_os = "windows")]
+pub use competitive_model_decision_readiness::{
+    check_competitive_model_decision_readiness_v1, MtgoCompetitiveModelDecisionReadinessV1,
+    MTGO_COMPETITIVE_MODEL_DECISION_READINESS_SCHEMA_V1,
 };
 
 #[cfg(target_os = "windows")]

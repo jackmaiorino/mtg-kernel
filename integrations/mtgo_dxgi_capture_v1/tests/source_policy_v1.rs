@@ -1476,6 +1476,9 @@ fn correspondence_review_command_emits_commitments_without_private_text_or_autho
 fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes() {
     let source = include_str!("../src/competitive_wiring_readiness.rs");
     let binary = include_str!("../src/bin/check_mtgo_competitive_wiring_readiness_v1.rs");
+    let model_source = include_str!("../src/competitive_model_decision_readiness.rs");
+    let model_binary =
+        include_str!("../src/bin/check_mtgo_competitive_model_decision_readiness_v1.rs");
 
     for required in [
         "check_competitive_wiring_static_readiness_v1",
@@ -1518,8 +1521,29 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "std::fs::read",
     ] {
         assert!(
-            !source.contains(forbidden) && !binary.contains(forbidden),
+            !source.contains(forbidden)
+                && !binary.contains(forbidden)
+                && !model_source.contains(forbidden)
+                && !model_binary.contains(forbidden),
             "readiness preflight exposes a forbidden operation: {forbidden}"
+        );
+    }
+
+    for required in [
+        "check_competitive_model_decision_readiness_v1",
+        "native_checkpoint_duel_action_interface_present: true",
+        "public_model_owned_duel_action_path_present: true",
+        "native_checkpoint_pregame_interface_present: false",
+        "public_model_owned_pregame_action_path_present: false",
+        "native_checkpoint_sideboard_interface_present: false",
+        "public_model_owned_changed_sideboard_path_present: false",
+        "public_model_owned_unchanged_sideboard_path_present: false",
+        "all_required_model_decision_surfaces_present: false",
+        "grants_live_authority: false",
+    ] {
+        assert!(
+            model_source.contains(required) || model_binary.contains(required),
+            "model-decision readiness preflight is missing: {required}"
         );
     }
 }
