@@ -19,8 +19,9 @@ use crate::probe::{
     resolve_competitive_sideboard_drag_pointer_target_v1,
     validate_classifier_backed_competitive_entry_frame_transition_v1,
     validate_classifier_backed_competitive_entry_immediate_recapture_v1,
+    MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
     MtgoClassifiedCompetitiveSideboardCommitmentsV1, MtgoCompetitiveEntryControlDryRunPartsV1,
-    MtgoCompetitiveEntryFrameTransitionCommitmentsV1,
+    MtgoCompetitiveEntryFrameTransitionCommitmentsV1, MtgoCompetitiveEntryFrameTransitionViewV1,
     MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1, MtgoCompetitiveEntryPointerTargetV1,
     MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1,
     MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1,
@@ -130,7 +131,11 @@ const RATIFIED_COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V1:
     None;
 const COMPETITIVE_ENTRY_AUTHORIZATION_RATIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-authorization-ratification-v1";
-const RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
+const COMPETITIVE_SELECTED_LISTING_ENTRY_REVIEW_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-selected-listing-entry-review-binding-v1";
+const COMPETITIVE_SELECTED_LISTING_ENTRY_AUTHORIZATION_RATIFICATION_DOMAIN_V2: &[u8] =
+    b"mtgo-competitive-selected-listing-entry-authorization-ratification-v2";
+const RATIFIED_COMPETITIVE_SELECTED_LISTING_ENTRY_AUTHORIZATION_COMMITMENT_V2: Option<&str> = None;
 const COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-match-launch-authorization-v1";
 const RATIFIED_COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
@@ -532,11 +537,12 @@ impl MtgoReviewedCompetitiveEntryRatificationCandidateV1 {
 /// require_clone::<RatifiedMtgoCompetitiveEntryAuthorizationV1>();
 /// ```
 pub struct RatifiedMtgoCompetitiveEntryAuthorizationV1 {
-    _permission_correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    _open_entry_review_authorization: RatifiedMtgoCompetitiveOpenEntryReviewAuthorizationV1,
+    _open_entry_review_visible_confirmation: OpaqueMtgoConfirmedCompetitiveEventListingOpenV1,
     _review: CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4,
-    _scope: MtgoAuthorizationScopeV1,
     #[allow(dead_code)]
     visible_account_alias: String,
+    selected_listing_binding_commitment_sha256: String,
     commitments: MtgoReviewedCompetitiveEntryRatificationCandidateV1,
 }
 
@@ -555,6 +561,10 @@ impl RatifiedMtgoCompetitiveEntryAuthorizationV1 {
 
     pub fn amount_v1(&self) -> u32 {
         self.commitments.amount
+    }
+
+    pub fn selected_listing_binding_commitment_sha256_v1(&self) -> &str {
+        &self.selected_listing_binding_commitment_sha256
     }
 
     pub fn authorizes_exact_reviewed_entry_v1(&self) -> bool {
@@ -822,6 +832,108 @@ impl OpaqueMtgoConfirmedCompetitiveOpenEntryReviewV1 {
     }
 
     pub fn safe_for_next_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoSelectedListingBoundCompetitiveEntryReviewCommitmentsV1 {
+    pub open_entry_review_authorization_ratification_commitment_sha256: String,
+    pub open_entry_review_confirmation_receipt_sha256: String,
+    pub open_entry_review_visible_confirmation_commitment_sha256: String,
+    pub control_bound_entry_review_commitment_sha256: String,
+    pub legacy_entry_ratification_candidate_commitment_sha256: String,
+    pub correspondence_sha256: String,
+    pub permission_review_commitment_sha256: String,
+    pub mode_authorization_commitment_sha256: String,
+    pub approved_account_alias_sha256: String,
+    pub navigation_profile_commitment_sha256: String,
+    pub navigation_profile_admission_commitment_sha256: String,
+    pub listing_evaluation_admission_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: String,
+    pub deck_list_sha256: String,
+    pub deck_manifest_commitment_sha256: String,
+    pub deck_format_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
+    pub entry_terms_sha256: String,
+    pub resource: MtgoCompetitiveEntryResourceV1,
+    pub amount: u32,
+    pub open_arrival_frame_id: u64,
+    pub open_arrival_frame_sequence: u64,
+    pub open_arrival_captured_at_unix_millis: u128,
+    pub entry_review_frame_id: u64,
+    pub entry_review_frame_sequence: u64,
+    pub entry_review_captured_at_unix_millis: u128,
+    pub entry_review_source_capture_commitment_sha256: String,
+    pub entry_review_window_continuity_commitment_sha256: String,
+    pub binding_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoReviewedSelectedListingCompetitiveEntryRatificationCandidateV2 {
+    pub selected_listing_binding_commitment_sha256: String,
+    pub entry_review_candidate: MtgoReviewedCompetitiveEntryRatificationCandidateV1,
+    pub ratification_commitment_sha256: String,
+}
+
+impl MtgoReviewedSelectedListingCompetitiveEntryRatificationCandidateV2 {
+    pub fn safe_for_live_input_v2(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v2(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v2(&self) -> bool {
+        false
+    }
+}
+
+/// One fresh paid Entry Review bound to the exact selected listing whose Open
+/// Entry Review click was visibly confirmed. It remains checked-untrusted and
+/// grants no entry, spending, or input authority. Production ratification is a
+/// separate empty-root step.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1;
+/// let _forged = CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1>();
+/// ```
+pub struct CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1 {
+    open_entry_review: OpaqueMtgoConfirmedCompetitiveOpenEntryReviewV1,
+    review: CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4,
+    visible_account_alias: String,
+    commitments: MtgoSelectedListingBoundCompetitiveEntryReviewCommitmentsV1,
+    ratification_candidate: MtgoReviewedSelectedListingCompetitiveEntryRatificationCandidateV2,
+}
+
+impl CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1 {
+    pub fn commitments_v1(&self) -> MtgoSelectedListingBoundCompetitiveEntryReviewCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn ratification_candidate_v2(
+        &self,
+    ) -> MtgoReviewedSelectedListingCompetitiveEntryRatificationCandidateV2 {
+        self.ratification_candidate.clone()
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
         false
     }
 }
@@ -3009,21 +3121,103 @@ pub fn review_competitive_entry_ratification_candidate_v1(
     )
 }
 
-/// Production path for separately ratifying one exact owner-reviewed League
-/// or Challenge entry. The root is deliberately empty, so current builds
-/// always reject. Even a future ratified value exposes no coordinate or input
-/// method and must still pass immediate-recapture and postcondition gates.
-pub fn ratify_competitive_entry_authorization_v1(
-    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+/// Consumes the visibly confirmed selected-listing arrival and one strictly
+/// newer, control-bound paid Entry Review. Success proves only that the two
+/// reviewed states preserve the same account, mode, client lineage, event,
+/// deck, and policy commitments. It grants no entry or spending authority.
+pub fn bind_confirmed_competitive_open_entry_review_to_entry_review_v1(
+    open_entry_review: OpaqueMtgoConfirmedCompetitiveOpenEntryReviewV1,
     review: CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4,
     visible_account_alias: String,
+) -> Result<CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1, String> {
+    let open_authorization = open_entry_review._authorization.commitments_v1();
+    let open_confirmation = open_entry_review.commitments_v1();
+    let open_visible = open_entry_review._visible_confirmation.commitments_v1();
+    let (open_after_navigation, open_after_window_continuity_commitment_sha256) = open_entry_review
+        ._visible_confirmation
+        .after_source_lineage_v1()?;
+    let source_identity = &review
+        ._classifier_bound_review
+        ._source_bound_review
+        ._source_identity;
+    let entry_review_lineage = source_identity.source_lineage_v1()?;
+    let entry_review_candidate = review_competitive_entry_ratification_candidate_v1(
+        &open_entry_review._authorization._permission_correspondence,
+        &review,
+        &visible_account_alias,
+    )?;
+    let commitments = bind_selected_listing_to_competitive_entry_review_from_parts_v1(
+        &open_authorization,
+        &open_confirmation,
+        &open_visible,
+        &open_after_navigation,
+        &open_after_window_continuity_commitment_sha256,
+        &entry_review_lineage,
+        &entry_review_candidate,
+    )?;
+    let ratification_candidate =
+        selected_listing_competitive_entry_ratification_candidate_from_parts_v2(
+            &commitments,
+            &entry_review_candidate,
+        )?;
+    Ok(
+        CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1 {
+            open_entry_review,
+            review,
+            visible_account_alias,
+            commitments,
+            ratification_candidate,
+        },
+    )
+}
+
+/// Returns non-authorizing telemetry for the exact selected-listing-bound paid
+/// entry candidate. This is the only candidate accepted by the v2 production
+/// ratifier.
+pub fn review_competitive_entry_ratification_candidate_from_selected_listing_v2(
+    review: &CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1,
+) -> MtgoReviewedSelectedListingCompetitiveEntryRatificationCandidateV2 {
+    review.ratification_candidate.clone()
+}
+
+/// Production path for one exact selected-listing-bound League or Challenge
+/// entry. Its compile-time root is empty, so current builds always reject. Even
+/// a future ratified value must still pass immediate recapture and visible
+/// postcondition gates before one paid-entry click can occur.
+pub fn ratify_competitive_entry_authorization_from_selected_listing_v2(
+    review: CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1,
 ) -> Result<RatifiedMtgoCompetitiveEntryAuthorizationV1, String> {
-    ratify_competitive_entry_authorization_with_commitment_v1(
-        correspondence,
+    let candidate = review.ratification_candidate.clone();
+    if RATIFIED_COMPETITIVE_SELECTED_LISTING_ENTRY_AUTHORIZATION_COMMITMENT_V2
+        != Some(candidate.ratification_commitment_sha256.as_str())
+    {
+        return Err(
+            "the exact selected-listing-bound competitive entry is not ratified in this build"
+                .to_owned(),
+        );
+    }
+    let CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1 {
+        open_entry_review,
         review,
         visible_account_alias,
-        RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1,
-    )
+        commitments,
+        ratification_candidate: _,
+    } = review;
+    let OpaqueMtgoConfirmedCompetitiveOpenEntryReviewV1 {
+        _authorization: open_entry_review_authorization,
+        _visible_confirmation: open_entry_review_visible_confirmation,
+        commitments: _,
+    } = open_entry_review;
+    let mut entry_commitments = candidate.entry_review_candidate;
+    entry_commitments.ratification_commitment_sha256 = candidate.ratification_commitment_sha256;
+    Ok(RatifiedMtgoCompetitiveEntryAuthorizationV1 {
+        _open_entry_review_authorization: open_entry_review_authorization,
+        _open_entry_review_visible_confirmation: open_entry_review_visible_confirmation,
+        _review: review,
+        visible_account_alias,
+        selected_listing_binding_commitment_sha256: commitments.binding_commitment_sha256,
+        commitments: entry_commitments,
+    })
 }
 
 /// Computes the complete non-authorizing production candidate for all five
@@ -8193,6 +8387,350 @@ fn competitive_duel_gesture_ratification_candidate_from_parts_v1(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn bind_selected_listing_to_competitive_entry_review_from_parts_v1(
+    open_authorization: &MtgoReviewedCompetitiveOpenEntryReviewRatificationCandidateV1,
+    open_confirmation: &MtgoConfirmedCompetitiveOpenEntryReviewCommitmentsV1,
+    open_visible: &MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1,
+    open_after_navigation: &MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
+    open_after_window_continuity_commitment_sha256: &str,
+    entry_review_lineage: &MtgoCompetitiveEntryFrameTransitionViewV1,
+    entry_review_candidate: &MtgoReviewedCompetitiveEntryRatificationCandidateV1,
+) -> Result<MtgoSelectedListingBoundCompetitiveEntryReviewCommitmentsV1, String> {
+    let open_after_capture = &open_after_navigation.source_frame.source_capture;
+    if open_confirmation.authorization_ratification_commitment_sha256
+        != open_authorization.ratification_commitment_sha256
+        || open_confirmation.visible_confirmation != *open_visible
+        || open_confirmation.event_kind != open_authorization.event_kind
+        || open_confirmation.event_kind != open_visible.event_kind
+        || open_confirmation.event_identity_sha256 != open_visible.event_identity_sha256
+        || open_confirmation.after_frame_id != open_visible.after_frame_id
+        || open_confirmation.after_frame_sequence != open_visible.after_frame_sequence
+        || open_confirmation.after_captured_at_unix_millis
+            != open_visible.after_captured_at_unix_millis
+        || open_visible.after_capture_commitment_sha256
+            != open_after_capture.capture_commitment_sha256
+        || open_visible.after_classification_result_commitment_sha256
+            != open_after_navigation.classification_result_commitment_sha256
+        || open_visible.after_lifecycle_snapshot_commitment_sha256
+            != open_after_navigation.lifecycle_snapshot_commitment_sha256
+        || open_visible.after_frame_id != open_after_navigation.frame_id
+        || open_visible.after_frame_sequence != open_after_navigation.frame_sequence
+        || open_visible.after_captured_at_unix_millis != open_after_capture.captured_at_unix_millis
+        || open_after_navigation.phase != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || open_after_navigation.event_kind != open_authorization.event_kind
+    {
+        return Err(
+            "selected-listing entry bridge changed the confirmed Open Entry Review arrival"
+                .to_owned(),
+        );
+    }
+    if open_after_navigation.source_frame.profile_commitment_sha256
+        != open_authorization.navigation_profile_commitment_sha256
+        || open_after_navigation
+            .source_frame
+            .profile_admission_commitment_sha256
+            != open_authorization.navigation_profile_admission_commitment_sha256
+        || open_after_navigation
+            .source_frame
+            .approved_account_alias_sha256
+            != open_authorization.approved_account_alias_sha256
+        || entry_review_lineage.navigation_profile_commitment_sha256
+            != open_authorization.navigation_profile_commitment_sha256
+        || entry_review_lineage.navigation_profile_admission_commitment_sha256
+            != open_authorization.navigation_profile_admission_commitment_sha256
+        || entry_review_lineage.approved_account_alias_sha256
+            != open_authorization.approved_account_alias_sha256
+        || entry_review_lineage.runtime_identity_commitment_sha256
+            != open_after_navigation.runtime_identity_commitment_sha256
+        || entry_review_lineage.window_continuity_commitment_sha256
+            != open_after_window_continuity_commitment_sha256
+    {
+        return Err(
+            "selected-listing entry bridge changed account, profile, runtime, process, window, geometry, or output"
+                .to_owned(),
+        );
+    }
+    if entry_review_lineage.phase != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || entry_review_lineage.event_kind != open_authorization.event_kind
+        || entry_review_lineage.event_identity_sha256 != open_visible.event_identity_sha256
+        || entry_review_lineage.frame_id == open_visible.after_frame_id
+        || entry_review_lineage.frame_sequence <= open_visible.after_frame_sequence
+        || entry_review_lineage.captured_at_unix_millis
+            <= open_visible.after_captured_at_unix_millis
+        || entry_review_lineage.capture_commitment_sha256
+            == open_visible.after_capture_commitment_sha256
+    {
+        return Err(
+            "selected-listing entry bridge requires a strictly newer visible Entry Review for the same exact event"
+                .to_owned(),
+        );
+    }
+    if entry_review_candidate.correspondence_sha256 != open_authorization.correspondence_sha256
+        || entry_review_candidate.permission_review_commitment_sha256
+            != open_authorization.permission_review_commitment_sha256
+        || entry_review_candidate.mode_authorization_commitment_sha256
+            != open_authorization.mode_authorization_commitment_sha256
+        || entry_review_candidate.account_alias_sha256
+            != open_authorization.approved_account_alias_sha256
+        || entry_review_candidate.event_kind != open_authorization.event_kind
+        || entry_review_candidate.event_identity_sha256 != open_visible.event_identity_sha256
+        || entry_review_candidate.deck_manifest_sha256
+            != open_authorization.deck_manifest_commitment_sha256
+        || entry_review_candidate.deck_format_sha256 != open_authorization.deck_format_sha256
+        || entry_review_candidate.policy_deployment_commitment_sha256
+            != open_authorization.policy_deployment_commitment_sha256
+        || entry_review_candidate.source_capture_commitment_sha256
+            != entry_review_lineage.capture_commitment_sha256
+    {
+        return Err(
+            "selected-listing entry bridge changed correspondence, account, mode, event, deck, policy, or source capture"
+                .to_owned(),
+        );
+    }
+    for digest in [
+        open_authorization.ratification_commitment_sha256.as_str(),
+        open_authorization.correspondence_sha256.as_str(),
+        open_authorization
+            .permission_review_commitment_sha256
+            .as_str(),
+        open_authorization
+            .mode_authorization_commitment_sha256
+            .as_str(),
+        open_authorization.approved_account_alias_sha256.as_str(),
+        open_authorization
+            .navigation_profile_commitment_sha256
+            .as_str(),
+        open_authorization
+            .navigation_profile_admission_commitment_sha256
+            .as_str(),
+        open_authorization
+            .listing_evaluation_admission_commitment_sha256
+            .as_str(),
+        open_authorization.deck_list_sha256.as_str(),
+        open_authorization.deck_manifest_commitment_sha256.as_str(),
+        open_authorization.deck_format_sha256.as_str(),
+        open_authorization
+            .policy_deployment_commitment_sha256
+            .as_str(),
+        open_confirmation.confirmation_receipt_sha256.as_str(),
+        open_visible.visible_confirmation_commitment_sha256.as_str(),
+        entry_review_candidate
+            .control_bound_review_commitment_sha256
+            .as_str(),
+        entry_review_candidate
+            .ratification_commitment_sha256
+            .as_str(),
+        entry_review_candidate.entry_terms_sha256.as_str(),
+        entry_review_lineage.capture_commitment_sha256.as_str(),
+        open_after_window_continuity_commitment_sha256,
+    ] {
+        if !is_sha256_v2(digest) {
+            return Err("selected-listing entry bridge contains an invalid commitment".to_owned());
+        }
+    }
+    let event_kind = competitive_event_kind_tag_v1(open_authorization.event_kind);
+    let resource: &[u8] = match entry_review_candidate.resource {
+        MtgoCompetitiveEntryResourceV1::NoCost => b"no_cost",
+        MtgoCompetitiveEntryResourceV1::ExistingEventToken => b"existing_event_token",
+        MtgoCompetitiveEntryResourceV1::ExistingPlayPoints => b"existing_play_points",
+        MtgoCompetitiveEntryResourceV1::ExistingEventTickets => b"existing_event_tickets",
+    };
+    let binding_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_SELECTED_LISTING_ENTRY_REVIEW_BINDING_DOMAIN_V1,
+        &[
+            open_authorization.ratification_commitment_sha256.as_bytes(),
+            open_confirmation.confirmation_receipt_sha256.as_bytes(),
+            open_visible.visible_confirmation_commitment_sha256.as_bytes(),
+            entry_review_candidate
+                .control_bound_review_commitment_sha256
+                .as_bytes(),
+            entry_review_candidate
+                .ratification_commitment_sha256
+                .as_bytes(),
+            open_authorization.correspondence_sha256.as_bytes(),
+            open_authorization
+                .permission_review_commitment_sha256
+                .as_bytes(),
+            open_authorization
+                .mode_authorization_commitment_sha256
+                .as_bytes(),
+            open_authorization.approved_account_alias_sha256.as_bytes(),
+            open_authorization
+                .navigation_profile_commitment_sha256
+                .as_bytes(),
+            open_authorization
+                .navigation_profile_admission_commitment_sha256
+                .as_bytes(),
+            open_authorization
+                .listing_evaluation_admission_commitment_sha256
+                .as_bytes(),
+            event_kind,
+            open_visible.event_identity_sha256.as_bytes(),
+            open_authorization.deck_list_sha256.as_bytes(),
+            open_authorization
+                .deck_manifest_commitment_sha256
+                .as_bytes(),
+            open_authorization.deck_format_sha256.as_bytes(),
+            open_authorization
+                .policy_deployment_commitment_sha256
+                .as_bytes(),
+            entry_review_candidate.entry_terms_sha256.as_bytes(),
+            resource,
+            entry_review_candidate.amount.to_be_bytes().as_slice(),
+            open_visible.after_frame_id.to_be_bytes().as_slice(),
+            open_visible.after_frame_sequence.to_be_bytes().as_slice(),
+            open_visible
+                .after_captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
+            entry_review_lineage.frame_id.to_be_bytes().as_slice(),
+            entry_review_lineage.frame_sequence.to_be_bytes().as_slice(),
+            entry_review_lineage
+                .captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
+            entry_review_lineage.capture_commitment_sha256.as_bytes(),
+            open_after_window_continuity_commitment_sha256.as_bytes(),
+            b"selected_listing_visible_arrival_to_fresh_exact_paid_entry_review_no_entry_no_spending_no_input",
+        ],
+    );
+    Ok(
+        MtgoSelectedListingBoundCompetitiveEntryReviewCommitmentsV1 {
+            open_entry_review_authorization_ratification_commitment_sha256: open_authorization
+                .ratification_commitment_sha256
+                .clone(),
+            open_entry_review_confirmation_receipt_sha256: open_confirmation
+                .confirmation_receipt_sha256
+                .clone(),
+            open_entry_review_visible_confirmation_commitment_sha256: open_visible
+                .visible_confirmation_commitment_sha256
+                .clone(),
+            control_bound_entry_review_commitment_sha256: entry_review_candidate
+                .control_bound_review_commitment_sha256
+                .clone(),
+            legacy_entry_ratification_candidate_commitment_sha256: entry_review_candidate
+                .ratification_commitment_sha256
+                .clone(),
+            correspondence_sha256: open_authorization.correspondence_sha256.clone(),
+            permission_review_commitment_sha256: open_authorization
+                .permission_review_commitment_sha256
+                .clone(),
+            mode_authorization_commitment_sha256: open_authorization
+                .mode_authorization_commitment_sha256
+                .clone(),
+            approved_account_alias_sha256: open_authorization.approved_account_alias_sha256.clone(),
+            navigation_profile_commitment_sha256: open_authorization
+                .navigation_profile_commitment_sha256
+                .clone(),
+            navigation_profile_admission_commitment_sha256: open_authorization
+                .navigation_profile_admission_commitment_sha256
+                .clone(),
+            listing_evaluation_admission_commitment_sha256: open_authorization
+                .listing_evaluation_admission_commitment_sha256
+                .clone(),
+            event_kind: open_authorization.event_kind,
+            event_identity_sha256: open_visible.event_identity_sha256.clone(),
+            deck_list_sha256: open_authorization.deck_list_sha256.clone(),
+            deck_manifest_commitment_sha256: open_authorization
+                .deck_manifest_commitment_sha256
+                .clone(),
+            deck_format_sha256: open_authorization.deck_format_sha256.clone(),
+            policy_deployment_commitment_sha256: open_authorization
+                .policy_deployment_commitment_sha256
+                .clone(),
+            entry_terms_sha256: entry_review_candidate.entry_terms_sha256.clone(),
+            resource: entry_review_candidate.resource,
+            amount: entry_review_candidate.amount,
+            open_arrival_frame_id: open_visible.after_frame_id,
+            open_arrival_frame_sequence: open_visible.after_frame_sequence,
+            open_arrival_captured_at_unix_millis: open_visible.after_captured_at_unix_millis,
+            entry_review_frame_id: entry_review_lineage.frame_id,
+            entry_review_frame_sequence: entry_review_lineage.frame_sequence,
+            entry_review_captured_at_unix_millis: entry_review_lineage.captured_at_unix_millis,
+            entry_review_source_capture_commitment_sha256: entry_review_lineage
+                .capture_commitment_sha256
+                .clone(),
+            entry_review_window_continuity_commitment_sha256:
+                open_after_window_continuity_commitment_sha256.to_owned(),
+            binding_commitment_sha256,
+        },
+    )
+}
+
+fn selected_listing_competitive_entry_ratification_candidate_from_parts_v2(
+    binding: &MtgoSelectedListingBoundCompetitiveEntryReviewCommitmentsV1,
+    entry_review_candidate: &MtgoReviewedCompetitiveEntryRatificationCandidateV1,
+) -> Result<MtgoReviewedSelectedListingCompetitiveEntryRatificationCandidateV2, String> {
+    if binding.legacy_entry_ratification_candidate_commitment_sha256
+        != entry_review_candidate.ratification_commitment_sha256
+        || binding.control_bound_entry_review_commitment_sha256
+            != entry_review_candidate.control_bound_review_commitment_sha256
+        || binding.correspondence_sha256 != entry_review_candidate.correspondence_sha256
+        || binding.permission_review_commitment_sha256
+            != entry_review_candidate.permission_review_commitment_sha256
+        || binding.mode_authorization_commitment_sha256
+            != entry_review_candidate.mode_authorization_commitment_sha256
+        || binding.approved_account_alias_sha256 != entry_review_candidate.account_alias_sha256
+        || binding.event_kind != entry_review_candidate.event_kind
+        || binding.event_identity_sha256 != entry_review_candidate.event_identity_sha256
+        || binding.deck_manifest_commitment_sha256 != entry_review_candidate.deck_manifest_sha256
+        || binding.deck_format_sha256 != entry_review_candidate.deck_format_sha256
+        || binding.policy_deployment_commitment_sha256
+            != entry_review_candidate.policy_deployment_commitment_sha256
+        || binding.entry_terms_sha256 != entry_review_candidate.entry_terms_sha256
+        || binding.resource != entry_review_candidate.resource
+        || binding.amount != entry_review_candidate.amount
+    {
+        return Err(
+            "selected-listing entry ratification changed the bound paid Entry Review".to_owned(),
+        );
+    }
+    if !is_sha256_v2(&binding.binding_commitment_sha256)
+        || !is_sha256_v2(&entry_review_candidate.ratification_commitment_sha256)
+    {
+        return Err(
+            "selected-listing entry ratification contains an invalid commitment".to_owned(),
+        );
+    }
+    let event_kind = competitive_event_kind_tag_v1(binding.event_kind);
+    let resource: &[u8] = match binding.resource {
+        MtgoCompetitiveEntryResourceV1::NoCost => b"no_cost",
+        MtgoCompetitiveEntryResourceV1::ExistingEventToken => b"existing_event_token",
+        MtgoCompetitiveEntryResourceV1::ExistingPlayPoints => b"existing_play_points",
+        MtgoCompetitiveEntryResourceV1::ExistingEventTickets => b"existing_event_tickets",
+    };
+    let ratification_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_SELECTED_LISTING_ENTRY_AUTHORIZATION_RATIFICATION_DOMAIN_V2,
+        &[
+            binding.binding_commitment_sha256.as_bytes(),
+            entry_review_candidate
+                .ratification_commitment_sha256
+                .as_bytes(),
+            binding.open_entry_review_authorization_ratification_commitment_sha256.as_bytes(),
+            binding.open_entry_review_confirmation_receipt_sha256.as_bytes(),
+            binding.approved_account_alias_sha256.as_bytes(),
+            event_kind,
+            binding.event_identity_sha256.as_bytes(),
+            binding.deck_list_sha256.as_bytes(),
+            binding.deck_manifest_commitment_sha256.as_bytes(),
+            binding.deck_format_sha256.as_bytes(),
+            binding.policy_deployment_commitment_sha256.as_bytes(),
+            binding.entry_terms_sha256.as_bytes(),
+            resource,
+            binding.amount.to_be_bytes().as_slice(),
+            b"exact_selected_listing_bound_owner_reviewed_entry_requires_fresh_recapture_and_visible_postcondition",
+        ],
+    );
+    Ok(
+        MtgoReviewedSelectedListingCompetitiveEntryRatificationCandidateV2 {
+            selected_listing_binding_commitment_sha256: binding.binding_commitment_sha256.clone(),
+            entry_review_candidate: entry_review_candidate.clone(),
+            ratification_commitment_sha256,
+        },
+    )
+}
+
 fn competitive_entry_ratification_candidate_from_parts_v1(
     correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
     visible_account_alias: &str,
@@ -8566,34 +9104,6 @@ fn competitive_entry_preparation_from_commitments_v1(
         amount: authorization.amount,
         immediate_frame_id: recapture.immediate_frame_id,
         immediate_frame_sequence: recapture.immediate_frame_sequence,
-    })
-}
-
-fn ratify_competitive_entry_authorization_with_commitment_v1(
-    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
-    review: CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4,
-    visible_account_alias: String,
-    ratified_commitment_sha256: Option<&str>,
-) -> Result<RatifiedMtgoCompetitiveEntryAuthorizationV1, String> {
-    let candidate = review_competitive_entry_ratification_candidate_v1(
-        &correspondence,
-        &review,
-        &visible_account_alias,
-    )?;
-    if ratified_commitment_sha256 != Some(candidate.ratification_commitment_sha256.as_str()) {
-        return Err(
-            "the exact owner-reviewed competitive entry is not ratified in this build".to_owned(),
-        );
-    }
-    let scope = correspondence
-        .checked_untrusted_scope_for_mode_v1(candidate.event_kind)
-        .map_err(|error| format!("derive ratified competitive entry scope: {error}"))?;
-    Ok(RatifiedMtgoCompetitiveEntryAuthorizationV1 {
-        _permission_correspondence: correspondence,
-        _review: review,
-        _scope: scope,
-        visible_account_alias,
-        commitments: candidate,
     })
 }
 
@@ -11891,6 +12401,159 @@ mod tests {
         }
     }
 
+    #[allow(clippy::type_complexity)]
+    fn selected_listing_entry_bridge_parts_v1(
+        event_kind: MtgoCompetitiveEventKindV1,
+        resource: MtgoCompetitiveEntryResourceV1,
+        amount: u32,
+    ) -> (
+        MtgoReviewedCompetitiveOpenEntryReviewRatificationCandidateV1,
+        MtgoConfirmedCompetitiveOpenEntryReviewCommitmentsV1,
+        MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1,
+        MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
+        String,
+        MtgoCompetitiveEntryFrameTransitionViewV1,
+        MtgoReviewedCompetitiveEntryRatificationCandidateV1,
+    ) {
+        let (correspondence, source, source_identity, entry_authorization, review) =
+            competitive_entry_ratification_parts_v1(event_kind, resource, amount);
+        let entry = competitive_entry_ratification_candidate_from_parts_v1(
+            &correspondence,
+            "UnbuckledPie",
+            &source,
+            &source_identity,
+            &entry_authorization,
+            &review,
+        )
+        .unwrap();
+        let open_authorization = MtgoReviewedCompetitiveOpenEntryReviewRatificationCandidateV1 {
+            correspondence_sha256: entry.correspondence_sha256.clone(),
+            permission_review_commitment_sha256: entry.permission_review_commitment_sha256.clone(),
+            mode_authorization_commitment_sha256: entry
+                .mode_authorization_commitment_sha256
+                .clone(),
+            approved_account_alias_sha256: entry.account_alias_sha256.clone(),
+            navigation_profile_commitment_sha256: "6".repeat(64),
+            navigation_profile_admission_commitment_sha256: "7".repeat(64),
+            listing_evaluation_ratification_commitment_sha256: "8".repeat(64),
+            listing_evaluation_admission_commitment_sha256: "9".repeat(64),
+            deck_list_sha256: "a".repeat(64),
+            deck_manifest_commitment_sha256: entry.deck_manifest_sha256.clone(),
+            deck_format_sha256: entry.deck_format_sha256.clone(),
+            policy_deployment_commitment_sha256: entry.policy_deployment_commitment_sha256.clone(),
+            open_review_scope_commitment_sha256: "b".repeat(64),
+            event_kind,
+            ratification_commitment_sha256: "c".repeat(64),
+        };
+        let open_visible = MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1 {
+            source_preparation_commitment_sha256: "d".repeat(64),
+            arrival_commitment_sha256: "e".repeat(64),
+            after_capture_commitment_sha256: "5".repeat(64),
+            after_classification_result_commitment_sha256: "f".repeat(64),
+            after_lifecycle_snapshot_commitment_sha256: "0".repeat(64),
+            visible_confirmation_commitment_sha256: "1".repeat(64),
+            event_kind,
+            event_identity_sha256: entry.event_identity_sha256.clone(),
+            after_frame_id: 16,
+            after_frame_sequence: 40,
+            after_captured_at_unix_millis: 400,
+        };
+        let open_confirmation = MtgoConfirmedCompetitiveOpenEntryReviewCommitmentsV1 {
+            input_receipt_sha256: "2".repeat(64),
+            preparation_commitment_sha256: "3".repeat(64),
+            authorization_ratification_commitment_sha256: open_authorization
+                .ratification_commitment_sha256
+                .clone(),
+            visible_confirmation: open_visible.clone(),
+            confirmation_receipt_sha256: "4".repeat(64),
+            event_kind,
+            event_identity_sha256: entry.event_identity_sha256.clone(),
+            after_frame_id: open_visible.after_frame_id,
+            after_frame_sequence: open_visible.after_frame_sequence,
+            after_captured_at_unix_millis: open_visible.after_captured_at_unix_millis,
+        };
+        let open_after_navigation = MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1 {
+            source_frame: crate::probe::MtgoAdmittedCompetitiveNavigationFrameCommitmentsV1 {
+                profile_commitment_sha256: open_authorization
+                    .navigation_profile_commitment_sha256
+                    .clone(),
+                profile_admission_commitment_sha256: open_authorization
+                    .navigation_profile_admission_commitment_sha256
+                    .clone(),
+                approved_account_alias_sha256: open_authorization
+                    .approved_account_alias_sha256
+                    .clone(),
+                frame_profile_binding_sha256: "2".repeat(64),
+                source_capture: crate::probe::MtgoDxgiFrameCommitmentsV3 {
+                    capture_commitment_sha256: open_visible.after_capture_commitment_sha256.clone(),
+                    canonical_bgra8_sha256: "3".repeat(64),
+                    preview_png_sha256: "4".repeat(64),
+                    canonical_width: 1240,
+                    canonical_height: 740,
+                    client_rect_desktop_px: crate::SignedRectV1 {
+                        left: 100,
+                        top: 100,
+                        right: 1340,
+                        bottom: 840,
+                    },
+                    captured_at_unix_millis: open_visible.after_captured_at_unix_millis,
+                },
+            },
+            runtime_identity_commitment_sha256: "8".repeat(64),
+            request_commitment_sha256: "6".repeat(64),
+            classifier_response_sha256: "7".repeat(64),
+            lifecycle_snapshot_commitment_sha256: open_visible
+                .after_lifecycle_snapshot_commitment_sha256
+                .clone(),
+            prediction_commitment_sha256: "9".repeat(64),
+            classification_result_commitment_sha256: open_visible
+                .after_classification_result_commitment_sha256
+                .clone(),
+            event_kind,
+            phase: MtgoCompetitiveLifecyclePhaseV1::EntryReview,
+            frame_id: open_visible.after_frame_id,
+            frame_sequence: open_visible.after_frame_sequence,
+        };
+        let window_continuity_commitment_sha256 = "a".repeat(64);
+        let entry_review_lineage = MtgoCompetitiveEntryFrameTransitionViewV1 {
+            navigation_profile_commitment_sha256: open_authorization
+                .navigation_profile_commitment_sha256
+                .clone(),
+            navigation_profile_admission_commitment_sha256: open_authorization
+                .navigation_profile_admission_commitment_sha256
+                .clone(),
+            approved_account_alias_sha256: open_authorization.approved_account_alias_sha256.clone(),
+            runtime_identity_commitment_sha256: open_after_navigation
+                .runtime_identity_commitment_sha256
+                .clone(),
+            window_continuity_commitment_sha256: window_continuity_commitment_sha256.clone(),
+            source_identity_commitment_sha256: Some(
+                entry.source_identity_commitment_sha256.clone(),
+            ),
+            capture_commitment_sha256: entry.source_capture_commitment_sha256.clone(),
+            canonical_bgra8_sha256: "b".repeat(64),
+            classification_result_commitment_sha256: entry
+                .source_navigation_classification_result_commitment_sha256
+                .clone(),
+            lifecycle_snapshot_commitment_sha256: source.snapshot_commitment_sha256().to_owned(),
+            event_kind,
+            phase: MtgoCompetitiveLifecyclePhaseV1::EntryReview,
+            event_identity_sha256: entry.event_identity_sha256.clone(),
+            frame_id: source.frame_id_v1(),
+            frame_sequence: source.frame_sequence(),
+            captured_at_unix_millis: 410,
+        };
+        (
+            open_authorization,
+            open_confirmation,
+            open_visible,
+            open_after_navigation,
+            window_continuity_commitment_sha256,
+            entry_review_lineage,
+            entry,
+        )
+    }
+
     fn ratified_competitive_pass_v1(
         event_kind: MtgoCompetitiveEventKindV1,
     ) -> RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
@@ -13214,7 +13877,122 @@ mod tests {
             commitments.push(candidate.ratification_commitment_sha256);
         }
         assert_ne!(commitments[0], commitments[1]);
-        assert!(RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1.is_none());
+        assert!(RATIFIED_COMPETITIVE_SELECTED_LISTING_ENTRY_AUTHORIZATION_COMMITMENT_V2.is_none());
+    }
+
+    #[test]
+    fn selected_listing_entry_bridge_binds_league_and_challenge_without_authority() {
+        let mut ratifications = Vec::new();
+        for (event_kind, resource, amount) in [
+            (
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+            ),
+            (
+                MtgoCompetitiveEventKindV1::Challenge,
+                MtgoCompetitiveEntryResourceV1::ExistingEventTickets,
+                25,
+            ),
+        ] {
+            let (open, confirmation, visible, after, window, lineage, entry) =
+                selected_listing_entry_bridge_parts_v1(event_kind, resource, amount);
+            let binding = bind_selected_listing_to_competitive_entry_review_from_parts_v1(
+                &open,
+                &confirmation,
+                &visible,
+                &after,
+                &window,
+                &lineage,
+                &entry,
+            )
+            .unwrap();
+            assert_eq!(binding.event_kind, event_kind);
+            assert_eq!(binding.resource, resource);
+            assert_eq!(binding.amount, amount);
+            assert_eq!(binding.open_arrival_frame_sequence, 40);
+            assert_eq!(binding.entry_review_frame_sequence, 41);
+            assert_eq!(binding.binding_commitment_sha256.len(), 64);
+            let candidate =
+                selected_listing_competitive_entry_ratification_candidate_from_parts_v2(
+                    &binding, &entry,
+                )
+                .unwrap();
+            assert_eq!(
+                candidate.selected_listing_binding_commitment_sha256,
+                binding.binding_commitment_sha256
+            );
+            assert_eq!(candidate.ratification_commitment_sha256.len(), 64);
+            assert!(!candidate.safe_for_live_input_v2());
+            assert!(!candidate.permits_event_entry_v2());
+            assert!(!candidate.permits_spending_v2());
+            ratifications.push(candidate.ratification_commitment_sha256);
+        }
+        assert_ne!(ratifications[0], ratifications[1]);
+        assert!(RATIFIED_COMPETITIVE_SELECTED_LISTING_ENTRY_AUTHORIZATION_COMMITMENT_V2.is_none());
+    }
+
+    #[test]
+    fn selected_listing_entry_bridge_rejects_identity_deck_window_and_order_drift() {
+        let (open, confirmation, visible, after, window, lineage, entry) =
+            selected_listing_entry_bridge_parts_v1(
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+            );
+        let check = |candidate_open: &MtgoReviewedCompetitiveOpenEntryReviewRatificationCandidateV1,
+                     candidate_visible: &MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1,
+                     candidate_after: &MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
+                     candidate_window: &str,
+                     candidate_lineage: &MtgoCompetitiveEntryFrameTransitionViewV1,
+                     candidate_entry: &MtgoReviewedCompetitiveEntryRatificationCandidateV1| {
+            let mut candidate_confirmation = confirmation.clone();
+            candidate_confirmation.visible_confirmation = candidate_visible.clone();
+            candidate_confirmation.event_identity_sha256 =
+                candidate_visible.event_identity_sha256.clone();
+            candidate_confirmation.after_frame_id = candidate_visible.after_frame_id;
+            candidate_confirmation.after_frame_sequence = candidate_visible.after_frame_sequence;
+            candidate_confirmation.after_captured_at_unix_millis =
+                candidate_visible.after_captured_at_unix_millis;
+            bind_selected_listing_to_competitive_entry_review_from_parts_v1(
+                candidate_open,
+                &candidate_confirmation,
+                candidate_visible,
+                candidate_after,
+                candidate_window,
+                candidate_lineage,
+                candidate_entry,
+            )
+        };
+
+        let mut wrong_event = entry.clone();
+        wrong_event.event_identity_sha256 = "f".repeat(64);
+        assert!(check(&open, &visible, &after, &window, &lineage, &wrong_event).is_err());
+
+        let mut wrong_deck = entry.clone();
+        wrong_deck.deck_manifest_sha256 = "f".repeat(64);
+        assert!(check(&open, &visible, &after, &window, &lineage, &wrong_deck).is_err());
+
+        let mut wrong_account = lineage.clone();
+        wrong_account.approved_account_alias_sha256 = "f".repeat(64);
+        assert!(check(&open, &visible, &after, &window, &wrong_account, &entry).is_err());
+
+        assert!(check(&open, &visible, &after, &"f".repeat(64), &lineage, &entry,).is_err());
+
+        let mut stale = lineage.clone();
+        stale.frame_sequence = visible.after_frame_sequence;
+        assert!(check(&open, &visible, &after, &window, &stale, &entry).is_err());
+
+        let binding = check(&open, &visible, &after, &window, &lineage, &entry).unwrap();
+        let mut changed_entry = entry.clone();
+        changed_entry.amount += 1;
+        assert!(
+            selected_listing_competitive_entry_ratification_candidate_from_parts_v2(
+                &binding,
+                &changed_entry,
+            )
+            .is_err()
+        );
     }
 
     #[test]

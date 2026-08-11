@@ -1,4 +1,5 @@
 use super::{
+    competitive_entry_window_continuity_commitment_for_frame_v1,
     competitive_navigation_classifier_assets_manifest_bytes_v1,
     invoke_verified_competitive_event_listing_classifier_process_v1,
     resolve_admitted_competitive_navigation_pointer_target_v1, sha256_hex_v1,
@@ -292,6 +293,7 @@ pub(crate) struct OpaqueMtgoConfirmedCompetitiveEventListingOpenV1 {
     _evaluation: AdmittedMtgoCompetitiveEventListingEvaluationV1,
     _after_frame: OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
     _after_navigation_classification: OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    after_navigation: MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
     _arrival: CheckedUntrustedMtgoCompetitiveEntryReviewArrivalV1,
     commitments: MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1,
 }
@@ -301,6 +303,23 @@ impl OpaqueMtgoConfirmedCompetitiveEventListingOpenV1 {
         &self,
     ) -> MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1 {
         self.commitments.clone()
+    }
+
+    pub(crate) fn after_source_lineage_v1(
+        &self,
+    ) -> Result<
+        (
+            MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
+            String,
+        ),
+        String,
+    > {
+        Ok((
+            self.after_navigation.clone(),
+            competitive_entry_window_continuity_commitment_for_frame_v1(
+                &self._after_frame.source_frame,
+            )?,
+        ))
     }
 }
 
@@ -565,6 +584,7 @@ pub(crate) fn confirm_opaque_competitive_event_listing_opened_v1(
         );
     }
     let after_captured_at_unix_millis = after_raw.manifest.captured_at_unix_millis;
+    let after_navigation = after_commitments.clone();
     let (after_frame, after_lifecycle, after_navigation_classification) =
         after.into_event_listing_parts_v1();
     let OpaqueMtgoPreparedCompetitiveEventListingOpenSourceV1 {
@@ -631,6 +651,7 @@ pub(crate) fn confirm_opaque_competitive_event_listing_opened_v1(
         _evaluation,
         _after_frame: after_frame,
         _after_navigation_classification: after_navigation_classification,
+        after_navigation,
         _arrival: arrival,
         commitments,
     })

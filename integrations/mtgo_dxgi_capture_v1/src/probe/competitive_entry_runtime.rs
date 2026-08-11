@@ -203,23 +203,23 @@ impl OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1 {
 }
 
 #[derive(Clone)]
-struct MtgoCompetitiveEntryFrameTransitionViewV1 {
-    navigation_profile_commitment_sha256: String,
-    navigation_profile_admission_commitment_sha256: String,
-    approved_account_alias_sha256: String,
-    runtime_identity_commitment_sha256: String,
-    window_continuity_commitment_sha256: String,
-    source_identity_commitment_sha256: Option<String>,
-    capture_commitment_sha256: String,
-    canonical_bgra8_sha256: String,
-    classification_result_commitment_sha256: String,
-    lifecycle_snapshot_commitment_sha256: String,
-    event_kind: MtgoCompetitiveEventKindV1,
-    phase: MtgoCompetitiveLifecyclePhaseV1,
-    event_identity_sha256: String,
-    frame_id: u64,
-    frame_sequence: u64,
-    captured_at_unix_millis: u128,
+pub(crate) struct MtgoCompetitiveEntryFrameTransitionViewV1 {
+    pub(crate) navigation_profile_commitment_sha256: String,
+    pub(crate) navigation_profile_admission_commitment_sha256: String,
+    pub(crate) approved_account_alias_sha256: String,
+    pub(crate) runtime_identity_commitment_sha256: String,
+    pub(crate) window_continuity_commitment_sha256: String,
+    pub(crate) source_identity_commitment_sha256: Option<String>,
+    pub(crate) capture_commitment_sha256: String,
+    pub(crate) canonical_bgra8_sha256: String,
+    pub(crate) classification_result_commitment_sha256: String,
+    pub(crate) lifecycle_snapshot_commitment_sha256: String,
+    pub(crate) event_kind: MtgoCompetitiveEventKindV1,
+    pub(crate) phase: MtgoCompetitiveLifecyclePhaseV1,
+    pub(crate) event_identity_sha256: String,
+    pub(crate) frame_id: u64,
+    pub(crate) frame_sequence: u64,
+    pub(crate) captured_at_unix_millis: u128,
 }
 
 /// One human-reviewed visible Confirm Entry control bound to the exact opaque
@@ -315,6 +315,12 @@ impl OpaqueMtgoCompetitiveEntryReviewIdentityV1 {
 
     pub(crate) fn event_label_rect_client_px_v1(&self) -> &MtgoRectPxV1 {
         &self._event_label_rect_client_px
+    }
+
+    pub(crate) fn source_lineage_v1(
+        &self,
+    ) -> Result<MtgoCompetitiveEntryFrameTransitionViewV1, String> {
+        entry_review_transition_view_v1(self)
     }
 }
 
@@ -1295,32 +1301,8 @@ fn classified_transition_view_v1(
     {
         return Err("competitive entry transition frame identity is incomplete".to_owned());
     }
-    let output = canonical_json_v1(&frame.manifest.output, "entry transition output identity")?;
-    let pre = &frame.manifest.pre;
-    let window_continuity_commitment_sha256 = commitment_v1(
-        COMPETITIVE_ENTRY_WINDOW_CONTINUITY_DOMAIN_V1,
-        &[
-            pre.hwnd.to_be_bytes().as_slice(),
-            pre.process_id.to_be_bytes().as_slice(),
-            pre.process_start_filetime_100ns.to_be_bytes().as_slice(),
-            pre.process_image.as_bytes(),
-            pre.executable_sha256.as_bytes(),
-            pre.signer_thumbprint.as_bytes(),
-            pre.signer_subject_sha256.as_bytes(),
-            pre.title.as_bytes(),
-            pre.dpi.to_be_bytes().as_slice(),
-            &canonical_json_v1(
-                &pre.client_rect_desktop_px,
-                "entry transition client rectangle",
-            )?,
-            &canonical_json_v1(
-                &pre.extended_frame_rect_desktop_px,
-                "entry transition extended-frame rectangle",
-            )?,
-            &output,
-            b"same_process_window_geometry_and_output_no_entry_no_spending_no_input",
-        ],
-    );
+    let window_continuity_commitment_sha256 =
+        competitive_entry_window_continuity_commitment_for_frame_v1(frame)?;
     Ok(MtgoCompetitiveEntryFrameTransitionViewV1 {
         navigation_profile_commitment_sha256: classification
             .source_frame
@@ -1365,6 +1347,37 @@ fn classified_transition_view_v1(
             .source_capture
             .captured_at_unix_millis,
     })
+}
+
+pub(crate) fn competitive_entry_window_continuity_commitment_for_frame_v1(
+    frame: &OpaqueMtgoDxgiFrameCandidateV3,
+) -> Result<String, String> {
+    let output = canonical_json_v1(&frame.manifest.output, "entry transition output identity")?;
+    let pre = &frame.manifest.pre;
+    Ok(commitment_v1(
+        COMPETITIVE_ENTRY_WINDOW_CONTINUITY_DOMAIN_V1,
+        &[
+            pre.hwnd.to_be_bytes().as_slice(),
+            pre.process_id.to_be_bytes().as_slice(),
+            pre.process_start_filetime_100ns.to_be_bytes().as_slice(),
+            pre.process_image.as_bytes(),
+            pre.executable_sha256.as_bytes(),
+            pre.signer_thumbprint.as_bytes(),
+            pre.signer_subject_sha256.as_bytes(),
+            pre.title.as_bytes(),
+            pre.dpi.to_be_bytes().as_slice(),
+            &canonical_json_v1(
+                &pre.client_rect_desktop_px,
+                "entry transition client rectangle",
+            )?,
+            &canonical_json_v1(
+                &pre.extended_frame_rect_desktop_px,
+                "entry transition extended-frame rectangle",
+            )?,
+            &output,
+            b"same_process_window_geometry_and_output_no_entry_no_spending_no_input",
+        ],
+    ))
 }
 
 fn bind_competitive_entry_frame_transition_views_v1(

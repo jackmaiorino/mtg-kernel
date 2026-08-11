@@ -1002,7 +1002,7 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
         "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2: Option<&str> = None",
         "RATIFIED_COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V1",
-        "RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_SELECTED_LISTING_ENTRY_AUTHORIZATION_COMMITMENT_V2: Option<&str> = None",
         "RATIFIED_COMPETITIVE_LIFECYCLE_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
         "RATIFIED_COMPETITIVE_OPEN_ENTRY_REVIEW_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
         "RATIFIED_COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
@@ -1022,7 +1022,11 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "review_competitive_entry_attended_v3",
         "review_competitive_entry_attended_v4",
         "review_competitive_entry_ratification_candidate_v1",
-        "ratify_competitive_entry_authorization_v1",
+        "bind_confirmed_competitive_open_entry_review_to_entry_review_v1",
+        "review_competitive_entry_ratification_candidate_from_selected_listing_v2",
+        "ratify_competitive_entry_authorization_from_selected_listing_v2",
+        "CheckedUntrustedMtgoSelectedListingBoundCompetitiveEntryReviewV1",
+        "selected_listing_visible_arrival_to_fresh_exact_paid_entry_review_no_entry_no_spending_no_input",
         "prepare_ratified_competitive_entry_v1",
         "execute_prepared_competitive_entry_v1",
         "confirm_pending_competitive_entry_v1",
@@ -1181,6 +1185,7 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
             "live actuator is missing required guard: {required}"
         );
     }
+    assert!(!source.contains("pub fn ratify_competitive_entry_authorization_v1("));
     for required in [
         "bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1",
         "bind_classifier_backed_competitive_entry_control_and_deck_dry_run_v2",

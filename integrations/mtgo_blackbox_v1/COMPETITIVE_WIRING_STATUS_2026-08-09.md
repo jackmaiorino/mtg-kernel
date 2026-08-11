@@ -31,6 +31,14 @@ The move-only preparation consumes one freshly captured evaluated listing and re
 
 The current capture crate lists 153 all-target tests. All 131 non-ignored unit tests, the review-command test, all 19 source-policy tests, all 145 doctests, and strict no-dependency clippy pass. Two opt-in live tests remain ignored. This update performed no live capture, classification, scoring, event entry, spending, or input.
 
+### Selected listing to paid Entry Review lineage update
+
+The paid-entry path now consumes the visibly confirmed selected-listing arrival instead of allowing an unrelated Entry Review capture to begin a separate lineage. `bind_confirmed_competitive_open_entry_review_to_entry_review_v1` requires a strictly newer Entry Review frame from the same approved account, navigation profile and admission, classifier runtime, MTGO process and window incarnation, geometry, display output, League or Challenge mode, exact event identity, deck-manifest commitment, format, and policy deployment. The binding also retains the selected deck-list commitment and exact visible resource terms.
+
+The prior direct paid-entry production constructor has been removed from the public API. Only `ratify_competitive_entry_authorization_from_selected_listing_v2` can create the move-only entry authorization, and its independent compile-time root remains empty. The binding, v2 candidate, and ratified value expose no coordinates and grant no entry, spending, or input authority before ratification. After any future ratification, the existing immediate-recapture, two-second freshness, one-click shared-gate, and strictly newer entered-waiting postcondition checks still apply.
+
+The current capture crate lists 155 all-target tests. All 133 non-ignored unit tests, the review-command test, all 19 source-policy tests, all 147 doctests, and strict no-dependency clippy pass. Two opt-in live tests remain ignored. This update performed no live capture, classification, scoring, event entry, spending, or input.
+
 ## Current evidence
 
 | Wiring segment | Current evidence | Status | Missing proof or implementation |
