@@ -1,20 +1,233 @@
 use super::{
-    sha256_hex_v1, MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
+    competitive_navigation_classifier_assets_manifest_bytes_v1,
+    invoke_verified_competitive_event_listing_classifier_process_v1, sha256_hex_v1,
+    verify_runtime_identity_now_v1, MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
     OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
 };
 use mtgo_blackbox_v1::{
+    competitive_event_listing_target_commitment_v1,
     validate_visible_competitive_event_listing_selection_v1,
-    visible_frame_region_content_sha256_v1, CheckedUntrustedMtgoCompetitiveEventListingSelectionV1,
+    visible_frame_region_content_sha256_v1, AdmittedMtgoCompetitiveEventListingEvaluationV1,
+    CheckedUntrustedMtgoCompetitiveEventListingSelectionV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitiveEventListingTargetV1, MtgoSizePxV1,
+    MtgoCompetitiveEventListingTargetV1, MtgoCompetitiveLifecyclePhaseV1, MtgoSizePxV1,
     MtgoVisibleCompetitiveEventListingSelectionV1, ValidatedMtgoCompetitiveDeckManifestV1,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::time::Duration;
 
 const SOURCE_BOUND_EVENT_LISTING_DOMAIN_V1: &[u8] =
     b"mtgo-source-bound-competitive-event-listing-v1";
+const EVENT_LISTING_CLASSIFIER_REQUEST_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-listing-classifier-request-v1";
+const EVENT_LISTING_CLASSIFIER_RESULT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-listing-classifier-result-v1";
+const EVALUATED_EVENT_LISTING_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-evaluated-competitive-event-listing-binding-v1";
+const MAX_EVENT_LISTING_REQUEST_HEADER_BYTES_V1: usize = 1024 * 1024;
+const MAX_EVENT_LISTING_ASSETS_MANIFEST_BYTES_V1: usize = 16 * 1024 * 1024;
+
+/// Canonical header followed by exact classifier assets and tightly packed
+/// BGRA8 pixels in the private selected-listing parser protocol.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCompetitiveEventListingClassifierRequestHeaderV1 {
+    pub schema_version: u32,
+    pub protocol: String,
+    pub parser_scope: String,
+    pub frame_id: u64,
+    pub frame_sequence: u64,
+    pub captured_at_unix_millis: u128,
+    pub canonical_width: u32,
+    pub canonical_height: u32,
+    pub canonical_stride: u32,
+    pub canonical_byte_length: u64,
+    pub canonical_bgra8_sha256: String,
+    pub source_capture_commitment_sha256: String,
+    pub source_frame_profile_binding_sha256: String,
+    pub source_navigation_classification_result_commitment_sha256: String,
+    pub source_lifecycle_snapshot_commitment_sha256: String,
+    pub navigation_profile_commitment_sha256: String,
+    pub navigation_profile_admission_commitment_sha256: String,
+    pub approved_account_alias_sha256: String,
+    pub runtime_identity_commitment_sha256: String,
+    pub classifier_binary_sha256: String,
+    pub classifier_assets_manifest_sha256: String,
+    pub target_commitment_sha256: String,
+    pub target: MtgoCompetitiveEventListingTargetV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCompetitiveEventListingClassifierProcessResponseV1 {
+    pub schema_version: u32,
+    pub request_commitment_sha256: String,
+    pub selection: MtgoVisibleCompetitiveEventListingSelectionV1,
+}
+
+/// Structurally checked request bytes. This value retains no pixels and does
+/// not prove that the bytes came from the opaque capture path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedUntrustedMtgoCompetitiveEventListingClassifierRequestV1 {
+    header: MtgoCompetitiveEventListingClassifierRequestHeaderV1,
+    request_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoCompetitiveEventListingClassifierRequestV1 {
+    pub fn header_v1(&self) -> &MtgoCompetitiveEventListingClassifierRequestHeaderV1 {
+        &self.header
+    }
+
+    pub fn request_commitment_sha256_v1(&self) -> &str {
+        &self.request_commitment_sha256
+    }
+
+    pub fn safe_for_live_classification_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_open_entry_review_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoClassifiedCompetitiveEventListingCommitmentsV1 {
+    pub source_listing: MtgoSourceBoundCompetitiveEventListingCommitmentsV1,
+    pub runtime_identity_commitment_sha256: String,
+    pub request_commitment_sha256: String,
+    pub classifier_response_sha256: String,
+    pub classification_result_commitment_sha256: String,
+}
+
+/// One source-bound Event Browser selection produced by the exact
+/// navigation-profile-pinned parser process. It remains unratified and has no
+/// action conversion.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoClassifiedCompetitiveEventListingV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoClassifiedCompetitiveEventListingV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoClassifiedCompetitiveEventListingV1;
+/// fn cannot_control(value: &OpaqueMtgoClassifiedCompetitiveEventListingV1) {
+///     let _ = value.canonical_bgra8();
+///     let _ = value.control_rect_client_px();
+///     let _ = value.open_entry_review();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct OpaqueMtgoClassifiedCompetitiveEventListingV1 {
+    _source_listing: OpaqueMtgoSourceBoundCompetitiveEventListingV1,
+    commitments: MtgoClassifiedCompetitiveEventListingCommitmentsV1,
+}
+
+impl OpaqueMtgoClassifiedCompetitiveEventListingV1 {
+    pub fn commitments_v1(&self) -> MtgoClassifiedCompetitiveEventListingCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.commitments.source_listing.event_kind
+    }
+
+    pub fn safe_for_live_classification_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_open_entry_review_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoEvaluatedCompetitiveEventListingCommitmentsV1 {
+    pub classified_listing: MtgoClassifiedCompetitiveEventListingCommitmentsV1,
+    pub evaluation_ratification_commitment_sha256: String,
+    pub evaluation_admission_commitment_sha256: String,
+    pub evaluated_binding_commitment_sha256: String,
+}
+
+/// A classified listing bound to the exact separately admitted two-mode
+/// evaluation. Capture admission remains insufficient for live classification,
+/// and this wrapper still has no Open Entry Review or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoEvaluatedCompetitiveEventListingV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoEvaluatedCompetitiveEventListingV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoEvaluatedCompetitiveEventListingV1;
+/// fn cannot_control(value: &OpaqueMtgoEvaluatedCompetitiveEventListingV1) {
+///     let _ = value.canonical_bgra8();
+///     let _ = value.open_entry_review();
+///     let _ = value.enter_event();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct OpaqueMtgoEvaluatedCompetitiveEventListingV1 {
+    _classified: OpaqueMtgoClassifiedCompetitiveEventListingV1,
+    _evaluation: AdmittedMtgoCompetitiveEventListingEvaluationV1,
+    commitments: MtgoEvaluatedCompetitiveEventListingCommitmentsV1,
+}
+
+impl OpaqueMtgoEvaluatedCompetitiveEventListingV1 {
+    pub fn commitments_v1(&self) -> MtgoEvaluatedCompetitiveEventListingCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_live_classification_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_open_entry_review_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
 
 /// Coordinate-free telemetry for one selected Event Browser listing whose
 /// declared regions were rehashed from an opaque classified navigation frame.
@@ -92,6 +305,390 @@ impl OpaqueMtgoSourceBoundCompetitiveEventListingV1 {
     pub fn safe_for_input_v1(&self) -> bool {
         false
     }
+}
+
+/// Checks the canonical selected-listing parser request, exact asset bytes,
+/// target identity, and exact BGRA8 payload. Success remains structural and
+/// non-authorizing.
+pub fn check_untrusted_competitive_event_listing_classifier_request_v1(
+    canonical_header_json: &[u8],
+    classifier_assets_manifest: &[u8],
+    canonical_bgra8: &[u8],
+    deck: &ValidatedMtgoCompetitiveDeckManifestV1,
+) -> Result<CheckedUntrustedMtgoCompetitiveEventListingClassifierRequestV1, String> {
+    if canonical_header_json.is_empty()
+        || canonical_header_json.len() > MAX_EVENT_LISTING_REQUEST_HEADER_BYTES_V1
+        || classifier_assets_manifest.is_empty()
+        || classifier_assets_manifest.len() > MAX_EVENT_LISTING_ASSETS_MANIFEST_BYTES_V1
+    {
+        return Err(
+            "event-listing classifier request header or assets are outside bounds".to_owned(),
+        );
+    }
+    let header: MtgoCompetitiveEventListingClassifierRequestHeaderV1 =
+        serde_json::from_slice(canonical_header_json)
+            .map_err(|error| format!("parse event-listing classifier request header: {error}"))?;
+    let canonical = serde_json::to_vec(&header)
+        .map_err(|error| format!("serialize event-listing classifier request header: {error}"))?;
+    if canonical != canonical_header_json {
+        return Err("event-listing classifier request header is not canonical JSON".to_owned());
+    }
+    if header.schema_version != 1
+        || header.protocol != "mtgo_visible_competitive_event_listing_v1"
+        || header.parser_scope
+            != "league_and_challenge_selected_listing_exact_semantics_checked_untrusted_v1"
+        || header.frame_id == 0
+        || header.frame_sequence == 0
+        || header.captured_at_unix_millis == 0
+        || header.canonical_width == 0
+        || header.canonical_height == 0
+        || header.canonical_width > 16_384
+        || header.canonical_height > 16_384
+    {
+        return Err("event-listing classifier request identity is invalid".to_owned());
+    }
+    let expected_stride = header
+        .canonical_width
+        .checked_mul(4)
+        .ok_or("event-listing classifier stride overflow")?;
+    let expected_length = u64::from(expected_stride)
+        .checked_mul(u64::from(header.canonical_height))
+        .ok_or("event-listing classifier byte length overflow")?;
+    if header.canonical_stride != expected_stride
+        || header.canonical_byte_length != expected_length
+        || usize::try_from(expected_length).ok() != Some(canonical_bgra8.len())
+        || header.canonical_bgra8_sha256 != sha256_hex_v1(canonical_bgra8)
+        || header.classifier_assets_manifest_sha256 != sha256_hex_v1(classifier_assets_manifest)
+    {
+        return Err("event-listing classifier pixels or assets differ from the header".to_owned());
+    }
+    for value in [
+        header.canonical_bgra8_sha256.as_str(),
+        header.source_capture_commitment_sha256.as_str(),
+        header.source_frame_profile_binding_sha256.as_str(),
+        header
+            .source_navigation_classification_result_commitment_sha256
+            .as_str(),
+        header.source_lifecycle_snapshot_commitment_sha256.as_str(),
+        header.navigation_profile_commitment_sha256.as_str(),
+        header
+            .navigation_profile_admission_commitment_sha256
+            .as_str(),
+        header.approved_account_alias_sha256.as_str(),
+        header.runtime_identity_commitment_sha256.as_str(),
+        header.classifier_binary_sha256.as_str(),
+        header.classifier_assets_manifest_sha256.as_str(),
+        header.target_commitment_sha256.as_str(),
+    ] {
+        if !looks_like_lower_sha256_v1(value) {
+            return Err(
+                "event-listing classifier request contains an invalid commitment".to_owned(),
+            );
+        }
+    }
+    let target_commitment_sha256 =
+        competitive_event_listing_target_commitment_v1(&header.target, deck)
+            .map_err(|error| format!("validate event-listing classifier target: {error}"))?;
+    if header.target_commitment_sha256 != target_commitment_sha256
+        || header.target.approved_account_alias_sha256 != header.approved_account_alias_sha256
+        || header.target.deck_list_sha256 != deck.deck_list_sha256()
+        || header.target.deck_manifest_commitment_sha256 != deck.manifest_commitment_sha256()
+        || header.target.deck_format_sha256 != deck.format_sha256()
+    {
+        return Err(
+            "event-listing classifier target differs from the exact account or deck".to_owned(),
+        );
+    }
+    let request_commitment_sha256 = commitment_v1(
+        EVENT_LISTING_CLASSIFIER_REQUEST_DOMAIN_V1,
+        &[
+            canonical_header_json,
+            classifier_assets_manifest,
+            canonical_bgra8,
+        ],
+    );
+    Ok(
+        CheckedUntrustedMtgoCompetitiveEventListingClassifierRequestV1 {
+            header,
+            request_commitment_sha256,
+        },
+    )
+}
+
+/// Runs the exact navigation-profile-pinned binary in selected-listing mode
+/// over one opaque Event Browser frame. It accepts only the exact caller target
+/// and rehashes all lifecycle, label, and enabled-control regions before
+/// returning a move-only checked-untrusted result.
+pub fn classify_checked_untrusted_competitive_event_listing_v1(
+    source: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    deck: &ValidatedMtgoCompetitiveDeckManifestV1,
+    target: MtgoCompetitiveEventListingTargetV1,
+    runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoClassifiedCompetitiveEventListingV1, String> {
+    if !(100..=60_000).contains(&timeout_ms) {
+        return Err("event-listing classifier timeout must be between 100 and 60000 ms".to_owned());
+    }
+    let source_commitments = source.commitments_v1();
+    let runtime_commitments = runtime.commitments_v1();
+    if source.phase_v1() != MtgoCompetitiveLifecyclePhaseV1::EventBrowser
+        || source.lifecycle_snapshot_v1().phase() != MtgoCompetitiveLifecyclePhaseV1::EventBrowser
+        || source_commitments.runtime_identity_commitment_sha256
+            != runtime_commitments.runtime_identity_commitment_sha256
+        || source_commitments.source_frame.profile_commitment_sha256
+            != runtime_commitments.navigation_profile_commitment_sha256
+        || source_commitments
+            .source_frame
+            .profile_admission_commitment_sha256
+            != runtime_commitments.navigation_profile_admission_commitment_sha256
+        || source_commitments
+            .source_frame
+            .approved_account_alias_sha256
+            != runtime_commitments.approved_account_alias_sha256
+        || target.approved_account_alias_sha256
+            != source_commitments
+                .source_frame
+                .approved_account_alias_sha256
+        || target.event_kind != source_commitments.event_kind
+    {
+        return Err(
+            "event-listing source, runtime, profile, account, target, or phase differs".to_owned(),
+        );
+    }
+    let target_commitment_sha256 = competitive_event_listing_target_commitment_v1(&target, deck)
+        .map_err(|error| format!("validate selected-listing target: {error}"))?;
+    verify_runtime_identity_now_v1(runtime)?;
+
+    let raw_source = &source._source_frame.source_frame;
+    let width = raw_source.manifest.frame.canonical_width;
+    let height = raw_source.manifest.frame.canonical_height;
+    let stride = width
+        .checked_mul(4)
+        .ok_or("event-listing classifier canonical stride overflow")?;
+    let byte_length = u64::try_from(raw_source.canonical_bgra8.len())
+        .map_err(|_| "event-listing classifier canonical byte length overflow")?;
+    if raw_source.manifest.frame.canonical_stride != stride
+        || raw_source.manifest.frame.canonical_byte_length != raw_source.canonical_bgra8.len()
+        || raw_source.manifest.frame.canonical_bgra8_sha256
+            != sha256_hex_v1(&raw_source.canonical_bgra8)
+        || raw_source.capture_commitment_sha256
+            != source_commitments
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+    {
+        return Err(
+            "opaque event-listing source pixels no longer match capture metadata".to_owned(),
+        );
+    }
+    let assets = competitive_navigation_classifier_assets_manifest_bytes_v1(runtime);
+    let header = MtgoCompetitiveEventListingClassifierRequestHeaderV1 {
+        schema_version: 1,
+        protocol: "mtgo_visible_competitive_event_listing_v1".to_owned(),
+        parser_scope: "league_and_challenge_selected_listing_exact_semantics_checked_untrusted_v1"
+            .to_owned(),
+        frame_id: source_commitments.frame_id,
+        frame_sequence: source_commitments.frame_sequence,
+        captured_at_unix_millis: raw_source.manifest.captured_at_unix_millis,
+        canonical_width: width,
+        canonical_height: height,
+        canonical_stride: stride,
+        canonical_byte_length: byte_length,
+        canonical_bgra8_sha256: raw_source.manifest.frame.canonical_bgra8_sha256.clone(),
+        source_capture_commitment_sha256: raw_source.capture_commitment_sha256.clone(),
+        source_frame_profile_binding_sha256: source_commitments
+            .source_frame
+            .frame_profile_binding_sha256
+            .clone(),
+        source_navigation_classification_result_commitment_sha256: source_commitments
+            .classification_result_commitment_sha256
+            .clone(),
+        source_lifecycle_snapshot_commitment_sha256: source_commitments
+            .lifecycle_snapshot_commitment_sha256
+            .clone(),
+        navigation_profile_commitment_sha256: source_commitments
+            .source_frame
+            .profile_commitment_sha256
+            .clone(),
+        navigation_profile_admission_commitment_sha256: source_commitments
+            .source_frame
+            .profile_admission_commitment_sha256
+            .clone(),
+        approved_account_alias_sha256: source_commitments
+            .source_frame
+            .approved_account_alias_sha256
+            .clone(),
+        runtime_identity_commitment_sha256: runtime_commitments
+            .runtime_identity_commitment_sha256
+            .clone(),
+        classifier_binary_sha256: runtime_commitments.classifier_binary_sha256.clone(),
+        classifier_assets_manifest_sha256: runtime_commitments
+            .classifier_assets_manifest_sha256
+            .clone(),
+        target_commitment_sha256,
+        target: target.clone(),
+    };
+    let header_json = serde_json::to_vec(&header)
+        .map_err(|error| format!("serialize event-listing classifier request: {error}"))?;
+    let checked_request = check_untrusted_competitive_event_listing_classifier_request_v1(
+        &header_json,
+        assets,
+        &raw_source.canonical_bgra8,
+        deck,
+    )?;
+    let request_commitment_sha256 = checked_request.request_commitment_sha256_v1().to_owned();
+    let response_bytes = invoke_verified_competitive_event_listing_classifier_process_v1(
+        runtime,
+        &header_json,
+        assets,
+        &raw_source.canonical_bgra8,
+        Duration::from_millis(u64::from(timeout_ms)),
+    )?;
+    verify_runtime_identity_now_v1(runtime)?;
+    let response =
+        parse_event_listing_classifier_response_v1(&response_bytes, &request_commitment_sha256)?;
+    if response.selection.frame_id != source_commitments.frame_id
+        || response.selection.frame_sequence != source_commitments.frame_sequence
+        || response.selection.frame_sha256
+            != source_commitments
+                .source_frame
+                .source_capture
+                .canonical_bgra8_sha256
+        || response
+            .selection
+            .source_lifecycle_snapshot_commitment_sha256
+            != source_commitments.lifecycle_snapshot_commitment_sha256
+        || response.selection.target_commitment_sha256 != header.target_commitment_sha256
+    {
+        return Err(
+            "event-listing classifier response changed the exact source or target".to_owned(),
+        );
+    }
+    let classifier_response_sha256 = sha256_hex_v1(&response_bytes);
+    let source_listing = bind_classified_navigation_frame_to_competitive_event_listing_v1(
+        source,
+        deck,
+        target,
+        response.selection,
+    )?;
+    let source_listing_commitments = source_listing.commitments_v1();
+    let classification_result_commitment_sha256 = commitment_v1(
+        EVENT_LISTING_CLASSIFIER_RESULT_DOMAIN_V1,
+        &[
+            source_listing_commitments
+                .source_navigation
+                .classification_result_commitment_sha256
+                .as_bytes(),
+            source_listing_commitments
+                .source_binding_commitment_sha256
+                .as_bytes(),
+            runtime_commitments
+                .runtime_identity_commitment_sha256
+                .as_bytes(),
+            request_commitment_sha256.as_bytes(),
+            classifier_response_sha256.as_bytes(),
+            source_listing_commitments
+                .selection_commitment_sha256
+                .as_bytes(),
+            b"bounded_selected_listing_parser_unratified_no_open_review_no_entry_no_spending_no_input",
+        ],
+    );
+    Ok(OpaqueMtgoClassifiedCompetitiveEventListingV1 {
+        commitments: MtgoClassifiedCompetitiveEventListingCommitmentsV1 {
+            source_listing: source_listing_commitments,
+            runtime_identity_commitment_sha256: runtime_commitments
+                .runtime_identity_commitment_sha256,
+            request_commitment_sha256,
+            classifier_response_sha256,
+            classification_result_commitment_sha256,
+        },
+        _source_listing: source_listing,
+    })
+}
+
+/// Consumes one parser result and the separately admitted exact two-mode
+/// evaluation only when profile, account, deck, format, and policy identities
+/// all match. This is an evaluation binding, not an actuation grant.
+pub fn bind_classified_competitive_event_listing_to_evaluation_v1(
+    classified: OpaqueMtgoClassifiedCompetitiveEventListingV1,
+    evaluation: AdmittedMtgoCompetitiveEventListingEvaluationV1,
+) -> Result<OpaqueMtgoEvaluatedCompetitiveEventListingV1, String> {
+    let classified_commitments = classified.commitments_v1();
+    let listing = &classified_commitments.source_listing;
+    let evaluated = evaluation.commitments_v1();
+    if evaluated.profile_commitment_sha256
+        != listing
+            .source_navigation
+            .source_frame
+            .profile_commitment_sha256
+        || evaluated.approved_account_alias_sha256
+            != listing
+                .source_navigation
+                .source_frame
+                .approved_account_alias_sha256
+        || evaluated.deck_list_sha256 != listing.deck_list_sha256
+        || evaluated.deck_manifest_commitment_sha256 != listing.deck_manifest_commitment_sha256
+        || evaluated.deck_format_sha256 != listing.deck_format_sha256
+        || evaluated.policy_deployment_commitment_sha256
+            != listing.policy_deployment_commitment_sha256
+    {
+        return Err(
+            "classified event listing does not match the admitted evaluation identity".to_owned(),
+        );
+    }
+    let evaluation_admission_commitment_sha256 =
+        evaluation.admission_commitment_sha256_v1().to_owned();
+    let evaluated_binding_commitment_sha256 = commitment_v1(
+        EVALUATED_EVENT_LISTING_BINDING_DOMAIN_V1,
+        &[
+            classified_commitments
+                .classification_result_commitment_sha256
+                .as_bytes(),
+            evaluated.ratification_commitment_sha256.as_bytes(),
+            evaluation_admission_commitment_sha256.as_bytes(),
+            listing.target_commitment_sha256.as_bytes(),
+            listing.selection_commitment_sha256.as_bytes(),
+            b"evaluated_listing_still_no_open_review_no_entry_no_spending_no_input",
+        ],
+    );
+    Ok(OpaqueMtgoEvaluatedCompetitiveEventListingV1 {
+        commitments: MtgoEvaluatedCompetitiveEventListingCommitmentsV1 {
+            classified_listing: classified_commitments,
+            evaluation_ratification_commitment_sha256: evaluated.ratification_commitment_sha256,
+            evaluation_admission_commitment_sha256,
+            evaluated_binding_commitment_sha256,
+        },
+        _classified: classified,
+        _evaluation: evaluation,
+    })
+}
+
+fn parse_event_listing_classifier_response_v1(
+    response_bytes: &[u8],
+    request_commitment_sha256: &str,
+) -> Result<MtgoCompetitiveEventListingClassifierProcessResponseV1, String> {
+    let response: MtgoCompetitiveEventListingClassifierProcessResponseV1 =
+        serde_json::from_slice(response_bytes).map_err(|error| {
+            format!("event-listing classifier response is not one strict JSON value: {error}")
+        })?;
+    let canonical = serde_json::to_vec(&response)
+        .map_err(|error| format!("serialize event-listing classifier response: {error}"))?;
+    if canonical != response_bytes {
+        return Err("event-listing classifier response is not canonical JSON".to_owned());
+    }
+    if response.schema_version != 1
+        || response.request_commitment_sha256 != request_commitment_sha256
+    {
+        return Err("event-listing classifier response does not bind the exact request".to_owned());
+    }
+    Ok(response)
+}
+
+fn looks_like_lower_sha256_v1(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// Recomputes the lifecycle frame, every lifecycle fact, and both selected
@@ -435,6 +1032,42 @@ mod tests {
         }
     }
 
+    fn request_header_v1(
+        fixture: &FixtureV1,
+        assets: &[u8],
+    ) -> MtgoCompetitiveEventListingClassifierRequestHeaderV1 {
+        MtgoCompetitiveEventListingClassifierRequestHeaderV1 {
+            schema_version: 1,
+            protocol: "mtgo_visible_competitive_event_listing_v1".to_owned(),
+            parser_scope:
+                "league_and_challenge_selected_listing_exact_semantics_checked_untrusted_v1"
+                    .to_owned(),
+            frame_id: fixture.raw.frame_id,
+            frame_sequence: fixture.raw.frame_sequence,
+            captured_at_unix_millis: 1_786_400_000_000,
+            canonical_width: 32,
+            canonical_height: 16,
+            canonical_stride: 128,
+            canonical_byte_length: 2_048,
+            canonical_bgra8_sha256: sha256_hex_v1(&fixture.pixels),
+            source_capture_commitment_sha256: digest('6'),
+            source_frame_profile_binding_sha256: digest('7'),
+            source_navigation_classification_result_commitment_sha256: digest('8'),
+            source_lifecycle_snapshot_commitment_sha256: fixture
+                .raw
+                .source_lifecycle_snapshot_commitment_sha256
+                .clone(),
+            navigation_profile_commitment_sha256: digest('9'),
+            navigation_profile_admission_commitment_sha256: digest('b'),
+            approved_account_alias_sha256: fixture.target.approved_account_alias_sha256.clone(),
+            runtime_identity_commitment_sha256: digest('c'),
+            classifier_binary_sha256: digest('d'),
+            classifier_assets_manifest_sha256: sha256_hex_v1(assets),
+            target_commitment_sha256: fixture.raw.target_commitment_sha256.clone(),
+            target: fixture.target.clone(),
+        }
+    }
+
     #[test]
     fn exact_current_pixels_create_only_a_checked_untrusted_selection() {
         let fixture = fixture_v1();
@@ -525,5 +1158,115 @@ mod tests {
         .err()
         .unwrap()
         .contains("approved account"));
+    }
+
+    #[test]
+    fn canonical_parser_request_binds_pixels_assets_target_and_deck_without_authority() {
+        let fixture = fixture_v1();
+        let assets = b"event-listing-assets-v1";
+        let header = request_header_v1(&fixture, assets);
+        let bytes = serde_json::to_vec(&header).unwrap();
+        let checked = check_untrusted_competitive_event_listing_classifier_request_v1(
+            &bytes,
+            assets,
+            &fixture.pixels,
+            &fixture.deck,
+        )
+        .unwrap();
+        assert_eq!(checked.header_v1(), &header);
+        assert!(!checked.safe_for_live_classification_v1());
+        assert!(!checked.permits_open_entry_review_v1());
+        assert!(!checked.permits_event_entry_v1());
+        assert!(!checked.permits_spending_v1());
+        assert!(!checked.safe_for_input_v1());
+    }
+
+    #[test]
+    fn parser_request_rejects_noncanonical_pixels_assets_and_target_substitution() {
+        let fixture = fixture_v1();
+        let assets = b"event-listing-assets-v1";
+        let header = request_header_v1(&fixture, assets);
+        let bytes = serde_json::to_vec(&header).unwrap();
+
+        let mut padded = bytes.clone();
+        padded.push(b' ');
+        assert!(
+            check_untrusted_competitive_event_listing_classifier_request_v1(
+                &padded,
+                assets,
+                &fixture.pixels,
+                &fixture.deck,
+            )
+            .err()
+            .unwrap()
+            .contains("canonical JSON")
+        );
+
+        let mut pixels = fixture.pixels.clone();
+        pixels[0] ^= 0xff;
+        assert!(
+            check_untrusted_competitive_event_listing_classifier_request_v1(
+                &bytes,
+                assets,
+                &pixels,
+                &fixture.deck,
+            )
+            .err()
+            .unwrap()
+            .contains("pixels or assets")
+        );
+
+        assert!(
+            check_untrusted_competitive_event_listing_classifier_request_v1(
+                &bytes,
+                b"changed-assets-v1",
+                &fixture.pixels,
+                &fixture.deck,
+            )
+            .err()
+            .unwrap()
+            .contains("pixels or assets")
+        );
+
+        let mut changed = header;
+        changed.target.event_identity_sha256 = digest('e');
+        let changed_bytes = serde_json::to_vec(&changed).unwrap();
+        assert!(
+            check_untrusted_competitive_event_listing_classifier_request_v1(
+                &changed_bytes,
+                assets,
+                &fixture.pixels,
+                &fixture.deck,
+            )
+            .err()
+            .unwrap()
+            .contains("target differs")
+        );
+    }
+
+    #[test]
+    fn parser_response_requires_one_canonical_exact_request_value() {
+        let fixture = fixture_v1();
+        let request_commitment = digest('f');
+        let response = MtgoCompetitiveEventListingClassifierProcessResponseV1 {
+            schema_version: 1,
+            request_commitment_sha256: request_commitment.clone(),
+            selection: fixture.raw,
+        };
+        let bytes = serde_json::to_vec(&response).unwrap();
+        assert_eq!(
+            parse_event_listing_classifier_response_v1(&bytes, &request_commitment).unwrap(),
+            response
+        );
+
+        let mut padded = bytes.clone();
+        padded.push(b'\n');
+        assert!(parse_event_listing_classifier_response_v1(&padded, &request_commitment).is_err());
+        assert!(parse_event_listing_classifier_response_v1(&bytes, &digest('e')).is_err());
+
+        let mut value = serde_json::to_value(&response).unwrap();
+        value["fabricated_input_authority"] = serde_json::json!(true);
+        let unknown = serde_json::to_vec(&value).unwrap();
+        assert!(parse_event_listing_classifier_response_v1(&unknown, &request_commitment).is_err());
     }
 }
