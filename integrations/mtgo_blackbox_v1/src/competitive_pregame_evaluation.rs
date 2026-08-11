@@ -49,8 +49,11 @@ pub struct MtgoCompetitivePregameEvaluationCaseV1 {
     pub source_frame_sequence: u64,
     pub acting_player_duel_capture_confirmed: bool,
     pub prompt_and_hand_unobscured_confirmed: bool,
+    pub visible_card_identities_and_control_targets_reviewed: bool,
     pub expected: MtgoCompetitivePregameStageLabelV1,
     pub prediction: Option<MtgoCompetitivePregameStageLabelV1>,
+    pub expected_visible_interaction_commitment_sha256: String,
+    pub predicted_visible_interaction_commitment_sha256: Option<String>,
 }
 
 /// Recomputed evaluation over the complete 44-state visible pregame surface:
@@ -111,12 +114,13 @@ impl CheckedUntrustedMtgoCompetitivePregameEvaluationV1 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoCompetitivePregameProfileScopeV1 {
-    ActingPlayerDuelPregameStageSemantics,
+    ActingPlayerDuelPregameStageAndInteractionSemantics,
 }
 
 /// Separately ratified accuracy profile for mode-independent acting-player
-/// duel pregame semantics. It contains no pixels, classifier process, card
-/// identities, event identity, coordinates, scoring, or input method.
+/// duel pregame stage, visible card identity, and visible control semantics.
+/// It contains no pixels, classifier process, event identity, coordinates,
+/// scoring, or input method.
 pub struct AdmittedMtgoCompetitivePregameProfileV1 {
     duel_perception_profile_commitment_sha256: String,
     duel_perception_profile_admission_commitment_sha256: String,
@@ -126,7 +130,7 @@ pub struct AdmittedMtgoCompetitivePregameProfileV1 {
 
 impl AdmittedMtgoCompetitivePregameProfileV1 {
     pub fn scope(&self) -> MtgoCompetitivePregameProfileScopeV1 {
-        MtgoCompetitivePregameProfileScopeV1::ActingPlayerDuelPregameStageSemantics
+        MtgoCompetitivePregameProfileScopeV1::ActingPlayerDuelPregameStageAndInteractionSemantics
     }
 
     pub fn duel_perception_profile_commitment_sha256(&self) -> &str {
@@ -214,9 +218,24 @@ pub fn evaluate_untrusted_competitive_pregame_profile_v1(
         if case.source_frame_sequence == 0
             || !case.acting_player_duel_capture_confirmed
             || !case.prompt_and_hand_unobscured_confirmed
+            || !case.visible_card_identities_and_control_targets_reviewed
         {
             return Err(error_v1(
                 "competitive_pregame_source_review_invalid",
+                &case.case_id,
+            ));
+        }
+        validate_lower_hex_sha256_v1(&case.expected_visible_interaction_commitment_sha256)?;
+        if let Some(predicted) = &case.predicted_visible_interaction_commitment_sha256 {
+            validate_lower_hex_sha256_v1(predicted)?;
+        }
+        if case.prediction.is_some()
+            != case
+                .predicted_visible_interaction_commitment_sha256
+                .is_some()
+        {
+            return Err(error_v1(
+                "competitive_pregame_prediction_incomplete",
                 &case.case_id,
             ));
         }
@@ -235,24 +254,31 @@ pub fn evaluate_untrusted_competitive_pregame_profile_v1(
             .ok_or_else(|| error_v1("competitive_pregame_expected_state_invalid", &case.case_id))?;
         case_counts[state_index] += 1;
 
-        let (prediction_json, exact) = if let Some(prediction) = case.prediction {
-            validate_stage_v1(prediction)?;
-            prediction_count += 1;
-            prediction_counts[state_index] += 1;
-            let exact = prediction == case.expected;
-            exact_prediction_count += u32::from(exact);
-            (
-                serde_json::to_vec(&prediction).map_err(|error| {
-                    error_v1(
-                        "competitive_pregame_prediction_serialization_failed",
-                        error.to_string(),
-                    )
-                })?,
-                exact,
-            )
-        } else {
-            (b"abstained".to_vec(), false)
-        };
+        let (prediction_json, predicted_interaction, exact) =
+            if let (Some(prediction), Some(predicted_interaction)) = (
+                case.prediction,
+                case.predicted_visible_interaction_commitment_sha256
+                    .as_deref(),
+            ) {
+                validate_stage_v1(prediction)?;
+                prediction_count += 1;
+                prediction_counts[state_index] += 1;
+                let exact = prediction == case.expected
+                    && predicted_interaction == case.expected_visible_interaction_commitment_sha256;
+                exact_prediction_count += u32::from(exact);
+                (
+                    serde_json::to_vec(&prediction).map_err(|error| {
+                        error_v1(
+                            "competitive_pregame_prediction_serialization_failed",
+                            error.to_string(),
+                        )
+                    })?,
+                    predicted_interaction.as_bytes().to_vec(),
+                    exact,
+                )
+            } else {
+                (b"abstained".to_vec(), b"abstained".to_vec(), false)
+            };
         let expected_json = serde_json::to_vec(&case.expected).map_err(|error| {
             error_v1(
                 "competitive_pregame_expected_serialization_failed",
@@ -265,7 +291,10 @@ pub fn evaluate_untrusted_competitive_pregame_profile_v1(
             case.source_canonical_bgra8_sha256.as_bytes(),
             &case.source_frame_sequence.to_be_bytes(),
             &expected_json,
+            case.expected_visible_interaction_commitment_sha256
+                .as_bytes(),
             &prediction_json,
+            &predicted_interaction,
             &[u8::from(exact)],
         ] {
             hash_part_v1(&mut hasher, part);
@@ -369,7 +398,7 @@ fn admit_competitive_pregame_profile_against_ratification_v1(
                 .duel_perception_profile_admission_commitment_sha256
                 .as_bytes(),
             evaluation.evaluation_commitment_sha256.as_bytes(),
-            b"complete_acting_player_duel_pregame_semantics_no_mode_inference_no_input",
+            b"complete_acting_player_duel_pregame_stage_card_and_control_semantics_no_mode_inference_no_input",
         ],
     );
     Ok(AdmittedMtgoCompetitivePregameProfileV1 {
@@ -393,7 +422,7 @@ pub(crate) fn competitive_pregame_profile_admitted_for_test_v1(
             profile.perception_profile_commitment_sha256().as_bytes(),
             profile.admission_commitment_sha256().as_bytes(),
             evaluation_commitment_sha256.as_bytes(),
-            b"complete_acting_player_duel_pregame_semantics_no_mode_inference_no_input",
+            b"complete_acting_player_duel_pregame_stage_card_and_control_semantics_no_mode_inference_no_input",
         ],
     );
     AdmittedMtgoCompetitivePregameProfileV1 {
@@ -578,8 +607,14 @@ mod tests {
                 source_frame_sequence: u64::try_from(index + 1).unwrap(),
                 acting_player_duel_capture_confirmed: true,
                 prompt_and_hand_unobscured_confirmed: true,
+                visible_card_identities_and_control_targets_reviewed: true,
                 expected: state,
                 prediction: Some(state),
+                expected_visible_interaction_commitment_sha256: format!("{:064x}", index + 201),
+                predicted_visible_interaction_commitment_sha256: Some(format!(
+                    "{:064x}",
+                    index + 201
+                )),
             })
             .collect()
     }
@@ -643,7 +678,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             admitted.scope(),
-            MtgoCompetitivePregameProfileScopeV1::ActingPlayerDuelPregameStageSemantics
+            MtgoCompetitivePregameProfileScopeV1::ActingPlayerDuelPregameStageAndInteractionSemantics
         );
         assert!(!admitted.safe_for_live_classification_v1());
         assert!(!admitted.safe_for_live_input_v1());
@@ -663,6 +698,7 @@ mod tests {
 
         let mut abstained = cases_v1();
         abstained[0].prediction = None;
+        abstained[0].predicted_visible_interaction_commitment_sha256 = None;
         let evaluation = evaluate_untrusted_competitive_pregame_profile_v1(
             &profile,
             spec_v1(&profile),
@@ -671,11 +707,30 @@ mod tests {
         .unwrap();
         assert!(!evaluation.passes_declared_gate());
 
+        let mut interaction_abstained = cases_v1();
+        interaction_abstained[0].predicted_visible_interaction_commitment_sha256 = None;
+        assert!(evaluate_untrusted_competitive_pregame_profile_v1(
+            &profile,
+            spec_v1(&profile),
+            interaction_abstained,
+        )
+        .is_err());
+
         let mut wrong = cases_v1();
         wrong[0].prediction = Some(MtgoCompetitivePregameStageLabelV1::GameplayReady);
         let evaluation =
             evaluate_untrusted_competitive_pregame_profile_v1(&profile, spec_v1(&profile), wrong)
                 .unwrap();
+        assert!(!evaluation.passes_declared_gate());
+
+        let mut wrong_interaction = cases_v1();
+        wrong_interaction[0].predicted_visible_interaction_commitment_sha256 = Some("f".repeat(64));
+        let evaluation = evaluate_untrusted_competitive_pregame_profile_v1(
+            &profile,
+            spec_v1(&profile),
+            wrong_interaction,
+        )
+        .unwrap();
         assert!(!evaluation.passes_declared_gate());
 
         let mut unreviewed = cases_v1();
@@ -684,6 +739,15 @@ mod tests {
             &profile,
             spec_v1(&profile),
             unreviewed,
+        )
+        .is_err());
+
+        let mut unreviewed_interaction = cases_v1();
+        unreviewed_interaction[0].visible_card_identities_and_control_targets_reviewed = false;
+        assert!(evaluate_untrusted_competitive_pregame_profile_v1(
+            &profile,
+            spec_v1(&profile),
+            unreviewed_interaction,
         )
         .is_err());
     }

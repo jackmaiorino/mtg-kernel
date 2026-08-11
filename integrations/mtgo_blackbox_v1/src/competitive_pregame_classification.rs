@@ -16,6 +16,8 @@ const COMPETITIVE_PREGAME_CLASSIFIER_REQUEST_DOMAIN_V1: &[u8] =
     b"mtgo-visible-competitive-pregame-classifier-request-v1";
 const COMPETITIVE_PREGAME_CLASSIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-visible-competitive-pregame-classification-v1";
+const COMPETITIVE_PREGAME_VISIBLE_INTERACTION_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-competitive-pregame-interaction-v1";
 
 /// Canonical metadata sent before one tightly packed BGRA8 acting-player
 /// duel frame. League or Challenge identity is intentionally absent.
@@ -59,6 +61,36 @@ pub struct MtgoCompetitivePregameVisibleFactV1 {
     pub confidence_bps: u16,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCompetitivePregameVisibleCardV1 {
+    pub card_slot: u8,
+    pub visible_card_name: String,
+    pub rect_client_px: MtgoRectPxV1,
+    pub visible_content_sha256: String,
+    pub confidence_bps: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "control_kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MtgoCompetitivePregameVisibleControlSemanticV1 {
+    KeepOpeningHand,
+    Mulligan { next_hand_size: u8 },
+    SelectForBottom { card_slot: u8, selected: bool },
+    SubmitBottoming,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCompetitivePregameVisibleControlV1 {
+    pub control_id: String,
+    pub semantic: MtgoCompetitivePregameVisibleControlSemanticV1,
+    pub rect_client_px: MtgoRectPxV1,
+    pub visible_content_sha256: String,
+    pub confidence_bps: u16,
+    pub visibly_enabled: bool,
+}
+
 /// Strict classifier output. The response remains untrusted until every
 /// region is rehashed from the exact request pixels.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,6 +100,9 @@ pub struct MtgoCompetitivePregameClassifierResponseV1 {
     pub request_commitment_sha256: String,
     pub stage: MtgoCompetitivePregameStageLabelV1,
     pub visible_facts: Vec<MtgoCompetitivePregameVisibleFactV1>,
+    pub visible_cards: Vec<MtgoCompetitivePregameVisibleCardV1>,
+    pub visible_controls: Vec<MtgoCompetitivePregameVisibleControlV1>,
+    pub visible_interaction_commitment_sha256: String,
 }
 
 /// Canonical request metadata checked against the exact admitted profiles and
@@ -113,6 +148,7 @@ pub struct CheckedUntrustedMtgoCompetitivePregameClassificationV1 {
     pregame_profile_admission_commitment_sha256: String,
     request_commitment_sha256: String,
     classification_commitment_sha256: String,
+    visible_interaction_commitment_sha256: String,
     frame_id: u64,
     frame_sequence: u64,
     stage: MtgoCompetitivePregameStageLabelV1,
@@ -145,6 +181,10 @@ impl CheckedUntrustedMtgoCompetitivePregameClassificationV1 {
 
     pub fn classification_commitment_sha256(&self) -> &str {
         &self.classification_commitment_sha256
+    }
+
+    pub fn visible_interaction_commitment_sha256(&self) -> &str {
+        &self.visible_interaction_commitment_sha256
     }
 
     pub fn frame_id(&self) -> u64 {
@@ -250,6 +290,36 @@ pub fn check_untrusted_competitive_pregame_classifier_response_v1(
             height: request.header.canonical_height,
         },
     )?;
+    validate_visible_cards_v1(
+        response.stage,
+        &response.visible_cards,
+        canonical_bgra8,
+        &MtgoSizePxV1 {
+            width: request.header.canonical_width,
+            height: request.header.canonical_height,
+        },
+    )?;
+    validate_visible_controls_v1(
+        response.stage,
+        &response.visible_controls,
+        canonical_bgra8,
+        &MtgoSizePxV1 {
+            width: request.header.canonical_width,
+            height: request.header.canonical_height,
+        },
+    )?;
+    let visible_interaction_commitment_sha256 =
+        competitive_pregame_visible_interaction_commitment_v1(
+            response.stage,
+            &response.visible_cards,
+            &response.visible_controls,
+        )?;
+    if response.visible_interaction_commitment_sha256 != visible_interaction_commitment_sha256 {
+        return Err(error_v1(
+            "competitive_pregame_visible_interaction_mismatch",
+            "visible interaction commitment differs from the checked stage and controls",
+        ));
+    }
 
     let classification_commitment_sha256 = commitment_v1(
         COMPETITIVE_PREGAME_CLASSIFICATION_DOMAIN_V1,
@@ -258,7 +328,7 @@ pub fn check_untrusted_competitive_pregame_classifier_response_v1(
             canonical_response_json,
             pregame_profile.evaluation_commitment_sha256().as_bytes(),
             pregame_profile.admission_commitment_sha256().as_bytes(),
-            b"pixel_checked_mode_independent_stage_no_live_or_input_authority",
+            b"pixel_checked_mode_independent_stage_and_interaction_no_live_or_input_authority",
         ],
     );
     Ok(CheckedUntrustedMtgoCompetitivePregameClassificationV1 {
@@ -281,10 +351,43 @@ pub fn check_untrusted_competitive_pregame_classifier_response_v1(
             .clone(),
         request_commitment_sha256: request.request_commitment_sha256.clone(),
         classification_commitment_sha256,
+        visible_interaction_commitment_sha256,
         frame_id: request.header.frame_id,
         frame_sequence: request.header.frame_sequence,
         stage: response.stage,
     })
+}
+
+/// Commits the complete mode-independent visible pregame interaction surface.
+/// The ordered controls include pixel hashes and card labels, but this digest
+/// grants no live-classification, scoring, event-entry, or input authority.
+pub fn competitive_pregame_visible_interaction_commitment_v1(
+    stage: MtgoCompetitivePregameStageLabelV1,
+    visible_cards: &[MtgoCompetitivePregameVisibleCardV1],
+    controls: &[MtgoCompetitivePregameVisibleControlV1],
+) -> Result<String, MtgoContractErrorV1> {
+    let stage_json = serde_json::to_vec(&stage).map_err(|error| {
+        error_v1(
+            "competitive_pregame_visible_interaction_serialization_failed",
+            error.to_string(),
+        )
+    })?;
+    let controls_json = serde_json::to_vec(controls).map_err(|error| {
+        error_v1(
+            "competitive_pregame_visible_interaction_serialization_failed",
+            error.to_string(),
+        )
+    })?;
+    let visible_cards_json = serde_json::to_vec(visible_cards).map_err(|error| {
+        error_v1(
+            "competitive_pregame_visible_interaction_serialization_failed",
+            error.to_string(),
+        )
+    })?;
+    Ok(commitment_v1(
+        COMPETITIVE_PREGAME_VISIBLE_INTERACTION_DOMAIN_V1,
+        &[&stage_json, &visible_cards_json, &controls_json],
+    ))
 }
 
 fn validate_header_v1(
@@ -434,6 +537,244 @@ fn required_fact_kinds_v1(
         }
         MtgoCompetitivePregameStageLabelV1::GameplayReady => vec![Prompt, GameplaySurface],
     }
+}
+
+fn validate_visible_cards_v1(
+    stage: MtgoCompetitivePregameStageLabelV1,
+    cards: &[MtgoCompetitivePregameVisibleCardV1],
+    canonical_bgra8: &[u8],
+    size: &MtgoSizePxV1,
+) -> Result<(), MtgoContractErrorV1> {
+    let expected_count = usize::from(!matches!(
+        stage,
+        MtgoCompetitivePregameStageLabelV1::GameplayReady
+    )) * 7;
+    if cards.len() != expected_count {
+        return Err(error_v1(
+            "competitive_pregame_visible_card_set_invalid",
+            "pregame decisions require exactly seven ordered visible cards",
+        ));
+    }
+    let mut rectangles = HashSet::new();
+    for (slot, card) in cards.iter().enumerate() {
+        validate_lower_hex_sha256_v1(&card.visible_content_sha256)?;
+        if usize::from(card.card_slot) != slot
+            || !valid_visible_card_name_v1(&card.visible_card_name)
+            || card.confidence_bps < MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1
+            || card.confidence_bps > 10_000
+            || card.rect_client_px.width < 2
+            || card.rect_client_px.height < 2
+            || !rectangles.insert((
+                card.rect_client_px.x,
+                card.rect_client_px.y,
+                card.rect_client_px.width,
+                card.rect_client_px.height,
+            ))
+        {
+            return Err(error_v1(
+                "competitive_pregame_visible_card_invalid",
+                slot.to_string(),
+            ));
+        }
+        let observed =
+            visible_frame_region_content_sha256_v1(canonical_bgra8, size, &card.rect_client_px)?;
+        if observed != card.visible_content_sha256 {
+            return Err(error_v1(
+                "competitive_pregame_visible_card_pixels_mismatch",
+                slot.to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_visible_controls_v1(
+    stage: MtgoCompetitivePregameStageLabelV1,
+    controls: &[MtgoCompetitivePregameVisibleControlV1],
+    canonical_bgra8: &[u8],
+    size: &MtgoSizePxV1,
+) -> Result<(), MtgoContractErrorV1> {
+    let mut control_ids = HashSet::new();
+    let mut rectangles = HashSet::new();
+    let mut centers = HashSet::new();
+    for control in controls {
+        validate_safe_control_id_v1(&control.control_id)?;
+        validate_lower_hex_sha256_v1(&control.visible_content_sha256)?;
+        if !control_ids.insert(control.control_id.as_str())
+            || !control.visibly_enabled
+            || control.confidence_bps < MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1
+            || control.confidence_bps > 10_000
+            || control.rect_client_px.width < 2
+            || control.rect_client_px.height < 2
+            || !rectangles.insert((
+                control.rect_client_px.x,
+                control.rect_client_px.y,
+                control.rect_client_px.width,
+                control.rect_client_px.height,
+            ))
+        {
+            return Err(error_v1(
+                "competitive_pregame_visible_control_invalid",
+                &control.control_id,
+            ));
+        }
+        let center = control_center_v1(&control.rect_client_px)?;
+        if !centers.insert(center) {
+            return Err(error_v1(
+                "competitive_pregame_visible_control_target_ambiguous",
+                &control.control_id,
+            ));
+        }
+        let observed =
+            visible_frame_region_content_sha256_v1(canonical_bgra8, size, &control.rect_client_px)?;
+        if observed != control.visible_content_sha256 {
+            return Err(error_v1(
+                "competitive_pregame_visible_control_pixels_mismatch",
+                &control.control_id,
+            ));
+        }
+    }
+    for (index, control) in controls.iter().enumerate() {
+        let center = control_center_v1(&control.rect_client_px)?;
+        if controls.iter().enumerate().any(|(other_index, other)| {
+            other_index != index && rect_contains_point_v1(&other.rect_client_px, center)
+        }) {
+            return Err(error_v1(
+                "competitive_pregame_visible_control_target_ambiguous",
+                &control.control_id,
+            ));
+        }
+    }
+    validate_stage_control_set_v1(stage, controls)
+}
+
+fn validate_stage_control_set_v1(
+    stage: MtgoCompetitivePregameStageLabelV1,
+    controls: &[MtgoCompetitivePregameVisibleControlV1],
+) -> Result<(), MtgoContractErrorV1> {
+    match stage {
+        MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+            prospective_keep_size,
+        } => {
+            let expected_len = if prospective_keep_size == 0 { 1 } else { 2 };
+            if controls.len() != expected_len
+                || controls[0].control_id != "keep_opening_hand"
+                || controls[0].semantic
+                    != MtgoCompetitivePregameVisibleControlSemanticV1::KeepOpeningHand
+                || (prospective_keep_size > 0
+                    && (controls[1].control_id != "mulligan"
+                        || controls[1].semantic
+                            != MtgoCompetitivePregameVisibleControlSemanticV1::Mulligan {
+                                next_hand_size: prospective_keep_size - 1,
+                            }))
+            {
+                return Err(error_v1(
+                    "competitive_pregame_visible_control_set_invalid",
+                    "mulligan choice controls",
+                ));
+            }
+        }
+        MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+            required_bottom_count,
+            selected_bottom_count,
+        } => {
+            let expected_len =
+                7_usize + usize::from(selected_bottom_count == required_bottom_count);
+            if controls.len() != expected_len {
+                return Err(error_v1(
+                    "competitive_pregame_visible_control_set_invalid",
+                    "London bottoming control count",
+                ));
+            }
+            let mut observed_selected_count = 0_u8;
+            for (slot, control) in controls.iter().take(7).enumerate() {
+                let expected_id = format!("bottom_card_{slot}");
+                let MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                    card_slot,
+                    selected,
+                } = &control.semantic
+                else {
+                    return Err(error_v1(
+                        "competitive_pregame_visible_control_set_invalid",
+                        "London bottoming card semantic",
+                    ));
+                };
+                if control.control_id != expected_id || usize::from(*card_slot) != slot {
+                    return Err(error_v1(
+                        "competitive_pregame_visible_control_set_invalid",
+                        "London bottoming card identity",
+                    ));
+                }
+                observed_selected_count = observed_selected_count
+                    .checked_add(u8::from(*selected))
+                    .ok_or_else(|| {
+                        error_v1(
+                            "competitive_pregame_visible_control_set_invalid",
+                            "selected card count overflow",
+                        )
+                    })?;
+            }
+            if observed_selected_count != selected_bottom_count
+                || (selected_bottom_count == required_bottom_count
+                    && (controls[7].control_id != "submit_bottoming"
+                        || controls[7].semantic
+                            != MtgoCompetitivePregameVisibleControlSemanticV1::SubmitBottoming))
+            {
+                return Err(error_v1(
+                    "competitive_pregame_visible_control_set_invalid",
+                    "London bottoming selected count or Submit control",
+                ));
+            }
+        }
+        MtgoCompetitivePregameStageLabelV1::GameplayReady if controls.is_empty() => {}
+        MtgoCompetitivePregameStageLabelV1::GameplayReady => {
+            return Err(error_v1(
+                "competitive_pregame_visible_control_set_invalid",
+                "GameplayReady must expose no pregame controls",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn control_center_v1(rect: &MtgoRectPxV1) -> Result<(u32, u32), MtgoContractErrorV1> {
+    let x = rect
+        .x
+        .checked_add(rect.width / 2)
+        .ok_or_else(|| error_v1("competitive_pregame_visible_control_invalid", "center x"))?;
+    let y = rect
+        .y
+        .checked_add(rect.height / 2)
+        .ok_or_else(|| error_v1("competitive_pregame_visible_control_invalid", "center y"))?;
+    Ok((x, y))
+}
+
+fn rect_contains_point_v1(rect: &MtgoRectPxV1, point: (u32, u32)) -> bool {
+    rect.x
+        .checked_add(rect.width)
+        .zip(rect.y.checked_add(rect.height))
+        .is_some_and(|(right, bottom)| {
+            point.0 >= rect.x && point.0 < right && point.1 >= rect.y && point.1 < bottom
+        })
+}
+
+fn validate_safe_control_id_v1(value: &str) -> Result<(), MtgoContractErrorV1> {
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(error_v1(
+            "competitive_pregame_visible_control_id_invalid",
+            value,
+        ));
+    }
+    Ok(())
+}
+
+fn valid_visible_card_name_v1(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
 fn parse_canonical_json_v1<T>(bytes: &[u8], label: &str) -> Result<T, MtgoContractErrorV1>
@@ -620,12 +961,131 @@ mod tests {
                 }
             })
             .collect();
+        let visible_controls = controls_v1(stage, pixels, &size);
+        let visible_cards = cards_v1(stage, pixels, &size);
+        let visible_interaction_commitment_sha256 =
+            competitive_pregame_visible_interaction_commitment_v1(
+                stage,
+                &visible_cards,
+                &visible_controls,
+            )
+            .unwrap();
         MtgoCompetitivePregameClassifierResponseV1 {
             schema_version: MTGO_COMPETITIVE_PREGAME_CLASSIFIER_SCHEMA_V1,
             request_commitment_sha256: request,
             stage,
             visible_facts,
+            visible_cards,
+            visible_controls,
+            visible_interaction_commitment_sha256,
         }
+    }
+
+    fn cards_v1(
+        stage: MtgoCompetitivePregameStageLabelV1,
+        pixels: &[u8],
+        size: &MtgoSizePxV1,
+    ) -> Vec<MtgoCompetitivePregameVisibleCardV1> {
+        if matches!(stage, MtgoCompetitivePregameStageLabelV1::GameplayReady) {
+            return Vec::new();
+        }
+        (0_u8..7)
+            .map(|card_slot| {
+                let rect_client_px = MtgoRectPxV1 {
+                    x: u32::from(card_slot) * 2,
+                    y: 8,
+                    width: 2,
+                    height: 2,
+                };
+                MtgoCompetitivePregameVisibleCardV1 {
+                    card_slot,
+                    visible_card_name: format!("Card {card_slot}"),
+                    visible_content_sha256: visible_frame_region_content_sha256_v1(
+                        pixels,
+                        size,
+                        &rect_client_px,
+                    )
+                    .unwrap(),
+                    rect_client_px,
+                    confidence_bps: 10_000,
+                }
+            })
+            .collect()
+    }
+
+    fn controls_v1(
+        stage: MtgoCompetitivePregameStageLabelV1,
+        pixels: &[u8],
+        size: &MtgoSizePxV1,
+    ) -> Vec<MtgoCompetitivePregameVisibleControlV1> {
+        let semantics = match stage {
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size,
+            } => {
+                let mut values = vec![(
+                    "keep_opening_hand".to_owned(),
+                    MtgoCompetitivePregameVisibleControlSemanticV1::KeepOpeningHand,
+                )];
+                if prospective_keep_size > 0 {
+                    values.push((
+                        "mulligan".to_owned(),
+                        MtgoCompetitivePregameVisibleControlSemanticV1::Mulligan {
+                            next_hand_size: prospective_keep_size - 1,
+                        },
+                    ));
+                }
+                values
+            }
+            MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count,
+                selected_bottom_count,
+            } => {
+                let mut values: Vec<_> = (0_u8..7)
+                    .map(|card_slot| {
+                        (
+                            format!("bottom_card_{card_slot}"),
+                            MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                                card_slot,
+                                selected: card_slot < selected_bottom_count,
+                            },
+                        )
+                    })
+                    .collect();
+                if selected_bottom_count == required_bottom_count {
+                    values.push((
+                        "submit_bottoming".to_owned(),
+                        MtgoCompetitivePregameVisibleControlSemanticV1::SubmitBottoming,
+                    ));
+                }
+                values
+            }
+            MtgoCompetitivePregameStageLabelV1::GameplayReady => Vec::new(),
+        };
+        semantics
+            .into_iter()
+            .enumerate()
+            .map(|(index, (control_id, semantic))| {
+                let rect_client_px = MtgoRectPxV1 {
+                    x: u32::try_from(index).unwrap() * 2,
+                    y: 12,
+                    width: 2,
+                    height: 2,
+                };
+                MtgoCompetitivePregameVisibleControlV1 {
+                    control_id,
+                    semantic,
+                    visible_content_sha256: visible_frame_region_content_sha256_v1(
+                        pixels,
+                        size,
+                        &rect_client_px,
+                    )
+                    .unwrap(),
+                    rect_client_px,
+                    confidence_bps: 10_000,
+                    visibly_enabled: true,
+                }
+            })
+            .collect()
     }
 
     fn check_stage_v1(
@@ -661,6 +1121,10 @@ mod tests {
             assert_eq!(checked.stage(), stage);
             assert_eq!(checked.frame_id(), 10);
             assert_eq!(checked.frame_sequence(), 20);
+            assert!(
+                validate_lower_hex_sha256_v1(checked.visible_interaction_commitment_sha256())
+                    .is_ok()
+            );
             assert!(!checked.safe_for_live_classification_v1());
             assert!(!checked.safe_for_input_v1());
             assert!(!checked.permits_event_entry_v1());
@@ -742,6 +1206,109 @@ mod tests {
             &header_json,
             &pixels,
             &serde_json::to_vec(&low_confidence).unwrap(),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn exact_stage_control_surface_and_pixels_are_required() {
+        let (duel, pregame) = profiles_v1();
+        let pixels = pixels_v1();
+        let header_json = serde_json::to_vec(&header_v1(&duel, &pregame, &pixels)).unwrap();
+        let stage = MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+            required_bottom_count: 2,
+            selected_bottom_count: 1,
+        };
+        let mut bad_card = response_v1(&header_json, &pixels, stage);
+        bad_card.visible_cards[0].visible_content_sha256 = "8".repeat(64);
+        assert!(check_untrusted_competitive_pregame_classifier_exchange_v1(
+            &duel,
+            &pregame,
+            &header_json,
+            &pixels,
+            &serde_json::to_vec(&bad_card).unwrap(),
+        )
+        .is_err());
+
+        let mut response = response_v1(&header_json, &pixels, stage);
+        response.visible_controls[1].visible_content_sha256 = "9".repeat(64);
+        assert!(check_untrusted_competitive_pregame_classifier_exchange_v1(
+            &duel,
+            &pregame,
+            &header_json,
+            &pixels,
+            &serde_json::to_vec(&response).unwrap(),
+        )
+        .is_err());
+
+        let mut wrong_interaction = response_v1(&header_json, &pixels, stage);
+        wrong_interaction.visible_interaction_commitment_sha256 = "7".repeat(64);
+        assert!(check_untrusted_competitive_pregame_classifier_exchange_v1(
+            &duel,
+            &pregame,
+            &header_json,
+            &pixels,
+            &serde_json::to_vec(&wrong_interaction).unwrap(),
+        )
+        .is_err());
+
+        let mut wrong_selection_count = response_v1(&header_json, &pixels, stage);
+        let MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom { selected, .. } =
+            &mut wrong_selection_count.visible_controls[1].semantic
+        else {
+            unreachable!();
+        };
+        *selected = true;
+        assert!(check_untrusted_competitive_pregame_classifier_exchange_v1(
+            &duel,
+            &pregame,
+            &header_json,
+            &pixels,
+            &serde_json::to_vec(&wrong_selection_count).unwrap(),
+        )
+        .is_err());
+
+        let mut ambiguous = response_v1(
+            &header_json,
+            &pixels,
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size: 7,
+            },
+        );
+        ambiguous.visible_controls[1].rect_client_px =
+            ambiguous.visible_controls[0].rect_client_px.clone();
+        ambiguous.visible_controls[1].visible_content_sha256 =
+            ambiguous.visible_controls[0].visible_content_sha256.clone();
+        assert!(check_untrusted_competitive_pregame_classifier_exchange_v1(
+            &duel,
+            &pregame,
+            &header_json,
+            &pixels,
+            &serde_json::to_vec(&ambiguous).unwrap(),
+        )
+        .is_err());
+
+        let mut ready_has_control = response_v1(
+            &header_json,
+            &pixels,
+            MtgoCompetitivePregameStageLabelV1::GameplayReady,
+        );
+        ready_has_control.visible_controls = controls_v1(
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size: 0,
+            },
+            &pixels,
+            &MtgoSizePxV1 {
+                width: 16,
+                height: 16,
+            },
+        );
+        assert!(check_untrusted_competitive_pregame_classifier_exchange_v1(
+            &duel,
+            &pregame,
+            &header_json,
+            &pixels,
+            &serde_json::to_vec(&ready_has_control).unwrap(),
         )
         .is_err());
     }

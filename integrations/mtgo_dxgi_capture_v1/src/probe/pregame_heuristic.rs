@@ -8,6 +8,8 @@ use super::{
     MTGO_BOTTOMING_CARD_AWARE_SCORING_SCHEMA_V5, MTGO_PREGAME_CARD_AWARE_SCORING_SCHEMA_V4,
 };
 use mtgo_blackbox_v1::{
+    MtgoCompetitivePregameStageLabelV1, MtgoCompetitivePregameVisibleCardV1,
+    MtgoCompetitivePregameVisibleControlSemanticV1, MtgoCompetitivePregameVisibleControlV1,
     MtgoNativeCheckpointIdentityV1, MtgoOfflineBottomingActionSemanticV1,
     MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1,
 };
@@ -174,6 +176,126 @@ impl MtgoNonModelPregameHeuristicV1 {
 
     pub fn safe_for_live_input_v1(&self) -> bool {
         false
+    }
+
+    pub(crate) fn select_competitive_visible_control_v1(
+        &self,
+        stage: MtgoCompetitivePregameStageLabelV1,
+        visible_cards: &[MtgoCompetitivePregameVisibleCardV1],
+        visible_controls: &[MtgoCompetitivePregameVisibleControlV1],
+    ) -> Result<MtgoCompetitivePregameVisibleControlSemanticV1, String> {
+        if visible_cards.len() != 7 {
+            return Err(
+                "competitive pregame heuristic requires seven ordered visible cards".to_owned(),
+            );
+        }
+        let features = visible_cards
+            .iter()
+            .enumerate()
+            .map(|(slot, card)| {
+                if usize::from(card.card_slot) != slot {
+                    return Err(
+                        "competitive pregame heuristic card slots are not canonical".to_owned()
+                    );
+                }
+                self.card_kind_v1(&card.visible_card_name)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let selected = match stage {
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size,
+            } => {
+                if prospective_keep_size == 0 {
+                    MtgoCompetitivePregameVisibleControlSemanticV1::KeepOpeningHand
+                } else {
+                    let profile_contains_only_lands = self
+                        .cards_by_name
+                        .values()
+                        .all(|feature| matches!(feature, MtgoHeuristicCardKindV1::Land { .. }));
+                    let keep_score = keep_score_v1(
+                        prospective_keep_size,
+                        &features,
+                        profile_contains_only_lands,
+                    );
+                    if keep_score > 0.0 {
+                        MtgoCompetitivePregameVisibleControlSemanticV1::KeepOpeningHand
+                    } else {
+                        MtgoCompetitivePregameVisibleControlSemanticV1::Mulligan {
+                            next_hand_size: prospective_keep_size - 1,
+                        }
+                    }
+                }
+            }
+            MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count,
+                selected_bottom_count,
+            } => {
+                if selected_bottom_count == required_bottom_count {
+                    MtgoCompetitivePregameVisibleControlSemanticV1::SubmitBottoming
+                } else {
+                    let mut selectable = Vec::new();
+                    for control in visible_controls {
+                        if let MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                            card_slot,
+                            selected,
+                        } = &control.semantic
+                        {
+                            if !*selected {
+                                selectable.push(*card_slot);
+                            }
+                        }
+                    }
+                    if selectable.len() != usize::from(7 - selected_bottom_count) {
+                        return Err(
+                            "competitive pregame heuristic selection surface is incomplete"
+                                .to_owned(),
+                        );
+                    }
+                    let available_colors = selectable
+                        .iter()
+                        .filter_map(|slot| match features[usize::from(*slot)] {
+                            MtgoHeuristicCardKindV1::Land {
+                                produced_color_mask,
+                            } => Some(*produced_color_mask),
+                            MtgoHeuristicCardKindV1::Spell { .. } => None,
+                        })
+                        .fold(0_u8, |mask, colors| mask | colors);
+                    let card_slot = selectable
+                        .into_iter()
+                        .min_by(|left, right| {
+                            let left_value = card_retention_value_v1(
+                                features[usize::from(*left)],
+                                available_colors,
+                            );
+                            let right_value = card_retention_value_v1(
+                                features[usize::from(*right)],
+                                available_colors,
+                            );
+                            left_value.total_cmp(&right_value).then(left.cmp(right))
+                        })
+                        .ok_or("competitive pregame heuristic has no selectable card")?;
+                    MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                        card_slot,
+                        selected: false,
+                    }
+                }
+            }
+            MtgoCompetitivePregameStageLabelV1::GameplayReady => {
+                return Err("competitive pregame is already gameplay ready".to_owned());
+            }
+        };
+        if visible_controls
+            .iter()
+            .filter(|control| control.semantic == selected)
+            .count()
+            != 1
+        {
+            return Err(
+                "competitive pregame heuristic selection does not resolve to one visible control"
+                    .to_owned(),
+            );
+        }
+        Ok(selected)
     }
 
     fn require_request_deployment_v1(&self, observed: &str) -> Result<(), String> {
@@ -493,6 +615,7 @@ mod tests {
     use crate::{
         MtgoBottomingCardIdentitySourceV5, MtgoBottomingConfirmedCardV5, MtgoBottomingVisibleCardV5,
     };
+    use mtgo_blackbox_v1::MtgoRectPxV1;
 
     fn digest(character: char) -> String {
         character.to_string().repeat(64)
@@ -536,6 +659,65 @@ mod tests {
 
     fn scorer_v1() -> MtgoNonModelPregameHeuristicV1 {
         MtgoNonModelPregameHeuristicV1::new_v1(profile_v1()).unwrap()
+    }
+
+    fn competitive_cards_v1(names: &[&str]) -> Vec<MtgoCompetitivePregameVisibleCardV1> {
+        names
+            .iter()
+            .enumerate()
+            .map(|(slot, name)| MtgoCompetitivePregameVisibleCardV1 {
+                card_slot: u8::try_from(slot).unwrap(),
+                visible_card_name: (*name).to_owned(),
+                rect_client_px: MtgoRectPxV1 {
+                    x: u32::try_from(slot).unwrap() * 10,
+                    y: 10,
+                    width: 8,
+                    height: 8,
+                },
+                visible_content_sha256: digest('a'),
+                confidence_bps: 10_000,
+            })
+            .collect()
+    }
+
+    fn competitive_bottoming_controls_v1(
+        selected_slots: &[u8],
+        submit: bool,
+    ) -> Vec<MtgoCompetitivePregameVisibleControlV1> {
+        let mut controls = (0_u8..7)
+            .map(|card_slot| MtgoCompetitivePregameVisibleControlV1 {
+                control_id: format!("bottom_card_{card_slot}"),
+                semantic: MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                    card_slot,
+                    selected: selected_slots.contains(&card_slot),
+                },
+                rect_client_px: MtgoRectPxV1 {
+                    x: u32::from(card_slot) * 10,
+                    y: 20,
+                    width: 8,
+                    height: 8,
+                },
+                visible_content_sha256: digest('b'),
+                confidence_bps: 10_000,
+                visibly_enabled: true,
+            })
+            .collect::<Vec<_>>();
+        if submit {
+            controls.push(MtgoCompetitivePregameVisibleControlV1 {
+                control_id: "submit_bottoming".to_owned(),
+                semantic: MtgoCompetitivePregameVisibleControlSemanticV1::SubmitBottoming,
+                rect_client_px: MtgoRectPxV1 {
+                    x: 80,
+                    y: 20,
+                    width: 8,
+                    height: 8,
+                },
+                visible_content_sha256: digest('c'),
+                confidence_bps: 10_000,
+                visibly_enabled: true,
+            });
+        }
+        controls
     }
 
     fn pregame_request_v4(
@@ -740,6 +922,104 @@ mod tests {
         assert!(
             f32::from_bits(all_lands_response.logits_f32_bits[0])
                 > f32::from_bits(all_lands_response.logits_f32_bits[1])
+        );
+    }
+
+    #[test]
+    fn competitive_visible_surface_selects_exact_keep_mulligan_bottom_and_submit_controls() {
+        let scorer = scorer_v1();
+        let balanced = competitive_cards_v1(&[
+            "Plains", "Island", "Plains", "Cheap", "Cheap", "Huge", "Cheap",
+        ]);
+        let mulligan_controls = vec![
+            MtgoCompetitivePregameVisibleControlV1 {
+                control_id: "keep_opening_hand".to_owned(),
+                semantic: MtgoCompetitivePregameVisibleControlSemanticV1::KeepOpeningHand,
+                rect_client_px: MtgoRectPxV1 {
+                    x: 0,
+                    y: 20,
+                    width: 8,
+                    height: 8,
+                },
+                visible_content_sha256: digest('d'),
+                confidence_bps: 10_000,
+                visibly_enabled: true,
+            },
+            MtgoCompetitivePregameVisibleControlV1 {
+                control_id: "mulligan".to_owned(),
+                semantic: MtgoCompetitivePregameVisibleControlSemanticV1::Mulligan {
+                    next_hand_size: 6,
+                },
+                rect_client_px: MtgoRectPxV1 {
+                    x: 10,
+                    y: 20,
+                    width: 8,
+                    height: 8,
+                },
+                visible_content_sha256: digest('e'),
+                confidence_bps: 10_000,
+                visibly_enabled: true,
+            },
+        ];
+        assert_eq!(
+            scorer
+                .select_competitive_visible_control_v1(
+                    MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                        prospective_keep_size: 7,
+                    },
+                    &balanced,
+                    &mulligan_controls,
+                )
+                .unwrap(),
+            MtgoCompetitivePregameVisibleControlSemanticV1::KeepOpeningHand
+        );
+
+        let no_lands =
+            competitive_cards_v1(&["Cheap", "Cheap", "Cheap", "Huge", "Huge", "Cheap", "Huge"]);
+        assert_eq!(
+            scorer
+                .select_competitive_visible_control_v1(
+                    MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                        prospective_keep_size: 7,
+                    },
+                    &no_lands,
+                    &mulligan_controls,
+                )
+                .unwrap(),
+            MtgoCompetitivePregameVisibleControlSemanticV1::Mulligan { next_hand_size: 6 }
+        );
+
+        let bottoming_cards = competitive_cards_v1(&[
+            "Huge", "Plains", "Island", "Cheap", "Cheap", "Plains", "Island",
+        ]);
+        assert_eq!(
+            scorer
+                .select_competitive_visible_control_v1(
+                    MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                        required_bottom_count: 2,
+                        selected_bottom_count: 0,
+                    },
+                    &bottoming_cards,
+                    &competitive_bottoming_controls_v1(&[], false),
+                )
+                .unwrap(),
+            MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                card_slot: 0,
+                selected: false,
+            }
+        );
+        assert_eq!(
+            scorer
+                .select_competitive_visible_control_v1(
+                    MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                        required_bottom_count: 2,
+                        selected_bottom_count: 2,
+                    },
+                    &bottoming_cards,
+                    &competitive_bottoming_controls_v1(&[0, 3], true),
+                )
+                .unwrap(),
+            MtgoCompetitivePregameVisibleControlSemanticV1::SubmitBottoming
         );
     }
 

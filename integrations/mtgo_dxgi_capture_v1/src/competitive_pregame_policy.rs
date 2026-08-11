@@ -2,6 +2,10 @@ use crate::competitive_operator_bootstrap::OpaqueMtgoCompetitiveOperatorResource
 use crate::probe::{
     non_model_pregame_heuristic_algorithm_commitment_v1, MtgoNonModelPregameHeuristicV1,
 };
+use mtgo_blackbox_v1::{
+    MtgoCompetitivePregameStageLabelV1, MtgoCompetitivePregameVisibleCardV1,
+    MtgoCompetitivePregameVisibleControlSemanticV1, MtgoCompetitivePregameVisibleControlV1,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -133,6 +137,19 @@ impl AdmittedMtgoCompetitivePregameHeuristicV1 {
 
     pub fn permits_sideboard_selection_v1(&self) -> bool {
         false
+    }
+
+    pub(crate) fn select_visible_control_v1(
+        &self,
+        stage: MtgoCompetitivePregameStageLabelV1,
+        visible_cards: &[MtgoCompetitivePregameVisibleCardV1],
+        visible_controls: &[MtgoCompetitivePregameVisibleControlV1],
+    ) -> Result<MtgoCompetitivePregameVisibleControlSemanticV1, String> {
+        self._heuristic.select_competitive_visible_control_v1(
+            stage,
+            visible_cards,
+            visible_controls,
+        )
     }
 }
 

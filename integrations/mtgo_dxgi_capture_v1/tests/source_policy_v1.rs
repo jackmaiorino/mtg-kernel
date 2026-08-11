@@ -111,6 +111,8 @@ fn admitted_duel_frame_requires_an_opaque_profile_and_retains_no_downstream_auth
 fn competitive_pregame_classifier_retains_exact_opaque_source_without_input_authority() {
     let source = include_str!("../src/probe/competitive_pregame_runtime.rs");
     let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let contract =
+        include_str!("../../mtgo_blackbox_v1/src/competitive_pregame_classification.rs");
     for required in [
         "classify_admitted_mtgo_competitive_pregame_frame_v1",
         "OpaqueMtgoAdmittedDuelVisibleFrameV1",
@@ -125,12 +127,16 @@ fn competitive_pregame_classifier_retains_exact_opaque_source_without_input_auth
         "_source_frame: source_frame",
         "_checked_classification: checked_classification",
         "_response: response_record",
+        "visible_interaction_commitment_sha256",
+        "MtgoCompetitivePregameVisibleCardV1",
+        "MtgoCompetitivePregameVisibleControlV1",
+        "competitive_pregame_visible_interaction_commitment_v1",
         "safe_for_live_classification_v1(&self) -> bool {\n        false",
         "safe_for_input_v1(&self) -> bool {\n        false",
         "permits_event_entry_v1(&self) -> bool {\n        false",
     ] {
         assert!(
-            source.contains(required) || runtime.contains(required),
+            source.contains(required) || runtime.contains(required) || contract.contains(required),
             "competitive pregame classifier runtime is missing: {required}"
         );
     }
@@ -1473,6 +1479,8 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "competitive_pregame_heuristic_deployment_ratification_present:",
         "competitive_pregame_session_ownership_bridge_present: true",
         "competitive_pregame_capture_profile_present: false",
+        "competitive_pregame_card_and_control_surface_present: true",
+        "competitive_pregame_deck_bound_action_planner_present: true",
         "competitive_pregame_input_actuator_present: false",
         "competitive_pregame_capture_and_session_bridge_present: true",
         "native_checkpoint_changed_sideboard_interface_present: false",
@@ -1510,6 +1518,7 @@ fn competitive_pregame_heuristic_is_deck_bound_separately_ratified_and_non_actua
         "check_untrusted_competitive_pregame_heuristic_v1",
         "admit_ratified_competitive_pregame_heuristic_v1",
         "bind_competitive_operator_pregame_resources_v1",
+        "select_visible_control_v1",
         "every_main_deck_card_feature_reviewed",
         "mulligan_behavior_reviewed",
         "london_bottoming_behavior_reviewed",
@@ -1539,6 +1548,43 @@ fn competitive_pregame_heuristic_is_deck_bound_separately_ratified_and_non_actua
         assert!(
             !source.contains(forbidden),
             "competitive pregame heuristic seam exposes a forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_pregame_action_plan_is_deck_bound_coordinate_private_and_non_actuating() {
+    let source = include_str!("../src/actuator.rs");
+    for required in [
+        "plan_competitive_event_pregame_action_v1",
+        "OpaqueMtgoCompetitivePregameActionPlanV1",
+        "AdmittedMtgoCompetitivePregameHeuristicV1",
+        "visible_interaction_commitment_sha256",
+        "heuristic_admission_commitment_sha256",
+        "selected_control_visible_content_sha256",
+        "competitive pregame action planning requires a retained classified frame",
+        "competitive pregame heuristic differs from the event deck, format, or gameplay policy",
+        "deck_bound_deterministic_visible_pregame_selection_no_input",
+        "_selected_control: selected_control",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+        "permits_spending_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame action plan is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn selected_control_v1",
+        "pub fn target_rect_v1",
+        "pub fn input_point_v1",
+        "prepare_competitive_event_pregame_action_v1",
+        "execute_competitive_event_pregame_action_v1",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame action plan exposes forbidden authority: {forbidden}"
         );
     }
 }

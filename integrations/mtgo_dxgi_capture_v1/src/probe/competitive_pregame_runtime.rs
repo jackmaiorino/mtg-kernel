@@ -28,6 +28,7 @@ pub struct MtgoClassifiedCompetitivePregameFrameCommitmentsV1 {
     pub pregame_profile_admission_commitment_sha256: String,
     pub request_commitment_sha256: String,
     pub classification_commitment_sha256: String,
+    pub visible_interaction_commitment_sha256: String,
     pub frame_id: u64,
     pub frame_sequence: u64,
     pub captured_at_unix_millis: u128,
@@ -81,6 +82,10 @@ impl OpaqueMtgoClassifiedCompetitivePregameFrameV1 {
 
     pub(crate) fn process_continuity_commitment_sha256_v1(&self) -> String {
         mtgo_process_continuity_commitment_for_frame_v1(&self._source_frame.source_frame)
+    }
+
+    pub(crate) fn response_v1(&self) -> &MtgoCompetitivePregameClassifierResponseV1 {
+        &self._response
     }
 
     pub(crate) fn window_continuity_commitment_sha256_v1(&self) -> Result<String, String> {
@@ -287,6 +292,9 @@ pub fn classify_admitted_mtgo_competitive_pregame_frame_v1(
             .to_owned(),
         classification_commitment_sha256: checked_classification
             .classification_commitment_sha256()
+            .to_owned(),
+        visible_interaction_commitment_sha256: checked_classification
+            .visible_interaction_commitment_sha256()
             .to_owned(),
         frame_id: identity.frame_id,
         frame_sequence: identity.frame_sequence,

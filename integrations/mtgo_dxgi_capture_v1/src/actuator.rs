@@ -1,3 +1,4 @@
+use crate::competitive_pregame_policy::AdmittedMtgoCompetitivePregameHeuristicV1;
 use crate::probe::{
     advance_evaluated_competitive_event_monitor_v1,
     advance_prepared_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
@@ -75,7 +76,8 @@ use mtgo_blackbox_v1::{
     MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
     MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
-    MtgoCompetitivePregameStageLabelV1, MtgoCompetitiveSideboardTransferDirectionV1,
+    MtgoCompetitivePregameStageLabelV1, MtgoCompetitivePregameVisibleControlSemanticV1,
+    MtgoCompetitivePregameVisibleControlV1, MtgoCompetitiveSideboardTransferDirectionV1,
     MtgoCompetitiveSideboardTransferV1, MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1,
     MtgoDuelPrimaryActivationV1, MtgoLifecycleVisibleFactKindV1,
     MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
@@ -221,6 +223,8 @@ const COMPETITIVE_EVENT_PREGAME_SESSION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-pregame-session-v1";
 const COMPETITIVE_EVENT_PREGAME_ADVANCE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-pregame-advance-v1";
+const COMPETITIVE_EVENT_PREGAME_ACTION_PLAN_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-pregame-action-plan-v1";
 const COMPETITIVE_EVENT_PREGAME_COMPLETION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-pregame-completion-v1";
 const COMPETITIVE_EVENT_MATCH_LAUNCH_BINDING_DOMAIN_V1: &[u8] =
@@ -1917,6 +1921,7 @@ pub struct MtgoCompetitivePregameObservationCommitmentsV1 {
     pub pregame_evaluation_commitment_sha256: String,
     pub pregame_profile_admission_commitment_sha256: String,
     pub pregame_classification_commitment_sha256: String,
+    pub visible_interaction_commitment_sha256: String,
     pub process_continuity_commitment_sha256: String,
     pub window_continuity_commitment_sha256: String,
     pub approved_account_alias_sha256: String,
@@ -2035,6 +2040,78 @@ impl OpaqueMtgoCompetitiveEventPregameSessionV1 {
 
     pub fn current_stage_v1(&self) -> MtgoCompetitivePregameStageV1 {
         self.commitments.current_stage
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MtgoCompetitivePregameSelectedActionV1 {
+    KeepOpeningHand,
+    Mulligan {
+        next_hand_size: u8,
+    },
+    SelectForBottom {
+        card_slot: u8,
+        visible_card_name: String,
+    },
+    SubmitBottoming,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitivePregameActionPlanCommitmentsV1 {
+    pub action_plan_commitment_sha256: String,
+    pub pregame_session_commitment_sha256: String,
+    pub current_observation_commitment_sha256: String,
+    pub pregame_classification_commitment_sha256: String,
+    pub visible_interaction_commitment_sha256: String,
+    pub heuristic_profile_commitment_sha256: String,
+    pub heuristic_algorithm_commitment_sha256: String,
+    pub heuristic_review_commitment_sha256: String,
+    pub heuristic_admission_commitment_sha256: String,
+    pub selected_control_visible_content_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub match_identity_sha256: String,
+    pub game_number: u8,
+    pub frame_id: u64,
+    pub frame_sequence: u64,
+    pub selected_action: MtgoCompetitivePregameSelectedActionV1,
+}
+
+/// One deck-specific deterministic pregame selection over the exact retained
+/// classified frame. The selected control rectangle remains private. This
+/// plan has no input method and cannot advance the event session.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitivePregameActionPlanV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitivePregameActionPlanV1>();
+/// ```
+pub struct OpaqueMtgoCompetitivePregameActionPlanV1 {
+    _session: OpaqueMtgoCompetitiveEventPregameSessionV1,
+    _heuristic: AdmittedMtgoCompetitivePregameHeuristicV1,
+    _selected_control: MtgoCompetitivePregameVisibleControlV1,
+    commitments: MtgoCompetitivePregameActionPlanCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitivePregameActionPlanV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitivePregameActionPlanCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn selected_action_v1(&self) -> &MtgoCompetitivePregameSelectedActionV1 {
+        &self.commitments.selected_action
     }
 
     pub fn safe_for_input_v1(&self) -> bool {
@@ -6294,6 +6371,161 @@ pub fn checkout_competitive_event_pregame_session_from_classified_frame_v2(
     checkout_competitive_event_pregame_session_v1(runtime, match_launch, observation)
 }
 
+/// Selects one Keep, Mulligan, London card, or Submit action from the exact
+/// classifier-backed event session using the separately admitted deck-bound
+/// non-model pregame policy. The result retains the session and private
+/// control target but cannot prepare or emit input.
+pub fn plan_competitive_event_pregame_action_v1(
+    session: OpaqueMtgoCompetitiveEventPregameSessionV1,
+    heuristic: AdmittedMtgoCompetitivePregameHeuristicV1,
+) -> Result<OpaqueMtgoCompetitivePregameActionPlanV1, String> {
+    validate_competitive_event_pregame_session_integrity_v1(&session)?;
+    let heuristic_commitments = heuristic.commitments_v1();
+    if heuristic_commitments.deck_manifest_commitment_sha256
+        != session.commitments.deck_manifest_sha256
+        || heuristic_commitments.deck_format_sha256 != session.commitments.deck_format_sha256
+        || heuristic_commitments.gameplay_policy_deployment_commitment_sha256
+            != session.commitments.policy_deployment_commitment_sha256
+    {
+        return Err(
+            "competitive pregame heuristic differs from the event deck, format, or gameplay policy"
+                .to_owned(),
+        );
+    }
+    let current = session.current_observation.commitments_v1();
+    let classified = session
+        .current_observation
+        ._classified_frame
+        .as_ref()
+        .ok_or("competitive pregame action planning requires a retained classified frame")?;
+    let response = classified.response_v1();
+    let response_stage = match response.stage {
+        MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+            prospective_keep_size,
+        } => MtgoCompetitivePregameStageV1::MulliganChoice {
+            prospective_keep_size,
+        },
+        MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+            required_bottom_count,
+            selected_bottom_count,
+        } => MtgoCompetitivePregameStageV1::LondonBottoming {
+            required_bottom_count,
+            selected_bottom_count,
+        },
+        MtgoCompetitivePregameStageLabelV1::GameplayReady => {
+            MtgoCompetitivePregameStageV1::GameplayReady
+        }
+    };
+    if response_stage != current.stage
+        || response.visible_interaction_commitment_sha256
+            != current.visible_interaction_commitment_sha256
+    {
+        return Err(
+            "competitive pregame retained response differs from the event observation".to_owned(),
+        );
+    }
+    let selected_semantic = heuristic.select_visible_control_v1(
+        response.stage,
+        &response.visible_cards,
+        &response.visible_controls,
+    )?;
+    let mut matching_controls = response
+        .visible_controls
+        .iter()
+        .filter(|control| control.semantic == selected_semantic);
+    let selected_control = matching_controls
+        .next()
+        .cloned()
+        .ok_or("competitive pregame selected control is absent")?;
+    if matching_controls.next().is_some() {
+        return Err("competitive pregame selected control is ambiguous".to_owned());
+    }
+    let selected_action = match selected_semantic {
+        MtgoCompetitivePregameVisibleControlSemanticV1::KeepOpeningHand => {
+            MtgoCompetitivePregameSelectedActionV1::KeepOpeningHand
+        }
+        MtgoCompetitivePregameVisibleControlSemanticV1::Mulligan { next_hand_size } => {
+            MtgoCompetitivePregameSelectedActionV1::Mulligan { next_hand_size }
+        }
+        MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+            card_slot,
+            selected: false,
+        } => {
+            let card = response
+                .visible_cards
+                .get(usize::from(card_slot))
+                .filter(|card| card.card_slot == card_slot)
+                .ok_or("competitive pregame selected card does not resolve")?;
+            MtgoCompetitivePregameSelectedActionV1::SelectForBottom {
+                card_slot,
+                visible_card_name: card.visible_card_name.clone(),
+            }
+        }
+        MtgoCompetitivePregameVisibleControlSemanticV1::SubmitBottoming => {
+            MtgoCompetitivePregameSelectedActionV1::SubmitBottoming
+        }
+        MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+            selected: true, ..
+        } => {
+            return Err(
+                "competitive pregame heuristic selected an already selected card".to_owned(),
+            )
+        }
+    };
+    let selected_action_json = serde_json::to_vec(&selected_action)
+        .map_err(|error| format!("serialize competitive pregame selected action: {error}"))?;
+    let selected_control_json = serde_json::to_vec(&selected_control)
+        .map_err(|error| format!("serialize competitive pregame selected control: {error}"))?;
+    let action_plan_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_PREGAME_ACTION_PLAN_DOMAIN_V1,
+        &[
+            session.commitments.session_commitment_sha256.as_bytes(),
+            current.observation_commitment_sha256.as_bytes(),
+            current.pregame_classification_commitment_sha256.as_bytes(),
+            current.visible_interaction_commitment_sha256.as_bytes(),
+            heuristic_commitments
+                .heuristic_profile_commitment_sha256
+                .as_bytes(),
+            heuristic_commitments
+                .heuristic_algorithm_commitment_sha256
+                .as_bytes(),
+            heuristic_commitments.review_commitment_sha256.as_bytes(),
+            heuristic_commitments.admission_commitment_sha256.as_bytes(),
+            &selected_action_json,
+            &selected_control_json,
+            current.frame_id.to_be_bytes().as_slice(),
+            current.frame_sequence.to_be_bytes().as_slice(),
+            b"deck_bound_deterministic_visible_pregame_selection_no_input",
+        ],
+    );
+    let commitments = MtgoCompetitivePregameActionPlanCommitmentsV1 {
+        action_plan_commitment_sha256,
+        pregame_session_commitment_sha256: session.commitments.session_commitment_sha256.clone(),
+        current_observation_commitment_sha256: current.observation_commitment_sha256,
+        pregame_classification_commitment_sha256: current.pregame_classification_commitment_sha256,
+        visible_interaction_commitment_sha256: current.visible_interaction_commitment_sha256,
+        heuristic_profile_commitment_sha256: heuristic_commitments
+            .heuristic_profile_commitment_sha256,
+        heuristic_algorithm_commitment_sha256: heuristic_commitments
+            .heuristic_algorithm_commitment_sha256,
+        heuristic_review_commitment_sha256: heuristic_commitments.review_commitment_sha256,
+        heuristic_admission_commitment_sha256: heuristic_commitments.admission_commitment_sha256,
+        selected_control_visible_content_sha256: selected_control.visible_content_sha256.clone(),
+        event_kind: session.commitments.event_kind,
+        match_identity_sha256: session.commitments.match_identity_sha256.clone(),
+        game_number: session.commitments.game_number,
+        frame_id: current.frame_id,
+        frame_sequence: current.frame_sequence,
+        selected_action,
+    };
+    Ok(OpaqueMtgoCompetitivePregameActionPlanV1 {
+        _session: session,
+        _heuristic: heuristic,
+        _selected_control: selected_control,
+        commitments,
+    })
+}
+
 /// Advances one exact paid-event pregame session with the immediate next
 /// classifier-backed duel capture. This remains observation-only. A later
 /// actuator must bind one sent input and its visible postcondition before it
@@ -10414,6 +10646,7 @@ struct CompetitivePregameClassifiedViewV2<'a> {
     pregame_evaluation_commitment_sha256: &'a str,
     pregame_profile_admission_commitment_sha256: &'a str,
     pregame_classification_commitment_sha256: &'a str,
+    visible_interaction_commitment_sha256: &'a str,
     process_continuity_commitment_sha256: &'a str,
     window_continuity_commitment_sha256: &'a str,
     stage: MtgoCompetitivePregameStageLabelV1,
@@ -10445,6 +10678,7 @@ impl<'a> CompetitivePregameClassifiedViewV2<'a> {
             pregame_profile_admission_commitment_sha256: &value
                 .pregame_profile_admission_commitment_sha256,
             pregame_classification_commitment_sha256: &value.classification_commitment_sha256,
+            visible_interaction_commitment_sha256: &value.visible_interaction_commitment_sha256,
             process_continuity_commitment_sha256,
             window_continuity_commitment_sha256,
             stage: value.stage,
@@ -10508,6 +10742,9 @@ fn competitive_pregame_observation_from_classified_view_v2(
         pregame_classification_commitment_sha256: source
             .pregame_classification_commitment_sha256
             .to_owned(),
+        visible_interaction_commitment_sha256: source
+            .visible_interaction_commitment_sha256
+            .to_owned(),
         process_continuity_commitment_sha256: source
             .process_continuity_commitment_sha256
             .to_owned(),
@@ -10546,6 +10783,7 @@ fn competitive_pregame_observation_commitment_v1(
             value.pregame_evaluation_commitment_sha256.as_bytes(),
             value.pregame_profile_admission_commitment_sha256.as_bytes(),
             value.pregame_classification_commitment_sha256.as_bytes(),
+            value.visible_interaction_commitment_sha256.as_bytes(),
             value.process_continuity_commitment_sha256.as_bytes(),
             value.window_continuity_commitment_sha256.as_bytes(),
             value.approved_account_alias_sha256.as_bytes(),
@@ -10577,6 +10815,7 @@ fn validate_competitive_pregame_observation_v1(
         value.pregame_evaluation_commitment_sha256.as_str(),
         value.pregame_profile_admission_commitment_sha256.as_str(),
         value.pregame_classification_commitment_sha256.as_str(),
+        value.visible_interaction_commitment_sha256.as_str(),
         value.process_continuity_commitment_sha256.as_str(),
         value.window_continuity_commitment_sha256.as_str(),
         value.approved_account_alias_sha256.as_str(),
@@ -14113,6 +14352,7 @@ mod tests {
             pregame_evaluation_commitment_sha256: "4".repeat(64),
             pregame_profile_admission_commitment_sha256: "5".repeat(64),
             pregame_classification_commitment_sha256: format!("{:064x}", frame_sequence + 200),
+            visible_interaction_commitment_sha256: format!("{:064x}", frame_sequence + 300),
             process_continuity_commitment_sha256: "6".repeat(64),
             window_continuity_commitment_sha256: "7".repeat(64),
             approved_account_alias_sha256: runtime.approved_account_alias_sha256.clone(),
@@ -17085,6 +17325,7 @@ mod tests {
         let pregame_evaluation = "4".repeat(64);
         let pregame_admission = "5".repeat(64);
         let classification = "6".repeat(64);
+        let visible_interaction = "9".repeat(64);
         let process = "7".repeat(64);
         let window = "8".repeat(64);
         for event_kind in [
@@ -17103,6 +17344,7 @@ mod tests {
                 pregame_evaluation_commitment_sha256: &pregame_evaluation,
                 pregame_profile_admission_commitment_sha256: &pregame_admission,
                 pregame_classification_commitment_sha256: &classification,
+                visible_interaction_commitment_sha256: &visible_interaction,
                 process_continuity_commitment_sha256: &process,
                 window_continuity_commitment_sha256: &window,
                 stage: MtgoCompetitivePregameStageLabelV1::LondonBottoming {
@@ -17116,6 +17358,10 @@ mod tests {
             let observation =
                 competitive_pregame_observation_from_classified_view_v2(&runtime, source).unwrap();
             assert_eq!(observation.event_kind, event_kind);
+            assert_eq!(
+                observation.visible_interaction_commitment_sha256,
+                visible_interaction
+            );
             assert_eq!(
                 observation.match_identity_sha256,
                 runtime.current_match_identity_sha256.clone().unwrap()
