@@ -143,10 +143,10 @@ pub use actuator::{
 
 #[cfg(target_os = "windows")]
 pub use probe::{
-    advance_checked_untrusted_competitive_event_monitor_v1,
+    advance_evaluated_competitive_event_monitor_v1,
     advance_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
     advance_opaque_competitive_duel_gesture_sequence_v1,
-    begin_checked_untrusted_competitive_event_monitor_v1,
+    begin_evaluated_competitive_event_monitor_v1,
     begin_opaque_competitive_duel_gesture_sequence_v1,
     bind_classified_competitive_event_listing_to_evaluation_v1,
     bind_classified_navigation_frame_to_competitive_entry_review_identity_v1,

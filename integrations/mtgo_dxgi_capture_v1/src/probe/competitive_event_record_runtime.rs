@@ -9,7 +9,8 @@ use super::{
 use mtgo_blackbox_v1::{
     validate_visible_competitive_event_record_v1,
     validate_visible_competitive_lifecycle_snapshot_v1, visible_frame_region_content_sha256_v1,
-    AdmittedMtgoCompetitiveNavigationProfileV1, CheckedUntrustedMtgoCompetitiveEventRecordV1,
+    AdmittedMtgoCompetitiveEventRecordEvaluationV1, AdmittedMtgoCompetitiveNavigationProfileV1,
+    CheckedUntrustedMtgoCompetitiveEventRecordV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoCompetitiveEventCompletionV1,
     MtgoCompetitiveEventKindV1, MtgoCompetitiveEventProgressV1,
     MtgoCompetitiveEventRecordVisibleFactV1, MtgoCompetitiveEventVisibleStatusV1,
@@ -141,6 +142,8 @@ pub struct MtgoCompetitiveEventMonitorCommitmentsV1 {
     pub navigation_profile_admission_commitment_sha256: String,
     pub runtime_identity_commitment_sha256: String,
     pub process_continuity_commitment_sha256: String,
+    pub event_record_evaluation_commitment_sha256: String,
+    pub event_record_evaluation_admission_commitment_sha256: String,
     pub approved_account_alias_sha256: String,
     pub event_identity_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
@@ -306,10 +309,21 @@ impl OpaqueMtgoCompetitiveEventMonitorV1 {
     }
 }
 
-pub fn begin_checked_untrusted_competitive_event_monitor_v1(
+pub fn begin_evaluated_competitive_event_monitor_v1(
     current: OpaqueMtgoClassifiedCompetitiveEventRecordV1,
+    evaluation: &AdmittedMtgoCompetitiveEventRecordEvaluationV1,
 ) -> Result<OpaqueMtgoCompetitiveEventMonitorV1, String> {
     let classified = current.commitments_v1();
+    let evaluation_commitments = evaluation.commitments_v1();
+    if evaluation_commitments.navigation_profile_commitment_sha256
+        != classified.navigation_profile_commitment_sha256
+        || evaluation_commitments.approved_account_alias_sha256
+            != classified.approved_account_alias_sha256
+    {
+        return Err(
+            "event-record evaluation differs from the exact profile or approved account".to_owned(),
+        );
+    }
     let observation = event_monitor_observation_v1(&current);
     validate_event_monitor_observation_v1(&observation)?;
     let monitor_chain_commitment_sha256 = commitment_parts_v1(
@@ -319,17 +333,27 @@ pub fn begin_checked_untrusted_competitive_event_monitor_v1(
                 .classification_result_commitment_sha256
                 .as_bytes(),
             classified.event_record_commitment_sha256.as_bytes(),
+            evaluation_commitments
+                .evaluation_commitment_sha256
+                .as_bytes(),
+            evaluation.admission_commitment_sha256_v1().as_bytes(),
             &1_u64.to_be_bytes(),
-            b"checked_untrusted_event_monitor_begin_no_entry_no_spending_no_gameplay_no_input",
+            b"evaluated_event_monitor_begin_no_entry_no_spending_no_gameplay_no_input",
         ],
     );
     Ok(OpaqueMtgoCompetitiveEventMonitorV1 {
-        commitments: event_monitor_commitments_v1(&classified, monitor_chain_commitment_sha256, 1),
+        commitments: event_monitor_commitments_v1(
+            &classified,
+            evaluation_commitments.evaluation_commitment_sha256,
+            evaluation.admission_commitment_sha256_v1().to_owned(),
+            monitor_chain_commitment_sha256,
+            1,
+        ),
         _current: current,
     })
 }
 
-pub fn advance_checked_untrusted_competitive_event_monitor_v1(
+pub fn advance_evaluated_competitive_event_monitor_v1(
     monitor: OpaqueMtgoCompetitiveEventMonitorV1,
     next: OpaqueMtgoClassifiedCompetitiveEventRecordV1,
 ) -> Result<OpaqueMtgoCompetitiveEventMonitorV1, String> {
@@ -359,13 +383,27 @@ pub fn advance_checked_untrusted_competitive_event_monitor_v1(
                 .classification_result_commitment_sha256
                 .as_bytes(),
             next_classified.event_record_commitment_sha256.as_bytes(),
+            monitor
+                .commitments
+                .event_record_evaluation_commitment_sha256
+                .as_bytes(),
+            monitor
+                .commitments
+                .event_record_evaluation_admission_commitment_sha256
+                .as_bytes(),
             &observation_count.to_be_bytes(),
-            b"checked_untrusted_event_monitor_advance_no_entry_no_spending_no_gameplay_no_input",
+            b"evaluated_event_monitor_advance_no_entry_no_spending_no_gameplay_no_input",
         ],
     );
     Ok(OpaqueMtgoCompetitiveEventMonitorV1 {
         commitments: event_monitor_commitments_v1(
             &next_classified,
+            monitor
+                .commitments
+                .event_record_evaluation_commitment_sha256,
+            monitor
+                .commitments
+                .event_record_evaluation_admission_commitment_sha256,
             monitor_chain_commitment_sha256,
             observation_count,
         ),
@@ -911,6 +949,8 @@ fn event_monitor_observation_v1(
 
 fn event_monitor_commitments_v1(
     classified: &MtgoClassifiedCompetitiveEventRecordCommitmentsV1,
+    event_record_evaluation_commitment_sha256: String,
+    event_record_evaluation_admission_commitment_sha256: String,
     monitor_chain_commitment_sha256: String,
     observation_count: u64,
 ) -> MtgoCompetitiveEventMonitorCommitmentsV1 {
@@ -925,6 +965,8 @@ fn event_monitor_commitments_v1(
         process_continuity_commitment_sha256: classified
             .process_continuity_commitment_sha256
             .clone(),
+        event_record_evaluation_commitment_sha256,
+        event_record_evaluation_admission_commitment_sha256,
         approved_account_alias_sha256: classified.approved_account_alias_sha256.clone(),
         event_identity_sha256: classified.event_identity_sha256.clone(),
         event_kind: classified.event_kind,

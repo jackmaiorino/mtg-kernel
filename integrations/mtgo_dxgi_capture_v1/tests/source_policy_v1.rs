@@ -608,14 +608,16 @@ fn competitive_event_monitor_is_move_only_monotonic_and_non_actionable() {
     let source = include_str!("../src/probe/competitive_event_record_runtime.rs");
     for required in [
         "OpaqueMtgoCompetitiveEventMonitorV1",
-        "begin_checked_untrusted_competitive_event_monitor_v1",
-        "advance_checked_untrusted_competitive_event_monitor_v1",
+        "begin_evaluated_competitive_event_monitor_v1",
+        "advance_evaluated_competitive_event_monitor_v1",
+        "AdmittedMtgoCompetitiveEventRecordEvaluationV1",
+        "event_record_evaluation_admission_commitment_sha256",
         "validate_event_monitor_advance_v1",
         "validate_event_monitor_progress_advance_v1",
         "competitive event monitor identity changed across records",
         "competitive event monitor requires a changed strictly newer record",
         "a completed competitive event monitor cannot accept another record",
-        "checked_untrusted_event_monitor_advance_no_entry_no_spending_no_gameplay_no_input",
+        "evaluated_event_monitor_advance_no_entry_no_spending_no_gameplay_no_input",
         "permits_gameplay_v1(&self) -> bool {\n        false",
     ] {
         assert!(
@@ -624,6 +626,8 @@ fn competitive_event_monitor_is_move_only_monotonic_and_non_actionable() {
         );
     }
     for forbidden in [
+        "begin_checked_untrusted_competitive_event_monitor_v1",
+        "advance_checked_untrusted_competitive_event_monitor_v1",
         "impl Clone for OpaqueMtgoCompetitiveEventMonitorV1",
         "pub fn canonical_bgra8",
         "pub fn visible_fact_rectangles",

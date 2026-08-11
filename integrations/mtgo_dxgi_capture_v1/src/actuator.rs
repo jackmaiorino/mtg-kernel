@@ -1,5 +1,5 @@
 use crate::probe::{
-    advance_checked_untrusted_competitive_event_monitor_v1,
+    advance_evaluated_competitive_event_monitor_v1,
     advance_prepared_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
     bind_opaque_duel_perception_to_competitive_launch_identity_v1,
     capture_admitted_mtgo_competitive_navigation_frame_v1,
@@ -5965,7 +5965,7 @@ pub fn advance_competitive_event_monitor_in_runtime_v1(
         .event_monitor
         .take()
         .ok_or("competitive event runtime has no attached event monitor")?;
-    let monitor = advance_checked_untrusted_competitive_event_monitor_v1(monitor, next)?;
+    let monitor = advance_evaluated_competitive_event_monitor_v1(monitor, next)?;
     let monitor_commitments = monitor.commitments_v1();
     validate_event_monitor_against_runtime_v1(&runtime, &monitor_commitments)?;
     runtime.event_monitor = Some(monitor);

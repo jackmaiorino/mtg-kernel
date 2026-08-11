@@ -18,6 +18,11 @@ pub const MTGO_COMPETITIVE_EVENT_RECORD_EVALUATION_SCHEMA_V1: u32 = 1;
 
 const EVENT_RECORD_PREDICTION_DOMAIN_V1: &[u8] = b"mtgo-competitive-event-record-prediction-v1";
 const EVENT_RECORD_EVALUATION_DOMAIN_V1: &[u8] = b"mtgo-competitive-event-record-evaluation-v1";
+const EVENT_RECORD_EVALUATION_RATIFICATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-record-evaluation-ratification-v1";
+const EVENT_RECORD_EVALUATION_ADMISSION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-record-evaluation-admission-v1";
+const RATIFIED_COMPETITIVE_EVENT_RECORD_EVALUATION_COMMITMENT_V1: Option<&str> = None;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -244,6 +249,8 @@ pub struct MtgoCompetitiveEventRecordFieldAccuracyV1 {
 /// ```
 pub struct CheckedUntrustedMtgoCompetitiveEventRecordEvaluationV1 {
     navigation_profile_commitment_sha256: String,
+    approved_account_alias_sha256: String,
+    corpus_manifest_sha256: String,
     evaluation_commitment_sha256: String,
     unique_case_count: u32,
     prediction_count: u32,
@@ -264,6 +271,14 @@ impl CheckedUntrustedMtgoCompetitiveEventRecordEvaluationV1 {
 
     pub fn evaluation_commitment_sha256_v1(&self) -> &str {
         &self.evaluation_commitment_sha256
+    }
+
+    pub fn approved_account_alias_sha256_v1(&self) -> &str {
+        &self.approved_account_alias_sha256
+    }
+
+    pub fn corpus_manifest_sha256_v1(&self) -> &str {
+        &self.corpus_manifest_sha256
     }
 
     pub fn unique_case_count_v1(&self) -> u32 {
@@ -307,6 +322,52 @@ impl CheckedUntrustedMtgoCompetitiveEventRecordEvaluationV1 {
     }
 
     pub fn safe_for_live_classification_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1 {
+    pub navigation_profile_commitment_sha256: String,
+    pub approved_account_alias_sha256: String,
+    pub corpus_manifest_sha256: String,
+    pub evaluation_commitment_sha256: String,
+    pub ratification_commitment_sha256: String,
+}
+
+pub struct AdmittedMtgoCompetitiveEventRecordEvaluationV1 {
+    commitments: MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1,
+    admission_commitment_sha256: String,
+}
+
+impl AdmittedMtgoCompetitiveEventRecordEvaluationV1 {
+    pub fn commitments_v1(
+        &self,
+    ) -> MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1 {
+        self.commitments.clone()
+    }
+
+    pub fn admission_commitment_sha256_v1(&self) -> &str {
+        &self.admission_commitment_sha256
+    }
+
+    pub fn safe_for_live_classification_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_close_v1(&self) -> bool {
         false
     }
 
@@ -651,6 +712,8 @@ pub fn evaluate_untrusted_competitive_event_record_profile_v1(
 
     Ok(CheckedUntrustedMtgoCompetitiveEventRecordEvaluationV1 {
         navigation_profile_commitment_sha256: spec.navigation_profile_commitment_sha256,
+        approved_account_alias_sha256: corpus.manifest.approved_account_alias_sha256.clone(),
+        corpus_manifest_sha256: spec.corpus_manifest_sha256,
         evaluation_commitment_sha256: format!("{:x}", hasher.finalize()),
         unique_case_count,
         prediction_count,
@@ -662,6 +725,94 @@ pub fn evaluate_untrusted_competitive_event_record_profile_v1(
         minimum_field_accuracy_bps,
         missing_slices,
         passes_declared_gate,
+    })
+}
+
+pub fn review_competitive_event_record_evaluation_ratification_candidate_v1(
+    evaluation: &CheckedUntrustedMtgoCompetitiveEventRecordEvaluationV1,
+) -> Result<MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1, MtgoContractErrorV1>
+{
+    if !evaluation.passes_declared_gate {
+        return Err(error(
+            "event_record_evaluation_declared_gate",
+            &evaluation.evaluation_commitment_sha256,
+        ));
+    }
+    let ratification_commitment_sha256 = commitment(
+        EVENT_RECORD_EVALUATION_RATIFICATION_DOMAIN_V1,
+        &[
+            evaluation.navigation_profile_commitment_sha256.as_bytes(),
+            evaluation.approved_account_alias_sha256.as_bytes(),
+            evaluation.corpus_manifest_sha256.as_bytes(),
+            evaluation.evaluation_commitment_sha256.as_bytes(),
+            b"league_challenge_eight_slice_event_record_exact_semantics_v1",
+            b"no_live_classification_no_event_close_no_entry_no_spending_no_coordinates_no_input",
+        ],
+    );
+    Ok(
+        MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1 {
+            navigation_profile_commitment_sha256: evaluation
+                .navigation_profile_commitment_sha256
+                .clone(),
+            approved_account_alias_sha256: evaluation.approved_account_alias_sha256.clone(),
+            corpus_manifest_sha256: evaluation.corpus_manifest_sha256.clone(),
+            evaluation_commitment_sha256: evaluation.evaluation_commitment_sha256.clone(),
+            ratification_commitment_sha256,
+        },
+    )
+}
+
+pub fn admit_ratified_competitive_event_record_evaluation_v1(
+    evaluation: CheckedUntrustedMtgoCompetitiveEventRecordEvaluationV1,
+    candidate: MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1,
+) -> Result<AdmittedMtgoCompetitiveEventRecordEvaluationV1, MtgoContractErrorV1> {
+    admit_competitive_event_record_evaluation_against_ratification_v1(
+        evaluation,
+        candidate,
+        RATIFIED_COMPETITIVE_EVENT_RECORD_EVALUATION_COMMITMENT_V1,
+    )
+}
+
+fn admit_competitive_event_record_evaluation_against_ratification_v1(
+    evaluation: CheckedUntrustedMtgoCompetitiveEventRecordEvaluationV1,
+    candidate: MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1,
+    ratified_commitment: Option<&str>,
+) -> Result<AdmittedMtgoCompetitiveEventRecordEvaluationV1, MtgoContractErrorV1> {
+    let expected =
+        review_competitive_event_record_evaluation_ratification_candidate_v1(&evaluation)?;
+    if candidate != expected {
+        return Err(error(
+            "event_record_evaluation_ratification_candidate",
+            "candidate does not exactly match the checked evaluation",
+        ));
+    }
+    let ratified = ratified_commitment.ok_or_else(|| {
+        error(
+            "event_record_evaluation_not_ratified",
+            "production contains no ratified League and Challenge event-record evaluation",
+        )
+    })?;
+    validate_sha256(ratified, "event_record_evaluation_ratification")?;
+    if candidate.ratification_commitment_sha256 != ratified {
+        return Err(error(
+            "event_record_evaluation_not_ratified",
+            "candidate does not match the production ratification",
+        ));
+    }
+    let admission_commitment_sha256 = commitment(
+        EVENT_RECORD_EVALUATION_ADMISSION_DOMAIN_V1,
+        &[
+            candidate.ratification_commitment_sha256.as_bytes(),
+            candidate.evaluation_commitment_sha256.as_bytes(),
+            candidate.navigation_profile_commitment_sha256.as_bytes(),
+            candidate.approved_account_alias_sha256.as_bytes(),
+            candidate.corpus_manifest_sha256.as_bytes(),
+            b"reviewed_event_record_evaluation_only_no_runtime_pixels_no_input",
+        ],
+    );
+    Ok(AdmittedMtgoCompetitiveEventRecordEvaluationV1 {
+        commitments: candidate,
+        admission_commitment_sha256,
     })
 }
 
@@ -1424,6 +1575,35 @@ mod tests {
         assert!(!evaluation.permits_event_entry_v1());
         assert!(!evaluation.permits_spending_v1());
         assert!(!evaluation.safe_for_input_v1());
+        let candidate =
+            review_competitive_event_record_evaluation_ratification_candidate_v1(&evaluation)
+                .unwrap();
+        let ratification = candidate.ratification_commitment_sha256.clone();
+        let admitted = admit_competitive_event_record_evaluation_against_ratification_v1(
+            evaluation,
+            candidate,
+            Some(&ratification),
+        )
+        .unwrap();
+        assert_eq!(
+            admitted.commitments_v1().ratification_commitment_sha256,
+            ratification
+        );
+        assert!(!admitted.safe_for_live_classification_v1());
+        assert!(!admitted.permits_event_close_v1());
+        assert!(!admitted.safe_for_input_v1());
+    }
+
+    #[test]
+    fn production_event_record_evaluation_admission_is_empty() {
+        let evaluation = run_evaluation(false, None, false);
+        let candidate =
+            review_competitive_event_record_evaluation_ratification_candidate_v1(&evaluation)
+                .unwrap();
+        let error = admit_ratified_competitive_event_record_evaluation_v1(evaluation, candidate)
+            .err()
+            .unwrap();
+        assert_eq!(error.code(), "event_record_evaluation_not_ratified");
     }
 
     #[test]
