@@ -1,4 +1,7 @@
-use super::{capture_commitment_v3, OpaqueMtgoDxgiFrameCandidateV3};
+use super::{
+    capture_commitment_v3, OpaqueMtgoDxgiFrameCandidateV3,
+    OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+};
 use crate::sha256_hex_v1;
 use mtgo_blackbox_v1::{
     visible_frame_region_content_sha256_v1, CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
@@ -10,6 +13,8 @@ use sha2::{Digest, Sha256};
 
 const OPAQUE_COMPETITIVE_ENTRY_REVIEW_IDENTITY_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-entry-review-identity-v1";
+const OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2: &[u8] =
+    b"mtgo-opaque-competitive-classifier-bound-entry-review-identity-v2";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
@@ -18,6 +23,7 @@ pub struct MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
     pub source_window_title_sha256: String,
     pub event_label_region_sha256: String,
     pub source_identity_commitment_sha256: String,
+    pub source_navigation_classification_result_commitment_sha256: Option<String>,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub frame_id: u64,
     pub frame_sequence: u64,
@@ -42,6 +48,7 @@ pub struct MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
 /// ```
 pub struct OpaqueMtgoCompetitiveEntryReviewIdentityV1 {
     _source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    _navigation_classification: Option<OpaqueMtgoRetainedCompetitiveNavigationClassificationV1>,
     lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     event_display_label: String,
     commitments: MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
@@ -83,6 +90,22 @@ pub fn bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1(
     event_display_label: String,
     event_label_rect_client_px: MtgoRectPxV1,
 ) -> Result<OpaqueMtgoCompetitiveEntryReviewIdentityV1, String> {
+    bind_opaque_navigation_frame_to_competitive_entry_review_identity_with_classification_v1(
+        source_frame,
+        lifecycle,
+        event_display_label,
+        event_label_rect_client_px,
+        None,
+    )
+}
+
+pub(super) fn bind_opaque_navigation_frame_to_competitive_entry_review_identity_with_classification_v1(
+    source_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    event_display_label: String,
+    event_label_rect_client_px: MtgoRectPxV1,
+    navigation_classification: Option<OpaqueMtgoRetainedCompetitiveNavigationClassificationV1>,
+) -> Result<OpaqueMtgoCompetitiveEntryReviewIdentityV1, String> {
     let recomputed_capture_commitment = capture_commitment_v3(
         &source_frame.manifest,
         &source_frame.canonical_bgra8,
@@ -108,6 +131,11 @@ pub fn bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1(
         );
     }
     let source_capture = source_frame.commitments_v3();
+    let navigation_classification_commitment = navigation_classification.as_ref().map(|value| {
+        value
+            .commitments_v1()
+            .classification_result_commitment_sha256
+    });
     let commitments = bind_competitive_entry_review_source_parts_v1(
         &source_capture.capture_commitment_sha256,
         &source_capture.canonical_bgra8_sha256,
@@ -120,9 +148,11 @@ pub fn bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1(
         &lifecycle,
         &event_display_label,
         &event_label_rect_client_px,
+        navigation_classification_commitment.as_deref(),
     )?;
     Ok(OpaqueMtgoCompetitiveEntryReviewIdentityV1 {
         _source_frame: source_frame,
+        _navigation_classification: navigation_classification,
         lifecycle,
         event_display_label,
         commitments,
@@ -142,6 +172,7 @@ fn bind_competitive_entry_review_source_parts_v1(
     lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     event_display_label: &str,
     event_label_rect_client_px: &MtgoRectPxV1,
+    navigation_classification_result_commitment_sha256: Option<&str>,
 ) -> Result<MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1, String> {
     if source_window_mode != "main_client" || source_capture_role != "navigation" {
         return Err("competitive entry identity requires the navigation capture role".to_owned());
@@ -211,7 +242,12 @@ fn bind_competitive_entry_review_source_parts_v1(
     let event_label_rect_json =
         canonical_json_v1(event_label_rect_client_px, "entry label region")?;
     let source_window_title_sha256 = sha256_hex_v1(source_window_title.as_bytes());
-    let source_identity_commitment_sha256 = commitment_v1(
+    if navigation_classification_result_commitment_sha256
+        .is_some_and(|value| !looks_like_lower_sha256_v1(value))
+    {
+        return Err("navigation classification result commitment is invalid".to_owned());
+    }
+    let manual_source_identity_commitment_sha256 = commitment_v1(
         OPAQUE_COMPETITIVE_ENTRY_REVIEW_IDENTITY_DOMAIN_V1,
         &[
             source_capture_commitment_sha256.as_bytes(),
@@ -229,6 +265,21 @@ fn bind_competitive_entry_review_source_parts_v1(
             b"opaque_composed_navigation_pixels_owner_review_only_no_entry_no_spending_no_input",
         ],
     );
+    let source_identity_commitment_sha256 =
+        if let Some(classification_commitment) =
+            navigation_classification_result_commitment_sha256
+        {
+            commitment_v1(
+                OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2,
+                &[
+                    manual_source_identity_commitment_sha256.as_bytes(),
+                    classification_commitment.as_bytes(),
+                    b"exact_navigation_classifier_lineage_no_entry_no_spending_no_input",
+                ],
+            )
+        } else {
+            manual_source_identity_commitment_sha256
+        };
     Ok(MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
         source_capture_commitment_sha256: source_capture_commitment_sha256.to_owned(),
         source_lifecycle_snapshot_commitment_sha256: lifecycle
@@ -237,6 +288,8 @@ fn bind_competitive_entry_review_source_parts_v1(
         source_window_title_sha256,
         event_label_region_sha256,
         source_identity_commitment_sha256,
+        source_navigation_classification_result_commitment_sha256:
+            navigation_classification_result_commitment_sha256.map(str::to_owned),
         event_kind: lifecycle.event_kind(),
         frame_id: lifecycle.frame_id_v1(),
         frame_sequence: lifecycle.frame_sequence(),
@@ -297,6 +350,13 @@ fn rect_contains_rect_v1(outer: &MtgoRectPxV1, inner: &MtgoRectPxV1) -> Result<b
 
 fn canonical_json_v1<T: Serialize>(value: &T, field: &str) -> Result<Vec<u8>, String> {
     serde_json::to_vec(value).map_err(|error| format!("serialize competitive {field}: {error}"))
+}
+
+fn looks_like_lower_sha256_v1(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn commitment_v1(domain: &[u8], parts: &[&[u8]]) -> String {
@@ -423,6 +483,7 @@ mod tests {
                     width: 50,
                     height: 20,
                 },
+                None,
             )
             .unwrap();
             assert_eq!(commitments.event_kind, event_kind);
@@ -458,6 +519,7 @@ mod tests {
                 &source,
                 label,
                 &rect,
+                None,
             )
         };
         let valid_rect = MtgoRectPxV1 {
@@ -494,5 +556,49 @@ mod tests {
         .is_err());
         pixels[5 * 100 * 4 + 5 * 4] ^= 1;
         assert!(bind(&pixels, "navigation", "Modern League", valid_rect).is_err());
+    }
+
+    #[test]
+    fn classifier_lineage_is_bound_into_entry_review_identity() {
+        let pixels = vec![23_u8; 100 * 100 * 4];
+        let source = source_v1(
+            &pixels,
+            MtgoCompetitiveEventKindV1::Challenge,
+            MtgoCompetitiveEntryResourceV1::ExistingEventToken,
+            1,
+        );
+        let rect = MtgoRectPxV1 {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 20,
+        };
+        let bind = |lineage: Option<&str>| {
+            bind_competitive_entry_review_source_parts_v1(
+                &"1".repeat(64),
+                source.frame_sha256_v1(),
+                100,
+                100,
+                &pixels,
+                "Magic: The Gathering Online",
+                "main_client",
+                "navigation",
+                &source,
+                "Modern Challenge",
+                &rect,
+                lineage,
+            )
+        };
+        let unclassified = bind(None).unwrap();
+        let classified = bind(Some(&"7".repeat(64))).unwrap();
+        assert_eq!(
+            classified.source_navigation_classification_result_commitment_sha256,
+            Some("7".repeat(64))
+        );
+        assert_ne!(
+            classified.source_identity_commitment_sha256,
+            unclassified.source_identity_commitment_sha256
+        );
+        assert!(bind(Some("not-a-digest")).is_err());
     }
 }

@@ -1,6 +1,7 @@
 use super::{
+    bind_opaque_navigation_frame_to_competitive_entry_review_identity_with_classification_v1,
     serialize_manifest_v2, sha256_hex_v1, MtgoAdmittedCompetitiveNavigationFrameCommitmentsV1,
-    OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    OpaqueMtgoAdmittedCompetitiveNavigationFrameV1, OpaqueMtgoCompetitiveEntryReviewIdentityV1,
 };
 use mtgo_blackbox_v1::{
     check_untrusted_competitive_navigation_prediction_v1,
@@ -10,7 +11,7 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoCompetitiveNavigationPredictionV1,
     CheckedUntrustedMtgoCompetitiveNavigationSourceV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveNavigationPredictionV1,
-    MtgoCompetitiveNavigationProfileScopeV1, MtgoSizePxV1,
+    MtgoCompetitiveNavigationProfileScopeV1, MtgoRectPxV1, MtgoSizePxV1,
     MtgoVisibleCompetitiveLifecycleSnapshotV1,
 };
 use serde::{Deserialize, Serialize};
@@ -209,6 +210,18 @@ pub struct OpaqueMtgoClassifiedCompetitiveNavigationFrameV1 {
     commitments: MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
 }
 
+pub(super) struct OpaqueMtgoRetainedCompetitiveNavigationClassificationV1 {
+    _source: CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
+    _prediction: CheckedUntrustedMtgoCompetitiveNavigationPredictionV1,
+    commitments: MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
+}
+
+impl OpaqueMtgoRetainedCompetitiveNavigationClassificationV1 {
+    pub(super) fn commitments_v1(&self) -> MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1 {
+        self.commitments.clone()
+    }
+}
+
 impl OpaqueMtgoClassifiedCompetitiveNavigationFrameV1 {
     pub fn commitments_v1(&self) -> MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1 {
         self.commitments.clone()
@@ -237,6 +250,69 @@ impl OpaqueMtgoClassifiedCompetitiveNavigationFrameV1 {
     pub fn safe_for_input_v1(&self) -> bool {
         false
     }
+}
+
+/// Consumes one exact classifier result and carries its complete profile,
+/// approved-account, runtime, request, response, and pixel lineage into the
+/// existing non-actionable entry-review identity. A caller still supplies the
+/// human-reviewed event label and its visible region. This function cannot
+/// create an event-entry intent, spending authority, coordinates, or input.
+pub fn bind_classified_navigation_frame_to_competitive_entry_review_identity_v1(
+    classified: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    event_display_label: String,
+    event_label_rect_client_px: MtgoRectPxV1,
+) -> Result<OpaqueMtgoCompetitiveEntryReviewIdentityV1, String> {
+    let OpaqueMtgoClassifiedCompetitiveNavigationFrameV1 {
+        _source_frame: admitted_source,
+        _lifecycle: lifecycle,
+        _source,
+        _prediction,
+        commitments,
+    } = classified;
+    if commitments.phase != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || commitments.event_kind != lifecycle.event_kind()
+        || commitments.frame_id != lifecycle.frame_id_v1()
+        || commitments.frame_sequence != lifecycle.frame_sequence()
+        || commitments.lifecycle_snapshot_commitment_sha256
+            != lifecycle.snapshot_commitment_sha256()
+    {
+        return Err(
+            "classified navigation source is not the exact retained entry-review lifecycle"
+                .to_owned(),
+        );
+    }
+    let admitted_commitments = admitted_source.commitments_v1();
+    if commitments.source_frame != admitted_commitments {
+        return Err("classified navigation source-frame lineage changed".to_owned());
+    }
+    let OpaqueMtgoAdmittedCompetitiveNavigationFrameV1 {
+        source_frame,
+        profile_commitment_sha256,
+        profile_admission_commitment_sha256,
+        approved_account_alias_sha256,
+        frame_profile_binding_sha256,
+    } = admitted_source;
+    if profile_commitment_sha256 != commitments.source_frame.profile_commitment_sha256
+        || profile_admission_commitment_sha256
+            != commitments.source_frame.profile_admission_commitment_sha256
+        || approved_account_alias_sha256 != commitments.source_frame.approved_account_alias_sha256
+        || frame_profile_binding_sha256 != commitments.source_frame.frame_profile_binding_sha256
+    {
+        return Err("classified navigation approved-account profile lineage changed".to_owned());
+    }
+    let retained_classification = OpaqueMtgoRetainedCompetitiveNavigationClassificationV1 {
+        _source,
+        _prediction,
+        commitments,
+    };
+    bind_opaque_navigation_frame_to_competitive_entry_review_identity_with_classification_v1(
+        source_frame,
+        lifecycle,
+        event_display_label,
+        event_label_rect_client_px,
+        Some(retained_classification),
+    )
 }
 
 /// Checks canonical request framing plus its exact assets and pixel

@@ -554,6 +554,7 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
     let source = include_str!("../src/actuator.rs");
     let duel_runtime = include_str!("../src/probe/duel_perception_runtime.rs");
     let entry_runtime = include_str!("../src/probe/competitive_entry_runtime.rs");
+    let navigation_runtime = include_str!("../src/probe/competitive_navigation_runtime.rs");
     for required in [
         "RATIFIED_PRIVATE_MATCH_AUTHORIZATION_COMMITMENT_V3: Option<&str> = None",
         "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
@@ -565,9 +566,15 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "review_competitive_duel_pass_ratification_candidate_from_correspondence_v2",
         "review_competitive_entry_attended_v1",
         "review_competitive_entry_attended_v2",
+        "review_competitive_entry_attended_v3",
         "OpaqueMtgoCompetitiveEntryReviewIdentityV1",
         "CheckedUntrustedMtgoSourceBoundCompetitiveEntryReviewV2",
+        "CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3",
+        "MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3",
+        "CLASSIFIER_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V3",
+        "classifier_bound_owner_review_no_entry_no_spending_no_input",
         "source_identity_commitment_sha256",
+        "source_navigation_classification_result_commitment_sha256",
         "CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1",
         "source_lifecycle_snapshot_commitment_sha256",
         "permission_review_commitment_sha256",
@@ -578,6 +585,9 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "pub fn permits_event_entry_v2(&self) -> bool {\n        false",
         "pub fn permits_spending_v2(&self) -> bool {\n        false",
         "safe_for_live_input_v2(&self) -> bool {\n        false",
+        "pub fn permits_event_entry_v3(&self) -> bool {\n        false",
+        "pub fn permits_spending_v3(&self) -> bool {\n        false",
+        "safe_for_live_input_v3(&self) -> bool {\n        false",
         "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
         "ratify_competitive_match_launch_v1",
         "ratify_competitive_match_launch_attended_v4",
@@ -617,6 +627,7 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
     for required in [
         "bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1",
         "OpaqueMtgoCompetitiveEntryReviewIdentityV1",
+        "OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2",
         "visible_frame_region_content_sha256_v1",
         "source_window_mode != \"main_client\"",
         "source_capture_role != \"navigation\"",
@@ -625,6 +636,17 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         assert!(
             entry_runtime.contains(required),
             "competitive entry identity is missing source binding: {required}"
+        );
+    }
+    for required in [
+        "bind_classified_navigation_frame_to_competitive_entry_review_identity_v1",
+        "OpaqueMtgoRetainedCompetitiveNavigationClassificationV1",
+        "classified navigation source-frame lineage changed",
+        "classified navigation approved-account profile lineage changed",
+    ] {
+        assert!(
+            navigation_runtime.contains(required),
+            "competitive entry identity is missing classifier lineage: {required}"
         );
     }
     for required in [
