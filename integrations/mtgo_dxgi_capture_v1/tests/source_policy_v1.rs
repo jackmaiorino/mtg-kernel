@@ -158,6 +158,54 @@ fn competitive_navigation_frame_requires_admitted_profile_and_exact_account_titl
 }
 
 #[test]
+fn competitive_navigation_classifier_is_exact_bounded_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_navigation_runtime.rs");
+    for required in [
+        "verify_competitive_navigation_classifier_runtime_v1",
+        "classify_admitted_mtgo_competitive_navigation_frame_v1",
+        "AdmittedMtgoCompetitiveNavigationProfileV1",
+        "OpaqueMtgoAdmittedCompetitiveNavigationFrameV1",
+        "OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1",
+        "OpaqueMtgoClassifiedCompetitiveNavigationFrameV1",
+        "classifier_assets_manifest_bytes",
+        "MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1",
+        "env_clear()",
+        "Stdio::piped()",
+        "child.kill()",
+        "MAX_CLASSIFIER_RESPONSE_BYTES_V1",
+        "check_untrusted_competitive_navigation_prediction_v1",
+        "rehash_lifecycle_visible_facts_v1",
+        "opaque_four_slice_classification_no_entry_no_spending_no_input",
+        "safe_for_lifecycle_classification_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive navigation classifier seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "cmd.exe",
+        "powershell",
+        "pub fn canonical_bgra8",
+        "pub fn visible_fact_rectangles",
+        "pub fn join_control",
+        "pub fn input_command",
+        "safe_for_lifecycle_classification_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive navigation classifier seam exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_authority() {
     let source = include_str!("../src/probe/duel_perception_runtime.rs");
     for required in [
