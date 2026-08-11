@@ -389,6 +389,17 @@ fn select_lifecycle_control_fact_v1(
             )
         }
     };
+    if action == MtgoCompetitiveLifecycleActionV1::SubmitSideboard
+        && !lifecycle
+            .visible_facts_v1()
+            .iter()
+            .any(|fact| fact.kind == MtgoLifecycleVisibleFactKindV1::SideboardNoChangesConfirmed)
+    {
+        return Err(
+            "generic sideboard control binding requires an explicitly visible no-change state"
+                .to_owned(),
+        );
+    }
     lifecycle
         .visible_facts_v1()
         .iter()
@@ -474,6 +485,7 @@ mod tests {
             MtgoCompetitiveLifecyclePhaseV1::Sideboarding => &[
                 MtgoLifecycleVisibleFactKindV1::SideboardSurfaceVisible,
                 MtgoLifecycleVisibleFactKindV1::SideboardTimerVisible,
+                MtgoLifecycleVisibleFactKindV1::SideboardConfigurationVisible,
                 MtgoLifecycleVisibleFactKindV1::SideboardNoChangesConfirmed,
                 MtgoLifecycleVisibleFactKindV1::SideboardSubmitControlEnabled,
             ],

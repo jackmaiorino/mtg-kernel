@@ -19,6 +19,7 @@ fn lifecycle_facts(phase: MtgoCompetitiveLifecyclePhaseV1) -> Vec<MtgoLifecycleV
         MtgoCompetitiveLifecyclePhaseV1::Sideboarding => &[
             SideboardSurfaceVisible,
             SideboardTimerVisible,
+            SideboardConfigurationVisible,
             SideboardNoChangesConfirmed,
             SideboardSubmitControlEnabled,
         ],

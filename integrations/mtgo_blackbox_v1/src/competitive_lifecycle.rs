@@ -46,6 +46,7 @@ pub enum MtgoLifecycleVisibleFactKindV1 {
     OpponentClockVisible,
     SideboardSurfaceVisible,
     SideboardTimerVisible,
+    SideboardConfigurationVisible,
     SideboardNoChangesConfirmed,
     SideboardSubmitControlEnabled,
     MatchResultVisible,
@@ -296,6 +297,17 @@ pub fn make_offline_competitive_lifecycle_intent_v1(
 ) -> Result<MtgoOfflineCompetitiveLifecycleIntentV1, MtgoContractErrorV1> {
     validate_authorization_for_mode_v1(mode_authorization, runtime_mode(source.event_kind()))?;
     validate_action_source_phase(source.phase(), action)?;
+    if action == MtgoCompetitiveLifecycleActionV1::SubmitSideboard
+        && !source
+            .visible_facts_v1()
+            .iter()
+            .any(|fact| fact.kind == MtgoLifecycleVisibleFactKindV1::SideboardNoChangesConfirmed)
+    {
+        return Err(error(
+            "sideboard_changes_unplanned",
+            "generic sideboard submission is limited to an explicitly visible no-change state",
+        ));
+    }
     let entry_authorization_sha256 = if action == MtgoCompetitiveLifecycleActionV1::ConfirmEntry {
         Some(validate_entry_authorization(
             source,
@@ -513,7 +525,7 @@ fn required_facts(
         MtgoCompetitiveLifecyclePhaseV1::Sideboarding => &[
             SideboardSurfaceVisible,
             SideboardTimerVisible,
-            SideboardNoChangesConfirmed,
+            SideboardConfigurationVisible,
             SideboardSubmitControlEnabled,
         ],
         MtgoCompetitiveLifecyclePhaseV1::MatchComplete => {

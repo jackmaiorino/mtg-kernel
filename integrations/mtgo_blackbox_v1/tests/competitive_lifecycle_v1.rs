@@ -23,6 +23,7 @@ fn required_fact_kinds(
         MtgoCompetitiveLifecyclePhaseV1::Sideboarding => vec![
             SideboardSurfaceVisible,
             SideboardTimerVisible,
+            SideboardConfigurationVisible,
             SideboardNoChangesConfirmed,
             SideboardSubmitControlEnabled,
         ],
@@ -274,6 +275,37 @@ fn league_and_challenge_authorization_are_not_interchangeable() {
         &challenge,
         MtgoCompetitiveLifecycleActionV1::OpenEntryReview,
         &scope,
+        None,
+    )
+    .is_ok());
+}
+
+#[test]
+fn generic_sideboard_submit_requires_an_explicit_visible_no_change_state() {
+    let mut changed = snapshot(MtgoCompetitiveLifecyclePhaseV1::Sideboarding, 1);
+    changed
+        .facts
+        .retain(|fact| fact.kind != MtgoLifecycleVisibleFactKindV1::SideboardNoChangesConfirmed);
+    let changed = validate_visible_competitive_lifecycle_snapshot_v1(changed).unwrap();
+
+    let error = make_offline_competitive_lifecycle_intent_v1(
+        &changed,
+        MtgoCompetitiveLifecycleActionV1::SubmitSideboard,
+        &mode_authorization(),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(error.code(), "sideboard_changes_unplanned");
+
+    let unchanged = validate_visible_competitive_lifecycle_snapshot_v1(snapshot(
+        MtgoCompetitiveLifecyclePhaseV1::Sideboarding,
+        2,
+    ))
+    .unwrap();
+    assert!(make_offline_competitive_lifecycle_intent_v1(
+        &unchanged,
+        MtgoCompetitiveLifecycleActionV1::SubmitSideboard,
+        &mode_authorization(),
         None,
     )
     .is_ok());

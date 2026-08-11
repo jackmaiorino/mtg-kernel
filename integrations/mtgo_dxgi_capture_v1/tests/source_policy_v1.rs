@@ -318,6 +318,8 @@ fn competitive_lifecycle_controls_are_exact_frame_bound_and_non_actionable() {
         "validate_checked_competitive_lifecycle_action_transition_v1",
         "strictly_newer_exact_action_postcondition_no_input_authority",
         "SideboardNoChangesConfirmed",
+        "SideboardConfigurationVisible",
+        "generic sideboard control binding requires an explicitly visible no-change state",
         "exact_enabled_control_detection_only_no_coordinates_no_input",
         "safe_for_live_input_v1(&self) -> bool {\n        false",
     ] {

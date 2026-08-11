@@ -1441,7 +1441,7 @@ mod tests {
             MtgoCompetitiveLifecyclePhaseV1::Sideboarding => &[
                 MtgoLifecycleVisibleFactKindV1::SideboardSurfaceVisible,
                 MtgoLifecycleVisibleFactKindV1::SideboardTimerVisible,
-                MtgoLifecycleVisibleFactKindV1::SideboardNoChangesConfirmed,
+                MtgoLifecycleVisibleFactKindV1::SideboardConfigurationVisible,
                 MtgoLifecycleVisibleFactKindV1::SideboardSubmitControlEnabled,
             ],
             MtgoCompetitiveLifecyclePhaseV1::MatchComplete => &[
