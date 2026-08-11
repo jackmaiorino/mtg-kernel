@@ -1104,7 +1104,10 @@ pub enum MtgoCompetitiveEventDriverStepV1 {
         match_identity_sha256: String,
         game_number: u8,
     },
-    ObserveTerminalEventRecord,
+    BeginTerminalEventRecordMonitor,
+    AdvanceTerminalEventRecordMonitor {
+        prior_observation_count: u64,
+    },
     CloseCompletedEvent,
     Complete,
 }
@@ -1277,6 +1280,21 @@ fn competitive_event_driver_directive_from_state_v1(
                 .to_owned(),
         );
     }
+    let event_monitor_present = runtime.event_monitor_chain_commitment_sha256.is_some();
+    if event_monitor_present != (runtime.event_monitor_observation_count > 0)
+        || runtime.terminal_event_record_confirmed && !event_monitor_present
+    {
+        return Err("competitive event runtime has inconsistent event monitor state".to_owned());
+    }
+    if runtime.terminal_event_record_confirmed
+        && runtime.current_phase != MtgoCompetitiveLifecyclePhaseV1::EventComplete
+        && !(runtime.closed_to_event_browser
+            && runtime.current_phase == MtgoCompetitiveLifecyclePhaseV1::EventBrowser)
+    {
+        return Err(
+            "competitive event runtime has a terminal record outside event completion".to_owned(),
+        );
+    }
     if runtime.closed_to_event_browser {
         if runtime.current_phase != MtgoCompetitiveLifecyclePhaseV1::EventBrowser
             || !runtime.terminal_event_record_confirmed
@@ -1351,8 +1369,12 @@ fn competitive_event_driver_directive_from_state_v1(
         MtgoCompetitiveLifecyclePhaseV1::EventComplete => {
             if runtime.terminal_event_record_confirmed {
                 MtgoCompetitiveEventDriverStepV1::CloseCompletedEvent
+            } else if event_monitor_present {
+                MtgoCompetitiveEventDriverStepV1::AdvanceTerminalEventRecordMonitor {
+                    prior_observation_count: runtime.event_monitor_observation_count,
+                }
             } else {
-                MtgoCompetitiveEventDriverStepV1::ObserveTerminalEventRecord
+                MtgoCompetitiveEventDriverStepV1::BeginTerminalEventRecordMonitor
             }
         }
         MtgoCompetitiveLifecyclePhaseV1::Reconnect => {
@@ -15957,7 +15979,17 @@ mod tests {
             competitive_event_driver_directive_from_commitments_v1(&completed)
                 .unwrap()
                 .step,
-            MtgoCompetitiveEventDriverStepV1::ObserveTerminalEventRecord
+            MtgoCompetitiveEventDriverStepV1::BeginTerminalEventRecordMonitor
+        );
+        completed.event_monitor_chain_commitment_sha256 = Some("f".repeat(64));
+        completed.event_monitor_observation_count = 1;
+        assert_eq!(
+            competitive_event_driver_directive_from_commitments_v1(&completed)
+                .unwrap()
+                .step,
+            MtgoCompetitiveEventDriverStepV1::AdvanceTerminalEventRecordMonitor {
+                prior_observation_count: 1,
+            }
         );
         completed.terminal_event_record_confirmed = true;
         let close = competitive_event_driver_directive_from_commitments_v1(&completed).unwrap();
@@ -15986,6 +16018,29 @@ mod tests {
         );
         inconsistent.gameplay_lease_count = 1;
         assert!(competitive_event_driver_directive_from_commitments_v1(&inconsistent).is_err());
+
+        let mut inconsistent_monitor = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::EventComplete,
+        );
+        inconsistent_monitor.event_monitor_observation_count = 1;
+        assert!(
+            competitive_event_driver_directive_from_commitments_v1(&inconsistent_monitor).is_err()
+        );
+        inconsistent_monitor.event_monitor_chain_commitment_sha256 = Some("f".repeat(64));
+        inconsistent_monitor.event_monitor_observation_count = 0;
+        assert!(
+            competitive_event_driver_directive_from_commitments_v1(&inconsistent_monitor).is_err()
+        );
+
+        let mut misplaced_terminal = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchComplete,
+        );
+        misplaced_terminal.event_monitor_chain_commitment_sha256 = Some("f".repeat(64));
+        misplaced_terminal.event_monitor_observation_count = 1;
+        misplaced_terminal.terminal_event_record_confirmed = true;
+        assert!(
+            competitive_event_driver_directive_from_commitments_v1(&misplaced_terminal).is_err()
+        );
 
         let mut missing_match = competitive_event_runtime_commitments_fixture_v1(
             MtgoCompetitiveLifecyclePhaseV1::Sideboarding,
