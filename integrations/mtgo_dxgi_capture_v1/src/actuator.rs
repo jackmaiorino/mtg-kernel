@@ -25,16 +25,18 @@ use crate::probe::{
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1, PreparedPregameActuationV3,
 };
 use mtgo_blackbox_v1::{
+    canonical_duel_gesture_action_families_v1,
     competitive_match_gameplay_authorization_commitment_v1,
     competitive_mode_authorization_commitment_v1, make_offline_competitive_lifecycle_intent_v1,
     validate_authorization_for_mode_v1, AdmittedMtgoCompetitiveNavigationProfileV1,
-    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    AdmittedMtgoDuelGestureProfileV1, AdmittedMtgoDuelPerceptionProfileV1,
+    CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
     MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
-    MtgoPregameActionSemanticV1, MtgoRuntimeModeV1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
-    MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
+    MtgoDuelActionFamilyV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
+    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -76,6 +78,10 @@ const COMPETITIVE_DUEL_PASS_AUTHORIZATION_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-priority-pass-authorization-binding-v1";
 const RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
 const RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2: Option<&str> = None;
+const COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-duel-gesture-authorization-from-review-v1";
+const RATIFIED_COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V1: Option<&str> =
+    None;
 const COMPETITIVE_ENTRY_AUTHORIZATION_RATIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-authorization-ratification-v1";
 const RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
@@ -236,6 +242,114 @@ impl MtgoReviewedCompetitivePassRatificationCandidateV2 {
     pub fn permits_spending_v2(&self) -> bool {
         false
     }
+}
+
+/// One separately ratified exact-account permission for the complete reviewed
+/// duel gesture profile in exactly one League or Challenge mode. The profile
+/// identity is retained, but this value is not an input command and grants no
+/// event-entry or spending authority. The production ratification root is
+/// empty.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::RatifiedMtgoCompetitiveDuelGestureAuthorizationV1;
+/// let _forged = RatifiedMtgoCompetitiveDuelGestureAuthorizationV1 {};
+/// ```
+pub struct RatifiedMtgoCompetitiveDuelGestureAuthorizationV1 {
+    scope: MtgoAuthorizationScopeV1,
+    _permission_correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    _gesture_profile: AdmittedMtgoDuelGestureProfileV1,
+    #[allow(dead_code)]
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    mode_authorization_commitment_sha256: String,
+    permission_review_commitment_sha256: String,
+    gesture_evaluation_commitment_sha256: String,
+    gesture_profile_admission_commitment_sha256: String,
+    authorization_commitment_sha256: String,
+}
+
+impl RatifiedMtgoCompetitiveDuelGestureAuthorizationV1 {
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.event_kind
+    }
+
+    pub fn account_alias_sha256_v1(&self) -> &str {
+        &self.scope.account_alias_sha256
+    }
+
+    pub fn written_permission_sha256_v1(&self) -> &str {
+        &self.scope.written_permission_sha256
+    }
+
+    pub fn mode_authorization_commitment_sha256_v1(&self) -> &str {
+        &self.mode_authorization_commitment_sha256
+    }
+
+    pub fn permission_review_commitment_sha256_v1(&self) -> &str {
+        &self.permission_review_commitment_sha256
+    }
+
+    pub fn gesture_evaluation_commitment_sha256_v1(&self) -> &str {
+        &self.gesture_evaluation_commitment_sha256
+    }
+
+    pub fn gesture_profile_admission_commitment_sha256_v1(&self) -> &str {
+        &self.gesture_profile_admission_commitment_sha256
+    }
+
+    pub fn authorization_commitment_sha256_v1(&self) -> &str {
+        &self.authorization_commitment_sha256
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoReviewedCompetitiveGestureRatificationCandidateV1 {
+    pub permission_review_commitment_sha256: String,
+    pub account_alias_sha256: String,
+    pub correspondence_sha256: String,
+    pub mode_authorization_commitment_sha256: String,
+    pub gesture_evaluation_commitment_sha256: String,
+    pub gesture_profile_admission_commitment_sha256: String,
+    pub gesture_target_runtime_binary_sha256: String,
+    pub gesture_target_assets_manifest_sha256: String,
+    pub supported_action_families: Vec<MtgoDuelActionFamilyV1>,
+    pub ratification_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+}
+
+impl MtgoReviewedCompetitiveGestureRatificationCandidateV1 {
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CompetitiveDuelGestureProfileFactsV1<'a> {
+    evaluation_commitment_sha256: &'a str,
+    admission_commitment_sha256: &'a str,
+    runtime_binary_sha256: &'a str,
+    assets_manifest_sha256: &'a str,
+    supported_action_families: &'a [MtgoDuelActionFamilyV1],
 }
 
 /// Copyable review telemetry for one exact League or Challenge entry and its
@@ -1315,6 +1429,74 @@ pub fn review_competitive_duel_pass_ratification_candidate_from_correspondence_v
         mode_authorization_commitment_sha256,
         ratification_commitment_sha256,
         event_kind,
+    })
+}
+
+/// Computes the non-authorizing production-ratification candidate for the
+/// complete reviewed duel gesture profile in one exact League or Challenge
+/// mode. Both the private Daybreak reply and the admitted gesture evaluation
+/// are retained by their opaque wrappers. No input, entry, or spending
+/// authority is created.
+pub fn review_competitive_duel_gesture_ratification_candidate_from_correspondence_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: &str,
+    event_kind: MtgoCompetitiveEventKindV1,
+    gesture_profile: &AdmittedMtgoDuelGestureProfileV1,
+) -> Result<MtgoReviewedCompetitiveGestureRatificationCandidateV1, String> {
+    let facts = CompetitiveDuelGestureProfileFactsV1 {
+        evaluation_commitment_sha256: gesture_profile.evaluation_commitment_sha256(),
+        admission_commitment_sha256: gesture_profile.admission_commitment_sha256(),
+        runtime_binary_sha256: gesture_profile.gesture_target_runtime_binary_sha256(),
+        assets_manifest_sha256: gesture_profile.gesture_target_assets_manifest_sha256(),
+        supported_action_families: gesture_profile.supported_action_families(),
+    };
+    competitive_duel_gesture_ratification_candidate_from_parts_v1(
+        correspondence,
+        visible_account_alias,
+        event_kind,
+        &facts,
+    )
+}
+
+/// Production constructor for one exact-account, exact-mode, reviewed gesture
+/// permission. The compile-pinned root is empty until the correspondence and
+/// measured all-family gesture corpus have both been reviewed. The returned
+/// value remains a permission identity only and cannot send input.
+pub fn ratify_competitive_duel_gesture_authorization_from_correspondence_v1(
+    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    gesture_profile: AdmittedMtgoDuelGestureProfileV1,
+) -> Result<RatifiedMtgoCompetitiveDuelGestureAuthorizationV1, String> {
+    let candidate = review_competitive_duel_gesture_ratification_candidate_from_correspondence_v1(
+        &correspondence,
+        &visible_account_alias,
+        event_kind,
+        &gesture_profile,
+    )?;
+    if RATIFIED_COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V1
+        != Some(candidate.ratification_commitment_sha256.as_str())
+    {
+        return Err(
+            "the exact reviewed competitive gesture permission is not ratified in this build"
+                .to_owned(),
+        );
+    }
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(event_kind)
+        .map_err(|error| format!("derive reviewed competitive gesture mode scope: {error}"))?;
+    Ok(RatifiedMtgoCompetitiveDuelGestureAuthorizationV1 {
+        scope,
+        _permission_correspondence: correspondence,
+        _gesture_profile: gesture_profile,
+        visible_account_alias,
+        event_kind,
+        mode_authorization_commitment_sha256: candidate.mode_authorization_commitment_sha256,
+        permission_review_commitment_sha256: candidate.permission_review_commitment_sha256,
+        gesture_evaluation_commitment_sha256: candidate.gesture_evaluation_commitment_sha256,
+        gesture_profile_admission_commitment_sha256: candidate
+            .gesture_profile_admission_commitment_sha256,
+        authorization_commitment_sha256: candidate.ratification_commitment_sha256,
     })
 }
 
@@ -2908,6 +3090,89 @@ fn is_sha256_v2(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn competitive_duel_gesture_ratification_candidate_from_parts_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: &str,
+    event_kind: MtgoCompetitiveEventKindV1,
+    gesture_profile: &CompetitiveDuelGestureProfileFactsV1<'_>,
+) -> Result<MtgoReviewedCompetitiveGestureRatificationCandidateV1, String> {
+    let permission_review_commitment_sha256 = correspondence.review_commitment_sha256().to_owned();
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(event_kind)
+        .map_err(|error| format!("derive reviewed competitive gesture mode scope: {error}"))?;
+    let mode_authorization_commitment_sha256 = validate_exact_competitive_mode_authorization_v1(
+        &scope,
+        visible_account_alias,
+        event_kind,
+        "competitive gesture permission",
+    )?;
+    let canonical_families = canonical_duel_gesture_action_families_v1();
+    if gesture_profile.supported_action_families != canonical_families.as_slice() {
+        return Err(
+            "competitive gesture permission requires all eleven action families in canonical order"
+                .to_owned(),
+        );
+    }
+    let profile_hashes = [
+        gesture_profile.evaluation_commitment_sha256,
+        gesture_profile.admission_commitment_sha256,
+        gesture_profile.runtime_binary_sha256,
+        gesture_profile.assets_manifest_sha256,
+    ];
+    if profile_hashes.iter().any(|value| !is_sha256_v2(value))
+        || profile_hashes
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != profile_hashes.len()
+    {
+        return Err(
+            "competitive gesture profile commitments must be valid and pairwise distinct"
+                .to_owned(),
+        );
+    }
+    let family_json = serde_json::to_vec(&canonical_families)
+        .map_err(|error| format!("serialize competitive gesture families: {error}"))?;
+    let event_kind_bytes: &[u8] = match event_kind {
+        MtgoCompetitiveEventKindV1::League => b"league",
+        MtgoCompetitiveEventKindV1::Challenge => b"challenge",
+    };
+    let ratification_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_DOMAIN_V1,
+        &[
+            permission_review_commitment_sha256.as_bytes(),
+            scope.account_alias_sha256.as_bytes(),
+            scope.written_permission_sha256.as_bytes(),
+            visible_account_alias.as_bytes(),
+            event_kind_bytes,
+            mode_authorization_commitment_sha256.as_bytes(),
+            gesture_profile.evaluation_commitment_sha256.as_bytes(),
+            gesture_profile.admission_commitment_sha256.as_bytes(),
+            gesture_profile.runtime_binary_sha256.as_bytes(),
+            gesture_profile.assets_manifest_sha256.as_bytes(),
+            &family_json,
+            b"complete_reviewed_eleven_family_profile_permission_identity_only_no_input_entry_or_spending",
+        ],
+    );
+    Ok(MtgoReviewedCompetitiveGestureRatificationCandidateV1 {
+        permission_review_commitment_sha256,
+        account_alias_sha256: scope.account_alias_sha256,
+        correspondence_sha256: scope.written_permission_sha256,
+        mode_authorization_commitment_sha256,
+        gesture_evaluation_commitment_sha256: gesture_profile
+            .evaluation_commitment_sha256
+            .to_owned(),
+        gesture_profile_admission_commitment_sha256: gesture_profile
+            .admission_commitment_sha256
+            .to_owned(),
+        gesture_target_runtime_binary_sha256: gesture_profile.runtime_binary_sha256.to_owned(),
+        gesture_target_assets_manifest_sha256: gesture_profile.assets_manifest_sha256.to_owned(),
+        supported_action_families: canonical_families,
+        ratification_commitment_sha256,
+        event_kind,
+    })
+}
+
 fn competitive_entry_ratification_candidate_from_parts_v1(
     correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
     visible_account_alias: &str,
@@ -3429,12 +3694,26 @@ fn validate_competitive_duel_pass_authorization_v1(
     visible_account_alias: &str,
     event_kind: MtgoCompetitiveEventKindV1,
 ) -> Result<String, String> {
+    validate_exact_competitive_mode_authorization_v1(
+        authorization,
+        visible_account_alias,
+        event_kind,
+        "competitive Pass ratification",
+    )
+}
+
+fn validate_exact_competitive_mode_authorization_v1(
+    authorization: &MtgoAuthorizationScopeV1,
+    visible_account_alias: &str,
+    event_kind: MtgoCompetitiveEventKindV1,
+    context: &str,
+) -> Result<String, String> {
     let runtime_mode = match event_kind {
         MtgoCompetitiveEventKindV1::League => MtgoRuntimeModeV1::LeagueInput,
         MtgoCompetitiveEventKindV1::Challenge => MtgoRuntimeModeV1::ChallengeInput,
     };
     validate_authorization_for_mode_v1(authorization, runtime_mode)
-        .map_err(|error| format!("competitive Pass authorization rejected: {error}"))?;
+        .map_err(|error| format!("{context} authorization rejected: {error}"))?;
     validate_visible_account_alias_v1(authorization, visible_account_alias)?;
 
     let selected_mode_is_exact = match event_kind {
@@ -3451,13 +3730,12 @@ fn validate_competitive_duel_pass_authorization_v1(
         || authorization.open_play_input
         || authorization.other_prize_event_input
     {
-        return Err(
-            "competitive Pass ratification requires exactly one League or Challenge input mode"
-                .to_owned(),
-        );
+        return Err(format!(
+            "{context} requires exactly one League or Challenge input mode"
+        ));
     }
     competitive_mode_authorization_commitment_v1(authorization, event_kind)
-        .map_err(|error| format!("competitive Pass mode commitment rejected: {error}"))
+        .map_err(|error| format!("{context} mode commitment rejected: {error}"))
 }
 
 fn competitive_duel_pass_authorization_commitment_v1(
@@ -5142,6 +5420,86 @@ mod tests {
                 &checked_competitive_correspondence_v2(),
                 "DifferentAccount",
                 MtgoCompetitiveEventKindV1::League,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn reviewed_gesture_permission_binds_all_families_profile_and_one_mode() {
+        let families = canonical_duel_gesture_action_families_v1();
+        let facts = CompetitiveDuelGestureProfileFactsV1 {
+            evaluation_commitment_sha256: &"1".repeat(64),
+            admission_commitment_sha256: &"2".repeat(64),
+            runtime_binary_sha256: &"3".repeat(64),
+            assets_manifest_sha256: &"4".repeat(64),
+            supported_action_families: &families,
+        };
+        let mut commitments = Vec::new();
+        for event_kind in [
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveEventKindV1::Challenge,
+        ] {
+            let candidate = competitive_duel_gesture_ratification_candidate_from_parts_v1(
+                &checked_competitive_correspondence_v2(),
+                "UnbuckledPie",
+                event_kind,
+                &facts,
+            )
+            .unwrap();
+            assert_eq!(candidate.event_kind, event_kind);
+            assert_eq!(candidate.supported_action_families, families);
+            assert_eq!(
+                candidate.gesture_evaluation_commitment_sha256,
+                facts.evaluation_commitment_sha256
+            );
+            assert_eq!(
+                candidate.gesture_profile_admission_commitment_sha256,
+                facts.admission_commitment_sha256
+            );
+            assert!(!candidate.safe_for_live_input_v1());
+            assert!(!candidate.permits_event_entry_v1());
+            assert!(!candidate.permits_spending_v1());
+            commitments.push(candidate.ratification_commitment_sha256);
+        }
+        assert_ne!(commitments[0], commitments[1]);
+        assert!(
+            RATIFIED_COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V1.is_none()
+        );
+
+        let incomplete = &families[..families.len() - 1];
+        let incomplete_facts = CompetitiveDuelGestureProfileFactsV1 {
+            supported_action_families: incomplete,
+            ..facts
+        };
+        assert!(
+            competitive_duel_gesture_ratification_candidate_from_parts_v1(
+                &checked_competitive_correspondence_v2(),
+                "UnbuckledPie",
+                MtgoCompetitiveEventKindV1::League,
+                &incomplete_facts,
+            )
+            .is_err()
+        );
+        let duplicate_hash_facts = CompetitiveDuelGestureProfileFactsV1 {
+            admission_commitment_sha256: facts.evaluation_commitment_sha256,
+            ..facts
+        };
+        assert!(
+            competitive_duel_gesture_ratification_candidate_from_parts_v1(
+                &checked_competitive_correspondence_v2(),
+                "UnbuckledPie",
+                MtgoCompetitiveEventKindV1::League,
+                &duplicate_hash_facts,
+            )
+            .is_err()
+        );
+        assert!(
+            competitive_duel_gesture_ratification_candidate_from_parts_v1(
+                &checked_competitive_correspondence_v2(),
+                "DifferentAccount",
+                MtgoCompetitiveEventKindV1::League,
+                &facts,
             )
             .is_err()
         );
