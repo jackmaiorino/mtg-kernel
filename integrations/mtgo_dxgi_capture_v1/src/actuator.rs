@@ -5,7 +5,7 @@ use crate::probe::{
     confirm_opaque_competitive_entry_postcondition_v1,
     confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
-    prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1,
+    prepare_opaque_competitive_duel_gesture_source_stage_from_pinned_runtime_v1,
     prepare_pregame_actuation_v3, resolve_competitive_entry_pointer_target_v1,
     validate_classifier_backed_competitive_entry_frame_transition_v1,
     validate_classifier_backed_competitive_entry_immediate_recapture_v1,
@@ -28,7 +28,8 @@ use crate::probe::{
     OpaqueMtgoPregameActionPlanV3,
     OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 as ProbeOpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1,
     OpaqueMtgoPreparedCompetitiveDuelPassV1,
-    OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1, PreparedPregameActuationV3,
+    OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1, PreparedPregameActuationV3,
 };
 use mtgo_blackbox_v1::{
     canonical_duel_gesture_action_families_v1,
@@ -42,8 +43,7 @@ use mtgo_blackbox_v1::{
     MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
     MtgoDuelActionFamilyV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
-    MtgoVisibleDuelGestureTargetSetV1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
-    MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
+    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1245,6 +1245,8 @@ pub struct MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1 {
     pub fresh_stage_binding_commitment_sha256: String,
     pub fresh_capture_commitment_sha256: String,
     pub fresh_perception_result_commitment_sha256: String,
+    pub gesture_target_runtime_identity_commitment_sha256: String,
+    pub gesture_target_request_commitment_sha256: String,
     pub primitive_commitment_sha256: String,
     pub selected_action_family: MtgoDuelActionFamilyV1,
     pub event_kind: MtgoCompetitiveEventKindV1,
@@ -1258,9 +1260,9 @@ pub struct MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1 {
 }
 
 /// One session-bound source primitive rechecked against a distinct next-frame
-/// opaque perception and complete current target set. The target set remains
-/// checked-untrusted until the pinned gesture runtime is integrated. This
-/// wrapper has no input method and exposes no target points.
+/// opaque perception and the response from the exact profile-pinned gesture
+/// target runtime. This wrapper has no input method and exposes no target
+/// points.
 ///
 /// ```compile_fail
 /// use mtgo_dxgi_capture_v1::OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1;
@@ -1285,7 +1287,7 @@ impl OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 {
     }
 
     pub fn target_runtime_attested_v1(&self) -> bool {
-        false
+        true
     }
 
     pub fn permits_event_entry_v1(&self) -> bool {
@@ -2865,13 +2867,15 @@ pub fn bind_competitive_duel_gesture_sequence_session_v1(
 }
 
 /// Rechecks the source primitive of one exact session-bound gesture on a
-/// distinct next-frame perception. The supplied target set is fully validated
-/// against retained pixels but is not yet attested to the pinned gesture
-/// runtime. The result cannot send input and exposes no target coordinates.
+/// distinct next-frame perception. Only the exact profile-pinned gesture
+/// target runtime may provide the complete target set. The request and runtime
+/// identities are retained in the result, which cannot send input and exposes
+/// no target coordinates.
 pub fn prepare_session_bound_competitive_duel_gesture_source_stage_v1(
     bound: OpaqueMtgoSessionBoundCompetitiveDuelGestureV1,
     fresh_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
-    target_set: MtgoVisibleDuelGestureTargetSetV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    timeout_ms: u32,
 ) -> Result<OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1, String> {
     let OpaqueMtgoSessionBoundCompetitiveDuelGestureV1 {
         _session: session,
@@ -2879,10 +2883,20 @@ pub fn prepare_session_bound_competitive_duel_gesture_source_stage_v1(
         commitments: bound_commitments,
     } = bound;
     let session_commitments = session.commitments_v1();
-    let prepared = prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
+    let profile = &session.launch.gesture_authorization._gesture_profile;
+    if bound_commitments.gesture_evaluation_commitment_sha256
+        != profile.evaluation_commitment_sha256()
+        || bound_commitments.gesture_profile_admission_commitment_sha256
+            != profile.admission_commitment_sha256()
+    {
+        return Err("session-bound gesture differs from its retained profile".to_owned());
+    }
+    let prepared = prepare_opaque_competitive_duel_gesture_source_stage_from_pinned_runtime_v1(
         sequence,
         fresh_perception,
-        target_set,
+        profile,
+        runtime,
+        timeout_ms,
     )?;
     let commitments = competitive_duel_gesture_source_preparation_from_parts_v1(
         &bound_commitments,
@@ -4843,6 +4857,10 @@ fn competitive_duel_gesture_source_preparation_from_parts_v1(
         prepared.fresh_stage_binding_commitment_sha256.as_str(),
         prepared.fresh_capture_commitment_sha256.as_str(),
         prepared.fresh_perception_result_commitment_sha256.as_str(),
+        prepared
+            .gesture_target_runtime_identity_commitment_sha256
+            .as_str(),
+        prepared.gesture_target_request_commitment_sha256.as_str(),
         prepared.primitive_commitment_sha256.as_str(),
         prepared.preparation_commitment_sha256.as_str(),
     ] {
@@ -4905,6 +4923,10 @@ fn competitive_duel_gesture_source_preparation_from_parts_v1(
             prepared
                 .fresh_perception_result_commitment_sha256
                 .as_bytes(),
+            prepared
+                .gesture_target_runtime_identity_commitment_sha256
+                .as_bytes(),
+            prepared.gesture_target_request_commitment_sha256.as_bytes(),
             prepared.primitive_commitment_sha256.as_bytes(),
             prepared.preparation_commitment_sha256.as_bytes(),
             &family_json,
@@ -4915,7 +4937,7 @@ fn competitive_duel_gesture_source_preparation_from_parts_v1(
             &prepared.target_count.to_be_bytes(),
             &prepared.fresh_frame_id.to_be_bytes(),
             &prepared.fresh_frame_sequence.to_be_bytes(),
-            b"source_primitive_freshly_rechecked_unattested_targets_no_input",
+            b"source_primitive_freshly_rechecked_pinned_runtime_targets_no_input",
         ],
     );
     Ok(MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1 {
@@ -4936,6 +4958,12 @@ fn competitive_duel_gesture_source_preparation_from_parts_v1(
         fresh_capture_commitment_sha256: prepared.fresh_capture_commitment_sha256.clone(),
         fresh_perception_result_commitment_sha256: prepared
             .fresh_perception_result_commitment_sha256
+            .clone(),
+        gesture_target_runtime_identity_commitment_sha256: prepared
+            .gesture_target_runtime_identity_commitment_sha256
+            .clone(),
+        gesture_target_request_commitment_sha256: prepared
+            .gesture_target_request_commitment_sha256
             .clone(),
         primitive_commitment_sha256: prepared.primitive_commitment_sha256.clone(),
         selected_action_family: prepared.selected_action_family,
@@ -6793,6 +6821,8 @@ mod tests {
             fresh_stage_binding_commitment_sha256: "e".repeat(64),
             fresh_capture_commitment_sha256: "f".repeat(64),
             fresh_perception_result_commitment_sha256: "0".repeat(64),
+            gesture_target_runtime_identity_commitment_sha256: "3".repeat(64),
+            gesture_target_request_commitment_sha256: "4".repeat(64),
             primitive_commitment_sha256: "1".repeat(64),
             preparation_commitment_sha256: "2".repeat(64),
             selected_action_family: MtgoDuelActionFamilyV1::CastOrPlotSpell,

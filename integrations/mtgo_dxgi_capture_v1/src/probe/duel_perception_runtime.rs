@@ -5,6 +5,7 @@ use super::{
 };
 use mtgo_blackbox_v1::{
     bind_profile_bound_action_plan_to_competitive_match_v1, bind_visible_duel_gesture_stage_v1,
+    canonical_duel_gesture_action_families_v1,
     check_untrusted_competitive_gameplay_before_input_pixels_v1,
     check_untrusted_competitive_gameplay_postcondition_pixels_v1,
     check_untrusted_dxgi_capture_artifact_v1, check_untrusted_dxgi_observed_decision_candidate_v1,
@@ -16,7 +17,8 @@ use mtgo_blackbox_v1::{
     score_and_select_profile_bound_duel_candidate_v1,
     validate_dxgi_bound_observation_reconstruction_audit_v1, validate_observed_decision_v1,
     validate_profile_bound_duel_gesture_plan_v1, visible_frame_region_content_sha256_v1,
-    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
+    AdmittedMtgoDuelGestureProfileV1, AdmittedMtgoDuelPerceptionProfileV1,
+    CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
     CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
     CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, CheckedUntrustedMtgoDuelGesturePlanV1,
@@ -50,6 +52,9 @@ use std::time::{Duration, Instant};
 const DUEL_PERCEPTION_RUNTIME_IDENTITY_DOMAIN_V1: &[u8] =
     b"mtgo-duel-perception-runtime-identity-v1";
 const DUEL_PERCEPTION_REQUEST_DOMAIN_V1: &[u8] = b"mtgo-duel-perception-request-v1";
+const DUEL_GESTURE_TARGET_RUNTIME_IDENTITY_DOMAIN_V1: &[u8] =
+    b"mtgo-duel-gesture-target-runtime-identity-v1";
+const DUEL_GESTURE_TARGET_REQUEST_DOMAIN_V1: &[u8] = b"mtgo-duel-gesture-target-request-v1";
 const DUEL_PERCEPTION_RESULT_DOMAIN_V1: &[u8] = b"mtgo-duel-perception-result-v1";
 const DUEL_OPAQUE_MODEL_SELECTION_DOMAIN_V1: &[u8] = b"mtgo-opaque-duel-model-selection-v1";
 const DUEL_OPAQUE_CONTROL_RESOLUTION_DOMAIN_V1: &[u8] = b"mtgo-opaque-duel-control-resolution-v1";
@@ -70,6 +75,7 @@ const DUEL_OPAQUE_COMPETITIVE_PASS_PREPARATION_DOMAIN_V1: &[u8] =
 const DUEL_OPAQUE_COMPETITIVE_PASS_CONFIRMATION_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-pass-confirmation-v1";
 const DUEL_PERCEPTION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_PERCEPTION_V1\0";
+const DUEL_GESTURE_TARGET_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_GESTURE_TARGET_V1\0";
 const MAX_RUNTIME_ARTIFACT_BYTES_V1: u64 = 512 * 1024 * 1024;
 const MAX_PERCEPTION_RESPONSE_BYTES_V1: usize = 16 * 1024 * 1024;
 const MAX_PERCEPTION_STDERR_BYTES_V1: usize = 64 * 1024;
@@ -121,12 +127,71 @@ pub struct MtgoDuelPerceptionRequestHeaderV1 {
     pub card_database_profile_sha256: String,
 }
 
+/// Canonical header for one pinned gesture-target runtime request. The exact
+/// BGRA8 frame follows this JSON header on the private stdin protocol.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoDuelGestureTargetRequestHeaderV1 {
+    pub schema_version: u32,
+    pub protocol: String,
+    pub frame_id: u64,
+    pub frame_sequence: u64,
+    pub canonical_width: u32,
+    pub canonical_height: u32,
+    pub canonical_stride: u32,
+    pub canonical_byte_length: usize,
+    pub canonical_bgra8_sha256: String,
+    pub source_capture_commitment_sha256: String,
+    pub perception_result_commitment_sha256: String,
+    pub decision_commitment_sha256: String,
+    pub gesture_plan_commitment_sha256: String,
+    pub selected_action_family: MtgoDuelActionFamilyV1,
+    pub stage_index: u16,
+    pub primitive: MtgoDuelGesturePrimitiveV1,
+    pub gesture_evaluation_commitment_sha256: String,
+    pub gesture_profile_admission_commitment_sha256: String,
+    pub runtime_identity_commitment_sha256: String,
+    pub gesture_target_runtime_binary_sha256: String,
+    pub gesture_target_assets_manifest_sha256: String,
+}
+
+/// Strict output schema for the pinned gesture-target runtime. The target set
+/// remains untrusted until the opaque Windows invocation validates the exact
+/// request binding and rehashes every region from retained pixels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoDuelGestureTargetProcessResponseV1 {
+    pub schema_version: u32,
+    pub request_commitment_sha256: String,
+    pub target_set: MtgoVisibleDuelGestureTargetSetV1,
+}
+
 /// Structurally checked protocol request metadata. This does not attest that a
 /// caller owns a DXGI frame and it retains no pixels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckedUntrustedMtgoDuelPerceptionRequestV1 {
     header: MtgoDuelPerceptionRequestHeaderV1,
     request_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckedUntrustedMtgoDuelGestureTargetRequestV1 {
+    header: MtgoDuelGestureTargetRequestHeaderV1,
+    request_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoDuelGestureTargetRequestV1 {
+    pub fn header_v1(&self) -> &MtgoDuelGestureTargetRequestHeaderV1 {
+        &self.header
+    }
+
+    pub fn request_commitment_sha256_v1(&self) -> &str {
+        &self.request_commitment_sha256
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
 }
 
 impl CheckedUntrustedMtgoDuelPerceptionRequestV1 {
@@ -181,6 +246,45 @@ pub struct OpaqueMtgoVerifiedDuelPerceptionRuntimeV1 {
     classifier_assets_manifest_path: PathBuf,
     card_database_profile_path: PathBuf,
     commitments: MtgoVerifiedDuelPerceptionRuntimeCommitmentsV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoVerifiedDuelGestureTargetRuntimeCommitmentsV1 {
+    pub gesture_evaluation_commitment_sha256: String,
+    pub gesture_profile_admission_commitment_sha256: String,
+    pub perception_profile_admission_commitment_sha256: String,
+    pub gesture_target_runtime_binary_sha256: String,
+    pub gesture_target_assets_manifest_sha256: String,
+    pub runtime_identity_commitment_sha256: String,
+}
+
+/// Exact on-disk gesture-target runtime matched to the admitted reviewed
+/// all-family profile. This handle is move-only and exposes no path or process
+/// control. Verification alone does not classify a frame or authorize input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1>();
+/// ```
+pub struct OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1 {
+    executable_path: PathBuf,
+    assets_manifest_path: PathBuf,
+    commitments: MtgoVerifiedDuelGestureTargetRuntimeCommitmentsV1,
+}
+
+impl OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1 {
+    pub fn commitments_v1(&self) -> MtgoVerifiedDuelGestureTargetRuntimeCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
 }
 
 impl OpaqueMtgoVerifiedDuelPerceptionRuntimeV1 {
@@ -931,6 +1035,8 @@ pub(crate) struct MtgoOpaqueCompetitiveDuelGestureSourcePreparationCommitmentsV1
     pub(crate) fresh_stage_binding_commitment_sha256: String,
     pub(crate) fresh_capture_commitment_sha256: String,
     pub(crate) fresh_perception_result_commitment_sha256: String,
+    pub(crate) gesture_target_runtime_identity_commitment_sha256: String,
+    pub(crate) gesture_target_request_commitment_sha256: String,
     pub(crate) primitive_commitment_sha256: String,
     pub(crate) preparation_commitment_sha256: String,
     pub(crate) selected_action_family: MtgoDuelActionFamilyV1,
@@ -958,6 +1064,11 @@ pub(crate) struct OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 {
     target_points_desktop_px: Vec<(i32, i32)>,
     #[allow(dead_code)]
     target_regions: Vec<PrivateOpaqueGestureTargetRegionV1>,
+}
+
+struct VerifiedDuelGestureTargetRuntimeBindingV1 {
+    runtime_identity_commitment_sha256: String,
+    request_commitment_sha256: String,
 }
 
 /// Coordinate-free telemetry for one immediate fresh-frame preparation of a
@@ -1132,6 +1243,80 @@ pub fn check_untrusted_duel_perception_request_v1(
     })
 }
 
+/// Checks the canonical gesture-target request envelope and exact following
+/// pixels. This is a structural protocol check only and does not attest that a
+/// pinned executable produced any later target set.
+pub fn check_untrusted_duel_gesture_target_request_v1(
+    canonical_header_json: &[u8],
+    canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoDuelGestureTargetRequestV1, String> {
+    let header: MtgoDuelGestureTargetRequestHeaderV1 =
+        serde_json::from_slice(canonical_header_json)
+            .map_err(|error| format!("parse duel gesture-target request header: {error}"))?;
+    let reencoded = serde_json::to_vec(&header)
+        .map_err(|error| format!("serialize duel gesture-target request header: {error}"))?;
+    if reencoded != canonical_header_json {
+        return Err("duel gesture-target request header is not canonical JSON".to_owned());
+    }
+    if header.schema_version != 1
+        || header.protocol != "mtgo_visible_duel_gesture_target_v1"
+        || header.frame_id == 0
+        || header.frame_sequence == 0
+        || header.canonical_width == 0
+        || header.canonical_height == 0
+        || header.canonical_width > 16_384
+        || header.canonical_height > 16_384
+        || !canonical_duel_gesture_action_families_v1().contains(&header.selected_action_family)
+        || header.stage_index > 31
+    {
+        return Err("duel gesture-target request identity or geometry is invalid".to_owned());
+    }
+    let expected_stride = header
+        .canonical_width
+        .checked_mul(4)
+        .ok_or("duel gesture-target request stride overflow")?;
+    let expected_length = usize::try_from(header.canonical_width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(header.canonical_height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("duel gesture-target request byte length overflow")?;
+    if header.canonical_stride != expected_stride
+        || header.canonical_byte_length != expected_length
+        || canonical_bgra8.len() != expected_length
+        || header.canonical_bgra8_sha256 != sha256_hex_v1(canonical_bgra8)
+    {
+        return Err("duel gesture-target request pixels do not match the header".to_owned());
+    }
+    for value in [
+        header.canonical_bgra8_sha256.as_str(),
+        header.source_capture_commitment_sha256.as_str(),
+        header.perception_result_commitment_sha256.as_str(),
+        header.decision_commitment_sha256.as_str(),
+        header.gesture_plan_commitment_sha256.as_str(),
+        header.gesture_evaluation_commitment_sha256.as_str(),
+        header.gesture_profile_admission_commitment_sha256.as_str(),
+        header.runtime_identity_commitment_sha256.as_str(),
+        header.gesture_target_runtime_binary_sha256.as_str(),
+        header.gesture_target_assets_manifest_sha256.as_str(),
+    ] {
+        if !looks_like_lower_sha256_v1(value) {
+            return Err("duel gesture-target request contains an invalid commitment".to_owned());
+        }
+    }
+    let request_commitment_sha256 = commitment_v1(
+        DUEL_GESTURE_TARGET_REQUEST_DOMAIN_V1,
+        &[canonical_header_json, canonical_bgra8],
+    );
+    Ok(CheckedUntrustedMtgoDuelGestureTargetRequestV1 {
+        header,
+        request_commitment_sha256,
+    })
+}
+
 pub fn verify_duel_perception_runtime_v1(
     profile: &AdmittedMtgoDuelPerceptionProfileV1,
     perception_pipeline_binary_path: &Path,
@@ -1190,6 +1375,70 @@ pub fn verify_duel_perception_runtime_v1(
                 .classifier_assets_manifest_sha256()
                 .to_owned(),
             card_database_profile_sha256: profile.card_database_profile_sha256().to_owned(),
+            runtime_identity_commitment_sha256,
+        },
+    })
+}
+
+pub fn verify_duel_gesture_target_runtime_v1(
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    gesture_target_runtime_binary_path: &Path,
+    gesture_target_assets_manifest_path: &Path,
+) -> Result<OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1, String> {
+    if profile.supported_action_families() != canonical_duel_gesture_action_families_v1() {
+        return Err(
+            "gesture-target runtime profile does not cover all canonical families".to_owned(),
+        );
+    }
+    let executable_path = verify_runtime_artifact_v1(
+        gesture_target_runtime_binary_path,
+        profile.gesture_target_runtime_binary_sha256(),
+        "gesture-target runtime binary",
+    )?;
+    if executable_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("exe"))
+        != Some(true)
+    {
+        return Err("gesture-target runtime binary must be an exact .exe artifact".to_owned());
+    }
+    let assets_manifest_path = verify_runtime_artifact_v1(
+        gesture_target_assets_manifest_path,
+        profile.gesture_target_assets_manifest_sha256(),
+        "gesture-target assets manifest",
+    )?;
+    let runtime_identity_commitment_sha256 = commitment_v1(
+        DUEL_GESTURE_TARGET_RUNTIME_IDENTITY_DOMAIN_V1,
+        &[
+            profile.evaluation_commitment_sha256().as_bytes(),
+            profile.admission_commitment_sha256().as_bytes(),
+            profile
+                .perception_profile_admission_commitment_sha256()
+                .as_bytes(),
+            profile.gesture_target_runtime_binary_sha256().as_bytes(),
+            profile.gesture_target_assets_manifest_sha256().as_bytes(),
+            DUEL_GESTURE_TARGET_PROTOCOL_MAGIC_V1,
+            b"verified_target_runtime_identity_no_classification_or_input_authority",
+        ],
+    );
+    Ok(OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1 {
+        executable_path,
+        assets_manifest_path,
+        commitments: MtgoVerifiedDuelGestureTargetRuntimeCommitmentsV1 {
+            gesture_evaluation_commitment_sha256: profile.evaluation_commitment_sha256().to_owned(),
+            gesture_profile_admission_commitment_sha256: profile
+                .admission_commitment_sha256()
+                .to_owned(),
+            perception_profile_admission_commitment_sha256: profile
+                .perception_profile_admission_commitment_sha256()
+                .to_owned(),
+            gesture_target_runtime_binary_sha256: profile
+                .gesture_target_runtime_binary_sha256()
+                .to_owned(),
+            gesture_target_assets_manifest_sha256: profile
+                .gesture_target_assets_manifest_sha256()
+                .to_owned(),
             runtime_identity_commitment_sha256,
         },
     })
@@ -1668,14 +1917,150 @@ pub fn begin_opaque_competitive_duel_gesture_sequence_v1(
     })
 }
 
+/// Runs the exact profile-pinned gesture-target runtime over one retained fresh
+/// frame, binds its response to the selected action and source primitive, and
+/// then performs the normal visible-pixel recheck. No pixels, targets, points,
+/// process handle, or input method are returned to the caller.
+pub(crate) fn prepare_opaque_competitive_duel_gesture_source_stage_from_pinned_runtime_v1(
+    sequence: OpaqueMtgoCompetitiveDuelGestureSequenceV1,
+    fresh_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1, String> {
+    if !(100..=60_000).contains(&timeout_ms) {
+        return Err("duel gesture-target timeout must be between 100 and 60000 ms".to_owned());
+    }
+    let sequence_commitments = sequence.commitments_v1();
+    if sequence_commitments.current_stage_index != 0
+        || sequence_commitments.observed_stage_count != 1
+        || sequence_commitments
+            .last_visible_transition_commitment_sha256
+            .is_some()
+    {
+        return Err("gesture-target runtime requires an unadvanced source sequence".to_owned());
+    }
+    if profile.supported_action_families() != canonical_duel_gesture_action_families_v1()
+        || !profile
+            .supported_action_families()
+            .contains(&sequence_commitments.selected_action_family)
+        || runtime.commitments.gesture_evaluation_commitment_sha256
+            != profile.evaluation_commitment_sha256()
+        || runtime
+            .commitments
+            .gesture_profile_admission_commitment_sha256
+            != profile.admission_commitment_sha256()
+        || runtime
+            .commitments
+            .perception_profile_admission_commitment_sha256
+            != profile.perception_profile_admission_commitment_sha256()
+    {
+        return Err("gesture sequence, runtime, and admitted all-family profile differ".to_owned());
+    }
+    let fresh_commitments = fresh_perception.commitments_v1();
+    if fresh_commitments
+        .source_frame
+        .perception_profile_admission_commitment_sha256
+        != profile.perception_profile_admission_commitment_sha256()
+    {
+        return Err("fresh perception differs from the gesture profile admission".to_owned());
+    }
+    verify_gesture_target_runtime_identity_now_v1(runtime)?;
+
+    let source = &fresh_perception.source_frame.source_frame;
+    let width = source.manifest.frame.canonical_width;
+    let height = source.manifest.frame.canonical_height;
+    let stride = width
+        .checked_mul(4)
+        .ok_or("duel gesture-target canonical stride overflow")?;
+    let primitive = sequence
+        .current_stage
+        ._plan
+        .gesture
+        .stages_v1()
+        .first()
+        .ok_or("gesture-target source plan is empty")?
+        .primitive
+        .clone();
+    let header = MtgoDuelGestureTargetRequestHeaderV1 {
+        schema_version: 1,
+        protocol: "mtgo_visible_duel_gesture_target_v1".to_owned(),
+        frame_id: fresh_commitments.frame_id,
+        frame_sequence: fresh_commitments.frame_sequence,
+        canonical_width: width,
+        canonical_height: height,
+        canonical_stride: stride,
+        canonical_byte_length: source.canonical_bgra8.len(),
+        canonical_bgra8_sha256: source.manifest.frame.canonical_bgra8_sha256.clone(),
+        source_capture_commitment_sha256: fresh_commitments
+            .source_frame
+            .source_capture
+            .capture_commitment_sha256,
+        perception_result_commitment_sha256: fresh_commitments.perception_result_commitment_sha256,
+        decision_commitment_sha256: fresh_commitments.decision_commitment_sha256,
+        gesture_plan_commitment_sha256: sequence_commitments.gesture_plan_commitment_sha256.clone(),
+        selected_action_family: sequence_commitments.selected_action_family,
+        stage_index: 0,
+        primitive,
+        gesture_evaluation_commitment_sha256: profile.evaluation_commitment_sha256().to_owned(),
+        gesture_profile_admission_commitment_sha256: profile
+            .admission_commitment_sha256()
+            .to_owned(),
+        runtime_identity_commitment_sha256: runtime
+            .commitments
+            .runtime_identity_commitment_sha256
+            .clone(),
+        gesture_target_runtime_binary_sha256: profile
+            .gesture_target_runtime_binary_sha256()
+            .to_owned(),
+        gesture_target_assets_manifest_sha256: profile
+            .gesture_target_assets_manifest_sha256()
+            .to_owned(),
+    };
+    let header_json = serde_json::to_vec(&header)
+        .map_err(|error| format!("serialize duel gesture-target request: {error}"))?;
+    let checked_request =
+        check_untrusted_duel_gesture_target_request_v1(&header_json, &source.canonical_bgra8)?;
+    let request_commitment_sha256 = checked_request.request_commitment_sha256_v1().to_owned();
+    let response = invoke_verified_gesture_target_process_v1(
+        runtime,
+        &header_json,
+        &source.canonical_bgra8,
+        Duration::from_millis(u64::from(timeout_ms)),
+    )?;
+    verify_gesture_target_runtime_identity_now_v1(runtime)?;
+    let response: MtgoDuelGestureTargetProcessResponseV1 = serde_json::from_slice(&response)
+        .map_err(|error| {
+            format!("gesture-target response is not one strict protocol JSON value: {error}")
+        })?;
+    if response.schema_version != 1
+        || response.request_commitment_sha256 != request_commitment_sha256
+    {
+        return Err("gesture-target response does not bind the exact request".to_owned());
+    }
+    prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
+        sequence,
+        fresh_perception,
+        response.target_set,
+        VerifiedDuelGestureTargetRuntimeBindingV1 {
+            runtime_identity_commitment_sha256: runtime
+                .commitments
+                .runtime_identity_commitment_sha256
+                .clone(),
+            request_commitment_sha256,
+        },
+    )
+}
+
 /// Rechecks the exact source-stage primitive on one distinct newer opaque duel
-/// perception. The caller supplies the already classified fresh frame and its
-/// complete target set. This consumes the source sequence, retains all target
+/// perception after its complete target set was produced by the verified
+/// pinned runtime. This consumes the source sequence, retains all target
 /// points privately, and performs no input.
-pub(crate) fn prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
+fn prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
     sequence: OpaqueMtgoCompetitiveDuelGestureSequenceV1,
     fresh_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
     target_set: MtgoVisibleDuelGestureTargetSetV1,
+    target_runtime: VerifiedDuelGestureTargetRuntimeBindingV1,
 ) -> Result<OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1, String> {
     let sequence_commitments = sequence.commitments_v1();
     if sequence_commitments.current_stage_index != 0
@@ -1841,6 +2226,8 @@ pub(crate) fn prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_fr
             fresh_commitments
                 .perception_result_commitment_sha256
                 .as_bytes(),
+            target_runtime.runtime_identity_commitment_sha256.as_bytes(),
+            target_runtime.request_commitment_sha256.as_bytes(),
             primitive_commitment_sha256.as_bytes(),
             &family_json,
             &event_kind_json,
@@ -1872,6 +2259,9 @@ pub(crate) fn prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_fr
             .capture_commitment_sha256,
         fresh_perception_result_commitment_sha256: fresh_commitments
             .perception_result_commitment_sha256,
+        gesture_target_runtime_identity_commitment_sha256: target_runtime
+            .runtime_identity_commitment_sha256,
+        gesture_target_request_commitment_sha256: target_runtime.request_commitment_sha256,
         primitive_commitment_sha256,
         preparation_commitment_sha256,
         selected_action_family: sequence_commitments.selected_action_family,
@@ -3309,6 +3699,34 @@ fn verify_runtime_identity_now_v1(
     Ok(())
 }
 
+fn verify_gesture_target_runtime_identity_now_v1(
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+) -> Result<(), String> {
+    for (path, expected, label) in [
+        (
+            runtime.executable_path.as_path(),
+            runtime
+                .commitments
+                .gesture_target_runtime_binary_sha256
+                .as_str(),
+            "gesture-target runtime binary",
+        ),
+        (
+            runtime.assets_manifest_path.as_path(),
+            runtime
+                .commitments
+                .gesture_target_assets_manifest_sha256
+                .as_str(),
+            "gesture-target assets manifest",
+        ),
+    ] {
+        if hash_bounded_file_v1(path, label)? != expected {
+            return Err(format!("{label} changed after runtime verification"));
+        }
+    }
+    Ok(())
+}
+
 fn hash_bounded_file_v1(path: &Path, label: &str) -> Result<String, String> {
     let mut file = File::open(path).map_err(|error| format!("open {label}: {error}"))?;
     let length = file
@@ -3436,6 +3854,108 @@ fn invoke_verified_perception_process_v1(
     )
 }
 
+fn invoke_verified_gesture_target_process_v1(
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    header_json: &[u8],
+    canonical_bgra8: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
+    let mut child = Command::new(&runtime.executable_path)
+        .arg("--mtgo-visible-duel-gesture-target-v1")
+        .arg("--gesture-target-assets-manifest")
+        .arg(&runtime.assets_manifest_path)
+        .current_dir(
+            runtime
+                .executable_path
+                .parent()
+                .ok_or("gesture-target binary has no parent directory")?,
+        )
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("start verified duel gesture-target runtime: {error}"))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or("verified duel gesture-target runtime has no stdin")?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or("verified duel gesture-target runtime has no stdout")?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or("verified duel gesture-target runtime has no stderr")?;
+    let started = Instant::now();
+    let (status, output, output_truncated, stderr_digest, stderr_truncated) =
+        thread::scope(|scope| {
+            let writer = scope.spawn(|| -> Result<(), String> {
+                stdin
+                    .write_all(DUEL_GESTURE_TARGET_PROTOCOL_MAGIC_V1)
+                    .and_then(|_| {
+                        stdin.write_all(
+                            &u64::try_from(header_json.len())
+                                .map_err(|_| {
+                                    std::io::Error::new(
+                                        std::io::ErrorKind::InvalidInput,
+                                        "duel gesture-target header is too large",
+                                    )
+                                })?
+                                .to_be_bytes(),
+                        )
+                    })
+                    .and_then(|_| stdin.write_all(header_json))
+                    .and_then(|_| stdin.write_all(canonical_bgra8))
+                    .map_err(|error| format!("write duel gesture-target request: {error}"))?;
+                drop(stdin);
+                Ok(())
+            });
+            let stdout_reader = scope
+                .spawn(|| read_bounded_and_drain_v1(&mut stdout, MAX_PERCEPTION_RESPONSE_BYTES_V1));
+            let stderr_reader = scope
+                .spawn(|| read_bounded_and_drain_v1(&mut stderr, MAX_PERCEPTION_STDERR_BYTES_V1));
+            let status = loop {
+                if let Some(status) = child
+                    .try_wait()
+                    .map_err(|error| format!("poll duel gesture-target runtime: {error}"))?
+                {
+                    break status;
+                }
+                if started.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err("verified duel gesture-target runtime timed out".to_owned());
+                }
+                thread::sleep(Duration::from_millis(5));
+            };
+            writer
+                .join()
+                .map_err(|_| "duel gesture-target request writer panicked".to_owned())??;
+            let (output, output_truncated) = stdout_reader
+                .join()
+                .map_err(|_| "duel gesture-target stdout reader panicked".to_owned())??;
+            let (stderr_bytes, stderr_truncated) = stderr_reader
+                .join()
+                .map_err(|_| "duel gesture-target stderr reader panicked".to_owned())??;
+            Ok::<_, String>((
+                status,
+                output,
+                output_truncated,
+                sha256_hex_v1(&stderr_bytes),
+                stderr_truncated,
+            ))
+        })?;
+    validate_gesture_target_process_result_v1(
+        status,
+        output,
+        output_truncated,
+        &stderr_digest,
+        stderr_truncated,
+    )
+}
+
 fn read_bounded_and_drain_v1(
     reader: &mut impl Read,
     maximum_retained: usize,
@@ -3472,6 +3992,24 @@ fn validate_process_result_v1(
     }
     if output_truncated || output.is_empty() {
         return Err("verified duel perception response is empty or exceeds 16 MiB".to_owned());
+    }
+    Ok(output)
+}
+
+fn validate_gesture_target_process_result_v1(
+    status: ExitStatus,
+    output: Vec<u8>,
+    output_truncated: bool,
+    stderr_digest: &str,
+    stderr_truncated: bool,
+) -> Result<Vec<u8>, String> {
+    if !status.success() {
+        return Err(format!(
+            "verified duel gesture-target runtime failed: status={status},stderr_sha256={stderr_digest},stderr_truncated={stderr_truncated}"
+        ));
+    }
+    if output_truncated || output.is_empty() {
+        return Err("verified duel gesture-target response is empty or exceeds 16 MiB".to_owned());
     }
     Ok(output)
 }
@@ -3638,6 +4176,34 @@ mod tests {
         }
     }
 
+    fn gesture_target_request_header_v1(pixels: &[u8]) -> MtgoDuelGestureTargetRequestHeaderV1 {
+        MtgoDuelGestureTargetRequestHeaderV1 {
+            schema_version: 1,
+            protocol: "mtgo_visible_duel_gesture_target_v1".to_owned(),
+            frame_id: 17,
+            frame_sequence: 23,
+            canonical_width: 2,
+            canonical_height: 1,
+            canonical_stride: 8,
+            canonical_byte_length: 8,
+            canonical_bgra8_sha256: sha256_hex_v1(pixels),
+            source_capture_commitment_sha256: "1".repeat(64),
+            perception_result_commitment_sha256: "2".repeat(64),
+            decision_commitment_sha256: "3".repeat(64),
+            gesture_plan_commitment_sha256: "4".repeat(64),
+            selected_action_family: MtgoDuelActionFamilyV1::PriorityPass,
+            stage_index: 0,
+            primitive: MtgoDuelGesturePrimitiveV1::ActivatePrimary {
+                activation: mtgo_blackbox_v1::MtgoDuelPrimaryActivationV1::SingleLeftClick,
+            },
+            gesture_evaluation_commitment_sha256: "5".repeat(64),
+            gesture_profile_admission_commitment_sha256: "6".repeat(64),
+            runtime_identity_commitment_sha256: "7".repeat(64),
+            gesture_target_runtime_binary_sha256: "8".repeat(64),
+            gesture_target_assets_manifest_sha256: "9".repeat(64),
+        }
+    }
+
     #[test]
     fn shared_request_checker_binds_canonical_header_and_every_pixel() {
         let pixels = [1_u8, 2, 3, 4, 5, 6, 7, 8];
@@ -3659,6 +4225,37 @@ mod tests {
         assert!(check_untrusted_duel_perception_request_v1(
             &serde_json::to_vec(&wrong_stride).unwrap(),
             &pixels
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn gesture_target_request_checker_binds_exact_stage_runtime_and_pixels() {
+        let pixels = [1_u8, 2, 3, 255, 5, 6, 7, 255];
+        let header = gesture_target_request_header_v1(&pixels);
+        let encoded = serde_json::to_vec(&header).unwrap();
+        let checked = check_untrusted_duel_gesture_target_request_v1(&encoded, &pixels).unwrap();
+        assert_eq!(checked.header_v1(), &header);
+        assert_eq!(checked.request_commitment_sha256_v1().len(), 64);
+        assert!(!checked.safe_for_input_v1());
+
+        let mut changed_pixels = pixels;
+        changed_pixels[0] ^= 1;
+        assert!(check_untrusted_duel_gesture_target_request_v1(&encoded, &changed_pixels).is_err());
+        let noncanonical = [encoded.as_slice(), &[b' '][..]].concat();
+        assert!(check_untrusted_duel_gesture_target_request_v1(&noncanonical, &pixels).is_err());
+        let mut wrong_stage = header.clone();
+        wrong_stage.stage_index = 32;
+        assert!(check_untrusted_duel_gesture_target_request_v1(
+            &serde_json::to_vec(&wrong_stage).unwrap(),
+            &pixels,
+        )
+        .is_err());
+        let mut invalid_runtime = header;
+        invalid_runtime.runtime_identity_commitment_sha256 = "A".repeat(64);
+        assert!(check_untrusted_duel_gesture_target_request_v1(
+            &serde_json::to_vec(&invalid_runtime).unwrap(),
+            &pixels,
         )
         .is_err());
     }
