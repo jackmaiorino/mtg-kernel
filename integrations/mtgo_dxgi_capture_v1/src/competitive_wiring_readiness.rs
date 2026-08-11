@@ -83,7 +83,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             navigation_lifecycle_classifier_protocol_present: true,
             event_record_classifier_protocol_present: true,
             sideboard_classifier_protocol_present: true,
-            duel_perception_classifier_protocol_present: false,
+            duel_perception_classifier_protocol_present: true,
             native_checkpoint_duel_action_interface_present: true,
             native_checkpoint_pregame_interface_present: false,
             competitive_pregame_public_context_contract_present: true,
@@ -162,7 +162,7 @@ mod tests {
                 .sideboard_classifier_protocol_present
         );
         assert!(
-            !report
+            report
                 .known_wiring_gaps
                 .duel_perception_classifier_protocol_present
         );

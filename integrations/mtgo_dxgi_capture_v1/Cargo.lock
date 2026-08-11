@@ -172,6 +172,7 @@ dependencies = [
 name = "mtgo-dxgi-capture-v1"
 version = "0.1.0"
 dependencies = [
+ "mtg-kernel",
  "mtgo-blackbox-v1",
  "png",
  "serde",

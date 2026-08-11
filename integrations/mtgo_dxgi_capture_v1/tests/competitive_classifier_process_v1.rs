@@ -1,13 +1,25 @@
 #![cfg(target_os = "windows")]
 
+use mtg_kernel::rl::ActionSemanticV1;
+use mtg_kernel::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
 use mtgo_blackbox_v1::{
-    validate_competitive_deck_manifest_v1, validate_visible_competitive_lifecycle_snapshot_v1,
-    visible_frame_region_content_sha256_v1, MtgoCompetitiveDeckCardCountV1,
-    MtgoCompetitiveDeckConfigurationV1, MtgoCompetitiveDeckManifestV1,
-    MtgoCompetitiveDeckPartitionV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveEventProgressV1,
-    MtgoCompetitiveEventRecordVisibleFactKindV1, MtgoCompetitiveEventVisibleStatusV1,
-    MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchRecordV1, MtgoLifecycleVisibleFactKindV1,
-    MtgoRectPxV1, MtgoSizePxV1, MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
+    local_metadata_commitment_v1, payload_leaf_inventory_v1, validate_competitive_deck_manifest_v1,
+    validate_observed_decision_v1, validate_visible_competitive_lifecycle_snapshot_v1,
+    visible_frame_region_content_sha256_v1, MtgoCalibrationCaptureRoleV1,
+    MtgoCalibrationFrameReferenceV1, MtgoCalibrationPreviewKindV1, MtgoCalibrationPreviewStatusV1,
+    MtgoCompetitiveDeckCardCountV1, MtgoCompetitiveDeckConfigurationV1,
+    MtgoCompetitiveDeckManifestV1, MtgoCompetitiveDeckPartitionV1, MtgoCompetitiveEventKindV1,
+    MtgoCompetitiveEventProgressV1, MtgoCompetitiveEventRecordVisibleFactKindV1,
+    MtgoCompetitiveEventVisibleStatusV1, MtgoCompetitiveLifecyclePhaseV1,
+    MtgoCompetitiveMatchRecordV1, MtgoDecisionReadinessV1, MtgoEvidenceSourceV1,
+    MtgoLeafProvenanceV1, MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1,
+    MtgoMockFrameV1, MtgoObjectBindingV1, MtgoObservationReconstructionAuditV1,
+    MtgoObservationReconstructionGroupAuditV1, MtgoObservationReconstructionGroupV1,
+    MtgoObservedDecisionV1, MtgoReconstructionStatusV1, MtgoReconstructionTopologyV1, MtgoRectPxV1,
+    MtgoSemanticDecisionPayloadV1, MtgoSizePxV1, MtgoVisibleActionControlCandidateV1,
+    MtgoVisibleActionControlSetV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
+    MtgoVisibleControlKindV1, MtgoVisibleEvidenceV1, MtgoVisibleRegionCommitmentV1,
+    MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
 };
 use mtgo_dxgi_capture_v1::{
     MtgoCompetitiveEventRecordClassifierProcessResponseV1,
@@ -15,7 +27,8 @@ use mtgo_dxgi_capture_v1::{
     MtgoCompetitiveNavigationClassifierProcessResponseV1,
     MtgoCompetitiveNavigationClassifierRequestHeaderV1,
     MtgoCompetitiveSideboardClassifierProcessResponseV1,
-    MtgoCompetitiveSideboardClassifierRequestHeaderV1,
+    MtgoCompetitiveSideboardClassifierRequestHeaderV1, MtgoDuelPerceptionProcessResponseV1,
+    MtgoDuelPerceptionRequestHeaderV1,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -25,6 +38,7 @@ use std::process::{Command, Stdio};
 const MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1\0";
 const EVENT_RECORD_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1\0";
 const SIDEBOARD_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_SIDEBOARD_V1\0";
+const DUEL_PERCEPTION_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_PERCEPTION_V1\0";
 
 #[derive(Serialize)]
 struct AssetsV1 {
@@ -109,6 +123,26 @@ struct SideboardCardProfileV1 {
     rect_client_px: MtgoRectPxV1,
     accepted_reference_sha256s: Vec<String>,
     confidence_bps: u16,
+}
+
+#[derive(Serialize)]
+struct DuelPerceptionAssetsV1 {
+    schema_version: u32,
+    scope: String,
+    canonical_pixel_format: String,
+    profiles: Vec<DuelPerceptionProfileV1>,
+}
+
+#[derive(Serialize)]
+struct DuelPerceptionProfileV1 {
+    profile_id: String,
+    perception_profile_commitment_sha256: String,
+    perception_profile_admission_commitment_sha256: String,
+    client_size_px: MtgoSizePxV1,
+    decision_template: MtgoObservedDecisionV1,
+    reconstruction_audit_template: MtgoObservationReconstructionAuditV1,
+    visible_controls_template: MtgoVisibleActionControlSetV1,
+    competitive_lifecycle_template: Option<MtgoVisibleCompetitiveLifecycleSnapshotV1>,
 }
 
 #[test]
@@ -771,6 +805,413 @@ fn sideboard_mode_completes_the_exact_framed_child_process_exchange() {
     );
     assert_eq!(response.sideboard.game_number, 1);
     assert_eq!(response.sideboard.cards.len(), 2);
+}
+
+#[test]
+fn duel_perception_mode_completes_the_exact_pinned_artifact_exchange() {
+    let width = 64;
+    let height = 64;
+    let size = MtgoSizePxV1 { width, height };
+    let pixels = (0..width * height * 4)
+        .map(|index| ((index * 37 + 41) % 251) as u8)
+        .collect::<Vec<_>>();
+    let (decision, audit, controls, lifecycle) = duel_fixture_v1(&pixels, &size);
+    let profile_commitment = digest('3');
+    let profile_admission = digest('4');
+    let assets = DuelPerceptionAssetsV1 {
+        schema_version: 1,
+        scope: "acting_player_duel_exact_visible_semantic_reference_checked_untrusted_v1"
+            .to_owned(),
+        canonical_pixel_format: "bgra8_unorm_top_down_tightly_packed_v1".to_owned(),
+        profiles: vec![DuelPerceptionProfileV1 {
+            profile_id: "league-duel-pass-land-64x64-process-v1".to_owned(),
+            perception_profile_commitment_sha256: profile_commitment.clone(),
+            perception_profile_admission_commitment_sha256: profile_admission.clone(),
+            client_size_px: size,
+            decision_template: decision,
+            reconstruction_audit_template: audit,
+            visible_controls_template: controls,
+            competitive_lifecycle_template: Some(lifecycle),
+        }],
+    };
+    let assets_json = serde_json::to_vec(&assets).unwrap();
+    let card_database_bytes = b"synthetic-exact-card-database-profile-v1";
+    let temp_root = std::env::temp_dir().join(format!(
+        "mtgo-duel-classifier-process-v1-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&temp_root).unwrap();
+    let assets_path = temp_root.join("classifier-assets.json");
+    let card_database_path = temp_root.join("card-database.json");
+    std::fs::write(&assets_path, &assets_json).unwrap();
+    std::fs::write(&card_database_path, card_database_bytes).unwrap();
+
+    let executable = env!("CARGO_BIN_EXE_mtgo_visible_competitive_classifier_v1");
+    let executable_bytes = std::fs::read(executable).unwrap();
+    let header = MtgoDuelPerceptionRequestHeaderV1 {
+        schema_version: 1,
+        protocol: "mtgo_visible_duel_perception_v1".to_owned(),
+        frame_id: 409,
+        frame_sequence: 419,
+        canonical_width: width,
+        canonical_height: height,
+        canonical_stride: width * 4,
+        canonical_byte_length: pixels.len(),
+        canonical_bgra8_sha256: sha256_hex(&pixels),
+        source_manifest_sha256: digest('5'),
+        source_capture_commitment_sha256: digest('6'),
+        source_frame_profile_binding_sha256: digest('7'),
+        perception_profile_commitment_sha256: profile_commitment,
+        perception_profile_admission_commitment_sha256: profile_admission,
+        runtime_identity_commitment_sha256: digest('8'),
+        perception_pipeline_binary_sha256: sha256_hex(&executable_bytes),
+        classifier_assets_manifest_sha256: sha256_hex(&assets_json),
+        card_database_profile_sha256: sha256_hex(card_database_bytes),
+    };
+    let header_json = serde_json::to_vec(&header).unwrap();
+    let output = invoke_duel_classifier_v1(
+        executable,
+        &assets_path,
+        &card_database_path,
+        &header_json,
+        &pixels,
+    );
+    assert!(
+        output.status.success(),
+        "duel classifier stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: MtgoDuelPerceptionProcessResponseV1 =
+        serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response.schema_version, 1);
+    assert_eq!(
+        response.request_commitment_sha256,
+        commitment_hex(b"mtgo-duel-perception-request-v1", &[&header_json, &pixels])
+    );
+    assert_eq!(response.decision.frame_id, header.frame_id);
+    assert_eq!(response.decision.frames[0].sequence, header.frame_sequence);
+    assert_eq!(
+        response.reconstruction_audit.frame.manifest_sha256,
+        header.source_manifest_sha256
+    );
+    assert_eq!(
+        response.reconstruction_audit.frame.frame_sha256,
+        header.canonical_bgra8_sha256
+    );
+    let checked_decision = validate_observed_decision_v1(response.decision.clone()).unwrap();
+    assert_eq!(
+        response.visible_controls.decision_commitment_sha256,
+        checked_decision.decision_commitment_sha256()
+    );
+    let lifecycle = response.competitive_lifecycle.unwrap();
+    assert_eq!(lifecycle.event_kind, MtgoCompetitiveEventKindV1::League);
+    assert_eq!(
+        lifecycle.phase,
+        MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+    );
+    assert_eq!(lifecycle.frame_id, header.frame_id);
+    assert_eq!(lifecycle.frame_sequence, header.frame_sequence);
+
+    let mut changed_pixels = pixels.clone();
+    changed_pixels[(10 * width + 10) as usize * 4] ^= 1;
+    let mut changed_header = header;
+    changed_header.canonical_bgra8_sha256 = sha256_hex(&changed_pixels);
+    let changed_header_json = serde_json::to_vec(&changed_header).unwrap();
+    let rejected = invoke_duel_classifier_v1(
+        executable,
+        &assets_path,
+        &card_database_path,
+        &changed_header_json,
+        &changed_pixels,
+    );
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr)
+        .contains("expected exactly one reviewed duel perception profile match"));
+
+    std::fs::remove_dir_all(temp_root).unwrap();
+}
+
+fn duel_fixture_v1(
+    pixels: &[u8],
+    size: &MtgoSizePxV1,
+) -> (
+    MtgoObservedDecisionV1,
+    MtgoObservationReconstructionAuditV1,
+    MtgoVisibleActionControlSetV1,
+    MtgoVisibleCompetitiveLifecycleSnapshotV1,
+) {
+    let (observation, pass, land) = (1..=128)
+        .find_map(|seed| {
+            let session = RlEpisodeSessionV1::reset_with_limits(7, seed, 128, 16_384);
+            let RlSessionResponseV1::Decision(current) = session.current_response() else {
+                return None;
+            };
+            let pass = current
+                .legal_actions
+                .iter()
+                .find(|action| matches!(action.semantic, ActionSemanticV1::Pass { .. }))?
+                .semantic
+                .clone();
+            let land = current
+                .legal_actions
+                .iter()
+                .find(|action| matches!(action.semantic, ActionSemanticV1::PlayLand { .. }))?
+                .semantic
+                .clone();
+            Some(((*current.observation).clone(), pass, land))
+        })
+        .expect("a deterministic seed supplies Pass and PlayLand");
+    let source_ref = match &land {
+        ActionSemanticV1::PlayLand { source, .. } => source.clone(),
+        _ => unreachable!(),
+    };
+    let payload = MtgoSemanticDecisionPayloadV1 {
+        observation,
+        legal_actions: vec![pass.clone(), land.clone()],
+        object_bindings: vec![MtgoObjectBindingV1 {
+            adapter_object_id: "duel-process:hand:0".to_owned(),
+            kernel_ref: source_ref,
+        }],
+    };
+    let prompt_rect = MtgoRectPxV1 {
+        x: 1,
+        y: 1,
+        width: 8,
+        height: 8,
+    };
+    let pass_rect = MtgoRectPxV1 {
+        x: 12,
+        y: 1,
+        width: 8,
+        height: 8,
+    };
+    let land_rect = MtgoRectPxV1 {
+        x: 23,
+        y: 1,
+        width: 8,
+        height: 8,
+    };
+    let whole_rect = MtgoRectPxV1 {
+        x: 0,
+        y: 0,
+        width: size.width,
+        height: size.height,
+    };
+    let evidence = [
+        (10, prompt_rect.clone()),
+        (20, pass_rect.clone()),
+        (30, land_rect.clone()),
+        (40, whole_rect.clone()),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (evidence_id, rect))| MtgoVisibleEvidenceV1 {
+        evidence_id,
+        sequence: u64::try_from(index + 1).unwrap(),
+        source: MtgoEvidenceSourceV1::FrameRegion {
+            frame_id: 1,
+            content_sha256: visible_frame_region_content_sha256_v1(pixels, size, &rect).unwrap(),
+            rect,
+        },
+    })
+    .collect::<Vec<_>>();
+    let provenance = payload_leaf_inventory_v1(&payload)
+        .unwrap()
+        .into_iter()
+        .filter(|leaf| leaf.requires_visible_evidence)
+        .map(|leaf| MtgoLeafProvenanceV1 {
+            json_pointer: leaf.json_pointer,
+            value_sha256: leaf.value_sha256,
+            evidence_ids: vec![10, 20, 30, 40],
+            confidence_bps: 10_000,
+        })
+        .collect();
+    let mut decision = MtgoObservedDecisionV1 {
+        schema_version: 1,
+        decision_id: "duel-process-template-v1".to_owned(),
+        frame_id: 1,
+        local_metadata_sha256: local_metadata_commitment_v1(&payload).unwrap(),
+        payload,
+        frames: vec![MtgoMockFrameV1 {
+            frame_id: 1,
+            sequence: 1,
+            sha256: sha256_hex(pixels),
+            client_bounds: whole_rect.clone(),
+        }],
+        evidence,
+        provenance,
+        readiness: MtgoDecisionReadinessV1 {
+            observation_complete: true,
+            legal_action_set_complete: true,
+            client_prompt_reconciled: true,
+        },
+    };
+    let checked = validate_observed_decision_v1(decision.clone()).unwrap();
+    let controls = MtgoVisibleActionControlSetV1 {
+        schema_version: 1,
+        decision_commitment_sha256: checked.decision_commitment_sha256().to_owned(),
+        frame_id: 1,
+        frame_sequence: 1,
+        prompt_frame_region_evidence_id: 10,
+        prompt_reconciled: true,
+        candidate_set_complete: true,
+        controls: vec![
+            MtgoVisibleActionControlCandidateV1 {
+                control_id: "priority-pass".to_owned(),
+                control_kind: MtgoVisibleControlKindV1::PromptButton,
+                frame_region_evidence_id: 20,
+                semantic: pass,
+                confidence_bps: 10_000,
+                visibly_enabled: true,
+            },
+            MtgoVisibleActionControlCandidateV1 {
+                control_id: "play-land".to_owned(),
+                control_kind: MtgoVisibleControlKindV1::Card,
+                frame_region_evidence_id: 30,
+                semantic: land,
+                confidence_bps: 10_000,
+                visibly_enabled: true,
+            },
+        ],
+    };
+    decision.decision_id = "duel-process-template-v1".to_owned();
+    let region = MtgoVisibleRegionCommitmentV1 {
+        rect_client_px: whole_rect.clone(),
+        bgra8_sha256: visible_frame_region_content_sha256_v1(pixels, size, &whole_rect).unwrap(),
+    };
+    let groups = [
+        MtgoObservationReconstructionGroupV1::DuelParticipants,
+        MtgoObservationReconstructionGroupV1::TurnPhaseAndPriority,
+        MtgoObservationReconstructionGroupV1::PlayerPublicState,
+        MtgoObservationReconstructionGroupV1::PublicObjectsAndZones,
+        MtgoObservationReconstructionGroupV1::ActingPlayerPrivateKnowledge,
+        MtgoObservationReconstructionGroupV1::StackCombatAndPendingChoices,
+        MtgoObservationReconstructionGroupV1::KernelDecisionHistoryContext,
+        MtgoObservationReconstructionGroupV1::ObjectIncarnationsAndCardDb,
+        MtgoObservationReconstructionGroupV1::CompleteOrderedLegalActions,
+        MtgoObservationReconstructionGroupV1::KernelContractMetadata,
+    ]
+    .into_iter()
+    .map(|group| {
+        let local = matches!(
+            group,
+            MtgoObservationReconstructionGroupV1::KernelDecisionHistoryContext
+                | MtgoObservationReconstructionGroupV1::ObjectIncarnationsAndCardDb
+                | MtgoObservationReconstructionGroupV1::KernelContractMetadata
+        );
+        MtgoObservationReconstructionGroupAuditV1 {
+            group,
+            status: if local {
+                MtgoReconstructionStatusV1::LocalDerivedComplete
+            } else {
+                MtgoReconstructionStatusV1::VisibleComplete
+            },
+            visible_regions: if local {
+                Vec::new()
+            } else {
+                vec![region.clone()]
+            },
+            missing_reason_codes: Vec::new(),
+        }
+    })
+    .collect();
+    let audit = MtgoObservationReconstructionAuditV1 {
+        schema_version: 1,
+        audit_id: "duel-process-audit-template-v1".to_owned(),
+        topology: MtgoReconstructionTopologyV1::TwoPlayerDuel,
+        frame: MtgoCalibrationFrameReferenceV1 {
+            sequence: 1,
+            manifest_sha256: digest('5'),
+            frame_sha256: sha256_hex(pixels),
+            client_size_px: size.clone(),
+            artifact_kind:
+                MtgoCalibrationPreviewKindV1::ActingPlayerDuelGameplayCalibrationPreviewV1,
+            capture_role: MtgoCalibrationCaptureRoleV1::ActingPlayerDuel,
+            status: MtgoCalibrationPreviewStatusV1::PendingVisualReview,
+            safe_for_semantic_evidence: false,
+            safe_for_ocr: false,
+            safe_for_policy_scoring: false,
+            safe_for_input: false,
+        },
+        groups,
+        observation_complete: true,
+        legal_action_set_complete: true,
+        ready_for_model_scoring: false,
+    };
+    let lifecycle_rects = [whole_rect, prompt_rect, pass_rect];
+    let lifecycle_kinds = [
+        MtgoLifecycleVisibleFactKindV1::MatchSurfaceVisible,
+        MtgoLifecycleVisibleFactKindV1::LocalClockVisible,
+        MtgoLifecycleVisibleFactKindV1::OpponentClockVisible,
+    ];
+    let lifecycle = MtgoVisibleCompetitiveLifecycleSnapshotV1 {
+        schema_version: 1,
+        snapshot_id: "duel-process-lifecycle-template-v1".to_owned(),
+        event_kind: MtgoCompetitiveEventKindV1::League,
+        phase: MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+        frame_id: 1,
+        frame_sequence: 1,
+        frame_sha256: sha256_hex(pixels),
+        client_bounds: MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: size.width,
+            height: size.height,
+        },
+        event_identity_sha256: Some(digest('a')),
+        match_identity_sha256: Some(digest('b')),
+        game_number: Some(1),
+        entry_terms: None,
+        visible_state_complete: true,
+        facts: lifecycle_kinds
+            .into_iter()
+            .zip(lifecycle_rects)
+            .map(|(kind, rect)| MtgoLifecycleVisibleFactV1 {
+                kind,
+                content_sha256: visible_frame_region_content_sha256_v1(pixels, size, &rect)
+                    .unwrap(),
+                rect_client_px: rect,
+                confidence_bps: 10_000,
+            })
+            .collect(),
+    };
+    validate_visible_competitive_lifecycle_snapshot_v1(lifecycle.clone()).unwrap();
+    (decision, audit, controls, lifecycle)
+}
+
+fn invoke_duel_classifier_v1(
+    executable: &str,
+    assets_path: &std::path::Path,
+    card_database_path: &std::path::Path,
+    header_json: &[u8],
+    pixels: &[u8],
+) -> std::process::Output {
+    let mut child = Command::new(executable)
+        .arg("--mtgo-visible-duel-perception-v1")
+        .arg("--classifier-assets-manifest")
+        .arg(assets_path)
+        .arg("--card-database-profile")
+        .arg(card_database_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(DUEL_PERCEPTION_MAGIC_V1).unwrap();
+        stdin
+            .write_all(&(header_json.len() as u64).to_be_bytes())
+            .unwrap();
+        stdin.write_all(header_json).unwrap();
+        stdin.write_all(pixels).unwrap();
+    }
+    drop(child.stdin.take());
+    child.wait_with_output().unwrap()
 }
 
 fn invoke_classifier_v1(

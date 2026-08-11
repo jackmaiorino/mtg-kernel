@@ -1622,6 +1622,17 @@ fn competitive_classifier_modes_are_bounded_exact_and_non_actuating() {
         "expected exactly one reviewed sideboard profile match",
         "visible sideboard card changed after profile selection",
         "sideboard lifecycle differs from the prior navigation response",
+        "--mtgo-visible-duel-perception-v1",
+        "MTGO_VISIBLE_DUEL_PERCEPTION_V1\\0",
+        "acting_player_duel_exact_visible_semantic_reference_checked_untrusted_v1",
+        "source_manifest_sha256",
+        "validate_observed_decision_v1",
+        "validate_observation_reconstruction_audit_v1",
+        "expected exactly one reviewed duel perception profile match",
+        "duel decision region changed after profile selection",
+        "duel reconstruction region changed after profile selection",
+        "duel lifecycle region changed after profile selection",
+        "duel visible controls must map one-to-one to legal actions",
     ] {
         assert!(
             source.contains(required),

@@ -131,6 +131,7 @@ pub struct MtgoDuelPerceptionRequestHeaderV1 {
     pub canonical_stride: u32,
     pub canonical_byte_length: usize,
     pub canonical_bgra8_sha256: String,
+    pub source_manifest_sha256: String,
     pub source_capture_commitment_sha256: String,
     pub source_frame_profile_binding_sha256: String,
     pub perception_profile_commitment_sha256: String,
@@ -1399,6 +1400,7 @@ pub fn check_untrusted_duel_perception_request_v1(
     }
     for value in [
         header.canonical_bgra8_sha256.as_str(),
+        header.source_manifest_sha256.as_str(),
         header.source_capture_commitment_sha256.as_str(),
         header.source_frame_profile_binding_sha256.as_str(),
         header.perception_profile_commitment_sha256.as_str(),
@@ -1680,6 +1682,10 @@ pub fn perceive_admitted_duel_frame_v1(
         canonical_stride: stride,
         canonical_byte_length: source.canonical_bgra8.len(),
         canonical_bgra8_sha256: source.manifest.frame.canonical_bgra8_sha256.clone(),
+        source_manifest_sha256: sha256_hex_v1(
+            &serialize_manifest_v2(&source.manifest)
+                .map_err(|error| format!("serialize duel source manifest for request: {error}"))?,
+        ),
         source_capture_commitment_sha256: source.capture_commitment_sha256.clone(),
         source_frame_profile_binding_sha256: source_frame.frame_profile_binding_sha256.clone(),
         perception_profile_commitment_sha256: profile
@@ -5468,6 +5474,7 @@ mod tests {
             canonical_stride: 8,
             canonical_byte_length: 8,
             canonical_bgra8_sha256: sha256_hex_v1(pixels),
+            source_manifest_sha256: "0".repeat(64),
             source_capture_commitment_sha256: "1".repeat(64),
             source_frame_profile_binding_sha256: "2".repeat(64),
             perception_profile_commitment_sha256: "3".repeat(64),

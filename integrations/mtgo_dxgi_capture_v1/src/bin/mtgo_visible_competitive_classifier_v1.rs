@@ -5,20 +5,23 @@ compile_error!("mtgo_visible_competitive_classifier_v1 is Windows-only");
 use mtgo_blackbox_v1::MtgoCompetitiveMatchRecordV1;
 #[cfg(target_os = "windows")]
 use mtgo_blackbox_v1::{
-    validate_competitive_deck_manifest_v1, validate_visible_competitive_event_record_v1,
+    validate_competitive_deck_manifest_v1, validate_observation_reconstruction_audit_v1,
+    validate_observed_decision_v1, validate_visible_competitive_event_record_v1,
     validate_visible_competitive_lifecycle_snapshot_v1,
     validate_visible_competitive_sideboard_snapshot_v1, visible_frame_region_content_sha256_v1,
     MtgoCompetitiveDeckManifestV1, MtgoCompetitiveDeckPartitionV1, MtgoCompetitiveEntryTermsV1,
     MtgoCompetitiveEventCompletionV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveEventListingTargetV1, MtgoCompetitiveEventProgressV1,
     MtgoCompetitiveEventRecordVisibleFactKindV1, MtgoCompetitiveEventRecordVisibleFactV1,
-    MtgoCompetitiveEventVisibleStatusV1, MtgoCompetitiveLifecyclePhaseV1,
-    MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1, MtgoRectPxV1, MtgoSizePxV1,
-    MtgoVisibleCompetitiveEventListingSelectionV1, MtgoVisibleCompetitiveEventRecordV1,
-    MtgoVisibleCompetitiveLifecycleSnapshotV1, MtgoVisibleCompetitiveSideboardCardV1,
-    MtgoVisibleCompetitiveSideboardSnapshotV1, MtgoVisibleCompetitiveSideboardZoneV1,
-    MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1, MTGO_COMPETITIVE_EVENT_RECORD_SCHEMA_V1,
-    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
+    MtgoCompetitiveEventVisibleStatusV1, MtgoCompetitiveLifecyclePhaseV1, MtgoEvidenceSourceV1,
+    MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1,
+    MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1, MtgoRectPxV1, MtgoSizePxV1,
+    MtgoVisibleActionControlSetV1, MtgoVisibleCompetitiveEventListingSelectionV1,
+    MtgoVisibleCompetitiveEventRecordV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
+    MtgoVisibleCompetitiveSideboardCardV1, MtgoVisibleCompetitiveSideboardSnapshotV1,
+    MtgoVisibleCompetitiveSideboardZoneV1, MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
+    MTGO_COMPETITIVE_EVENT_RECORD_SCHEMA_V1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+    MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
 };
 #[cfg(target_os = "windows")]
 use mtgo_dxgi_capture_v1::{
@@ -29,7 +32,8 @@ use mtgo_dxgi_capture_v1::{
     MtgoCompetitiveNavigationClassifierProcessResponseV1,
     MtgoCompetitiveNavigationClassifierRequestHeaderV1,
     MtgoCompetitiveSideboardClassifierProcessResponseV1,
-    MtgoCompetitiveSideboardClassifierRequestHeaderV1,
+    MtgoCompetitiveSideboardClassifierRequestHeaderV1, MtgoDuelPerceptionProcessResponseV1,
+    MtgoDuelPerceptionRequestHeaderV1,
 };
 #[cfg(target_os = "windows")]
 use serde::{Deserialize, Serialize};
@@ -60,6 +64,8 @@ const EVENT_RECORD_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-event-re
 #[cfg(target_os = "windows")]
 const SIDEBOARD_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-sideboard-v1";
 #[cfg(target_os = "windows")]
+const DUEL_PERCEPTION_MODE_ARGUMENT_V1: &str = "--mtgo-visible-duel-perception-v1";
+#[cfg(target_os = "windows")]
 const EVENT_LISTING_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1\0";
 #[cfg(target_os = "windows")]
 const NAVIGATION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1\0";
@@ -67,6 +73,8 @@ const NAVIGATION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_NAVIGATIO
 const EVENT_RECORD_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1\0";
 #[cfg(target_os = "windows")]
 const SIDEBOARD_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_SIDEBOARD_V1\0";
+#[cfg(target_os = "windows")]
+const DUEL_PERCEPTION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_PERCEPTION_V1\0";
 #[cfg(target_os = "windows")]
 const EVENT_LISTING_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_event_listing_v1";
 #[cfg(target_os = "windows")]
@@ -81,6 +89,9 @@ const SIDEBOARD_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_sideboard_
 #[cfg(target_os = "windows")]
 const SIDEBOARD_REQUEST_SCOPE_V1: &str =
     "league_or_challenge_exact_deck_policy_between_game_sideboard_checked_untrusted_v1";
+#[cfg(target_os = "windows")]
+const DUEL_PERCEPTION_ASSET_SCOPE_V1: &str =
+    "acting_player_duel_exact_visible_semantic_reference_checked_untrusted_v1";
 #[cfg(target_os = "windows")]
 const REQUEST_SCOPE_V1: &str =
     "league_and_challenge_selected_listing_exact_semantics_checked_untrusted_v1";
@@ -103,6 +114,10 @@ const EVENT_RECORD_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
 const SIDEBOARD_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-sideboard-classifier-request-v1";
 #[cfg(target_os = "windows")]
+const DUEL_PERCEPTION_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-duel-perception-request-v1";
+#[cfg(target_os = "windows")]
+const DUEL_PERCEPTION_DYNAMIC_ID_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-perception-dynamic-id-v1";
+#[cfg(target_os = "windows")]
 const NAVIGATION_SNAPSHOT_ID_DOMAIN_V1: &[u8] =
     b"mtgo-visible-competitive-navigation-snapshot-id-v1";
 #[cfg(target_os = "windows")]
@@ -121,6 +136,8 @@ const MAX_PROFILES_V1: usize = 256;
 const MAX_CONTROL_REFERENCES_V1: usize = 64;
 #[cfg(target_os = "windows")]
 const MAX_SIDEBOARD_CARD_PROFILES_V1: usize = 512;
+#[cfg(target_os = "windows")]
+const MAX_DUEL_PERCEPTION_PROFILES_V1: usize = 256;
 #[cfg(target_os = "windows")]
 const MAX_EXPECTED_LABEL_BYTES_V1: usize = 256;
 
@@ -229,6 +246,30 @@ struct MtgoCompetitiveSideboardCardProfileV1 {
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct MtgoDuelPerceptionClassifierAssetsV1 {
+    schema_version: u32,
+    scope: String,
+    canonical_pixel_format: String,
+    profiles: Vec<MtgoDuelPerceptionReferenceProfileV1>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoDuelPerceptionReferenceProfileV1 {
+    profile_id: String,
+    perception_profile_commitment_sha256: String,
+    perception_profile_admission_commitment_sha256: String,
+    client_size_px: MtgoSizePxV1,
+    decision_template: MtgoObservedDecisionV1,
+    reconstruction_audit_template: MtgoObservationReconstructionAuditV1,
+    visible_controls_template: MtgoVisibleActionControlSetV1,
+    competitive_lifecycle_template: Option<MtgoVisibleCompetitiveLifecycleSnapshotV1>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MtgoCompetitiveEventListingOcrProfileV1 {
     profile_id: String,
     event_kind: MtgoCompetitiveEventKindV1,
@@ -288,9 +329,6 @@ fn main() -> ExitCode {
 #[cfg(target_os = "windows")]
 fn run_v1() -> Result<Vec<u8>, String> {
     let args = std::env::args().collect::<Vec<_>>();
-    if args.len() != 2 {
-        return Err("exactly one bounded classifier mode is required".to_owned());
-    }
     let current_exe = std::env::current_exe()
         .map_err(|error| format!("resolve classifier executable: {error}"))?;
     let actual_classifier_sha256 = hash_bounded_file_v1(
@@ -298,12 +336,34 @@ fn run_v1() -> Result<Vec<u8>, String> {
         MAX_RUNTIME_ARTIFACT_BYTES_V1,
         "classifier executable",
     )?;
-    match args[1].as_str() {
-        EVENT_LISTING_MODE_ARGUMENT_V1 => run_event_listing_v1(&actual_classifier_sha256),
-        NAVIGATION_MODE_ARGUMENT_V1 => run_navigation_v1(&actual_classifier_sha256),
-        EVENT_RECORD_MODE_ARGUMENT_V1 => run_event_record_v1(&actual_classifier_sha256),
-        SIDEBOARD_MODE_ARGUMENT_V1 => run_sideboard_v1(&actual_classifier_sha256),
-        _ => Err("unsupported bounded classifier mode".to_owned()),
+    match args.get(1).map(String::as_str) {
+        Some(EVENT_LISTING_MODE_ARGUMENT_V1) if args.len() == 2 => {
+            run_event_listing_v1(&actual_classifier_sha256)
+        }
+        Some(NAVIGATION_MODE_ARGUMENT_V1) if args.len() == 2 => {
+            run_navigation_v1(&actual_classifier_sha256)
+        }
+        Some(EVENT_RECORD_MODE_ARGUMENT_V1) if args.len() == 2 => {
+            run_event_record_v1(&actual_classifier_sha256)
+        }
+        Some(SIDEBOARD_MODE_ARGUMENT_V1) if args.len() == 2 => {
+            run_sideboard_v1(&actual_classifier_sha256)
+        }
+        Some(DUEL_PERCEPTION_MODE_ARGUMENT_V1)
+            if args.len() == 6
+                && args[2] == "--classifier-assets-manifest"
+                && args[4] == "--card-database-profile" =>
+        {
+            run_duel_perception_v1(
+                &actual_classifier_sha256,
+                Path::new(&args[3]),
+                Path::new(&args[5]),
+            )
+        }
+        Some(DUEL_PERCEPTION_MODE_ARGUMENT_V1) => {
+            Err("duel perception requires exact pinned artifact arguments".to_owned())
+        }
+        _ => Err("exactly one supported bounded classifier mode is required".to_owned()),
     }
 }
 
@@ -659,6 +719,466 @@ fn run_sideboard_v1(actual_classifier_sha256: &str) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_os = "windows")]
+fn run_duel_perception_v1(
+    actual_classifier_sha256: &str,
+    classifier_assets_manifest_path: &Path,
+    card_database_profile_path: &Path,
+) -> Result<Vec<u8>, String> {
+    let mut stdin = io::stdin().lock();
+    let mut magic = vec![0_u8; DUEL_PERCEPTION_PROTOCOL_MAGIC_V1.len()];
+    stdin
+        .read_exact(&mut magic)
+        .map_err(|error| format!("read duel perception protocol magic: {error}"))?;
+    if magic != DUEL_PERCEPTION_PROTOCOL_MAGIC_V1 {
+        return Err("duel perception protocol magic differs".to_owned());
+    }
+    let header_length = read_u64_be_v1(&mut stdin, "duel perception header length")?;
+    let header_length =
+        bounded_usize_v1(header_length, MAX_HEADER_BYTES_V1, "duel perception header")?;
+    let header_json = read_exact_vec_v1(&mut stdin, header_length, "duel perception header")?;
+    let header = parse_canonical_json_v1::<MtgoDuelPerceptionRequestHeaderV1>(
+        &header_json,
+        "duel perception request header",
+    )?;
+    let assets_json = read_bounded_file_bytes_v1(
+        classifier_assets_manifest_path,
+        MAX_ASSETS_BYTES_V1 as u64,
+        "duel perception classifier assets manifest",
+    )?;
+    let card_database_sha256 = hash_bounded_file_v1(
+        card_database_profile_path,
+        MAX_RUNTIME_ARTIFACT_BYTES_V1,
+        "duel perception card database profile",
+    )?;
+    validate_duel_perception_header_identity_v1(
+        &header,
+        &assets_json,
+        &card_database_sha256,
+        actual_classifier_sha256,
+    )?;
+    let pixel_length = bounded_usize_v1(
+        u64::try_from(header.canonical_byte_length)
+            .map_err(|_| "duel perception byte length does not fit u64".to_owned())?,
+        usize::try_from(MAX_CANONICAL_BYTES_V1)
+            .map_err(|_| "classifier byte bound does not fit this process".to_owned())?,
+        "duel perception canonical pixels",
+    )?;
+    let canonical_bgra8 =
+        read_exact_vec_v1(&mut stdin, pixel_length, "duel perception canonical pixels")?;
+    let mut trailing = [0_u8; 1];
+    if stdin
+        .read(&mut trailing)
+        .map_err(|error| format!("check duel perception request end: {error}"))?
+        != 0
+    {
+        return Err("duel perception request has trailing bytes".to_owned());
+    }
+    validate_duel_perception_pixels_v1(&header, &canonical_bgra8)?;
+    let assets = parse_canonical_json_v1::<MtgoDuelPerceptionClassifierAssetsV1>(
+        &assets_json,
+        "duel perception classifier assets manifest",
+    )?;
+    let request_commitment_sha256 = commitment_be_v1(
+        DUEL_PERCEPTION_REQUEST_COMMITMENT_DOMAIN_V1,
+        &[&header_json, &canonical_bgra8],
+    );
+    let response = classify_duel_perception_profile_v1(
+        &header,
+        &assets,
+        &canonical_bgra8,
+        request_commitment_sha256,
+    )?;
+    serde_json::to_vec(&response)
+        .map_err(|error| format!("serialize duel perception response: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn classify_duel_perception_profile_v1(
+    header: &MtgoDuelPerceptionRequestHeaderV1,
+    assets: &MtgoDuelPerceptionClassifierAssetsV1,
+    canonical_bgra8: &[u8],
+    request_commitment_sha256: String,
+) -> Result<MtgoDuelPerceptionProcessResponseV1, String> {
+    validate_duel_perception_assets_v1(assets)?;
+    let mut matches = Vec::new();
+    for profile in &assets.profiles {
+        if profile.perception_profile_commitment_sha256
+            != header.perception_profile_commitment_sha256
+            || profile.perception_profile_admission_commitment_sha256
+                != header.perception_profile_admission_commitment_sha256
+            || profile.client_size_px.width != header.canonical_width
+            || profile.client_size_px.height != header.canonical_height
+        {
+            continue;
+        }
+        if duel_perception_profile_pixels_match_v1(profile, canonical_bgra8)? {
+            matches.push(profile);
+        }
+    }
+    if matches.len() != 1 {
+        return Err("expected exactly one reviewed duel perception profile match".to_owned());
+    }
+    build_duel_perception_response_v1(
+        header,
+        matches[0],
+        canonical_bgra8,
+        request_commitment_sha256,
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn build_duel_perception_response_v1(
+    header: &MtgoDuelPerceptionRequestHeaderV1,
+    profile: &MtgoDuelPerceptionReferenceProfileV1,
+    canonical_bgra8: &[u8],
+    request_commitment_sha256: String,
+) -> Result<MtgoDuelPerceptionProcessResponseV1, String> {
+    let dynamic_id = commitment_be_v1(
+        DUEL_PERCEPTION_DYNAMIC_ID_DOMAIN_V1,
+        &[
+            request_commitment_sha256.as_bytes(),
+            profile.profile_id.as_bytes(),
+        ],
+    );
+    let mut decision = profile.decision_template.clone();
+    if decision.frames.len() != 1 {
+        return Err("duel perception decision template must contain exactly one frame".to_owned());
+    }
+    decision.decision_id = format!("visible-duel-decision-v1-{}", &dynamic_id[..24]);
+    decision.frame_id = header.frame_id;
+    decision.frames[0].frame_id = header.frame_id;
+    decision.frames[0].sequence = header.frame_sequence;
+    decision.frames[0].sha256 = header.canonical_bgra8_sha256.clone();
+    decision.frames[0].client_bounds = MtgoRectPxV1 {
+        x: 0,
+        y: 0,
+        width: header.canonical_width,
+        height: header.canonical_height,
+    };
+    for (index, evidence) in decision.evidence.iter_mut().enumerate() {
+        evidence.sequence = header
+            .frame_sequence
+            .checked_add(
+                u64::try_from(index)
+                    .map_err(|_| "duel perception evidence index overflow".to_owned())?,
+            )
+            .ok_or("duel perception evidence sequence overflow")?;
+        match &mut evidence.source {
+            MtgoEvidenceSourceV1::FrameRegion { frame_id, .. } => {
+                *frame_id = header.frame_id;
+            }
+            MtgoEvidenceSourceV1::VisibleGameLogText { .. }
+            | MtgoEvidenceSourceV1::DerivedPublicFact { .. } => {}
+            MtgoEvidenceSourceV1::VisibleAccessibilityText { .. }
+            | MtgoEvidenceSourceV1::ManualVisibleAnnotation { .. } => {
+                return Err(
+                    "duel perception templates cannot use accessibility or manual evidence"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    validate_duel_decision_region_pixels_v1(&decision, canonical_bgra8, &profile.client_size_px)?;
+    let validated = validate_observed_decision_v1(decision.clone())
+        .map_err(|error| format!("validate classified duel decision: {error}"))?;
+
+    let mut reconstruction_audit = profile.reconstruction_audit_template.clone();
+    reconstruction_audit.audit_id = format!("visible-duel-audit-v1-{}", &dynamic_id[..24]);
+    reconstruction_audit.frame.sequence = header.frame_sequence;
+    reconstruction_audit.frame.manifest_sha256 = header.source_manifest_sha256.clone();
+    reconstruction_audit.frame.frame_sha256 = header.canonical_bgra8_sha256.clone();
+    reconstruction_audit.frame.client_size_px = profile.client_size_px.clone();
+    validate_reconstruction_audit_region_pixels_v1(
+        &reconstruction_audit,
+        canonical_bgra8,
+        &profile.client_size_px,
+    )?;
+    validate_observation_reconstruction_audit_v1(reconstruction_audit.clone())
+        .map_err(|error| format!("validate classified duel reconstruction audit: {error}"))?;
+
+    let mut visible_controls = profile.visible_controls_template.clone();
+    visible_controls.decision_commitment_sha256 = validated.decision_commitment_sha256().to_owned();
+    visible_controls.frame_id = header.frame_id;
+    visible_controls.frame_sequence = header.frame_sequence;
+    validate_duel_visible_controls_v1(&decision, &visible_controls)?;
+
+    let competitive_lifecycle = profile
+        .competitive_lifecycle_template
+        .clone()
+        .map(|mut lifecycle| {
+            lifecycle.snapshot_id = format!("visible-duel-lifecycle-v1-{}", &dynamic_id[..24]);
+            lifecycle.frame_id = header.frame_id;
+            lifecycle.frame_sequence = header.frame_sequence;
+            lifecycle.frame_sha256 = header.canonical_bgra8_sha256.clone();
+            lifecycle.client_bounds = MtgoRectPxV1 {
+                x: 0,
+                y: 0,
+                width: header.canonical_width,
+                height: header.canonical_height,
+            };
+            validate_duel_lifecycle_region_pixels_v1(
+                &lifecycle,
+                canonical_bgra8,
+                &profile.client_size_px,
+            )?;
+            validate_visible_competitive_lifecycle_snapshot_v1(lifecycle.clone())
+                .map_err(|error| format!("validate classified duel lifecycle: {error}"))?;
+            Ok::<_, String>(lifecycle)
+        })
+        .transpose()?;
+
+    Ok(MtgoDuelPerceptionProcessResponseV1 {
+        schema_version: 1,
+        request_commitment_sha256,
+        reconstruction_audit,
+        decision,
+        visible_controls,
+        competitive_lifecycle,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn validate_duel_perception_assets_v1(
+    assets: &MtgoDuelPerceptionClassifierAssetsV1,
+) -> Result<(), String> {
+    if assets.schema_version != 1
+        || assets.scope != DUEL_PERCEPTION_ASSET_SCOPE_V1
+        || assets.canonical_pixel_format != PIXEL_FORMAT_V1
+        || assets.profiles.is_empty()
+        || assets.profiles.len() > MAX_DUEL_PERCEPTION_PROFILES_V1
+    {
+        return Err("duel perception classifier assets are outside the bounded schema".to_owned());
+    }
+    let mut profile_ids = HashSet::new();
+    for profile in &assets.profiles {
+        validate_identifier_v1(&profile.profile_id, "duel perception profile id")?;
+        validate_sha256_v1(
+            &profile.perception_profile_commitment_sha256,
+            "duel perception profile commitment",
+        )?;
+        validate_sha256_v1(
+            &profile.perception_profile_admission_commitment_sha256,
+            "duel perception profile admission commitment",
+        )?;
+        if !profile_ids.insert(profile.profile_id.as_str()) {
+            return Err("duel perception profiles must be uniquely identified".to_owned());
+        }
+        if profile.client_size_px.width == 0
+            || profile.client_size_px.height == 0
+            || profile.client_size_px.width > 16_384
+            || profile.client_size_px.height > 16_384
+            || profile.decision_template.frames.len() != 1
+            || profile.decision_template.evidence.is_empty()
+        {
+            return Err("duel perception profile geometry or template is invalid".to_owned());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn duel_perception_profile_pixels_match_v1(
+    profile: &MtgoDuelPerceptionReferenceProfileV1,
+    canonical_bgra8: &[u8],
+) -> Result<bool, String> {
+    let mut matches = true;
+    for evidence in &profile.decision_template.evidence {
+        match &evidence.source {
+            MtgoEvidenceSourceV1::FrameRegion {
+                rect,
+                content_sha256,
+                ..
+            } => {
+                validate_sha256_v1(content_sha256, "duel decision region reference")?;
+                let actual = visible_frame_region_content_sha256_v1(
+                    canonical_bgra8,
+                    &profile.client_size_px,
+                    rect,
+                )
+                .map_err(|error| format!("hash duel decision reference region: {error}"))?;
+                matches &= actual == *content_sha256;
+            }
+            MtgoEvidenceSourceV1::VisibleGameLogText { .. }
+            | MtgoEvidenceSourceV1::DerivedPublicFact { .. } => {}
+            MtgoEvidenceSourceV1::VisibleAccessibilityText { .. }
+            | MtgoEvidenceSourceV1::ManualVisibleAnnotation { .. } => {
+                return Err(
+                    "duel perception templates cannot use accessibility or manual evidence"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    for group in &profile.reconstruction_audit_template.groups {
+        for region in &group.visible_regions {
+            validate_sha256_v1(&region.bgra8_sha256, "duel audit region reference")?;
+            let actual = visible_frame_region_content_sha256_v1(
+                canonical_bgra8,
+                &profile.client_size_px,
+                &region.rect_client_px,
+            )
+            .map_err(|error| format!("hash duel audit reference region: {error}"))?;
+            matches &= actual == region.bgra8_sha256;
+        }
+    }
+    if let Some(lifecycle) = &profile.competitive_lifecycle_template {
+        for fact in &lifecycle.facts {
+            validate_sha256_v1(&fact.content_sha256, "duel lifecycle region reference")?;
+            let actual = visible_frame_region_content_sha256_v1(
+                canonical_bgra8,
+                &profile.client_size_px,
+                &fact.rect_client_px,
+            )
+            .map_err(|error| format!("hash duel lifecycle reference region: {error}"))?;
+            matches &= actual == fact.content_sha256;
+        }
+    }
+    Ok(matches)
+}
+
+#[cfg(target_os = "windows")]
+fn validate_duel_decision_region_pixels_v1(
+    decision: &MtgoObservedDecisionV1,
+    canonical_bgra8: &[u8],
+    size: &MtgoSizePxV1,
+) -> Result<(), String> {
+    for evidence in &decision.evidence {
+        if let MtgoEvidenceSourceV1::FrameRegion {
+            rect,
+            content_sha256,
+            ..
+        } = &evidence.source
+        {
+            let actual = visible_frame_region_content_sha256_v1(canonical_bgra8, size, rect)
+                .map_err(|error| format!("hash classified duel evidence region: {error}"))?;
+            if actual != *content_sha256 {
+                return Err("duel decision region changed after profile selection".to_owned());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_reconstruction_audit_region_pixels_v1(
+    audit: &MtgoObservationReconstructionAuditV1,
+    canonical_bgra8: &[u8],
+    size: &MtgoSizePxV1,
+) -> Result<(), String> {
+    for group in &audit.groups {
+        for region in &group.visible_regions {
+            let actual = visible_frame_region_content_sha256_v1(
+                canonical_bgra8,
+                size,
+                &region.rect_client_px,
+            )
+            .map_err(|error| format!("hash classified duel audit region: {error}"))?;
+            if actual != region.bgra8_sha256 {
+                return Err("duel reconstruction region changed after profile selection".to_owned());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_duel_lifecycle_region_pixels_v1(
+    lifecycle: &MtgoVisibleCompetitiveLifecycleSnapshotV1,
+    canonical_bgra8: &[u8],
+    size: &MtgoSizePxV1,
+) -> Result<(), String> {
+    for fact in &lifecycle.facts {
+        let actual =
+            visible_frame_region_content_sha256_v1(canonical_bgra8, size, &fact.rect_client_px)
+                .map_err(|error| format!("hash classified duel lifecycle region: {error}"))?;
+        if actual != fact.content_sha256 {
+            return Err("duel lifecycle region changed after profile selection".to_owned());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_duel_visible_controls_v1(
+    decision: &MtgoObservedDecisionV1,
+    controls: &MtgoVisibleActionControlSetV1,
+) -> Result<(), String> {
+    if controls.schema_version != 1
+        || controls.frame_id != decision.frame_id
+        || controls.frame_sequence != decision.frames[0].sequence
+        || !controls.prompt_reconciled
+        || !controls.candidate_set_complete
+        || controls.controls.is_empty()
+        || controls.controls.len() > 128
+        || controls.controls.len() != decision.payload.legal_actions.len()
+    {
+        return Err("duel visible controls do not bind the complete decision".to_owned());
+    }
+    let evidence_rect = |evidence_id: u64| -> Result<&MtgoRectPxV1, String> {
+        let evidence = decision
+            .evidence
+            .iter()
+            .find(|candidate| candidate.evidence_id == evidence_id)
+            .ok_or("duel visible control cites unknown evidence")?;
+        let MtgoEvidenceSourceV1::FrameRegion { rect, .. } = &evidence.source else {
+            return Err("duel visible control evidence is not a frame region".to_owned());
+        };
+        Ok(rect)
+    };
+    let prompt_rect = evidence_rect(controls.prompt_frame_region_evidence_id)?;
+    let mut control_ids = HashSet::new();
+    let mut evidence_ids = HashSet::new();
+    for control in &controls.controls {
+        validate_identifier_v1(&control.control_id, "duel visible control id")?;
+        if !control_ids.insert(control.control_id.as_str())
+            || !evidence_ids.insert(control.frame_region_evidence_id)
+            || !control.visibly_enabled
+            || !(9_500..=10_000).contains(&control.confidence_bps)
+        {
+            return Err("duel visible control is duplicated, hidden, or uncertain".to_owned());
+        }
+        if decision
+            .payload
+            .legal_actions
+            .iter()
+            .filter(|semantic| *semantic == &control.semantic)
+            .count()
+            != 1
+            || controls
+                .controls
+                .iter()
+                .filter(|candidate| candidate.semantic == control.semantic)
+                .count()
+                != 1
+        {
+            return Err("duel visible controls must map one-to-one to legal actions".to_owned());
+        }
+        let control_rect = evidence_rect(control.frame_region_evidence_id)?;
+        if rects_intersect_local_v1(prompt_rect, control_rect) {
+            return Err("duel visible control overlaps the prompt region".to_owned());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn rects_intersect_local_v1(left: &MtgoRectPxV1, right: &MtgoRectPxV1) -> bool {
+    let Some(left_right) = left.x.checked_add(left.width) else {
+        return true;
+    };
+    let Some(left_bottom) = left.y.checked_add(left.height) else {
+        return true;
+    };
+    let Some(right_right) = right.x.checked_add(right.width) else {
+        return true;
+    };
+    let Some(right_bottom) = right.y.checked_add(right.height) else {
+        return true;
+    };
+    left.x < right_right && left_right > right.x && left.y < right_bottom && left_bottom > right.y
+}
+
+#[cfg(target_os = "windows")]
 fn classify_sideboard_profile_v1(
     header: &MtgoCompetitiveSideboardClassifierRequestHeaderV1,
     navigation_profile: &MtgoCompetitiveNavigationRegionProfileV1,
@@ -999,6 +1519,81 @@ fn classify_from_words_v1(
         request_commitment_sha256,
         selection,
     })
+}
+
+#[cfg(target_os = "windows")]
+fn validate_duel_perception_header_identity_v1(
+    header: &MtgoDuelPerceptionRequestHeaderV1,
+    assets_json: &[u8],
+    actual_card_database_sha256: &str,
+    actual_classifier_sha256: &str,
+) -> Result<(), String> {
+    if header.schema_version != 1
+        || header.protocol != "mtgo_visible_duel_perception_v1"
+        || header.frame_id == 0
+        || header.frame_sequence == 0
+        || header.canonical_width == 0
+        || header.canonical_height == 0
+        || header.canonical_width > 16_384
+        || header.canonical_height > 16_384
+    {
+        return Err("duel perception request identity is invalid".to_owned());
+    }
+    let expected_stride = header
+        .canonical_width
+        .checked_mul(4)
+        .ok_or("duel perception stride overflow")?;
+    let expected_length = usize::try_from(header.canonical_width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(header.canonical_height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("duel perception pixel length overflow")?;
+    if header.canonical_stride != expected_stride
+        || header.canonical_byte_length != expected_length
+        || expected_length == 0
+        || u64::try_from(expected_length)
+            .ok()
+            .is_none_or(|length| length > MAX_CANONICAL_BYTES_V1)
+        || header.classifier_assets_manifest_sha256 != sha256_hex_v1(assets_json)
+        || header.card_database_profile_sha256 != actual_card_database_sha256
+        || header.perception_pipeline_binary_sha256 != actual_classifier_sha256
+    {
+        return Err("duel perception runtime, geometry, or artifacts differ".to_owned());
+    }
+    for digest in [
+        header.canonical_bgra8_sha256.as_str(),
+        header.source_manifest_sha256.as_str(),
+        header.source_capture_commitment_sha256.as_str(),
+        header.source_frame_profile_binding_sha256.as_str(),
+        header.perception_profile_commitment_sha256.as_str(),
+        header
+            .perception_profile_admission_commitment_sha256
+            .as_str(),
+        header.runtime_identity_commitment_sha256.as_str(),
+        header.perception_pipeline_binary_sha256.as_str(),
+        header.classifier_assets_manifest_sha256.as_str(),
+        header.card_database_profile_sha256.as_str(),
+    ] {
+        validate_sha256_v1(digest, "duel perception request commitment")?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_duel_perception_pixels_v1(
+    header: &MtgoDuelPerceptionRequestHeaderV1,
+    canonical_bgra8: &[u8],
+) -> Result<(), String> {
+    if canonical_bgra8.len() != header.canonical_byte_length
+        || sha256_hex_v1(canonical_bgra8) != header.canonical_bgra8_sha256
+    {
+        return Err("duel perception pixels differ from the request header".to_owned());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -2381,6 +2976,23 @@ fn hash_bounded_file_v1(path: &Path, maximum: u64, label: &str) -> Result<String
         hasher.update(&buffer[..read]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(target_os = "windows")]
+fn read_bounded_file_bytes_v1(path: &Path, maximum: u64, label: &str) -> Result<Vec<u8>, String> {
+    let mut file = File::open(path).map_err(|error| format!("open {label}: {error}"))?;
+    let length = file
+        .metadata()
+        .map_err(|error| format!("inspect {label}: {error}"))?
+        .len();
+    if length == 0 || length > maximum {
+        return Err(format!("{label} length is outside bounds"));
+    }
+    let length = usize::try_from(length).map_err(|_| format!("{label} length does not fit"))?;
+    let mut bytes = vec![0_u8; length];
+    file.read_exact(&mut bytes)
+        .map_err(|error| format!("read {label}: {error}"))?;
+    Ok(bytes)
 }
 
 #[cfg(target_os = "windows")]
