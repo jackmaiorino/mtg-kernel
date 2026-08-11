@@ -38,6 +38,7 @@ use crate::flat_policy_v1::{
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V1,
 };
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
+use crate::kernel_native_search_opponent_v1::KernelNativeSearchOpponentV1;
 use crate::native_full_episode_trajectory_v1::{
     NativeFullEpisodeTrajectoryDecisionRowV1, NativeTrajectoryActorRoleV1,
 };
@@ -1674,6 +1675,15 @@ struct LocalLaneCore<F: FlatScoredFamilyCore> {
     /// Set once per lane at construction. The handle array remains immutable;
     /// only the episode-selected slot is retained in `native_schedule`.
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    /// Set once per lane at construction. Non-Store, non-checkpoint authority
+    /// (`kernel-native-search-opponent-v1`); unlike `ladder_opponent` and
+    /// `population_opponent` there is no per-episode member/slot draw to
+    /// retain in `native_schedule` -- when installed, every opponent decision
+    /// in this lane is resolved by this one authority. Mutually exclusive
+    /// with both fields above; enforced once at the run's construction
+    /// boundary (`run_async_flat_scored_rollout_core_with_population_v1`),
+    /// not re-checked per decision here.
+    search_opponent: Option<Arc<KernelNativeSearchOpponentV1>>,
     #[cfg(test)]
     test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
@@ -1689,6 +1699,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
         end_episode_id: u64,
         ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
         population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+        search_opponent: Option<Arc<KernelNativeSearchOpponentV1>>,
     ) -> Self {
         let next_episode_id = first_episode_id
             .checked_add(logical_lane_id as u64)
@@ -1712,6 +1723,7 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
             learner_trace_hash: FNV1A64_OFFSET,
             ladder_opponent,
             population_opponent,
+            search_opponent,
             #[cfg(test)]
             test_instrumentation: Arc::new(TestRunInstrumentationV1::default()),
         }
@@ -2135,14 +2147,57 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                         let population_slot = self
                             .native_schedule
                             .and_then(|schedule| schedule.population_slot);
-                        match (ladder_member, population_slot) {
-                            (None, None)
-                            | (Some(OpponentLadderPoolMemberV2::UniformFloor), None) => {
+                        let search_authority_active = self.search_opponent.is_some();
+                        match (ladder_member, population_slot, search_authority_active) {
+                            (None, None, false)
+                            | (Some(OpponentLadderPoolMemberV2::UniformFloor), None, false) => {
                                 preflight.opponent_selected_index.ok_or_else(|| {
                                     self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
                                 })?
                             }
-                            (Some(_), None) | (None, Some(_)) => {
+                            // The kernel-native search authority never
+                            // consults the broker/scorer scoring view: it
+                            // takes the live session and the exact decision
+                            // binding directly (`select_action`) and derives
+                            // its own internal simulation seeds from the
+                            // decision identity plus its authority digest.
+                            // `preflight.action_seed` is not consulted here,
+                            // matching the standard opponent dispatch
+                            // contract (KERNEL-NATIVE-SEARCH-OPPONENT-V1-
+                            // DESIGN.md, "Runtime and authority
+                            // integration"): checkpoint opponents use the
+                            // scoring view unchanged, the search authority
+                            // uses the cloned session and binding instead.
+                            (None, None, true) => {
+                                let searcher = self.search_opponent.as_ref().ok_or_else(|| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?;
+                                let session = self.session.as_ref().ok_or_else(|| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?;
+                                searcher
+                                    .select_action(session, decision)
+                                    .map(|result| result.selected_index)
+                                    .map_err(|_| {
+                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                    })?
+                            }
+                            // Fail closed: more than one opponent authority
+                            // installed at once (ladder+population,
+                            // ladder+search, population+search) is a
+                            // construction-time contract violation that
+                            // should already be rejected before a worker is
+                            // ever spawned (see the pairwise-exclusivity
+                            // check in
+                            // `run_async_flat_scored_rollout_core_with_population_v1`).
+                            // This arm is a per-decision backstop, not the
+                            // primary enforcement point.
+                            (Some(_), Some(_), _)
+                            | (Some(_), None, true)
+                            | (None, Some(_), true) => {
+                                return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                            }
+                            (Some(_), None, false) | (None, Some(_), false) => {
                                 // Deferred from preflight for either immutable
                                 // policy runtime: build the
                                 // decision's flat encoding the same way the
@@ -2210,9 +2265,6 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                                     });
                                 self.packet = Some(F::into_owned_packet(validated_packet));
                                 index?
-                            }
-                            (Some(_), Some(_)) => {
-                                return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
                             }
                         }
                     } else {
@@ -2770,6 +2822,11 @@ struct WorkerRuntimeV1 {
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     /// Optional immutable eight-slot population runtime for the full run.
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    /// Optional kernel-native search authority for the full run. Mutually
+    /// exclusive with both fields above (checked once in
+    /// `run_async_flat_scored_rollout_core_with_population_v1`, before any
+    /// worker is spawned).
+    search_opponent: Option<Arc<KernelNativeSearchOpponentV1>>,
     #[cfg(test)]
     test_instrumentation: Arc<TestRunInstrumentationV1>,
 }
@@ -2812,6 +2869,7 @@ fn worker_loop<F: FlatScoredFamilyCore>(
                 runtime.end_episode_id,
                 runtime.ladder_opponent.clone(),
                 runtime.population_opponent.clone(),
+                runtime.search_opponent.clone(),
             );
             #[cfg(test)]
             let lane = LocalLaneCore {
@@ -3251,9 +3309,22 @@ pub(crate) fn run_async_flat_scored_rollout_core<
         environment_authority,
         ladder_opponent,
         None,
+        None,
         scorer,
         observer,
     )
+}
+
+/// At most one of the three mutually exclusive opponent authorities
+/// (ladder, population, kernel-native search) may be installed for a run.
+/// Pure and independent of any real engine so it can be constructed-tested
+/// and mutation-verified with plain booleans.
+pub(crate) const fn opponent_authority_installation_is_valid_v1(
+    ladder_installed: bool,
+    population_installed: bool,
+    search_installed: bool,
+) -> bool {
+    (ladder_installed as u8 + population_installed as u8 + search_installed as u8) <= 1
 }
 
 pub(crate) fn run_async_flat_scored_rollout_core_with_population_v1<
@@ -3266,12 +3337,24 @@ pub(crate) fn run_async_flat_scored_rollout_core_with_population_v1<
     environment_authority: Option<NativeEnvironmentWindowPreflightAuthorityV2>,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    search_opponent: Option<Arc<KernelNativeSearchOpponentV1>>,
     scorer: &mut S,
     mut observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV1, O::Output), AsyncFlatScoredObservedRunErrorV1<O::Error>>
 {
     let api_started = Instant::now();
-    if ladder_opponent.is_some() && population_opponent.is_some() {
+    // Fail closed: at most one opponent authority may be installed for a
+    // run. Pairwise, not just ladder/population -- the kernel-native search
+    // authority (`kernel-native-search-opponent-v1`) is a third mutually
+    // exclusive alternative, never combined with the other two. Extracted as
+    // a pure, directly unit-testable predicate so this construction-time
+    // gate can be exercised (and mutation-verified) without spawning a
+    // worker or supplying a real engine.
+    if !opponent_authority_installation_is_valid_v1(
+        ladder_opponent.is_some(),
+        population_opponent.is_some(),
+        search_opponent.is_some(),
+    ) {
         return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
     }
     if !(1..=ASYNC_ROLLOUT_MAX_WORKERS_V2).contains(&config.worker_count) {
@@ -3385,6 +3468,7 @@ pub(crate) fn run_async_flat_scored_rollout_core_with_population_v1<
         released_epoch: Arc::clone(&released_epoch),
         ladder_opponent,
         population_opponent,
+        search_opponent,
         #[cfg(test)]
         test_instrumentation: Arc::clone(&test_instrumentation),
     };
@@ -5537,8 +5621,15 @@ mod tests {
         let _test_state = acquire_async_flat_scored_test_guard_v1();
         let shaped = config(1, 1, 1, 1);
         let end_episode_id = shaped.first_episode_id + shaped.episode_count;
-        let mut lane =
-            LocalLaneV1::vacant(0, 0, shaped.first_episode_id, end_episode_id, None, None);
+        let mut lane = LocalLaneV1::vacant(
+            0,
+            0,
+            shaped.first_episode_id,
+            end_episode_id,
+            None,
+            None,
+            None,
+        );
         lane.test_instrumentation = _test_state.instrumentation_arc();
         lane.fill(
             &shaped,
@@ -6018,6 +6109,33 @@ mod tests {
             Some(population_slot),
         )
         .is_err());
+    }
+
+    /// The kernel-native search authority is a third opponent-authority
+    /// alternative alongside ladder and population (KERNEL-NATIVE-SEARCH-
+    /// OPPONENT-V1-DESIGN.md "Runtime and authority integration"),
+    /// exclusive with both, and with itself never more than once. Pure and
+    /// fixture-free: exercises the exact predicate
+    /// `run_async_flat_scored_rollout_core_with_population_v1` consults
+    /// before spawning any worker.
+    #[test]
+    fn opponent_authority_installation_accepts_at_most_one_of_three() {
+        assert!(opponent_authority_installation_is_valid_v1(
+            false, false, false
+        ));
+        assert!(opponent_authority_installation_is_valid_v1(true, false, false));
+        assert!(opponent_authority_installation_is_valid_v1(false, true, false));
+        assert!(opponent_authority_installation_is_valid_v1(false, false, true));
+        assert!(!opponent_authority_installation_is_valid_v1(
+            true, true, false
+        ));
+        assert!(!opponent_authority_installation_is_valid_v1(
+            true, false, true
+        ));
+        assert!(!opponent_authority_installation_is_valid_v1(
+            false, true, true
+        ));
+        assert!(!opponent_authority_installation_is_valid_v1(true, true, true));
     }
 
     #[test]

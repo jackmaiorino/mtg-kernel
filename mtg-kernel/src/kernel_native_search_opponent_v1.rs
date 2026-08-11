@@ -46,6 +46,20 @@ pub const KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1: u16 = 64;
 pub const KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1: [u64; 4] =
     [1_987_001, 1_988_001, 1_989_001, 1_990_001];
 
+/// Diagnostic candidate-generation allowlist for the throughput screen and
+/// calibration panels (design "Calibration after implementation"): the
+/// search authority has no checkpoint generation to select, so its analog
+/// of the response-exploiter lineage's `candidate_gen` allowlist is simply
+/// "every tier the design defines is admitted, in the fixed order the
+/// design lists them." Stage 2 registers this allowlist; it does not run
+/// any panel (calibration remains the coordinator's job).
+pub const KERNEL_NATIVE_SEARCH_DIAGNOSTIC_TIER_ALLOWLIST_V1: [KernelNativeSearchTierV1; 4] = [
+    KernelNativeSearchTierV1::T512,
+    KernelNativeSearchTierV1::T2048,
+    KernelNativeSearchTierV1::T8192,
+    KernelNativeSearchTierV1::T32768,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KernelNativeSearchTierV1 {
@@ -1447,5 +1461,75 @@ mod tests {
         let tree = SearchTreeV1::new(key, PlayerId::P0, 3).unwrap();
         assert_eq!(tree.find_node(key), Some(0));
         assert_eq!(tree.find_node([8; 32]), None);
+    }
+
+    #[test]
+    fn diagnostic_tier_allowlist_covers_every_tier_exactly_once_in_design_order() {
+        assert_eq!(
+            KERNEL_NATIVE_SEARCH_DIAGNOSTIC_TIER_ALLOWLIST_V1,
+            [
+                KernelNativeSearchTierV1::T512,
+                KernelNativeSearchTierV1::T2048,
+                KernelNativeSearchTierV1::T8192,
+                KernelNativeSearchTierV1::T32768,
+            ]
+        );
+        let mut budgets: Vec<u32> = KERNEL_NATIVE_SEARCH_DIAGNOSTIC_TIER_ALLOWLIST_V1
+            .iter()
+            .map(|tier| tier.transition_budget())
+            .collect();
+        budgets.sort_unstable();
+        budgets.dedup();
+        assert_eq!(
+            budgets.len(),
+            4,
+            "every registered tier must be distinct and monotone by budget"
+        );
+    }
+
+    /// Registration-only validation of the "Rust mixture-seed whitelist"
+    /// layer (design "Calibration after implementation": the four base
+    /// seeds 1,987,001 / 1,988,001 / 1,989,001 / 1,990,001, pair indices
+    /// `0..15` for the throughput screen and `0..255` for a matched panel).
+    /// This checks the ENV-DRIVEN VALIDATION SURFACE ONLY (tier string,
+    /// pair-count bound, and eval-seed allowlist membership) that a future
+    /// calibration launcher resolves against; it does not run a search, a
+    /// rollout, or any panel, and it is `#[ignore]`-gated so `cargo test`
+    /// never executes it by default. Running an actual calibration panel is
+    /// explicitly out of stage-2 scope (KERNEL-NATIVE-SEARCH-OPPONENT-V1-
+    /// DESIGN.md "Calibration after implementation" is a separate,
+    /// coordinator-run phase).
+    #[test]
+    #[ignore]
+    fn kernel_native_search_diagnostic_env_surface_is_registered_and_fails_closed() {
+        fn required_env_v1(name: &str) -> String {
+            std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
+        }
+        let tier_name = required_env_v1("KERNEL_SEARCH_DIAGNOSTIC_TIER");
+        let tier = match tier_name.as_str() {
+            "T512" => KernelNativeSearchTierV1::T512,
+            "T2048" => KernelNativeSearchTierV1::T2048,
+            "T8192" => KernelNativeSearchTierV1::T8192,
+            "T32768" => KernelNativeSearchTierV1::T32768,
+            _ => panic!("KERNEL_SEARCH_DIAGNOSTIC_TIER must name one of the four registered tiers"),
+        };
+        assert!(
+            KERNEL_NATIVE_SEARCH_DIAGNOSTIC_TIER_ALLOWLIST_V1.contains(&tier),
+            "diagnostic tier must be on the registered allowlist"
+        );
+        let pairs: u64 = required_env_v1("KERNEL_SEARCH_DIAGNOSTIC_PAIRS")
+            .parse()
+            .expect("KERNEL_SEARCH_DIAGNOSTIC_PAIRS");
+        assert!(
+            (1..=256).contains(&pairs),
+            "diagnostic panel must be the 16-pair throughput screen or the 256-pair matched panel, or a smaller smoke pair count"
+        );
+        let eval_seed: u64 = required_env_v1("KERNEL_SEARCH_DIAGNOSTIC_EVAL_SEED")
+            .parse()
+            .expect("KERNEL_SEARCH_DIAGNOSTIC_EVAL_SEED");
+        assert!(
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1.contains(&eval_seed),
+            "diagnostic eval seed must be one of the four countersigned calibration seeds"
+        );
     }
 }

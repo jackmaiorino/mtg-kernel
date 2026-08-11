@@ -35,6 +35,7 @@ use crate::flat_policy_v2::{
     FLAT_SCORER_PACKET_VERSION_V2, FLAT_SCORER_VISIBLE_MANIFEST_V2,
     FLAT_SCORER_VISIBLE_MANIFEST_VERSION_V2,
 };
+use crate::kernel_native_search_opponent_v1::KernelNativeSearchOpponentV1;
 use crate::native_full_episode_trajectory_v2::{
     NativeEnvironmentWindowPreflightAuthorityV2, NativeTrainingTrajectoryReceiptV2,
 };
@@ -1141,6 +1142,11 @@ pub(crate) fn run_async_flat_scored_rollout_native_observed_v2<
 
 /// Population-aware native-trainer sibling. Existing native callers keep the
 /// function above and therefore continue to install no population engine.
+///
+/// Also the kernel-native search authority's entry point: `search_opponent`
+/// is mutually exclusive with both `ladder_opponent` and
+/// `population_opponent` (enforced in the shared core), and every existing
+/// caller passes `None`, reproducing today's behavior exactly.
 pub(crate) fn run_async_flat_scored_rollout_native_observed_with_population_v1<
     O: FlatScoredTrajectoryObserverV2,
 >(
@@ -1148,6 +1154,7 @@ pub(crate) fn run_async_flat_scored_rollout_native_observed_with_population_v1<
     base_seed: u64,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    search_opponent: Option<Arc<KernelNativeSearchOpponentV1>>,
     scorer: &mut impl FlatBatchScorerV2,
     observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
@@ -1158,6 +1165,7 @@ pub(crate) fn run_async_flat_scored_rollout_native_observed_with_population_v1<
         None,
         ladder_opponent,
         population_opponent,
+        search_opponent,
         scorer,
         observer,
     )
@@ -1188,7 +1196,9 @@ pub(crate) fn run_async_flat_scored_rollout_native_environment_randomization_v2<
     )
 }
 
-/// Population-aware environment-randomization native-trainer sibling.
+/// Population-aware environment-randomization native-trainer sibling. Also
+/// the kernel-native search authority's environment-randomization entry
+/// point; see `run_async_flat_scored_rollout_native_observed_with_population_v1`.
 pub(crate) fn run_async_flat_scored_rollout_native_environment_randomization_with_population_v1<
     O: FlatScoredTrajectoryObserverV2,
 >(
@@ -1197,6 +1207,7 @@ pub(crate) fn run_async_flat_scored_rollout_native_environment_randomization_wit
     environment_authority: NativeEnvironmentWindowPreflightAuthorityV2,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    search_opponent: Option<Arc<KernelNativeSearchOpponentV1>>,
     scorer: &mut impl FlatBatchScorerV2,
     observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
@@ -1207,6 +1218,7 @@ pub(crate) fn run_async_flat_scored_rollout_native_environment_randomization_wit
         Some(environment_authority),
         ladder_opponent,
         population_opponent,
+        search_opponent,
         scorer,
         observer,
     )
@@ -1257,6 +1269,7 @@ fn run_async_flat_scored_rollout_observed_with_schedule_and_population_v1<
     environment_authority: Option<NativeEnvironmentWindowPreflightAuthorityV2>,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    search_opponent: Option<Arc<KernelNativeSearchOpponentV1>>,
     scorer: &mut impl FlatBatchScorerV2,
     observer: O,
 ) -> Result<(AsyncFlatScoredRolloutResultV2, O::Output), AsyncFlatScoredObservedRunErrorV2<O::Error>>
@@ -1269,6 +1282,7 @@ fn run_async_flat_scored_rollout_observed_with_schedule_and_population_v1<
         environment_authority,
         ladder_opponent,
         population_opponent,
+        search_opponent,
         &mut scorer,
         observer,
     ) {
@@ -1784,6 +1798,7 @@ mod tests {
                 BASE_SEED,
                 None,
                 None,
+                None,
                 &mut new_scorer,
                 UniformTrajectoryObserverV2::default(),
             )
@@ -1798,6 +1813,126 @@ mod tests {
         assert_eq!(
             new_result.metrics.batch_membership_digest,
             old_result.metrics.batch_membership_digest
+        );
+    }
+
+    /// Standard opponent dispatch, kernel-native search arm (KERNEL-NATIVE-
+    /// SEARCH-OPPONENT-V1-DESIGN.md "Runtime and authority integration"):
+    /// resolves the authority-kind role string through
+    /// `native_checkpoint_opponent_role_v1` (the role-string dispatch
+    /// layer), then installs the resulting search authority through the
+    /// SAME shared entry point native evaluation and population slots both
+    /// use (`run_async_flat_scored_rollout_native_observed_with_population_v1`),
+    /// and plays a genuine two-episode pair to natural completion. No
+    /// checkpoint, Store record, or TrainRunV2 fixture is constructed for
+    /// the opponent seat: the search authority consumes only the cloned
+    /// session and the exact decision binding, never the scorer. The
+    /// learner seat still uses a plain scoring mock
+    /// (`ContractCheckingScorerV2`) since the search authority never
+    /// touches it.
+    #[test]
+    fn kernel_native_search_authority_resolves_via_role_string_and_plays_a_minimal_episode() {
+        use crate::kernel_native_search_opponent_v1::{
+            KernelNativeSearchAuthorityV1, KernelNativeSearchOpponentV1, KernelNativeSearchTierV1,
+            KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1, KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1,
+        };
+        use crate::native_checkpoint_runner_v1::{
+            native_checkpoint_opponent_role_v1, NativeCheckpointOpponentRoleV1,
+        };
+
+        const BASE_SEED: u64 = 71_501;
+        assert_eq!(
+            native_checkpoint_opponent_role_v1(KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1).unwrap(),
+            NativeCheckpointOpponentRoleV1::KernelNativeSearch,
+            "the role string must resolve to the kernel-native search role \
+             before any engine is constructed"
+        );
+
+        let authority = KernelNativeSearchAuthorityV1::current(
+            KernelNativeSearchTierV1::T512,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+        )
+        .unwrap();
+        let searcher = Arc::new(KernelNativeSearchOpponentV1::new(authority).unwrap());
+
+        // A T512 search authority runs up to 512 simulated transitions per
+        // opponent decision (redetermine, re-observe, select) instead of one
+        // cheap softmax draw, so this smoke needs a much longer scheduler
+        // deadline than the shared `config()` helper's 60s default; the
+        // topology (one worker, one session) is otherwise identical.
+        let shaped = AsyncRolloutConfigV2 {
+            scheduler_timeout: Duration::from_secs(1_200),
+            ..config(2)
+        };
+        let mut scorer = ContractCheckingScorerV2::default();
+        let (result, _rows) = run_async_flat_scored_rollout_native_observed_with_population_v1(
+            shaped,
+            BASE_SEED,
+            None,
+            None,
+            Some(searcher),
+            &mut scorer,
+            UniformTrajectoryObserverV2::default(),
+        )
+        .unwrap();
+        assert_eq!(result.episodes.len(), 2);
+        assert!(result.all_natural());
+    }
+
+    /// Fast discriminator for the happy-path arm added to `advance_to_event`
+    /// (`(None, None, true) => { ... searcher.select_action(session,
+    /// decision) ... }`): proves the dispatch genuinely calls into the
+    /// search authority rather than silently falling through to the uniform
+    /// sampler. Uses an authority whose `private_diagnostic_identity` names
+    /// the wrong environment variant for this `NativeTrainerV1` (legacy)
+    /// schedule -- `validate()` still accepts it (both diagnostic
+    /// identities are individually valid, per
+    /// `KernelNativeSearchAuthorityV1::validate`), but
+    /// `select_action_with_budget_v1`'s own runtime check
+    /// (`session.kernel_search_private_diagnostic_identity_v1() !=
+    /// self.authority.private_diagnostic_identity`) rejects it on the very
+    /// first opponent decision. If the dispatch arm ever stopped calling
+    /// `select_action` (e.g. fell through to `uniform_index` instead), this
+    /// sabotaged authority would never be consulted and the rollout would
+    /// wrongly succeed; this test's whole value is failing loudly in that
+    /// case. Fast: fails on the first opponent decision, no 512-transition
+    /// search ever runs.
+    #[test]
+    fn kernel_native_search_authority_dispatch_is_actually_consulted_not_bypassed() {
+        use crate::kernel_native_search_opponent_v1::{
+            KernelNativeSearchAuthorityV1, KernelNativeSearchOpponentV1, KernelNativeSearchTierV1,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1,
+        };
+
+        const BASE_SEED: u64 = 71_501;
+        let sabotaged_authority = KernelNativeSearchAuthorityV1::current(
+            KernelNativeSearchTierV1::T512,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
+        )
+        .unwrap();
+        assert!(
+            sabotaged_authority.validate().is_ok(),
+            "the diagnostic identity mismatch is only a runtime-session mismatch, \
+             not a record-validity defect, so construction must still succeed"
+        );
+        let searcher = Arc::new(KernelNativeSearchOpponentV1::new(sabotaged_authority).unwrap());
+
+        let mut scorer = ContractCheckingScorerV2::default();
+        let outcome = run_async_flat_scored_rollout_native_observed_with_population_v1(
+            config(2),
+            BASE_SEED,
+            None,
+            None,
+            Some(searcher),
+            &mut scorer,
+            UniformTrajectoryObserverV2::default(),
+        );
+        assert!(
+            outcome.is_err(),
+            "a genuinely consulted search authority must reject this session/authority \
+             diagnostic-identity mismatch instead of the rollout completing naturally"
         );
     }
 
@@ -1828,6 +1963,7 @@ mod tests {
                 authority,
                 None,
                 Some(population.clone()),
+                None,
                 &mut scorer,
                 NoopFlatScoredTrajectoryObserverV2,
             )
@@ -1884,6 +2020,7 @@ mod tests {
             71_501,
             Some(ladder.clone()),
             Some(population.clone()),
+            None,
             &mut UnreachableScorerV2,
             NoopFlatScoredTrajectoryObserverV2,
         )

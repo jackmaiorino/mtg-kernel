@@ -2592,6 +2592,7 @@ impl NativeTrainerStateV2 {
                     self.base_seed,
                     self.ladder_opponent.clone(),
                     Some(population_opponent),
+                    None,
                     &mut scorer,
                     observer,
                 )
@@ -2603,6 +2604,7 @@ impl NativeTrainerStateV2 {
                     authority,
                     self.ladder_opponent.clone(),
                     Some(population_opponent),
+                    None,
                     &mut scorer,
                     observer,
                 )
@@ -2940,6 +2942,7 @@ impl NativeTrainerStateV2 {
                     self.base_seed,
                     self.ladder_opponent.clone(),
                     Some(population_opponent),
+                    None,
                     &mut scorer,
                     observer,
                 )
@@ -2951,6 +2954,7 @@ impl NativeTrainerStateV2 {
                     authority,
                     self.ladder_opponent.clone(),
                     Some(population_opponent),
+                    None,
                     &mut scorer,
                     observer,
                 )

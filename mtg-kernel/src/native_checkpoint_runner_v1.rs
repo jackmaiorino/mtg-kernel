@@ -26,6 +26,7 @@ use crate::native_checkpoint_inference_v1::{
 use crate::native_full_episode_trajectory_v2::{
     preflight_native_environment_window_v2, NativeEnvironmentWindowPreflightAuthorityV2,
 };
+use crate::kernel_native_search_opponent_v1::KernelNativeSearchOpponentV1;
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
@@ -528,7 +529,7 @@ pub fn run_native_checkpoint_v1(
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, None, None)
+    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, None, None, None)
 }
 
 /// EVAL-ONLY (Self-Play Ladder Design Contract S2, Deliverable 2 head-to-head
@@ -576,6 +577,7 @@ pub(crate) fn run_native_checkpoint_with_ladder_opponent_eval_v1(
         config,
         ladder_opponent,
         None,
+        None,
     )
 }
 
@@ -598,7 +600,81 @@ pub(crate) fn run_native_checkpoint_with_population_opponent_eval_v1(
         config,
         None,
         Some(population_opponent),
+        None,
     )
+}
+
+/// Evaluation-only kernel-native search-opponent sibling
+/// (`kernel-native-search-opponent-v1`, KERNEL-NATIVE-SEARCH-OPPONENT-V1-
+/// DESIGN.md "Runtime and authority integration"). Existing fixed, ladder,
+/// and population callers cannot supply a search authority and preserve
+/// their exact path; this is the ONLY production entry point that can ever
+/// install one, and it is `cfg(test)`-gated for the same reason the ladder
+/// and population eval siblings above are: it does not exist in a
+/// non-test build and can never be reached from a training run record or
+/// the live science loop, so the search authority can never supply learner
+/// reward or promotion reward (the design's own stop-the-lane condition).
+#[cfg(test)]
+pub(crate) fn run_native_checkpoint_with_search_opponent_eval_v1(
+    run: &ValidatedTrainRunV2,
+    checkpoint: &CheckpointManifestV3,
+    checkpoint_payload: &[u8],
+    config: NativeCheckpointRunnerConfigV1,
+    search_opponent: Arc<KernelNativeSearchOpponentV1>,
+) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
+    run_native_checkpoint_core_v1(
+        run,
+        checkpoint,
+        checkpoint_payload,
+        config,
+        None,
+        None,
+        Some(search_opponent),
+    )
+}
+
+/// Runtime-side role-string dispatch for the search authority's lineage
+/// registration (`kernel-native-search-opponent-v1` non-Store authority
+/// kind). This is the resolution surface a future CLI or panel script
+/// resolves an opponent-role argument against before constructing the
+/// corresponding engine; it does not itself construct anything. Fail
+/// closed: any string other than the four recognized roles is rejected,
+/// never silently defaulted to the frozen uniform opponent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NativeCheckpointOpponentRoleV1 {
+    Uniform,
+    Ladder,
+    Population,
+    KernelNativeSearch,
+}
+
+pub(crate) fn native_checkpoint_opponent_role_v1(
+    role: &str,
+) -> Result<NativeCheckpointOpponentRoleV1, NativeCheckpointRunnerErrorV1> {
+    match role {
+        "uniform" => Ok(NativeCheckpointOpponentRoleV1::Uniform),
+        "ladder" => Ok(NativeCheckpointOpponentRoleV1::Ladder),
+        "population" => Ok(NativeCheckpointOpponentRoleV1::Population),
+        crate::kernel_native_search_opponent_v1::KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1 => {
+            Ok(NativeCheckpointOpponentRoleV1::KernelNativeSearch)
+        }
+        _ => Err(NativeCheckpointRunnerErrorV1::InvalidConfig),
+    }
+}
+
+/// Runtime requirements predicate for the runner's opponent-authority
+/// installation: at most one of the three optional engines may be
+/// installed for a run. Pure and directly unit-tested, mirroring the
+/// established `*_runtime_requirements_satisfied_v1` predicate shape used
+/// elsewhere in this codebase's lineage-registration surfaces (compare
+/// `response_exploiter_runtime_requirements_satisfied_v1` in
+/// `native_science_loop_v1.rs`).
+pub(crate) const fn native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+    ladder_installed: bool,
+    population_installed: bool,
+    search_installed: bool,
+) -> bool {
+    (ladder_installed as u8 + population_installed as u8 + search_installed as u8) <= 1
 }
 
 fn run_native_checkpoint_core_v1(
@@ -608,9 +684,37 @@ fn run_native_checkpoint_core_v1(
     config: NativeCheckpointRunnerConfigV1,
     ladder_opponent: Option<Arc<LadderOpponentEngineV1>>,
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
+    search_opponent: Option<Arc<KernelNativeSearchOpponentV1>>,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    if ladder_opponent.is_some() && population_opponent.is_some() {
+    // Fail closed: at most one opponent authority may be installed. Pairwise,
+    // not just ladder/population -- the kernel-native search authority is a
+    // third mutually exclusive alternative (design: "non-Store authority
+    // kind"), never combined with the other two or with itself twice.
+    if !native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+        ladder_opponent.is_some(),
+        population_opponent.is_some(),
+        search_opponent.is_some(),
+    ) {
         return Err(NativeCheckpointRunnerErrorV1::InvalidConfig);
+    }
+    if let Some(search_opponent) = search_opponent.as_ref() {
+        // Checklist item 1 scope (COUNTERSIGN amendment 3): the compile-bound
+        // contract array and the record's embedded seed field are two
+        // distinct validated checks, not one. `.validate()` re-checks the
+        // full canonical record (including the embedded `action_seed`
+        // against the compile-bound allowlist internally); the explicit
+        // `.contains()` re-check immediately below is the second, textually
+        // separate check against that same compile-bound array at this
+        // runtime boundary.
+        search_opponent
+            .authority()
+            .validate()
+            .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?;
+        if !crate::kernel_native_search_opponent_v1::KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1
+            .contains(&search_opponent.authority().action_seed)
+        {
+            return Err(NativeCheckpointRunnerErrorV1::InvalidConfig);
+        }
     }
     let validated = validate_runner_config_v1(run, config)?;
     let expected_episode_count = usize::try_from(config.episode_count)
@@ -669,22 +773,33 @@ fn run_native_checkpoint_core_v1(
     // Exhaustive rollout dispatch by the sealed contract: neither core can
     // default to Legacy, and the V2 arm surrenders the consumed authority
     // minted by the first validator from the evaluation seed.
+    // `route_through_population_shaped_call` reduces to
+    // `population_opponent.is_some()` for every existing caller (which can
+    // never supply a search authority), reproducing the exact prior routing.
+    // The kernel-native search authority reuses the population-shaped call
+    // because that is the runtime's only opponent-injection surface that
+    // already threads the full session/binding to the shared per-decision
+    // dispatch (async_flat_scored_rollout_v1's `advance_to_event`); it does
+    // not require a scoring view or the broker/scorer path.
+    let route_through_population_shaped_call =
+        population_opponent.is_some() || search_opponent.is_some();
     let observed = match (
         validated.environment,
         validated.environment_authority,
-        population_opponent,
+        route_through_population_shaped_call,
     ) {
-        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, None, Some(population)) => {
+        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, None, true) => {
             run_async_flat_scored_rollout_native_observed_with_population_v1(
                 rollout_config,
                 config.evaluation_base_seed,
                 ladder_opponent,
-                Some(population),
+                population_opponent,
+                search_opponent,
                 &mut scorer,
                 observer,
             )
         }
-        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, None, None) => {
+        (NativeRunEnvironmentTrajectoryContractV1::LegacyV1, None, false) => {
             run_async_flat_scored_rollout_native_observed_v2(
                 rollout_config,
                 config.evaluation_base_seed,
@@ -696,20 +811,21 @@ fn run_native_checkpoint_core_v1(
         (
             NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
             Some(environment_authority),
-            Some(population),
+            true,
         ) => run_async_flat_scored_rollout_native_environment_randomization_with_population_v1(
             rollout_config,
             config.evaluation_base_seed,
             environment_authority,
             ladder_opponent,
-            Some(population),
+            population_opponent,
+            search_opponent,
             &mut scorer,
             observer,
         ),
         (
             NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2,
             Some(environment_authority),
-            None,
+            false,
         ) => run_async_flat_scored_rollout_native_environment_randomization_v2(
             rollout_config,
             config.evaluation_base_seed,
@@ -2224,6 +2340,144 @@ mod tests {
         assert_eq!(
             (retained[0].episode_index(), retained[1].episode_index()),
             (0, 1)
+        );
+    }
+
+    /// Role-string dispatch (seven-layer registration item c) accepts the
+    /// registered kernel-native search authority-kind string and every
+    /// other pre-existing role, and fails closed on a near-miss (a string
+    /// that differs from the registered kind by one character/case) rather
+    /// than silently defaulting to the frozen uniform opponent. This is
+    /// also the "dispatch fail-closed on unknown authority kind" gate: an
+    /// unrecognized role string is exactly an unknown authority kind at
+    /// this dispatch surface.
+    #[test]
+    fn opponent_role_dispatch_accepts_registered_roles_and_rejects_near_misses() {
+        assert_eq!(
+            native_checkpoint_opponent_role_v1("uniform").unwrap(),
+            NativeCheckpointOpponentRoleV1::Uniform
+        );
+        assert_eq!(
+            native_checkpoint_opponent_role_v1("ladder").unwrap(),
+            NativeCheckpointOpponentRoleV1::Ladder
+        );
+        assert_eq!(
+            native_checkpoint_opponent_role_v1("population").unwrap(),
+            NativeCheckpointOpponentRoleV1::Population
+        );
+        assert_eq!(
+            native_checkpoint_opponent_role_v1(
+                crate::kernel_native_search_opponent_v1::KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1
+            )
+            .unwrap(),
+            NativeCheckpointOpponentRoleV1::KernelNativeSearch
+        );
+        assert_eq!(
+            crate::kernel_native_search_opponent_v1::KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1,
+            "kernel-native-search-opponent-v1"
+        );
+        for near_miss in [
+            "kernel-native-search-opponent-v2",
+            "kernel_native_search_opponent_v1",
+            "Kernel-Native-Search-Opponent-V1",
+            "kernel-native-search-opponent-v1 ",
+            "",
+            "checkpoint",
+        ] {
+            assert_eq!(
+                native_checkpoint_opponent_role_v1(near_miss),
+                Err(NativeCheckpointRunnerErrorV1::InvalidConfig),
+                "near-miss role {near_miss:?} must fail closed, not resolve to any role"
+            );
+        }
+    }
+
+    /// Direct, fixture-free coverage of the runner's own mutual-exclusion
+    /// predicate (mirrors `opponent_authority_installation_accepts_at_most_one_of_three`
+    /// in `async_flat_scored_rollout_v1.rs`, which is the analogous gate one
+    /// layer up in the shared dispatch). Both gates exist because the
+    /// checkpoint runner's own guard must reject a bad combination BEFORE
+    /// any payload decode, session reset, or worker spawn -- not rely solely
+    /// on the rollout-layer gate underneath it.
+    #[test]
+    fn checkpoint_runner_opponent_authority_predicate_accepts_at_most_one_of_three() {
+        assert!(
+            native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+                false, false, false
+            )
+        );
+        assert!(
+            native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+                true, false, false
+            )
+        );
+        assert!(
+            native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+                false, true, false
+            )
+        );
+        assert!(
+            native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+                false, false, true
+            )
+        );
+        assert!(
+            !native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+                true, true, false
+            )
+        );
+        assert!(
+            !native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+                true, false, true
+            )
+        );
+        assert!(
+            !native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+                false, true, true
+            )
+        );
+        assert!(
+            !native_checkpoint_opponent_authority_runtime_requirements_satisfied_v1(
+                true, true, true
+            )
+        );
+    }
+
+    /// Schema validation rejects a tampered canonical record. Flips exactly
+    /// one field (`authority_kind`, the field item 2 of the stage-2 scope is
+    /// specifically about: "non-store authority kind") on an otherwise
+    /// valid, freshly constructed authority, and checks that BOTH gates this
+    /// stage wires reject it: `KernelNativeSearchOpponentV1::new` (the
+    /// construction-time gate stage 1 built) and the runner's own
+    /// defense-in-depth `.validate()` re-check added in this stage. The
+    /// second half of this test is mutation-verified in the accompanying
+    /// report: the `.validate()` re-check inside `run_native_checkpoint_core_v1`
+    /// was temporarily removed and this assertion observed to still pass
+    /// only via the first (construction-time) gate, then restored.
+    #[test]
+    fn tampered_authority_kind_is_rejected_by_construction_and_by_runtime_revalidation() {
+        use crate::kernel_native_search_opponent_v1::{
+            KernelNativeSearchAuthorityV1, KernelNativeSearchErrorV1, KernelNativeSearchOpponentV1,
+            KernelNativeSearchTierV1, KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1,
+        };
+        let valid = KernelNativeSearchAuthorityV1::current(
+            KernelNativeSearchTierV1::T512,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1[0],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+        )
+        .unwrap();
+        assert!(valid.validate().is_ok());
+
+        let mut tampered = valid.clone();
+        tampered.authority_kind = "kernel-native-search-opponent-v2".to_owned();
+        assert_eq!(
+            tampered.validate(),
+            Err(KernelNativeSearchErrorV1::InvalidAuthority)
+        );
+        assert_eq!(
+            KernelNativeSearchOpponentV1::new(tampered).map(|_| ()),
+            Err(KernelNativeSearchErrorV1::InvalidAuthority),
+            "construction must reject the tampered record"
         );
     }
 }
