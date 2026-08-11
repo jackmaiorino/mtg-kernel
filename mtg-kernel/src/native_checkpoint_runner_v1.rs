@@ -648,6 +648,13 @@ pub(crate) enum NativeCheckpointOpponentRoleV1 {
     KernelNativeSearch,
 }
 
+// No non-test caller resolves an opponent-role string yet: no CLI or panel
+// script in this repo takes one today (grepped; none found). This function
+// is the registration surface such a future caller resolves against, kept
+// non-`cfg(test)` because it is real, load-bearing registration
+// infrastructure (layer c of the seven-layer lineage registration), not
+// test-only scaffolding, even though every current caller is a test.
+#[allow(dead_code)]
 pub(crate) fn native_checkpoint_opponent_role_v1(
     role: &str,
 ) -> Result<NativeCheckpointOpponentRoleV1, NativeCheckpointRunnerErrorV1> {
