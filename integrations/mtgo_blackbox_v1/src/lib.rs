@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod action_resolution;
+mod authorization_correspondence;
 mod calibration_trace;
 mod capture_contract;
 mod card_correspondence;
@@ -42,6 +43,7 @@ mod validation;
 mod visible_history;
 
 pub use action_resolution::*;
+pub use authorization_correspondence::*;
 pub use calibration_trace::*;
 pub use capture_contract::*;
 pub use card_correspondence::*;

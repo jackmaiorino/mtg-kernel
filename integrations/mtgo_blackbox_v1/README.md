@@ -355,9 +355,11 @@ Provenance proves that a claim was attributed to a permitted player-visible chan
 
 All live-input flags default to false. On 2026-08-10, the account owner reported that Daybreak expressly extended the same visible-only approval to League and Challenge play on the approved main account. That permits those two modes to be wired, but a runtime scope must still bind the exact account and exact permission-message bytes, and each actual entry remains separately gated below. This repository does not contain those private message bytes and does not itself authorize an entry. Other prize-event input remains false unless separately confirmed. The no-hidden-information condition is never configurable away.
 
+`check_untrusted_authorization_correspondence_v1` is the offline import boundary for that reply. It recomputes the SHA-256 of up to 4 MiB of exact exported correspondence bytes and the exact visible account alias, then binds them to a human review of the approved competitive modes and the retained visible-only, no-hidden-information, no-reverse-engineering, no-cheating, attended-entry, and attended-spending conditions. The approved mode list must be canonical and can derive only one-mode League or Challenge scopes. The wrapper is intentionally checked-untrusted because code cannot prove that a human paraphrase accurately reflects private message text. It retains no correspondence bytes, cannot ratify input, enter an event, or spend resources, and its derived scope remains ordinary coordinate-free data. The Windows actuator has a separate compile-pinned review commitment that is still empty.
+
 ## Intended pipeline
 
-1. Load a local authorization scope bound to the final correspondence and exact account.
+1. Import the exact private correspondence bytes, review their conditions against the approved account, and derive one local League or Challenge scope. Separately compile-ratify that exact review before any input path can use it.
 2. Capture only pixels that a player can see in the MTGO client.
 3. Parse visible zones, cards, counters, prompts, phase, priority, game log, and timers. Accessibility text may assist only when the same content is visibly corroborated.
 4. Reconcile the visible state into `ObservationV5`, a complete ordered `ActionSemanticV1` vector, and synthetic object incarnations. A zone change creates a new `zone_change_count`.

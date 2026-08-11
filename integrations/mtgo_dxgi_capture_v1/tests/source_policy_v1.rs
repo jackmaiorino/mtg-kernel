@@ -457,9 +457,12 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
     for required in [
         "RATIFIED_PRIVATE_MATCH_AUTHORIZATION_COMMITMENT_V3: Option<&str> = None",
         "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2: Option<&str> = None",
         "RATIFIED_COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
         "ratify_private_match_authorization_v3",
         "ratify_competitive_duel_pass_authorization_v1",
+        "ratify_competitive_duel_pass_authorization_from_correspondence_v2",
+        "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
         "ratify_competitive_match_launch_v1",
         "ratify_competitive_match_launch_attended_v2",
         "MtgoAttendedCompetitiveMatchLaunchRequestV2",

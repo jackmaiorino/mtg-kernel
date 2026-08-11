@@ -13,7 +13,8 @@ use crate::probe::{
 use mtgo_blackbox_v1::{
     competitive_match_gameplay_authorization_commitment_v1,
     competitive_mode_authorization_commitment_v1, validate_authorization_for_mode_v1,
-    AdmittedMtgoDuelPerceptionProfileV1, MtgoAuthorizationScopeV1, MtgoCompetitiveEventKindV1,
+    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    MtgoAuthorizationScopeV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
     MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
@@ -51,9 +52,12 @@ const PRIVATE_MATCH_AUTHORIZATION_DOMAIN_V3: &[u8] = b"mtgo-private-match-author
 const RATIFIED_PRIVATE_MATCH_AUTHORIZATION_COMMITMENT_V3: Option<&str> = None;
 const COMPETITIVE_DUEL_PASS_AUTHORIZATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-priority-pass-authorization-v1";
+const COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_DOMAIN_V2: &[u8] =
+    b"mtgo-competitive-duel-priority-pass-authorization-from-review-v2";
 const COMPETITIVE_DUEL_PASS_AUTHORIZATION_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-priority-pass-authorization-binding-v1";
 const RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
+const RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2: Option<&str> = None;
 const COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-match-launch-authorization-v1";
 const RATIFIED_COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
@@ -127,11 +131,13 @@ impl RatifiedMtgoPrivateMatchAuthorizationV3 {
 /// ```
 pub struct RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
     scope: MtgoAuthorizationScopeV1,
+    _permission_correspondence: Option<CheckedUntrustedMtgoAuthorizationCorrespondenceV1>,
     #[allow(dead_code)]
     visible_account_alias: String,
     event_kind: MtgoCompetitiveEventKindV1,
     mode_authorization_commitment_sha256: String,
     authorization_commitment_sha256: String,
+    permission_review_commitment_sha256: Option<String>,
 }
 
 impl RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
@@ -153,6 +159,10 @@ impl RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
 
     pub fn authorization_commitment_sha256_v1(&self) -> &str {
         &self.authorization_commitment_sha256
+    }
+
+    pub fn permission_review_commitment_sha256_v2(&self) -> Option<&str> {
+        self.permission_review_commitment_sha256.as_deref()
     }
 
     pub fn permits_event_entry_v1(&self) -> bool {
@@ -537,6 +547,25 @@ pub fn ratify_competitive_duel_pass_authorization_v1(
     )
 }
 
+/// Preferred production path for general League or Challenge priority-Pass
+/// permission. It consumes a structurally checked review of the exact private
+/// correspondence bytes, derives a one-mode scope from that review, and then
+/// requires a separately compile-pinned commitment to the review and scope.
+/// The production commitment remains empty until the exact reply is imported
+/// and reviewed. This function grants no event-entry or spending authority.
+pub fn ratify_competitive_duel_pass_authorization_from_correspondence_v2(
+    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+) -> Result<RatifiedMtgoCompetitiveDuelPassAuthorizationV1, String> {
+    ratify_competitive_duel_pass_authorization_from_correspondence_with_commitment_v2(
+        correspondence,
+        visible_account_alias,
+        event_kind,
+        RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2,
+    )
+}
+
 pub fn ratify_competitive_match_launch_v1(
     scope: &MtgoAuthorizationScopeV1,
     visible_account_alias: &str,
@@ -759,10 +788,52 @@ fn ratify_competitive_duel_pass_authorization_with_commitment_v1(
     }
     Ok(RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
         scope,
+        _permission_correspondence: None,
         visible_account_alias,
         event_kind,
         mode_authorization_commitment_sha256,
         authorization_commitment_sha256,
+        permission_review_commitment_sha256: None,
+    })
+}
+
+fn ratify_competitive_duel_pass_authorization_from_correspondence_with_commitment_v2(
+    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    ratified_commitment_sha256: Option<&str>,
+) -> Result<RatifiedMtgoCompetitiveDuelPassAuthorizationV1, String> {
+    let permission_review_commitment_sha256 = correspondence.review_commitment_sha256().to_owned();
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(event_kind)
+        .map_err(|error| format!("derive reviewed competitive mode scope: {error}"))?;
+    let mode_authorization_commitment_sha256 = validate_competitive_duel_pass_authorization_v1(
+        &scope,
+        &visible_account_alias,
+        event_kind,
+    )?;
+    let authorization_commitment_sha256 =
+        competitive_duel_pass_authorization_from_review_commitment_v2(
+            &scope,
+            &visible_account_alias,
+            event_kind,
+            &mode_authorization_commitment_sha256,
+            &permission_review_commitment_sha256,
+        );
+    if ratified_commitment_sha256 != Some(authorization_commitment_sha256.as_str()) {
+        return Err(
+            "the exact reviewed competitive Pass permission is not ratified in this build"
+                .to_owned(),
+        );
+    }
+    Ok(RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
+        scope,
+        _permission_correspondence: Some(correspondence),
+        visible_account_alias,
+        event_kind,
+        mode_authorization_commitment_sha256,
+        authorization_commitment_sha256,
+        permission_review_commitment_sha256: Some(permission_review_commitment_sha256),
     })
 }
 
@@ -1139,6 +1210,29 @@ fn competitive_duel_pass_authorization_commitment_v1(
         update_hash_part_v3(&mut hasher, part);
     }
     format!("{:x}", hasher.finalize())
+}
+
+fn competitive_duel_pass_authorization_from_review_commitment_v2(
+    authorization: &MtgoAuthorizationScopeV1,
+    visible_account_alias: &str,
+    event_kind: MtgoCompetitiveEventKindV1,
+    mode_authorization_commitment_sha256: &str,
+    permission_review_commitment_sha256: &str,
+) -> String {
+    let base_commitment_sha256 = competitive_duel_pass_authorization_commitment_v1(
+        authorization,
+        visible_account_alias,
+        event_kind,
+        mode_authorization_commitment_sha256,
+    );
+    hash_parts_v2(
+        COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_DOMAIN_V2,
+        &[
+            base_commitment_sha256.as_bytes(),
+            permission_review_commitment_sha256.as_bytes(),
+            b"exact_correspondence_bytes_and_human_review_required",
+        ],
+    )
 }
 
 fn validate_competitive_match_launch_record_v1(
@@ -1871,6 +1965,10 @@ fn update_hash_part_v3(hasher: &mut Sha256, part: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mtgo_blackbox_v1::{
+        check_untrusted_authorization_correspondence_v1, MtgoAuthorizationCorrespondenceReviewV1,
+        MTGO_AUTHORIZATION_CORRESPONDENCE_REVIEW_SCHEMA_V1,
+    };
 
     fn authorized_scope_v3(alias: &str) -> MtgoAuthorizationScopeV1 {
         MtgoAuthorizationScopeV1 {
@@ -1895,6 +1993,38 @@ mod tests {
             MtgoCompetitiveEventKindV1::Challenge => scope.challenge_input = true,
         }
         scope
+    }
+
+    fn checked_competitive_correspondence_v2() -> CheckedUntrustedMtgoAuthorizationCorrespondenceV1
+    {
+        const BYTES: &[u8] = b"exact private Daybreak correspondence test fixture\r\n";
+        let account_alias = "UnbuckledPie";
+        check_untrusted_authorization_correspondence_v1(
+            MtgoAuthorizationCorrespondenceReviewV1 {
+                schema_version: MTGO_AUTHORIZATION_CORRESPONDENCE_REVIEW_SCHEMA_V1,
+                review_id: "daybreak-visible-competitive-test-v1".to_owned(),
+                correspondence_sha256: format!("{:x}", Sha256::digest(BYTES)),
+                approved_account_alias_sha256: format!(
+                    "{:x}",
+                    Sha256::digest(account_alias.as_bytes())
+                ),
+                approved_competitive_modes: vec![
+                    MtgoCompetitiveEventKindV1::League,
+                    MtgoCompetitiveEventKindV1::Challenge,
+                ],
+                visible_channels_only: true,
+                hidden_information_access_prohibited: true,
+                hidden_information_reverse_engineering_prohibited: true,
+                cheating_or_hacking_prohibited: true,
+                account_owner_event_entry_confirmation_required: true,
+                account_owner_spending_confirmation_required: true,
+                reviewer_alias_sha256: format!("{:x}", Sha256::digest(b"local-owner-reviewer")),
+                reviewed_at_utc: "2026-08-10T20:00:00Z".to_owned(),
+            },
+            BYTES,
+            account_alias,
+        )
+        .unwrap()
     }
 
     fn ratified_competitive_pass_v1(
@@ -2063,6 +2193,67 @@ mod tests {
             assert!(!ratified.safe_for_input_v1());
             assert!(!ratified.permits_event_entry_v1());
         }
+    }
+
+    #[test]
+    fn reviewed_correspondence_ratification_binds_exact_review_and_one_mode() {
+        for event_kind in [
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveEventKindV1::Challenge,
+        ] {
+            let correspondence = checked_competitive_correspondence_v2();
+            let review_commitment = correspondence.review_commitment_sha256().to_owned();
+            let scope = correspondence
+                .checked_untrusted_scope_for_mode_v1(event_kind)
+                .unwrap();
+            let mode_commitment =
+                validate_competitive_duel_pass_authorization_v1(&scope, "UnbuckledPie", event_kind)
+                    .unwrap();
+            let expected = competitive_duel_pass_authorization_from_review_commitment_v2(
+                &scope,
+                "UnbuckledPie",
+                event_kind,
+                &mode_commitment,
+                &review_commitment,
+            );
+            let ratified =
+                ratify_competitive_duel_pass_authorization_from_correspondence_with_commitment_v2(
+                    correspondence,
+                    "UnbuckledPie".to_owned(),
+                    event_kind,
+                    Some(&expected),
+                )
+                .unwrap();
+            assert_eq!(ratified.event_kind_v1(), event_kind);
+            assert_eq!(
+                ratified.permission_review_commitment_sha256_v2(),
+                Some(review_commitment.as_str())
+            );
+            assert_eq!(
+                ratified.mode_authorization_commitment_sha256_v1(),
+                mode_commitment
+            );
+            assert_ne!(
+                ratified.authorization_commitment_sha256_v1(),
+                competitive_duel_pass_authorization_commitment_v1(
+                    &scope,
+                    "UnbuckledPie",
+                    event_kind,
+                    &mode_commitment,
+                )
+            );
+            assert!(!ratified.permits_event_entry_v1());
+            assert!(!ratified.safe_for_input_v1());
+        }
+
+        assert!(
+            ratify_competitive_duel_pass_authorization_from_correspondence_v2(
+                checked_competitive_correspondence_v2(),
+                "UnbuckledPie".to_owned(),
+                MtgoCompetitiveEventKindV1::League,
+            )
+            .is_err()
+        );
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub use actuator::{
     execute_authorized_private_match_pregame_action_v3,
     mtgo_input_gate_status_v3, pregame_input_gate_status_v3,
     ratify_competitive_duel_pass_authorization_v1,
+    ratify_competitive_duel_pass_authorization_from_correspondence_v2,
     ratify_competitive_match_launch_attended_v2, ratify_competitive_match_launch_v1,
     ratify_private_match_authorization_v3,
     MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
