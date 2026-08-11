@@ -1052,7 +1052,7 @@ fn validate_required_slices_v1(
     Ok(())
 }
 
-fn validate_source_profile_v1(
+pub(crate) fn validate_source_profile_v1(
     profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
     source: &CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
 ) -> Result<(), MtgoContractErrorV1> {
@@ -1105,6 +1105,15 @@ fn validate_snapshot_source_v1(
     snapshot: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     source: &CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
 ) -> Result<(), MtgoContractErrorV1> {
+    validate_snapshot_artifact_source_v1(snapshot, source)?;
+    navigation_slice_v1(snapshot.event_kind(), snapshot.phase())?;
+    Ok(())
+}
+
+pub(crate) fn validate_snapshot_artifact_source_v1(
+    snapshot: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    source: &CheckedUntrustedMtgoCompetitiveNavigationSourceV1,
+) -> Result<(), MtgoContractErrorV1> {
     let bounds = snapshot.client_bounds_v1();
     if snapshot.frame_sha256_v1() != source.canonical_bgra8_sha256()
         || bounds.x != 0
@@ -1117,8 +1126,32 @@ fn validate_snapshot_source_v1(
             "lifecycle snapshot must bind the exact navigation artifact pixels and geometry",
         ));
     }
-    navigation_slice_v1(snapshot.event_kind(), snapshot.phase())?;
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn checked_untrusted_competitive_navigation_source_for_test_v1(
+    profile: &CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
+    discriminator: u8,
+) -> CheckedUntrustedMtgoCompetitiveNavigationSourceV1 {
+    let artifact = crate::checked_untrusted_dxgi_navigation_artifact_for_test_v1(discriminator);
+    let account_identity_region_sha256 = profile.account_identity_region_sha256().to_owned();
+    let source_profile_binding_sha256 = commitment_v1(
+        NAVIGATION_SOURCE_PROFILE_BINDING_DOMAIN_V1,
+        &[
+            profile.profile_commitment_sha256().as_bytes(),
+            artifact.manifest_sha256().as_bytes(),
+            artifact.canonical_bgra8_sha256().as_bytes(),
+            profile.approved_account_alias_sha256().as_bytes(),
+            account_identity_region_sha256.as_bytes(),
+            b"checked_untrusted_offline_source_no_pixels_no_classification_no_entry_no_spending_no_input",
+        ],
+    );
+    CheckedUntrustedMtgoCompetitiveNavigationSourceV1 {
+        artifact,
+        account_identity_region_sha256,
+        source_profile_binding_sha256,
+    }
 }
 
 fn navigation_slice_v1(
