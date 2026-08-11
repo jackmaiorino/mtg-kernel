@@ -17,15 +17,17 @@ mod probe;
 
 #[cfg(target_os = "windows")]
 pub use actuator::{
-    advance_competitive_event_monitor_in_runtime_v1, advance_competitive_event_pregame_observed_v1,
-    advance_competitive_event_runtime_observed_v1, attach_competitive_event_monitor_to_runtime_v1,
-    begin_competitive_event_runtime_after_entry_v1,
+    advance_competitive_event_monitor_in_runtime_v1,
+    advance_competitive_event_pregame_from_classified_frame_v2,
+    advance_competitive_event_pregame_observed_v1, advance_competitive_event_runtime_observed_v1,
+    attach_competitive_event_monitor_to_runtime_v1, begin_competitive_event_runtime_after_entry_v1,
     begin_competitive_event_sideboard_transfer_sequence_v1, begin_competitive_game_session_v1,
     begin_competitive_gesture_game_session_v1, bind_competitive_duel_gesture_sequence_session_v1,
     bind_competitive_entry_postcondition_dry_run_v1,
     bind_competitive_event_runtime_to_match_launch_identity_v1,
     bind_confirmed_competitive_open_entry_review_to_entry_review_v1,
     bind_prepared_competitive_duel_pass_session_v2, checkout_competitive_event_gameplay_session_v1,
+    checkout_competitive_event_pregame_session_from_classified_frame_v2,
     checkout_competitive_event_pregame_session_v1,
     competitive_authorization_ratification_readiness_v1,
     complete_competitive_event_pregame_session_v1,

@@ -72,7 +72,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             competitive_pregame_session_ownership_bridge_present: true,
             competitive_pregame_capture_profile_present: false,
             competitive_pregame_input_actuator_present: false,
-            competitive_pregame_capture_and_session_bridge_present: false,
+            competitive_pregame_capture_and_session_bridge_present: true,
             native_checkpoint_changed_sideboard_interface_present: false,
         },
         status:
@@ -143,7 +143,7 @@ mod tests {
                 .competitive_pregame_input_actuator_present
         );
         assert!(
-            !report
+            report
                 .known_wiring_gaps
                 .competitive_pregame_capture_and_session_bridge_present
         );

@@ -1,5 +1,7 @@
 use super::{
-    invoke_verified_competitive_pregame_process_v1, sha256_hex_v1,
+    competitive_entry_window_continuity_commitment_for_frame_v1,
+    frame_id_from_capture_commitment_v1, invoke_verified_competitive_pregame_process_v1,
+    mtgo_process_continuity_commitment_for_frame_v1, sha256_hex_v1,
     verify_duel_perception_runtime_identity_now_v1, MtgoAdmittedDuelVisibleFrameCommitmentsV1,
     MtgoDuelPerceptionFrameIdentityV1, OpaqueMtgoAdmittedDuelVisibleFrameV1,
     OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
@@ -76,6 +78,75 @@ impl OpaqueMtgoClassifiedCompetitivePregameFrameV1 {
     pub fn permits_event_entry_v1(&self) -> bool {
         false
     }
+
+    pub(crate) fn process_continuity_commitment_sha256_v1(&self) -> String {
+        mtgo_process_continuity_commitment_for_frame_v1(&self._source_frame.source_frame)
+    }
+
+    pub(crate) fn window_continuity_commitment_sha256_v1(&self) -> Result<String, String> {
+        competitive_entry_window_continuity_commitment_for_frame_v1(
+            &self._source_frame.source_frame,
+        )
+    }
+
+    pub(crate) fn require_immediate_successor_v1(
+        &self,
+        prior_frame_id: u64,
+        prior_frame_sequence: u64,
+        prior_source_capture_commitment_sha256: &str,
+        prior_captured_at_unix_millis: u128,
+    ) -> Result<(), String> {
+        validate_immediate_successor_identity_v1(
+            ImmediateFrameIdentityViewV1 {
+                source_capture_commitment_sha256: &self
+                    .commitments
+                    .source_frame
+                    .source_capture
+                    .capture_commitment_sha256,
+                captured_at_unix_millis: self.commitments.captured_at_unix_millis,
+                frame_id: self.commitments.frame_id,
+                frame_sequence: self.commitments.frame_sequence,
+            },
+            ImmediateFrameIdentityViewV1 {
+                source_capture_commitment_sha256: prior_source_capture_commitment_sha256,
+                captured_at_unix_millis: prior_captured_at_unix_millis,
+                frame_id: prior_frame_id,
+                frame_sequence: prior_frame_sequence,
+            },
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ImmediateFrameIdentityViewV1<'a> {
+    source_capture_commitment_sha256: &'a str,
+    captured_at_unix_millis: u128,
+    frame_id: u64,
+    frame_sequence: u64,
+}
+
+fn validate_immediate_successor_identity_v1(
+    current: ImmediateFrameIdentityViewV1<'_>,
+    prior: ImmediateFrameIdentityViewV1<'_>,
+) -> Result<(), String> {
+    let expected_frame_sequence = prior
+        .frame_sequence
+        .checked_add(1)
+        .ok_or("competitive pregame frame sequence overflow")?;
+    let expected_frame_id = frame_id_from_capture_commitment_v1(
+        current.source_capture_commitment_sha256,
+        prior.frame_id,
+    )?;
+    if current.source_capture_commitment_sha256 == prior.source_capture_commitment_sha256
+        || current.captured_at_unix_millis <= prior.captured_at_unix_millis
+        || current.frame_sequence != expected_frame_sequence
+        || current.frame_id != expected_frame_id
+    {
+        return Err(
+            "competitive pregame frame is not the immediate capture-bound successor".to_owned(),
+        );
+    }
+    Ok(())
 }
 
 /// Invokes the exact duel-profile classifier in its competitive-pregame mode.
@@ -228,4 +299,56 @@ pub fn classify_admitted_mtgo_competitive_pregame_frame_v1(
         _response: response_record,
         commitments,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn immediate_successor_identity_is_capture_bound_and_strictly_newer() {
+        let prior_capture = "1".repeat(64);
+        let current_capture = "0123456789abcdef".to_owned() + &"0".repeat(48);
+        let prior_frame_id = 77;
+        let expected_frame_id =
+            frame_id_from_capture_commitment_v1(&current_capture, prior_frame_id).unwrap();
+        validate_immediate_successor_identity_v1(
+            ImmediateFrameIdentityViewV1 {
+                source_capture_commitment_sha256: &current_capture,
+                captured_at_unix_millis: 1_001,
+                frame_id: expected_frame_id,
+                frame_sequence: 41,
+            },
+            ImmediateFrameIdentityViewV1 {
+                source_capture_commitment_sha256: &prior_capture,
+                captured_at_unix_millis: 1_000,
+                frame_id: prior_frame_id,
+                frame_sequence: 40,
+            },
+        )
+        .unwrap();
+
+        for (capture, captured_at, frame_id, frame_sequence) in [
+            (prior_capture.as_str(), 1_001, expected_frame_id, 41),
+            (current_capture.as_str(), 1_000, expected_frame_id, 41),
+            (current_capture.as_str(), 1_001, expected_frame_id ^ 1, 41),
+            (current_capture.as_str(), 1_001, expected_frame_id, 42),
+        ] {
+            assert!(validate_immediate_successor_identity_v1(
+                ImmediateFrameIdentityViewV1 {
+                    source_capture_commitment_sha256: capture,
+                    captured_at_unix_millis: captured_at,
+                    frame_id,
+                    frame_sequence,
+                },
+                ImmediateFrameIdentityViewV1 {
+                    source_capture_commitment_sha256: &prior_capture,
+                    captured_at_unix_millis: 1_000,
+                    frame_id: prior_frame_id,
+                    frame_sequence: 40,
+                },
+            )
+            .is_err());
+        }
+    }
 }

@@ -4544,7 +4544,7 @@ fn validate_same_duel_window_incarnation_v1(
     Ok(())
 }
 
-fn frame_id_from_capture_commitment_v1(
+pub(super) fn frame_id_from_capture_commitment_v1(
     capture_commitment_sha256: &str,
     source_frame_id: u64,
 ) -> Result<u64, String> {
