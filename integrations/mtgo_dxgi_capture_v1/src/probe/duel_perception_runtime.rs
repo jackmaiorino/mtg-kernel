@@ -31,9 +31,9 @@ use mtgo_blackbox_v1::{
     MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1,
     MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDuelActionFamilyV1, MtgoDuelGesturePlanV1,
     MtgoDuelGesturePrimitiveV1, MtgoDuelGestureTargetRoleV1, MtgoDxgiCaptureRoleV2,
-    MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1, MtgoExternalObservationScorerV1,
-    MtgoLifecycleVisibleFactKindV1, MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
-    MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1, MtgoLifecycleVisibleFactKindV1,
+    MtgoNativeCheckpointObservationScorerV1, MtgoObservationReconstructionAuditV1,
+    MtgoObservedDecisionV1, MtgoProfileBoundPostconditionAfterFrameMetadataV1,
     MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoProfileBoundPostconditionCalibrationV1,
     MtgoProfileBoundPostconditionCandidateStatusV1, MtgoProfileBoundPostconditionRegionSetV1,
     MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
@@ -1783,11 +1783,11 @@ pub fn perceive_admitted_duel_frame_v1(
     })
 }
 
-pub fn score_and_select_opaque_admitted_duel_perception_v1<S: MtgoExternalObservationScorerV1>(
+pub fn score_and_select_opaque_admitted_duel_perception_v1(
     mut perception: OpaqueMtgoAdmittedDuelPerceptionV1,
     profile: &AdmittedMtgoDuelPerceptionProfileV1,
     deployment: &MtgoExpectedModelDeploymentV1,
-    scorer: &mut S,
+    scorer: &mut MtgoNativeCheckpointObservationScorerV1<'_>,
 ) -> Result<OpaqueMtgoProfileBoundDuelModelSelectionV1, String> {
     let source = perception.source_frame.commitments_v1();
     if source.perception_profile_commitment_sha256 != profile.perception_profile_commitment_sha256()

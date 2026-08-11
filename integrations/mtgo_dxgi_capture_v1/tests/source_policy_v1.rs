@@ -630,6 +630,7 @@ fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_a
         "verify_duel_gesture_target_runtime_v1",
         "perceive_admitted_duel_frame_v1",
         "score_and_select_opaque_admitted_duel_perception_v1",
+        "scorer: &mut MtgoNativeCheckpointObservationScorerV1<'_>",
         "resolve_opaque_profile_bound_duel_control_v1",
         "prepare_opaque_competitive_duel_action_plan_v1",
         "prepare_opaque_competitive_duel_pass_actuation_v1",
@@ -706,6 +707,9 @@ fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_a
         );
     }
     assert!(!source.contains("pub fn bind_opaque_duel_control_to_competitive_action_plan_v1("));
+    assert!(!source.contains(
+        "score_and_select_opaque_admitted_duel_perception_v1<S: MtgoExternalObservationScorerV1>"
+    ));
     for forbidden in [
         "pub fn canonical_bgra8",
         "pub fn observation",
