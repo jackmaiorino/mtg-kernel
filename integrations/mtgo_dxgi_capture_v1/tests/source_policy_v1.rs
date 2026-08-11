@@ -508,7 +508,7 @@ fn competitive_sideboard_measurement_is_pixel_bound_event_bound_and_non_actionab
         "OpaqueMtgoPlannedCompetitiveEventSideboardV1",
         "COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1",
         "event_runtime_withheld_during_checked_untrusted_sideboard_measurement_no_input_no_submit",
-        "manifest.deck_list_sha256() != runtime.commitments.deck_manifest_sha256",
+        "manifest.deck_list_sha256() != runtime.commitments.deck_list_sha256",
         "manifest.format_sha256() != runtime.commitments.deck_format_sha256",
         "sideboard.policy_deployment_commitment_sha256",
         "begin_competitive_event_sideboard_transfer_sequence_v1",
@@ -2022,6 +2022,47 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         assert!(
             !source.contains(forbidden),
             "post-entry operator loop exposes a forbidden new-entry capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn pre_entry_operator_retains_exact_resources_through_attended_spending_and_handoff() {
+    let source = include_str!("../src/competitive_pre_entry_operator.rs");
+    for required in [
+        "prepare_competitive_operator_open_entry_review_v1",
+        "execute_prepared_competitive_operator_open_entry_review_v1",
+        "confirm_pending_competitive_operator_open_entry_review_v1",
+        "bind_competitive_operator_paid_entry_review_v1",
+        "ratify_competitive_operator_paid_entry_v1",
+        "prepare_ratified_competitive_operator_entry_v1",
+        "execute_prepared_competitive_operator_entry_v1",
+        "confirm_pending_competitive_operator_entry_v1",
+        "begin_competitive_post_entry_operator_from_confirmed_entry_v1",
+        "resources, evaluated listing, and Open Entry Review authority are crossed",
+        "paid Entry Review changed the exact operator resource lineage",
+        "deck_list_sha256",
+        "deck_manifest_commitment_sha256",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+        "safe_for_next_input_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "pre-entry operator ownership is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
+        "pub fn pointer_target",
+        "pub fn canonical_bgra8",
+        "pub fn process_handle",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "pre-entry operator exposes a forbidden primitive: {forbidden}"
         );
     }
 }

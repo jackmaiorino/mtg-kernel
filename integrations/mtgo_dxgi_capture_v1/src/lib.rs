@@ -15,6 +15,8 @@ mod competitive_operator_bootstrap;
 #[cfg(target_os = "windows")]
 mod competitive_operator_loop;
 #[cfg(target_os = "windows")]
+mod competitive_pre_entry_operator;
+#[cfg(target_os = "windows")]
 mod competitive_pregame_policy;
 
 #[cfg(target_os = "windows")]
@@ -212,6 +214,23 @@ pub use competitive_operator_loop::{
     MtgoCompetitivePostEntryOperatorRouteV1, OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     OpaqueMtgoCompetitivePostEntryOperatorV1, OpaqueMtgoPendingCompetitiveOperatorLifecycleV1,
     OpaqueMtgoPreparedCompetitiveOperatorLifecycleV1,
+};
+#[cfg(target_os = "windows")]
+pub use competitive_pre_entry_operator::{
+    begin_competitive_post_entry_operator_from_confirmed_entry_v1,
+    bind_competitive_operator_paid_entry_review_v1, confirm_pending_competitive_operator_entry_v1,
+    confirm_pending_competitive_operator_open_entry_review_v1,
+    execute_prepared_competitive_operator_entry_v1,
+    execute_prepared_competitive_operator_open_entry_review_v1,
+    prepare_competitive_operator_open_entry_review_v1,
+    prepare_ratified_competitive_operator_entry_v1, ratify_competitive_operator_paid_entry_v1,
+    CheckedUntrustedMtgoCompetitiveOperatorPaidEntryReviewV1,
+    OpaqueMtgoConfirmedCompetitiveOperatorEntryV1,
+    OpaqueMtgoConfirmedCompetitiveOperatorOpenEntryReviewV1,
+    OpaqueMtgoPendingCompetitiveOperatorEntryV1,
+    OpaqueMtgoPendingCompetitiveOperatorOpenEntryReviewV1,
+    OpaqueMtgoPreparedCompetitiveOperatorEntryV1,
+    OpaqueMtgoPreparedCompetitiveOperatorOpenEntryReviewV1, RatifiedMtgoCompetitiveOperatorEntryV1,
 };
 #[cfg(target_os = "windows")]
 pub use competitive_pregame_policy::{

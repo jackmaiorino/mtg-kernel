@@ -1187,6 +1187,7 @@ pub struct MtgoCompetitiveEventRuntimeCommitmentsV1 {
     pub entry_authorization_sha256: String,
     pub correspondence_sha256: String,
     pub permission_review_commitment_sha256: String,
+    pub deck_list_sha256: String,
     pub deck_manifest_sha256: String,
     pub deck_format_sha256: String,
     pub selected_deck_label_sha256: String,
@@ -5151,6 +5152,16 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
     let current = current_frame.commitments_v1();
     let lifecycle = current_frame.lifecycle_snapshot_v1();
     let entry_ratification = spent_entry_authorization.commitments_v1();
+    let entry_deck_list_sha256 = spent_entry_authorization
+        ._open_entry_review_authorization
+        .commitments
+        .deck_list_sha256
+        .clone();
+    let entry_deck_manifest_commitment_sha256 = spent_entry_authorization
+        ._open_entry_review_authorization
+        .commitments
+        .deck_manifest_commitment_sha256
+        .clone();
     let lifecycle_ratification = lifecycle_authorization.commitments_v1();
     validate_competitive_event_authorization_lineage_v1(
         &entry_ratification,
@@ -5163,6 +5174,7 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         || entry_ratification.event_kind != entry.event_kind
         || entry.entry_ratification_commitment_sha256
             != entry_ratification.ratification_commitment_sha256
+        || entry_ratification.deck_manifest_sha256 != entry_deck_manifest_commitment_sha256
         || visible
             .frame_transition
             .after_lifecycle_snapshot_commitment_sha256
@@ -5192,6 +5204,7 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         entry_authorization_sha256: entry_ratification.entry_authorization_sha256,
         correspondence_sha256: entry_ratification.correspondence_sha256,
         permission_review_commitment_sha256: entry_ratification.permission_review_commitment_sha256,
+        deck_list_sha256: entry_deck_list_sha256,
         deck_manifest_sha256: entry_ratification.deck_manifest_sha256,
         deck_format_sha256: entry_ratification.deck_format_sha256,
         selected_deck_label_sha256: entry_ratification.selected_deck_label_sha256,
@@ -5253,7 +5266,7 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
 ) -> Result<OpaqueMtgoMeasuredCompetitiveEventSideboardV1, String> {
     if runtime.commitments.closed_to_event_browser
         || runtime.commitments.current_phase != MtgoCompetitiveLifecyclePhaseV1::Sideboarding
-        || manifest.deck_list_sha256() != runtime.commitments.deck_manifest_sha256
+        || manifest.deck_list_sha256() != runtime.commitments.deck_list_sha256
         || manifest.format_sha256() != runtime.commitments.deck_format_sha256
     {
         return Err(
@@ -5283,7 +5296,7 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
             != prior.navigation_profile_commitment_sha256
         || sideboard_authorization_commitments.navigation_profile_admission_commitment_sha256
             != prior.navigation_profile_admission_commitment_sha256
-        || sideboard_authorization_commitments.deck_list_sha256 != prior.deck_manifest_sha256
+        || sideboard_authorization_commitments.deck_list_sha256 != prior.deck_list_sha256
         || sideboard_authorization_commitments.deck_manifest_commitment_sha256
             != manifest.manifest_commitment_sha256()
         || sideboard_authorization_commitments.deck_format_sha256 != prior.deck_format_sha256
@@ -5317,7 +5330,7 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
                 .classification_result_commitment_sha256
         || sideboard.source_lifecycle_snapshot_commitment_sha256
             != prior.current_lifecycle_snapshot_commitment_sha256
-        || sideboard.deck_list_sha256 != prior.deck_manifest_sha256
+        || sideboard.deck_list_sha256 != prior.deck_list_sha256
         || sideboard.deck_format_sha256 != prior.deck_format_sha256
         || sideboard.policy_deployment_commitment_sha256
             != prior.policy_deployment_commitment_sha256
@@ -5661,7 +5674,7 @@ pub fn prepare_fresh_competitive_event_sideboard_transfer_drag_v1(
                 .source_frame
                 .source_capture
                 .captured_at_unix_millis
-        || immediate_commitments.deck_list_sha256 != sequence.prior.deck_manifest_sha256
+        || immediate_commitments.deck_list_sha256 != sequence.prior.deck_list_sha256
         || immediate_commitments.deck_format_sha256 != sequence.prior.deck_format_sha256
         || immediate_commitments.policy_deployment_commitment_sha256
             != sequence.prior.policy_deployment_commitment_sha256
@@ -5960,7 +5973,7 @@ pub fn confirm_competitive_event_sideboard_transfer_visible_v1(
                 .prior
                 .navigation_profile_admission_commitment_sha256
         || next.approved_account_alias_sha256 != sequence.prior.approved_account_alias_sha256
-        || next.deck_list_sha256 != sequence.prior.deck_manifest_sha256
+        || next.deck_list_sha256 != sequence.prior.deck_list_sha256
         || next.deck_format_sha256 != sequence.prior.deck_format_sha256
         || next.policy_deployment_commitment_sha256
             != sequence.prior.policy_deployment_commitment_sha256
@@ -6259,7 +6272,7 @@ pub fn prepare_ready_competitive_event_sideboard_submit_v1(
             != prior.navigation_profile_commitment_sha256
         || sideboard_authorization_commitments.navigation_profile_admission_commitment_sha256
             != prior.navigation_profile_admission_commitment_sha256
-        || sideboard_authorization_commitments.deck_list_sha256 != prior.deck_manifest_sha256
+        || sideboard_authorization_commitments.deck_list_sha256 != prior.deck_list_sha256
         || sideboard_authorization_commitments.deck_manifest_commitment_sha256
             != manifest.manifest_commitment_sha256()
         || sideboard_authorization_commitments.deck_format_sha256 != prior.deck_format_sha256
@@ -6282,7 +6295,7 @@ pub fn prepare_ready_competitive_event_sideboard_submit_v1(
         || _ready.event_identity_sha256() != prior.bound_event_identity_sha256
         || prior.current_match_identity_sha256.as_deref() != Some(_ready.match_identity_sha256())
         || prior.current_game_number != Some(_ready.game_number())
-        || manifest.deck_list_sha256() != prior.deck_manifest_sha256
+        || manifest.deck_list_sha256() != prior.deck_list_sha256
         || manifest.format_sha256() != prior.deck_format_sha256
         || _ready.deck_manifest_commitment_sha256() != manifest.manifest_commitment_sha256()
         || _ready.policy_deployment_commitment_sha256() != prior.policy_deployment_commitment_sha256
@@ -12574,6 +12587,7 @@ fn competitive_event_runtime_commitment_v1(
             value.entry_authorization_sha256.as_bytes(),
             value.correspondence_sha256.as_bytes(),
             value.permission_review_commitment_sha256.as_bytes(),
+            value.deck_list_sha256.as_bytes(),
             value.deck_manifest_sha256.as_bytes(),
             value.deck_format_sha256.as_bytes(),
             value.selected_deck_label_sha256.as_bytes(),
@@ -15536,6 +15550,7 @@ mod tests {
             entry_authorization_sha256: "d".repeat(64),
             correspondence_sha256: "e".repeat(64),
             permission_review_commitment_sha256: "f".repeat(64),
+            deck_list_sha256: "a".repeat(64),
             deck_manifest_sha256: "0".repeat(64),
             deck_format_sha256: "1".repeat(64),
             selected_deck_label_sha256: "2".repeat(64),
@@ -18681,6 +18696,7 @@ mod tests {
             entry_authorization_sha256: "d".repeat(64),
             correspondence_sha256: "e".repeat(64),
             permission_review_commitment_sha256: "f".repeat(64),
+            deck_list_sha256: "a".repeat(64),
             deck_manifest_sha256: "0".repeat(64),
             deck_format_sha256: "1".repeat(64),
             selected_deck_label_sha256: "2".repeat(64),
@@ -18751,6 +18767,17 @@ mod tests {
             )
         );
         state.entry_authorization_sha256 = "d".repeat(64);
+        state.deck_list_sha256 = "3".repeat(64);
+        assert_ne!(
+            baseline,
+            competitive_event_runtime_commitment_v1(
+                COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+                Some(&prior),
+                &state,
+                b"transition",
+            )
+        );
+        state.deck_list_sha256 = "a".repeat(64);
         state.deck_manifest_sha256 = "3".repeat(64);
         assert_ne!(
             baseline,
@@ -19018,6 +19045,7 @@ mod tests {
                 entry_authorization_sha256: "3".repeat(64),
                 correspondence_sha256: "4".repeat(64),
                 permission_review_commitment_sha256: "5".repeat(64),
+                deck_list_sha256: "0".repeat(64),
                 deck_manifest_sha256: "6".repeat(64),
                 deck_format_sha256: "7".repeat(64),
                 selected_deck_label_sha256: "8".repeat(64),
@@ -19180,6 +19208,7 @@ mod tests {
             entry_authorization_sha256: "3".repeat(64),
             correspondence_sha256: "c".repeat(64),
             permission_review_commitment_sha256: "d".repeat(64),
+            deck_list_sha256: "3".repeat(64),
             deck_manifest_sha256: "e".repeat(64),
             deck_format_sha256: "f".repeat(64),
             selected_deck_label_sha256: "0".repeat(64),
@@ -19408,6 +19437,7 @@ mod tests {
             entry_authorization_sha256: "3".repeat(64),
             correspondence_sha256: "4".repeat(64),
             permission_review_commitment_sha256: "5".repeat(64),
+            deck_list_sha256: "1".repeat(64),
             deck_manifest_sha256: "d".repeat(64),
             deck_format_sha256: "e".repeat(64),
             selected_deck_label_sha256: "f".repeat(64),

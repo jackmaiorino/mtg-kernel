@@ -96,6 +96,16 @@ impl OpaqueMtgoCompetitiveOperatorResourcesV1 {
         false
     }
 
+    pub fn navigation_profile_v1(&self) -> &AdmittedMtgoCompetitiveNavigationProfileV1 {
+        &self.parts.navigation_profile
+    }
+
+    pub fn navigation_runtime_v1(
+        &self,
+    ) -> &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1 {
+        &self.parts.navigation_runtime
+    }
+
     /// Returns the same already-opaque resources for the eventual operator.
     /// Every downstream authority boundary still performs its own exact join.
     pub fn into_parts_v1(self) -> MtgoCompetitiveOperatorResourcesPartsV1 {

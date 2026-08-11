@@ -482,6 +482,7 @@ struct PostEntryOperatorJoinIdentityV1 {
     runtime_navigation_profile_admission_commitment_sha256: String,
     runtime_approved_account_alias_sha256: String,
     runtime_deck_list_sha256: String,
+    runtime_deck_manifest_commitment_sha256: String,
     runtime_deck_format_sha256: String,
     runtime_policy_deployment_commitment_sha256: String,
     event_kind: MtgoCompetitiveEventKindV1,
@@ -519,7 +520,8 @@ fn post_entry_operator_commitments_v1(
             .navigation_profile_admission_commitment_sha256
             .clone(),
         runtime_approved_account_alias_sha256: runtime.approved_account_alias_sha256.clone(),
-        runtime_deck_list_sha256: runtime.deck_manifest_sha256.clone(),
+        runtime_deck_list_sha256: runtime.deck_list_sha256.clone(),
+        runtime_deck_manifest_commitment_sha256: runtime.deck_manifest_sha256.clone(),
         runtime_deck_format_sha256: runtime.deck_format_sha256.clone(),
         runtime_policy_deployment_commitment_sha256: runtime
             .policy_deployment_commitment_sha256
@@ -608,6 +610,8 @@ fn validate_post_entry_operator_join_v1(
         || value.resource_approved_account_alias_sha256
             != value.runtime_approved_account_alias_sha256
         || value.resource_deck_list_sha256 != value.runtime_deck_list_sha256
+        || value.resource_deck_manifest_commitment_sha256
+            != value.runtime_deck_manifest_commitment_sha256
         || value.resource_deck_format_sha256 != value.runtime_deck_format_sha256
         || value.resource_policy_deployment_commitment_sha256
             != value.runtime_policy_deployment_commitment_sha256
@@ -768,7 +772,7 @@ fn validate_operator_gameplay_lease_v1(
 ) -> Result<(), String> {
     if lease.event_runtime_commitment_sha256 != operator.event_runtime_commitment_sha256
         || lease.event_kind != operator.event_kind
-        || lease.deck_manifest_sha256 != operator.deck_list_sha256
+        || lease.deck_manifest_sha256 != operator.deck_manifest_commitment_sha256
         || lease.deck_format_sha256 != operator.deck_format_sha256
         || lease.policy_deployment_commitment_sha256 != operator.policy_deployment_commitment_sha256
     {
@@ -858,6 +862,7 @@ mod tests {
             runtime_navigation_profile_admission_commitment_sha256: digest('2'),
             runtime_approved_account_alias_sha256: digest('3'),
             runtime_deck_list_sha256: digest('4'),
+            runtime_deck_manifest_commitment_sha256: digest('5'),
             runtime_deck_format_sha256: digest('6'),
             runtime_policy_deployment_commitment_sha256: digest('7'),
             event_kind: MtgoCompetitiveEventKindV1::League,
@@ -897,7 +902,7 @@ mod tests {
             entry_ratification_commitment_sha256: digest('f'),
             selected_deck_label_sha256: digest('0'),
             selected_deck_region_sha256: digest('1'),
-            deck_manifest_sha256: digest('5'),
+            deck_manifest_sha256: digest('6'),
             deck_format_sha256: digest('7'),
             policy_deployment_commitment_sha256: digest('8'),
             game_number: 1,
@@ -980,6 +985,9 @@ mod tests {
             },
             |value: &mut PostEntryOperatorJoinIdentityV1| {
                 value.runtime_deck_list_sha256 = digest('9')
+            },
+            |value: &mut PostEntryOperatorJoinIdentityV1| {
+                value.runtime_deck_manifest_commitment_sha256 = digest('9')
             },
             |value: &mut PostEntryOperatorJoinIdentityV1| {
                 value.runtime_deck_format_sha256 = digest('9')
