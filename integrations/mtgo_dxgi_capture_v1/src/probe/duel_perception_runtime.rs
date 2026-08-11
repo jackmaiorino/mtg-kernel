@@ -1044,6 +1044,7 @@ pub struct MtgoOpaquePinnedCompetitiveDuelGestureContinuationCommitmentsV1 {
     pub gesture_stage_count: u16,
     pub frame_id: u64,
     pub frame_sequence: u64,
+    pub captured_at_unix_millis: u128,
     pub target_count: u16,
 }
 
@@ -1083,6 +1084,7 @@ impl OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MtgoOpaqueCompetitiveDuelGestureSourcePreparationCommitmentsV1 {
     pub(crate) source_sequence_commitment_sha256: String,
+    pub(crate) prepared_sequence_commitment_sha256: String,
     pub(crate) competitive_action_plan_commitment_sha256: String,
     pub(crate) gesture_plan_commitment_sha256: String,
     pub(crate) competitive_mode_authorization_commitment_sha256: String,
@@ -2048,102 +2050,40 @@ pub(crate) fn prepare_opaque_competitive_duel_gesture_source_stage_from_pinned_r
     {
         return Err("gesture sequence, runtime, and admitted all-family profile differ".to_owned());
     }
-    let fresh_commitments = fresh_perception.commitments_v1();
-    if fresh_commitments
-        .source_frame
-        .perception_profile_admission_commitment_sha256
-        != profile.perception_profile_admission_commitment_sha256()
-    {
-        return Err("fresh perception differs from the gesture profile admission".to_owned());
-    }
-    verify_gesture_target_runtime_identity_now_v1(runtime)?;
-
-    let source = &fresh_perception.source_frame.source_frame;
-    let width = source.manifest.frame.canonical_width;
-    let height = source.manifest.frame.canonical_height;
-    let stride = width
-        .checked_mul(4)
-        .ok_or("duel gesture-target canonical stride overflow")?;
-    let primitive = sequence
-        .current_stage
-        ._plan
-        .gesture
-        .stages_v1()
-        .first()
-        .ok_or("gesture-target source plan is empty")?
-        .primitive
-        .clone();
-    let header = MtgoDuelGestureTargetRequestHeaderV1 {
-        schema_version: 1,
-        protocol: "mtgo_visible_duel_gesture_target_v1".to_owned(),
-        frame_id: fresh_commitments.frame_id,
-        frame_sequence: fresh_commitments.frame_sequence,
-        canonical_width: width,
-        canonical_height: height,
-        canonical_stride: stride,
-        canonical_byte_length: source.canonical_bgra8.len(),
-        canonical_bgra8_sha256: source.manifest.frame.canonical_bgra8_sha256.clone(),
-        source_capture_commitment_sha256: fresh_commitments
-            .source_frame
-            .source_capture
-            .capture_commitment_sha256,
-        perception_result_commitment_sha256: fresh_commitments.perception_result_commitment_sha256,
-        decision_commitment_sha256: fresh_commitments.decision_commitment_sha256,
-        gesture_plan_commitment_sha256: sequence_commitments.gesture_plan_commitment_sha256.clone(),
-        selected_action_family: sequence_commitments.selected_action_family,
-        stage_index: 0,
-        primitive,
-        gesture_evaluation_commitment_sha256: profile.evaluation_commitment_sha256().to_owned(),
-        gesture_profile_admission_commitment_sha256: profile
-            .admission_commitment_sha256()
-            .to_owned(),
-        runtime_identity_commitment_sha256: runtime
-            .commitments
-            .runtime_identity_commitment_sha256
-            .clone(),
-        gesture_target_runtime_binary_sha256: profile
-            .gesture_target_runtime_binary_sha256()
-            .to_owned(),
-        gesture_target_assets_manifest_sha256: profile
-            .gesture_target_assets_manifest_sha256()
-            .to_owned(),
-    };
-    let header_json = serde_json::to_vec(&header)
-        .map_err(|error| format!("serialize duel gesture-target request: {error}"))?;
-    let checked_request =
-        check_untrusted_duel_gesture_target_request_v1(&header_json, &source.canonical_bgra8)?;
-    let request_commitment_sha256 = checked_request.request_commitment_sha256_v1().to_owned();
-    let response = invoke_verified_gesture_target_process_v1(
-        runtime,
-        &header_json,
-        &source.canonical_bgra8,
-        Duration::from_millis(u64::from(timeout_ms)),
-    )?;
-    verify_gesture_target_runtime_identity_now_v1(runtime)?;
-    let response: MtgoDuelGestureTargetProcessResponseV1 = serde_json::from_slice(&response)
-        .map_err(|error| {
-            format!("gesture-target response is not one strict protocol JSON value: {error}")
-        })?;
-    if response.schema_version != 1
-        || response.request_commitment_sha256 != request_commitment_sha256
-    {
-        return Err("gesture-target response does not bind the exact request".to_owned());
-    }
-    prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
+    prepare_opaque_competitive_duel_gesture_current_stage_from_pinned_runtime_v1(
         sequence,
         fresh_perception,
-        response.target_set,
-        VerifiedDuelGestureTargetRuntimeBindingV1 {
-            runtime_identity_commitment_sha256: runtime
-                .commitments
-                .runtime_identity_commitment_sha256
-                .clone(),
-            request_commitment_sha256,
-        },
+        profile,
+        runtime,
+        timeout_ms,
     )
 }
 
-/// Rechecks the exact source-stage primitive on one distinct newer opaque duel
+fn prepare_opaque_competitive_duel_gesture_current_stage_from_pinned_runtime_v1(
+    sequence: OpaqueMtgoCompetitiveDuelGestureSequenceV1,
+    fresh_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1, String> {
+    let stage_index = sequence.commitments.current_stage_index;
+    let (target_set, target_runtime) = invoke_pinned_gesture_target_runtime_for_stage_v1(
+        &sequence,
+        &fresh_perception,
+        profile,
+        runtime,
+        stage_index,
+        timeout_ms,
+    )?;
+    prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
+        sequence,
+        fresh_perception,
+        target_set,
+        target_runtime,
+    )
+}
+
+/// Rechecks the exact current-stage primitive on one distinct newer opaque duel
 /// perception after its complete target set was produced by the verified
 /// pinned runtime. This consumes the source sequence, retains all target
 /// points privately, and performs no input.
@@ -2154,27 +2094,35 @@ fn prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
     target_runtime: VerifiedDuelGestureTargetRuntimeBindingV1,
 ) -> Result<OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1, String> {
     let sequence_commitments = sequence.commitments_v1();
-    if sequence_commitments.current_stage_index != 0
-        || sequence_commitments.observed_stage_count != 1
-        || sequence_commitments
-            .last_visible_transition_commitment_sha256
-            .is_some()
+    if sequence_commitments.current_stage_index >= sequence_commitments.gesture_stage_count
+        || sequence_commitments.observed_stage_count
+            != sequence_commitments.current_stage_index.saturating_add(1)
+        || (sequence_commitments.current_stage_index == 0)
+            == sequence_commitments
+                .last_visible_transition_commitment_sha256
+                .is_some()
     {
-        return Err("gesture source preparation requires an unadvanced source sequence".to_owned());
+        return Err(
+            "gesture preparation requires one internally consistent current stage".to_owned(),
+        );
     }
     let source_stage = &sequence.current_stage;
     let plan = &source_stage._plan;
     let source_perception = &plan.control.selection.perception;
-    let source_manifest = &source_perception.source_frame.source_frame.manifest;
+    let prior_perception = source_stage
+        ._continuation_frame
+        .as_deref()
+        .unwrap_or(source_perception);
+    let prior_manifest = &prior_perception.source_frame.source_frame.manifest;
     let fresh_manifest = &fresh_perception.source_frame.source_frame.manifest;
-    validate_same_duel_window_incarnation_v1(source_manifest, fresh_manifest)?;
+    validate_same_duel_window_incarnation_v1(prior_manifest, fresh_manifest)?;
 
     let fresh_commitments = fresh_perception.commitments_v1();
     if fresh_commitments
         .source_frame
         .source_capture
         .captured_at_unix_millis
-        <= source_manifest.captured_at_unix_millis
+        <= prior_manifest.captured_at_unix_millis
         || fresh_commitments
             .source_frame
             .source_capture
@@ -2201,7 +2149,7 @@ fn prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
         || fresh_commitments.frame_sequence != expected_frame_sequence
         || target_set.frame_id != fresh_commitments.frame_id
         || target_set.frame_sequence != fresh_commitments.frame_sequence
-        || target_set.stage_index != 0
+        || target_set.stage_index != sequence_commitments.current_stage_index
         || expected_frame_sequence
             > sequence_commitments.gameplay_authorization_valid_through_frame_sequence
     {
@@ -2230,48 +2178,64 @@ fn prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
         return Err("visible duel decision payload changed before gesture preparation".to_owned());
     }
 
-    let mut matching_controls = Vec::new();
-    for candidate in &fresh_perception.visible_controls.controls {
-        let semantic_json = serde_json::to_vec(&candidate.semantic)
-            .map_err(|error| format!("serialize fresh gesture control semantic: {error}"))?;
-        if semantic_json == plan.control.selected_semantic_json {
-            matching_controls.push(candidate);
+    let fresh_primary = if sequence_commitments.current_stage_index == 0 {
+        let mut matching_controls = Vec::new();
+        for candidate in &fresh_perception.visible_controls.controls {
+            let semantic_json = serde_json::to_vec(&candidate.semantic)
+                .map_err(|error| format!("serialize fresh gesture control semantic: {error}"))?;
+            if semantic_json == plan.control.selected_semantic_json {
+                matching_controls.push(candidate);
+            }
         }
-    }
-    if matching_controls.len() != 1
-        || matching_controls[0].control_id != plan.control.commitments.control_id
-    {
-        return Err("fresh gesture semantic control is ambiguous or changed identity".to_owned());
-    }
-    let selected = matching_controls[0];
-    let (fresh_primary_rect, fresh_primary_sha256) = frame_region_for_evidence_v1(
-        &fresh_perception.decision_record,
-        selected.frame_region_evidence_id,
-    )?;
-    if fresh_primary_rect != &plan.control.rect_client_px
-        || fresh_primary_sha256 != plan.control.selected_region_content_sha256
-    {
-        return Err("fresh gesture semantic control geometry or pixels changed".to_owned());
-    }
+        if matching_controls.len() != 1
+            || matching_controls[0].control_id != plan.control.commitments.control_id
+        {
+            return Err(
+                "fresh gesture semantic control is ambiguous or changed identity".to_owned(),
+            );
+        }
+        let selected = matching_controls[0];
+        let (fresh_primary_rect, fresh_primary_sha256) = frame_region_for_evidence_v1(
+            &fresh_perception.decision_record,
+            selected.frame_region_evidence_id,
+        )?;
+        if fresh_primary_rect != &plan.control.rect_client_px
+            || fresh_primary_sha256 != plan.control.selected_region_content_sha256
+        {
+            return Err("fresh gesture semantic control geometry or pixels changed".to_owned());
+        }
+        Some((fresh_primary_rect, fresh_primary_sha256))
+    } else {
+        None
+    };
 
-    let fresh_binding = recheck_visible_duel_gesture_source_stage_v1(
-        &plan.gesture,
-        &fresh_perception.validated_decision,
-        target_set.clone(),
-    )
-    .map_err(|error| format!("recheck fresh gesture source stage: {error}"))?;
+    let fresh_binding = if sequence_commitments.current_stage_index == 0 {
+        recheck_visible_duel_gesture_source_stage_v1(
+            &plan.gesture,
+            &fresh_perception.validated_decision,
+            target_set.clone(),
+        )
+        .map_err(|error| format!("recheck fresh gesture source stage: {error}"))?
+    } else {
+        bind_visible_duel_gesture_stage_v1(
+            &plan.gesture,
+            &fresh_perception.validated_decision,
+            target_set.clone(),
+        )
+        .map_err(|error| format!("recheck fresh gesture continuation stage: {error}"))?
+    };
     let primitive = plan
         .gesture
         .stages_v1()
-        .first()
-        .ok_or("gesture source preparation plan is empty")?
+        .get(usize::from(sequence_commitments.current_stage_index))
+        .ok_or("gesture current stage is absent from the exact plan")?
         .primitive
         .clone();
     let resolved_targets = resolve_opaque_gesture_target_points_v1(
         &target_set,
         &primitive,
         &fresh_perception,
-        Some((fresh_primary_rect, fresh_primary_sha256)),
+        fresh_primary,
     )?;
     let fresh_manifest_json = serialize_manifest_v2(fresh_manifest)
         .map_err(|error| format!("serialize fresh gesture capture manifest: {error}"))?;
@@ -2312,7 +2276,7 @@ fn prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
     )
     .map_err(|error| format!("verify fresh gesture postcondition baseline: {error}"))?;
     let binding_commitments = fresh_binding.commitments_v1();
-    if binding_commitments.stage_index != 0
+    if binding_commitments.stage_index != sequence_commitments.current_stage_index
         || binding_commitments.frame_id != fresh_commitments.frame_id
         || binding_commitments.frame_sequence != fresh_commitments.frame_sequence
         || binding_commitments.target_count as usize != resolved_targets.points_desktop_px.len()
@@ -2375,8 +2339,29 @@ fn prepare_opaque_competitive_duel_gesture_source_stage_from_fresh_frame_v1(
             b"fresh_source_stage_rechecked_private_points_no_input_or_action_causality",
         ],
     );
+    let prepared_sequence_commitment_sha256 = commitment_v1(
+        DUEL_OPAQUE_COMPETITIVE_GESTURE_SEQUENCE_DOMAIN_V1,
+        &[
+            sequence_commitments.sequence_commitment_sha256.as_bytes(),
+            binding_commitments.binding_commitment_sha256.as_bytes(),
+            fresh_commitments
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+                .as_bytes(),
+            fresh_commitments
+                .perception_result_commitment_sha256
+                .as_bytes(),
+            primitive_commitment_sha256.as_bytes(),
+            preparation_commitment_sha256.as_bytes(),
+            &fresh_commitments.frame_id.to_be_bytes(),
+            &fresh_commitments.frame_sequence.to_be_bytes(),
+            b"same_stage_refreshed_immediately_before_input_no_action_causality",
+        ],
+    );
     let commitments = MtgoOpaqueCompetitiveDuelGestureSourcePreparationCommitmentsV1 {
         source_sequence_commitment_sha256: sequence_commitments.sequence_commitment_sha256,
+        prepared_sequence_commitment_sha256,
         competitive_action_plan_commitment_sha256: sequence_commitments
             .competitive_action_plan_commitment_sha256,
         gesture_plan_commitment_sha256: sequence_commitments.gesture_plan_commitment_sha256,
@@ -2714,11 +2699,263 @@ pub fn advance_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1(
         gesture_stage_count: next.gesture_stage_count,
         frame_id: next.current_frame_id,
         frame_sequence: next.current_frame_sequence,
+        captured_at_unix_millis: after_capture
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis,
         target_count: advanced.current_stage.commitments.target_count,
     };
     Ok(OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1 {
         _sequence: advanced,
         commitments,
+    })
+}
+
+/// Consumes the exact primitive preparation that preceded input, promotes its
+/// retained fresh frame to the sequence baseline, and observes one declared
+/// later stage through the pinned target runtime. This function sends no input
+/// and does not itself claim that input caused the visible transition.
+pub(crate) fn advance_prepared_competitive_duel_gesture_sequence_from_pinned_runtime_v1(
+    prepared: OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1,
+    current_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1, String> {
+    let prepared_commitments = prepared.commitments.clone();
+    if prepared_commitments
+        .stage_index
+        .checked_add(1)
+        .ok_or("prepared gesture continuation stage index overflow")?
+        >= prepared_commitments.gesture_stage_count
+    {
+        return Err("prepared gesture primitive has no declared continuation stage".to_owned());
+    }
+    let current = current_perception.commitments_v1();
+    if current.frame_sequence <= prepared_commitments.fresh_frame_sequence
+        || current.frame_id == prepared_commitments.fresh_frame_id
+        || current.source_frame.source_capture.captured_at_unix_millis
+            <= prepared_commitments.fresh_captured_at_unix_millis
+    {
+        return Err(
+            "gesture continuation is not newer than its prepared input baseline".to_owned(),
+        );
+    }
+    let sequence = promote_prepared_gesture_sequence_baseline_v1(prepared)?;
+    let promoted = sequence.commitments_v1();
+    if promoted.sequence_commitment_sha256
+        != prepared_commitments.prepared_sequence_commitment_sha256
+        || promoted.current_stage_index != prepared_commitments.stage_index
+        || promoted.current_frame_id != prepared_commitments.fresh_frame_id
+        || promoted.current_frame_sequence != prepared_commitments.fresh_frame_sequence
+    {
+        return Err("prepared gesture sequence baseline promotion changed its identity".to_owned());
+    }
+    let continuation = advance_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1(
+        sequence,
+        current_perception,
+        profile,
+        runtime,
+        timeout_ms,
+    )?;
+    if continuation.commitments.prior_sequence_commitment_sha256
+        != prepared_commitments.prepared_sequence_commitment_sha256
+    {
+        return Err("pinned continuation did not consume the exact prepared sequence".to_owned());
+    }
+    Ok(continuation)
+}
+
+/// Rechecks the already observed next stage on one additional fresh frame.
+/// This separates visible transition confirmation from target preparation, so
+/// the transition frame itself can never be routed directly to another input.
+pub(crate) fn prepare_opaque_competitive_duel_gesture_continuation_stage_from_pinned_runtime_v1(
+    continuation: OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1,
+    fresh_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1, String> {
+    let OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1 {
+        _sequence: sequence,
+        commitments: continuation_commitments,
+    } = continuation;
+    let sequence_commitments = sequence.commitments_v1();
+    if continuation_commitments.advanced_sequence_commitment_sha256
+        != sequence_commitments.sequence_commitment_sha256
+        || continuation_commitments.stage_index != sequence_commitments.current_stage_index
+        || continuation_commitments.gesture_stage_count != sequence_commitments.gesture_stage_count
+        || continuation_commitments.frame_id != sequence_commitments.current_frame_id
+        || continuation_commitments.frame_sequence != sequence_commitments.current_frame_sequence
+        || continuation_commitments.selected_action_family
+            != sequence_commitments.selected_action_family
+        || continuation_commitments.event_kind != sequence_commitments.event_kind
+        || continuation_commitments.game_number != sequence_commitments.game_number
+        || continuation_commitments.target_count != sequence.current_stage.commitments.target_count
+        || sequence_commitments.current_stage_index == 0
+        || sequence_commitments.current_stage_index >= sequence_commitments.gesture_stage_count
+    {
+        return Err("pinned continuation and retained gesture sequence differ".to_owned());
+    }
+    prepare_opaque_competitive_duel_gesture_current_stage_from_pinned_runtime_v1(
+        sequence,
+        fresh_perception,
+        profile,
+        runtime,
+        timeout_ms,
+    )
+}
+
+fn promote_prepared_gesture_sequence_baseline_v1(
+    prepared: OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1,
+) -> Result<OpaqueMtgoCompetitiveDuelGestureSequenceV1, String> {
+    let prepared_commitments = prepared.commitments.clone();
+    let OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 {
+        _sequence: sequence,
+        _fresh_perception: fresh_perception,
+        _fresh_binding: fresh_binding,
+        _before_input_postcondition: _,
+        commitments: _,
+        primitive,
+        target_points_desktop_px,
+        target_regions,
+        ..
+    } = prepared;
+    let OpaqueMtgoCompetitiveDuelGestureSequenceV1 {
+        current_stage,
+        commitments: mut sequence_commitments,
+    } = sequence;
+    if sequence_commitments.sequence_commitment_sha256
+        != prepared_commitments.source_sequence_commitment_sha256
+        || sequence_commitments.current_stage_index != prepared_commitments.stage_index
+        || sequence_commitments.gesture_stage_count != prepared_commitments.gesture_stage_count
+    {
+        return Err("prepared gesture baseline differs from its source sequence".to_owned());
+    }
+    let OpaqueMtgoCompetitiveDuelGestureStageV1 {
+        _plan: plan,
+        commitments: source_stage_commitments,
+        ..
+    } = current_stage;
+    let plan_commitments = plan.commitments_v1();
+    let fresh_binding_commitments = fresh_binding.commitments_v1();
+    let fresh_perception_commitments = fresh_perception.commitments_v1();
+    if fresh_binding_commitments.stage_index != prepared_commitments.stage_index
+        || fresh_binding_commitments.frame_id != prepared_commitments.fresh_frame_id
+        || fresh_binding_commitments.frame_sequence != prepared_commitments.fresh_frame_sequence
+        || fresh_binding_commitments.binding_commitment_sha256
+            != prepared_commitments.fresh_stage_binding_commitment_sha256
+        || fresh_perception_commitments.frame_id != prepared_commitments.fresh_frame_id
+        || fresh_perception_commitments.frame_sequence != prepared_commitments.fresh_frame_sequence
+        || fresh_perception_commitments
+            .source_frame
+            .source_capture
+            .capture_commitment_sha256
+            != prepared_commitments.fresh_capture_commitment_sha256
+        || fresh_perception_commitments.perception_result_commitment_sha256
+            != prepared_commitments.fresh_perception_result_commitment_sha256
+    {
+        return Err("prepared gesture baseline retained inconsistent fresh-frame state".to_owned());
+    }
+    let primitive_json = serde_json::to_vec(&primitive)
+        .map_err(|error| format!("serialize promoted gesture primitive: {error}"))?;
+    let target_points_json = serde_json::to_vec(&target_points_desktop_px)
+        .map_err(|error| format!("serialize promoted gesture target points: {error}"))?;
+    let opaque_gesture_stage_commitment_sha256 = commitment_v1(
+        DUEL_OPAQUE_COMPETITIVE_GESTURE_STAGE_DOMAIN_V1,
+        &[
+            plan_commitments
+                .opaque_competitive_action_plan_commitment_sha256
+                .as_bytes(),
+            plan_commitments.gesture_plan_commitment_sha256.as_bytes(),
+            fresh_binding_commitments
+                .binding_commitment_sha256
+                .as_bytes(),
+            source_stage_commitments
+                .source_perception_result_commitment_sha256
+                .as_bytes(),
+            fresh_perception_commitments
+                .perception_result_commitment_sha256
+                .as_bytes(),
+            fresh_perception_commitments
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+                .as_bytes(),
+            b"continuation",
+            &primitive_json,
+            &target_points_json,
+            b"private_pixel_rehashed_target_points_no_input_or_event_entry_authority",
+        ],
+    );
+    let promoted_stage_commitments = MtgoOpaqueCompetitiveDuelGestureStageCommitmentsV1 {
+        competitive_action_plan_commitment_sha256: plan_commitments
+            .opaque_competitive_action_plan_commitment_sha256,
+        gesture_plan_commitment_sha256: plan_commitments.gesture_plan_commitment_sha256,
+        gesture_stage_binding_commitment_sha256: fresh_binding_commitments
+            .binding_commitment_sha256,
+        source_perception_result_commitment_sha256: source_stage_commitments
+            .source_perception_result_commitment_sha256,
+        bound_perception_result_commitment_sha256: fresh_perception_commitments
+            .perception_result_commitment_sha256,
+        bound_capture_commitment_sha256: fresh_perception_commitments
+            .source_frame
+            .source_capture
+            .capture_commitment_sha256,
+        opaque_gesture_stage_commitment_sha256,
+        selected_action_family: prepared_commitments.selected_action_family,
+        stage_index: prepared_commitments.stage_index,
+        frame_id: prepared_commitments.fresh_frame_id,
+        frame_sequence: prepared_commitments.fresh_frame_sequence,
+        target_count: prepared_commitments.target_count,
+    };
+    let expected_prepared_sequence_commitment_sha256 = commitment_v1(
+        DUEL_OPAQUE_COMPETITIVE_GESTURE_SEQUENCE_DOMAIN_V1,
+        &[
+            sequence_commitments.sequence_commitment_sha256.as_bytes(),
+            prepared_commitments
+                .fresh_stage_binding_commitment_sha256
+                .as_bytes(),
+            prepared_commitments
+                .fresh_capture_commitment_sha256
+                .as_bytes(),
+            prepared_commitments
+                .fresh_perception_result_commitment_sha256
+                .as_bytes(),
+            prepared_commitments.primitive_commitment_sha256.as_bytes(),
+            prepared_commitments
+                .preparation_commitment_sha256
+                .as_bytes(),
+            &prepared_commitments.fresh_frame_id.to_be_bytes(),
+            &prepared_commitments.fresh_frame_sequence.to_be_bytes(),
+            b"same_stage_refreshed_immediately_before_input_no_action_causality",
+        ],
+    );
+    if expected_prepared_sequence_commitment_sha256
+        != prepared_commitments.prepared_sequence_commitment_sha256
+    {
+        return Err("prepared gesture sequence commitment did not recompute".to_owned());
+    }
+    sequence_commitments.current_stage_binding_commitment_sha256 = promoted_stage_commitments
+        .gesture_stage_binding_commitment_sha256
+        .clone();
+    sequence_commitments.current_opaque_stage_commitment_sha256 = promoted_stage_commitments
+        .opaque_gesture_stage_commitment_sha256
+        .clone();
+    sequence_commitments.sequence_commitment_sha256 =
+        prepared_commitments.prepared_sequence_commitment_sha256;
+    sequence_commitments.current_frame_id = prepared_commitments.fresh_frame_id;
+    sequence_commitments.current_frame_sequence = prepared_commitments.fresh_frame_sequence;
+    Ok(OpaqueMtgoCompetitiveDuelGestureSequenceV1 {
+        current_stage: OpaqueMtgoCompetitiveDuelGestureStageV1 {
+            _plan: plan,
+            _continuation_frame: Some(Box::new(fresh_perception)),
+            _binding: fresh_binding,
+            commitments: promoted_stage_commitments,
+            target_points_desktop_px,
+            target_regions,
+        },
+        commitments: sequence_commitments,
     })
 }
 
@@ -3786,8 +4023,10 @@ pub(crate) fn confirm_opaque_competitive_duel_gesture_postcondition_v1(
         );
     }
     let prepared_commitments = prepared.commitments.clone();
-    if prepared_commitments.stage_index != 0 || prepared_commitments.gesture_stage_count != 1 {
-        return Err("complete-action confirmation accepts one-stage gestures only".to_owned());
+    if prepared_commitments.stage_index.checked_add(1)
+        != Some(prepared_commitments.gesture_stage_count)
+    {
+        return Err("complete-action confirmation requires the final gesture stage".to_owned());
     }
     if input_sent_at_unix_millis == 0
         || input_sent_at_unix_millis < prepared_commitments.fresh_captured_at_unix_millis
