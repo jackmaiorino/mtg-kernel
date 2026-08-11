@@ -3,6 +3,7 @@ use crate::competitive_event_listing_evaluation::RATIFIED_COMPETITIVE_EVENT_LIST
 use crate::competitive_event_record_evaluation::RATIFIED_COMPETITIVE_EVENT_RECORD_EVALUATION_COMMITMENT_V1;
 use crate::competitive_navigation_evaluation::RATIFIED_COMPETITIVE_NAVIGATION_EVALUATION_COMMITMENT_V1;
 use crate::competitive_pregame_evaluation::RATIFIED_COMPETITIVE_PREGAME_EVALUATION_COMMITMENT_V1;
+use crate::competitive_pregame_public_context_evaluation::RATIFIED_COMPETITIVE_PREGAME_PUBLIC_CONTEXT_EVALUATION_COMMITMENT_V1;
 use crate::competitive_sideboard_evaluation::RATIFIED_COMPETITIVE_SIDEBOARD_EVALUATION_COMMITMENT_V1;
 use crate::duel_gesture_evaluation::RATIFIED_DUEL_GESTURE_EVALUATION_COMMITMENT_V1;
 use crate::duel_perception_evaluation::RATIFIED_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V1;
@@ -26,6 +27,7 @@ pub struct MtgoCompetitiveSemanticRatificationReadinessV1 {
     pub duel_gesture_evaluation_present: bool,
     pub duel_lifecycle_evaluation_present: bool,
     pub competitive_pregame_evaluation_present: bool,
+    pub competitive_pregame_public_context_evaluation_present: bool,
     pub changed_sideboard_evaluation_present: bool,
 }
 
@@ -38,6 +40,7 @@ impl MtgoCompetitiveSemanticRatificationReadinessV1 {
             && self.duel_gesture_evaluation_present
             && self.duel_lifecycle_evaluation_present
             && self.competitive_pregame_evaluation_present
+            && self.competitive_pregame_public_context_evaluation_present
     }
 
     pub fn changed_sideboard_event_path_present_v1(&self) -> bool {
@@ -67,6 +70,8 @@ pub fn competitive_semantic_ratification_readiness_v1(
             RATIFIED_COMPETITIVE_DUEL_LIFECYCLE_EVALUATION_COMMITMENT_V1.is_some(),
         competitive_pregame_evaluation_present:
             RATIFIED_COMPETITIVE_PREGAME_EVALUATION_COMMITMENT_V1.is_some(),
+        competitive_pregame_public_context_evaluation_present:
+            RATIFIED_COMPETITIVE_PREGAME_PUBLIC_CONTEXT_EVALUATION_COMMITMENT_V1.is_some(),
         changed_sideboard_evaluation_present:
             RATIFIED_COMPETITIVE_SIDEBOARD_EVALUATION_COMMITMENT_V1.is_some(),
     }
@@ -97,6 +102,7 @@ mod tests {
                 "duel_gesture_evaluation_present": false,
                 "duel_lifecycle_evaluation_present": false,
                 "competitive_pregame_evaluation_present": false,
+                "competitive_pregame_public_context_evaluation_present": false,
                 "changed_sideboard_evaluation_present": false
             })
         );

@@ -18,7 +18,11 @@ It requires the canonical play-or-draw, acting-player score, and opponent-score
 regions in that order, rehashes each region from the supplied BGRA frame,
 enforces legal best-of-three score progression, and binds the result to the
 same exact pregame classification frame. It intentionally grants no model or
-input authority until a heldout visible-context evaluation is admitted.
+input authority until a heldout visible-context evaluation is admitted. The
+adapter now also defines that evaluation over all eight legal combinations of
+play or draw and best-of-three game score. It requires unique manually reviewed
+source frames, full prediction coverage, and exact labels and commitments in
+every state. The production ratification root remains empty.
 
 ## Required mtg-kernel surface
 

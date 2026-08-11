@@ -12,7 +12,7 @@ const COMPETITIVE_PREGAME_PUBLIC_CONTEXT_DOMAIN_V1: &[u8] =
 const COMPETITIVE_PREGAME_PUBLIC_CONTEXT_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-pregame-public-context-binding-v1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MtgoCompetitivePregamePlayDrawV1 {
     OnPlay,
