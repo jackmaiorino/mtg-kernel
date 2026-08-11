@@ -1582,6 +1582,29 @@ pub(crate) fn checked_untrusted_dxgi_artifact_for_test_v1(
 }
 
 #[cfg(test)]
+pub(crate) fn checked_untrusted_dxgi_navigation_artifact_for_test_v1(
+    source_byte: u8,
+) -> CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
+    CheckedUntrustedMtgoDxgiCaptureArtifactV1 {
+        manifest_sha256: format!("{:064x}", source_byte),
+        canonical_bgra8_sha256: format!("{:064x}", source_byte),
+        preview_png_sha256: format!("{:064x}", source_byte.saturating_add(16)),
+        output_identity_sha256: "4".repeat(64),
+        executable_sha256: "a".repeat(64),
+        signer_thumbprint: "b".repeat(40),
+        signer_subject_sha256: "c".repeat(64),
+        dpi: 120,
+        client_size_px: MtgoSizePxV1 {
+            width: 1_550,
+            height: 925,
+        },
+        captured_at_unix_millis: 1_786_338_000_000 + u64::from(source_byte),
+        capture_role: MtgoDxgiCaptureRoleV2::Navigation,
+        game_format: None,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
