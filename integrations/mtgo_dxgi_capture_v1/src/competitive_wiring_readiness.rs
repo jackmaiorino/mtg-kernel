@@ -21,6 +21,7 @@ pub enum MtgoCompetitiveStaticReadinessStatusV1 {
 #[serde(deny_unknown_fields)]
 pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub operator_resource_bootstrap_present: bool,
+    pub checkpoint_bound_model_capability_commitment_present: bool,
     pub pre_entry_operator_loop_present: bool,
     pub post_entry_operator_loop_present: bool,
     pub end_to_end_operator_loop_present: bool,
@@ -80,6 +81,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
         authorization_ratifications: competitive_authorization_ratification_readiness_v1(),
         known_wiring_gaps: MtgoCompetitiveKnownWiringGapsV1 {
             operator_resource_bootstrap_present: true,
+            checkpoint_bound_model_capability_commitment_present: true,
             pre_entry_operator_loop_present: true,
             post_entry_operator_loop_present: true,
             end_to_end_operator_loop_present: false,
@@ -144,6 +146,11 @@ mod tests {
             .authorization_ratifications
             .unchanged_sideboard_event_path_present_v1());
         assert!(report.known_wiring_gaps.operator_resource_bootstrap_present);
+        assert!(
+            report
+                .known_wiring_gaps
+                .checkpoint_bound_model_capability_commitment_present
+        );
         assert!(report.known_wiring_gaps.pre_entry_operator_loop_present);
         assert!(report.known_wiring_gaps.post_entry_operator_loop_present);
         assert!(!report.known_wiring_gaps.end_to_end_operator_loop_present);

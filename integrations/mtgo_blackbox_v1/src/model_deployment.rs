@@ -9,11 +9,51 @@ use mtg_kernel::native_checkpoint_inference_v1::{
 use mtg_kernel::native_training_store_resume_v2::load_native_training_boundary_v2;
 use mtg_kernel::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
 use mtg_kernel::native_training_store_run_v2::decode_train_run_v2;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fmt::{Debug, Formatter};
 use std::fs;
 use std::path::Path;
 
 const MAX_RUN_JSON_BYTES_V1: u64 = 1_048_576;
+const NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_DOMAIN_V1: &[u8] =
+    b"mtgo-native-checkpoint-competitive-capabilities-v1";
+
+pub const MTGO_NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_SCHEMA_V1: u32 = 1;
+
+/// Code-derived inventory of the competitive decision heads exposed by one
+/// exact loaded checkpoint deployment.
+///
+/// This record is telemetry only. It cannot load a checkpoint, score a
+/// decision, create an operator, authorize input, or enter an event. The
+/// opaque loaded deployment remains the authority for its provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
+    pub schema_version: u32,
+    pub deployment_commitment_sha256: String,
+    pub native_duel_action_interface_present: bool,
+    pub native_pregame_interface_present: bool,
+    pub terminal_outcome_trained_pregame_head_present: bool,
+    pub native_sideboard_interface_present: bool,
+    pub terminal_outcome_trained_sideboard_head_present: bool,
+    pub native_changed_sideboard_action_present: bool,
+    pub native_unchanged_sideboard_action_present: bool,
+    pub capabilities_commitment_sha256: String,
+}
+
+impl MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
+    pub fn pregame_head_ready_v1(&self) -> bool {
+        self.native_pregame_interface_present && self.terminal_outcome_trained_pregame_head_present
+    }
+
+    pub fn sideboard_head_ready_v1(&self) -> bool {
+        self.native_sideboard_interface_present
+            && self.terminal_outcome_trained_sideboard_head_present
+            && self.native_changed_sideboard_action_present
+            && self.native_unchanged_sideboard_action_present
+    }
+}
 
 /// One exact native checkpoint deployment loaded through the validated Store
 /// walk and rebound to an independently supplied MTGO deployment identity.
@@ -37,6 +77,7 @@ const MAX_RUN_JSON_BYTES_V1: u64 = 1_048_576;
 pub struct LoadedMtgoNativeCheckpointDeploymentV1 {
     expected: MtgoExpectedModelDeploymentV1,
     deployment_commitment_sha256: String,
+    competitive_capabilities: MtgoNativeCheckpointCompetitiveCapabilitiesV1,
     inference: NativeCheckpointInferenceV1,
 }
 
@@ -53,6 +94,10 @@ impl Debug for LoadedMtgoNativeCheckpointDeploymentV1 {
                 "deployment_commitment_sha256",
                 &self.deployment_commitment_sha256,
             )
+            .field(
+                "competitive_capabilities_commitment_sha256",
+                &self.competitive_capabilities.capabilities_commitment_sha256,
+            )
             .finish_non_exhaustive()
     }
 }
@@ -68,6 +113,10 @@ impl LoadedMtgoNativeCheckpointDeploymentV1 {
 
     pub fn deployment_commitment_sha256(&self) -> &str {
         &self.deployment_commitment_sha256
+    }
+
+    pub fn competitive_capabilities_v1(&self) -> &MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
+        &self.competitive_capabilities
     }
 
     pub fn scorer_v1(
@@ -110,6 +159,8 @@ pub fn load_mtgo_native_checkpoint_deployment_v1(
     expected: MtgoExpectedModelDeploymentV1,
 ) -> Result<LoadedMtgoNativeCheckpointDeploymentV1, MtgoContractErrorV1> {
     let deployment_commitment_sha256 = model_deployment_commitment_v1(&expected)?;
+    let competitive_capabilities =
+        current_native_checkpoint_competitive_capabilities_v1(&deployment_commitment_sha256)?;
     let store_root = store_root.as_ref();
     let run_path = store_root.join("run.json");
     let run_metadata = fs::metadata(&run_path).map_err(|_| {
@@ -163,8 +214,110 @@ pub fn load_mtgo_native_checkpoint_deployment_v1(
     Ok(LoadedMtgoNativeCheckpointDeploymentV1 {
         expected,
         deployment_commitment_sha256,
+        competitive_capabilities,
         inference,
     })
+}
+
+/// Rechecks a serialized capability inventory. Passing this check does not
+/// prove that it came from a loaded checkpoint and grants no authority.
+pub fn validate_native_checkpoint_competitive_capabilities_v1(
+    value: &MtgoNativeCheckpointCompetitiveCapabilitiesV1,
+) -> Result<(), MtgoContractErrorV1> {
+    if value.schema_version != MTGO_NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_SCHEMA_V1 {
+        return Err(error_v1(
+            "mtgo_checkpoint_capabilities_schema_invalid",
+            "the checkpoint capability inventory uses an unsupported schema",
+        ));
+    }
+    if !is_lower_sha256_v1(&value.deployment_commitment_sha256)
+        || !is_lower_sha256_v1(&value.capabilities_commitment_sha256)
+    {
+        return Err(error_v1(
+            "mtgo_checkpoint_capabilities_digest_invalid",
+            "the checkpoint capability inventory contains an invalid digest",
+        ));
+    }
+    if !value.native_pregame_interface_present
+        && value.terminal_outcome_trained_pregame_head_present
+    {
+        return Err(error_v1(
+            "mtgo_checkpoint_pregame_capabilities_inconsistent",
+            "a trained pregame head cannot be present without its native interface",
+        ));
+    }
+    if !value.native_sideboard_interface_present
+        && (value.terminal_outcome_trained_sideboard_head_present
+            || value.native_changed_sideboard_action_present
+            || value.native_unchanged_sideboard_action_present)
+    {
+        return Err(error_v1(
+            "mtgo_checkpoint_sideboard_capabilities_inconsistent",
+            "sideboard training or actions cannot be present without the native interface",
+        ));
+    }
+    let expected = native_checkpoint_competitive_capabilities_commitment_v1(value)?;
+    if value.capabilities_commitment_sha256 != expected {
+        return Err(error_v1(
+            "mtgo_checkpoint_capabilities_commitment_mismatch",
+            "the checkpoint capability inventory commitment does not match its fields",
+        ));
+    }
+    Ok(())
+}
+
+fn current_native_checkpoint_competitive_capabilities_v1(
+    deployment_commitment_sha256: &str,
+) -> Result<MtgoNativeCheckpointCompetitiveCapabilitiesV1, MtgoContractErrorV1> {
+    if !is_lower_sha256_v1(deployment_commitment_sha256) {
+        return Err(error_v1(
+            "mtgo_checkpoint_capabilities_deployment_invalid",
+            "the checkpoint capability inventory requires an exact deployment commitment",
+        ));
+    }
+    let mut value = MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
+        schema_version: MTGO_NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_SCHEMA_V1,
+        deployment_commitment_sha256: deployment_commitment_sha256.to_owned(),
+        native_duel_action_interface_present: true,
+        native_pregame_interface_present: false,
+        terminal_outcome_trained_pregame_head_present: false,
+        native_sideboard_interface_present: false,
+        terminal_outcome_trained_sideboard_head_present: false,
+        native_changed_sideboard_action_present: false,
+        native_unchanged_sideboard_action_present: false,
+        capabilities_commitment_sha256: String::new(),
+    };
+    value.capabilities_commitment_sha256 =
+        native_checkpoint_competitive_capabilities_commitment_v1(&value)?;
+    validate_native_checkpoint_competitive_capabilities_v1(&value)?;
+    Ok(value)
+}
+
+/// Recomputes the domain-separated telemetry commitment. This does not prove
+/// that a record came from a loaded checkpoint and grants no authority.
+pub fn native_checkpoint_competitive_capabilities_commitment_v1(
+    value: &MtgoNativeCheckpointCompetitiveCapabilitiesV1,
+) -> Result<String, MtgoContractErrorV1> {
+    let mut payload = value.clone();
+    payload.capabilities_commitment_sha256.clear();
+    let bytes = serde_json::to_vec(&payload).map_err(|_| {
+        error_v1(
+            "mtgo_checkpoint_capabilities_serialize_failed",
+            "the checkpoint capability inventory could not be serialized",
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_DOMAIN_V1);
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn is_lower_sha256_v1(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn error_v1(code: &'static str, detail: &'static str) -> MtgoContractErrorV1 {
@@ -323,6 +476,39 @@ mod tests {
             load_mtgo_native_checkpoint_deployment_v1("this-path-must-not-be-read", deployment)
                 .expect_err("invalid expected identity must fail");
         assert_eq!(error.code(), "external_scoring_deployment_hash_invalid");
+    }
+
+    #[test]
+    fn current_loaded_checkpoint_capability_inventory_is_duel_only_and_bound() {
+        let deployment_commitment = fixture_digest_v1('a');
+        let capabilities =
+            current_native_checkpoint_competitive_capabilities_v1(&deployment_commitment).unwrap();
+        assert_eq!(
+            capabilities.deployment_commitment_sha256,
+            deployment_commitment
+        );
+        assert!(capabilities.native_duel_action_interface_present);
+        assert!(!capabilities.pregame_head_ready_v1());
+        assert!(!capabilities.sideboard_head_ready_v1());
+        validate_native_checkpoint_competitive_capabilities_v1(&capabilities).unwrap();
+
+        let mut crossed = capabilities.clone();
+        crossed.deployment_commitment_sha256 = fixture_digest_v1('b');
+        assert_eq!(
+            validate_native_checkpoint_competitive_capabilities_v1(&crossed)
+                .unwrap_err()
+                .code(),
+            "mtgo_checkpoint_capabilities_commitment_mismatch"
+        );
+
+        let mut impossible = capabilities;
+        impossible.terminal_outcome_trained_sideboard_head_present = true;
+        assert_eq!(
+            validate_native_checkpoint_competitive_capabilities_v1(&impossible)
+                .unwrap_err()
+                .code(),
+            "mtgo_checkpoint_sideboard_capabilities_inconsistent"
+        );
     }
 
     #[test]

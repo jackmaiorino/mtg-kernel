@@ -6,10 +6,12 @@ use crate::{
     OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1, OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
 };
 use mtgo_blackbox_v1::{
+    validate_native_checkpoint_competitive_capabilities_v1,
     AdmittedMtgoCompetitiveDuelLifecycleProfileV1, AdmittedMtgoCompetitiveEventListingEvaluationV1,
     AdmittedMtgoCompetitiveEventRecordEvaluationV1, AdmittedMtgoCompetitiveNavigationProfileV1,
     AdmittedMtgoCompetitiveSideboardEvaluationV1, AdmittedMtgoDuelGestureProfileV1,
     AdmittedMtgoDuelPerceptionProfileV1, LoadedMtgoNativeCheckpointDeploymentV1,
+    MtgoNativeCheckpointCompetitiveCapabilitiesV1,
     MtgoReviewedCompetitiveEventListingEvaluationRatificationCandidateV1,
     MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1,
     MtgoReviewedCompetitiveSideboardEvaluationRatificationCandidateV1,
@@ -36,6 +38,7 @@ pub struct MtgoCompetitiveOperatorResourceCommitmentsV1 {
     pub deck_manifest_commitment_sha256: String,
     pub deck_format_sha256: String,
     pub policy_deployment_commitment_sha256: String,
+    pub checkpoint_competitive_capabilities_commitment_sha256: String,
     pub duel_perception_profile_commitment_sha256: String,
     pub duel_perception_profile_admission_commitment_sha256: String,
     pub duel_perception_runtime_identity_commitment_sha256: String,
@@ -148,6 +151,7 @@ pub fn bind_competitive_operator_resources_v1(
     let record = event_record_evaluation.commitments_v1();
     let perception = duel_perception_runtime.commitments_v1();
     let gesture = duel_gesture_runtime.commitments_v1();
+    let checkpoint_capabilities = checkpoint_deployment.competitive_capabilities_v1().clone();
     let sideboard = changed_sideboard_evaluation
         .as_ref()
         .map(AdmittedMtgoCompetitiveSideboardEvaluationV1::commitments_v1);
@@ -206,6 +210,7 @@ pub fn bind_competitive_operator_resources_v1(
         policy_deployment_commitment_sha256: checkpoint_deployment
             .deployment_commitment_sha256()
             .to_owned(),
+        checkpoint_capabilities,
         sideboard,
         sideboard_admission_commitment_sha256: changed_sideboard_evaluation
             .as_ref()
@@ -256,6 +261,7 @@ struct MtgoCompetitiveOperatorResourceIdentityV1 {
     duel_gesture_perception_admission_commitment_sha256: String,
     gesture: MtgoVerifiedDuelGestureTargetRuntimeCommitmentsV1,
     policy_deployment_commitment_sha256: String,
+    checkpoint_capabilities: MtgoNativeCheckpointCompetitiveCapabilitiesV1,
     sideboard: Option<MtgoReviewedCompetitiveSideboardEvaluationRatificationCandidateV1>,
     sideboard_admission_commitment_sha256: Option<String>,
 }
@@ -320,6 +326,15 @@ fn validate_operator_resource_identity_v1(
             "competitive operator listing and checkpoint deployment are crossed".to_owned(),
         );
     }
+    validate_native_checkpoint_competitive_capabilities_v1(&value.checkpoint_capabilities)
+        .map_err(|error| format!("competitive operator checkpoint capabilities: {error}"))?;
+    if value.checkpoint_capabilities.deployment_commitment_sha256
+        != value.policy_deployment_commitment_sha256
+    {
+        return Err(
+            "competitive operator checkpoint capabilities and deployment are crossed".to_owned(),
+        );
+    }
     match (
         &value.sideboard,
         &value.sideboard_admission_commitment_sha256,
@@ -367,6 +382,10 @@ fn validate_operator_resource_identity_v1(
         deck_manifest_commitment_sha256: value.listing.deck_manifest_commitment_sha256.clone(),
         deck_format_sha256: value.listing.deck_format_sha256.clone(),
         policy_deployment_commitment_sha256: value.policy_deployment_commitment_sha256.clone(),
+        checkpoint_competitive_capabilities_commitment_sha256: value
+            .checkpoint_capabilities
+            .capabilities_commitment_sha256
+            .clone(),
         duel_perception_profile_commitment_sha256: value
             .duel_perception_profile_commitment_sha256
             .clone(),
@@ -423,6 +442,7 @@ fn validate_all_commitment_digests_v1(
         &value.deck_manifest_commitment_sha256,
         &value.deck_format_sha256,
         &value.policy_deployment_commitment_sha256,
+        &value.checkpoint_competitive_capabilities_commitment_sha256,
         &value.duel_perception_profile_commitment_sha256,
         &value.duel_perception_profile_admission_commitment_sha256,
         &value.duel_perception_runtime_identity_commitment_sha256,
@@ -489,6 +509,24 @@ mod tests {
         let perception_admission = digest('9');
         let gesture_evaluation = digest('a');
         let gesture_admission = digest('b');
+        let mut checkpoint_capabilities = MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
+            schema_version:
+                mtgo_blackbox_v1::MTGO_NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_SCHEMA_V1,
+            deployment_commitment_sha256: policy.clone(),
+            native_duel_action_interface_present: true,
+            native_pregame_interface_present: false,
+            terminal_outcome_trained_pregame_head_present: false,
+            native_sideboard_interface_present: false,
+            terminal_outcome_trained_sideboard_head_present: false,
+            native_changed_sideboard_action_present: false,
+            native_unchanged_sideboard_action_present: false,
+            capabilities_commitment_sha256: String::new(),
+        };
+        checkpoint_capabilities.capabilities_commitment_sha256 =
+            mtgo_blackbox_v1::native_checkpoint_competitive_capabilities_commitment_v1(
+                &checkpoint_capabilities,
+            )
+            .unwrap();
         let sideboard = with_sideboard.then(|| {
             MtgoReviewedCompetitiveSideboardEvaluationRatificationCandidateV1 {
                 profile_commitment_sha256: profile.clone(),
@@ -563,6 +601,7 @@ mod tests {
                 runtime_identity_commitment_sha256: digest('b'),
             },
             policy_deployment_commitment_sha256: policy,
+            checkpoint_capabilities,
             sideboard,
             sideboard_admission_commitment_sha256: with_sideboard.then(|| digest('f')),
         }
@@ -596,6 +635,12 @@ mod tests {
         let mut listing = identity_v1(false);
         listing.listing.policy_deployment_commitment_sha256 = digest('0');
         assert!(validate_operator_resource_identity_v1(&listing).is_err());
+
+        let mut checkpoint = identity_v1(false);
+        checkpoint
+            .checkpoint_capabilities
+            .deployment_commitment_sha256 = digest('0');
+        assert!(validate_operator_resource_identity_v1(&checkpoint).is_err());
 
         let mut lifecycle = identity_v1(false);
         lifecycle.duel_lifecycle_perception_admission_commitment_sha256 = digest('0');

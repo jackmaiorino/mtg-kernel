@@ -24,8 +24,9 @@ use crate::probe::{
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
 };
 use mtgo_blackbox_v1::{
-    MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1,
-    MtgoObservedCompetitiveLifecycleAdvanceV1,
+    validate_native_checkpoint_competitive_capabilities_v1, MtgoCompetitiveEventKindV1,
+    MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1,
+    MtgoNativeCheckpointCompetitiveCapabilitiesV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -46,6 +47,7 @@ pub struct MtgoCompetitivePostEntryOperatorCommitmentsV1 {
     pub deck_manifest_commitment_sha256: String,
     pub deck_format_sha256: String,
     pub policy_deployment_commitment_sha256: String,
+    pub checkpoint_competitive_capabilities_commitment_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub current_phase: MtgoCompetitiveLifecyclePhaseV1,
     pub current_frame_sequence: u64,
@@ -273,6 +275,10 @@ pub fn next_competitive_post_entry_operator_directive_v1(
     let driver = next_competitive_event_driver_directive_v1(&operator.runtime)?;
     directive_from_driver_v1(
         &operator.commitments,
+        operator
+            .resources
+            .checkpoint_deployment
+            .competitive_capabilities_v1(),
         operator.resources.changed_sideboard_evaluation.is_some(),
         &driver,
     )
@@ -477,6 +483,7 @@ struct PostEntryOperatorJoinIdentityV1 {
     resource_deck_manifest_commitment_sha256: String,
     resource_deck_format_sha256: String,
     resource_policy_deployment_commitment_sha256: String,
+    resource_checkpoint_competitive_capabilities_commitment_sha256: String,
     runtime_commitment_sha256: String,
     runtime_navigation_profile_commitment_sha256: String,
     runtime_navigation_profile_admission_commitment_sha256: String,
@@ -512,6 +519,9 @@ fn post_entry_operator_commitments_v1(
         resource_policy_deployment_commitment_sha256: resources
             .policy_deployment_commitment_sha256
             .clone(),
+        resource_checkpoint_competitive_capabilities_commitment_sha256: resources
+            .checkpoint_competitive_capabilities_commitment_sha256
+            .clone(),
         runtime_commitment_sha256: runtime.runtime_commitment_sha256.clone(),
         runtime_navigation_profile_commitment_sha256: runtime
             .navigation_profile_commitment_sha256
@@ -541,6 +551,9 @@ fn post_entry_operator_commitments_v1(
             identity.resource_bundle_commitment_sha256.as_bytes(),
             identity.runtime_commitment_sha256.as_bytes(),
             identity.resource_deck_manifest_commitment_sha256.as_bytes(),
+            identity
+                .resource_checkpoint_competitive_capabilities_commitment_sha256
+                .as_bytes(),
             competitive_event_kind_tag_v1(identity.event_kind),
             competitive_phase_tag_v1(identity.current_phase),
             identity.current_frame_sequence.to_be_bytes().as_slice(),
@@ -560,6 +573,8 @@ fn post_entry_operator_commitments_v1(
         deck_manifest_commitment_sha256: identity.resource_deck_manifest_commitment_sha256,
         deck_format_sha256: identity.resource_deck_format_sha256,
         policy_deployment_commitment_sha256: identity.resource_policy_deployment_commitment_sha256,
+        checkpoint_competitive_capabilities_commitment_sha256: identity
+            .resource_checkpoint_competitive_capabilities_commitment_sha256,
         event_kind: identity.event_kind,
         current_phase: identity.current_phase,
         current_frame_sequence: identity.current_frame_sequence,
@@ -596,6 +611,10 @@ fn validate_post_entry_operator_join_v1(
             &value.resource_policy_deployment_commitment_sha256,
             "resource policy",
         ),
+        (
+            &value.resource_checkpoint_competitive_capabilities_commitment_sha256,
+            "resource checkpoint competitive capabilities",
+        ),
         (&value.runtime_commitment_sha256, "event runtime"),
     ] {
         require_sha256_v1(digest, label)?;
@@ -625,6 +644,7 @@ fn validate_post_entry_operator_join_v1(
 
 fn directive_from_driver_v1(
     operator: &MtgoCompetitivePostEntryOperatorCommitmentsV1,
+    checkpoint: &MtgoNativeCheckpointCompetitiveCapabilitiesV1,
     changed_sideboard_resources_present: bool,
     driver: &MtgoCompetitiveEventDriverDirectiveV1,
 ) -> Result<MtgoCompetitivePostEntryOperatorDirectiveV1, String> {
@@ -637,13 +657,25 @@ fn directive_from_driver_v1(
             "competitive post-entry driver changed the operator runtime lineage".to_owned(),
         );
     }
+    validate_native_checkpoint_competitive_capabilities_v1(checkpoint)
+        .map_err(|error| format!("competitive post-entry checkpoint capabilities: {error}"))?;
+    if checkpoint.deployment_commitment_sha256 != operator.policy_deployment_commitment_sha256
+        || checkpoint.capabilities_commitment_sha256
+            != operator.checkpoint_competitive_capabilities_commitment_sha256
+    {
+        return Err(
+            "competitive post-entry operator checkpoint capabilities changed lineage".to_owned(),
+        );
+    }
     let model = check_competitive_model_decision_readiness_v1();
     let route = route_from_driver_step_v1(
         &driver.step,
         driver.allowed_observed_advances_v1(),
-        model.public_model_owned_pregame_action_path_present,
-        model.public_model_owned_duel_action_path_present,
-        model.public_model_owned_changed_sideboard_path_present
+        checkpoint.pregame_head_ready_v1() && model.public_model_owned_pregame_action_path_present,
+        checkpoint.native_duel_action_interface_present
+            && model.public_model_owned_duel_action_path_present,
+        checkpoint.sideboard_head_ready_v1()
+            && model.public_model_owned_changed_sideboard_path_present
             && model.public_model_owned_unchanged_sideboard_path_present,
         changed_sideboard_resources_present,
     );
@@ -857,6 +889,7 @@ mod tests {
             resource_deck_manifest_commitment_sha256: digest('5'),
             resource_deck_format_sha256: digest('6'),
             resource_policy_deployment_commitment_sha256: digest('7'),
+            resource_checkpoint_competitive_capabilities_commitment_sha256: digest('a'),
             runtime_commitment_sha256: digest('8'),
             runtime_navigation_profile_commitment_sha256: digest('1'),
             runtime_navigation_profile_admission_commitment_sha256: digest('2'),
@@ -882,6 +915,7 @@ mod tests {
             deck_manifest_commitment_sha256: digest('6'),
             deck_format_sha256: digest('7'),
             policy_deployment_commitment_sha256: digest('8'),
+            checkpoint_competitive_capabilities_commitment_sha256: digest('b'),
             event_kind: MtgoCompetitiveEventKindV1::League,
             current_phase: MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
             current_frame_sequence: 10,
@@ -889,6 +923,28 @@ mod tests {
             prior_operator_commitment_sha256: Some(digest('9')),
             operator_commitment_sha256: digest('a'),
         }
+    }
+
+    fn checkpoint_capabilities_v1(
+        native_duel_action_interface_present: bool,
+    ) -> MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
+        let mut value = MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
+            schema_version:
+                mtgo_blackbox_v1::MTGO_NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_SCHEMA_V1,
+            deployment_commitment_sha256: digest('8'),
+            native_duel_action_interface_present,
+            native_pregame_interface_present: false,
+            terminal_outcome_trained_pregame_head_present: false,
+            native_sideboard_interface_present: false,
+            terminal_outcome_trained_sideboard_head_present: false,
+            native_changed_sideboard_action_present: false,
+            native_unchanged_sideboard_action_present: false,
+            capabilities_commitment_sha256: String::new(),
+        };
+        value.capabilities_commitment_sha256 =
+            mtgo_blackbox_v1::native_checkpoint_competitive_capabilities_commitment_v1(&value)
+                .unwrap();
+        value
     }
 
     fn gameplay_lease_v1() -> MtgoCompetitiveEventGameplayLeaseCommitmentsV1 {
@@ -925,6 +981,7 @@ mod tests {
             deck_manifest_commitment_sha256: digest('9'),
             deck_format_sha256: digest('a'),
             policy_deployment_commitment_sha256: digest('b'),
+            checkpoint_competitive_capabilities_commitment_sha256: digest('c'),
             duel_perception_profile_commitment_sha256: digest('c'),
             duel_perception_profile_admission_commitment_sha256: digest('d'),
             duel_perception_runtime_identity_commitment_sha256: digest('e'),
@@ -1070,6 +1127,68 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn gameplay_route_requires_the_exact_loaded_checkpoint_capability() {
+        let unavailable_capabilities = checkpoint_capabilities_v1(false);
+        let mut unavailable_operator = operator_commitments_v1();
+        unavailable_operator.checkpoint_competitive_capabilities_commitment_sha256 =
+            unavailable_capabilities
+                .capabilities_commitment_sha256
+                .clone();
+        let driver = MtgoCompetitiveEventDriverDirectiveV1 {
+            source_runtime_commitment_sha256: unavailable_operator
+                .event_runtime_commitment_sha256
+                .clone(),
+            event_kind: unavailable_operator.event_kind,
+            current_phase: unavailable_operator.current_phase,
+            current_frame_sequence: unavailable_operator.current_frame_sequence,
+            step: MtgoCompetitiveEventDriverStepV1::LaunchGameplay {
+                match_identity_sha256: digest('c'),
+                game_number: 1,
+            },
+        };
+
+        let unavailable = directive_from_driver_v1(
+            &unavailable_operator,
+            &unavailable_capabilities,
+            false,
+            &driver,
+        )
+        .unwrap();
+        assert!(matches!(
+            unavailable.route,
+            MtgoCompetitivePostEntryOperatorRouteV1::LaunchGameplay {
+                native_model_path_present: false,
+                ..
+            }
+        ));
+
+        let available_capabilities = checkpoint_capabilities_v1(true);
+        let mut available_operator = operator_commitments_v1();
+        available_operator.checkpoint_competitive_capabilities_commitment_sha256 =
+            available_capabilities
+                .capabilities_commitment_sha256
+                .clone();
+        let available =
+            directive_from_driver_v1(&available_operator, &available_capabilities, false, &driver)
+                .unwrap();
+        assert!(matches!(
+            available.route,
+            MtgoCompetitivePostEntryOperatorRouteV1::LaunchGameplay {
+                native_model_path_present: true,
+                ..
+            }
+        ));
+
+        assert!(directive_from_driver_v1(
+            &unavailable_operator,
+            &available_capabilities,
+            false,
+            &driver
+        )
+        .is_err());
     }
 
     #[test]

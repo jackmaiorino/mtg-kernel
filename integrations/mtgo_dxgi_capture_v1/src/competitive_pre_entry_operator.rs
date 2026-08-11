@@ -534,6 +534,7 @@ mod tests {
             deck_manifest_commitment_sha256: digest('9'),
             deck_format_sha256: digest('a'),
             policy_deployment_commitment_sha256: digest('b'),
+            checkpoint_competitive_capabilities_commitment_sha256: digest('d'),
             duel_perception_profile_commitment_sha256: digest('c'),
             duel_perception_profile_admission_commitment_sha256: digest('d'),
             duel_perception_runtime_identity_commitment_sha256: digest('e'),
