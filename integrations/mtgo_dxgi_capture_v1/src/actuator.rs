@@ -666,6 +666,7 @@ pub struct MtgoCompetitiveEventRuntimeCommitmentsV1 {
     pub confirmed_lifecycle_action_count: u64,
     pub observed_lifecycle_advance_count: u64,
     pub gameplay_lease_count: u64,
+    pub last_returned_gameplay_frame_sequence: Option<u64>,
     pub event_monitor_chain_commitment_sha256: Option<String>,
     pub event_monitor_observation_count: u64,
     pub terminal_event_record_confirmed: bool,
@@ -2781,6 +2782,7 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         confirmed_lifecycle_action_count: 0,
         observed_lifecycle_advance_count: 0,
         gameplay_lease_count: 0,
+        last_returned_gameplay_frame_sequence: None,
         event_monitor_chain_commitment_sha256: None,
         event_monitor_observation_count: 0,
         terminal_event_record_confirmed: false,
@@ -3121,6 +3123,11 @@ pub fn return_competitive_event_gameplay_session_v1(
         || game.confirmed_action_count < lease.commitments.initial_confirmed_action_count
         || game.last_confirmed_frame_sequence < lease.commitments.checkout_frame_sequence
         || game.last_confirmed_frame_sequence > game.valid_through_frame_sequence
+        || lease
+            .runtime
+            .commitments
+            .last_returned_gameplay_frame_sequence
+            .is_some_and(|prior| game.last_confirmed_frame_sequence < prior)
     {
         return Err("returned gameplay session differs from its exact event lease".to_owned());
     }
@@ -3147,6 +3154,8 @@ pub fn return_competitive_event_gameplay_session_v1(
         .gameplay_lease_count
         .checked_add(1)
         .ok_or("competitive event gameplay lease count overflow")?;
+    runtime.commitments.last_returned_gameplay_frame_sequence =
+        Some(game.last_confirmed_frame_sequence);
     runtime.commitments.runtime_commitment_sha256 = competitive_event_runtime_commitment_v1(
         COMPETITIVE_EVENT_GAMEPLAY_RETURN_DOMAIN_V1,
         Some(lease.commitments.event_runtime_commitment_sha256.as_str()),
@@ -6081,7 +6090,7 @@ fn advance_competitive_event_runtime_commitments_v1(
         || (current.phase != MtgoCompetitiveLifecyclePhaseV1::EventBrowser
             && lifecycle.event_identity_sha256_v1()
                 != Some(prior.bound_event_identity_sha256.as_str()))
-        || current.frame_sequence <= prior.current_frame_sequence
+        || validate_competitive_event_next_frame_order_v1(prior, current.frame_sequence).is_err()
     {
         return Err(
             "competitive event runtime next frame changed its exact event lineage".to_owned(),
@@ -6154,6 +6163,23 @@ fn validate_event_monitor_against_runtime_v1(
     {
         return Err(
             "competitive event monitor differs from the exact runtime event or is stale".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_competitive_event_next_frame_order_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    next_frame_sequence: u64,
+) -> Result<(), String> {
+    if next_frame_sequence <= runtime.current_frame_sequence
+        || runtime
+            .last_returned_gameplay_frame_sequence
+            .is_some_and(|gameplay| next_frame_sequence <= gameplay)
+    {
+        return Err(
+            "competitive event next frame is not newer than its lifecycle and returned-gameplay floors"
+                .to_owned(),
         );
     }
     Ok(())
@@ -6288,6 +6314,15 @@ fn competitive_event_runtime_commitment_v1(
                 .to_be_bytes()
                 .as_slice(),
             value.gameplay_lease_count.to_be_bytes().as_slice(),
+            value
+                .last_returned_gameplay_frame_sequence
+                .map_or([0_u8; 9], |sequence| {
+                    let mut encoded = [0_u8; 9];
+                    encoded[0] = 1;
+                    encoded[1..].copy_from_slice(&sequence.to_be_bytes());
+                    encoded
+                })
+                .as_slice(),
             value
                 .event_monitor_chain_commitment_sha256
                 .as_deref()
@@ -11132,6 +11167,7 @@ mod tests {
             confirmed_lifecycle_action_count: 1,
             observed_lifecycle_advance_count: 2,
             gameplay_lease_count: 0,
+            last_returned_gameplay_frame_sequence: None,
             event_monitor_chain_commitment_sha256: Some("b".repeat(64)),
             event_monitor_observation_count: 4,
             terminal_event_record_confirmed: false,
@@ -11188,6 +11224,17 @@ mod tests {
             )
         );
         state.gameplay_lease_count = 0;
+        state.last_returned_gameplay_frame_sequence = Some(21);
+        assert_ne!(
+            baseline,
+            competitive_event_runtime_commitment_v1(
+                COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+                Some(&prior),
+                &state,
+                b"transition",
+            )
+        );
+        state.last_returned_gameplay_frame_sequence = None;
         state.terminal_event_record_confirmed = true;
         assert_ne!(
             baseline,
@@ -11226,6 +11273,7 @@ mod tests {
             confirmed_lifecycle_action_count: 1,
             observed_lifecycle_advance_count: 3,
             gameplay_lease_count: 0,
+            last_returned_gameplay_frame_sequence: None,
             event_monitor_chain_commitment_sha256: None,
             event_monitor_observation_count: 0,
             terminal_event_record_confirmed: false,
@@ -11344,5 +11392,46 @@ mod tests {
             entry.permission_review_commitment_sha256.clone();
         lifecycle.mode_authorization_commitment_sha256 = "5".repeat(64);
         assert!(validate_competitive_event_authorization_lineage_v1(&entry, &lifecycle).is_err());
+    }
+
+    #[test]
+    fn competitive_event_rejects_lifecycle_frames_not_newer_than_returned_gameplay() {
+        let mut runtime = MtgoCompetitiveEventRuntimeCommitmentsV1 {
+            runtime_commitment_sha256: "0".repeat(64),
+            entry_confirmation_receipt_sha256: "1".repeat(64),
+            entry_ratification_commitment_sha256: "2".repeat(64),
+            entry_authorization_sha256: "3".repeat(64),
+            correspondence_sha256: "4".repeat(64),
+            permission_review_commitment_sha256: "5".repeat(64),
+            lifecycle_authorization_commitment_sha256: "6".repeat(64),
+            mode_authorization_commitment_sha256: "7".repeat(64),
+            navigation_profile_commitment_sha256: "8".repeat(64),
+            navigation_profile_admission_commitment_sha256: "9".repeat(64),
+            approved_account_alias_sha256: "a".repeat(64),
+            bound_event_identity_sha256: "b".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            current_phase: MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            current_lifecycle_snapshot_commitment_sha256: "c".repeat(64),
+            current_match_identity_sha256: Some("d".repeat(64)),
+            current_game_number: Some(1),
+            current_frame_id: 20,
+            current_frame_sequence: 30,
+            lifecycle_transition_count: 4,
+            confirmed_lifecycle_action_count: 1,
+            observed_lifecycle_advance_count: 3,
+            gameplay_lease_count: 1,
+            last_returned_gameplay_frame_sequence: Some(50),
+            event_monitor_chain_commitment_sha256: None,
+            event_monitor_observation_count: 0,
+            terminal_event_record_confirmed: false,
+            closed_to_event_browser: false,
+        };
+
+        assert!(validate_competitive_event_next_frame_order_v1(&runtime, 30).is_err());
+        assert!(validate_competitive_event_next_frame_order_v1(&runtime, 50).is_err());
+        validate_competitive_event_next_frame_order_v1(&runtime, 51).unwrap();
+
+        runtime.last_returned_gameplay_frame_sequence = None;
+        validate_competitive_event_next_frame_order_v1(&runtime, 31).unwrap();
     }
 }
