@@ -1075,6 +1075,93 @@ pub struct MtgoCompetitiveEventRuntimeCommitmentsV1 {
     pub closed_to_event_browser: bool,
 }
 
+/// The next coordinator operation implied by one exact classified event
+/// runtime. This is routing information only. It cannot authorize input,
+/// event entry, spending, or a sideboard selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MtgoCompetitiveEventDriverStepV1 {
+    AwaitPairingOrEventEnd,
+    AcceptPairing,
+    LaunchGameplay {
+        match_identity_sha256: String,
+        game_number: u8,
+    },
+    AwaitGameOutcome {
+        match_identity_sha256: String,
+        game_number: u8,
+    },
+    ResolveSideboard {
+        match_identity_sha256: String,
+        game_number: u8,
+    },
+    ContinueAfterMatch,
+    ResumeMatch {
+        match_identity_sha256: String,
+        game_number: u8,
+    },
+    ObserveTerminalEventRecord,
+    CloseCompletedEvent,
+    Complete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveEventDriverDirectiveV1 {
+    pub source_runtime_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub current_phase: MtgoCompetitiveLifecyclePhaseV1,
+    pub current_frame_sequence: u64,
+    pub step: MtgoCompetitiveEventDriverStepV1,
+}
+
+impl MtgoCompetitiveEventDriverDirectiveV1 {
+    pub fn lifecycle_action_v1(&self) -> Option<MtgoCompetitiveLifecycleActionV1> {
+        match &self.step {
+            MtgoCompetitiveEventDriverStepV1::AcceptPairing => {
+                Some(MtgoCompetitiveLifecycleActionV1::AcceptPairing)
+            }
+            MtgoCompetitiveEventDriverStepV1::ContinueAfterMatch => {
+                Some(MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch)
+            }
+            MtgoCompetitiveEventDriverStepV1::ResumeMatch { .. } => {
+                Some(MtgoCompetitiveLifecycleActionV1::ResumeMatch)
+            }
+            MtgoCompetitiveEventDriverStepV1::CloseCompletedEvent => {
+                Some(MtgoCompetitiveLifecycleActionV1::CloseCompletedEvent)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn allowed_observed_advances_v1(
+        &self,
+    ) -> &'static [MtgoObservedCompetitiveLifecycleAdvanceV1] {
+        match &self.step {
+            MtgoCompetitiveEventDriverStepV1::AwaitPairingOrEventEnd => &[
+                MtgoObservedCompetitiveLifecycleAdvanceV1::PairingPosted,
+                MtgoObservedCompetitiveLifecycleAdvanceV1::EventEnded,
+            ],
+            MtgoCompetitiveEventDriverStepV1::AwaitGameOutcome { .. } => &[
+                MtgoObservedCompetitiveLifecycleAdvanceV1::GameEndedForSideboarding,
+                MtgoObservedCompetitiveLifecycleAdvanceV1::MatchEnded,
+                MtgoObservedCompetitiveLifecycleAdvanceV1::ConnectionInterrupted,
+            ],
+            _ => &[],
+        }
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
 /// Move-only coordinator for one exact, visibly confirmed League or Challenge
 /// entry. It owns the spent entry authorization, the reusable exact-mode
 /// lifecycle authorization, the current opaque classifier-backed frame, and an
@@ -1130,6 +1217,151 @@ impl OpaqueMtgoCompetitiveEventRuntimeV1 {
 
     pub fn permits_additional_spending_v1(&self) -> bool {
         false
+    }
+}
+
+/// Derives the only next high-level driver branch from the current opaque
+/// event runtime. Input-producing branches still have to pass their existing
+/// ratification, immediate-recapture, shared-gate, and visible-postcondition
+/// boundaries. The directive itself carries no authority.
+pub fn next_competitive_event_driver_directive_v1(
+    runtime: &OpaqueMtgoCompetitiveEventRuntimeV1,
+) -> Result<MtgoCompetitiveEventDriverDirectiveV1, String> {
+    competitive_event_driver_directive_from_commitments_v1(&runtime.commitments)
+}
+
+fn competitive_event_driver_directive_from_commitments_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+) -> Result<MtgoCompetitiveEventDriverDirectiveV1, String> {
+    if runtime.gameplay_lease_count == 0 && runtime.last_returned_gameplay_frame_sequence.is_some()
+        || runtime.gameplay_lease_count > 0
+            && runtime.last_returned_gameplay_frame_sequence.is_none()
+    {
+        return Err(
+            "competitive event runtime has inconsistent gameplay checkout and return state"
+                .to_owned(),
+        );
+    }
+    if runtime.closed_to_event_browser {
+        if runtime.current_phase != MtgoCompetitiveLifecyclePhaseV1::EventBrowser
+            || !runtime.terminal_event_record_confirmed
+        {
+            return Err(
+                "closed competitive event runtime lacks its terminal record or browser return"
+                    .to_owned(),
+            );
+        }
+        return Ok(competitive_event_driver_directive_v1(
+            runtime,
+            MtgoCompetitiveEventDriverStepV1::Complete,
+        ));
+    }
+
+    let step = match runtime.current_phase {
+        MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing => {
+            MtgoCompetitiveEventDriverStepV1::AwaitPairingOrEventEnd
+        }
+        MtgoCompetitiveLifecyclePhaseV1::PairingReady => {
+            require_competitive_event_runtime_match_identity_v1(runtime)?;
+            if runtime.current_game_number.is_some() {
+                return Err(
+                    "competitive event driver found a game number before gameplay".to_owned(),
+                );
+            }
+            MtgoCompetitiveEventDriverStepV1::AcceptPairing
+        }
+        MtgoCompetitiveLifecyclePhaseV1::MatchInProgress => {
+            let (match_identity_sha256, game_number) =
+                require_competitive_event_runtime_match_and_game_v1(runtime)?;
+            if runtime
+                .last_returned_gameplay_frame_sequence
+                .is_some_and(|returned| returned >= runtime.current_frame_sequence)
+            {
+                MtgoCompetitiveEventDriverStepV1::AwaitGameOutcome {
+                    match_identity_sha256,
+                    game_number,
+                }
+            } else {
+                MtgoCompetitiveEventDriverStepV1::LaunchGameplay {
+                    match_identity_sha256,
+                    game_number,
+                }
+            }
+        }
+        MtgoCompetitiveLifecyclePhaseV1::Sideboarding => {
+            let (match_identity_sha256, game_number) =
+                require_competitive_event_runtime_match_and_game_v1(runtime)?;
+            MtgoCompetitiveEventDriverStepV1::ResolveSideboard {
+                match_identity_sha256,
+                game_number,
+            }
+        }
+        MtgoCompetitiveLifecyclePhaseV1::MatchComplete => {
+            require_competitive_event_runtime_match_identity_v1(runtime)?;
+            if runtime.current_game_number.is_some() {
+                return Err(
+                    "competitive event driver found a game number after match completion"
+                        .to_owned(),
+                );
+            }
+            MtgoCompetitiveEventDriverStepV1::ContinueAfterMatch
+        }
+        MtgoCompetitiveLifecyclePhaseV1::EventComplete => {
+            if runtime.terminal_event_record_confirmed {
+                MtgoCompetitiveEventDriverStepV1::CloseCompletedEvent
+            } else {
+                MtgoCompetitiveEventDriverStepV1::ObserveTerminalEventRecord
+            }
+        }
+        MtgoCompetitiveLifecyclePhaseV1::Reconnect => {
+            let (match_identity_sha256, game_number) =
+                require_competitive_event_runtime_match_and_game_v1(runtime)?;
+            MtgoCompetitiveEventDriverStepV1::ResumeMatch {
+                match_identity_sha256,
+                game_number,
+            }
+        }
+        MtgoCompetitiveLifecyclePhaseV1::EventBrowser
+        | MtgoCompetitiveLifecyclePhaseV1::EntryReview => {
+            return Err(
+                "an open competitive event runtime cannot route from a pre-entry phase".to_owned(),
+            );
+        }
+    };
+    Ok(competitive_event_driver_directive_v1(runtime, step))
+}
+
+fn require_competitive_event_runtime_match_identity_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+) -> Result<String, String> {
+    runtime
+        .current_match_identity_sha256
+        .clone()
+        .ok_or_else(|| {
+            "competitive event driver requires the current exact match identity".to_owned()
+        })
+}
+
+fn require_competitive_event_runtime_match_and_game_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+) -> Result<(String, u8), String> {
+    let match_identity_sha256 = require_competitive_event_runtime_match_identity_v1(runtime)?;
+    let game_number = runtime
+        .current_game_number
+        .ok_or("competitive event driver requires the current exact game number")?;
+    Ok((match_identity_sha256, game_number))
+}
+
+fn competitive_event_driver_directive_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    step: MtgoCompetitiveEventDriverStepV1,
+) -> MtgoCompetitiveEventDriverDirectiveV1 {
+    MtgoCompetitiveEventDriverDirectiveV1 {
+        source_runtime_commitment_sha256: runtime.runtime_commitment_sha256.clone(),
+        event_kind: runtime.event_kind,
+        current_phase: runtime.current_phase,
+        current_frame_sequence: runtime.current_frame_sequence,
+        step,
     }
 }
 
@@ -12696,6 +12928,60 @@ mod tests {
         }
     }
 
+    fn competitive_event_runtime_commitments_fixture_v1(
+        phase: MtgoCompetitiveLifecyclePhaseV1,
+    ) -> MtgoCompetitiveEventRuntimeCommitmentsV1 {
+        let match_required = matches!(
+            phase,
+            MtgoCompetitiveLifecyclePhaseV1::PairingReady
+                | MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+                | MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+                | MtgoCompetitiveLifecyclePhaseV1::MatchComplete
+                | MtgoCompetitiveLifecyclePhaseV1::Reconnect
+        );
+        let game_required = matches!(
+            phase,
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+                | MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+                | MtgoCompetitiveLifecyclePhaseV1::Reconnect
+        );
+        MtgoCompetitiveEventRuntimeCommitmentsV1 {
+            runtime_commitment_sha256: "c".repeat(64),
+            entry_confirmation_receipt_sha256: "1".repeat(64),
+            entry_ratification_commitment_sha256: "2".repeat(64),
+            entry_authorization_sha256: "d".repeat(64),
+            correspondence_sha256: "e".repeat(64),
+            permission_review_commitment_sha256: "f".repeat(64),
+            deck_manifest_sha256: "0".repeat(64),
+            deck_format_sha256: "1".repeat(64),
+            selected_deck_label_sha256: "2".repeat(64),
+            selected_deck_region_sha256: "3".repeat(64),
+            policy_deployment_commitment_sha256: "4".repeat(64),
+            lifecycle_authorization_commitment_sha256: "3".repeat(64),
+            mode_authorization_commitment_sha256: "4".repeat(64),
+            navigation_profile_commitment_sha256: "5".repeat(64),
+            navigation_profile_admission_commitment_sha256: "6".repeat(64),
+            approved_account_alias_sha256: "7".repeat(64),
+            bound_event_identity_sha256: "8".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            current_phase: phase,
+            current_lifecycle_snapshot_commitment_sha256: "9".repeat(64),
+            current_match_identity_sha256: match_required.then(|| "a".repeat(64)),
+            current_game_number: game_required.then_some(1),
+            current_frame_id: 10,
+            current_frame_sequence: 20,
+            lifecycle_transition_count: 3,
+            confirmed_lifecycle_action_count: 1,
+            observed_lifecycle_advance_count: 2,
+            gameplay_lease_count: 0,
+            last_returned_gameplay_frame_sequence: None,
+            event_monitor_chain_commitment_sha256: None,
+            event_monitor_observation_count: 0,
+            terminal_event_record_confirmed: false,
+            closed_to_event_browser: false,
+        }
+    }
+
     #[allow(clippy::type_complexity)]
     fn selected_listing_entry_bridge_parts_v1(
         event_kind: MtgoCompetitiveEventKindV1,
@@ -15506,6 +15792,148 @@ mod tests {
                 b"transition",
             )
         );
+    }
+
+    #[test]
+    fn competitive_event_driver_routes_every_post_entry_phase_and_rejects_drift() {
+        let waiting = competitive_event_driver_directive_from_commitments_v1(
+            &competitive_event_runtime_commitments_fixture_v1(
+                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            waiting.step,
+            MtgoCompetitiveEventDriverStepV1::AwaitPairingOrEventEnd
+        );
+        assert_eq!(
+            waiting.allowed_observed_advances_v1(),
+            &[
+                MtgoObservedCompetitiveLifecycleAdvanceV1::PairingPosted,
+                MtgoObservedCompetitiveLifecycleAdvanceV1::EventEnded,
+            ]
+        );
+        assert!(!waiting.safe_for_live_input_v1());
+        assert!(!waiting.permits_event_entry_v1());
+        assert!(!waiting.permits_spending_v1());
+
+        let pairing = competitive_event_driver_directive_from_commitments_v1(
+            &competitive_event_runtime_commitments_fixture_v1(
+                MtgoCompetitiveLifecyclePhaseV1::PairingReady,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            pairing.lifecycle_action_v1(),
+            Some(MtgoCompetitiveLifecycleActionV1::AcceptPairing)
+        );
+
+        let mut gameplay = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+        );
+        assert!(matches!(
+            competitive_event_driver_directive_from_commitments_v1(&gameplay)
+                .unwrap()
+                .step,
+            MtgoCompetitiveEventDriverStepV1::LaunchGameplay { game_number: 1, .. }
+        ));
+        gameplay.gameplay_lease_count = 1;
+        gameplay.last_returned_gameplay_frame_sequence = Some(gameplay.current_frame_sequence);
+        let outcome = competitive_event_driver_directive_from_commitments_v1(&gameplay).unwrap();
+        assert!(matches!(
+            &outcome.step,
+            MtgoCompetitiveEventDriverStepV1::AwaitGameOutcome { game_number: 1, .. }
+        ));
+        assert_eq!(
+            outcome.allowed_observed_advances_v1(),
+            &[
+                MtgoObservedCompetitiveLifecycleAdvanceV1::GameEndedForSideboarding,
+                MtgoObservedCompetitiveLifecycleAdvanceV1::MatchEnded,
+                MtgoObservedCompetitiveLifecycleAdvanceV1::ConnectionInterrupted,
+            ]
+        );
+        gameplay.current_frame_sequence += 1;
+        assert!(matches!(
+            competitive_event_driver_directive_from_commitments_v1(&gameplay)
+                .unwrap()
+                .step,
+            MtgoCompetitiveEventDriverStepV1::LaunchGameplay { .. }
+        ));
+
+        let sideboard = competitive_event_driver_directive_from_commitments_v1(
+            &competitive_event_runtime_commitments_fixture_v1(
+                MtgoCompetitiveLifecyclePhaseV1::Sideboarding,
+            ),
+        )
+        .unwrap();
+        assert!(matches!(
+            sideboard.step,
+            MtgoCompetitiveEventDriverStepV1::ResolveSideboard { game_number: 1, .. }
+        ));
+
+        let continued = competitive_event_driver_directive_from_commitments_v1(
+            &competitive_event_runtime_commitments_fixture_v1(
+                MtgoCompetitiveLifecyclePhaseV1::MatchComplete,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            continued.lifecycle_action_v1(),
+            Some(MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch)
+        );
+
+        let resumed = competitive_event_driver_directive_from_commitments_v1(
+            &competitive_event_runtime_commitments_fixture_v1(
+                MtgoCompetitiveLifecyclePhaseV1::Reconnect,
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            resumed.lifecycle_action_v1(),
+            Some(MtgoCompetitiveLifecycleActionV1::ResumeMatch)
+        );
+
+        let mut completed = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::EventComplete,
+        );
+        assert_eq!(
+            competitive_event_driver_directive_from_commitments_v1(&completed)
+                .unwrap()
+                .step,
+            MtgoCompetitiveEventDriverStepV1::ObserveTerminalEventRecord
+        );
+        completed.terminal_event_record_confirmed = true;
+        let close = competitive_event_driver_directive_from_commitments_v1(&completed).unwrap();
+        assert_eq!(
+            close.lifecycle_action_v1(),
+            Some(MtgoCompetitiveLifecycleActionV1::CloseCompletedEvent)
+        );
+
+        completed.current_phase = MtgoCompetitiveLifecyclePhaseV1::EventBrowser;
+        completed.closed_to_event_browser = true;
+        assert_eq!(
+            competitive_event_driver_directive_from_commitments_v1(&completed)
+                .unwrap()
+                .step,
+            MtgoCompetitiveEventDriverStepV1::Complete
+        );
+
+        let pre_entry = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::EntryReview,
+        );
+        assert!(competitive_event_driver_directive_from_commitments_v1(&pre_entry).is_err());
+
+        let mut inconsistent = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+        );
+        inconsistent.gameplay_lease_count = 1;
+        assert!(competitive_event_driver_directive_from_commitments_v1(&inconsistent).is_err());
+
+        let mut missing_match = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::Sideboarding,
+        );
+        missing_match.current_match_identity_sha256 = None;
+        assert!(competitive_event_driver_directive_from_commitments_v1(&missing_match).is_err());
     }
 
     #[test]
