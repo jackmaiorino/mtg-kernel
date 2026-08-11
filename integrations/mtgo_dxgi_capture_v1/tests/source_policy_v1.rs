@@ -454,6 +454,7 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
 #[test]
 fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
     let source = include_str!("../src/actuator.rs");
+    let duel_runtime = include_str!("../src/probe/duel_perception_runtime.rs");
     for required in [
         "RATIFIED_PRIVATE_MATCH_AUTHORIZATION_COMMITMENT_V3: Option<&str> = None",
         "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
@@ -464,8 +465,8 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "ratify_competitive_duel_pass_authorization_from_correspondence_v2",
         "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
         "ratify_competitive_match_launch_v1",
-        "ratify_competitive_match_launch_attended_v3",
-        "MtgoAttendedCompetitiveMatchLaunchRequestV3",
+        "ratify_competitive_match_launch_attended_v4",
+        "OpaqueMtgoCompetitiveLaunchIdentityV1",
         "event_display_label",
         "opponent_display_name",
         "stdin.is_terminal()",
@@ -494,8 +495,21 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
             "live actuator is missing required guard: {required}"
         );
     }
+    for required in [
+        "bind_opaque_duel_perception_to_competitive_launch_identity_v1",
+        "OpaqueMtgoCompetitiveLaunchIdentityV1",
+        "visible_facts_v1()",
+        "parse_competitive_duel_window_title_v1",
+        "event_label_region_sha256",
+    ] {
+        assert!(
+            duel_runtime.contains(required),
+            "duel launch identity is missing required source binding: {required}"
+        );
+    }
     for forbidden in [
         "ratify_competitive_match_launch_attended_v2",
+        "pub fn ratify_competitive_match_launch_attended_v3",
         "INPUT_KEYBOARD",
         "KEYBDINPUT",
         "keybd_event",

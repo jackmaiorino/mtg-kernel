@@ -22,8 +22,9 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
     CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
     CheckedUntrustedMtgoProfileBoundResolvedActionControlV1, MtgoAuthorizationScopeV1,
-    MtgoCompetitiveEventKindV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
-    MtgoDuelActionFamilyV1, MtgoDxgiCaptureRoleV2, MtgoEvidenceSourceV1,
+    MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1,
+    MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDuelActionFamilyV1, MtgoDxgiCaptureRoleV2,
+    MtgoEvidenceSourceV1, MtgoLifecycleVisibleFactKindV1,
     MtgoExpectedModelDeploymentV1, MtgoExternalObservationScorerV1,
     MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
     MtgoProfileBoundPostconditionAfterFrameMetadataV1,
@@ -50,6 +51,8 @@ const DUEL_PERCEPTION_REQUEST_DOMAIN_V1: &[u8] = b"mtgo-duel-perception-request-
 const DUEL_PERCEPTION_RESULT_DOMAIN_V1: &[u8] = b"mtgo-duel-perception-result-v1";
 const DUEL_OPAQUE_MODEL_SELECTION_DOMAIN_V1: &[u8] = b"mtgo-opaque-duel-model-selection-v1";
 const DUEL_OPAQUE_CONTROL_RESOLUTION_DOMAIN_V1: &[u8] = b"mtgo-opaque-duel-control-resolution-v1";
+const DUEL_OPAQUE_COMPETITIVE_LAUNCH_IDENTITY_DOMAIN_V1: &[u8] =
+    b"mtgo-opaque-competitive-launch-visible-identity-v1";
 const DUEL_OPAQUE_COMPETITIVE_ACTION_PLAN_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-action-plan-v1";
 const DUEL_OPAQUE_COMPETITIVE_PASS_PREPARATION_DOMAIN_V1: &[u8] =
@@ -249,6 +252,339 @@ impl OpaqueMtgoAdmittedDuelPerceptionV1 {
     pub fn permits_event_entry_v1(&self) -> bool {
         false
     }
+}
+
+/// Copyable commitments for one owner-readable League or Challenge launch
+/// identity derived from the exact opaque perception frame. This telemetry is
+/// not itself an authorization or input capability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1 {
+    pub source_capture_commitment_sha256: String,
+    pub perception_result_commitment_sha256: String,
+    pub lifecycle_snapshot_commitment_sha256: String,
+    pub window_title_sha256: String,
+    pub event_label_region_sha256: String,
+    pub launch_identity_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub game_number: u8,
+    pub frame_id: u64,
+    pub frame_sequence: u64,
+}
+
+/// Exact visible match identity for an attended competitive launch. Only the
+/// opaque frame-and-lifecycle binder can construct this move-only value. The
+/// event label remains a human-reviewed interpretation of the committed pixel
+/// region, while the opponent and visible match IDs are parsed from the exact
+/// stable MTGO window title.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveLaunchIdentityV1;
+/// let _forged = OpaqueMtgoCompetitiveLaunchIdentityV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveLaunchIdentityV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveLaunchIdentityV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveLaunchIdentityV1 {
+    commitments: MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1,
+    event_display_label: String,
+    opponent_display_name: String,
+    visible_match_id: String,
+    visible_game_id: String,
+    event_identity_sha256: String,
+    match_identity_sha256: String,
+    entry_authorization_sha256: String,
+}
+
+impl OpaqueMtgoCompetitiveLaunchIdentityV1 {
+    pub fn commitments_v1(&self) -> MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub(crate) fn event_display_label_v1(&self) -> &str {
+        &self.event_display_label
+    }
+
+    pub(crate) fn opponent_display_name_v1(&self) -> &str {
+        &self.opponent_display_name
+    }
+
+    pub(crate) fn visible_match_id_v1(&self) -> &str {
+        &self.visible_match_id
+    }
+
+    pub(crate) fn visible_game_id_v1(&self) -> &str {
+        &self.visible_game_id
+    }
+
+    pub(crate) fn event_identity_sha256_v1(&self) -> &str {
+        &self.event_identity_sha256
+    }
+
+    pub(crate) fn match_identity_sha256_v1(&self) -> &str {
+        &self.match_identity_sha256
+    }
+
+    pub(crate) fn entry_authorization_sha256_v1(&self) -> &str {
+        &self.entry_authorization_sha256
+    }
+}
+
+/// Binds the owner-readable launch identity to the exact retained DXGI pixels,
+/// exact classifier result, and same-frame competitive lifecycle snapshot.
+/// Every lifecycle fact region is rehashed against the retained pixels. This
+/// performs no OCR and grants no input or event-entry authority.
+pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
+    perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    event_display_label: String,
+    event_label_rect_client_px: MtgoRectPxV1,
+    entry_authorization_sha256: String,
+) -> Result<OpaqueMtgoCompetitiveLaunchIdentityV1, String> {
+    if lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress {
+        return Err("competitive launch identity requires match-in-progress pixels".to_owned());
+    }
+    let perception_commitments = perception.commitments_v1();
+    let source = &perception.source_frame.source_frame;
+    let source_capture = &perception_commitments.source_frame.source_capture;
+    let source_size = MtgoSizePxV1 {
+        width: source_capture.canonical_width,
+        height: source_capture.canonical_height,
+    };
+    let client_bounds = lifecycle.client_bounds_v1();
+    if lifecycle.frame_id_v1() != perception_commitments.frame_id
+        || lifecycle.frame_sequence() != perception_commitments.frame_sequence
+        || lifecycle.frame_sha256_v1() != source_capture.canonical_bgra8_sha256
+        || client_bounds.x != 0
+        || client_bounds.y != 0
+        || client_bounds.width != source_capture.canonical_width
+        || client_bounds.height != source_capture.canonical_height
+    {
+        return Err(
+            "competitive launch lifecycle does not describe the exact opaque perception frame"
+                .to_owned(),
+        );
+    }
+    for fact in lifecycle.visible_facts_v1() {
+        let actual = visible_frame_region_content_sha256_v1(
+            &source.canonical_bgra8,
+            &source_size,
+            &fact.rect_client_px,
+        )
+        .map_err(|error| format!("rehash competitive lifecycle fact pixels: {error}"))?;
+        if actual != fact.content_sha256 {
+            return Err(
+                "competitive lifecycle fact does not match the retained source pixels".to_owned(),
+            );
+        }
+    }
+
+    validate_competitive_launch_display_label_v1(
+        &event_display_label,
+        160,
+        "event display label",
+    )?;
+    let required_mode_word = match lifecycle.event_kind() {
+        MtgoCompetitiveEventKindV1::League => "league",
+        MtgoCompetitiveEventKindV1::Challenge => "challenge",
+    };
+    if !event_display_label
+        .to_ascii_lowercase()
+        .contains(required_mode_word)
+    {
+        return Err("event display label does not identify the selected competitive mode".to_owned());
+    }
+    if event_label_rect_client_px.width < 8 || event_label_rect_client_px.height < 8 {
+        return Err("event display label region is too small for human review".to_owned());
+    }
+    let match_surface_rect = lifecycle
+        .visible_facts_v1()
+        .iter()
+        .find(|fact| fact.kind == MtgoLifecycleVisibleFactKindV1::MatchSurfaceVisible)
+        .map(|fact| &fact.rect_client_px)
+        .ok_or("match lifecycle is missing its visible match surface")?;
+    if !rect_contains_rect_v1(match_surface_rect, &event_label_rect_client_px)? {
+        return Err("event display label region is outside the visible match surface".to_owned());
+    }
+    let event_label_region_sha256 = visible_frame_region_content_sha256_v1(
+        &source.canonical_bgra8,
+        &source_size,
+        &event_label_rect_client_px,
+    )
+    .map_err(|error| format!("hash competitive event label pixels: {error}"))?;
+
+    let manifest = &source.manifest;
+    if manifest.pre.title != manifest.post.title {
+        return Err("competitive launch window title changed during capture".to_owned());
+    }
+    let (opponent_display_name, visible_match_id, visible_game_id) =
+        parse_competitive_duel_window_title_v1(
+            &manifest.pre.title,
+            &manifest.expected_game_format,
+        )?;
+    validate_competitive_launch_display_label_v1(
+        &opponent_display_name,
+        64,
+        "opponent display name",
+    )?;
+    if !looks_like_lower_sha256_v1(&entry_authorization_sha256) {
+        return Err("competitive entry authorization must be lowercase SHA-256".to_owned());
+    }
+    let event_identity_sha256 = lifecycle
+        .event_identity_sha256_v1()
+        .ok_or("match lifecycle is missing the event identity")?
+        .to_owned();
+    let match_identity_sha256 = lifecycle
+        .match_identity_sha256_v1()
+        .ok_or("match lifecycle is missing the match identity")?
+        .to_owned();
+    if entry_authorization_sha256 == event_identity_sha256
+        || entry_authorization_sha256 == match_identity_sha256
+    {
+        return Err("entry, event, and match identities must be distinct".to_owned());
+    }
+    let game_number = lifecycle
+        .game_number_v1()
+        .ok_or("match lifecycle is missing the game number")?;
+    let rect_json = serde_json::to_vec(&event_label_rect_client_px)
+        .map_err(|error| format!("serialize competitive event label region: {error}"))?;
+    let event_kind_json = serde_json::to_vec(&lifecycle.event_kind())
+        .map_err(|error| format!("serialize competitive launch mode: {error}"))?;
+    let window_title_sha256 = sha256_hex_v1(manifest.pre.title.as_bytes());
+    let launch_identity_commitment_sha256 = commitment_v1(
+        DUEL_OPAQUE_COMPETITIVE_LAUNCH_IDENTITY_DOMAIN_V1,
+        &[
+            source_capture.capture_commitment_sha256.as_bytes(),
+            perception_commitments
+                .perception_result_commitment_sha256
+                .as_bytes(),
+            lifecycle.snapshot_commitment_sha256().as_bytes(),
+            window_title_sha256.as_bytes(),
+            event_display_label.as_bytes(),
+            &rect_json,
+            event_label_region_sha256.as_bytes(),
+            opponent_display_name.as_bytes(),
+            visible_match_id.as_bytes(),
+            visible_game_id.as_bytes(),
+            &event_kind_json,
+            event_identity_sha256.as_bytes(),
+            match_identity_sha256.as_bytes(),
+            &[game_number],
+            entry_authorization_sha256.as_bytes(),
+            b"source_bound_owner_review_only_no_input_or_event_entry_authority",
+        ],
+    );
+    Ok(OpaqueMtgoCompetitiveLaunchIdentityV1 {
+        commitments: MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1 {
+            source_capture_commitment_sha256: source_capture
+                .capture_commitment_sha256
+                .clone(),
+            perception_result_commitment_sha256: perception_commitments
+                .perception_result_commitment_sha256,
+            lifecycle_snapshot_commitment_sha256: lifecycle
+                .snapshot_commitment_sha256()
+                .to_owned(),
+            window_title_sha256,
+            event_label_region_sha256,
+            launch_identity_commitment_sha256,
+            event_kind: lifecycle.event_kind(),
+            game_number,
+            frame_id: perception_commitments.frame_id,
+            frame_sequence: perception_commitments.frame_sequence,
+        },
+        event_display_label,
+        opponent_display_name,
+        visible_match_id,
+        visible_game_id,
+        event_identity_sha256,
+        match_identity_sha256,
+        entry_authorization_sha256,
+    })
+}
+
+fn parse_competitive_duel_window_title_v1(
+    title: &str,
+    expected_game_format: &str,
+) -> Result<(String, String, String), String> {
+    let prefix = format!("(1-on-1): {expected_game_format}: Vs. ");
+    let remainder = title
+        .strip_prefix(&prefix)
+        .ok_or("competitive duel title does not match the admitted game format")?;
+    let (opponent, identity) = remainder
+        .split_once(" Match #")
+        .ok_or("competitive duel title is missing visible match and game IDs")?;
+    let (visible_match_id, visible_game_id) = identity
+        .split_once(" - Game #")
+        .ok_or("competitive duel title has malformed visible match and game IDs")?;
+    if opponent.is_empty()
+        || opponent.trim() != opponent
+        || opponent.contains(',')
+        || visible_match_id.is_empty()
+        || visible_match_id.len() > 32
+        || visible_game_id.is_empty()
+        || visible_game_id.len() > 32
+        || !visible_match_id.bytes().all(|byte| byte.is_ascii_digit())
+        || !visible_game_id.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("competitive duel title identity is invalid".to_owned());
+    }
+    Ok((
+        opponent.to_owned(),
+        visible_match_id.to_owned(),
+        visible_game_id.to_owned(),
+    ))
+}
+
+fn validate_competitive_launch_display_label_v1(
+    value: &str,
+    max_bytes: usize,
+    field: &str,
+) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > max_bytes
+        || value.trim() != value
+        || !value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+    {
+        return Err(format!(
+            "competitive {field} must be nonempty, trimmed, bounded ASCII display text"
+        ));
+    }
+    Ok(())
+}
+
+fn rect_contains_rect_v1(outer: &MtgoRectPxV1, inner: &MtgoRectPxV1) -> Result<bool, String> {
+    let outer_right = outer
+        .x
+        .checked_add(outer.width)
+        .ok_or("outer rectangle x overflow")?;
+    let outer_bottom = outer
+        .y
+        .checked_add(outer.height)
+        .ok_or("outer rectangle y overflow")?;
+    let inner_right = inner
+        .x
+        .checked_add(inner.width)
+        .ok_or("inner rectangle x overflow")?;
+    let inner_bottom = inner
+        .y
+        .checked_add(inner.height)
+        .ok_or("inner rectangle y overflow")?;
+    Ok(inner.width > 0
+        && inner.height > 0
+        && inner.x >= outer.x
+        && inner.y >= outer.y
+        && inner_right <= outer_right
+        && inner_bottom <= outer_bottom)
 }
 
 /// Copyable scoring telemetry without an observation, semantic, coordinate, or
@@ -2154,6 +2490,63 @@ fn looks_like_lower_sha256_v1(value: &str) -> bool {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn competitive_launch_title_parser_requires_exact_visible_identity() {
+        assert_eq!(
+            parse_competitive_duel_window_title_v1(
+                "(1-on-1): Modern: Vs. VisibleOpponent Match #123 - Game #456",
+                "Modern",
+            )
+            .unwrap(),
+            (
+                "VisibleOpponent".to_owned(),
+                "123".to_owned(),
+                "456".to_owned(),
+            )
+        );
+        for title in [
+            "(1-on-1): Legacy: Vs. VisibleOpponent Match #123 - Game #456",
+            "(1-on-1): Modern: Vs. VisibleOpponent",
+            "(1-on-1): Modern: Vs. A, B Match #123 - Game #456",
+            "(1-on-1): Modern: Vs. VisibleOpponent Match #abc - Game #456",
+            "(1-on-1): Modern: Vs. VisibleOpponent Match #123 - Game #xyz",
+        ] {
+            assert!(parse_competitive_duel_window_title_v1(title, "Modern").is_err());
+        }
+        assert!(validate_competitive_launch_display_label_v1(
+            "\u{202e}spoof",
+            64,
+            "opponent display name"
+        )
+        .is_err());
+        let outer = MtgoRectPxV1 {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 50,
+        };
+        assert!(rect_contains_rect_v1(
+            &outer,
+            &MtgoRectPxV1 {
+                x: 15,
+                y: 25,
+                width: 8,
+                height: 8,
+            }
+        )
+        .unwrap());
+        assert!(!rect_contains_rect_v1(
+            &outer,
+            &MtgoRectPxV1 {
+                x: 105,
+                y: 25,
+                width: 8,
+                height: 8,
+            }
+        )
+        .unwrap());
+    }
 
     fn request_header_v1(pixels: &[u8]) -> MtgoDuelPerceptionRequestHeaderV1 {
         MtgoDuelPerceptionRequestHeaderV1 {
