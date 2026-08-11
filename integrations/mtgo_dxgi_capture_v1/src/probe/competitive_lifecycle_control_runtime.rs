@@ -144,7 +144,7 @@ pub fn bind_classified_navigation_frame_to_lifecycle_control_v1(
 /// Binds Submit Deck only after the exact model-selected changed configuration
 /// is already visible on this same retained frame. This cannot be invoked with
 /// a generic boolean or with the no-change lifecycle path.
-pub fn bind_classified_navigation_frame_to_confirmed_sideboard_submit_control_v1(
+pub(crate) fn bind_classified_navigation_frame_to_confirmed_sideboard_submit_control_v1(
     source: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     ready: CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
     authorization: &MtgoAuthorizationScopeV1,

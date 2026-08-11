@@ -17,8 +17,10 @@ deterministic transfers, perform one-card drags with immediate visible
 confirmation, and submit only a newer exact target configuration. The event
 coordinator deliberately has no production constructor that turns an arbitrary
 application-supplied target configuration into that changed-sideboard chain.
-The currently reachable no-change submission is an automation fallback, not a
-decision attributable to the mtg-kernel model.
+The driver also always stops at sideboard resolution, and generic lifecycle
+preparation rejects Submit Deck unless the control retains exact target-ready
+provenance. Unchanged submission remains unavailable until a future opaque
+native model decision supplies its proof.
 
 ## Required mtg-kernel match surface
 
@@ -108,8 +110,8 @@ Once the native surface exists, the adapter should:
 6. reuse the existing deterministic transfer order, immediate recapture,
    one-drag shared gate, exact visible inventory confirmation, and proof-specific
    Submit Deck path without changing their input behavior;
-7. route an unchanged model submission through the existing no-change control
-   path while retaining the model decision commitment;
+7. add a proof-specific unchanged binder that consumes the opaque native
+   `SubmitConfiguration` result while retaining the model decision commitment;
 8. remove any production route in which application code can supply
    `MtgoCompetitiveSideboardSelectionV1` without the opaque native scorer result.
 

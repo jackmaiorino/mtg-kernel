@@ -540,6 +540,8 @@ fn competitive_sideboard_measurement_is_pixel_bound_event_bound_and_non_actionab
         "official_mtgo_drag_between_visible_zones_one_card_per_input",
         "strictly_newer_exact_inventory_confirmation_after_each_drag",
         "changed_sideboard_submit_only_after_exact_target_ready",
+        "generic competitive lifecycle preparation cannot submit a sideboard without exact model-selected target provenance",
+        "competitive event runtime cannot submit an unchanged sideboard without an opaque native model decision",
         "no_double_click_no_keyboard_no_hidden_channels_no_event_entry_no_spending",
         "halt_before_input_attempt_v3",
         "set_pending_v3",
@@ -560,12 +562,21 @@ fn competitive_sideboard_measurement_is_pixel_bound_event_bound_and_non_actionab
         "SendMessage",
         "ReadProcessMemory",
         "WriteProcessMemory",
+        "SubmitUnchangedSideboard",
     ] {
         assert!(
             !coordinator.contains(forbidden),
             "event sideboard coordinator exposes a forbidden authority or channel: {forbidden}"
         );
     }
+
+    let lifecycle_control = include_str!("../src/probe/competitive_lifecycle_control_runtime.rs");
+    assert!(lifecycle_control.contains(
+        "pub(crate) fn bind_classified_navigation_frame_to_confirmed_sideboard_submit_control_v1"
+    ));
+    let public_exports = include_str!("../src/lib.rs");
+    assert!(!public_exports
+        .contains("bind_classified_navigation_frame_to_confirmed_sideboard_submit_control_v1"));
 }
 
 #[test]
@@ -583,8 +594,6 @@ fn competitive_event_runtime_is_move_only_identity_bound_and_terminal_record_gat
         "LaunchGameplay",
         "AwaitGameOutcome",
         "ResolveSideboard",
-        "SubmitUnchangedSideboard",
-        "MtgoLifecycleVisibleFactKindV1::SideboardNoChangesConfirmed",
         "ContinueAfterMatch",
         "ResumeMatch",
         "BeginTerminalEventRecordMonitor",
