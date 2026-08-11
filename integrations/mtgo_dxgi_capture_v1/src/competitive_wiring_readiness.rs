@@ -24,6 +24,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub end_to_end_operator_loop_present: bool,
     pub native_checkpoint_duel_action_interface_present: bool,
     pub native_checkpoint_pregame_interface_present: bool,
+    pub competitive_pregame_play_draw_context_present: bool,
+    pub competitive_pregame_match_score_context_present: bool,
+    pub terminal_outcome_trained_pregame_head_present: bool,
     pub non_model_pregame_scorer_present: bool,
     pub competitive_pregame_heuristic_deployment_ratification_present: bool,
     pub competitive_pregame_session_ownership_bridge_present: bool,
@@ -70,6 +73,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             end_to_end_operator_loop_present: false,
             native_checkpoint_duel_action_interface_present: true,
             native_checkpoint_pregame_interface_present: false,
+            competitive_pregame_play_draw_context_present: false,
+            competitive_pregame_match_score_context_present: false,
+            terminal_outcome_trained_pregame_head_present: false,
             non_model_pregame_scorer_present: true,
             competitive_pregame_heuristic_deployment_ratification_present:
                 competitive_pregame_heuristic_ratification_present_v1(),
@@ -128,6 +134,21 @@ mod tests {
             !report
                 .known_wiring_gaps
                 .native_checkpoint_pregame_interface_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .competitive_pregame_play_draw_context_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .competitive_pregame_match_score_context_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .terminal_outcome_trained_pregame_head_present
         );
         assert!(report.known_wiring_gaps.non_model_pregame_scorer_present);
         assert!(
