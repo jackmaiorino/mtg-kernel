@@ -455,6 +455,7 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
 fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
     let source = include_str!("../src/actuator.rs");
     let duel_runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let entry_runtime = include_str!("../src/probe/competitive_entry_runtime.rs");
     for required in [
         "RATIFIED_PRIVATE_MATCH_AUTHORIZATION_COMMITMENT_V3: Option<&str> = None",
         "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
@@ -465,6 +466,10 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "ratify_competitive_duel_pass_authorization_from_correspondence_v2",
         "review_competitive_duel_pass_ratification_candidate_from_correspondence_v2",
         "review_competitive_entry_attended_v1",
+        "review_competitive_entry_attended_v2",
+        "OpaqueMtgoCompetitiveEntryReviewIdentityV1",
+        "CheckedUntrustedMtgoSourceBoundCompetitiveEntryReviewV2",
+        "source_identity_commitment_sha256",
         "CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1",
         "source_lifecycle_snapshot_commitment_sha256",
         "permission_review_commitment_sha256",
@@ -472,6 +477,8 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "interactive_terminal_owner_review_no_entry_no_spending_no_input",
         "pub fn permits_event_entry_v1(&self) -> bool {\n        false",
         "pub fn permits_spending_v1(&self) -> bool {\n        false",
+        "pub fn permits_event_entry_v2(&self) -> bool {\n        false",
+        "pub fn permits_spending_v2(&self) -> bool {\n        false",
         "safe_for_live_input_v2(&self) -> bool {\n        false",
         "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
         "ratify_competitive_match_launch_v1",
@@ -507,6 +514,19 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         assert!(
             source.contains(required),
             "live actuator is missing required guard: {required}"
+        );
+    }
+    for required in [
+        "bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1",
+        "OpaqueMtgoCompetitiveEntryReviewIdentityV1",
+        "visible_frame_region_content_sha256_v1",
+        "source_window_mode != \"main_client\"",
+        "source_capture_role != \"navigation\"",
+        "opaque_composed_navigation_pixels_owner_review_only_no_entry_no_spending_no_input",
+    ] {
+        assert!(
+            entry_runtime.contains(required),
+            "competitive entry identity is missing source binding: {required}"
         );
     }
     for required in [
