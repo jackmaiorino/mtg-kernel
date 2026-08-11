@@ -1,8 +1,8 @@
 use super::{
     competitive_navigation_classifier_assets_manifest_bytes_v1,
-    invoke_verified_competitive_event_record_classifier_process_v1, sha256_hex_v1,
-    verify_runtime_identity_now_v1, MtgoCompetitiveNavigationFrameIdentityV1,
-    OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    invoke_verified_competitive_event_record_classifier_process_v1,
+    mtgo_process_continuity_commitment_for_frame_v1, sha256_hex_v1, verify_runtime_identity_now_v1,
+    MtgoCompetitiveNavigationFrameIdentityV1, OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
 };
@@ -118,6 +118,7 @@ pub struct MtgoClassifiedCompetitiveEventRecordCommitmentsV1 {
     pub navigation_profile_commitment_sha256: String,
     pub navigation_profile_admission_commitment_sha256: String,
     pub runtime_identity_commitment_sha256: String,
+    pub process_continuity_commitment_sha256: String,
     pub source_capture_commitment_sha256: String,
     pub source_frame_profile_binding_sha256: String,
     pub request_commitment_sha256: String,
@@ -139,6 +140,7 @@ pub struct MtgoCompetitiveEventMonitorCommitmentsV1 {
     pub navigation_profile_commitment_sha256: String,
     pub navigation_profile_admission_commitment_sha256: String,
     pub runtime_identity_commitment_sha256: String,
+    pub process_continuity_commitment_sha256: String,
     pub approved_account_alias_sha256: String,
     pub event_identity_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
@@ -616,6 +618,8 @@ pub fn classify_checked_untrusted_competitive_event_record_v1(
     identity: MtgoCompetitiveNavigationFrameIdentityV1,
     timeout_ms: u32,
 ) -> Result<OpaqueMtgoClassifiedCompetitiveEventRecordV1, String> {
+    let process_continuity_commitment_sha256 =
+        mtgo_process_continuity_commitment_for_frame_v1(&source.source_frame);
     if identity.frame_id == 0 || identity.frame_sequence == 0 {
         return Err("event-record classifier frame identity must be nonzero".to_owned());
     }
@@ -782,6 +786,7 @@ pub fn classify_checked_untrusted_competitive_event_record_v1(
                 .to_owned(),
             runtime_identity_commitment_sha256: runtime_commitments
                 .runtime_identity_commitment_sha256,
+            process_continuity_commitment_sha256,
             source_capture_commitment_sha256: source_commitments
                 .source_capture
                 .capture_commitment_sha256,
@@ -861,6 +866,7 @@ struct MtgoCompetitiveEventMonitorObservationV1 {
     navigation_profile_commitment_sha256: String,
     navigation_profile_admission_commitment_sha256: String,
     runtime_identity_commitment_sha256: String,
+    process_continuity_commitment_sha256: String,
     approved_account_alias_sha256: String,
     event_identity_sha256: String,
     source_capture_commitment_sha256: String,
@@ -885,6 +891,7 @@ fn event_monitor_observation_v1(
         navigation_profile_admission_commitment_sha256: commitments
             .navigation_profile_admission_commitment_sha256,
         runtime_identity_commitment_sha256: commitments.runtime_identity_commitment_sha256,
+        process_continuity_commitment_sha256: commitments.process_continuity_commitment_sha256,
         approved_account_alias_sha256: commitments.approved_account_alias_sha256,
         event_identity_sha256: commitments.event_identity_sha256,
         source_capture_commitment_sha256: commitments.source_capture_commitment_sha256,
@@ -915,6 +922,9 @@ fn event_monitor_commitments_v1(
             .navigation_profile_admission_commitment_sha256
             .clone(),
         runtime_identity_commitment_sha256: classified.runtime_identity_commitment_sha256.clone(),
+        process_continuity_commitment_sha256: classified
+            .process_continuity_commitment_sha256
+            .clone(),
         approved_account_alias_sha256: classified.approved_account_alias_sha256.clone(),
         event_identity_sha256: classified.event_identity_sha256.clone(),
         event_kind: classified.event_kind,
@@ -941,6 +951,7 @@ fn validate_event_monitor_observation_v1(
             .navigation_profile_admission_commitment_sha256
             .as_str(),
         value.runtime_identity_commitment_sha256.as_str(),
+        value.process_continuity_commitment_sha256.as_str(),
         value.approved_account_alias_sha256.as_str(),
         value.event_identity_sha256.as_str(),
         value.source_capture_commitment_sha256.as_str(),
@@ -980,6 +991,7 @@ fn validate_event_monitor_advance_v1(
         || prior.navigation_profile_admission_commitment_sha256
             != next.navigation_profile_admission_commitment_sha256
         || prior.runtime_identity_commitment_sha256 != next.runtime_identity_commitment_sha256
+        || prior.process_continuity_commitment_sha256 != next.process_continuity_commitment_sha256
         || prior.approved_account_alias_sha256 != next.approved_account_alias_sha256
         || prior.event_identity_sha256 != next.event_identity_sha256
         || prior.event_kind != next.event_kind
@@ -1338,6 +1350,7 @@ mod tests {
             navigation_profile_commitment_sha256: "1".repeat(64),
             navigation_profile_admission_commitment_sha256: "2".repeat(64),
             runtime_identity_commitment_sha256: "3".repeat(64),
+            process_continuity_commitment_sha256: "6".repeat(64),
             approved_account_alias_sha256: "4".repeat(64),
             event_identity_sha256: "5".repeat(64),
             source_capture_commitment_sha256: format!("{sequence:064x}"),
@@ -1576,6 +1589,11 @@ mod tests {
         );
         wrong_event.event_identity_sha256 = "a".repeat(64);
         assert!(validate_event_monitor_advance_v1(&prior, &wrong_event).is_err());
+
+        let mut restarted_client = wrong_event.clone();
+        restarted_client.event_identity_sha256 = prior.event_identity_sha256.clone();
+        restarted_client.process_continuity_commitment_sha256 = "7".repeat(64);
+        assert!(validate_event_monitor_advance_v1(&prior, &restarted_client).is_err());
 
         let mut stale = wrong_event.clone();
         stale.event_identity_sha256 = prior.event_identity_sha256.clone();

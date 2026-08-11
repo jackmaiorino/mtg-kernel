@@ -551,6 +551,8 @@ fn competitive_event_runtime_is_move_only_identity_bound_and_terminal_record_gat
         "confirm_pending_competitive_event_lifecycle_control_v1",
         "attach_competitive_event_monitor_to_runtime_v1",
         "advance_competitive_event_monitor_in_runtime_v1",
+        "process_continuity_commitment_sha256",
+        "process_continuity_commitment_sha256_v1()",
         "bind_competitive_event_runtime_to_match_launch_identity_v1",
         "OpaqueMtgoCompetitiveEventMatchLaunchBindingV1",
         "COMPETITIVE_EVENT_MATCH_LAUNCH_BINDING_DOMAIN_V1",

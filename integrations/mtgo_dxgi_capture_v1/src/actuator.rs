@@ -5947,7 +5947,7 @@ pub fn attach_competitive_event_monitor_to_runtime_v1(
         return Err("competitive event runtime already owns an event monitor".to_owned());
     }
     let monitor_commitments = monitor.commitments_v1();
-    validate_event_monitor_against_runtime_v1(&runtime.commitments, &monitor_commitments)?;
+    validate_event_monitor_against_runtime_v1(&runtime, &monitor_commitments)?;
     runtime.event_monitor = Some(monitor);
     apply_event_monitor_to_runtime_commitments_v1(
         &mut runtime.commitments,
@@ -5967,7 +5967,7 @@ pub fn advance_competitive_event_monitor_in_runtime_v1(
         .ok_or("competitive event runtime has no attached event monitor")?;
     let monitor = advance_checked_untrusted_competitive_event_monitor_v1(monitor, next)?;
     let monitor_commitments = monitor.commitments_v1();
-    validate_event_monitor_against_runtime_v1(&runtime.commitments, &monitor_commitments)?;
+    validate_event_monitor_against_runtime_v1(&runtime, &monitor_commitments)?;
     runtime.event_monitor = Some(monitor);
     apply_event_monitor_to_runtime_commitments_v1(
         &mut runtime.commitments,
@@ -9872,19 +9872,26 @@ fn advance_competitive_event_runtime_commitments_v1(
 }
 
 fn validate_event_monitor_against_runtime_v1(
-    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    runtime: &OpaqueMtgoCompetitiveEventRuntimeV1,
     monitor: &MtgoCompetitiveEventMonitorCommitmentsV1,
 ) -> Result<(), String> {
-    if monitor.navigation_profile_commitment_sha256 != runtime.navigation_profile_commitment_sha256
+    let commitments = &runtime.commitments;
+    if monitor.navigation_profile_commitment_sha256
+        != commitments.navigation_profile_commitment_sha256
         || monitor.navigation_profile_admission_commitment_sha256
-            != runtime.navigation_profile_admission_commitment_sha256
-        || monitor.approved_account_alias_sha256 != runtime.approved_account_alias_sha256
-        || monitor.event_identity_sha256 != runtime.bound_event_identity_sha256
-        || monitor.event_kind != runtime.event_kind
-        || monitor.last_frame_sequence < runtime.current_frame_sequence
+            != commitments.navigation_profile_admission_commitment_sha256
+        || monitor.approved_account_alias_sha256 != commitments.approved_account_alias_sha256
+        || monitor.event_identity_sha256 != commitments.bound_event_identity_sha256
+        || monitor.event_kind != commitments.event_kind
+        || monitor.process_continuity_commitment_sha256
+            != runtime
+                .current_frame
+                .process_continuity_commitment_sha256_v1()
+        || monitor.last_frame_sequence < commitments.current_frame_sequence
     {
         return Err(
-            "competitive event monitor differs from the exact runtime event or is stale".to_owned(),
+            "competitive event monitor differs from the exact runtime event, client incarnation, or is stale"
+                .to_owned(),
         );
     }
     Ok(())
