@@ -21,7 +21,7 @@ const SIDEBOARD_EVALUATION_RATIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-sideboard-evaluation-ratification-v1";
 const SIDEBOARD_EVALUATION_ADMISSION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-sideboard-evaluation-admission-v1";
-const RATIFIED_COMPETITIVE_SIDEBOARD_EVALUATION_COMMITMENT_V1: Option<&str> = None;
+pub(crate) const RATIFIED_COMPETITIVE_SIDEBOARD_EVALUATION_COMMITMENT_V1: Option<&str> = None;
 
 struct SideboardIdentitySetV1<'a> {
     profile_commitment_sha256: &'a str,

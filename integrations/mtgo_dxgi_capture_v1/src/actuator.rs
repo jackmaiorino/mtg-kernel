@@ -250,6 +250,59 @@ pub enum MtgoPregameInputGateStatusV3 {
 
 pub type MtgoInputGateStatusV3 = MtgoPregameInputGateStatusV3;
 
+pub const MTGO_COMPETITIVE_AUTHORIZATION_READINESS_SCHEMA_V1: u32 = 1;
+
+/// Non-authorizing visibility into the compile-pinned competitive permission
+/// roots. The booleans reveal presence only, never commitment values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCompetitiveAuthorizationRatificationReadinessV1 {
+    pub schema_version: u32,
+    pub reviewed_priority_pass_authorization_present: bool,
+    pub reviewed_all_family_gesture_authorization_present: bool,
+    pub selected_listing_entry_authorization_present: bool,
+    pub lifecycle_authorization_present: bool,
+    pub open_entry_review_authorization_present: bool,
+    pub changed_sideboard_automation_authorization_present: bool,
+}
+
+impl MtgoCompetitiveAuthorizationRatificationReadinessV1 {
+    pub fn unchanged_sideboard_event_path_present_v1(&self) -> bool {
+        self.reviewed_all_family_gesture_authorization_present
+            && self.selected_listing_entry_authorization_present
+            && self.lifecycle_authorization_present
+            && self.open_entry_review_authorization_present
+    }
+
+    pub fn changed_sideboard_event_path_present_v1(&self) -> bool {
+        self.unchanged_sideboard_event_path_present_v1()
+            && self.changed_sideboard_automation_authorization_present
+    }
+
+    pub fn grants_live_authority_v1(&self) -> bool {
+        false
+    }
+}
+
+pub fn competitive_authorization_ratification_readiness_v1(
+) -> MtgoCompetitiveAuthorizationRatificationReadinessV1 {
+    MtgoCompetitiveAuthorizationRatificationReadinessV1 {
+        schema_version: MTGO_COMPETITIVE_AUTHORIZATION_READINESS_SCHEMA_V1,
+        reviewed_priority_pass_authorization_present:
+            RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2.is_some(),
+        reviewed_all_family_gesture_authorization_present:
+            RATIFIED_COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V1.is_some(),
+        selected_listing_entry_authorization_present:
+            RATIFIED_COMPETITIVE_SELECTED_LISTING_ENTRY_AUTHORIZATION_COMMITMENT_V2.is_some(),
+        lifecycle_authorization_present: RATIFIED_COMPETITIVE_LIFECYCLE_AUTHORIZATION_COMMITMENT_V1
+            .is_some(),
+        open_entry_review_authorization_present:
+            RATIFIED_COMPETITIVE_OPEN_ENTRY_REVIEW_AUTHORIZATION_COMMITMENT_V1.is_some(),
+        changed_sideboard_automation_authorization_present:
+            RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1.is_some(),
+    }
+}
+
 enum PregameInputGateStateV3 {
     Idle,
     Preparing,
@@ -3762,9 +3815,10 @@ pub fn review_competitive_open_entry_review_ratification_candidate_v1(
 }
 
 /// Production constructor for the exact Open Entry Review-only permission.
-/// The root remains empty until the written League and Challenge approval,
-/// approved account, profile, evaluation, deck, and policy are imported and
-/// reviewed. The returned type, when reachable, still cannot confirm entry.
+/// The root remains empty until the exact written League and Challenge
+/// approval, approved account, profile, evaluation, deck, and policy are
+/// imported and reviewed. The returned type, when reachable, still cannot
+/// confirm entry.
 #[allow(clippy::too_many_arguments)]
 pub fn ratify_competitive_open_entry_review_authorization_v1(
     correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,

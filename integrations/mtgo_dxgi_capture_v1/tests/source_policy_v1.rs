@@ -1396,3 +1396,42 @@ fn correspondence_review_command_emits_commitments_without_private_text_or_autho
         );
     }
 }
+
+#[test]
+fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes() {
+    let source = include_str!("../src/competitive_wiring_readiness.rs");
+    let binary = include_str!("../src/bin/check_mtgo_competitive_wiring_readiness_v1.rs");
+
+    for required in [
+        "check_competitive_wiring_static_readiness_v1",
+        "MtgoCompetitiveEventKindV1::League",
+        "MtgoCompetitiveEventKindV1::Challenge",
+        "end_to_end_operator_loop_present: false",
+        "native_checkpoint_duel_action_interface_present: true",
+        "native_checkpoint_pregame_interface_present: false",
+        "native_checkpoint_changed_sideboard_interface_present: false",
+        "safe_for_live_capture: false",
+        "safe_for_input: false",
+        "safe_for_event_entry: false",
+        "safe_for_spending: false",
+    ] {
+        assert!(
+            source.contains(required),
+            "readiness preflight is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "run_cli_v3",
+        "execute_prepared_competitive_entry_v1",
+        "execute_prepared_competitive_duel_gesture_primitive_v1",
+        "execute_prepared_competitive_lifecycle_control_v1",
+        "std::fs::read",
+    ] {
+        assert!(
+            !source.contains(forbidden) && !binary.contains(forbidden),
+            "readiness preflight exposes a forbidden operation: {forbidden}"
+        );
+    }
+}

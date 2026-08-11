@@ -11,7 +11,7 @@ pub const MTGO_DUEL_GESTURE_EVALUATION_SCHEMA_V1: u32 = 1;
 
 const DUEL_GESTURE_EVALUATION_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-duel-gesture-evaluation-v1";
 const DUEL_GESTURE_PROFILE_ADMISSION_DOMAIN_V1: &[u8] = b"mtgo-duel-gesture-profile-admission-v1";
-const RATIFIED_DUEL_GESTURE_EVALUATION_COMMITMENT_V1: Option<&str> = None;
+pub(crate) const RATIFIED_DUEL_GESTURE_EVALUATION_COMMITMENT_V1: Option<&str> = None;
 const MAX_GESTURE_EVALUATION_CASES_V1: usize = 2_048;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

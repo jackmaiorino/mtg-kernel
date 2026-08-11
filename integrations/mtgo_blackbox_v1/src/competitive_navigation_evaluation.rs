@@ -19,7 +19,7 @@ const NAVIGATION_PROFILE_ADMISSION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-navigation-profile-admission-v1";
 const NAVIGATION_SOURCE_PROFILE_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-navigation-source-profile-binding-v1";
-const RATIFIED_COMPETITIVE_NAVIGATION_EVALUATION_COMMITMENT_V1: Option<&str> = None;
+pub(crate) const RATIFIED_COMPETITIVE_NAVIGATION_EVALUATION_COMMITMENT_V1: Option<&str> = None;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

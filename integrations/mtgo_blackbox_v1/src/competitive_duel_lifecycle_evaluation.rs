@@ -13,7 +13,7 @@ const COMPETITIVE_DUEL_LIFECYCLE_EVALUATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-lifecycle-evaluation-v1";
 const COMPETITIVE_DUEL_LIFECYCLE_ADMISSION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-lifecycle-admission-v1";
-const RATIFIED_COMPETITIVE_DUEL_LIFECYCLE_EVALUATION_COMMITMENT_V1: Option<&str> = None;
+pub(crate) const RATIFIED_COMPETITIVE_DUEL_LIFECYCLE_EVALUATION_COMMITMENT_V1: Option<&str> = None;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

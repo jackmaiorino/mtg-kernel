@@ -23,7 +23,7 @@ const EVENT_LISTING_EVALUATION_RATIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-listing-evaluation-ratification-v1";
 const EVENT_LISTING_EVALUATION_ADMISSION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-listing-evaluation-admission-v1";
-const RATIFIED_COMPETITIVE_EVENT_LISTING_EVALUATION_COMMITMENT_V1: Option<&str> = None;
+pub(crate) const RATIFIED_COMPETITIVE_EVENT_LISTING_EVALUATION_COMMITMENT_V1: Option<&str> = None;
 
 struct EventListingIdentitySetV1<'a> {
     profile_commitment_sha256: &'a str,

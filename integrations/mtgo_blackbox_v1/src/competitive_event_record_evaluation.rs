@@ -22,7 +22,7 @@ const EVENT_RECORD_EVALUATION_RATIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-record-evaluation-ratification-v1";
 const EVENT_RECORD_EVALUATION_ADMISSION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-record-evaluation-admission-v1";
-const RATIFIED_COMPETITIVE_EVENT_RECORD_EVALUATION_COMMITMENT_V1: Option<&str> = None;
+pub(crate) const RATIFIED_COMPETITIVE_EVENT_RECORD_EVALUATION_COMMITMENT_V1: Option<&str> = None;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

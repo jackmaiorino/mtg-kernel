@@ -5,6 +5,9 @@ use sha2::{Digest, Sha256};
 mod actuator;
 
 #[cfg(target_os = "windows")]
+mod competitive_wiring_readiness;
+
+#[cfg(target_os = "windows")]
 mod probe;
 
 #[cfg(target_os = "windows")]
@@ -17,6 +20,7 @@ pub use actuator::{
     bind_competitive_event_runtime_to_match_launch_identity_v1,
     bind_confirmed_competitive_open_entry_review_to_entry_review_v1,
     bind_prepared_competitive_duel_pass_session_v2, checkout_competitive_event_gameplay_session_v1,
+    competitive_authorization_ratification_readiness_v1,
     confirm_competitive_event_sideboard_transfer_visible_v1,
     confirm_pending_competitive_duel_gesture_continuation_v1,
     confirm_pending_competitive_duel_gesture_primitive_v1,
@@ -71,6 +75,7 @@ pub use actuator::{
     MtgoAtomicCompetitiveSideboardTransferV1, MtgoAttendedCompetitiveEntryReviewCommitmentsV1,
     MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
     MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3,
+    MtgoCompetitiveAuthorizationRatificationReadinessV1,
     MtgoCompetitiveEntryInputReceiptCommitmentsV1,
     MtgoCompetitiveEntryPostconditionDryRunCommitmentsV1, MtgoCompetitiveEventDriverDirectiveV1,
     MtgoCompetitiveEventDriverStepV1, MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
@@ -138,7 +143,14 @@ pub use actuator::{
     RatifiedMtgoCompetitiveGestureMatchLaunchV1, RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
     RatifiedMtgoCompetitiveMatchLaunchV1, RatifiedMtgoCompetitiveOpenEntryReviewAuthorizationV1,
     RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
-    RatifiedMtgoPrivateMatchAuthorizationV3,
+    RatifiedMtgoPrivateMatchAuthorizationV3, MTGO_COMPETITIVE_AUTHORIZATION_READINESS_SCHEMA_V1,
+};
+
+#[cfg(target_os = "windows")]
+pub use competitive_wiring_readiness::{
+    check_competitive_wiring_static_readiness_v1, MtgoCompetitiveKnownWiringGapsV1,
+    MtgoCompetitiveStaticReadinessStatusV1, MtgoCompetitiveWiringStaticReadinessV1,
+    MTGO_COMPETITIVE_WIRING_STATIC_READINESS_SCHEMA_V1,
 };
 
 #[cfg(target_os = "windows")]

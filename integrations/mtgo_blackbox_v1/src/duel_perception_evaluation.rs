@@ -12,7 +12,7 @@ pub const MTGO_DUEL_PERCEPTION_EVALUATION_SCHEMA_V1: u32 = 1;
 const DUEL_PERCEPTION_EVALUATION_DOMAIN_V1: &[u8] = b"mtgo-duel-perception-evaluation-v1";
 const DUEL_PERCEPTION_PROFILE_ADMISSION_DOMAIN_V1: &[u8] =
     b"mtgo-duel-perception-profile-admission-v1";
-const RATIFIED_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V1: Option<&str> = None;
+pub(crate) const RATIFIED_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V1: Option<&str> = None;
 const CANONICAL_PIXEL_FORMAT_V1: &str = "bgra8_unorm_top_down_tightly_packed_v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
