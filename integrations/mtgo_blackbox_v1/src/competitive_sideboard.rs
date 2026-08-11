@@ -44,6 +44,7 @@ pub struct MtgoCompetitiveDeckConfigurationV1 {
 #[serde(deny_unknown_fields)]
 pub struct MtgoCompetitiveDeckManifestV1 {
     pub schema_version: u32,
+    pub deck_list_sha256: String,
     pub format_sha256: String,
     pub starting_mainboard_count: u16,
     pub starting_sideboard_count: u16,
@@ -66,6 +67,10 @@ impl ValidatedMtgoCompetitiveDeckManifestV1 {
 
     pub fn format_sha256(&self) -> &str {
         &self.manifest.format_sha256
+    }
+
+    pub fn deck_list_sha256(&self) -> &str {
+        &self.manifest.deck_list_sha256
     }
 
     pub fn starting_mainboard_count(&self) -> u16 {
@@ -325,10 +330,13 @@ pub fn validate_competitive_deck_manifest_v1(
             "expected schema version 1",
         ));
     }
-    if !is_sha256_v1(&manifest.format_sha256) {
+    if !is_sha256_v1(&manifest.deck_list_sha256)
+        || !is_sha256_v1(&manifest.format_sha256)
+        || manifest.deck_list_sha256 == manifest.format_sha256
+    {
         return Err(error(
             "sideboard_manifest_format",
-            "format commitment must be a lowercase SHA-256 digest",
+            "deck-list and format commitments must be distinct lowercase SHA-256 digests",
         ));
     }
     let mainboard =

@@ -39,6 +39,7 @@ fn swapped_configuration() -> MtgoCompetitiveDeckConfigurationV1 {
 fn manifest_raw() -> MtgoCompetitiveDeckManifestV1 {
     MtgoCompetitiveDeckManifestV1 {
         schema_version: MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
+        deck_list_sha256: digest('0'),
         format_sha256: digest('1'),
         starting_mainboard_count: 5,
         starting_sideboard_count: 2,
@@ -177,6 +178,7 @@ fn manifest_is_canonical_exact_and_non_authorizing() {
     let manifest = validate_competitive_deck_manifest_v1(manifest_raw()).unwrap();
     assert_eq!(manifest.starting_mainboard_count(), 5);
     assert_eq!(manifest.starting_sideboard_count(), 2);
+    assert_eq!(manifest.deck_list_sha256(), digest('0'));
     assert_eq!(manifest.manifest_commitment_sha256().len(), 64);
     assert!(!manifest.claims_format_legality_v1());
     assert!(!manifest.permits_live_input_v1());
@@ -200,6 +202,16 @@ fn manifest_is_canonical_exact_and_non_authorizing() {
             .unwrap()
             .code(),
         "sideboard_manifest_count"
+    );
+
+    let mut crossed_identity = manifest_raw();
+    crossed_identity.deck_list_sha256 = crossed_identity.format_sha256.clone();
+    assert_eq!(
+        validate_competitive_deck_manifest_v1(crossed_identity)
+            .err()
+            .unwrap()
+            .code(),
+        "sideboard_manifest_format"
     );
 }
 
