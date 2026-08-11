@@ -9,7 +9,8 @@ mod probe;
 
 #[cfg(target_os = "windows")]
 pub use actuator::{
-    begin_competitive_game_session_v1, bind_competitive_entry_postcondition_dry_run_v1,
+    begin_competitive_game_session_v1, begin_competitive_gesture_game_session_v1,
+    bind_competitive_entry_postcondition_dry_run_v1,
     bind_prepared_competitive_duel_pass_session_v2, confirm_pending_competitive_duel_pass_v2,
     confirm_pending_competitive_entry_v1, confirm_pending_pregame_keep_to_bottom_six_v3,
     confirm_pending_pregame_keep_to_first_main_v3, confirm_pending_pregame_mulligan_v3,
@@ -19,6 +20,7 @@ pub use actuator::{
     ratify_competitive_duel_gesture_authorization_from_correspondence_v1,
     ratify_competitive_duel_pass_authorization_from_correspondence_v2,
     ratify_competitive_duel_pass_authorization_v1, ratify_competitive_entry_authorization_v1,
+    ratify_competitive_gesture_match_launch_attended_v1,
     ratify_competitive_match_launch_attended_v4, ratify_competitive_match_launch_v1,
     ratify_private_match_authorization_v3,
     review_competitive_duel_gesture_ratification_candidate_from_correspondence_v1,
@@ -36,7 +38,8 @@ pub use actuator::{
     MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3,
     MtgoCompetitiveEntryInputReceiptCommitmentsV1,
     MtgoCompetitiveEntryPostconditionDryRunCommitmentsV1, MtgoCompetitiveGameSessionCommitmentsV1,
-    MtgoConfirmedCompetitiveDuelPassCommitmentsV2, MtgoConfirmedCompetitiveEntryCommitmentsV1,
+    MtgoCompetitiveGestureGameSessionCommitmentsV1, MtgoConfirmedCompetitiveDuelPassCommitmentsV2,
+    MtgoConfirmedCompetitiveEntryCommitmentsV1,
     MtgoControlBoundCompetitiveEntryReviewCommitmentsV4, MtgoInputGateStatusV3,
     MtgoPregameInputGateStatusV3, MtgoPreparedCompetitiveEntryCommitmentsV1,
     MtgoReviewedCompetitiveEntryRatificationCandidateV1,
@@ -44,12 +47,13 @@ pub use actuator::{
     MtgoReviewedCompetitivePassRatificationCandidateV2,
     MtgoSourceBoundCompetitiveEntryReviewCommitmentsV2,
     OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1, OpaqueMtgoCompetitiveGameSessionV1,
-    OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2, OpaqueMtgoConfirmedCompetitiveEntryV1,
-    OpaqueMtgoPendingCompetitiveDuelPassV1, OpaqueMtgoPendingCompetitiveEntryV1,
-    OpaqueMtgoPendingPregameInputV3, OpaqueMtgoPreparedCompetitiveEntryV1,
-    RatifiedMtgoCompetitiveDuelGestureAuthorizationV1,
+    OpaqueMtgoCompetitiveGestureGameSessionV1, OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2,
+    OpaqueMtgoConfirmedCompetitiveEntryV1, OpaqueMtgoPendingCompetitiveDuelPassV1,
+    OpaqueMtgoPendingCompetitiveEntryV1, OpaqueMtgoPendingPregameInputV3,
+    OpaqueMtgoPreparedCompetitiveEntryV1, RatifiedMtgoCompetitiveDuelGestureAuthorizationV1,
     RatifiedMtgoCompetitiveDuelPassAuthorizationV1, RatifiedMtgoCompetitiveEntryAuthorizationV1,
-    RatifiedMtgoCompetitiveMatchLaunchV1, RatifiedMtgoPrivateMatchAuthorizationV3,
+    RatifiedMtgoCompetitiveGestureMatchLaunchV1, RatifiedMtgoCompetitiveMatchLaunchV1,
+    RatifiedMtgoPrivateMatchAuthorizationV3,
 };
 
 #[cfg(target_os = "windows")]

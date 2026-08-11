@@ -96,6 +96,10 @@ const ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_DOMAIN_V4: &[u8] =
     b"mtgo-attended-competitive-match-launch-request-v4";
 const ATTENDED_COMPETITIVE_MATCH_LAUNCH_RECEIPT_DOMAIN_V4: &[u8] =
     b"mtgo-attended-competitive-match-launch-receipt-v4";
+const ATTENDED_COMPETITIVE_GESTURE_MATCH_LAUNCH_UPGRADE_DOMAIN_V1: &[u8] =
+    b"mtgo-attended-competitive-gesture-match-launch-upgrade-v1";
+const COMPETITIVE_GESTURE_GAME_SESSION_INITIAL_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-gesture-game-session-initial-v1";
 const ATTENDED_COMPETITIVE_ENTRY_REVIEW_REQUEST_DOMAIN_V1: &[u8] =
     b"mtgo-attended-competitive-entry-review-request-v1";
 const ATTENDED_COMPETITIVE_ENTRY_REVIEW_RECEIPT_DOMAIN_V1: &[u8] =
@@ -978,6 +982,177 @@ impl RatifiedMtgoCompetitiveMatchLaunchV1 {
     }
 
     pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+}
+
+/// An attended extension of one exact priority-Pass match launch to the
+/// complete reviewed eleven-family gesture profile. It owns both independent
+/// ratifications and the original exact-game owner launch. It grants no event
+/// entry or spending authority and has no input conversion.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::RatifiedMtgoCompetitiveGestureMatchLaunchV1;
+/// let _forged = RatifiedMtgoCompetitiveGestureMatchLaunchV1 {};
+/// ```
+pub struct RatifiedMtgoCompetitiveGestureMatchLaunchV1 {
+    gesture_authorization: RatifiedMtgoCompetitiveDuelGestureAuthorizationV1,
+    pass_match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    gesture_match_launch_commitment_sha256: String,
+}
+
+impl RatifiedMtgoCompetitiveGestureMatchLaunchV1 {
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.pass_match_launch.authorization.event_kind
+    }
+
+    pub fn game_number_v1(&self) -> u8 {
+        self.pass_match_launch.authorization.game_number
+    }
+
+    pub fn mode_authorization_commitment_sha256_v1(&self) -> &str {
+        &self
+            .gesture_authorization
+            .mode_authorization_commitment_sha256
+    }
+
+    pub fn general_gesture_permission_commitment_sha256_v1(&self) -> &str {
+        &self.gesture_authorization.authorization_commitment_sha256
+    }
+
+    pub fn pass_match_launch_commitment_sha256_v1(&self) -> &str {
+        &self
+            .pass_match_launch
+            .launch_authorization_commitment_sha256
+    }
+
+    pub fn gesture_match_launch_commitment_sha256_v1(&self) -> &str {
+        &self.gesture_match_launch_commitment_sha256
+    }
+
+    pub fn gesture_evaluation_commitment_sha256_v1(&self) -> &str {
+        &self
+            .gesture_authorization
+            .gesture_evaluation_commitment_sha256
+    }
+
+    pub fn gesture_profile_admission_commitment_sha256_v1(&self) -> &str {
+        &self
+            .gesture_authorization
+            .gesture_profile_admission_commitment_sha256
+    }
+
+    pub fn valid_from_frame_sequence_v1(&self) -> u64 {
+        self.pass_match_launch.valid_from_frame_sequence
+    }
+
+    pub fn valid_through_frame_sequence_v1(&self) -> u64 {
+        self.pass_match_launch
+            .authorization
+            .valid_through_frame_sequence
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveGestureGameSessionCommitmentsV1 {
+    pub session_commitment_sha256: String,
+    pub general_gesture_permission_commitment_sha256: String,
+    pub pass_match_launch_commitment_sha256: String,
+    pub gesture_match_launch_commitment_sha256: String,
+    pub gesture_evaluation_commitment_sha256: String,
+    pub gesture_profile_admission_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub game_number: u8,
+    pub valid_from_frame_sequence: u64,
+    pub valid_through_frame_sequence: u64,
+    pub last_confirmed_frame_sequence: u64,
+    pub confirmed_action_count: u64,
+}
+
+/// Move-only all-family session identity for one exact already-entered League
+/// or Challenge game. This tranche creates no preparation, execution, or
+/// advancement method. A future actuator must consume the session and return
+/// it only after each exact visible postcondition.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveGestureGameSessionV1;
+/// let _forged = OpaqueMtgoCompetitiveGestureGameSessionV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveGestureGameSessionV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveGestureGameSessionV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveGestureGameSessionV1 {
+    launch: RatifiedMtgoCompetitiveGestureMatchLaunchV1,
+    session_commitment_sha256: String,
+    last_confirmed_frame_sequence: u64,
+    confirmed_action_count: u64,
+}
+
+impl OpaqueMtgoCompetitiveGestureGameSessionV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveGestureGameSessionCommitmentsV1 {
+        MtgoCompetitiveGestureGameSessionCommitmentsV1 {
+            session_commitment_sha256: self.session_commitment_sha256.clone(),
+            general_gesture_permission_commitment_sha256: self
+                .launch
+                .gesture_authorization
+                .authorization_commitment_sha256
+                .clone(),
+            pass_match_launch_commitment_sha256: self
+                .launch
+                .pass_match_launch
+                .launch_authorization_commitment_sha256
+                .clone(),
+            gesture_match_launch_commitment_sha256: self
+                .launch
+                .gesture_match_launch_commitment_sha256
+                .clone(),
+            gesture_evaluation_commitment_sha256: self
+                .launch
+                .gesture_authorization
+                .gesture_evaluation_commitment_sha256
+                .clone(),
+            gesture_profile_admission_commitment_sha256: self
+                .launch
+                .gesture_authorization
+                .gesture_profile_admission_commitment_sha256
+                .clone(),
+            event_kind: self.launch.pass_match_launch.authorization.event_kind,
+            game_number: self.launch.pass_match_launch.authorization.game_number,
+            valid_from_frame_sequence: self.launch.pass_match_launch.valid_from_frame_sequence,
+            valid_through_frame_sequence: self
+                .launch
+                .pass_match_launch
+                .authorization
+                .valid_through_frame_sequence,
+            last_confirmed_frame_sequence: self.last_confirmed_frame_sequence,
+            confirmed_action_count: self.confirmed_action_count,
+        }
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
         false
     }
 }
@@ -2404,6 +2579,82 @@ pub fn ratify_competitive_match_launch_attended_v4(
     )
 }
 
+/// Extends one separately attended priority-Pass launch to the exact admitted
+/// eleven-family gesture profile. The owner must confirm the broader scope in
+/// an interactive terminal. This consumes both authorities and creates no
+/// input, event-entry, or spending capability.
+pub fn ratify_competitive_gesture_match_launch_attended_v1(
+    gesture_authorization: RatifiedMtgoCompetitiveDuelGestureAuthorizationV1,
+    pass_match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+) -> Result<RatifiedMtgoCompetitiveGestureMatchLaunchV1, String> {
+    let candidate = validate_competitive_gesture_match_launch_authorities_v1(
+        &gesture_authorization,
+        &pass_match_launch,
+    )?;
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    if !stdin.is_terminal() || !stdout.is_terminal() {
+        return Err(
+            "attended competitive gesture match launch requires an interactive terminal".to_owned(),
+        );
+    }
+    let mut challenge_nonce = [0_u8; 8];
+    unsafe {
+        BCryptGenRandom(None, &mut challenge_nonce, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+            .ok()
+            .map_err(|error| format!("generate attended gesture launch challenge: {error}"))?;
+    }
+    let issued_at_unix_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before epoch: {error}"))?
+        .as_millis();
+    let expected_phrase = attended_competitive_gesture_match_launch_confirmation_phrase_v1(
+        candidate.event_kind,
+        pass_match_launch.authorization.game_number,
+        &challenge_nonce,
+    );
+    writeln!(stdout, "MTGO attended all-family match launch extension")
+        .map_err(|error| format!("write attended gesture launch prompt: {error}"))?;
+    writeln!(
+        stdout,
+        "Account: {}",
+        gesture_authorization.visible_account_alias
+    )
+    .map_err(|error| format!("write attended gesture launch account: {error}"))?;
+    writeln!(
+        stdout,
+        "Mode: {}; game: {}; exact match launch: {}; gesture evaluation: {}; gesture profile: {}",
+        competitive_event_kind_label_v4(candidate.event_kind),
+        pass_match_launch.authorization.game_number,
+        &pass_match_launch.launch_authorization_commitment_sha256[..12],
+        &candidate.gesture_evaluation_commitment_sha256[..12],
+        &candidate.gesture_profile_admission_commitment_sha256[..12]
+    )
+    .map_err(|error| format!("write attended gesture launch identity: {error}"))?;
+    writeln!(
+        stdout,
+        "This extends the exact already-entered game from priority Pass to the reviewed eleven-family gesture profile. It cannot enter an event or spend resources."
+    )
+    .map_err(|error| format!("write attended gesture launch scope: {error}"))?;
+    writeln!(stdout, "Type exactly: {expected_phrase}")
+        .map_err(|error| format!("write attended gesture launch challenge: {error}"))?;
+    stdout
+        .flush()
+        .map_err(|error| format!("flush attended gesture launch prompt: {error}"))?;
+    let mut supplied_phrase = String::new();
+    stdin
+        .read_line(&mut supplied_phrase)
+        .map_err(|error| format!("read attended gesture launch confirmation: {error}"))?;
+    ratify_competitive_gesture_match_launch_from_confirmation_v1(
+        gesture_authorization,
+        pass_match_launch,
+        candidate,
+        challenge_nonce,
+        issued_at_unix_millis,
+        supplied_phrase.trim_end_matches(['\r', '\n']),
+    )
+}
+
 pub fn begin_competitive_game_session_v1(
     authorization: RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
     match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
@@ -2419,6 +2670,36 @@ pub fn begin_competitive_game_session_v1(
             .ok_or("competitive game session has an invalid starting frame")?,
         match_launch,
         session_commitment_sha256,
+        confirmed_action_count: 0,
+    })
+}
+
+/// Begins a move-only all-family session for one exact attended League or
+/// Challenge game. The session is a lineage boundary only. It cannot prepare
+/// or execute a gesture in this tranche.
+pub fn begin_competitive_gesture_game_session_v1(
+    launch: RatifiedMtgoCompetitiveGestureMatchLaunchV1,
+) -> Result<OpaqueMtgoCompetitiveGestureGameSessionV1, String> {
+    let candidate = validate_competitive_gesture_match_launch_authorities_v1(
+        &launch.gesture_authorization,
+        &launch.pass_match_launch,
+    )?;
+    if !is_sha256_v2(&launch.gesture_match_launch_commitment_sha256) {
+        return Err("competitive gesture match launch commitment is invalid".to_owned());
+    }
+    let valid_from_frame_sequence = launch.pass_match_launch.valid_from_frame_sequence;
+    let last_confirmed_frame_sequence = valid_from_frame_sequence
+        .checked_sub(1)
+        .ok_or("competitive gesture game session has an invalid starting frame")?;
+    let session_commitment_sha256 = initial_competitive_gesture_game_session_commitment_v1(
+        &candidate,
+        &launch.pass_match_launch,
+        &launch.gesture_match_launch_commitment_sha256,
+    );
+    Ok(OpaqueMtgoCompetitiveGestureGameSessionV1 {
+        launch,
+        session_commitment_sha256,
+        last_confirmed_frame_sequence,
         confirmed_action_count: 0,
     })
 }
@@ -2958,6 +3239,221 @@ fn ratify_competitive_match_launch_from_attended_confirmation_v4(
     Ok(ratified)
 }
 
+fn validate_competitive_gesture_match_launch_authorities_v1(
+    gesture_authorization: &RatifiedMtgoCompetitiveDuelGestureAuthorizationV1,
+    pass_match_launch: &RatifiedMtgoCompetitiveMatchLaunchV1,
+) -> Result<MtgoReviewedCompetitiveGestureRatificationCandidateV1, String> {
+    let candidate = review_competitive_duel_gesture_ratification_candidate_from_correspondence_v1(
+        &gesture_authorization._permission_correspondence,
+        &gesture_authorization.visible_account_alias,
+        gesture_authorization.event_kind,
+        &gesture_authorization._gesture_profile,
+    )?;
+    if candidate.ratification_commitment_sha256
+        != gesture_authorization.authorization_commitment_sha256
+        || candidate.mode_authorization_commitment_sha256
+            != gesture_authorization.mode_authorization_commitment_sha256
+        || candidate.permission_review_commitment_sha256
+            != gesture_authorization.permission_review_commitment_sha256
+        || candidate.gesture_evaluation_commitment_sha256
+            != gesture_authorization.gesture_evaluation_commitment_sha256
+        || candidate.gesture_profile_admission_commitment_sha256
+            != gesture_authorization.gesture_profile_admission_commitment_sha256
+    {
+        return Err("competitive gesture authorization commitment changed".to_owned());
+    }
+    validate_competitive_match_launch_record_v1(
+        &gesture_authorization.scope,
+        &pass_match_launch.authorization,
+    )?;
+    validate_competitive_gesture_match_launch_facts_v1(
+        &candidate,
+        pass_match_launch,
+        &gesture_authorization.visible_account_alias,
+    )?;
+    Ok(candidate)
+}
+
+fn validate_competitive_gesture_match_launch_facts_v1(
+    candidate: &MtgoReviewedCompetitiveGestureRatificationCandidateV1,
+    pass_match_launch: &RatifiedMtgoCompetitiveMatchLaunchV1,
+    visible_account_alias: &str,
+) -> Result<(), String> {
+    if candidate.supported_action_families != canonical_duel_gesture_action_families_v1()
+        || candidate.event_kind != pass_match_launch.authorization.event_kind
+        || candidate.mode_authorization_commitment_sha256
+            != pass_match_launch.mode_authorization_commitment_sha256
+        || candidate.account_alias_sha256 != pass_match_launch.authorization.account_alias_sha256
+        || candidate.correspondence_sha256
+            != pass_match_launch.authorization.written_permission_sha256
+        || format!("{:x}", Sha256::digest(visible_account_alias.as_bytes()))
+            != candidate.account_alias_sha256
+        || pass_match_launch.valid_from_frame_sequence == 0
+        || pass_match_launch.valid_from_frame_sequence
+            > pass_match_launch.authorization.valid_through_frame_sequence
+    {
+        return Err(
+            "competitive gesture permission and priority-Pass launch describe different exact games"
+                .to_owned(),
+        );
+    }
+    for commitment in [
+        candidate.permission_review_commitment_sha256.as_str(),
+        candidate.mode_authorization_commitment_sha256.as_str(),
+        candidate.gesture_evaluation_commitment_sha256.as_str(),
+        candidate
+            .gesture_profile_admission_commitment_sha256
+            .as_str(),
+        candidate.gesture_target_runtime_binary_sha256.as_str(),
+        candidate.gesture_target_assets_manifest_sha256.as_str(),
+        candidate.ratification_commitment_sha256.as_str(),
+        pass_match_launch
+            .gameplay_authorization_commitment_sha256
+            .as_str(),
+        pass_match_launch
+            .launch_authorization_commitment_sha256
+            .as_str(),
+    ] {
+        if !is_sha256_v2(commitment) {
+            return Err(
+                "competitive gesture match launch contains an invalid commitment".to_owned(),
+            );
+        }
+    }
+    let expected_gameplay =
+        competitive_match_gameplay_authorization_commitment_v1(&pass_match_launch.authorization)
+            .map_err(|error| format!("competitive gesture match commitment: {error}"))?;
+    let expected_pass_launch = competitive_match_launch_commitment_v1(
+        visible_account_alias,
+        &candidate.mode_authorization_commitment_sha256,
+        &expected_gameplay,
+        &pass_match_launch.authorization,
+    );
+    if expected_gameplay != pass_match_launch.gameplay_authorization_commitment_sha256
+        || expected_pass_launch != pass_match_launch.launch_authorization_commitment_sha256
+    {
+        return Err("priority-Pass launch commitment changed before gesture extension".to_owned());
+    }
+    Ok(())
+}
+
+fn ratify_competitive_gesture_match_launch_from_confirmation_v1(
+    gesture_authorization: RatifiedMtgoCompetitiveDuelGestureAuthorizationV1,
+    pass_match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    candidate: MtgoReviewedCompetitiveGestureRatificationCandidateV1,
+    challenge_nonce: [u8; 8],
+    issued_at_unix_millis: u128,
+    supplied_phrase: &str,
+) -> Result<RatifiedMtgoCompetitiveGestureMatchLaunchV1, String> {
+    let expected_candidate = validate_competitive_gesture_match_launch_authorities_v1(
+        &gesture_authorization,
+        &pass_match_launch,
+    )?;
+    if candidate != expected_candidate {
+        return Err("competitive gesture match launch candidate changed".to_owned());
+    }
+    let gesture_match_launch_commitment_sha256 =
+        competitive_gesture_match_launch_commitment_from_facts_v1(
+            &candidate,
+            &pass_match_launch,
+            &gesture_authorization.visible_account_alias,
+            &challenge_nonce,
+            issued_at_unix_millis,
+            supplied_phrase,
+        )?;
+    Ok(RatifiedMtgoCompetitiveGestureMatchLaunchV1 {
+        gesture_authorization,
+        pass_match_launch,
+        gesture_match_launch_commitment_sha256,
+    })
+}
+
+fn competitive_gesture_match_launch_commitment_from_facts_v1(
+    candidate: &MtgoReviewedCompetitiveGestureRatificationCandidateV1,
+    pass_match_launch: &RatifiedMtgoCompetitiveMatchLaunchV1,
+    visible_account_alias: &str,
+    challenge_nonce: &[u8; 8],
+    issued_at_unix_millis: u128,
+    supplied_phrase: &str,
+) -> Result<String, String> {
+    validate_competitive_gesture_match_launch_facts_v1(
+        candidate,
+        pass_match_launch,
+        visible_account_alias,
+    )?;
+    if issued_at_unix_millis == 0 {
+        return Err("attended gesture match launch has an invalid issue time".to_owned());
+    }
+    let expected_phrase = attended_competitive_gesture_match_launch_confirmation_phrase_v1(
+        candidate.event_kind,
+        pass_match_launch.authorization.game_number,
+        challenge_nonce,
+    );
+    if supplied_phrase != expected_phrase {
+        return Err("attended competitive gesture match launch challenge did not match".to_owned());
+    }
+    let event_kind: &[u8] = match candidate.event_kind {
+        MtgoCompetitiveEventKindV1::League => b"league",
+        MtgoCompetitiveEventKindV1::Challenge => b"challenge",
+    };
+    let family_json = serde_json::to_vec(&candidate.supported_action_families)
+        .map_err(|error| format!("serialize attended gesture launch families: {error}"))?;
+    Ok(hash_parts_v2(
+        ATTENDED_COMPETITIVE_GESTURE_MATCH_LAUNCH_UPGRADE_DOMAIN_V1,
+        &[
+            candidate.ratification_commitment_sha256.as_bytes(),
+            candidate.permission_review_commitment_sha256.as_bytes(),
+            candidate.mode_authorization_commitment_sha256.as_bytes(),
+            candidate.gesture_evaluation_commitment_sha256.as_bytes(),
+            candidate
+                .gesture_profile_admission_commitment_sha256
+                .as_bytes(),
+            candidate.gesture_target_runtime_binary_sha256.as_bytes(),
+            candidate
+                .gesture_target_assets_manifest_sha256
+                .as_bytes(),
+            pass_match_launch
+                .launch_authorization_commitment_sha256
+                .as_bytes(),
+            pass_match_launch
+                .gameplay_authorization_commitment_sha256
+                .as_bytes(),
+            pass_match_launch
+                .authorization
+                .owner_launch_authorization_sha256
+                .as_bytes(),
+            pass_match_launch
+                .authorization
+                .event_identity_sha256
+                .as_bytes(),
+            pass_match_launch
+                .authorization
+                .match_identity_sha256
+                .as_bytes(),
+            pass_match_launch
+                .authorization
+                .entry_authorization_sha256
+                .as_bytes(),
+            event_kind,
+            &[pass_match_launch.authorization.game_number],
+            pass_match_launch
+                .valid_from_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            pass_match_launch
+                .authorization
+                .valid_through_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            challenge_nonce.as_slice(),
+            issued_at_unix_millis.to_be_bytes().as_slice(),
+            supplied_phrase.as_bytes(),
+            family_json.as_slice(),
+            b"owner_extends_exact_pass_launch_to_complete_reviewed_eleven_family_profile_no_entry_or_spending",
+        ],
+    ))
+}
+
 fn validate_attended_competitive_match_launch_request_v4(
     scope: &MtgoAuthorizationScopeV1,
     visible_account_alias: &str,
@@ -3046,6 +3542,21 @@ fn attended_competitive_match_launch_confirmation_phrase_v4(
         .collect::<String>();
     format!(
         "AUTHORIZE MTGO {} GAME {game_number} {nonce}",
+        competitive_event_kind_label_v4(event_kind).to_ascii_uppercase()
+    )
+}
+
+fn attended_competitive_gesture_match_launch_confirmation_phrase_v1(
+    event_kind: MtgoCompetitiveEventKindV1,
+    game_number: u8,
+    challenge_nonce: &[u8; 8],
+) -> String {
+    let nonce = challenge_nonce
+        .iter()
+        .map(|value| format!("{value:02X}"))
+        .collect::<String>();
+    format!(
+        "AUTHORIZE MTGO {} GAME {game_number} ALL ELEVEN GESTURES {nonce}",
         competitive_event_kind_label_v4(event_kind).to_ascii_uppercase()
     )
 }
@@ -3946,6 +4457,46 @@ fn initial_competitive_game_session_commitment_v1(
                 .to_be_bytes()
                 .as_slice(),
             b"move_only_sequential_visible_postconditions_no_entry_or_spending",
+        ],
+    )
+}
+
+fn initial_competitive_gesture_game_session_commitment_v1(
+    candidate: &MtgoReviewedCompetitiveGestureRatificationCandidateV1,
+    pass_match_launch: &RatifiedMtgoCompetitiveMatchLaunchV1,
+    gesture_match_launch_commitment_sha256: &str,
+) -> String {
+    let event_kind: &[u8] = match candidate.event_kind {
+        MtgoCompetitiveEventKindV1::League => b"league",
+        MtgoCompetitiveEventKindV1::Challenge => b"challenge",
+    };
+    hash_parts_v2(
+        COMPETITIVE_GESTURE_GAME_SESSION_INITIAL_DOMAIN_V1,
+        &[
+            candidate.ratification_commitment_sha256.as_bytes(),
+            candidate.gesture_evaluation_commitment_sha256.as_bytes(),
+            candidate
+                .gesture_profile_admission_commitment_sha256
+                .as_bytes(),
+            pass_match_launch
+                .launch_authorization_commitment_sha256
+                .as_bytes(),
+            pass_match_launch
+                .gameplay_authorization_commitment_sha256
+                .as_bytes(),
+            gesture_match_launch_commitment_sha256.as_bytes(),
+            event_kind,
+            &[pass_match_launch.authorization.game_number],
+            pass_match_launch
+                .valid_from_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            pass_match_launch
+                .authorization
+                .valid_through_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            b"move_only_all_family_lineage_no_preparation_execution_entry_or_spending",
         ],
     )
 }
@@ -5503,6 +6054,141 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn attended_gesture_launch_extension_binds_exact_pass_game_and_profile() {
+        let families = canonical_duel_gesture_action_families_v1();
+        let evaluation = "1".repeat(64);
+        let admission = "2".repeat(64);
+        let runtime = "3".repeat(64);
+        let assets = "4".repeat(64);
+        let facts = CompetitiveDuelGestureProfileFactsV1 {
+            evaluation_commitment_sha256: &evaluation,
+            admission_commitment_sha256: &admission,
+            runtime_binary_sha256: &runtime,
+            assets_manifest_sha256: &assets,
+            supported_action_families: &families,
+        };
+        let correspondence = checked_competitive_correspondence_v2();
+        let candidate = competitive_duel_gesture_ratification_candidate_from_parts_v1(
+            &correspondence,
+            "UnbuckledPie",
+            MtgoCompetitiveEventKindV1::League,
+            &facts,
+        )
+        .unwrap();
+        let mut authorization =
+            competitive_match_authorization_v1(MtgoCompetitiveEventKindV1::League, 2);
+        authorization.account_alias_sha256 = candidate.account_alias_sha256.clone();
+        authorization.written_permission_sha256 = candidate.correspondence_sha256.clone();
+        let gameplay_authorization_commitment_sha256 =
+            competitive_match_gameplay_authorization_commitment_v1(&authorization).unwrap();
+        let launch_authorization_commitment_sha256 = competitive_match_launch_commitment_v1(
+            "UnbuckledPie",
+            &candidate.mode_authorization_commitment_sha256,
+            &gameplay_authorization_commitment_sha256,
+            &authorization,
+        );
+        let pass_match_launch = RatifiedMtgoCompetitiveMatchLaunchV1 {
+            authorization,
+            mode_authorization_commitment_sha256: candidate
+                .mode_authorization_commitment_sha256
+                .clone(),
+            gameplay_authorization_commitment_sha256,
+            launch_authorization_commitment_sha256,
+            valid_from_frame_sequence: 40,
+        };
+        let nonce = [0x2au8; 8];
+        let phrase = attended_competitive_gesture_match_launch_confirmation_phrase_v1(
+            MtgoCompetitiveEventKindV1::League,
+            2,
+            &nonce,
+        );
+        assert_eq!(
+            phrase,
+            "AUTHORIZE MTGO LEAGUE GAME 2 ALL ELEVEN GESTURES 2A2A2A2A2A2A2A2A"
+        );
+        let extension = competitive_gesture_match_launch_commitment_from_facts_v1(
+            &candidate,
+            &pass_match_launch,
+            "UnbuckledPie",
+            &nonce,
+            1_777,
+            &phrase,
+        )
+        .unwrap();
+        assert_eq!(extension.len(), 64);
+        assert!(competitive_gesture_match_launch_commitment_from_facts_v1(
+            &candidate,
+            &pass_match_launch,
+            "UnbuckledPie",
+            &nonce,
+            1_777,
+            "AUTHORIZE SOMETHING ELSE",
+        )
+        .is_err());
+        let wrong_game_phrase = attended_competitive_gesture_match_launch_confirmation_phrase_v1(
+            MtgoCompetitiveEventKindV1::League,
+            1,
+            &nonce,
+        );
+        assert!(competitive_gesture_match_launch_commitment_from_facts_v1(
+            &candidate,
+            &pass_match_launch,
+            "UnbuckledPie",
+            &nonce,
+            1_777,
+            &wrong_game_phrase,
+        )
+        .is_err());
+        assert!(competitive_gesture_match_launch_commitment_from_facts_v1(
+            &candidate,
+            &pass_match_launch,
+            "UnbuckledPie",
+            &nonce,
+            0,
+            &phrase,
+        )
+        .is_err());
+        let session = initial_competitive_gesture_game_session_commitment_v1(
+            &candidate,
+            &pass_match_launch,
+            &extension,
+        );
+        assert_eq!(session.len(), 64);
+        assert_ne!(session, extension);
+
+        let mut wrong_mode = candidate.clone();
+        wrong_mode.event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        assert!(validate_competitive_gesture_match_launch_facts_v1(
+            &wrong_mode,
+            &pass_match_launch,
+            "UnbuckledPie"
+        )
+        .is_err());
+        let mut incomplete = candidate.clone();
+        incomplete.supported_action_families.pop();
+        assert!(validate_competitive_gesture_match_launch_facts_v1(
+            &incomplete,
+            &pass_match_launch,
+            "UnbuckledPie"
+        )
+        .is_err());
+        assert!(validate_competitive_gesture_match_launch_facts_v1(
+            &candidate,
+            &pass_match_launch,
+            "DifferentAccount"
+        )
+        .is_err());
+        let mut invalid_lifetime = pass_match_launch;
+        invalid_lifetime.valid_from_frame_sequence = 0;
+        assert!(validate_competitive_gesture_match_launch_facts_v1(
+            &candidate,
+            &invalid_lifetime,
+            "UnbuckledPie"
+        )
+        .is_err());
     }
 
     #[test]
