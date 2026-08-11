@@ -9,11 +9,11 @@ card-selection, or Submit action, and the Flat V2 encoder has no pregame
 observation. The existing `MtgoNonModelPregameHeuristicV1` is therefore a
 wiring stopgap, not the mtg-kernel RL model.
 
-The competitive adapter also lacks two public facts needed by a serious
-pregame policy: whether the acting player is on the play or draw, and the
-current public match score. Game number alone is not enough.
+The competitive adapter now carries the two additional public facts needed by
+a serious pregame policy: whether the acting player is on the play or draw,
+and the current public match score. Game number alone is not enough.
 
-The adapter now has a checked-untrusted structural contract for those facts.
+The adapter has a checked-untrusted structural contract for those facts.
 It requires the canonical play-or-draw, acting-player score, and opponent-score
 regions in that order, rehashes each region from the supplied BGRA frame,
 enforces legal best-of-three score progression, and binds the result to the
@@ -22,7 +22,11 @@ input authority until a heldout visible-context evaluation is admitted. The
 adapter now also defines that evaluation over all eight legal combinations of
 play or draw and best-of-three game score. It requires unique manually reviewed
 source frames, full prediction coverage, and exact labels and commitments in
-every state. The production ratification root remains empty.
+every state. A second bounded classifier protocol now runs over the same
+retained pregame pixels, requires its separately evaluated classifier binary
+to equal the verified runtime executable, and consumes both checked results
+into one move-only model context. The production ratification root remains
+empty, and the context exposes no native-scoring or input conversion.
 
 ## Required mtg-kernel surface
 
@@ -79,7 +83,8 @@ Once the native surface exists, the adapter should:
 The model path is not wiring-complete until all of the following are true:
 
 - the current checkpoint package exposes the typed pregame head;
-- play or draw and match score are source-bound from visible MTGO state;
+- play or draw and match score remain source-bound from the same visible MTGO
+  frame through the native pregame scoring call;
 - deterministic simulator fixtures prove action ordering and checkpoint
   identity parity;
 - heldout pregame evaluation covers every legal stage and supported deck;

@@ -83,6 +83,8 @@ const DUEL_OPAQUE_COMPETITIVE_PASS_CONFIRMATION_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-pass-confirmation-v1";
 const DUEL_PERCEPTION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_PERCEPTION_V1\0";
 const COMPETITIVE_PREGAME_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_PREGAME_V1\0";
+const COMPETITIVE_PREGAME_PUBLIC_CONTEXT_PROTOCOL_MAGIC_V1: &[u8] =
+    b"MTGO_VISIBLE_COMPETITIVE_PREGAME_PUBLIC_CONTEXT_V1\0";
 const DUEL_GESTURE_TARGET_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_GESTURE_TARGET_V1\0";
 const MAX_RUNTIME_ARTIFACT_BYTES_V1: u64 = 512 * 1024 * 1024;
 const MAX_PERCEPTION_RESPONSE_BYTES_V1: usize = 16 * 1024 * 1024;
@@ -4926,6 +4928,23 @@ pub(super) fn invoke_verified_competitive_pregame_process_v1(
         "--mtgo-visible-competitive-pregame-v1",
         COMPETITIVE_PREGAME_PROTOCOL_MAGIC_V1,
         "competitive pregame",
+        header_json,
+        canonical_bgra8,
+        timeout,
+    )
+}
+
+pub(super) fn invoke_verified_competitive_pregame_public_context_process_v1(
+    runtime: &OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
+    header_json: &[u8],
+    canonical_bgra8: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
+    invoke_verified_classifier_process_v1(
+        runtime,
+        "--mtgo-visible-competitive-pregame-public-context-v1",
+        COMPETITIVE_PREGAME_PUBLIC_CONTEXT_PROTOCOL_MAGIC_V1,
+        "competitive pregame public context",
         header_json,
         canonical_bgra8,
         timeout,

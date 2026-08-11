@@ -1475,6 +1475,8 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "end_to_end_operator_loop_present: false",
         "native_checkpoint_duel_action_interface_present: true",
         "native_checkpoint_pregame_interface_present: false",
+        "competitive_pregame_play_draw_context_present: true",
+        "competitive_pregame_match_score_context_present: true",
         "competitive_pregame_heuristic_deployment_ratification_present:",
         "competitive_pregame_session_ownership_bridge_present: true",
         "visible_accessibility_exact_text_probe_present: true",
@@ -1509,6 +1511,46 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         assert!(
             !source.contains(forbidden) && !binary.contains(forbidden),
             "readiness preflight exposes a forbidden operation: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_pregame_public_context_runtime_is_same_frame_profile_and_binary_bound() {
+    let source = include_str!("../src/probe/competitive_pregame_runtime.rs");
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    for required in [
+        "classify_competitive_pregame_public_context_v1",
+        "check_untrusted_competitive_pregame_public_context_classifier_request_v1",
+        "check_untrusted_competitive_pregame_public_context_classifier_response_v1",
+        "bind_untrusted_competitive_pregame_model_context_v1",
+        "runtime_commitments.perception_pipeline_binary_sha256",
+        "profile.classifier_binary_sha256()",
+        "source._checked_classification",
+        "raw.canonical_bgra8",
+        "safe_for_native_model_scoring_v1(&self) -> bool",
+        "safe_for_input_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame public-context runtime is missing: {required}"
+        );
+    }
+    for required in [
+        "--mtgo-visible-competitive-pregame-public-context-v1",
+        "MTGO_VISIBLE_COMPETITIVE_PREGAME_PUBLIC_CONTEXT_V1",
+    ] {
+        assert!(runtime.contains(required));
+    }
+    for forbidden in [
+        "impl VerifiedPointerTargetV3 for OpaqueMtgoClassifiedCompetitivePregameModelContextV1",
+        "pub fn pixels_v1",
+        "pub fn rect_client_px_v1",
+        "SendInput",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame model context exposes forbidden capability: {forbidden}"
         );
     }
 }

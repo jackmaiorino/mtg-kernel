@@ -35,6 +35,7 @@ pub struct MtgoCompetitivePregamePublicContextEvaluationSpecV1 {
     pub corpus_manifest_sha256: String,
     pub annotation_protocol_sha256: String,
     pub evaluator_binary_sha256: String,
+    pub classifier_binary_sha256: String,
     pub minimum_unique_cases_per_canonical_state: u32,
     pub minimum_prediction_coverage_bps_per_canonical_state: u16,
     pub minimum_exact_accuracy_bps_per_canonical_state: u16,
@@ -62,6 +63,7 @@ pub struct CheckedUntrustedMtgoCompetitivePregamePublicContextEvaluationV1 {
     pregame_evaluation_commitment_sha256: String,
     pregame_profile_admission_commitment_sha256: String,
     evaluation_commitment_sha256: String,
+    classifier_binary_sha256: String,
     unique_case_count: u32,
     prediction_count: u32,
     exact_prediction_count: u32,
@@ -79,6 +81,10 @@ impl CheckedUntrustedMtgoCompetitivePregamePublicContextEvaluationV1 {
 
     pub fn evaluation_commitment_sha256(&self) -> &str {
         &self.evaluation_commitment_sha256
+    }
+
+    pub fn classifier_binary_sha256(&self) -> &str {
+        &self.classifier_binary_sha256
     }
 
     pub fn unique_case_count(&self) -> u32 {
@@ -115,6 +121,7 @@ pub struct AdmittedMtgoCompetitivePregamePublicContextProfileV1 {
     pregame_evaluation_commitment_sha256: String,
     pregame_profile_admission_commitment_sha256: String,
     evaluation_commitment_sha256: String,
+    classifier_binary_sha256: String,
     admission_commitment_sha256: String,
 }
 
@@ -133,6 +140,10 @@ impl AdmittedMtgoCompetitivePregamePublicContextProfileV1 {
 
     pub fn evaluation_commitment_sha256(&self) -> &str {
         &self.evaluation_commitment_sha256
+    }
+
+    pub fn classifier_binary_sha256(&self) -> &str {
+        &self.classifier_binary_sha256
     }
 
     pub fn admission_commitment_sha256(&self) -> &str {
@@ -320,6 +331,7 @@ pub fn evaluate_untrusted_competitive_pregame_public_context_profile_v1(
             pregame_profile_admission_commitment_sha256: spec
                 .pregame_profile_admission_commitment_sha256,
             evaluation_commitment_sha256,
+            classifier_binary_sha256: spec.classifier_binary_sha256,
             unique_case_count: u32::try_from(cases.len()).map_err(|_| {
                 error_v1(
                     "competitive_pregame_public_context_case_count_invalid",
@@ -373,6 +385,7 @@ fn admit_against_ratification_v1(
             checked
                 .pregame_profile_admission_commitment_sha256
                 .as_bytes(),
+            checked.classifier_binary_sha256.as_bytes(),
             b"identity_only_no_pixels_model_input_or_live_authority",
         ],
     );
@@ -381,8 +394,36 @@ fn admit_against_ratification_v1(
         pregame_profile_admission_commitment_sha256: checked
             .pregame_profile_admission_commitment_sha256,
         evaluation_commitment_sha256: checked.evaluation_commitment_sha256,
+        classifier_binary_sha256: checked.classifier_binary_sha256,
         admission_commitment_sha256,
     })
+}
+
+#[cfg(test)]
+pub(crate) fn competitive_pregame_public_context_profile_admitted_for_test_v1(
+    pregame_evaluation_commitment_sha256: &str,
+    pregame_profile_admission_commitment_sha256: &str,
+    classifier_binary_sha256: String,
+) -> AdmittedMtgoCompetitivePregamePublicContextProfileV1 {
+    let evaluation_commitment_sha256 = "d".repeat(64);
+    let admission_commitment_sha256 = commitment_v1(
+        PUBLIC_CONTEXT_ADMISSION_DOMAIN_V1,
+        &[
+            evaluation_commitment_sha256.as_bytes(),
+            pregame_evaluation_commitment_sha256.as_bytes(),
+            pregame_profile_admission_commitment_sha256.as_bytes(),
+            classifier_binary_sha256.as_bytes(),
+            b"identity_only_no_pixels_model_input_or_live_authority",
+        ],
+    );
+    AdmittedMtgoCompetitivePregamePublicContextProfileV1 {
+        pregame_evaluation_commitment_sha256: pregame_evaluation_commitment_sha256.to_owned(),
+        pregame_profile_admission_commitment_sha256: pregame_profile_admission_commitment_sha256
+            .to_owned(),
+        evaluation_commitment_sha256,
+        classifier_binary_sha256,
+        admission_commitment_sha256,
+    }
 }
 
 fn validate_spec_v1(
@@ -405,6 +446,7 @@ fn validate_spec_v1(
         spec.corpus_manifest_sha256.as_str(),
         spec.annotation_protocol_sha256.as_str(),
         spec.evaluator_binary_sha256.as_str(),
+        spec.classifier_binary_sha256.as_str(),
     ] {
         validate_lower_sha256_v1(digest)?;
     }
@@ -513,6 +555,7 @@ mod tests {
             corpus_manifest_sha256: "a".repeat(64),
             annotation_protocol_sha256: "b".repeat(64),
             evaluator_binary_sha256: "c".repeat(64),
+            classifier_binary_sha256: "d".repeat(64),
             minimum_unique_cases_per_canonical_state: 1,
             minimum_prediction_coverage_bps_per_canonical_state: 10_000,
             minimum_exact_accuracy_bps_per_canonical_state: 10_000,
@@ -554,15 +597,18 @@ mod tests {
     #[test]
     fn exact_corpus_passes_but_production_admission_is_empty() {
         let profile = profile_v1();
+        let spec = spec_v1(&profile);
+        let classifier_binary_sha256 = spec.classifier_binary_sha256.clone();
         let checked = evaluate_untrusted_competitive_pregame_public_context_profile_v1(
             &profile,
-            spec_v1(&profile),
+            spec,
             cases_v1(),
         )
         .unwrap();
         assert_eq!(checked.unique_case_count(), 8);
         assert_eq!(checked.prediction_count(), 8);
         assert_eq!(checked.exact_prediction_count(), 8);
+        assert_eq!(checked.classifier_binary_sha256(), classifier_binary_sha256);
         assert!(checked.passes_declared_gate());
         assert!(!checked.safe_for_live_classification_v1());
         assert!(!checked.safe_for_model_scoring_v1());
@@ -727,8 +773,32 @@ mod tests {
             admitted.scope(),
             MtgoCompetitivePregamePublicContextProfileScopeV1::ActingPlayerDuelPlayDrawAndBestOfThreeScore
         );
+        assert_eq!(admitted.classifier_binary_sha256(), "d".repeat(64));
         assert!(!admitted.safe_for_live_classification_v1());
         assert!(!admitted.safe_for_model_scoring_v1());
         assert!(!admitted.safe_for_input_v1());
+    }
+
+    #[test]
+    fn classifier_binary_is_part_of_the_evaluation_identity() {
+        let profile = profile_v1();
+        let baseline = evaluate_untrusted_competitive_pregame_public_context_profile_v1(
+            &profile,
+            spec_v1(&profile),
+            cases_v1(),
+        )
+        .unwrap();
+        let mut changed_spec = spec_v1(&profile);
+        changed_spec.classifier_binary_sha256 = "e".repeat(64);
+        let changed = evaluate_untrusted_competitive_pregame_public_context_profile_v1(
+            &profile,
+            changed_spec,
+            cases_v1(),
+        )
+        .unwrap();
+        assert_ne!(
+            baseline.evaluation_commitment_sha256(),
+            changed.evaluation_commitment_sha256()
+        );
     }
 }
