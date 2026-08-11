@@ -1,16 +1,21 @@
 use super::{
-    capture_commitment_v3, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    capture_admitted_mtgo_competitive_navigation_frame_v1, capture_commitment_v3,
+    choose_cursor_park_point_v3, classify_admitted_mtgo_competitive_navigation_frame_v1,
+    MtgoCompetitiveNavigationFrameIdentityV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
 };
-use crate::sha256_hex_v1;
+use crate::{sha256_hex_v1, SignedRectV1};
 use mtgo_blackbox_v1::{
-    visible_frame_region_content_sha256_v1, CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
-    MtgoCompetitiveEntryResourceV1, MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitiveLifecyclePhaseV1, MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1,
-    MtgoRectPxV1, MtgoSizePxV1,
+    visible_frame_region_content_sha256_v1, AdmittedMtgoCompetitiveNavigationProfileV1,
+    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoCompetitiveEntryResourceV1,
+    MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1,
+    MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1, MtgoRectPxV1, MtgoSizePxV1,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const OPAQUE_COMPETITIVE_ENTRY_REVIEW_IDENTITY_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-entry-review-identity-v1";
@@ -24,6 +29,8 @@ const COMPETITIVE_ENTRY_WINDOW_CONTINUITY_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-window-continuity-v1";
 const COMPETITIVE_ENTRY_IMMEDIATE_RECAPTURE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-immediate-recapture-v1";
+const COMPETITIVE_ENTRY_VISIBLE_CONFIRMATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-entry-visible-confirmation-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
@@ -135,6 +142,42 @@ pub struct MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1 {
     pub recapture_commitment_sha256: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MtgoCompetitiveEntryPointerTargetV1 {
+    pub(crate) hwnd: u64,
+    pub(crate) process_id: u32,
+    pub(crate) process_start_filetime_100ns: u64,
+    pub(crate) dpi: u32,
+    pub(crate) client_rect_desktop_px: SignedRectV1,
+    pub(crate) target_x_desktop_px: i32,
+    pub(crate) target_y_desktop_px: i32,
+    pub(crate) park_x_desktop_px: i32,
+    pub(crate) park_y_desktop_px: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1 {
+    pub(crate) frame_transition: MtgoCompetitiveEntryFrameTransitionCommitmentsV1,
+    pub(crate) after_capture_commitment_sha256: String,
+    pub(crate) after_classification_result_commitment_sha256: String,
+    pub(crate) after_lifecycle_snapshot_commitment_sha256: String,
+    pub(crate) after_captured_at_unix_millis: u128,
+    pub(crate) postcondition_candidate_count: u32,
+    pub(crate) confirmation_commitment_sha256: String,
+}
+
+pub(crate) struct OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1 {
+    _before_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    _after_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    commitments: MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1,
+}
+
+impl OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1 {
+    pub(crate) fn commitments_v1(&self) -> MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1 {
+        self.commitments.clone()
+    }
+}
+
 #[derive(Clone)]
 struct MtgoCompetitiveEntryFrameTransitionViewV1 {
     navigation_profile_commitment_sha256: String,
@@ -238,6 +281,10 @@ impl OpaqueMtgoCompetitiveEntryReviewIdentityV1 {
 
     pub(crate) fn event_display_label_v1(&self) -> &str {
         &self.event_display_label
+    }
+
+    pub(crate) fn event_label_rect_client_px_v1(&self) -> &MtgoRectPxV1 {
+        &self._event_label_rect_client_px
     }
 }
 
@@ -605,6 +652,306 @@ pub(crate) fn validate_classifier_backed_competitive_entry_immediate_recapture_v
     })
 }
 
+pub(crate) fn resolve_competitive_entry_pointer_target_v1(
+    immediate: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    control_rect_client_px: &MtgoRectPxV1,
+) -> Result<MtgoCompetitiveEntryPointerTargetV1, String> {
+    if immediate.phase_v1() != MtgoCompetitiveLifecyclePhaseV1::EntryReview {
+        return Err("competitive entry pointer target is not an Entry Review frame".to_owned());
+    }
+    let frame = &immediate._source_frame.source_frame;
+    let width = frame.manifest.frame.canonical_width;
+    let height = frame.manifest.frame.canonical_height;
+    let right = control_rect_client_px
+        .x
+        .checked_add(control_rect_client_px.width)
+        .ok_or("competitive entry control x overflow")?;
+    let bottom = control_rect_client_px
+        .y
+        .checked_add(control_rect_client_px.height)
+        .ok_or("competitive entry control y overflow")?;
+    if control_rect_client_px.width == 0
+        || control_rect_client_px.height == 0
+        || right > width
+        || bottom > height
+    {
+        return Err("competitive entry control is outside the immediate client".to_owned());
+    }
+    let target_x_client_px = control_rect_client_px
+        .x
+        .checked_add(control_rect_client_px.width / 2)
+        .ok_or("competitive entry target x overflow")?;
+    let target_y_client_px = control_rect_client_px
+        .y
+        .checked_add(control_rect_client_px.height / 2)
+        .ok_or("competitive entry target y overflow")?;
+    let client_rect = frame.manifest.pre.client_rect_desktop_px;
+    let target_x_desktop_px = client_rect
+        .left
+        .checked_add(
+            i32::try_from(target_x_client_px)
+                .map_err(|_| "competitive entry target x does not fit the desktop")?,
+        )
+        .ok_or("competitive entry desktop x overflow")?;
+    let target_y_desktop_px = client_rect
+        .top
+        .checked_add(
+            i32::try_from(target_y_client_px)
+                .map_err(|_| "competitive entry target y does not fit the desktop")?,
+        )
+        .ok_or("competitive entry desktop y overflow")?;
+    if !client_rect.contains_point(target_x_desktop_px, target_y_desktop_px) {
+        return Err("competitive entry target is outside the current client".to_owned());
+    }
+    let (park_x_desktop_px, park_y_desktop_px) =
+        choose_cursor_park_point_v3(&client_rect, &frame.manifest.output.bounds_desktop_px)?;
+    let pre = &frame.manifest.pre;
+    Ok(MtgoCompetitiveEntryPointerTargetV1 {
+        hwnd: pre.hwnd,
+        process_id: pre.process_id,
+        process_start_filetime_100ns: pre.process_start_filetime_100ns,
+        dpi: pre.dpi,
+        client_rect_desktop_px: client_rect,
+        target_x_desktop_px,
+        target_y_desktop_px,
+        park_x_desktop_px,
+        park_y_desktop_px,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn confirm_opaque_competitive_entry_postcondition_v1(
+    before: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    source_identity_commitment_sha256: String,
+    event_label_rect_client_px: MtgoRectPxV1,
+    control_rect_client_px: MtgoRectPxV1,
+    expected_event_label_region_sha256: String,
+    expected_control_region_sha256: String,
+    preparation_commitment_sha256: String,
+    profile: &AdmittedMtgoCompetitiveNavigationProfileV1,
+    runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    input_sent_at_unix_millis: u128,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1, String> {
+    if !(100..=10_000).contains(&timeout_ms) {
+        return Err(
+            "competitive entry confirmation timeout must be between 100 and 10000 ms".to_owned(),
+        );
+    }
+    for digest in [
+        source_identity_commitment_sha256.as_str(),
+        expected_event_label_region_sha256.as_str(),
+        expected_control_region_sha256.as_str(),
+        preparation_commitment_sha256.as_str(),
+    ] {
+        if !looks_like_lower_sha256_v1(digest) {
+            return Err("competitive entry confirmation has an invalid commitment".to_owned());
+        }
+    }
+    if input_sent_at_unix_millis == 0 {
+        return Err("competitive entry confirmation has no input timestamp".to_owned());
+    }
+    let before_view = classified_entry_review_transition_view_v1(
+        &before,
+        Some(source_identity_commitment_sha256),
+    )?;
+    if before_view.captured_at_unix_millis > input_sent_at_unix_millis
+        || input_sent_at_unix_millis - before_view.captured_at_unix_millis > 2_000
+    {
+        return Err("competitive entry confirmation baseline was not fresh at input".to_owned());
+    }
+    let before_frame = &before._source_frame.source_frame;
+    let before_size = MtgoSizePxV1 {
+        width: before_frame.manifest.frame.canonical_width,
+        height: before_frame.manifest.frame.canonical_height,
+    };
+    let before_event_label_region_sha256 = visible_frame_region_content_sha256_v1(
+        &before_frame.canonical_bgra8,
+        &before_size,
+        &event_label_rect_client_px,
+    )
+    .map_err(|error| format!("rehash entry confirmation event label: {error}"))?;
+    let before_control_region_sha256 = visible_frame_region_content_sha256_v1(
+        &before_frame.canonical_bgra8,
+        &before_size,
+        &control_rect_client_px,
+    )
+    .map_err(|error| format!("rehash entry confirmation control: {error}"))?;
+    if before_event_label_region_sha256 != expected_event_label_region_sha256
+        || before_control_region_sha256 != expected_control_region_sha256
+    {
+        return Err(
+            "competitive entry confirmation baseline changed its event label or control pixels"
+                .to_owned(),
+        );
+    }
+    let before_terms = before
+        ._lifecycle
+        .entry_terms_v1()
+        .ok_or("competitive entry confirmation baseline has no exact entry terms")?
+        .clone();
+    let before_facts = before._lifecycle.visible_facts_v1().to_vec();
+    let deadline = Instant::now()
+        .checked_add(Duration::from_millis(u64::from(timeout_ms)))
+        .ok_or("competitive entry confirmation deadline overflow")?;
+    let mut postcondition_candidate_count = 0_u32;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining < Duration::from_millis(100) {
+            return Err(format!(
+                "timed out waiting for entered-and-waiting after {postcondition_candidate_count} admitted candidates"
+            ));
+        }
+        let candidate_timeout_ms = u32::try_from(remaining.as_millis())
+            .unwrap_or(u32::MAX)
+            .clamp(100, 10_000);
+        let candidate_source =
+            capture_admitted_mtgo_competitive_navigation_frame_v1(profile, candidate_timeout_ms)?;
+        postcondition_candidate_count = postcondition_candidate_count
+            .checked_add(1)
+            .ok_or("competitive entry postcondition candidate count overflow")?;
+        let candidate_capture = candidate_source.commitments_v1();
+        let candidate_captured_at_unix_millis =
+            candidate_capture.source_capture.captured_at_unix_millis;
+        if candidate_captured_at_unix_millis < before_view.captured_at_unix_millis {
+            return Err("competitive entry postcondition clock moved backwards".to_owned());
+        }
+        if candidate_captured_at_unix_millis <= input_sent_at_unix_millis
+            || candidate_capture.source_capture.capture_commitment_sha256
+                == before_view.capture_commitment_sha256
+        {
+            thread::sleep(Duration::from_millis(25));
+            continue;
+        }
+        let candidate_frame_sequence = before_view
+            .frame_sequence
+            .checked_add(u64::from(postcondition_candidate_count))
+            .ok_or("competitive entry postcondition frame sequence overflow")?;
+        let candidate_frame_id = competitive_entry_frame_id_from_capture_commitment_v1(
+            &candidate_capture.source_capture.capture_commitment_sha256,
+            before_view.frame_id,
+        )?;
+        let classifier_remaining = deadline.saturating_duration_since(Instant::now());
+        if classifier_remaining < Duration::from_millis(100) {
+            return Err(format!(
+                "timed out before classifying competitive entry candidate {postcondition_candidate_count}"
+            ));
+        }
+        let classifier_timeout_ms = u32::try_from(classifier_remaining.as_millis())
+            .unwrap_or(u32::MAX)
+            .clamp(100, 10_000);
+        let candidate = classify_admitted_mtgo_competitive_navigation_frame_v1(
+            candidate_source,
+            profile,
+            runtime,
+            MtgoCompetitiveNavigationFrameIdentityV1 {
+                frame_id: candidate_frame_id,
+                frame_sequence: candidate_frame_sequence,
+            },
+            classifier_timeout_ms,
+        )?;
+        match candidate.phase_v1() {
+            MtgoCompetitiveLifecyclePhaseV1::EntryReview => {
+                let candidate_view = classified_entry_review_transition_view_v1(&candidate, None)?;
+                validate_competitive_entry_immediate_recapture_views_v1(
+                    &before_view,
+                    &candidate_view,
+                )?;
+                let candidate_terms = candidate
+                    ._lifecycle
+                    .entry_terms_v1()
+                    .ok_or("pending entry-review candidate has no exact entry terms")?;
+                if candidate_terms != &before_terms
+                    || candidate._lifecycle.visible_facts_v1() != before_facts.as_slice()
+                {
+                    return Err(
+                        "pending entry-review candidate changed visible lifecycle facts or terms"
+                            .to_owned(),
+                    );
+                }
+                let candidate_frame = &candidate._source_frame.source_frame;
+                let candidate_size = MtgoSizePxV1 {
+                    width: candidate_frame.manifest.frame.canonical_width,
+                    height: candidate_frame.manifest.frame.canonical_height,
+                };
+                let candidate_event_label_region_sha256 = visible_frame_region_content_sha256_v1(
+                    &candidate_frame.canonical_bgra8,
+                    &candidate_size,
+                    &event_label_rect_client_px,
+                )
+                .map_err(|error| format!("rehash pending entry-review event label: {error}"))?;
+                let candidate_control_region_sha256 = visible_frame_region_content_sha256_v1(
+                    &candidate_frame.canonical_bgra8,
+                    &candidate_size,
+                    &control_rect_client_px,
+                )
+                .map_err(|error| format!("rehash pending entry-review control: {error}"))?;
+                if candidate_event_label_region_sha256 != expected_event_label_region_sha256
+                    || candidate_control_region_sha256 != expected_control_region_sha256
+                {
+                    return Err(
+                        "pending entry-review candidate changed event-label or control pixels"
+                            .to_owned(),
+                    );
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing => {
+                let after_view = entered_waiting_transition_view_v1(&candidate)?;
+                let frame_transition =
+                    bind_competitive_entry_frame_transition_views_v1(&before_view, &after_view)?;
+                let candidate_commitments = candidate.commitments_v1();
+                let confirmation_commitment_sha256 = commitment_v1(
+                    COMPETITIVE_ENTRY_VISIBLE_CONFIRMATION_DOMAIN_V1,
+                    &[
+                        preparation_commitment_sha256.as_bytes(),
+                        frame_transition.transition_commitment_sha256.as_bytes(),
+                        candidate_commitments
+                            .source_frame
+                            .source_capture
+                            .capture_commitment_sha256
+                            .as_bytes(),
+                        candidate_commitments
+                            .classification_result_commitment_sha256
+                            .as_bytes(),
+                        candidate_commitments
+                            .lifecycle_snapshot_commitment_sha256
+                            .as_bytes(),
+                        input_sent_at_unix_millis.to_be_bytes().as_slice(),
+                        candidate_captured_at_unix_millis.to_be_bytes().as_slice(),
+                        postcondition_candidate_count.to_be_bytes().as_slice(),
+                        b"entered_waiting_confirmed_after_exactly_one_entry_input",
+                    ],
+                );
+                return Ok(OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1 {
+                    _before_frame: before,
+                    _after_frame: candidate,
+                    commitments: MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1 {
+                        frame_transition,
+                        after_capture_commitment_sha256: candidate_commitments
+                            .source_frame
+                            .source_capture
+                            .capture_commitment_sha256,
+                        after_classification_result_commitment_sha256: candidate_commitments
+                            .classification_result_commitment_sha256,
+                        after_lifecycle_snapshot_commitment_sha256: candidate_commitments
+                            .lifecycle_snapshot_commitment_sha256,
+                        after_captured_at_unix_millis: candidate_captured_at_unix_millis,
+                        postcondition_candidate_count,
+                        confirmation_commitment_sha256,
+                    },
+                });
+            }
+            _ => {
+                return Err(
+                    "competitive entry postcondition entered an unexpected visible lifecycle phase"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+}
+
 fn validate_competitive_entry_immediate_recapture_views_v1(
     source: &MtgoCompetitiveEntryFrameTransitionViewV1,
     immediate: &MtgoCompetitiveEntryFrameTransitionViewV1,
@@ -754,6 +1101,45 @@ fn entry_review_transition_view_v1(
         &classification,
         source.lifecycle_v1(),
         Some(identity.source_identity_commitment_sha256),
+    )
+}
+
+fn classified_entry_review_transition_view_v1(
+    source: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    source_identity_commitment_sha256: Option<String>,
+) -> Result<MtgoCompetitiveEntryFrameTransitionViewV1, String> {
+    let classification = source.commitments_v1();
+    if classification.phase != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || source._lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || classification.event_kind != source._lifecycle.event_kind()
+        || classification.frame_id != source._lifecycle.frame_id_v1()
+        || classification.frame_sequence != source._lifecycle.frame_sequence()
+        || classification.lifecycle_snapshot_commitment_sha256
+            != source._lifecycle.snapshot_commitment_sha256()
+    {
+        return Err(
+            "competitive entry confirmation baseline is not the exact Entry Review lifecycle"
+                .to_owned(),
+        );
+    }
+    let frame = &source._source_frame.source_frame;
+    let capture_commitment =
+        capture_commitment_v3(&frame.manifest, &frame.canonical_bgra8, &frame.preview_png)?;
+    if capture_commitment != frame.capture_commitment_sha256
+        || capture_commitment
+            != classification
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+        || source._source_frame.commitments_v1() != classification.source_frame
+    {
+        return Err("competitive entry confirmation baseline capture changed".to_owned());
+    }
+    classified_transition_view_v1(
+        frame,
+        &classification,
+        &source._lifecycle,
+        source_identity_commitment_sha256,
     )
 }
 
@@ -1346,6 +1732,26 @@ fn canonical_json_v1<T: Serialize + ?Sized>(value: &T, field: &str) -> Result<Ve
     serde_json::to_vec(value).map_err(|error| format!("serialize competitive {field}: {error}"))
 }
 
+fn competitive_entry_frame_id_from_capture_commitment_v1(
+    capture_commitment_sha256: &str,
+    source_frame_id: u64,
+) -> Result<u64, String> {
+    if !looks_like_lower_sha256_v1(capture_commitment_sha256) {
+        return Err("competitive entry capture commitment is not lowercase SHA-256".to_owned());
+    }
+    let mut frame_id = u64::from_str_radix(&capture_commitment_sha256[..16], 16)
+        .map_err(|error| format!("derive competitive entry frame id: {error}"))?;
+    if frame_id == 0 || frame_id == source_frame_id {
+        frame_id ^= 0xa5a5_5a5a_d3d3_3c3c;
+    }
+    if frame_id == 0 || frame_id == source_frame_id {
+        return Err(
+            "competitive entry capture cannot derive a distinct nonzero frame id".to_owned(),
+        );
+    }
+    Ok(frame_id)
+}
+
 fn looks_like_lower_sha256_v1(value: &str) -> bool {
     value.len() == 64
         && value
@@ -1886,6 +2292,23 @@ mod tests {
         assert!(validate_competitive_entry_immediate_recapture_views_v1(
             &source,
             &unchanged_capture
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn competitive_entry_frame_id_is_capture_bound_nonzero_and_distinct() {
+        let source_frame_id = 0x1122_3344_5566_7788;
+        let commitment = "1122334455667788".to_owned() + &"0".repeat(48);
+        let derived =
+            competitive_entry_frame_id_from_capture_commitment_v1(&commitment, source_frame_id)
+                .unwrap();
+        assert_ne!(derived, 0);
+        assert_ne!(derived, source_frame_id);
+        assert_eq!(derived, source_frame_id ^ 0xa5a5_5a5a_d3d3_3c3c);
+        assert!(competitive_entry_frame_id_from_capture_commitment_v1(
+            "not-a-commitment",
+            source_frame_id
         )
         .is_err());
     }

@@ -2,23 +2,26 @@ use crate::probe::{
     capture_admitted_mtgo_competitive_navigation_frame_v1,
     classify_admitted_mtgo_competitive_navigation_frame_v1,
     confirm_opaque_competitive_duel_pass_postcondition_v1,
+    confirm_opaque_competitive_entry_postcondition_v1,
     confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
-    prepare_pregame_actuation_v3, validate_classifier_backed_competitive_entry_frame_transition_v1,
+    prepare_pregame_actuation_v3, resolve_competitive_entry_pointer_target_v1,
+    validate_classifier_backed_competitive_entry_frame_transition_v1,
     validate_classifier_backed_competitive_entry_immediate_recapture_v1,
     MtgoCompetitiveEntryControlDryRunPartsV1, MtgoCompetitiveEntryFrameTransitionCommitmentsV1,
-    MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1, MtgoCompetitiveNavigationFrameIdentityV1,
+    MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1, MtgoCompetitiveEntryPointerTargetV1,
+    MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1, MtgoCompetitiveNavigationFrameIdentityV1,
     MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
     MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
     MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
     MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1, MtgoPlannedPregamePostconditionV3,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1, OpaqueMtgoCompetitiveEntryControlDryRunV1,
     OpaqueMtgoCompetitiveEntryReviewIdentityV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
-    OpaqueMtgoConfirmedCompetitiveDuelPassV1, OpaqueMtgoConfirmedKeepToBottomSixTransitionV3,
-    OpaqueMtgoConfirmedKeepToFirstMainTransitionV3, OpaqueMtgoConfirmedMulliganTransitionV3,
-    OpaqueMtgoDxgiBottomSixInitialMeasurementV3, OpaqueMtgoDxgiFirstMainMeasurementV3,
-    OpaqueMtgoDxgiMulliganMeasurementV3, OpaqueMtgoPregameActionPlanV3,
-    OpaqueMtgoPreparedCompetitiveDuelPassV1,
+    OpaqueMtgoConfirmedCompetitiveDuelPassV1, OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1,
+    OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, OpaqueMtgoConfirmedKeepToFirstMainTransitionV3,
+    OpaqueMtgoConfirmedMulliganTransitionV3, OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
+    OpaqueMtgoDxgiFirstMainMeasurementV3, OpaqueMtgoDxgiMulliganMeasurementV3,
+    OpaqueMtgoPregameActionPlanV3, OpaqueMtgoPreparedCompetitiveDuelPassV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1, PreparedPregameActuationV3,
 };
 use mtgo_blackbox_v1::{
@@ -98,6 +101,9 @@ const CONTROL_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V4: &[u8] =
 const COMPETITIVE_ENTRY_POSTCONDITION_DRY_RUN_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-postcondition-dry-run-v1";
 const COMPETITIVE_ENTRY_PREPARATION_DOMAIN_V1: &[u8] = b"mtgo-competitive-entry-preparation-v1";
+const COMPETITIVE_ENTRY_INPUT_RECEIPT_DOMAIN_V1: &[u8] = b"mtgo-competitive-entry-input-receipt-v1";
+const COMPETITIVE_ENTRY_CONFIRMATION_RECEIPT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-entry-confirmation-receipt-v1";
 const ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V4: u64 = 512;
 
 const MTGO_ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_SCHEMA_V4: u32 = 4;
@@ -344,10 +350,11 @@ pub struct MtgoPreparedCompetitiveEntryCommitmentsV1 {
 }
 
 /// One exact separately ratified entry whose visible Entry Review state was
-/// reacquired and reclassified immediately before a future input boundary.
-/// The complete authorization, coordinate-private control, and fresh opaque
-/// frame remain retained. This value has no click, event-entry, or spending
-/// conversion.
+/// reacquired and reclassified immediately before the exact entry input
+/// boundary. The complete authorization, coordinate-private control, and fresh
+/// opaque frame remain retained. Only `execute_prepared_competitive_entry_v1`
+/// may consume it, and that production-disabled path permits exactly one click
+/// before withholding all later input pending visible confirmation.
 ///
 /// ```compile_fail
 /// use mtgo_dxgi_capture_v1::OpaqueMtgoPreparedCompetitiveEntryV1;
@@ -365,6 +372,7 @@ pub struct MtgoPreparedCompetitiveEntryCommitmentsV1 {
 pub struct OpaqueMtgoPreparedCompetitiveEntryV1 {
     _authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     _immediate_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    pointer_target: MtgoCompetitiveEntryPointerTargetV1,
     commitments: MtgoPreparedCompetitiveEntryCommitmentsV1,
 }
 
@@ -382,6 +390,117 @@ impl OpaqueMtgoPreparedCompetitiveEntryV1 {
     }
 
     pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveEntryInputReceiptCommitmentsV1 {
+    pub preparation_commitment_sha256: String,
+    pub entry_ratification_commitment_sha256: String,
+    pub input_receipt_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub resource: MtgoCompetitiveEntryResourceV1,
+    pub amount: u32,
+    pub immediate_frame_id: u64,
+    pub immediate_frame_sequence: u64,
+    pub input_sent_at_unix_millis: u128,
+    pub cursor_parked_outside_client: bool,
+}
+
+/// Proof that one exact-entry click was emitted and the shared process gate is
+/// withholding all later input pending a visible entered-waiting result.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPendingCompetitiveEntryV1;
+/// let _forged = OpaqueMtgoPendingCompetitiveEntryV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPendingCompetitiveEntryV1;
+/// fn cannot_repeat(value: &OpaqueMtgoPendingCompetitiveEntryV1) {
+///     let _ = value.send_input();
+///     let _ = value.enter_another_event();
+///     let _ = value.spend_again();
+/// }
+/// ```
+pub struct OpaqueMtgoPendingCompetitiveEntryV1 {
+    prepared: OpaqueMtgoPreparedCompetitiveEntryV1,
+    commitments: MtgoCompetitiveEntryInputReceiptCommitmentsV1,
+}
+
+impl OpaqueMtgoPendingCompetitiveEntryV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveEntryInputReceiptCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_additional_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoConfirmedCompetitiveEntryCommitmentsV1 {
+    pub input_receipt_sha256: String,
+    pub preparation_commitment_sha256: String,
+    pub entry_ratification_commitment_sha256: String,
+    pub visible_transition_commitment_sha256: String,
+    pub visible_confirmation_commitment_sha256: String,
+    pub confirmation_receipt_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub resource: MtgoCompetitiveEntryResourceV1,
+    pub amount: u32,
+    pub after_frame_id: u64,
+    pub after_frame_sequence: u64,
+    pub after_captured_at_unix_millis: u128,
+    pub postcondition_candidate_count: u32,
+}
+
+/// One exact entry click whose strictly newer visible result is the matching
+/// entered-and-waiting-for-pairing state. It has no authority for gameplay,
+/// another entry, another resource spend, or another input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoConfirmedCompetitiveEntryV1;
+/// let _forged = OpaqueMtgoConfirmedCompetitiveEntryV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoConfirmedCompetitiveEntryV1;
+/// fn cannot_continue(value: &OpaqueMtgoConfirmedCompetitiveEntryV1) {
+///     let _ = value.send_input();
+///     let _ = value.enter_another_event();
+///     let _ = value.start_gameplay();
+/// }
+/// ```
+pub struct OpaqueMtgoConfirmedCompetitiveEntryV1 {
+    _authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
+    _visible_confirmation: OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1,
+    commitments: MtgoConfirmedCompetitiveEntryCommitmentsV1,
+}
+
+impl OpaqueMtgoConfirmedCompetitiveEntryV1 {
+    pub fn commitments_v1(&self) -> MtgoConfirmedCompetitiveEntryCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn entry_visibly_confirmed_v1(&self) -> bool {
+        true
+    }
+
+    pub fn safe_for_gameplay_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_additional_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_additional_spending_v1(&self) -> bool {
         false
     }
 }
@@ -1240,9 +1359,10 @@ pub fn ratify_competitive_entry_authorization_v1(
 }
 
 /// Reacquires and reclassifies the exact owner-reviewed League or Challenge
-/// entry immediately before a future actuation boundary. This consumes the
+/// entry immediately before its exact actuation boundary. This consumes the
 /// separately ratified authorization and retains both it and the fresh opaque
-/// frame, but deliberately provides no input, event-entry, or spending path.
+/// frame. The result exposes no coordinates or general input capability and is
+/// accepted only by the one-click, visible-confirmation-locked entry executor.
 ///
 /// Current production builds cannot reach this function successfully because
 /// both the navigation-profile and exact-entry ratification roots are empty.
@@ -1276,12 +1396,171 @@ pub fn prepare_ratified_competitive_entry_v1(
             &immediate,
         )?
     };
+    let pointer_target = resolve_competitive_entry_pointer_target_v1(
+        &immediate,
+        &authorization._review._control_rect_client_px,
+    )?;
     let commitments =
         competitive_entry_preparation_from_commitments_v1(&authorization.commitments, &recapture)?;
     Ok(OpaqueMtgoPreparedCompetitiveEntryV1 {
         _authorization: authorization,
         _immediate_frame: immediate,
+        pointer_target,
         commitments,
+    })
+}
+
+/// Emits exactly one left click for the exact freshly prepared entry and then
+/// locks the shared process gate until its visible postcondition is confirmed.
+/// Production builds cannot construct the prerequisite ratified entry or
+/// admitted navigation profile because both trust roots remain empty.
+pub fn execute_prepared_competitive_entry_v1(
+    prepared: OpaqueMtgoPreparedCompetitiveEntryV1,
+) -> Result<OpaqueMtgoPendingCompetitiveEntryV1, String> {
+    reserve_input_gate_v3()?;
+    let input_sent_at_unix_millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis(),
+        Err(error) => {
+            release_unattempted_reservation_v3()?;
+            return Err(format!("system clock is before epoch: {error}"));
+        }
+    };
+    let prepared_commitments = prepared.commitments_v1();
+    if validate_preinput_capture_freshness_v3(
+        prepared_commitments
+            .immediate_recapture
+            .immediate_captured_at_unix_millis,
+        input_sent_at_unix_millis,
+    )
+    .is_err()
+    {
+        release_unattempted_reservation_v3()?;
+        return Err(
+            "the immediate competitive entry capture is stale or from the future".to_owned(),
+        );
+    }
+    halt_before_input_attempt_v3()?;
+    let cursor_parked_outside_client = send_exactly_one_left_click_v3(&prepared)?;
+    let input_receipt_sha256 = competitive_entry_input_receipt_v1(
+        &prepared,
+        input_sent_at_unix_millis,
+        cursor_parked_outside_client,
+    );
+    set_pending_v3(&input_receipt_sha256)?;
+    Ok(OpaqueMtgoPendingCompetitiveEntryV1 {
+        prepared,
+        commitments: MtgoCompetitiveEntryInputReceiptCommitmentsV1 {
+            preparation_commitment_sha256: prepared_commitments.preparation_commitment_sha256,
+            entry_ratification_commitment_sha256: prepared_commitments
+                .entry_ratification_commitment_sha256,
+            input_receipt_sha256,
+            event_kind: prepared_commitments.event_kind,
+            resource: prepared_commitments.resource,
+            amount: prepared_commitments.amount,
+            immediate_frame_id: prepared_commitments.immediate_frame_id,
+            immediate_frame_sequence: prepared_commitments.immediate_frame_sequence,
+            input_sent_at_unix_millis,
+            cursor_parked_outside_client,
+        },
+    })
+}
+
+pub fn confirm_pending_competitive_entry_v1(
+    pending: OpaqueMtgoPendingCompetitiveEntryV1,
+    profile: &AdmittedMtgoCompetitiveNavigationProfileV1,
+    runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoConfirmedCompetitiveEntryV1, String> {
+    require_matching_pending_v3(&pending.commitments.input_receipt_sha256)?;
+    let OpaqueMtgoPendingCompetitiveEntryV1 {
+        prepared,
+        commitments: input,
+    } = pending;
+    let OpaqueMtgoPreparedCompetitiveEntryV1 {
+        _authorization: authorization,
+        _immediate_frame: immediate_frame,
+        pointer_target: _,
+        commitments: prepared_commitments,
+    } = prepared;
+    let source = &authorization
+        ._review
+        ._classifier_bound_review
+        ._source_bound_review
+        ._source_identity;
+    let source_identity_commitment_sha256 =
+        source.commitments_v1().source_identity_commitment_sha256;
+    let event_label_rect_client_px = source.event_label_rect_client_px_v1().clone();
+    let control_rect_client_px = authorization._review._control_rect_client_px.clone();
+    let visible_confirmation = match confirm_opaque_competitive_entry_postcondition_v1(
+        immediate_frame,
+        source_identity_commitment_sha256,
+        event_label_rect_client_px,
+        control_rect_client_px,
+        prepared_commitments
+            .immediate_recapture
+            .event_label_region_sha256
+            .clone(),
+        prepared_commitments
+            .immediate_recapture
+            .visible_control_region_sha256
+            .clone(),
+        prepared_commitments.preparation_commitment_sha256.clone(),
+        profile,
+        runtime,
+        input.input_sent_at_unix_millis,
+        timeout_ms,
+    ) {
+        Ok(confirmation) => confirmation,
+        Err(error) => {
+            halt_gate_v3()?;
+            return Err(format!(
+                "competitive entry postcondition failed and the input gate is halted: {error}"
+            ));
+        }
+    };
+    let visible = visible_confirmation.commitments_v1();
+    if visible.frame_transition.event_kind != prepared_commitments.event_kind
+        || visible.frame_transition.event_identity_sha256
+            != prepared_commitments
+                .immediate_recapture
+                .event_identity_sha256
+        || visible.frame_transition.before_frame_id != prepared_commitments.immediate_frame_id
+        || visible.frame_transition.before_frame_sequence
+            != prepared_commitments.immediate_frame_sequence
+        || visible.frame_transition.after_frame_sequence
+            <= prepared_commitments.immediate_frame_sequence
+        || visible.after_captured_at_unix_millis <= input.input_sent_at_unix_millis
+    {
+        halt_gate_v3()?;
+        return Err(
+            "competitive entry confirmation changed the exact event or frame and halted the input gate"
+                .to_owned(),
+        );
+    }
+    let confirmation_receipt_sha256 =
+        competitive_entry_confirmation_receipt_v1(&input, &prepared_commitments, &visible);
+    release_confirmed_pending_v3(&input.input_receipt_sha256)?;
+    Ok(OpaqueMtgoConfirmedCompetitiveEntryV1 {
+        _authorization: authorization,
+        _visible_confirmation: visible_confirmation,
+        commitments: MtgoConfirmedCompetitiveEntryCommitmentsV1 {
+            input_receipt_sha256: input.input_receipt_sha256,
+            preparation_commitment_sha256: prepared_commitments.preparation_commitment_sha256,
+            entry_ratification_commitment_sha256: prepared_commitments
+                .entry_ratification_commitment_sha256,
+            visible_transition_commitment_sha256: visible
+                .frame_transition
+                .transition_commitment_sha256,
+            visible_confirmation_commitment_sha256: visible.confirmation_commitment_sha256,
+            confirmation_receipt_sha256,
+            event_kind: prepared_commitments.event_kind,
+            resource: prepared_commitments.resource,
+            amount: prepared_commitments.amount,
+            after_frame_id: visible.frame_transition.after_frame_id,
+            after_frame_sequence: visible.frame_transition.after_frame_sequence,
+            after_captured_at_unix_millis: visible.after_captured_at_unix_millis,
+            postcondition_candidate_count: visible.postcondition_candidate_count,
+        },
     })
 }
 
@@ -3562,6 +3841,123 @@ fn competitive_duel_pass_input_receipt_v1(
     format!("{:x}", hasher.finalize())
 }
 
+fn competitive_entry_input_receipt_v1(
+    prepared: &OpaqueMtgoPreparedCompetitiveEntryV1,
+    input_sent_at_unix_millis: u128,
+    cursor_parked_outside_client: bool,
+) -> String {
+    let prepared_commitments = prepared.commitments_v1();
+    competitive_entry_input_receipt_from_parts_v1(
+        &prepared_commitments,
+        &prepared.pointer_target,
+        input_sent_at_unix_millis,
+        cursor_parked_outside_client,
+    )
+}
+
+fn competitive_entry_input_receipt_from_parts_v1(
+    prepared: &MtgoPreparedCompetitiveEntryCommitmentsV1,
+    target: &MtgoCompetitiveEntryPointerTargetV1,
+    input_sent_at_unix_millis: u128,
+    cursor_parked_outside_client: bool,
+) -> String {
+    hash_parts_v2(
+        COMPETITIVE_ENTRY_INPUT_RECEIPT_DOMAIN_V1,
+        &[
+            prepared.preparation_commitment_sha256.as_bytes(),
+            prepared
+                .entry_ratification_commitment_sha256
+                .as_bytes(),
+            prepared
+                .immediate_recapture
+                .recapture_commitment_sha256
+                .as_bytes(),
+            prepared
+                .immediate_recapture
+                .visible_control_region_sha256
+                .as_bytes(),
+            target.hwnd.to_be_bytes().as_slice(),
+            target.process_id.to_be_bytes().as_slice(),
+            target
+                .process_start_filetime_100ns
+                .to_be_bytes()
+                .as_slice(),
+            target.target_x_desktop_px.to_be_bytes().as_slice(),
+            target.target_y_desktop_px.to_be_bytes().as_slice(),
+            target.park_x_desktop_px.to_be_bytes().as_slice(),
+            target.park_y_desktop_px.to_be_bytes().as_slice(),
+            input_sent_at_unix_millis.to_be_bytes().as_slice(),
+            &[u8::from(cursor_parked_outside_client)],
+            b"exactly_one_exactly_ratified_competitive_entry_left_click_pending_visible_confirmation",
+        ],
+    )
+}
+
+fn competitive_entry_confirmation_receipt_v1(
+    input: &MtgoCompetitiveEntryInputReceiptCommitmentsV1,
+    prepared: &MtgoPreparedCompetitiveEntryCommitmentsV1,
+    visible: &MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1,
+) -> String {
+    let event_kind: &[u8] = match prepared.event_kind {
+        MtgoCompetitiveEventKindV1::League => b"league",
+        MtgoCompetitiveEventKindV1::Challenge => b"challenge",
+    };
+    let resource: &[u8] = match prepared.resource {
+        MtgoCompetitiveEntryResourceV1::NoCost => b"no_cost",
+        MtgoCompetitiveEntryResourceV1::ExistingEventToken => b"existing_event_token",
+        MtgoCompetitiveEntryResourceV1::ExistingPlayPoints => b"existing_play_points",
+        MtgoCompetitiveEntryResourceV1::ExistingEventTickets => b"existing_event_tickets",
+    };
+    hash_parts_v2(
+        COMPETITIVE_ENTRY_CONFIRMATION_RECEIPT_DOMAIN_V1,
+        &[
+            input.input_receipt_sha256.as_bytes(),
+            prepared.preparation_commitment_sha256.as_bytes(),
+            prepared.entry_ratification_commitment_sha256.as_bytes(),
+            visible
+                .frame_transition
+                .transition_commitment_sha256
+                .as_bytes(),
+            visible.confirmation_commitment_sha256.as_bytes(),
+            visible.after_capture_commitment_sha256.as_bytes(),
+            visible
+                .after_classification_result_commitment_sha256
+                .as_bytes(),
+            visible
+                .after_lifecycle_snapshot_commitment_sha256
+                .as_bytes(),
+            event_kind,
+            prepared
+                .immediate_recapture
+                .event_identity_sha256
+                .as_bytes(),
+            prepared.immediate_recapture.entry_terms_sha256.as_bytes(),
+            resource,
+            prepared.amount.to_be_bytes().as_slice(),
+            input.input_sent_at_unix_millis.to_be_bytes().as_slice(),
+            visible
+                .after_captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
+            visible
+                .frame_transition
+                .after_frame_id
+                .to_be_bytes()
+                .as_slice(),
+            visible
+                .frame_transition
+                .after_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            visible
+                .postcondition_candidate_count
+                .to_be_bytes()
+                .as_slice(),
+            b"one_entry_input_visible_entered_waiting_confirmed_shared_gate_released",
+        ],
+    )
+}
+
 fn competitive_duel_pass_transition_receipt_v1(
     input_receipt_sha256: &str,
     authorization_binding_commitment_sha256: &str,
@@ -3825,6 +4221,44 @@ impl VerifiedPointerTargetV3 for OpaqueMtgoPreparedCompetitiveDuelPassV1 {
 
     fn park_y_desktop_px_v3(&self) -> i32 {
         self.park_y_desktop_px
+    }
+}
+
+impl VerifiedPointerTargetV3 for OpaqueMtgoPreparedCompetitiveEntryV1 {
+    fn hwnd_v3(&self) -> u64 {
+        self.pointer_target.hwnd
+    }
+
+    fn process_id_v3(&self) -> u32 {
+        self.pointer_target.process_id
+    }
+
+    fn process_start_filetime_100ns_v3(&self) -> u64 {
+        self.pointer_target.process_start_filetime_100ns
+    }
+
+    fn dpi_v3(&self) -> u32 {
+        self.pointer_target.dpi
+    }
+
+    fn client_rect_desktop_px_v3(&self) -> &crate::SignedRectV1 {
+        &self.pointer_target.client_rect_desktop_px
+    }
+
+    fn target_x_desktop_px_v3(&self) -> i32 {
+        self.pointer_target.target_x_desktop_px
+    }
+
+    fn target_y_desktop_px_v3(&self) -> i32 {
+        self.pointer_target.target_y_desktop_px
+    }
+
+    fn park_x_desktop_px_v3(&self) -> i32 {
+        self.pointer_target.park_x_desktop_px
+    }
+
+    fn park_y_desktop_px_v3(&self) -> i32 {
+        self.pointer_target.park_y_desktop_px
     }
 }
 
@@ -5053,6 +5487,144 @@ mod tests {
         assert!(
             competitive_entry_preparation_from_commitments_v1(&candidate, &invalid_runtime)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn competitive_entry_input_receipt_binds_preparation_target_time_and_cursor_result() {
+        let (correspondence, source, source_identity, entry_authorization, review) =
+            competitive_entry_ratification_parts_v1(
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+            );
+        let candidate = competitive_entry_ratification_candidate_from_parts_v1(
+            &correspondence,
+            "UnbuckledPie",
+            &source,
+            &source_identity,
+            &entry_authorization,
+            &review,
+        )
+        .unwrap();
+        let recapture = competitive_entry_immediate_recapture_commitments_v1(&candidate);
+        let prepared =
+            competitive_entry_preparation_from_commitments_v1(&candidate, &recapture).unwrap();
+        let target = MtgoCompetitiveEntryPointerTargetV1 {
+            hwnd: 17,
+            process_id: 23,
+            process_start_filetime_100ns: 31,
+            dpi: 120,
+            client_rect_desktop_px: crate::SignedRectV1 {
+                left: -100,
+                top: 20,
+                right: 1140,
+                bottom: 760,
+            },
+            target_x_desktop_px: 900,
+            target_y_desktop_px: 600,
+            park_x_desktop_px: 1200,
+            park_y_desktop_px: 700,
+        };
+        let baseline = competitive_entry_input_receipt_from_parts_v1(&prepared, &target, 500, true);
+        assert_eq!(baseline.len(), 64);
+
+        let mut changed_target = MtgoCompetitiveEntryPointerTargetV1 { ..target.clone() };
+        changed_target.target_x_desktop_px += 1;
+        assert_ne!(
+            baseline,
+            competitive_entry_input_receipt_from_parts_v1(&prepared, &changed_target, 500, true)
+        );
+        assert_ne!(
+            baseline,
+            competitive_entry_input_receipt_from_parts_v1(&prepared, &changed_target, 501, true)
+        );
+        assert_ne!(
+            baseline,
+            competitive_entry_input_receipt_from_parts_v1(&prepared, &target, 500, false)
+        );
+    }
+
+    #[test]
+    fn competitive_entry_confirmation_receipt_binds_visible_result_and_candidate_count() {
+        let (correspondence, source, source_identity, entry_authorization, review) =
+            competitive_entry_ratification_parts_v1(
+                MtgoCompetitiveEventKindV1::Challenge,
+                MtgoCompetitiveEntryResourceV1::ExistingEventTickets,
+                25,
+            );
+        let candidate = competitive_entry_ratification_candidate_from_parts_v1(
+            &correspondence,
+            "UnbuckledPie",
+            &source,
+            &source_identity,
+            &entry_authorization,
+            &review,
+        )
+        .unwrap();
+        let recapture = competitive_entry_immediate_recapture_commitments_v1(&candidate);
+        let prepared =
+            competitive_entry_preparation_from_commitments_v1(&candidate, &recapture).unwrap();
+        let input = MtgoCompetitiveEntryInputReceiptCommitmentsV1 {
+            preparation_commitment_sha256: prepared.preparation_commitment_sha256.clone(),
+            entry_ratification_commitment_sha256: prepared
+                .entry_ratification_commitment_sha256
+                .clone(),
+            input_receipt_sha256: "1".repeat(64),
+            event_kind: prepared.event_kind,
+            resource: prepared.resource,
+            amount: prepared.amount,
+            immediate_frame_id: prepared.immediate_frame_id,
+            immediate_frame_sequence: prepared.immediate_frame_sequence,
+            input_sent_at_unix_millis: 500,
+            cursor_parked_outside_client: true,
+        };
+        let transition = MtgoCompetitiveEntryFrameTransitionCommitmentsV1 {
+            navigation_profile_commitment_sha256: recapture.navigation_profile_commitment_sha256,
+            navigation_profile_admission_commitment_sha256: recapture
+                .navigation_profile_admission_commitment_sha256,
+            approved_account_alias_sha256: recapture.approved_account_alias_sha256,
+            runtime_identity_commitment_sha256: recapture.runtime_identity_commitment_sha256,
+            window_continuity_commitment_sha256: recapture.window_continuity_commitment_sha256,
+            source_identity_commitment_sha256: recapture.source_identity_commitment_sha256,
+            before_capture_commitment_sha256: recapture.immediate_capture_commitment_sha256,
+            before_classification_result_commitment_sha256: recapture
+                .immediate_classification_result_commitment_sha256,
+            before_lifecycle_snapshot_commitment_sha256: recapture
+                .immediate_lifecycle_snapshot_commitment_sha256,
+            after_capture_commitment_sha256: "2".repeat(64),
+            after_classification_result_commitment_sha256: "3".repeat(64),
+            after_lifecycle_snapshot_commitment_sha256: "4".repeat(64),
+            event_kind: prepared.event_kind,
+            event_identity_sha256: recapture.event_identity_sha256,
+            before_frame_id: prepared.immediate_frame_id,
+            before_frame_sequence: prepared.immediate_frame_sequence,
+            after_frame_id: 19,
+            after_frame_sequence: prepared.immediate_frame_sequence + 1,
+            transition_commitment_sha256: "5".repeat(64),
+        };
+        let visible = MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1 {
+            frame_transition: transition,
+            after_capture_commitment_sha256: "2".repeat(64),
+            after_classification_result_commitment_sha256: "3".repeat(64),
+            after_lifecycle_snapshot_commitment_sha256: "4".repeat(64),
+            after_captured_at_unix_millis: 600,
+            postcondition_candidate_count: 2,
+            confirmation_commitment_sha256: "6".repeat(64),
+        };
+        let baseline = competitive_entry_confirmation_receipt_v1(&input, &prepared, &visible);
+        assert_eq!(baseline.len(), 64);
+        let mut changed_count = visible.clone();
+        changed_count.postcondition_candidate_count += 1;
+        assert_ne!(
+            baseline,
+            competitive_entry_confirmation_receipt_v1(&input, &prepared, &changed_count)
+        );
+        let mut changed_after = visible;
+        changed_after.after_capture_commitment_sha256 = "7".repeat(64);
+        assert_ne!(
+            baseline,
+            competitive_entry_confirmation_receipt_v1(&input, &prepared, &changed_after)
         );
     }
 
