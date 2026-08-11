@@ -463,6 +463,8 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "ratify_private_match_authorization_v3",
         "ratify_competitive_duel_pass_authorization_v1",
         "ratify_competitive_duel_pass_authorization_from_correspondence_v2",
+        "review_competitive_duel_pass_ratification_candidate_from_correspondence_v2",
+        "safe_for_live_input_v2(&self) -> bool {\n        false",
         "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
         "ratify_competitive_match_launch_v1",
         "ratify_competitive_match_launch_attended_v4",
@@ -540,4 +542,38 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
     ));
     assert!(!source.contains("pub fn target_x_desktop_px"));
     assert!(!source.contains("pub fn target_y_desktop_px"));
+}
+
+#[test]
+fn correspondence_review_command_emits_commitments_without_private_text_or_authority() {
+    let source = include_str!("../src/bin/review_mtgo_authorization_correspondence_v2.rs");
+    for required in [
+        "MAX_CORRESPONDENCE_BYTES_V2",
+        "check_untrusted_authorization_correspondence_v1",
+        "review_competitive_duel_pass_ratification_candidate_from_correspondence_v2",
+        "private_correspondence_bytes_retained\": false",
+        "account_alias_text_emitted\": false",
+        "safe_for_live_input\": false",
+        "permits_event_entry\": false",
+        "permits_spending\": false",
+    ] {
+        assert!(
+            source.contains(required),
+            "correspondence review command is missing guard: {required}"
+        );
+    }
+    for forbidden in [
+        "println!(\"{visible_account_alias}",
+        "println!(\"{correspondence_bytes",
+        "fs::write(&correspondence_path, correspondence)",
+    ] {
+        assert!(
+            !source
+                .split("#[cfg(all(test, target_os = \"windows\"))]")
+                .next()
+                .unwrap()
+                .contains(forbidden),
+            "production correspondence review command exposes private input: {forbidden}"
+        );
+    }
 }
