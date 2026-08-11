@@ -4,12 +4,15 @@ use crate::probe::{
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
     prepare_pregame_actuation_v3, MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
     MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
+    MtgoCompetitiveEntryControlDryRunPartsV1,
+    MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
     MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1, MtgoPlannedPregamePostconditionV3,
     OpaqueMtgoCompetitiveEntryReviewIdentityV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
     OpaqueMtgoConfirmedCompetitiveDuelPassV1, OpaqueMtgoConfirmedKeepToBottomSixTransitionV3,
     OpaqueMtgoConfirmedKeepToFirstMainTransitionV3, OpaqueMtgoConfirmedMulliganTransitionV3,
     OpaqueMtgoDxgiBottomSixInitialMeasurementV3, OpaqueMtgoDxgiFirstMainMeasurementV3,
     OpaqueMtgoDxgiMulliganMeasurementV3, OpaqueMtgoPregameActionPlanV3,
+    OpaqueMtgoCompetitiveEntryControlDryRunV1,
     OpaqueMtgoPreparedCompetitiveDuelPassV1, PreparedPregameActuationV3,
 };
 use mtgo_blackbox_v1::{
@@ -81,6 +84,8 @@ const ATTENDED_COMPETITIVE_ENTRY_REVIEW_RECEIPT_DOMAIN_V1: &[u8] =
     b"mtgo-attended-competitive-entry-review-receipt-v1";
 const CLASSIFIER_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V3: &[u8] =
     b"mtgo-classifier-bound-competitive-entry-review-v3";
+const CONTROL_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V4: &[u8] =
+    b"mtgo-control-bound-competitive-entry-review-v4";
 const ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V4: u64 = 512;
 
 const MTGO_ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_SCHEMA_V4: u32 = 4;
@@ -360,8 +365,8 @@ pub struct MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3 {
 }
 
 /// One attended entry review whose visible frame was interpreted by the exact
-/// profile-pinned classifier retained inside the source identity. This is the
-/// only review type a future event-entry gate may accept.
+/// profile-pinned classifier retained inside the source identity. A stricter
+/// control-bound v4 review adds the required visible Confirm Entry control.
 ///
 /// It remains checked-untrusted and deliberately grants no Join, spending, or
 /// input authority. The account owner must separately authorize any eventual
@@ -401,6 +406,60 @@ impl CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3 {
     }
 
     pub fn permits_spending_v3(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoControlBoundCompetitiveEntryReviewCommitmentsV4 {
+    pub control_bound_review_commitment_sha256: String,
+    pub classifier_bound_review: MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3,
+    pub entry_control_dry_run: MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
+}
+
+/// One owner-attended entry review bound to a coordinate-private, visibly
+/// enabled Confirm Entry control on the exact classifier-backed source frame.
+/// This is the most specific dry-run type and the only review type a future
+/// event-entry actuator may accept.
+///
+/// It still grants no Join, spending, or input authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4;
+/// let _forged = CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4>();
+/// ```
+pub struct CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4 {
+    _classifier_bound_review: CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3,
+    _visible_control_label: String,
+    _control_rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1,
+    entry_authorization: MtgoCompetitiveEntryAuthorizationV1,
+    commitments: MtgoControlBoundCompetitiveEntryReviewCommitmentsV4,
+}
+
+impl CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4 {
+    pub fn commitments_v4(&self) -> MtgoControlBoundCompetitiveEntryReviewCommitmentsV4 {
+        self.commitments.clone()
+    }
+
+    pub fn entry_authorization_record_v4(&self) -> MtgoCompetitiveEntryAuthorizationV1 {
+        self.entry_authorization.clone()
+    }
+
+    pub fn safe_for_live_input_v4(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v4(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v4(&self) -> bool {
         false
     }
 }
@@ -963,6 +1022,29 @@ pub fn review_competitive_entry_attended_v2(
     visible_account_alias: &str,
 ) -> Result<CheckedUntrustedMtgoSourceBoundCompetitiveEntryReviewV2, String> {
     let source_commitments = source_identity.commitments_v1();
+    let source_description = if source_commitments
+        .source_navigation_classification_result_commitment_sha256
+        .is_some()
+    {
+        "exact profile-pinned classifier over opaque composed-desktop navigation pixels"
+    } else {
+        "opaque composed-desktop navigation pixels"
+    };
+    review_competitive_entry_attended_v2_with_source_description(
+        correspondence,
+        source_identity,
+        visible_account_alias,
+        source_description,
+    )
+}
+
+fn review_competitive_entry_attended_v2_with_source_description(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    source_identity: OpaqueMtgoCompetitiveEntryReviewIdentityV1,
+    visible_account_alias: &str,
+    source_description: &str,
+) -> Result<CheckedUntrustedMtgoSourceBoundCompetitiveEntryReviewV2, String> {
+    let source_commitments = source_identity.commitments_v1();
     let request = build_attended_competitive_entry_review_request_v1(
         correspondence,
         source_identity.lifecycle_v1(),
@@ -981,14 +1063,6 @@ pub fn review_competitive_entry_attended_v2(
             "source-bound entry review identity changed before owner confirmation".to_owned(),
         );
     }
-    let source_description = if source_commitments
-        .source_navigation_classification_result_commitment_sha256
-        .is_some()
-    {
-        "exact profile-pinned classifier over opaque composed-desktop navigation pixels"
-    } else {
-        "opaque composed-desktop navigation pixels"
-    };
     let (challenge_nonce, issued_at_unix_millis, supplied_phrase) =
         prompt_attended_competitive_entry_review_v1(
             &request,
@@ -1026,13 +1100,28 @@ pub fn review_competitive_entry_attended_v3(
     source_identity: OpaqueMtgoCompetitiveEntryReviewIdentityV1,
     visible_account_alias: &str,
 ) -> Result<CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3, String> {
-    let source_commitments = source_identity.commitments_v1();
-    let classifier_commitment =
-        require_classifier_bound_competitive_entry_source_v3(&source_commitments)?.to_owned();
-    let source_bound_review = review_competitive_entry_attended_v2(
+    review_competitive_entry_attended_v3_with_source_description(
         correspondence,
         source_identity,
         visible_account_alias,
+        "exact profile-pinned classifier over opaque composed-desktop navigation pixels",
+    )
+}
+
+fn review_competitive_entry_attended_v3_with_source_description(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    source_identity: OpaqueMtgoCompetitiveEntryReviewIdentityV1,
+    visible_account_alias: &str,
+    source_description: &str,
+) -> Result<CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3, String> {
+    let source_commitments = source_identity.commitments_v1();
+    let classifier_commitment =
+        require_classifier_bound_competitive_entry_source_v3(&source_commitments)?.to_owned();
+    let source_bound_review = review_competitive_entry_attended_v2_with_source_description(
+        correspondence,
+        source_identity,
+        visible_account_alias,
+        source_description,
     )?;
     let source_bound_commitments = source_bound_review.commitments_v2();
     if source_bound_commitments
@@ -1061,6 +1150,51 @@ pub fn review_competitive_entry_attended_v3(
             },
         },
     )
+}
+
+/// Preferred owner-attended competitive entry dry run. It consumes a visible,
+/// explicitly enabled Confirm Entry control bound to the same exact opaque
+/// classifier-backed frame as the event and terms review. Success records the
+/// review but cannot click Join, spend resources, or enable input.
+pub fn review_competitive_entry_attended_v4(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    dry_run: OpaqueMtgoCompetitiveEntryControlDryRunV1,
+    visible_account_alias: &str,
+) -> Result<CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4, String> {
+    let MtgoCompetitiveEntryControlDryRunPartsV1 {
+        source_identity,
+        visible_control_label,
+        control_rect_client_px,
+        commitments: entry_control_dry_run,
+    } = dry_run.into_parts_v1();
+    let source_description = format!(
+        "exact profile-pinned classifier plus human-reviewed visibly enabled control {visible_control_label:?} over opaque composed-desktop navigation pixels"
+    );
+    let classifier_bound_review =
+        review_competitive_entry_attended_v3_with_source_description(
+            correspondence,
+            source_identity,
+            visible_account_alias,
+            &source_description,
+        )?;
+    let classifier_bound_commitments = classifier_bound_review.commitments_v3();
+    let control_bound_review_commitment_sha256 =
+        bind_control_bound_competitive_entry_review_commitment_v4(
+            &classifier_bound_commitments,
+            &entry_control_dry_run,
+        )?;
+    let entry_authorization = classifier_bound_review.entry_authorization_record_v3();
+    Ok(CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4 {
+        _classifier_bound_review: classifier_bound_review,
+        _visible_control_label: visible_control_label,
+        _control_rect_client_px: control_rect_client_px,
+        entry_authorization,
+        commitments: MtgoControlBoundCompetitiveEntryReviewCommitmentsV4 {
+            control_bound_review_commitment_sha256,
+            classifier_bound_review: classifier_bound_commitments,
+            entry_control_dry_run,
+        },
+    })
 }
 
 fn require_classifier_bound_competitive_entry_source_v3(
@@ -1140,6 +1274,75 @@ fn classifier_bound_competitive_entry_review_commitment_v3(
             b"classifier_bound_owner_review_no_entry_no_spending_no_input",
         ],
     )
+}
+
+fn bind_control_bound_competitive_entry_review_commitment_v4(
+    classifier_bound: &MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3,
+    dry_run: &MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
+) -> Result<String, String> {
+    let source_bound = &classifier_bound.source_bound_review;
+    let attended = &source_bound.attended_review;
+    if !dry_run.visibly_enabled_confirmed
+        || classifier_bound.source_navigation_classification_result_commitment_sha256
+            != dry_run.source_navigation_classification_result_commitment_sha256
+        || source_bound
+            .source_navigation_classification_result_commitment_sha256
+            .as_deref()
+            != Some(dry_run.source_navigation_classification_result_commitment_sha256.as_str())
+        || source_bound.source_identity_commitment_sha256
+            != dry_run.source_identity_commitment_sha256
+        || source_bound.source_capture_commitment_sha256
+            != dry_run.source_capture_commitment_sha256
+        || attended.source_lifecycle_snapshot_commitment_sha256
+            != dry_run.source_lifecycle_snapshot_commitment_sha256
+        || attended.event_kind != dry_run.event_kind
+        || attended.frame_id != dry_run.frame_id
+        || attended.frame_sequence != dry_run.frame_sequence
+        || attended.resource != dry_run.resource
+        || attended.amount != dry_run.amount
+    {
+        return Err(
+            "control-bound competitive entry review does not match its exact classifier, frame, lifecycle, event, and terms"
+                .to_owned(),
+        );
+    }
+    for commitment in [
+        classifier_bound
+            .classifier_bound_review_commitment_sha256
+            .as_str(),
+        dry_run.dry_run_commitment_sha256.as_str(),
+        dry_run.visible_control_label_sha256.as_str(),
+        dry_run.visible_control_region_sha256.as_str(),
+    ] {
+        if !is_sha256_v2(commitment) {
+            return Err(
+                "control-bound competitive entry review contains an invalid commitment".to_owned(),
+            );
+        }
+    }
+    Ok(hash_parts_v2(
+        CONTROL_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V4,
+        &[
+            classifier_bound
+                .classifier_bound_review_commitment_sha256
+                .as_bytes(),
+            dry_run.dry_run_commitment_sha256.as_bytes(),
+            dry_run.source_identity_commitment_sha256.as_bytes(),
+            dry_run.source_capture_commitment_sha256.as_bytes(),
+            dry_run
+                .source_lifecycle_snapshot_commitment_sha256
+                .as_bytes(),
+            dry_run
+                .source_navigation_classification_result_commitment_sha256
+                .as_bytes(),
+            dry_run.visible_control_label_sha256.as_bytes(),
+            dry_run.visible_control_region_sha256.as_bytes(),
+            &[u8::from(dry_run.visibly_enabled_confirmed)],
+            attended.owner_review_receipt_sha256.as_bytes(),
+            attended.entry_authorization_sha256.as_bytes(),
+            b"owner_attended_control_bound_entry_dry_run_no_join_no_spending_no_input",
+        ],
+    ))
 }
 
 fn prompt_attended_competitive_entry_review_v1(
@@ -3276,6 +3479,45 @@ mod tests {
         }
     }
 
+    fn classifier_bound_entry_review_commitments_v4(
+        classifier_commitment_sha256: String,
+    ) -> MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3 {
+        let source_bound =
+            source_bound_entry_review_commitments_v3(classifier_commitment_sha256.clone());
+        let classifier_bound_review_commitment_sha256 =
+            classifier_bound_competitive_entry_review_commitment_v3(
+                &source_bound,
+                &classifier_commitment_sha256,
+            );
+        MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3 {
+            source_navigation_classification_result_commitment_sha256:
+                classifier_commitment_sha256,
+            classifier_bound_review_commitment_sha256,
+            source_bound_review: source_bound,
+        }
+    }
+
+    fn entry_control_dry_run_commitments_v4(
+        classifier_commitment_sha256: String,
+    ) -> MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
+        MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
+            source_identity_commitment_sha256: "5".repeat(64),
+            source_capture_commitment_sha256: "1".repeat(64),
+            source_lifecycle_snapshot_commitment_sha256: "2".repeat(64),
+            source_navigation_classification_result_commitment_sha256:
+                classifier_commitment_sha256,
+            visible_control_label_sha256: "c".repeat(64),
+            visible_control_region_sha256: "d".repeat(64),
+            visibly_enabled_confirmed: true,
+            dry_run_commitment_sha256: "e".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            frame_id: 17,
+            frame_sequence: 41,
+            resource: MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+            amount: 100,
+        }
+    }
+
     fn ratified_competitive_pass_v1(
         event_kind: MtgoCompetitiveEventKindV1,
     ) -> RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
@@ -3651,6 +3893,54 @@ mod tests {
             baseline,
             classifier_bound_competitive_entry_review_commitment_v3(&changed_terms, &classifier,)
         );
+    }
+
+    #[test]
+    fn control_bound_attended_review_requires_the_exact_enabled_dry_run() {
+        let classifier = "b".repeat(64);
+        let classifier_bound =
+            classifier_bound_entry_review_commitments_v4(classifier.clone());
+        let dry_run = entry_control_dry_run_commitments_v4(classifier);
+        let baseline = bind_control_bound_competitive_entry_review_commitment_v4(
+            &classifier_bound,
+            &dry_run,
+        )
+        .unwrap();
+        assert_eq!(baseline.len(), 64);
+
+        let mut disabled = dry_run.clone();
+        disabled.visibly_enabled_confirmed = false;
+        assert!(bind_control_bound_competitive_entry_review_commitment_v4(
+            &classifier_bound,
+            &disabled,
+        )
+        .is_err());
+
+        let mut wrong_frame = dry_run.clone();
+        wrong_frame.frame_sequence += 1;
+        assert!(bind_control_bound_competitive_entry_review_commitment_v4(
+            &classifier_bound,
+            &wrong_frame,
+        )
+        .is_err());
+
+        let mut wrong_classifier = dry_run.clone();
+        wrong_classifier.source_navigation_classification_result_commitment_sha256 =
+            "f".repeat(64);
+        assert!(bind_control_bound_competitive_entry_review_commitment_v4(
+            &classifier_bound,
+            &wrong_classifier,
+        )
+        .is_err());
+
+        let mut changed_control = dry_run;
+        changed_control.visible_control_region_sha256 = "0".repeat(64);
+        let changed = bind_control_bound_competitive_entry_review_commitment_v4(
+            &classifier_bound,
+            &changed_control,
+        )
+        .unwrap();
+        assert_ne!(baseline, changed);
     }
 
     #[test]

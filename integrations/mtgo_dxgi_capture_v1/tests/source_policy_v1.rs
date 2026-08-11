@@ -567,11 +567,15 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "review_competitive_entry_attended_v1",
         "review_competitive_entry_attended_v2",
         "review_competitive_entry_attended_v3",
+        "review_competitive_entry_attended_v4",
         "OpaqueMtgoCompetitiveEntryReviewIdentityV1",
         "CheckedUntrustedMtgoSourceBoundCompetitiveEntryReviewV2",
         "CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3",
+        "CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4",
         "MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3",
+        "MtgoControlBoundCompetitiveEntryReviewCommitmentsV4",
         "CLASSIFIER_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V3",
+        "CONTROL_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V4",
         "classifier_bound_owner_review_no_entry_no_spending_no_input",
         "source_identity_commitment_sha256",
         "source_navigation_classification_result_commitment_sha256",
@@ -588,6 +592,9 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "pub fn permits_event_entry_v3(&self) -> bool {\n        false",
         "pub fn permits_spending_v3(&self) -> bool {\n        false",
         "safe_for_live_input_v3(&self) -> bool {\n        false",
+        "pub fn permits_event_entry_v4(&self) -> bool {\n        false",
+        "pub fn permits_spending_v4(&self) -> bool {\n        false",
+        "safe_for_live_input_v4(&self) -> bool {\n        false",
         "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
         "ratify_competitive_match_launch_v1",
         "ratify_competitive_match_launch_attended_v4",
@@ -626,16 +633,35 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
     }
     for required in [
         "bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1",
+        "bind_classifier_backed_competitive_entry_control_dry_run_v1",
         "OpaqueMtgoCompetitiveEntryReviewIdentityV1",
+        "OpaqueMtgoCompetitiveEntryControlDryRunV1",
+        "MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1",
+        "OPAQUE_COMPETITIVE_ENTRY_CONTROL_DRY_RUN_DOMAIN_V1",
+        "visibly_enabled_confirmed",
         "OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2",
         "visible_frame_region_content_sha256_v1",
         "source_window_mode != \"main_client\"",
         "source_capture_role != \"navigation\"",
         "opaque_composed_navigation_pixels_owner_review_only_no_entry_no_spending_no_input",
+        "human_reviewed_confirm_entry_control_dry_run_no_join_no_spending_no_input",
     ] {
         assert!(
             entry_runtime.contains(required),
             "competitive entry identity is missing source binding: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn control_rect_client_px",
+        "pub fn visible_control_label_v1",
+        "pub fn execute_competitive_entry",
+        "pub fn purchase_competitive_entry",
+        "SendInput",
+        "SetCursorPos",
+    ] {
+        assert!(
+            !entry_runtime.contains(forbidden),
+            "competitive entry dry run contains a forbidden exposure or actuator: {forbidden}"
         );
     }
     for required in [

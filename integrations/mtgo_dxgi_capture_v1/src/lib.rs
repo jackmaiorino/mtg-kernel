@@ -21,9 +21,10 @@ pub use actuator::{
     ratify_private_match_authorization_v3,
     review_competitive_duel_pass_ratification_candidate_from_correspondence_v2,
     review_competitive_entry_attended_v1, review_competitive_entry_attended_v2,
-    review_competitive_entry_attended_v3,
+    review_competitive_entry_attended_v3, review_competitive_entry_attended_v4,
     CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1,
     CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3,
+    CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4,
     CheckedUntrustedMtgoSourceBoundCompetitiveEntryReviewV2,
     MtgoAttendedCompetitiveEntryReviewCommitmentsV1,
     MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
@@ -31,6 +32,7 @@ pub use actuator::{
     MtgoInputGateStatusV3, MtgoPregameInputGateStatusV3,
     MtgoReviewedCompetitivePassRatificationCandidateV2,
     MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3,
+    MtgoControlBoundCompetitiveEntryReviewCommitmentsV4,
     MtgoSourceBoundCompetitiveEntryReviewCommitmentsV2,
     OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1,
     OpaqueMtgoCompetitiveGameSessionV1, OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2,
@@ -41,6 +43,7 @@ pub use actuator::{
 
 #[cfg(target_os = "windows")]
 pub use probe::{
+    bind_classifier_backed_competitive_entry_control_dry_run_v1,
     bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1,
     bind_classified_navigation_frame_to_competitive_entry_review_identity_v1,
     bind_opaque_duel_control_to_competitive_action_plan_v1,
@@ -101,6 +104,7 @@ pub use probe::{
     MtgoNonModelPregameHeuristicProfileV1, MtgoNonModelPregameHeuristicV1,
     MtgoOpaqueCompetitiveDuelActionPlanCommitmentsV1,
     MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
+    MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
     MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
     MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1, MtgoOpaqueDuelModelSelectionCommitmentsV1,
     MtgoOpaqueDuelResolvedControlCommitmentsV1,
@@ -114,6 +118,7 @@ pub use probe::{
     OpaqueMtgoCardAwareBottomingModelSelectionV5, OpaqueMtgoCardAwareBottomingSessionV5,
     OpaqueMtgoCardAwarePregameModelSelectionV4,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1, OpaqueMtgoCompetitiveDuelActionPlanV1,
+    OpaqueMtgoCompetitiveEntryControlDryRunV1,
     OpaqueMtgoCompetitiveEntryReviewIdentityV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
     OpaqueMtgoPreparedCompetitiveDuelPassV1,
     OpaqueMtgoConfirmedBottomingSubmitV5, OpaqueMtgoConfirmedKeepToBottomSixTransitionV3,

@@ -15,6 +15,8 @@ const OPAQUE_COMPETITIVE_ENTRY_REVIEW_IDENTITY_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-entry-review-identity-v1";
 const OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2: &[u8] =
     b"mtgo-opaque-competitive-classifier-bound-entry-review-identity-v2";
+const OPAQUE_COMPETITIVE_ENTRY_CONTROL_DRY_RUN_DOMAIN_V1: &[u8] =
+    b"mtgo-opaque-competitive-entry-control-dry-run-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
@@ -49,9 +51,87 @@ pub struct MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
 pub struct OpaqueMtgoCompetitiveEntryReviewIdentityV1 {
     _source_frame: OpaqueMtgoDxgiFrameCandidateV3,
     _navigation_classification: Option<OpaqueMtgoRetainedCompetitiveNavigationClassificationV1>,
+    _event_label_rect_client_px: MtgoRectPxV1,
     lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     event_display_label: String,
     commitments: MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
+    pub source_identity_commitment_sha256: String,
+    pub source_capture_commitment_sha256: String,
+    pub source_lifecycle_snapshot_commitment_sha256: String,
+    pub source_navigation_classification_result_commitment_sha256: String,
+    pub visible_control_label_sha256: String,
+    pub visible_control_region_sha256: String,
+    pub visibly_enabled_confirmed: bool,
+    pub dry_run_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub frame_id: u64,
+    pub frame_sequence: u64,
+    pub resource: MtgoCompetitiveEntryResourceV1,
+    pub amount: u32,
+}
+
+/// One human-reviewed visible Confirm Entry control bound to the exact opaque
+/// classifier-backed entry-review frame. The control rectangle, source pixels,
+/// classifier result, and source identity remain retained and private.
+///
+/// This is a dry-run calibration only. It cannot create a lifecycle intent,
+/// expose coordinates, click Join, spend resources, or send input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveEntryControlDryRunV1;
+/// let _forged = OpaqueMtgoCompetitiveEntryControlDryRunV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveEntryControlDryRunV1;
+/// fn cannot_extract(value: &OpaqueMtgoCompetitiveEntryControlDryRunV1) {
+///     let _ = value.rect_client_px();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct OpaqueMtgoCompetitiveEntryControlDryRunV1 {
+    _source_identity: OpaqueMtgoCompetitiveEntryReviewIdentityV1,
+    _visible_control_label: String,
+    _control_rect_client_px: MtgoRectPxV1,
+    commitments: MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
+}
+
+pub(crate) struct MtgoCompetitiveEntryControlDryRunPartsV1 {
+    pub source_identity: OpaqueMtgoCompetitiveEntryReviewIdentityV1,
+    pub visible_control_label: String,
+    pub control_rect_client_px: MtgoRectPxV1,
+    pub commitments: MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitiveEntryControlDryRunV1 {
+    pub fn commitments_v1(&self) -> MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub(crate) fn into_parts_v1(self) -> MtgoCompetitiveEntryControlDryRunPartsV1 {
+        MtgoCompetitiveEntryControlDryRunPartsV1 {
+            source_identity: self._source_identity,
+            visible_control_label: self._visible_control_label,
+            control_rect_client_px: self._control_rect_client_px,
+            commitments: self.commitments,
+        }
+    }
 }
 
 impl OpaqueMtgoCompetitiveEntryReviewIdentityV1 {
@@ -153,9 +233,181 @@ pub(super) fn bind_opaque_navigation_frame_to_competitive_entry_review_identity_
     Ok(OpaqueMtgoCompetitiveEntryReviewIdentityV1 {
         _source_frame: source_frame,
         _navigation_classification: navigation_classification,
+        _event_label_rect_client_px: event_label_rect_client_px,
         lifecycle,
         event_display_label,
         commitments,
+    })
+}
+
+/// Adds a coordinate-private, human-reviewed Confirm Entry control calibration
+/// to one exact classifier-backed entry-review identity. This function only
+/// records a dry run and cannot enter the event.
+pub fn bind_classifier_backed_competitive_entry_control_dry_run_v1(
+    source_identity: OpaqueMtgoCompetitiveEntryReviewIdentityV1,
+    visible_control_label: String,
+    control_rect_client_px: MtgoRectPxV1,
+    visibly_enabled_confirmed: bool,
+) -> Result<OpaqueMtgoCompetitiveEntryControlDryRunV1, String> {
+    let source_commitments = source_identity.commitments_v1();
+    let retained_classifier_commitment = source_identity
+        ._navigation_classification
+        .as_ref()
+        .ok_or("competitive entry control dry run requires retained classifier lineage")?
+        .commitments_v1()
+        .classification_result_commitment_sha256;
+    if source_commitments
+        .source_navigation_classification_result_commitment_sha256
+        .as_deref()
+        != Some(retained_classifier_commitment.as_str())
+    {
+        return Err("competitive entry control classifier lineage changed".to_owned());
+    }
+    let recomputed_capture_commitment = capture_commitment_v3(
+        &source_identity._source_frame.manifest,
+        &source_identity._source_frame.canonical_bgra8,
+        &source_identity._source_frame.preview_png,
+    )?;
+    if recomputed_capture_commitment != source_commitments.source_capture_commitment_sha256
+        || recomputed_capture_commitment
+            != source_identity._source_frame.capture_commitment_sha256
+    {
+        return Err("competitive entry control source capture changed".to_owned());
+    }
+    let source_size = MtgoSizePxV1 {
+        width: source_identity
+            ._source_frame
+            .manifest
+            .frame
+            .canonical_width,
+        height: source_identity
+            ._source_frame
+            .manifest
+            .frame
+            .canonical_height,
+    };
+    let commitments = bind_competitive_entry_control_dry_run_parts_v1(
+        &source_commitments,
+        source_identity.lifecycle_v1(),
+        &source_identity._source_frame.canonical_bgra8,
+        &source_size,
+        &source_identity._event_label_rect_client_px,
+        &visible_control_label,
+        &control_rect_client_px,
+        visibly_enabled_confirmed,
+    )?;
+    Ok(OpaqueMtgoCompetitiveEntryControlDryRunV1 {
+        _source_identity: source_identity,
+        _visible_control_label: visible_control_label,
+        _control_rect_client_px: control_rect_client_px,
+        commitments,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bind_competitive_entry_control_dry_run_parts_v1(
+    source: &MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
+    lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    source_pixels: &[u8],
+    source_size: &MtgoSizePxV1,
+    event_label_rect_client_px: &MtgoRectPxV1,
+    visible_control_label: &str,
+    control_rect_client_px: &MtgoRectPxV1,
+    visibly_enabled_confirmed: bool,
+) -> Result<MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1, String> {
+    let classifier_commitment = source
+        .source_navigation_classification_result_commitment_sha256
+        .as_deref()
+        .ok_or("competitive entry control dry run requires a classifier-backed source")?;
+    if !looks_like_lower_sha256_v1(classifier_commitment)
+        || lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || lifecycle.snapshot_commitment_sha256()
+            != source.source_lifecycle_snapshot_commitment_sha256
+        || lifecycle.event_kind() != source.event_kind
+        || lifecycle.frame_id_v1() != source.frame_id
+        || lifecycle.frame_sequence() != source.frame_sequence
+        || lifecycle.client_bounds_v1().width != source_size.width
+        || lifecycle.client_bounds_v1().height != source_size.height
+    {
+        return Err(
+            "competitive entry control dry run source lineage is incomplete or mismatched"
+                .to_owned(),
+        );
+    }
+    validate_entry_control_label_v1(visible_control_label)?;
+    if !visibly_enabled_confirmed {
+        return Err(
+            "competitive entry control dry run requires an explicitly reviewed enabled control"
+                .to_owned(),
+        );
+    }
+    if control_rect_client_px.width < 8 || control_rect_client_px.height < 8 {
+        return Err("competitive entry control region is too small for human review".to_owned());
+    }
+    let review_surface = lifecycle
+        .visible_facts_v1()
+        .iter()
+        .find(|fact| fact.kind == MtgoLifecycleVisibleFactKindV1::EntryReviewVisible)
+        .map(|fact| &fact.rect_client_px)
+        .ok_or("competitive entry control source is missing its visible review surface")?;
+    if !rect_contains_rect_v1(review_surface, control_rect_client_px)? {
+        return Err(
+            "competitive entry control region is outside the visible entry-review surface"
+                .to_owned(),
+        );
+    }
+    if rects_intersect_v1(event_label_rect_client_px, control_rect_client_px)? {
+        return Err("competitive entry control overlaps the reviewed event label".to_owned());
+    }
+    let visible_control_region_sha256 = visible_frame_region_content_sha256_v1(
+        source_pixels,
+        source_size,
+        control_rect_client_px,
+    )
+    .map_err(|error| format!("hash competitive entry control pixels: {error}"))?;
+    let visible_control_label_sha256 = sha256_hex_v1(visible_control_label.as_bytes());
+    let control_rect_json =
+        canonical_json_v1(control_rect_client_px, "entry control region")?;
+    let event_kind = canonical_json_v1(&source.event_kind, "entry control mode")?;
+    let resource = canonical_json_v1(&source.resource, "entry control resource")?;
+    let dry_run_commitment_sha256 = commitment_v1(
+        OPAQUE_COMPETITIVE_ENTRY_CONTROL_DRY_RUN_DOMAIN_V1,
+        &[
+            source.source_identity_commitment_sha256.as_bytes(),
+            source.source_capture_commitment_sha256.as_bytes(),
+            source
+                .source_lifecycle_snapshot_commitment_sha256
+                .as_bytes(),
+            classifier_commitment.as_bytes(),
+            visible_control_label.as_bytes(),
+            visible_control_label_sha256.as_bytes(),
+            &control_rect_json,
+            visible_control_region_sha256.as_bytes(),
+            &[u8::from(visibly_enabled_confirmed)],
+            &event_kind,
+            source.frame_id.to_be_bytes().as_slice(),
+            source.frame_sequence.to_be_bytes().as_slice(),
+            &resource,
+            source.amount.to_be_bytes().as_slice(),
+            b"human_reviewed_confirm_entry_control_dry_run_no_join_no_spending_no_input",
+        ],
+    );
+    Ok(MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
+        source_identity_commitment_sha256: source.source_identity_commitment_sha256.clone(),
+        source_capture_commitment_sha256: source.source_capture_commitment_sha256.clone(),
+        source_lifecycle_snapshot_commitment_sha256: source
+            .source_lifecycle_snapshot_commitment_sha256
+            .clone(),
+        source_navigation_classification_result_commitment_sha256: classifier_commitment.to_owned(),
+        visible_control_label_sha256,
+        visible_control_region_sha256,
+        visibly_enabled_confirmed,
+        dry_run_commitment_sha256,
+        event_kind: source.event_kind,
+        frame_id: source.frame_id,
+        frame_sequence: source.frame_sequence,
+        resource: source.resource,
+        amount: source.amount,
     })
 }
 
@@ -322,6 +574,26 @@ fn validate_entry_display_label_v1(
     Ok(())
 }
 
+fn validate_entry_control_label_v1(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 80
+        || value.trim() != value
+        || !value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+    {
+        return Err(
+            "competitive entry control label must be nonempty, trimmed, bounded ASCII display text"
+                .to_owned(),
+        );
+    }
+    let normalized = value.to_ascii_lowercase();
+    if !normalized.contains("join") && !normalized.contains("enter") {
+        return Err(
+            "competitive entry control label does not visibly identify Join or Enter".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn rect_contains_rect_v1(outer: &MtgoRectPxV1, inner: &MtgoRectPxV1) -> Result<bool, String> {
     if inner.width == 0 || inner.height == 0 {
         return Ok(false);
@@ -346,6 +618,29 @@ fn rect_contains_rect_v1(outer: &MtgoRectPxV1, inner: &MtgoRectPxV1) -> Result<b
         && inner.y >= outer.y
         && inner_right <= outer_right
         && inner_bottom <= outer_bottom)
+}
+
+fn rects_intersect_v1(left: &MtgoRectPxV1, right: &MtgoRectPxV1) -> Result<bool, String> {
+    let left_right = left
+        .x
+        .checked_add(left.width)
+        .ok_or("competitive entry left rectangle overflow")?;
+    let left_bottom = left
+        .y
+        .checked_add(left.height)
+        .ok_or("competitive entry left rectangle overflow")?;
+    let right_right = right
+        .x
+        .checked_add(right.width)
+        .ok_or("competitive entry right rectangle overflow")?;
+    let right_bottom = right
+        .y
+        .checked_add(right.height)
+        .ok_or("competitive entry right rectangle overflow")?;
+    Ok(left.x < right_right
+        && right.x < left_right
+        && left.y < right_bottom
+        && right.y < left_bottom)
 }
 
 fn canonical_json_v1<T: Serialize>(value: &T, field: &str) -> Result<Vec<u8>, String> {
@@ -600,5 +895,173 @@ mod tests {
             unclassified.source_identity_commitment_sha256
         );
         assert!(bind(Some("not-a-digest")).is_err());
+    }
+
+    #[test]
+    fn classifier_backed_confirm_entry_control_is_coordinate_private_and_exact() {
+        let mut pixels = vec![29_u8; 100 * 100 * 4];
+        for y in 35..43 {
+            for x in 10..40 {
+                pixels[(y * 100 * 4 + x * 4) as usize] = 211;
+            }
+        }
+        for (event_kind, label) in [
+            (MtgoCompetitiveEventKindV1::League, "Modern League"),
+            (MtgoCompetitiveEventKindV1::Challenge, "Modern Challenge"),
+        ] {
+            let lifecycle = source_v1(
+                &pixels,
+                event_kind,
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+            );
+            let event_rect = MtgoRectPxV1 {
+                x: 10,
+                y: 10,
+                width: 50,
+                height: 20,
+            };
+            let source = bind_competitive_entry_review_source_parts_v1(
+                &"1".repeat(64),
+                lifecycle.frame_sha256_v1(),
+                100,
+                100,
+                &pixels,
+                "Magic: The Gathering Online",
+                "main_client",
+                "navigation",
+                &lifecycle,
+                label,
+                &event_rect,
+                Some(&"7".repeat(64)),
+            )
+            .unwrap();
+            let control_rect = MtgoRectPxV1 {
+                x: 10,
+                y: 35,
+                width: 30,
+                height: 8,
+            };
+            let dry_run = bind_competitive_entry_control_dry_run_parts_v1(
+                &source,
+                &lifecycle,
+                &pixels,
+                &MtgoSizePxV1 {
+                    width: 100,
+                    height: 100,
+                },
+                &event_rect,
+                "Join Event",
+                &control_rect,
+                true,
+            )
+            .unwrap();
+            assert_eq!(dry_run.event_kind, event_kind);
+            assert_eq!(dry_run.frame_id, 7);
+            assert_eq!(dry_run.frame_sequence, 11);
+            assert_eq!(dry_run.amount, 100);
+            assert_eq!(dry_run.dry_run_commitment_sha256.len(), 64);
+            assert_eq!(dry_run.visible_control_label_sha256.len(), 64);
+            assert_eq!(dry_run.visible_control_region_sha256.len(), 64);
+
+            let relabeled = bind_competitive_entry_control_dry_run_parts_v1(
+                &source,
+                &lifecycle,
+                &pixels,
+                &MtgoSizePxV1 {
+                    width: 100,
+                    height: 100,
+                },
+                &event_rect,
+                "Enter Event",
+                &control_rect,
+                true,
+            )
+            .unwrap();
+            assert_ne!(
+                dry_run.dry_run_commitment_sha256,
+                relabeled.dry_run_commitment_sha256
+            );
+        }
+    }
+
+    #[test]
+    fn confirm_entry_control_dry_run_rejects_manual_overlap_and_geometry_drift() {
+        let pixels = vec![31_u8; 100 * 100 * 4];
+        let lifecycle = source_v1(
+            &pixels,
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveEntryResourceV1::ExistingEventTickets,
+            10,
+        );
+        let event_rect = MtgoRectPxV1 {
+            x: 10,
+            y: 10,
+            width: 50,
+            height: 20,
+        };
+        let bind_source = |lineage: Option<&str>| {
+            bind_competitive_entry_review_source_parts_v1(
+                &"1".repeat(64),
+                lifecycle.frame_sha256_v1(),
+                100,
+                100,
+                &pixels,
+                "Magic: The Gathering Online",
+                "main_client",
+                "navigation",
+                &lifecycle,
+                "Modern League",
+                &event_rect,
+                lineage,
+            )
+            .unwrap()
+        };
+        let size = MtgoSizePxV1 {
+            width: 100,
+            height: 100,
+        };
+        let valid_control = MtgoRectPxV1 {
+            x: 10,
+            y: 35,
+            width: 30,
+            height: 8,
+        };
+        let bind = |source: &MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
+                    label: &str,
+                    rect: &MtgoRectPxV1,
+                    visibly_enabled: bool| {
+            bind_competitive_entry_control_dry_run_parts_v1(
+                source,
+                &lifecycle,
+                &pixels,
+                &size,
+                &event_rect,
+                label,
+                rect,
+                visibly_enabled,
+            )
+        };
+
+        assert!(bind(&bind_source(None), "Join Event", &valid_control, true).is_err());
+        let classified = bind_source(Some(&"7".repeat(64)));
+        assert!(bind(&classified, "Continue", &valid_control, true).is_err());
+        assert!(bind(&classified, "Join Event", &valid_control, false).is_err());
+        assert!(bind(&classified, "Join Event", &event_rect, true).is_err());
+        assert!(bind(
+            &classified,
+            "Join Event",
+            &MtgoRectPxV1 {
+                x: 80,
+                y: 80,
+                width: 20,
+                height: 20,
+            },
+            true,
+        )
+        .is_err());
+        let mut wrong_frame = classified;
+        wrong_frame.frame_sequence = 12;
+        assert!(bind(&wrong_frame, "Join Event", &valid_control, true).is_err());
     }
 }
