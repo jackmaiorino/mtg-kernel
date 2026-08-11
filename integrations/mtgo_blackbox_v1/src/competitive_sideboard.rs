@@ -200,6 +200,10 @@ impl CheckedUntrustedMtgoCompetitiveSideboardSnapshotV1 {
         &self.frame_sha256
     }
 
+    pub fn lifecycle_snapshot_commitment_sha256(&self) -> &str {
+        self._lifecycle.snapshot_commitment_sha256()
+    }
+
     pub fn deck_manifest_commitment_sha256(&self) -> &str {
         &self.deck_manifest_commitment_sha256
     }

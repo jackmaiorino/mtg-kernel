@@ -55,8 +55,9 @@ use mtgo_blackbox_v1::{
     competitive_mode_authorization_commitment_v1, confirm_competitive_sideboard_target_visible_v1,
     make_offline_competitive_lifecycle_intent_v1, validate_authorization_for_mode_v1,
     validate_checked_observed_competitive_lifecycle_advance_v1,
-    AdmittedMtgoCompetitiveNavigationProfileV1, AdmittedMtgoDuelGestureProfileV1,
-    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    AdmittedMtgoCompetitiveNavigationProfileV1, AdmittedMtgoCompetitiveSideboardEvaluationV1,
+    AdmittedMtgoDuelGestureProfileV1, AdmittedMtgoDuelPerceptionProfileV1,
+    CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     CheckedUntrustedMtgoCompetitiveSideboardReadyV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveDeckConfigurationV1, MtgoCompetitiveDeckPartitionV1,
@@ -590,6 +591,8 @@ pub struct MtgoReviewedCompetitiveSideboardAutomationRatificationCandidateV1 {
     pub deck_manifest_commitment_sha256: String,
     pub deck_format_sha256: String,
     pub policy_deployment_commitment_sha256: String,
+    pub sideboard_evaluation_ratification_commitment_sha256: String,
+    pub sideboard_evaluation_admission_commitment_sha256: String,
     pub automation_scope_commitment_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub ratification_commitment_sha256: String,
@@ -2905,8 +2908,10 @@ pub fn review_competitive_sideboard_automation_ratification_candidate_v1(
     lifecycle_authorization: &RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
     manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
     policy_deployment_commitment_sha256: &str,
+    sideboard_evaluation: &AdmittedMtgoCompetitiveSideboardEvaluationV1,
 ) -> Result<MtgoReviewedCompetitiveSideboardAutomationRatificationCandidateV1, String> {
     let lifecycle = lifecycle_authorization.commitments_v1();
+    let evaluation = sideboard_evaluation.commitments_v1();
     for commitment in [
         lifecycle.ratification_commitment_sha256.as_str(),
         lifecycle.permission_review_commitment_sha256.as_str(),
@@ -2920,6 +2925,8 @@ pub fn review_competitive_sideboard_automation_ratification_candidate_v1(
         manifest.manifest_commitment_sha256(),
         manifest.format_sha256(),
         policy_deployment_commitment_sha256,
+        evaluation.ratification_commitment_sha256.as_str(),
+        sideboard_evaluation.admission_commitment_sha256_v1(),
     ] {
         if !is_sha256_v2(commitment) {
             return Err(
@@ -2933,6 +2940,18 @@ pub fn review_competitive_sideboard_automation_ratification_candidate_v1(
         || manifest.format_sha256() == policy_deployment_commitment_sha256
     {
         return Err("sideboard deck, format, and policy identities are crossed".to_owned());
+    }
+    if evaluation.profile_commitment_sha256 != lifecycle.lifecycle_profile_commitment_sha256
+        || evaluation.approved_account_alias_sha256 != lifecycle.approved_account_alias_sha256
+        || evaluation.deck_list_sha256 != manifest.deck_list_sha256()
+        || evaluation.deck_manifest_commitment_sha256 != manifest.manifest_commitment_sha256()
+        || evaluation.deck_format_sha256 != manifest.format_sha256()
+        || evaluation.policy_deployment_commitment_sha256 != policy_deployment_commitment_sha256
+    {
+        return Err(
+            "sideboard evaluation differs from the exact lifecycle profile, account, deck, format, or policy"
+                .to_owned(),
+        );
     }
     let automation_scope_commitment_sha256 = competitive_sideboard_automation_scope_v1();
     let ratification_commitment_sha256 = hash_parts_v2(
@@ -2950,6 +2969,10 @@ pub fn review_competitive_sideboard_automation_ratification_candidate_v1(
             manifest.manifest_commitment_sha256().as_bytes(),
             manifest.format_sha256().as_bytes(),
             policy_deployment_commitment_sha256.as_bytes(),
+            evaluation.ratification_commitment_sha256.as_bytes(),
+            sideboard_evaluation
+                .admission_commitment_sha256_v1()
+                .as_bytes(),
             automation_scope_commitment_sha256.as_bytes(),
             competitive_event_kind_tag_v1(lifecycle.event_kind),
             b"exact_visible_sideboard_parser_one_card_drag_confirmation_and_changed_submit",
@@ -2968,6 +2991,11 @@ pub fn review_competitive_sideboard_automation_ratification_candidate_v1(
             deck_manifest_commitment_sha256: manifest.manifest_commitment_sha256().to_owned(),
             deck_format_sha256: manifest.format_sha256().to_owned(),
             policy_deployment_commitment_sha256: policy_deployment_commitment_sha256.to_owned(),
+            sideboard_evaluation_ratification_commitment_sha256: evaluation
+                .ratification_commitment_sha256,
+            sideboard_evaluation_admission_commitment_sha256: sideboard_evaluation
+                .admission_commitment_sha256_v1()
+                .to_owned(),
             automation_scope_commitment_sha256,
             event_kind: lifecycle.event_kind,
             ratification_commitment_sha256,
@@ -2979,11 +3007,13 @@ pub fn ratify_competitive_sideboard_automation_v1(
     lifecycle_authorization: &RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
     manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
     policy_deployment_commitment_sha256: &str,
+    sideboard_evaluation: &AdmittedMtgoCompetitiveSideboardEvaluationV1,
 ) -> Result<RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1, String> {
     let candidate = review_competitive_sideboard_automation_ratification_candidate_v1(
         lifecycle_authorization,
         manifest,
         policy_deployment_commitment_sha256,
+        sideboard_evaluation,
     )?;
     let expected = RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1
         .ok_or("the exact competitive sideboard automation is not ratified in this build")?;
