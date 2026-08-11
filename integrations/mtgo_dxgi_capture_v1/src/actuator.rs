@@ -64,9 +64,10 @@ use mtgo_blackbox_v1::{
     competitive_mode_authorization_commitment_v1, confirm_competitive_sideboard_target_visible_v1,
     make_offline_competitive_lifecycle_intent_v1, validate_authorization_for_mode_v1,
     validate_checked_observed_competitive_lifecycle_advance_v1,
-    AdmittedMtgoCompetitiveEventListingEvaluationV1, AdmittedMtgoCompetitiveNavigationProfileV1,
-    AdmittedMtgoCompetitiveSideboardEvaluationV1, AdmittedMtgoDuelGestureProfileV1,
-    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    AdmittedMtgoCompetitiveDuelLifecycleProfileV1, AdmittedMtgoCompetitiveEventListingEvaluationV1,
+    AdmittedMtgoCompetitiveNavigationProfileV1, AdmittedMtgoCompetitiveSideboardEvaluationV1,
+    AdmittedMtgoDuelGestureProfileV1, AdmittedMtgoDuelPerceptionProfileV1,
+    CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     CheckedUntrustedMtgoCompetitiveSideboardReadyV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveDeckConfigurationV1, MtgoCompetitiveDeckPartitionV1,
@@ -1545,6 +1546,8 @@ pub struct MtgoCompetitiveEventMatchLaunchBindingCommitmentsV1 {
     pub process_continuity_commitment_sha256: String,
     pub event_runtime_lifecycle_snapshot_commitment_sha256: String,
     pub launch_lifecycle_snapshot_commitment_sha256: String,
+    pub launch_lifecycle_evaluation_commitment_sha256: String,
+    pub launch_lifecycle_profile_admission_commitment_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub game_number: u8,
     pub event_runtime_frame_id: u64,
@@ -5687,11 +5690,13 @@ pub fn advance_competitive_event_monitor_in_runtime_v1(
 pub fn bind_competitive_event_runtime_to_match_launch_identity_v1(
     runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
     perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    lifecycle_profile: &AdmittedMtgoCompetitiveDuelLifecycleProfileV1,
     event_display_label: String,
     event_label_rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1,
 ) -> Result<OpaqueMtgoCompetitiveEventMatchLaunchBindingV1, String> {
     let visible_identity = bind_opaque_duel_perception_to_competitive_launch_identity_v1(
         perception,
+        lifecycle_profile,
         event_display_label,
         event_label_rect_client_px,
         runtime.commitments.entry_authorization_sha256.clone(),
@@ -9726,6 +9731,10 @@ fn competitive_event_match_launch_binding_commitments_v1(
         source.source_capture_commitment_sha256.as_str(),
         source.perception_result_commitment_sha256.as_str(),
         source.lifecycle_snapshot_commitment_sha256.as_str(),
+        source.lifecycle_evaluation_commitment_sha256.as_str(),
+        source
+            .lifecycle_profile_admission_commitment_sha256
+            .as_str(),
         source.process_continuity_commitment_sha256.as_str(),
         source.window_continuity_commitment_sha256.as_str(),
         source.window_title_sha256.as_str(),
@@ -9772,6 +9781,10 @@ fn competitive_event_match_launch_binding_commitments_v1(
             source.source_capture_commitment_sha256.as_bytes(),
             source.perception_result_commitment_sha256.as_bytes(),
             source.lifecycle_snapshot_commitment_sha256.as_bytes(),
+            source.lifecycle_evaluation_commitment_sha256.as_bytes(),
+            source
+                .lifecycle_profile_admission_commitment_sha256
+                .as_bytes(),
             source.process_continuity_commitment_sha256.as_bytes(),
             source.window_continuity_commitment_sha256.as_bytes(),
             source.launch_identity_commitment_sha256.as_bytes(),
@@ -9797,6 +9810,12 @@ fn competitive_event_match_launch_binding_commitments_v1(
             .clone(),
         launch_lifecycle_snapshot_commitment_sha256: source
             .lifecycle_snapshot_commitment_sha256
+            .clone(),
+        launch_lifecycle_evaluation_commitment_sha256: source
+            .lifecycle_evaluation_commitment_sha256
+            .clone(),
+        launch_lifecycle_profile_admission_commitment_sha256: source
+            .lifecycle_profile_admission_commitment_sha256
             .clone(),
         event_kind: runtime.event_kind,
         game_number: source.game_number,
@@ -15535,6 +15554,8 @@ mod tests {
                 source_capture_commitment_sha256: "6".repeat(64),
                 perception_result_commitment_sha256: "7".repeat(64),
                 lifecycle_snapshot_commitment_sha256: "b".repeat(64),
+                lifecycle_evaluation_commitment_sha256: "d".repeat(64),
+                lifecycle_profile_admission_commitment_sha256: "e".repeat(64),
                 process_continuity_commitment_sha256: process.clone(),
                 window_continuity_commitment_sha256: "c".repeat(64),
                 window_title_sha256: "8".repeat(64),

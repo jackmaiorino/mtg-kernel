@@ -625,6 +625,8 @@ fn competitive_event_monitor_is_move_only_monotonic_and_non_actionable() {
 #[test]
 fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_authority() {
     let source = include_str!("../src/probe/duel_perception_runtime.rs");
+    let lifecycle_evaluation =
+        include_str!("../../mtgo_blackbox_v1/src/competitive_duel_lifecycle_evaluation.rs");
     for required in [
         "verify_duel_perception_runtime_v1",
         "verify_duel_gesture_target_runtime_v1",
@@ -657,6 +659,9 @@ fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_a
         "visible_controls: MtgoVisibleActionControlSetV1",
         "competitive_lifecycle: Option<MtgoVisibleCompetitiveLifecycleSnapshotV1>",
         "competitive_lifecycle_snapshot_commitment_sha256: Option<String>",
+        "AdmittedMtgoCompetitiveDuelLifecycleProfileV1",
+        "lifecycle_evaluation_commitment_sha256",
+        "lifecycle_profile_admission_commitment_sha256",
         "competitive duel action requires classifier-bound lifecycle pixels",
         "visible_frame_region_content_sha256_v1",
         "validate_observed_decision_v1",
@@ -710,6 +715,19 @@ fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_a
     assert!(!source.contains(
         "score_and_select_opaque_admitted_duel_perception_v1<S: MtgoExternalObservationScorerV1>"
     ));
+    for required in [
+        "RATIFIED_COMPETITIVE_DUEL_LIFECYCLE_EVALUATION_COMMITMENT_V1: Option<&str> = None",
+        "minimum_unique_cases_per_mode",
+        "MtgoCompetitiveEventKindV1::League",
+        "MtgoCompetitiveEventKindV1::Challenge",
+        "exact_snapshot_count == prediction_count",
+        "league_and_challenge_match_in_progress_lifecycle_accuracy_only_no_input_or_entry",
+    ] {
+        assert!(
+            lifecycle_evaluation.contains(required),
+            "competitive duel lifecycle gate is missing: {required}"
+        );
+    }
     for forbidden in [
         "pub fn canonical_bgra8",
         "pub fn observation",

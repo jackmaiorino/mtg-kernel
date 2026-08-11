@@ -19,8 +19,8 @@ use mtgo_blackbox_v1::{
     validate_dxgi_bound_observation_reconstruction_audit_v1, validate_observed_decision_v1,
     validate_profile_bound_duel_gesture_plan_v1,
     validate_visible_competitive_lifecycle_snapshot_v1, visible_frame_region_content_sha256_v1,
-    AdmittedMtgoDuelGestureProfileV1, AdmittedMtgoDuelPerceptionProfileV1,
-    CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
+    AdmittedMtgoCompetitiveDuelLifecycleProfileV1, AdmittedMtgoDuelGestureProfileV1,
+    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
     CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
     CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, CheckedUntrustedMtgoDuelGesturePlanV1,
@@ -401,6 +401,8 @@ pub struct MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1 {
     pub source_capture_commitment_sha256: String,
     pub perception_result_commitment_sha256: String,
     pub lifecycle_snapshot_commitment_sha256: String,
+    pub lifecycle_evaluation_commitment_sha256: String,
+    pub lifecycle_profile_admission_commitment_sha256: String,
     pub process_continuity_commitment_sha256: String,
     pub window_continuity_commitment_sha256: String,
     pub window_title_sha256: String,
@@ -488,6 +490,7 @@ impl OpaqueMtgoCompetitiveLaunchIdentityV1 {
 /// performs no OCR and grants no input or event-entry authority.
 pub(crate) fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
     perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    lifecycle_profile: &AdmittedMtgoCompetitiveDuelLifecycleProfileV1,
     event_display_label: String,
     event_label_rect_client_px: MtgoRectPxV1,
     entry_authorization_sha256: String,
@@ -496,6 +499,20 @@ pub(crate) fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
         .competitive_lifecycle_v1()
         .ok_or("competitive launch identity requires classifier-bound lifecycle pixels")?;
     let perception_commitments = perception.commitments_v1();
+    if lifecycle_profile.duel_perception_profile_commitment_sha256()
+        != perception_commitments
+            .source_frame
+            .perception_profile_commitment_sha256
+        || lifecycle_profile.duel_perception_profile_admission_commitment_sha256()
+            != perception_commitments
+                .source_frame
+                .perception_profile_admission_commitment_sha256
+    {
+        return Err(
+            "competitive lifecycle evaluation does not bind the exact duel perception profile"
+                .to_owned(),
+        );
+    }
     let source = &perception.source_frame.source_frame;
     let source_capture = &perception_commitments.source_frame.source_capture;
     let source_size = MtgoSizePxV1 {
@@ -595,6 +612,8 @@ pub(crate) fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
                 .perception_result_commitment_sha256
                 .as_bytes(),
             lifecycle.snapshot_commitment_sha256().as_bytes(),
+            lifecycle_profile.evaluation_commitment_sha256().as_bytes(),
+            lifecycle_profile.admission_commitment_sha256().as_bytes(),
             process_continuity_commitment_sha256.as_bytes(),
             window_continuity_commitment_sha256.as_bytes(),
             window_title_sha256.as_bytes(),
@@ -622,6 +641,12 @@ pub(crate) fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
             perception_result_commitment_sha256: perception_commitments
                 .perception_result_commitment_sha256,
             lifecycle_snapshot_commitment_sha256: lifecycle.snapshot_commitment_sha256().to_owned(),
+            lifecycle_evaluation_commitment_sha256: lifecycle_profile
+                .evaluation_commitment_sha256()
+                .to_owned(),
+            lifecycle_profile_admission_commitment_sha256: lifecycle_profile
+                .admission_commitment_sha256()
+                .to_owned(),
             process_continuity_commitment_sha256,
             window_continuity_commitment_sha256,
             window_title_sha256,
