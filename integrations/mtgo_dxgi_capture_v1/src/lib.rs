@@ -9,8 +9,8 @@ mod probe;
 
 #[cfg(target_os = "windows")]
 pub use actuator::{
-    bind_prepared_competitive_duel_pass_authorization_v1,
-    confirm_pending_competitive_duel_pass_v1,
+    begin_competitive_game_session_v1, bind_prepared_competitive_duel_pass_session_v2,
+    confirm_pending_competitive_duel_pass_v2,
     confirm_pending_pregame_keep_to_bottom_six_v3, confirm_pending_pregame_keep_to_first_main_v3,
     confirm_pending_pregame_mulligan_v3, execute_authorized_competitive_duel_pass_v1,
     execute_authorized_private_match_pregame_action_v3,
@@ -20,10 +20,10 @@ pub use actuator::{
     ratify_competitive_match_launch_attended_v4, ratify_competitive_match_launch_v1,
     ratify_private_match_authorization_v3,
     MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
-    MtgoConfirmedCompetitiveDuelPassCommitmentsV1, MtgoInputGateStatusV3,
-    MtgoPregameInputGateStatusV3,
+    MtgoCompetitiveGameSessionCommitmentsV1, MtgoConfirmedCompetitiveDuelPassCommitmentsV2,
+    MtgoInputGateStatusV3, MtgoPregameInputGateStatusV3,
     OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1,
-    OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV1,
+    OpaqueMtgoCompetitiveGameSessionV1, OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2,
     OpaqueMtgoPendingCompetitiveDuelPassV1, OpaqueMtgoPendingPregameInputV3,
     RatifiedMtgoCompetitiveDuelPassAuthorizationV1, RatifiedMtgoCompetitiveMatchLaunchV1,
     RatifiedMtgoPrivateMatchAuthorizationV3,

@@ -62,6 +62,10 @@ const RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2: Op
 const COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-match-launch-authorization-v1";
 const RATIFIED_COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
+const COMPETITIVE_GAME_SESSION_INITIAL_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-game-session-initial-v1";
+const COMPETITIVE_GAME_SESSION_ADVANCE_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-game-session-advance-v1";
 const ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_DOMAIN_V4: &[u8] =
     b"mtgo-attended-competitive-match-launch-request-v4";
 const ATTENDED_COMPETITIVE_MATCH_LAUNCH_RECEIPT_DOMAIN_V4: &[u8] =
@@ -236,6 +240,75 @@ impl RatifiedMtgoCompetitiveMatchLaunchV1 {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveGameSessionCommitmentsV1 {
+    pub session_commitment_sha256: String,
+    pub general_permission_commitment_sha256: String,
+    pub match_launch_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub game_number: u8,
+    pub valid_from_frame_sequence: u64,
+    pub valid_through_frame_sequence: u64,
+    pub last_confirmed_frame_sequence: u64,
+    pub confirmed_action_count: u64,
+}
+
+/// Move-only authority for sequential visible actions in one exact already
+/// entered League or Challenge game. It owns both independent ratifications.
+/// The session is returned to the caller only after an emitted action has a
+/// newer visible postcondition and the shared input gate is released.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveGameSessionV1;
+/// let _forged = OpaqueMtgoCompetitiveGameSessionV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveGameSessionV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveGameSessionV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveGameSessionV1 {
+    authorization: RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
+    match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    session_commitment_sha256: String,
+    last_confirmed_frame_sequence: u64,
+    confirmed_action_count: u64,
+}
+
+impl OpaqueMtgoCompetitiveGameSessionV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveGameSessionCommitmentsV1 {
+        MtgoCompetitiveGameSessionCommitmentsV1 {
+            session_commitment_sha256: self.session_commitment_sha256.clone(),
+            general_permission_commitment_sha256: self
+                .authorization
+                .authorization_commitment_sha256
+                .clone(),
+            match_launch_commitment_sha256: self
+                .match_launch
+                .launch_authorization_commitment_sha256
+                .clone(),
+            event_kind: self.match_launch.authorization.event_kind,
+            game_number: self.match_launch.authorization.game_number,
+            valid_from_frame_sequence: self.match_launch.valid_from_frame_sequence,
+            valid_through_frame_sequence: self
+                .match_launch
+                .authorization
+                .valid_through_frame_sequence,
+            last_confirmed_frame_sequence: self.last_confirmed_frame_sequence,
+            confirmed_action_count: self.confirmed_action_count,
+        }
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+}
+
 /// Coordinate-free facts shown to the account owner before authorizing
 /// gameplay in one exact already-entered League or Challenge game. Event entry
 /// and resource spending are deliberately outside this request.
@@ -269,6 +342,7 @@ pub struct MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1 {
     pub ratified_authorization_commitment_sha256: String,
     pub ratified_match_launch_commitment_sha256: String,
     pub competitive_match_gameplay_authorization_commitment_sha256: String,
+    pub competitive_game_session_commitment_sha256: String,
     pub authorization_binding_commitment_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub game_number: u8,
@@ -289,8 +363,7 @@ pub struct MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1 {
 /// ```
 pub struct OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1 {
     _prepared: OpaqueMtgoPreparedCompetitiveDuelPassV1,
-    _authorization: RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
-    _match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    _session: OpaqueMtgoCompetitiveGameSessionV1,
     commitments: MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
 }
 
@@ -318,8 +391,7 @@ impl OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1 {
 /// ```
 pub struct OpaqueMtgoPendingCompetitiveDuelPassV1 {
     prepared: OpaqueMtgoPreparedCompetitiveDuelPassV1,
-    _authorization: RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
-    _match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    session: OpaqueMtgoCompetitiveGameSessionV1,
     authorization_binding_commitments: MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
     input_receipt_sha256: String,
     input_sent_at_unix_millis: u128,
@@ -363,33 +435,41 @@ impl OpaqueMtgoPendingCompetitiveDuelPassV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MtgoConfirmedCompetitiveDuelPassCommitmentsV1 {
+pub struct MtgoConfirmedCompetitiveDuelPassCommitmentsV2 {
     pub input_receipt_sha256: String,
     pub visible_postcondition_commitment_sha256: String,
     pub transition_receipt_sha256: String,
+    pub prior_game_session_commitment_sha256: String,
+    pub advanced_game_session_commitment_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub game_number: u8,
     pub after_frame_id: u64,
     pub after_frame_sequence: u64,
     pub postcondition_candidate_count: u32,
+    pub confirmed_action_count: u64,
 }
 
 /// One emitted priority Pass with its exact newer visible postcondition
-/// confirmed. The shared input gate has been released, but this value itself
-/// carries no authority for another input or event entry.
+/// confirmed. The shared input gate has been released. The only way to recover
+/// the move-only game session for a later action is to consume this value.
 ///
 /// ```compile_fail
-/// use mtgo_dxgi_capture_v1::OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV1;
-/// let _forged = OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV1 {};
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2;
+/// let _forged = OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2 {};
 /// ```
-pub struct OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV1 {
+pub struct OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2 {
     _confirmation: OpaqueMtgoConfirmedCompetitiveDuelPassV1,
-    commitments: MtgoConfirmedCompetitiveDuelPassCommitmentsV1,
+    session: OpaqueMtgoCompetitiveGameSessionV1,
+    commitments: MtgoConfirmedCompetitiveDuelPassCommitmentsV2,
 }
 
-impl OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV1 {
-    pub fn commitments_v1(&self) -> MtgoConfirmedCompetitiveDuelPassCommitmentsV1 {
+impl OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2 {
+    pub fn commitments_v2(&self) -> MtgoConfirmedCompetitiveDuelPassCommitmentsV2 {
         self.commitments.clone()
+    }
+
+    pub fn into_game_session_v1(self) -> OpaqueMtgoCompetitiveGameSessionV1 {
+        self.session
     }
 
     pub fn safe_for_next_input_v1(&self) -> bool {
@@ -690,21 +770,37 @@ pub fn ratify_competitive_match_launch_attended_v4(
     )
 }
 
-pub fn bind_prepared_competitive_duel_pass_authorization_v1(
-    prepared: OpaqueMtgoPreparedCompetitiveDuelPassV1,
+pub fn begin_competitive_game_session_v1(
     authorization: RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
     match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+) -> Result<OpaqueMtgoCompetitiveGameSessionV1, String> {
+    validate_competitive_game_session_authorities_v1(&authorization, &match_launch)?;
+    let session_commitment_sha256 =
+        initial_competitive_game_session_commitment_v1(&authorization, &match_launch);
+    Ok(OpaqueMtgoCompetitiveGameSessionV1 {
+        authorization,
+        last_confirmed_frame_sequence: match_launch
+            .valid_from_frame_sequence
+            .checked_sub(1)
+            .ok_or("competitive game session has an invalid starting frame")?,
+        match_launch,
+        session_commitment_sha256,
+        confirmed_action_count: 0,
+    })
+}
+
+pub fn bind_prepared_competitive_duel_pass_session_v2(
+    prepared: OpaqueMtgoPreparedCompetitiveDuelPassV1,
+    session: OpaqueMtgoCompetitiveGameSessionV1,
 ) -> Result<OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1, String> {
     let prepared_commitments = prepared.commitments_v1();
     let commitments = competitive_duel_pass_authorization_binding_commitments_v1(
         &prepared_commitments,
-        &authorization,
-        &match_launch,
+        &session,
     )?;
     Ok(OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1 {
         _prepared: prepared,
-        _authorization: authorization,
-        _match_launch: match_launch,
+        _session: session,
         commitments,
     })
 }
@@ -715,8 +811,7 @@ pub fn execute_authorized_competitive_duel_pass_v1(
     reserve_input_gate_v3()?;
     let OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1 {
         _prepared: prepared,
-        _authorization: authorization,
-        _match_launch: match_launch,
+        _session: session,
         commitments: authorization_binding_commitments,
     } = bound;
     let input_sent_at_unix_millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
@@ -748,8 +843,7 @@ pub fn execute_authorized_competitive_duel_pass_v1(
     set_pending_v3(&input_receipt_sha256)?;
     Ok(OpaqueMtgoPendingCompetitiveDuelPassV1 {
         prepared,
-        _authorization: authorization,
-        _match_launch: match_launch,
+        session,
         authorization_binding_commitments,
         input_receipt_sha256,
         input_sent_at_unix_millis,
@@ -757,20 +851,24 @@ pub fn execute_authorized_competitive_duel_pass_v1(
     })
 }
 
-pub fn confirm_pending_competitive_duel_pass_v1(
+pub fn confirm_pending_competitive_duel_pass_v2(
     pending: OpaqueMtgoPendingCompetitiveDuelPassV1,
     profile: &AdmittedMtgoDuelPerceptionProfileV1,
     timeout_ms: u32,
-) -> Result<OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV1, String> {
+) -> Result<OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2, String> {
     require_matching_pending_v3(&pending.input_receipt_sha256)?;
-    let input_receipt_sha256 = pending.input_receipt_sha256;
-    let authorization_binding_commitment_sha256 = pending
-        .authorization_binding_commitments
-        .authorization_binding_commitment_sha256;
+    let OpaqueMtgoPendingCompetitiveDuelPassV1 {
+        prepared,
+        session,
+        authorization_binding_commitments,
+        input_receipt_sha256,
+        input_sent_at_unix_millis: _,
+        cursor_parked_outside_client: _,
+    } = pending;
+    let authorization_binding_commitment_sha256 =
+        authorization_binding_commitments.authorization_binding_commitment_sha256;
     let confirmation = match confirm_opaque_competitive_duel_pass_postcondition_v1(
-        pending.prepared,
-        profile,
-        timeout_ms,
+        prepared, profile, timeout_ms,
     ) {
         Ok(confirmation) => confirmation,
         Err(error) => {
@@ -786,18 +884,34 @@ pub fn confirm_pending_competitive_duel_pass_v1(
         &authorization_binding_commitment_sha256,
         &visible,
     );
+    let prior_game_session_commitment_sha256 = session.session_commitment_sha256.clone();
+    let session =
+        match advance_competitive_game_session_v1(session, &visible, &transition_receipt_sha256) {
+            Ok(session) => session,
+            Err(error) => {
+                halt_gate_v3()?;
+                return Err(format!(
+                    "competitive game session advance failed and the input gate is halted: {error}"
+                ));
+            }
+        };
+    let advanced = session.commitments_v1();
     release_confirmed_pending_v3(&input_receipt_sha256)?;
-    Ok(OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV1 {
+    Ok(OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2 {
         _confirmation: confirmation,
-        commitments: MtgoConfirmedCompetitiveDuelPassCommitmentsV1 {
+        session,
+        commitments: MtgoConfirmedCompetitiveDuelPassCommitmentsV2 {
             input_receipt_sha256,
             visible_postcondition_commitment_sha256: visible.opaque_confirmation_commitment_sha256,
             transition_receipt_sha256,
+            prior_game_session_commitment_sha256,
+            advanced_game_session_commitment_sha256: advanced.session_commitment_sha256,
             event_kind: visible.event_kind,
             game_number: visible.game_number,
             after_frame_id: visible.after_frame_id,
             after_frame_sequence: visible.after_frame_sequence,
             postcondition_candidate_count: visible.postcondition_candidate_count,
+            confirmed_action_count: advanced.confirmed_action_count,
         },
     })
 }
@@ -1401,11 +1515,136 @@ fn competitive_match_launch_commitment_v1(
     format!("{:x}", hasher.finalize())
 }
 
-fn competitive_duel_pass_authorization_binding_commitments_v1(
-    prepared: &MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
+fn validate_competitive_game_session_authorities_v1(
     authorization: &RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
     match_launch: &RatifiedMtgoCompetitiveMatchLaunchV1,
+) -> Result<(), String> {
+    if authorization.event_kind != match_launch.authorization.event_kind
+        || authorization.mode_authorization_commitment_sha256
+            != match_launch.mode_authorization_commitment_sha256
+        || authorization.scope.account_alias_sha256
+            != match_launch.authorization.account_alias_sha256
+        || authorization.scope.written_permission_sha256
+            != match_launch.authorization.written_permission_sha256
+        || match_launch.valid_from_frame_sequence == 0
+        || match_launch.valid_from_frame_sequence
+            > match_launch.authorization.valid_through_frame_sequence
+    {
+        return Err(
+            "competitive game session authorities describe different modes or lifetimes".to_owned(),
+        );
+    }
+    validate_competitive_match_launch_record_v1(&authorization.scope, &match_launch.authorization)?;
+    let expected_mode = validate_competitive_duel_pass_authorization_v1(
+        &authorization.scope,
+        &authorization.visible_account_alias,
+        authorization.event_kind,
+    )?;
+    if expected_mode != authorization.mode_authorization_commitment_sha256 {
+        return Err("competitive game session mode commitment changed".to_owned());
+    }
+    let expected_gameplay =
+        competitive_match_gameplay_authorization_commitment_v1(&match_launch.authorization)
+            .map_err(|error| format!("competitive game session match commitment: {error}"))?;
+    let expected_launch = competitive_match_launch_commitment_v1(
+        &authorization.visible_account_alias,
+        &expected_mode,
+        &expected_gameplay,
+        &match_launch.authorization,
+    );
+    if expected_gameplay != match_launch.gameplay_authorization_commitment_sha256
+        || expected_launch != match_launch.launch_authorization_commitment_sha256
+    {
+        return Err("competitive game session match launch commitment changed".to_owned());
+    }
+    Ok(())
+}
+
+fn initial_competitive_game_session_commitment_v1(
+    authorization: &RatifiedMtgoCompetitiveDuelPassAuthorizationV1,
+    match_launch: &RatifiedMtgoCompetitiveMatchLaunchV1,
+) -> String {
+    let event_kind_bytes: &[u8] = match authorization.event_kind {
+        MtgoCompetitiveEventKindV1::League => b"league",
+        MtgoCompetitiveEventKindV1::Challenge => b"challenge",
+    };
+    hash_parts_v2(
+        COMPETITIVE_GAME_SESSION_INITIAL_DOMAIN_V1,
+        &[
+            authorization.authorization_commitment_sha256.as_bytes(),
+            match_launch
+                .launch_authorization_commitment_sha256
+                .as_bytes(),
+            match_launch
+                .gameplay_authorization_commitment_sha256
+                .as_bytes(),
+            authorization
+                .mode_authorization_commitment_sha256
+                .as_bytes(),
+            authorization.scope.account_alias_sha256.as_bytes(),
+            authorization.scope.written_permission_sha256.as_bytes(),
+            event_kind_bytes,
+            &[match_launch.authorization.game_number],
+            match_launch
+                .valid_from_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            match_launch
+                .authorization
+                .valid_through_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            b"move_only_sequential_visible_postconditions_no_entry_or_spending",
+        ],
+    )
+}
+
+fn advance_competitive_game_session_v1(
+    mut session: OpaqueMtgoCompetitiveGameSessionV1,
+    visible: &MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
+    transition_receipt_sha256: &str,
+) -> Result<OpaqueMtgoCompetitiveGameSessionV1, String> {
+    if visible.event_kind != session.match_launch.authorization.event_kind
+        || visible.game_number != session.match_launch.authorization.game_number
+        || visible.after_frame_sequence <= session.last_confirmed_frame_sequence
+        || visible.after_frame_sequence
+            > session
+                .match_launch
+                .authorization
+                .valid_through_frame_sequence
+        || !is_sha256_v2(transition_receipt_sha256)
+    {
+        return Err(
+            "confirmed transition is outside the competitive game session lifetime".to_owned(),
+        );
+    }
+    let next_count = session
+        .confirmed_action_count
+        .checked_add(1)
+        .ok_or("competitive game session action count overflow")?;
+    session.session_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_GAME_SESSION_ADVANCE_DOMAIN_V1,
+        &[
+            session.session_commitment_sha256.as_bytes(),
+            transition_receipt_sha256.as_bytes(),
+            visible.opaque_confirmation_commitment_sha256.as_bytes(),
+            visible.after_frame_id.to_be_bytes().as_slice(),
+            visible.after_frame_sequence.to_be_bytes().as_slice(),
+            next_count.to_be_bytes().as_slice(),
+            b"returned_only_after_newer_visible_postcondition",
+        ],
+    );
+    session.last_confirmed_frame_sequence = visible.after_frame_sequence;
+    session.confirmed_action_count = next_count;
+    Ok(session)
+}
+
+fn competitive_duel_pass_authorization_binding_commitments_v1(
+    prepared: &MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
+    session: &OpaqueMtgoCompetitiveGameSessionV1,
 ) -> Result<MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1, String> {
+    let authorization = &session.authorization;
+    let match_launch = &session.match_launch;
     if prepared.event_kind != authorization.event_kind
         || prepared.competitive_mode_authorization_commitment_sha256
             != authorization.mode_authorization_commitment_sha256
@@ -1418,6 +1657,7 @@ fn competitive_duel_pass_authorization_binding_commitments_v1(
         || prepared.immediate_frame_sequence < match_launch.valid_from_frame_sequence
         || prepared.immediate_frame_sequence
             > match_launch.authorization.valid_through_frame_sequence
+        || prepared.immediate_frame_sequence <= session.last_confirmed_frame_sequence
     {
         return Err(
             "the prepared Pass does not match the ratified competitive mode authority".to_owned(),
@@ -1441,6 +1681,12 @@ fn competitive_duel_pass_authorization_binding_commitments_v1(
         match_launch
             .launch_authorization_commitment_sha256
             .as_bytes(),
+        session.session_commitment_sha256.as_bytes(),
+        session
+            .last_confirmed_frame_sequence
+            .to_be_bytes()
+            .as_slice(),
+        session.confirmed_action_count.to_be_bytes().as_slice(),
         prepared
             .competitive_match_gameplay_authorization_commitment_sha256
             .as_bytes(),
@@ -1478,6 +1724,7 @@ fn competitive_duel_pass_authorization_binding_commitments_v1(
         competitive_match_gameplay_authorization_commitment_sha256: prepared
             .competitive_match_gameplay_authorization_commitment_sha256
             .clone(),
+        competitive_game_session_commitment_sha256: session.session_commitment_sha256.clone(),
         authorization_binding_commitment_sha256: format!("{:x}", hasher.finalize()),
         event_kind: prepared.event_kind,
         game_number: prepared.game_number,
@@ -2488,27 +2735,22 @@ mod tests {
             immediate_frame_sequence: 39,
             immediate_captured_at_unix_millis: 13,
         };
-        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
-            &prepared,
-            &authorization,
-            &match_launch,
-        )
-        .is_err());
+        let session = begin_competitive_game_session_v1(authorization, match_launch).unwrap();
+        assert!(
+            competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &session,)
+                .is_err()
+        );
         prepared.immediate_frame_sequence = 40;
-        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
-            &prepared,
-            &authorization,
-            &match_launch,
-        )
-        .is_ok());
+        assert!(
+            competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &session,)
+                .is_ok()
+        );
         prepared.immediate_frame_sequence =
             40 + ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V4 + 1;
-        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
-            &prepared,
-            &authorization,
-            &match_launch,
-        )
-        .is_err());
+        assert!(
+            competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &session,)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2658,6 +2900,9 @@ mod tests {
     fn prepared_pass_binds_only_to_the_same_ratified_competitive_mode() {
         let authorization = ratified_competitive_pass_v1(MtgoCompetitiveEventKindV1::League);
         let match_launch = ratified_match_launch_v1(MtgoCompetitiveEventKindV1::League, 2);
+        let correct_mode_commitment = authorization
+            .mode_authorization_commitment_sha256_v1()
+            .to_owned();
         let mut prepared = MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
             competitive_action_plan_commitment_sha256: "1".repeat(64),
             competitive_mode_authorization_commitment_sha256: authorization
@@ -2676,12 +2921,9 @@ mod tests {
             immediate_frame_sequence: 12,
             immediate_captured_at_unix_millis: 13,
         };
-        let bound = competitive_duel_pass_authorization_binding_commitments_v1(
-            &prepared,
-            &authorization,
-            &match_launch,
-        )
-        .unwrap();
+        let session = begin_competitive_game_session_v1(authorization, match_launch).unwrap();
+        let bound = competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &session)
+            .unwrap();
         assert_eq!(bound.event_kind, MtgoCompetitiveEventKindV1::League);
         assert_eq!(bound.game_number, 2);
         assert_eq!(bound.immediate_frame_id, 11);
@@ -2689,30 +2931,115 @@ mod tests {
         assert_eq!(bound.authorization_binding_commitment_sha256.len(), 64);
 
         prepared.event_kind = MtgoCompetitiveEventKindV1::Challenge;
-        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
-            &prepared,
-            &authorization,
-            &match_launch,
-        )
-        .is_err());
+        assert!(
+            competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &session,)
+                .is_err()
+        );
         prepared.event_kind = MtgoCompetitiveEventKindV1::League;
         prepared.competitive_mode_authorization_commitment_sha256 = "5".repeat(64);
-        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
-            &prepared,
-            &authorization,
-            &match_launch,
-        )
-        .is_err());
-        prepared.competitive_mode_authorization_commitment_sha256 = authorization
-            .mode_authorization_commitment_sha256_v1()
-            .to_owned();
+        assert!(
+            competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &session,)
+                .is_err()
+        );
+        prepared.competitive_mode_authorization_commitment_sha256 = correct_mode_commitment;
         prepared.competitive_match_gameplay_authorization_commitment_sha256 = "8".repeat(64);
-        assert!(competitive_duel_pass_authorization_binding_commitments_v1(
-            &prepared,
-            &authorization,
-            &match_launch,
-        )
-        .is_err());
+        assert!(
+            competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &session,)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn competitive_game_session_advances_only_after_a_newer_visible_transition() {
+        let authorization = ratified_competitive_pass_v1(MtgoCompetitiveEventKindV1::League);
+        let match_launch = ratified_match_launch_v1(MtgoCompetitiveEventKindV1::League, 2);
+        let session = begin_competitive_game_session_v1(authorization, match_launch).unwrap();
+        let initial = session.commitments_v1();
+        assert_eq!(initial.confirmed_action_count, 0);
+        assert_eq!(initial.last_confirmed_frame_sequence, 0);
+        assert!(!session.safe_for_input_v1());
+        assert!(!session.permits_event_entry_v1());
+
+        let visible = MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1 {
+            before_input_verification_commitment_sha256: "3".repeat(64),
+            after_capture_commitment_sha256: "4".repeat(64),
+            checked_postcondition_commitment_sha256: "5".repeat(64),
+            opaque_confirmation_commitment_sha256: "6".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            game_number: 2,
+            after_frame_id: 10,
+            after_frame_sequence: 12,
+            postcondition_candidate_count: 3,
+        };
+        let session =
+            advance_competitive_game_session_v1(session, &visible, &"a".repeat(64)).unwrap();
+        let advanced = session.commitments_v1();
+        assert_eq!(advanced.confirmed_action_count, 1);
+        assert_eq!(advanced.last_confirmed_frame_sequence, 12);
+        assert_ne!(
+            initial.session_commitment_sha256,
+            advanced.session_commitment_sha256
+        );
+
+        let mut prepared = MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1 {
+            competitive_action_plan_commitment_sha256: "1".repeat(64),
+            competitive_mode_authorization_commitment_sha256: session
+                .authorization
+                .mode_authorization_commitment_sha256
+                .clone(),
+            competitive_match_gameplay_authorization_commitment_sha256: session
+                .match_launch
+                .gameplay_authorization_commitment_sha256
+                .clone(),
+            before_input_postcondition_verification_commitment_sha256: "6".repeat(64),
+            immediate_capture_commitment_sha256: "2".repeat(64),
+            immediate_perception_result_commitment_sha256: "3".repeat(64),
+            preparation_commitment_sha256: "4".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            game_number: 2,
+            immediate_frame_id: 11,
+            immediate_frame_sequence: 12,
+            immediate_captured_at_unix_millis: 13,
+        };
+        assert!(
+            competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &session)
+                .is_err()
+        );
+        prepared.immediate_frame_sequence = 13;
+        let next = competitive_duel_pass_authorization_binding_commitments_v1(&prepared, &session)
+            .unwrap();
+        assert_eq!(
+            next.competitive_game_session_commitment_sha256,
+            advanced.session_commitment_sha256
+        );
+    }
+
+    #[test]
+    fn competitive_game_session_rejects_mismatched_or_expired_authority() {
+        let league = ratified_competitive_pass_v1(MtgoCompetitiveEventKindV1::League);
+        let challenge_launch = ratified_match_launch_v1(MtgoCompetitiveEventKindV1::Challenge, 1);
+        assert!(begin_competitive_game_session_v1(league, challenge_launch).is_err());
+
+        let league = ratified_competitive_pass_v1(MtgoCompetitiveEventKindV1::League);
+        let mut invalid_launch = ratified_match_launch_v1(MtgoCompetitiveEventKindV1::League, 1);
+        invalid_launch.valid_from_frame_sequence = 0;
+        assert!(begin_competitive_game_session_v1(league, invalid_launch).is_err());
+
+        let league = ratified_competitive_pass_v1(MtgoCompetitiveEventKindV1::League);
+        let launch = ratified_match_launch_v1(MtgoCompetitiveEventKindV1::League, 1);
+        let session = begin_competitive_game_session_v1(league, launch).unwrap();
+        let visible = MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1 {
+            before_input_verification_commitment_sha256: "3".repeat(64),
+            after_capture_commitment_sha256: "4".repeat(64),
+            checked_postcondition_commitment_sha256: "5".repeat(64),
+            opaque_confirmation_commitment_sha256: "6".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            game_number: 1,
+            after_frame_id: 101,
+            after_frame_sequence: 101,
+            postcondition_candidate_count: 1,
+        };
+        assert!(advance_competitive_game_session_v1(session, &visible, &"a".repeat(64)).is_err());
     }
 
     #[test]
