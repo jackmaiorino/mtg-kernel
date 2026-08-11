@@ -1,8 +1,9 @@
 use super::{
     capture_admitted_mtgo_competitive_navigation_frame_v1, capture_commitment_v3,
     choose_cursor_park_point_v3, classify_admitted_mtgo_competitive_navigation_frame_v1,
-    MtgoCompetitiveNavigationFrameIdentityV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
-    OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    MtgoCompetitiveNavigationFrameIdentityV1, OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    OpaqueMtgoClassifiedCompetitiveNavigationFrameV1, OpaqueMtgoDxgiFrameCandidateV3,
+    OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
 };
 use crate::{sha256_hex_v1, SignedRectV1};
@@ -732,23 +733,39 @@ pub(crate) fn resolve_competitive_entry_pointer_target_v1(
     if immediate.phase_v1() != MtgoCompetitiveLifecyclePhaseV1::EntryReview {
         return Err("competitive entry pointer target is not an Entry Review frame".to_owned());
     }
-    let frame = &immediate._source_frame.source_frame;
+    resolve_admitted_competitive_navigation_pointer_target_v1(
+        &immediate._source_frame,
+        control_rect_client_px,
+        "competitive entry control",
+    )
+}
+
+/// Resolves one already semantically admitted visible control rectangle to a
+/// desktop point. This helper is crate-private so raw rectangles cannot escape
+/// the opaque perception path. Callers must first prove the expected lifecycle
+/// phase and exact control semantics.
+pub(crate) fn resolve_admitted_competitive_navigation_pointer_target_v1(
+    immediate: &OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    control_rect_client_px: &MtgoRectPxV1,
+    control_name: &str,
+) -> Result<MtgoCompetitiveEntryPointerTargetV1, String> {
+    let frame = &immediate.source_frame;
     let width = frame.manifest.frame.canonical_width;
     let height = frame.manifest.frame.canonical_height;
     let right = control_rect_client_px
         .x
         .checked_add(control_rect_client_px.width)
-        .ok_or("competitive entry control x overflow")?;
+        .ok_or_else(|| format!("{control_name} x overflow"))?;
     let bottom = control_rect_client_px
         .y
         .checked_add(control_rect_client_px.height)
-        .ok_or("competitive entry control y overflow")?;
+        .ok_or_else(|| format!("{control_name} y overflow"))?;
     if control_rect_client_px.width == 0
         || control_rect_client_px.height == 0
         || right > width
         || bottom > height
     {
-        return Err("competitive entry control is outside the immediate client".to_owned());
+        return Err(format!("{control_name} is outside the immediate client"));
     }
     let target_x_client_px = control_rect_client_px
         .x

@@ -1,19 +1,25 @@
 use super::{
     competitive_navigation_classifier_assets_manifest_bytes_v1,
-    invoke_verified_competitive_event_listing_classifier_process_v1, sha256_hex_v1,
+    invoke_verified_competitive_event_listing_classifier_process_v1,
+    resolve_admitted_competitive_navigation_pointer_target_v1, sha256_hex_v1,
     verify_runtime_identity_now_v1, MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
-    OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    MtgoCompetitiveEntryPointerTargetV1, OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
 };
 use mtgo_blackbox_v1::{
     competitive_event_listing_target_commitment_v1,
+    confirm_checked_competitive_event_listing_opened_v1,
+    make_offline_competitive_event_listing_open_intent_v1,
     validate_visible_competitive_event_listing_selection_v1,
     visible_frame_region_content_sha256_v1, AdmittedMtgoCompetitiveEventListingEvaluationV1,
+    CheckedUntrustedMtgoCompetitiveEntryReviewArrivalV1,
+    CheckedUntrustedMtgoCompetitiveEventListingOpenIntentV1,
     CheckedUntrustedMtgoCompetitiveEventListingSelectionV1,
-    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitiveEventListingTargetV1, MtgoCompetitiveLifecyclePhaseV1, MtgoSizePxV1,
+    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoAuthorizationScopeV1,
+    MtgoCompetitiveEventKindV1, MtgoCompetitiveEventListingTargetV1,
+    MtgoCompetitiveLifecyclePhaseV1, MtgoRectPxV1, MtgoSizePxV1,
     MtgoVisibleCompetitiveEventListingSelectionV1, ValidatedMtgoCompetitiveDeckManifestV1,
 };
 use serde::{Deserialize, Serialize};
@@ -28,6 +34,10 @@ const EVENT_LISTING_CLASSIFIER_RESULT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-listing-classifier-result-v1";
 const EVALUATED_EVENT_LISTING_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-evaluated-competitive-event-listing-binding-v1";
+const PREPARED_EVENT_LISTING_OPEN_SOURCE_DOMAIN_V1: &[u8] =
+    b"mtgo-prepared-competitive-event-listing-open-source-v1";
+const EVENT_LISTING_OPEN_VISIBLE_CONFIRMATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-listing-open-visible-confirmation-v1";
 const MAX_EVENT_LISTING_REQUEST_HEADER_BYTES_V1: usize = 1024 * 1024;
 const MAX_EVENT_LISTING_ASSETS_MANIFEST_BYTES_V1: usize = 16 * 1024 * 1024;
 
@@ -229,6 +239,71 @@ impl OpaqueMtgoEvaluatedCompetitiveEventListingV1 {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MtgoPreparedCompetitiveEventListingOpenSourceCommitmentsV1 {
+    pub(crate) evaluated_listing: MtgoEvaluatedCompetitiveEventListingCommitmentsV1,
+    pub(crate) mode_authorization_commitment_sha256: String,
+    pub(crate) open_intent_commitment_sha256: String,
+    pub(crate) source_preparation_commitment_sha256: String,
+    pub(crate) event_kind: MtgoCompetitiveEventKindV1,
+    pub(crate) event_identity_sha256: String,
+    pub(crate) source_frame_id: u64,
+    pub(crate) source_frame_sequence: u64,
+    pub(crate) source_captured_at_unix_millis: u128,
+}
+
+/// Private source for exactly one click on a freshly rehashed visible Open
+/// Entry Review control. It retains the semantic intent and opaque capture
+/// lineage but exposes neither coordinates nor an input primitive.
+pub(crate) struct OpaqueMtgoPreparedCompetitiveEventListingOpenSourceV1 {
+    _source_frame: OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    _navigation_classification: OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    _evaluation: AdmittedMtgoCompetitiveEventListingEvaluationV1,
+    intent: CheckedUntrustedMtgoCompetitiveEventListingOpenIntentV1,
+    commitments: MtgoPreparedCompetitiveEventListingOpenSourceCommitmentsV1,
+}
+
+impl OpaqueMtgoPreparedCompetitiveEventListingOpenSourceV1 {
+    pub(crate) fn commitments_v1(
+        &self,
+    ) -> MtgoPreparedCompetitiveEventListingOpenSourceCommitmentsV1 {
+        self.commitments.clone()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1 {
+    pub source_preparation_commitment_sha256: String,
+    pub arrival_commitment_sha256: String,
+    pub after_capture_commitment_sha256: String,
+    pub after_classification_result_commitment_sha256: String,
+    pub after_lifecycle_snapshot_commitment_sha256: String,
+    pub visible_confirmation_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: String,
+    pub after_frame_id: u64,
+    pub after_frame_sequence: u64,
+    pub after_captured_at_unix_millis: u128,
+}
+
+pub(crate) struct OpaqueMtgoConfirmedCompetitiveEventListingOpenV1 {
+    _source_frame: OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    _source_navigation_classification: OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    _evaluation: AdmittedMtgoCompetitiveEventListingEvaluationV1,
+    _after_frame: OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    _after_navigation_classification: OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    _arrival: CheckedUntrustedMtgoCompetitiveEntryReviewArrivalV1,
+    commitments: MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1,
+}
+
+impl OpaqueMtgoConfirmedCompetitiveEventListingOpenV1 {
+    pub(crate) fn commitments_v1(
+        &self,
+    ) -> MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1 {
+        self.commitments.clone()
+    }
+}
+
 /// Coordinate-free telemetry for one selected Event Browser listing whose
 /// declared regions were rehashed from an opaque classified navigation frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,6 +345,7 @@ pub struct OpaqueMtgoSourceBoundCompetitiveEventListingV1 {
     _source_frame: OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
     _navigation_classification: OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
     selection: CheckedUntrustedMtgoCompetitiveEventListingSelectionV1,
+    _open_entry_review_control_rect_client_px: MtgoRectPxV1,
     commitments: MtgoSourceBoundCompetitiveEventListingCommitmentsV1,
 }
 
@@ -305,6 +381,259 @@ impl OpaqueMtgoSourceBoundCompetitiveEventListingV1 {
     pub fn safe_for_input_v1(&self) -> bool {
         false
     }
+}
+
+/// Converts one freshly captured, evaluated Event Browser listing into a
+/// coordinate-private Open Entry Review source. The mode scope is checked by
+/// the blackbox semantic contract. The returned point is crate-private and can
+/// only be consumed by the separately ratified shared input gate.
+pub(crate) fn prepare_opaque_competitive_event_listing_open_source_v1(
+    evaluated: OpaqueMtgoEvaluatedCompetitiveEventListingV1,
+    authorization: &MtgoAuthorizationScopeV1,
+) -> Result<
+    (
+        OpaqueMtgoPreparedCompetitiveEventListingOpenSourceV1,
+        MtgoCompetitiveEntryPointerTargetV1,
+    ),
+    String,
+> {
+    let evaluated_commitments = evaluated.commitments_v1();
+    let OpaqueMtgoEvaluatedCompetitiveEventListingV1 {
+        _classified,
+        _evaluation,
+        commitments: _,
+    } = evaluated;
+    let OpaqueMtgoClassifiedCompetitiveEventListingV1 {
+        _source_listing,
+        commitments: _,
+    } = _classified;
+    let OpaqueMtgoSourceBoundCompetitiveEventListingV1 {
+        _source_frame,
+        _navigation_classification,
+        selection,
+        _open_entry_review_control_rect_client_px,
+        commitments: _,
+    } = _source_listing;
+    let navigation = &evaluated_commitments
+        .classified_listing
+        .source_listing
+        .source_navigation;
+    let listing = &evaluated_commitments.classified_listing.source_listing;
+    if navigation.phase != MtgoCompetitiveLifecyclePhaseV1::EventBrowser
+        || navigation.event_kind != listing.event_kind
+        || navigation.frame_id == 0
+        || navigation.frame_sequence == 0
+        || navigation
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis
+            == 0
+    {
+        return Err("evaluated listing is not one complete Event Browser frame".to_owned());
+    }
+    let intent = make_offline_competitive_event_listing_open_intent_v1(selection, authorization)
+        .map_err(|error| format!("build exact selected-listing open intent: {error}"))?;
+    let mode_authorization_commitment_sha256 =
+        intent.mode_authorization_commitment_sha256_v1().to_owned();
+    let open_intent_commitment_sha256 = intent.open_intent_commitment_sha256_v1().to_owned();
+    let pointer_target = resolve_admitted_competitive_navigation_pointer_target_v1(
+        &_source_frame,
+        &_open_entry_review_control_rect_client_px,
+        "selected Open Entry Review control",
+    )?;
+    let source_preparation_commitment_sha256 = commitment_v1(
+        PREPARED_EVENT_LISTING_OPEN_SOURCE_DOMAIN_V1,
+        &[
+            evaluated_commitments
+                .evaluated_binding_commitment_sha256
+                .as_bytes(),
+            listing.source_binding_commitment_sha256.as_bytes(),
+            listing.selection_commitment_sha256.as_bytes(),
+            mode_authorization_commitment_sha256.as_bytes(),
+            open_intent_commitment_sha256.as_bytes(),
+            navigation
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+                .as_bytes(),
+            navigation.classification_result_commitment_sha256.as_bytes(),
+            navigation.lifecycle_snapshot_commitment_sha256.as_bytes(),
+            listing.event_identity_sha256.as_bytes(),
+            navigation.frame_id.to_be_bytes().as_slice(),
+            navigation.frame_sequence.to_be_bytes().as_slice(),
+            navigation
+                .source_frame
+                .source_capture
+                .captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
+            b"fresh_rehashed_event_browser_control_no_entry_confirmation_no_spending_no_public_coordinates",
+        ],
+    );
+    let commitments = MtgoPreparedCompetitiveEventListingOpenSourceCommitmentsV1 {
+        evaluated_listing: evaluated_commitments.clone(),
+        mode_authorization_commitment_sha256,
+        open_intent_commitment_sha256,
+        source_preparation_commitment_sha256,
+        event_kind: listing.event_kind,
+        event_identity_sha256: listing.event_identity_sha256.clone(),
+        source_frame_id: navigation.frame_id,
+        source_frame_sequence: navigation.frame_sequence,
+        source_captured_at_unix_millis: navigation
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis,
+    };
+    Ok((
+        OpaqueMtgoPreparedCompetitiveEventListingOpenSourceV1 {
+            _source_frame,
+            _navigation_classification,
+            _evaluation,
+            intent,
+            commitments,
+        },
+        pointer_target,
+    ))
+}
+
+/// Confirms that the one pending Open Entry Review click reached a strictly
+/// newer visible Entry Review frame for the exact selected event. Any caller
+/// must halt the shared gate when this returns an error.
+pub(crate) fn confirm_opaque_competitive_event_listing_opened_v1(
+    source: OpaqueMtgoPreparedCompetitiveEventListingOpenSourceV1,
+    after: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    authorization: &MtgoAuthorizationScopeV1,
+    input_sent_at_unix_millis: u128,
+) -> Result<OpaqueMtgoConfirmedCompetitiveEventListingOpenV1, String> {
+    let source_commitments = source.commitments_v1();
+    let before = &source_commitments
+        .evaluated_listing
+        .classified_listing
+        .source_listing
+        .source_navigation;
+    let after_commitments = after.commitments_v1();
+    if input_sent_at_unix_millis == 0
+        || before.source_frame.profile_commitment_sha256
+            != after_commitments.source_frame.profile_commitment_sha256
+        || before.source_frame.profile_admission_commitment_sha256
+            != after_commitments
+                .source_frame
+                .profile_admission_commitment_sha256
+        || before.source_frame.approved_account_alias_sha256
+            != after_commitments.source_frame.approved_account_alias_sha256
+        || before.runtime_identity_commitment_sha256
+            != after_commitments.runtime_identity_commitment_sha256
+        || before.event_kind != after_commitments.event_kind
+        || after_commitments.phase != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || after_commitments.frame_id == before.frame_id
+        || after_commitments.frame_sequence <= before.frame_sequence
+    {
+        return Err(
+            "Open Entry Review confirmation changed profile, account, runtime, mode, phase, or frame order"
+                .to_owned(),
+        );
+    }
+    let before_raw = &source._source_frame.source_frame;
+    let after_raw = &after._source_frame.source_frame;
+    if before_raw.manifest.pre.process_id != after_raw.manifest.pre.process_id
+        || before_raw.manifest.pre.process_start_filetime_100ns
+            != after_raw.manifest.pre.process_start_filetime_100ns
+        || before_raw.manifest.pre.hwnd != after_raw.manifest.pre.hwnd
+        || before_raw.manifest.pre.dpi != after_raw.manifest.pre.dpi
+        || before_raw.manifest.pre.client_rect_desktop_px
+            != after_raw.manifest.pre.client_rect_desktop_px
+        || before_raw.manifest.output.device_name != after_raw.manifest.output.device_name
+        || before_raw.manifest.output.bounds_desktop_px
+            != after_raw.manifest.output.bounds_desktop_px
+        || before_raw.manifest.captured_at_unix_millis > input_sent_at_unix_millis
+        || after_raw.manifest.captured_at_unix_millis <= input_sent_at_unix_millis
+        || before.source_frame.source_capture.capture_commitment_sha256
+            == after_commitments
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+        || before_raw.manifest.frame.canonical_bgra8_sha256
+            == after_raw.manifest.frame.canonical_bgra8_sha256
+        || before.classification_result_commitment_sha256
+            == after_commitments.classification_result_commitment_sha256
+        || before.lifecycle_snapshot_commitment_sha256
+            == after_commitments.lifecycle_snapshot_commitment_sha256
+    {
+        return Err(
+            "Open Entry Review confirmation changed the client incarnation or lacks a changed post-input frame"
+                .to_owned(),
+        );
+    }
+    let after_captured_at_unix_millis = after_raw.manifest.captured_at_unix_millis;
+    let (after_frame, after_lifecycle, after_navigation_classification) =
+        after.into_event_listing_parts_v1();
+    let OpaqueMtgoPreparedCompetitiveEventListingOpenSourceV1 {
+        _source_frame,
+        _navigation_classification,
+        _evaluation,
+        intent,
+        commitments: _,
+    } = source;
+    let arrival =
+        confirm_checked_competitive_event_listing_opened_v1(intent, authorization, after_lifecycle)
+            .map_err(|error| format!("confirm exact selected Entry Review arrival: {error}"))?;
+    if arrival.event_kind_v1() != source_commitments.event_kind
+        || arrival.event_identity_sha256_v1() != source_commitments.event_identity_sha256
+    {
+        return Err("visible Entry Review arrival changed the selected event identity".to_owned());
+    }
+    let arrival_commitment_sha256 = arrival.arrival_commitment_sha256_v1().to_owned();
+    let after_capture_commitment_sha256 = after_commitments
+        .source_frame
+        .source_capture
+        .capture_commitment_sha256;
+    let visible_confirmation_commitment_sha256 = commitment_v1(
+        EVENT_LISTING_OPEN_VISIBLE_CONFIRMATION_DOMAIN_V1,
+        &[
+            source_commitments
+                .source_preparation_commitment_sha256
+                .as_bytes(),
+            source_commitments.open_intent_commitment_sha256.as_bytes(),
+            arrival_commitment_sha256.as_bytes(),
+            after_capture_commitment_sha256.as_bytes(),
+            after_commitments
+                .classification_result_commitment_sha256
+                .as_bytes(),
+            after_commitments
+                .lifecycle_snapshot_commitment_sha256
+                .as_bytes(),
+            source_commitments.event_identity_sha256.as_bytes(),
+            after_commitments.frame_id.to_be_bytes().as_slice(),
+            after_commitments.frame_sequence.to_be_bytes().as_slice(),
+            after_captured_at_unix_millis.to_be_bytes().as_slice(),
+            b"strictly_newer_exact_entry_review_visible_no_entry_confirmation_no_spending_no_input",
+        ],
+    );
+    let commitments = MtgoCompetitiveEventListingOpenVisibleConfirmationCommitmentsV1 {
+        source_preparation_commitment_sha256: source_commitments
+            .source_preparation_commitment_sha256,
+        arrival_commitment_sha256,
+        after_capture_commitment_sha256,
+        after_classification_result_commitment_sha256: after_commitments
+            .classification_result_commitment_sha256,
+        after_lifecycle_snapshot_commitment_sha256: after_commitments
+            .lifecycle_snapshot_commitment_sha256,
+        visible_confirmation_commitment_sha256,
+        event_kind: source_commitments.event_kind,
+        event_identity_sha256: source_commitments.event_identity_sha256,
+        after_frame_id: after_commitments.frame_id,
+        after_frame_sequence: after_commitments.frame_sequence,
+        after_captured_at_unix_millis,
+    };
+    Ok(OpaqueMtgoConfirmedCompetitiveEventListingOpenV1 {
+        _source_frame,
+        _source_navigation_classification: _navigation_classification,
+        _evaluation,
+        _after_frame: after_frame,
+        _after_navigation_classification: after_navigation_classification,
+        _arrival: arrival,
+        commitments,
+    })
 }
 
 /// Checks the canonical selected-listing parser request, exact asset bytes,
@@ -771,6 +1100,8 @@ pub fn bind_classified_navigation_frame_to_competitive_event_listing_v1(
     target: MtgoCompetitiveEventListingTargetV1,
     raw: MtgoVisibleCompetitiveEventListingSelectionV1,
 ) -> Result<OpaqueMtgoSourceBoundCompetitiveEventListingV1, String> {
+    let open_entry_review_control_rect_client_px =
+        raw.open_entry_review_control_rect_client_px.clone();
     let source_navigation = classified.commitments_v1();
     let (source_frame, lifecycle, navigation_classification) =
         classified.into_event_listing_parts_v1();
@@ -834,6 +1165,7 @@ pub fn bind_classified_navigation_frame_to_competitive_event_listing_v1(
         _source_frame: source_frame,
         _navigation_classification: navigation_classification,
         selection,
+        _open_entry_review_control_rect_client_px: open_entry_review_control_rect_client_px,
         commitments: MtgoSourceBoundCompetitiveEventListingCommitmentsV1 {
             source_navigation,
             target_commitment_sha256,
