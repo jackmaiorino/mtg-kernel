@@ -40,14 +40,20 @@ pub enum MtgoLifecycleVisibleFactKindV1 {
     EntryTermsVisible,
     EnteredEventVisible,
     PairingVisible,
+    PairingAcceptControlEnabled,
     MatchSurfaceVisible,
     LocalClockVisible,
     OpponentClockVisible,
     SideboardSurfaceVisible,
     SideboardTimerVisible,
+    SideboardNoChangesConfirmed,
+    SideboardSubmitControlEnabled,
     MatchResultVisible,
+    MatchContinueControlEnabled,
     EventResultVisible,
+    EventCloseControlEnabled,
     ReconnectVisible,
+    ReconnectResumeControlEnabled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -327,6 +333,26 @@ pub fn validate_competitive_lifecycle_action_transition_v1(
     entry_authorization: Option<&MtgoCompetitiveEntryAuthorizationV1>,
     next: MtgoVisibleCompetitiveLifecycleSnapshotV1,
 ) -> Result<CheckedUntrustedMtgoCompetitiveLifecycleTransitionV1, MtgoContractErrorV1> {
+    let next = validate_visible_competitive_lifecycle_snapshot_v1(next)?;
+    validate_checked_competitive_lifecycle_action_transition_v1(
+        source,
+        intent,
+        mode_authorization,
+        entry_authorization,
+        &next,
+    )
+}
+
+/// Validates an action transition when both lifecycle snapshots already came
+/// through the strict structural checker. This avoids serializing or
+/// reconstructing classifier output and still grants no input authority.
+pub fn validate_checked_competitive_lifecycle_action_transition_v1(
+    source: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    intent: &MtgoOfflineCompetitiveLifecycleIntentV1,
+    mode_authorization: &MtgoAuthorizationScopeV1,
+    entry_authorization: Option<&MtgoCompetitiveEntryAuthorizationV1>,
+    next: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+) -> Result<CheckedUntrustedMtgoCompetitiveLifecycleTransitionV1, MtgoContractErrorV1> {
     let expected_intent = make_offline_competitive_lifecycle_intent_v1(
         source,
         intent.action,
@@ -339,8 +365,7 @@ pub fn validate_competitive_lifecycle_action_transition_v1(
             "the lifecycle intent must match the exact revalidated authorization and source",
         ));
     }
-    let next = validate_visible_competitive_lifecycle_snapshot_v1(next)?;
-    validate_common_transition(source, &next)?;
+    validate_common_transition(source, next)?;
     let phase_allowed = match intent.action {
         MtgoCompetitiveLifecycleActionV1::OpenEntryReview => {
             next.phase() == MtgoCompetitiveLifecyclePhaseV1::EntryReview
@@ -371,8 +396,8 @@ pub fn validate_competitive_lifecycle_action_transition_v1(
             "the visible next phase is not a postcondition of the requested action",
         ));
     }
-    validate_identity_continuity(source, &next, intent.action)?;
-    Ok(transition(source, &next))
+    validate_identity_continuity(source, next, intent.action)?;
+    Ok(transition(source, next))
 }
 
 pub fn validate_observed_competitive_lifecycle_advance_v1(
@@ -381,7 +406,18 @@ pub fn validate_observed_competitive_lifecycle_advance_v1(
     next: MtgoVisibleCompetitiveLifecycleSnapshotV1,
 ) -> Result<CheckedUntrustedMtgoCompetitiveLifecycleTransitionV1, MtgoContractErrorV1> {
     let next = validate_visible_competitive_lifecycle_snapshot_v1(next)?;
-    validate_common_transition(source, &next)?;
+    validate_checked_observed_competitive_lifecycle_advance_v1(source, observed, &next)
+}
+
+/// Validates a server- or client-observed lifecycle advance when both visible
+/// snapshots have already passed the strict structural checker. This is an
+/// observation-only transition and grants no input authority.
+pub fn validate_checked_observed_competitive_lifecycle_advance_v1(
+    source: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    observed: MtgoObservedCompetitiveLifecycleAdvanceV1,
+    next: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+) -> Result<CheckedUntrustedMtgoCompetitiveLifecycleTransitionV1, MtgoContractErrorV1> {
+    validate_common_transition(source, next)?;
     let allowed = match observed {
         MtgoObservedCompetitiveLifecycleAdvanceV1::PairingPosted => {
             source.phase() == MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing
@@ -419,8 +455,8 @@ pub fn validate_observed_competitive_lifecycle_advance_v1(
             "the observed client event does not allow the visible phase transition",
         ));
     }
-    validate_observed_identity_continuity(source, &next, observed)?;
-    Ok(transition(source, &next))
+    validate_observed_identity_continuity(source, next, observed)?;
+    Ok(transition(source, next))
 }
 
 fn validate_visible_facts(
@@ -468,16 +504,27 @@ fn required_facts(
         MtgoCompetitiveLifecyclePhaseV1::EventBrowser => &[EventBrowserVisible],
         MtgoCompetitiveLifecyclePhaseV1::EntryReview => &[EntryReviewVisible, EntryTermsVisible],
         MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing => &[EnteredEventVisible],
-        MtgoCompetitiveLifecyclePhaseV1::PairingReady => &[PairingVisible],
+        MtgoCompetitiveLifecyclePhaseV1::PairingReady => {
+            &[PairingVisible, PairingAcceptControlEnabled]
+        }
         MtgoCompetitiveLifecyclePhaseV1::MatchInProgress => {
             &[MatchSurfaceVisible, LocalClockVisible, OpponentClockVisible]
         }
-        MtgoCompetitiveLifecyclePhaseV1::Sideboarding => {
-            &[SideboardSurfaceVisible, SideboardTimerVisible]
+        MtgoCompetitiveLifecyclePhaseV1::Sideboarding => &[
+            SideboardSurfaceVisible,
+            SideboardTimerVisible,
+            SideboardNoChangesConfirmed,
+            SideboardSubmitControlEnabled,
+        ],
+        MtgoCompetitiveLifecyclePhaseV1::MatchComplete => {
+            &[MatchResultVisible, MatchContinueControlEnabled]
         }
-        MtgoCompetitiveLifecyclePhaseV1::MatchComplete => &[MatchResultVisible],
-        MtgoCompetitiveLifecyclePhaseV1::EventComplete => &[EventResultVisible],
-        MtgoCompetitiveLifecyclePhaseV1::Reconnect => &[ReconnectVisible],
+        MtgoCompetitiveLifecyclePhaseV1::EventComplete => {
+            &[EventResultVisible, EventCloseControlEnabled]
+        }
+        MtgoCompetitiveLifecyclePhaseV1::Reconnect => {
+            &[ReconnectVisible, ReconnectResumeControlEnabled]
+        }
     }
 }
 

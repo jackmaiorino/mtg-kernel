@@ -176,6 +176,10 @@ impl OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1 {
     pub(crate) fn commitments_v1(&self) -> MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1 {
         self.commitments.clone()
     }
+
+    pub(crate) fn into_after_frame_v1(self) -> OpaqueMtgoClassifiedCompetitiveNavigationFrameV1 {
+        self._after_frame
+    }
 }
 
 #[derive(Clone)]

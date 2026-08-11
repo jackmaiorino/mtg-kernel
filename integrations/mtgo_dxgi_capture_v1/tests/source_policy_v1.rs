@@ -167,7 +167,7 @@ fn competitive_navigation_classifier_is_exact_bounded_and_non_actionable() {
         "OpaqueMtgoAdmittedCompetitiveNavigationFrameV1",
         "OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1",
         "OpaqueMtgoClassifiedCompetitiveNavigationFrameV1",
-        "LeagueAndChallengeEntryTransitionClassification",
+        "LeagueAndChallengeLifecycleClassification",
         "classifier_assets_manifest_bytes",
         "MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1",
         "env_clear()",
@@ -176,7 +176,7 @@ fn competitive_navigation_classifier_is_exact_bounded_and_non_actionable() {
         "MAX_CLASSIFIER_RESPONSE_BYTES_V1",
         "check_untrusted_competitive_navigation_prediction_v1",
         "rehash_lifecycle_visible_facts_v1",
-        "opaque_six_slice_entry_transition_classification_no_entry_no_spending_no_input",
+        "opaque_eighteen_slice_lifecycle_classification_no_entry_no_spending_no_input",
         "safe_for_lifecycle_classification_v1(&self) -> bool {\n        false",
     ] {
         assert!(
@@ -280,7 +280,7 @@ fn competitive_event_record_parser_is_exact_frame_bounded_and_unratified() {
     }
     assert!(
         !runtime.contains("OpaqueMtgoClassifiedCompetitiveNavigationFrameV1"),
-        "the eight-slice parser must start from the admitted main-client frame, not the six-slice entry classifier"
+        "the exact-field parser must start from the admitted main-client frame, not a lifecycle label classification"
     );
     for forbidden in [
         "pub fn canonical_bgra8",
@@ -298,6 +298,84 @@ fn competitive_event_record_parser_is_exact_frame_bounded_and_unratified() {
         assert!(
             !combined.contains(forbidden),
             "bounded competitive event-record parser exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_lifecycle_controls_are_exact_frame_bound_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_lifecycle_control_runtime.rs");
+    for required in [
+        "bind_classified_navigation_frame_to_lifecycle_control_v1",
+        "OpaqueMtgoCompetitiveLifecycleControlV1",
+        "PairingAcceptControlEnabled",
+        "SideboardSubmitControlEnabled",
+        "MatchContinueControlEnabled",
+        "ReconnectResumeControlEnabled",
+        "EventCloseControlEnabled",
+        "visible_frame_region_content_sha256_v1",
+        "confirm_opaque_competitive_lifecycle_control_postcondition_v1",
+        "validate_checked_competitive_lifecycle_action_transition_v1",
+        "strictly_newer_exact_action_postcondition_no_input_authority",
+        "SideboardNoChangesConfirmed",
+        "exact_enabled_control_detection_only_no_coordinates_no_input",
+        "safe_for_live_input_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive lifecycle control seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn rect_client_px",
+        "pub fn canonical_bgra8",
+        "pub fn input_command",
+        "safe_for_live_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive lifecycle control seam exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_event_runtime_is_move_only_identity_bound_and_terminal_record_gated() {
+    let source = include_str!("../src/actuator.rs");
+    for required in [
+        "OpaqueMtgoCompetitiveEventRuntimeV1",
+        "begin_competitive_event_runtime_after_entry_v1",
+        "advance_competitive_event_runtime_observed_v1",
+        "prepare_competitive_event_runtime_lifecycle_control_v1",
+        "execute_prepared_competitive_event_lifecycle_control_v1",
+        "confirm_pending_competitive_event_lifecycle_control_v1",
+        "attach_competitive_event_monitor_to_runtime_v1",
+        "advance_competitive_event_monitor_in_runtime_v1",
+        "checkout_competitive_event_gameplay_session_v1",
+        "return_competitive_event_gameplay_session_v1",
+        "closing a competitive event requires its terminal visible event record",
+        "move_only_gameplay_lease_event_runtime_withheld",
+        "one_exact_event_move_only_no_reentry_no_additional_spending",
+        "permits_additional_entry_v1(&self) -> bool {\n        false",
+        "permits_additional_spending_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive event runtime is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn current_frame_v1",
+        "pub fn lifecycle_authorization_v1",
+        "pub fn target_point_client_px",
+        "pub fn input_command",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive event runtime exposes a forbidden capability: {forbidden}"
         );
     }
 }
@@ -729,6 +807,7 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2: Option<&str> = None",
         "RATIFIED_COMPETITIVE_DUEL_GESTURE_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V1",
         "RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "RATIFIED_COMPETITIVE_LIFECYCLE_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
         "RATIFIED_COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
         "ratify_private_match_authorization_v3",
         "ratify_competitive_duel_pass_authorization_v1",
@@ -758,6 +837,22 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "MtgoCompetitiveEntryInputReceiptCommitmentsV1",
         "MtgoConfirmedCompetitiveEntryCommitmentsV1",
         "MtgoReviewedCompetitiveEntryRatificationCandidateV1",
+        "review_competitive_lifecycle_ratification_candidate_from_correspondence_v1",
+        "ratify_competitive_lifecycle_authorization_from_correspondence_v1",
+        "prepare_ratified_competitive_lifecycle_control_v1",
+        "execute_prepared_competitive_lifecycle_control_v1",
+        "confirm_pending_competitive_lifecycle_control_v1",
+        "RatifiedMtgoCompetitiveLifecycleAuthorizationV1",
+        "OpaqueMtgoPreparedCompetitiveLifecycleControlV1",
+        "OpaqueMtgoPendingCompetitiveLifecycleControlV1",
+        "OpaqueMtgoConfirmedCompetitiveLifecycleControlV1",
+        "COMPETITIVE_LIFECYCLE_AUTHORIZATION_DOMAIN_V1",
+        "COMPETITIVE_LIFECYCLE_PREPARATION_DOMAIN_V1",
+        "COMPETITIVE_LIFECYCLE_INPUT_RECEIPT_DOMAIN_V1",
+        "COMPETITIVE_LIFECYCLE_CONFIRMATION_RECEIPT_DOMAIN_V1",
+        "all_five_non_entry_lifecycle_controls_one_click_each_exact_postcondition",
+        "exactly_one_left_click_shared_gate_pending_visible_postcondition",
+        "exact_action_visibly_confirmed_shared_gate_released",
         "COMPETITIVE_ENTRY_AUTHORIZATION_RATIFICATION_DOMAIN_V1",
         "COMPETITIVE_ENTRY_PREPARATION_DOMAIN_V1",
         "COMPETITIVE_ENTRY_INPUT_RECEIPT_DOMAIN_V1",

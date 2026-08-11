@@ -14,16 +14,27 @@ fn required_fact_kinds(
             vec![EntryReviewVisible, EntryTermsVisible]
         }
         MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing => vec![EnteredEventVisible],
-        MtgoCompetitiveLifecyclePhaseV1::PairingReady => vec![PairingVisible],
+        MtgoCompetitiveLifecyclePhaseV1::PairingReady => {
+            vec![PairingVisible, PairingAcceptControlEnabled]
+        }
         MtgoCompetitiveLifecyclePhaseV1::MatchInProgress => {
             vec![MatchSurfaceVisible, LocalClockVisible, OpponentClockVisible]
         }
-        MtgoCompetitiveLifecyclePhaseV1::Sideboarding => {
-            vec![SideboardSurfaceVisible, SideboardTimerVisible]
+        MtgoCompetitiveLifecyclePhaseV1::Sideboarding => vec![
+            SideboardSurfaceVisible,
+            SideboardTimerVisible,
+            SideboardNoChangesConfirmed,
+            SideboardSubmitControlEnabled,
+        ],
+        MtgoCompetitiveLifecyclePhaseV1::MatchComplete => {
+            vec![MatchResultVisible, MatchContinueControlEnabled]
         }
-        MtgoCompetitiveLifecyclePhaseV1::MatchComplete => vec![MatchResultVisible],
-        MtgoCompetitiveLifecyclePhaseV1::EventComplete => vec![EventResultVisible],
-        MtgoCompetitiveLifecyclePhaseV1::Reconnect => vec![ReconnectVisible],
+        MtgoCompetitiveLifecyclePhaseV1::EventComplete => {
+            vec![EventResultVisible, EventCloseControlEnabled]
+        }
+        MtgoCompetitiveLifecyclePhaseV1::Reconnect => {
+            vec![ReconnectVisible, ReconnectResumeControlEnabled]
+        }
     }
 }
 
@@ -421,6 +432,15 @@ fn reconnect_and_server_advances_are_explicit_and_observation_only() {
     ))
     .unwrap();
     let reconnect = snapshot(MtgoCompetitiveLifecyclePhaseV1::Reconnect, 2);
+    let checked_reconnect =
+        validate_visible_competitive_lifecycle_snapshot_v1(reconnect.clone()).unwrap();
+    let checked = validate_checked_observed_competitive_lifecycle_advance_v1(
+        &game,
+        MtgoObservedCompetitiveLifecycleAdvanceV1::ConnectionInterrupted,
+        &checked_reconnect,
+    )
+    .unwrap();
+    assert!(!checked.safe_for_live_input());
     let checked = validate_observed_competitive_lifecycle_advance_v1(
         &game,
         MtgoObservedCompetitiveLifecycleAdvanceV1::ConnectionInterrupted,

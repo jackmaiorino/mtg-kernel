@@ -27,19 +27,47 @@ pub enum MtgoCompetitiveNavigationSliceV1 {
     LeagueEventBrowser,
     LeagueEntryReview,
     LeagueEnteredWaitingForPairing,
+    LeaguePairingReady,
+    LeagueMatchInProgress,
+    LeagueSideboarding,
+    LeagueMatchComplete,
+    LeagueEventComplete,
+    LeagueReconnect,
     ChallengeEventBrowser,
     ChallengeEntryReview,
     ChallengeEnteredWaitingForPairing,
+    ChallengePairingReady,
+    ChallengeMatchInProgress,
+    ChallengeSideboarding,
+    ChallengeMatchComplete,
+    ChallengeEventComplete,
+    ChallengeReconnect,
 }
 
-const REQUIRED_NAVIGATION_SLICES_V1: [MtgoCompetitiveNavigationSliceV1; 6] = [
+const REQUIRED_NAVIGATION_SLICES_V1: [MtgoCompetitiveNavigationSliceV1; 18] = [
     MtgoCompetitiveNavigationSliceV1::LeagueEventBrowser,
     MtgoCompetitiveNavigationSliceV1::LeagueEntryReview,
     MtgoCompetitiveNavigationSliceV1::LeagueEnteredWaitingForPairing,
+    MtgoCompetitiveNavigationSliceV1::LeaguePairingReady,
+    MtgoCompetitiveNavigationSliceV1::LeagueMatchInProgress,
+    MtgoCompetitiveNavigationSliceV1::LeagueSideboarding,
+    MtgoCompetitiveNavigationSliceV1::LeagueMatchComplete,
+    MtgoCompetitiveNavigationSliceV1::LeagueEventComplete,
+    MtgoCompetitiveNavigationSliceV1::LeagueReconnect,
     MtgoCompetitiveNavigationSliceV1::ChallengeEventBrowser,
     MtgoCompetitiveNavigationSliceV1::ChallengeEntryReview,
     MtgoCompetitiveNavigationSliceV1::ChallengeEnteredWaitingForPairing,
+    MtgoCompetitiveNavigationSliceV1::ChallengePairingReady,
+    MtgoCompetitiveNavigationSliceV1::ChallengeMatchInProgress,
+    MtgoCompetitiveNavigationSliceV1::ChallengeSideboarding,
+    MtgoCompetitiveNavigationSliceV1::ChallengeMatchComplete,
+    MtgoCompetitiveNavigationSliceV1::ChallengeEventComplete,
+    MtgoCompetitiveNavigationSliceV1::ChallengeReconnect,
 ];
+
+pub fn canonical_competitive_lifecycle_slices_v1() -> &'static [MtgoCompetitiveNavigationSliceV1] {
+    &REQUIRED_NAVIGATION_SLICES_V1
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -418,12 +446,12 @@ impl CheckedUntrustedMtgoCompetitiveNavigationEvaluationV1 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoCompetitiveNavigationProfileScopeV1 {
-    LeagueAndChallengeEntryTransitionClassification,
+    LeagueAndChallengeLifecycleClassification,
 }
 
-/// A separately ratified profile identity for classifying League and Challenge
-/// browser, entry-review, and entered-waiting frames. It remains insufficient
-/// for event entry, resource spending, coordinates, or input.
+/// A separately ratified profile identity for classifying the complete visible
+/// League and Challenge lifecycle. It remains insufficient for event entry,
+/// resource spending, coordinates, or input.
 ///
 /// Production currently has no ratified evaluation commitment, so callers
 /// cannot construct this value.
@@ -444,7 +472,7 @@ pub struct AdmittedMtgoCompetitiveNavigationProfileV1 {
 
 impl AdmittedMtgoCompetitiveNavigationProfileV1 {
     pub fn scope(&self) -> MtgoCompetitiveNavigationProfileScopeV1 {
-        MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeEntryTransitionClassification
+        MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeLifecycleClassification
     }
 
     pub fn profile_commitment_sha256(&self) -> &str {
@@ -944,8 +972,8 @@ pub fn evaluate_untrusted_competitive_navigation_profile_v1(
     })
 }
 
-/// Admits only the exact six-slice evaluation pinned in the private production
-/// trust root. The root remains empty until a real reviewed navigation corpus
+/// Admits only the exact 18-slice lifecycle evaluation pinned in the private
+/// production trust root. The root remains empty until a real reviewed corpus
 /// and classifier run exist.
 pub fn admit_ratified_competitive_navigation_profile_v1(
     profile: CheckedUntrustedMtgoCompetitiveNavigationRuntimeProfileV1,
@@ -993,7 +1021,7 @@ fn admit_competitive_navigation_profile_against_ratification_v1(
         &[
             evaluation.profile_commitment_sha256.as_bytes(),
             evaluation.evaluation_commitment_sha256.as_bytes(),
-            b"league_and_challenge_six_slice_entry_transition_classification_only",
+            b"league_and_challenge_eighteen_slice_lifecycle_classification_only",
             b"no_event_entry_no_spending_no_coordinates_no_input",
         ],
     );
@@ -1046,7 +1074,7 @@ fn validate_required_slices_v1(
     if slices != REQUIRED_NAVIGATION_SLICES_V1 {
         return Err(error_v1(
             "competitive_navigation_required_slices",
-            "profile and evaluation must cover League and Challenge browser, entry review, and entered-waiting postcondition in canonical order",
+            "profile and evaluation must cover all nine League and Challenge lifecycle phases in canonical order",
         ));
     }
     Ok(())
@@ -1169,6 +1197,24 @@ fn navigation_slice_v1(
             MtgoCompetitiveEventKindV1::League,
             MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
         ) => Ok(MtgoCompetitiveNavigationSliceV1::LeagueEnteredWaitingForPairing),
+        (MtgoCompetitiveEventKindV1::League, MtgoCompetitiveLifecyclePhaseV1::PairingReady) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::LeaguePairingReady)
+        }
+        (MtgoCompetitiveEventKindV1::League, MtgoCompetitiveLifecyclePhaseV1::MatchInProgress) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::LeagueMatchInProgress)
+        }
+        (MtgoCompetitiveEventKindV1::League, MtgoCompetitiveLifecyclePhaseV1::Sideboarding) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::LeagueSideboarding)
+        }
+        (MtgoCompetitiveEventKindV1::League, MtgoCompetitiveLifecyclePhaseV1::MatchComplete) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::LeagueMatchComplete)
+        }
+        (MtgoCompetitiveEventKindV1::League, MtgoCompetitiveLifecyclePhaseV1::EventComplete) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::LeagueEventComplete)
+        }
+        (MtgoCompetitiveEventKindV1::League, MtgoCompetitiveLifecyclePhaseV1::Reconnect) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::LeagueReconnect)
+        }
         (MtgoCompetitiveEventKindV1::Challenge, MtgoCompetitiveLifecyclePhaseV1::EventBrowser) => {
             Ok(MtgoCompetitiveNavigationSliceV1::ChallengeEventBrowser)
         }
@@ -1179,10 +1225,25 @@ fn navigation_slice_v1(
             MtgoCompetitiveEventKindV1::Challenge,
             MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
         ) => Ok(MtgoCompetitiveNavigationSliceV1::ChallengeEnteredWaitingForPairing),
-        _ => Err(error_v1(
-            "competitive_navigation_slice",
-            "navigation evaluation accepts only League and Challenge browser, entry-review, and entered-waiting phases",
-        )),
+        (MtgoCompetitiveEventKindV1::Challenge, MtgoCompetitiveLifecyclePhaseV1::PairingReady) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::ChallengePairingReady)
+        }
+        (
+            MtgoCompetitiveEventKindV1::Challenge,
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+        ) => Ok(MtgoCompetitiveNavigationSliceV1::ChallengeMatchInProgress),
+        (MtgoCompetitiveEventKindV1::Challenge, MtgoCompetitiveLifecyclePhaseV1::Sideboarding) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::ChallengeSideboarding)
+        }
+        (MtgoCompetitiveEventKindV1::Challenge, MtgoCompetitiveLifecyclePhaseV1::MatchComplete) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::ChallengeMatchComplete)
+        }
+        (MtgoCompetitiveEventKindV1::Challenge, MtgoCompetitiveLifecyclePhaseV1::EventComplete) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::ChallengeEventComplete)
+        }
+        (MtgoCompetitiveEventKindV1::Challenge, MtgoCompetitiveLifecyclePhaseV1::Reconnect) => {
+            Ok(MtgoCompetitiveNavigationSliceV1::ChallengeReconnect)
+        }
     }
 }
 
@@ -1343,37 +1404,74 @@ mod tests {
         frame_sha256: String,
     ) -> MtgoVisibleCompetitiveLifecycleSnapshotV1 {
         let entry_review = phase == MtgoCompetitiveLifecyclePhaseV1::EntryReview;
-        let entered_waiting = phase == MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing;
-        let mut facts = vec![MtgoLifecycleVisibleFactV1 {
-            kind: if entry_review {
-                MtgoLifecycleVisibleFactKindV1::EntryReviewVisible
-            } else if entered_waiting {
-                MtgoLifecycleVisibleFactKindV1::EnteredEventVisible
-            } else {
-                MtgoLifecycleVisibleFactKindV1::EventBrowserVisible
-            },
-            rect_client_px: MtgoRectPxV1 {
-                x: 100,
-                y: 100,
-                width: 600,
-                height: 500,
-            },
-            content_sha256: "d".repeat(64),
-            confidence_bps: 10_000,
-        }];
-        if entry_review {
-            facts.push(MtgoLifecycleVisibleFactV1 {
-                kind: MtgoLifecycleVisibleFactKindV1::EntryTermsVisible,
+        let match_phase = matches!(
+            phase,
+            MtgoCompetitiveLifecyclePhaseV1::PairingReady
+                | MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+                | MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+                | MtgoCompetitiveLifecyclePhaseV1::MatchComplete
+                | MtgoCompetitiveLifecyclePhaseV1::Reconnect
+        );
+        let game_phase = matches!(
+            phase,
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+                | MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+                | MtgoCompetitiveLifecyclePhaseV1::Reconnect
+        );
+        let required_kinds: &[MtgoLifecycleVisibleFactKindV1] = match phase {
+            MtgoCompetitiveLifecyclePhaseV1::EventBrowser => {
+                &[MtgoLifecycleVisibleFactKindV1::EventBrowserVisible]
+            }
+            MtgoCompetitiveLifecyclePhaseV1::EntryReview => &[
+                MtgoLifecycleVisibleFactKindV1::EntryReviewVisible,
+                MtgoLifecycleVisibleFactKindV1::EntryTermsVisible,
+            ],
+            MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing => {
+                &[MtgoLifecycleVisibleFactKindV1::EnteredEventVisible]
+            }
+            MtgoCompetitiveLifecyclePhaseV1::PairingReady => &[
+                MtgoLifecycleVisibleFactKindV1::PairingVisible,
+                MtgoLifecycleVisibleFactKindV1::PairingAcceptControlEnabled,
+            ],
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress => &[
+                MtgoLifecycleVisibleFactKindV1::MatchSurfaceVisible,
+                MtgoLifecycleVisibleFactKindV1::LocalClockVisible,
+                MtgoLifecycleVisibleFactKindV1::OpponentClockVisible,
+            ],
+            MtgoCompetitiveLifecyclePhaseV1::Sideboarding => &[
+                MtgoLifecycleVisibleFactKindV1::SideboardSurfaceVisible,
+                MtgoLifecycleVisibleFactKindV1::SideboardTimerVisible,
+                MtgoLifecycleVisibleFactKindV1::SideboardNoChangesConfirmed,
+                MtgoLifecycleVisibleFactKindV1::SideboardSubmitControlEnabled,
+            ],
+            MtgoCompetitiveLifecyclePhaseV1::MatchComplete => &[
+                MtgoLifecycleVisibleFactKindV1::MatchResultVisible,
+                MtgoLifecycleVisibleFactKindV1::MatchContinueControlEnabled,
+            ],
+            MtgoCompetitiveLifecyclePhaseV1::EventComplete => &[
+                MtgoLifecycleVisibleFactKindV1::EventResultVisible,
+                MtgoLifecycleVisibleFactKindV1::EventCloseControlEnabled,
+            ],
+            MtgoCompetitiveLifecyclePhaseV1::Reconnect => &[
+                MtgoLifecycleVisibleFactKindV1::ReconnectVisible,
+                MtgoLifecycleVisibleFactKindV1::ReconnectResumeControlEnabled,
+            ],
+        };
+        let facts = required_kinds
+            .iter()
+            .enumerate()
+            .map(|(index, kind)| MtgoLifecycleVisibleFactV1 {
+                kind: *kind,
                 rect_client_px: MtgoRectPxV1 {
-                    x: 300,
-                    y: 450,
-                    width: 240,
-                    height: 80,
+                    x: 100 + u32::try_from(index).unwrap() * 20,
+                    y: 100 + u32::try_from(index).unwrap() * 20,
+                    width: 600,
+                    height: 500,
                 },
-                content_sha256: "e".repeat(64),
+                content_sha256: format!("{:064x}", index + 13),
                 confidence_bps: 10_000,
-            });
-        }
+            })
+            .collect();
         MtgoVisibleCompetitiveLifecycleSnapshotV1 {
             schema_version: 1,
             snapshot_id: format!("navigation-case-{frame_id}"),
@@ -1388,9 +1486,10 @@ mod tests {
                 width: 1_550,
                 height: 925,
             },
-            event_identity_sha256: (entry_review || entered_waiting).then(|| "f".repeat(64)),
-            match_identity_sha256: None,
-            game_number: None,
+            event_identity_sha256: (phase != MtgoCompetitiveLifecyclePhaseV1::EventBrowser)
+                .then(|| "f".repeat(64)),
+            match_identity_sha256: match_phase.then(|| "e".repeat(64)),
+            game_number: game_phase.then_some(1),
             entry_terms: entry_review.then(|| MtgoCompetitiveEntryTermsV1 {
                 terms_sha256: "1".repeat(64),
                 resource: MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
@@ -1482,38 +1581,42 @@ mod tests {
         evaluate_untrusted_competitive_navigation_profile_v1(profile, &corpus, spec, cases)
     }
 
+    fn required_case_kinds_v1(
+    ) -> [(MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1); 18] {
+        use MtgoCompetitiveEventKindV1::{Challenge, League};
+        use MtgoCompetitiveLifecyclePhaseV1::{
+            EnteredWaitingForPairing, EntryReview, EventBrowser, EventComplete, MatchComplete,
+            MatchInProgress, PairingReady, Reconnect, Sideboarding,
+        };
+        [
+            (League, EventBrowser),
+            (League, EntryReview),
+            (League, EnteredWaitingForPairing),
+            (League, PairingReady),
+            (League, MatchInProgress),
+            (League, Sideboarding),
+            (League, MatchComplete),
+            (League, EventComplete),
+            (League, Reconnect),
+            (Challenge, EventBrowser),
+            (Challenge, EntryReview),
+            (Challenge, EnteredWaitingForPairing),
+            (Challenge, PairingReady),
+            (Challenge, MatchInProgress),
+            (Challenge, Sideboarding),
+            (Challenge, MatchComplete),
+            (Challenge, EventComplete),
+            (Challenge, Reconnect),
+        ]
+    }
+
     #[test]
-    fn six_slice_exact_evaluation_passes_but_production_admission_is_empty() {
+    fn full_lifecycle_evaluation_passes_but_production_admission_is_empty() {
         let profile = profile_v1();
-        let sources = (1_u8..=6)
+        let sources = (1_u8..=18)
             .map(|discriminator| source_v1(&profile, discriminator))
             .collect::<Vec<_>>();
-        let kinds = [
-            (
-                MtgoCompetitiveEventKindV1::League,
-                MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::League,
-                MtgoCompetitiveLifecyclePhaseV1::EntryReview,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::League,
-                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::Challenge,
-                MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::Challenge,
-                MtgoCompetitiveLifecyclePhaseV1::EntryReview,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::Challenge,
-                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
-            ),
-        ];
+        let kinds = required_case_kinds_v1();
         let expected = sources
             .iter()
             .zip(kinds)
@@ -1542,7 +1645,7 @@ mod tests {
             .enumerate()
             .map(|(index, ((source, expected), prediction))| {
                 MtgoCompetitiveNavigationEvaluationCaseV1 {
-                    case_id: format!("case-{}", index + 1),
+                    case_id: format!("case-{:02}", index + 1),
                     source,
                     expected: expected.clone(),
                     prediction: Some(prediction),
@@ -1551,8 +1654,8 @@ mod tests {
             .collect::<Vec<_>>();
         let evaluation = evaluate_v1(&profile, spec_v1(&profile), cases).unwrap();
         assert!(evaluation.passes_declared_gate());
-        assert_eq!(evaluation.unique_case_count(), 6);
-        assert_eq!(evaluation.exact_prediction_count(), 6);
+        assert_eq!(evaluation.unique_case_count(), 18);
+        assert_eq!(evaluation.exact_prediction_count(), 18);
         assert_eq!(evaluation.minimum_observed_cases_per_slice(), 1);
         assert_eq!(
             evaluation.minimum_prediction_coverage_bps_per_slice(),
@@ -1572,35 +1675,10 @@ mod tests {
     #[test]
     fn private_exact_ratification_grants_profile_identity_only() {
         let profile = profile_v1();
-        let sources = (1_u8..=6)
+        let sources = (1_u8..=18)
             .map(|discriminator| source_v1(&profile, discriminator))
             .collect::<Vec<_>>();
-        let kinds = [
-            (
-                MtgoCompetitiveEventKindV1::League,
-                MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::League,
-                MtgoCompetitiveLifecyclePhaseV1::EntryReview,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::League,
-                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::Challenge,
-                MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::Challenge,
-                MtgoCompetitiveLifecyclePhaseV1::EntryReview,
-            ),
-            (
-                MtgoCompetitiveEventKindV1::Challenge,
-                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
-            ),
-        ];
+        let kinds = required_case_kinds_v1();
         let expected = sources
             .iter()
             .zip(kinds)
@@ -1629,7 +1707,7 @@ mod tests {
             .enumerate()
             .map(|(index, ((source, expected), prediction))| {
                 MtgoCompetitiveNavigationEvaluationCaseV1 {
-                    case_id: format!("case-{}", index + 1),
+                    case_id: format!("case-{:02}", index + 1),
                     source,
                     expected: expected.clone(),
                     prediction: Some(prediction),
@@ -1646,7 +1724,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             admitted.scope(),
-            MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeEntryTransitionClassification
+            MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeLifecycleClassification
         );
         assert_eq!(admitted.evaluation_commitment_sha256(), ratification);
         assert_eq!(admitted.admission_commitment_sha256().len(), 64);
@@ -1679,7 +1757,7 @@ mod tests {
         .unwrap();
         assert!(!evaluation.passes_declared_gate());
         assert_eq!(evaluation.prediction_coverage_bps(), 0);
-        assert_eq!(evaluation.missing_slices().len(), 5);
+        assert_eq!(evaluation.missing_slices().len(), 17);
     }
 
     #[test]
@@ -1999,7 +2077,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_requires_all_six_slices_in_canonical_order() {
+    fn profile_requires_all_lifecycle_slices_in_canonical_order() {
         let mut payload = profile_payload_v1();
         payload.supported_slices.pop();
         assert!(check_untrusted_competitive_navigation_runtime_profile_v1(payload).is_err());

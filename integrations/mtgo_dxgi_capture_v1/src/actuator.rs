@@ -1,10 +1,12 @@
 use crate::probe::{
+    advance_checked_untrusted_competitive_event_monitor_v1,
     advance_prepared_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
     capture_admitted_mtgo_competitive_navigation_frame_v1,
     classify_admitted_mtgo_competitive_navigation_frame_v1,
     confirm_opaque_competitive_duel_gesture_postcondition_v1,
     confirm_opaque_competitive_duel_pass_postcondition_v1,
     confirm_opaque_competitive_entry_postcondition_v1,
+    confirm_opaque_competitive_lifecycle_control_postcondition_v1,
     confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
     prepare_opaque_competitive_duel_gesture_continuation_stage_from_pinned_runtime_v1,
@@ -14,7 +16,9 @@ use crate::probe::{
     validate_classifier_backed_competitive_entry_immediate_recapture_v1,
     MtgoCompetitiveEntryControlDryRunPartsV1, MtgoCompetitiveEntryFrameTransitionCommitmentsV1,
     MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1, MtgoCompetitiveEntryPointerTargetV1,
-    MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1, MtgoCompetitiveNavigationFrameIdentityV1,
+    MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1, MtgoCompetitiveEventMonitorCommitmentsV1,
+    MtgoCompetitiveLifecycleControlTransitionCommitmentsV1,
+    MtgoCompetitiveNavigationFrameIdentityV1,
     MtgoOpaqueCompetitiveDuelGestureConfirmationCommitmentsV1,
     MtgoOpaqueCompetitiveDuelGestureSequenceCommitmentsV1,
     MtgoOpaqueCompetitiveDuelGestureSourcePreparationCommitmentsV1,
@@ -26,8 +30,10 @@ use crate::probe::{
     MtgoPlannedPregamePostconditionV3, OpaqueMtgoAdmittedDuelPerceptionV1,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1, OpaqueMtgoCompetitiveDuelGestureSequenceV1,
     OpaqueMtgoCompetitiveEntryControlDryRunV1, OpaqueMtgoCompetitiveEntryReviewIdentityV1,
-    OpaqueMtgoCompetitiveLaunchIdentityV1, OpaqueMtgoConfirmedCompetitiveDuelGestureV1,
+    OpaqueMtgoCompetitiveEventMonitorV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
+    OpaqueMtgoCompetitiveLifecycleControlV1, OpaqueMtgoConfirmedCompetitiveDuelGestureV1,
     OpaqueMtgoConfirmedCompetitiveDuelPassV1, OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1,
+    OpaqueMtgoConfirmedCompetitiveLifecycleControlPostconditionV1,
     OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, OpaqueMtgoConfirmedKeepToFirstMainTransitionV3,
     OpaqueMtgoConfirmedMulliganTransitionV3, OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
     OpaqueMtgoDxgiFirstMainMeasurementV3, OpaqueMtgoDxgiMulliganMeasurementV3,
@@ -41,16 +47,16 @@ use mtgo_blackbox_v1::{
     canonical_duel_gesture_action_families_v1,
     competitive_match_gameplay_authorization_commitment_v1,
     competitive_mode_authorization_commitment_v1, make_offline_competitive_lifecycle_intent_v1,
-    validate_authorization_for_mode_v1, AdmittedMtgoCompetitiveNavigationProfileV1,
-    AdmittedMtgoDuelGestureProfileV1, AdmittedMtgoDuelPerceptionProfileV1,
-    CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    validate_authorization_for_mode_v1, validate_checked_observed_competitive_lifecycle_advance_v1,
+    AdmittedMtgoCompetitiveNavigationProfileV1, AdmittedMtgoDuelGestureProfileV1,
+    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
     MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
     MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1, MtgoDuelPrimaryActivationV1,
-    MtgoPregameActionSemanticV1, MtgoRuntimeModeV1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
-    MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
+    MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
+    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -143,6 +149,27 @@ const COMPETITIVE_ENTRY_PREPARATION_DOMAIN_V1: &[u8] = b"mtgo-competitive-entry-
 const COMPETITIVE_ENTRY_INPUT_RECEIPT_DOMAIN_V1: &[u8] = b"mtgo-competitive-entry-input-receipt-v1";
 const COMPETITIVE_ENTRY_CONFIRMATION_RECEIPT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-confirmation-receipt-v1";
+const COMPETITIVE_LIFECYCLE_AUTHORIZATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-lifecycle-authorization-v1";
+const COMPETITIVE_LIFECYCLE_ACTION_SET_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-lifecycle-action-set-v1";
+const RATIFIED_COMPETITIVE_LIFECYCLE_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
+const COMPETITIVE_LIFECYCLE_PREPARATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-lifecycle-preparation-v1";
+const COMPETITIVE_LIFECYCLE_INPUT_RECEIPT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-lifecycle-input-receipt-v1";
+const COMPETITIVE_LIFECYCLE_CONFIRMATION_RECEIPT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-lifecycle-confirmation-receipt-v1";
+const COMPETITIVE_EVENT_RUNTIME_INITIAL_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-runtime-initial-v1";
+const COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-runtime-advance-v1";
+const COMPETITIVE_EVENT_RUNTIME_MONITOR_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-runtime-monitor-v1";
+const COMPETITIVE_EVENT_GAMEPLAY_LEASE_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-gameplay-lease-v1";
+const COMPETITIVE_EVENT_GAMEPLAY_RETURN_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-gameplay-return-v1";
 const ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V4: u64 = 512;
 
 const MTGO_ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_SCHEMA_V4: u32 = 4;
@@ -480,6 +507,307 @@ impl RatifiedMtgoCompetitiveEntryAuthorizationV1 {
     }
 
     pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoReviewedCompetitiveLifecycleRatificationCandidateV1 {
+    pub correspondence_sha256: String,
+    pub permission_review_commitment_sha256: String,
+    pub mode_authorization_commitment_sha256: String,
+    pub approved_account_alias_sha256: String,
+    pub lifecycle_profile_commitment_sha256: String,
+    pub lifecycle_profile_admission_commitment_sha256: String,
+    pub allowed_actions_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub ratification_commitment_sha256: String,
+}
+
+/// Exact reviewed correspondence and evaluated lifecycle-profile authority for
+/// one League or Challenge mode. Production construction is disabled until the
+/// complete candidate commitment is intentionally pinned.
+pub struct RatifiedMtgoCompetitiveLifecycleAuthorizationV1 {
+    _permission_correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    scope: MtgoAuthorizationScopeV1,
+    commitments: MtgoReviewedCompetitiveLifecycleRatificationCandidateV1,
+}
+
+impl RatifiedMtgoCompetitiveLifecycleAuthorizationV1 {
+    pub fn commitments_v1(&self) -> MtgoReviewedCompetitiveLifecycleRatificationCandidateV1 {
+        self.commitments.clone()
+    }
+
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.commitments.event_kind
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPreparedCompetitiveLifecycleControlCommitmentsV1 {
+    pub lifecycle_authorization_commitment_sha256: String,
+    pub control_binding_commitment_sha256: String,
+    pub preparation_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub action: MtgoCompetitiveLifecycleActionV1,
+    pub event_identity_sha256: String,
+    pub match_identity_sha256: Option<String>,
+    pub game_number: Option<u8>,
+    pub source_frame_id: u64,
+    pub source_frame_sequence: u64,
+    pub source_captured_at_unix_millis: u128,
+}
+
+pub struct OpaqueMtgoPreparedCompetitiveLifecycleControlV1 {
+    authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    control: OpaqueMtgoCompetitiveLifecycleControlV1,
+    pointer_target: MtgoCompetitiveEntryPointerTargetV1,
+    commitments: MtgoPreparedCompetitiveLifecycleControlCommitmentsV1,
+}
+
+impl OpaqueMtgoPreparedCompetitiveLifecycleControlV1 {
+    pub fn commitments_v1(&self) -> MtgoPreparedCompetitiveLifecycleControlCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveLifecycleInputReceiptCommitmentsV1 {
+    pub preparation_commitment_sha256: String,
+    pub lifecycle_authorization_commitment_sha256: String,
+    pub input_receipt_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub action: MtgoCompetitiveLifecycleActionV1,
+    pub source_frame_id: u64,
+    pub source_frame_sequence: u64,
+    pub input_sent_at_unix_millis: u128,
+    pub cursor_parked_outside_client: bool,
+}
+
+pub struct OpaqueMtgoPendingCompetitiveLifecycleControlV1 {
+    prepared: OpaqueMtgoPreparedCompetitiveLifecycleControlV1,
+    commitments: MtgoCompetitiveLifecycleInputReceiptCommitmentsV1,
+}
+
+impl OpaqueMtgoPendingCompetitiveLifecycleControlV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveLifecycleInputReceiptCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoConfirmedCompetitiveLifecycleControlCommitmentsV1 {
+    pub input_receipt_sha256: String,
+    pub preparation_commitment_sha256: String,
+    pub lifecycle_authorization_commitment_sha256: String,
+    pub visible_transition: MtgoCompetitiveLifecycleControlTransitionCommitmentsV1,
+    pub confirmation_receipt_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub action: MtgoCompetitiveLifecycleActionV1,
+    pub after_frame_id: u64,
+    pub after_frame_sequence: u64,
+    pub after_captured_at_unix_millis: u128,
+}
+
+pub struct OpaqueMtgoConfirmedCompetitiveLifecycleControlV1 {
+    _authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    _visible_postcondition: OpaqueMtgoConfirmedCompetitiveLifecycleControlPostconditionV1,
+    commitments: MtgoConfirmedCompetitiveLifecycleControlCommitmentsV1,
+}
+
+impl OpaqueMtgoConfirmedCompetitiveLifecycleControlV1 {
+    pub fn commitments_v1(&self) -> MtgoConfirmedCompetitiveLifecycleControlCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn visibly_confirmed_v1(&self) -> bool {
+        true
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveEventRuntimeCommitmentsV1 {
+    pub runtime_commitment_sha256: String,
+    pub entry_confirmation_receipt_sha256: String,
+    pub entry_ratification_commitment_sha256: String,
+    pub lifecycle_authorization_commitment_sha256: String,
+    pub mode_authorization_commitment_sha256: String,
+    pub navigation_profile_commitment_sha256: String,
+    pub navigation_profile_admission_commitment_sha256: String,
+    pub approved_account_alias_sha256: String,
+    pub bound_event_identity_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub current_phase: MtgoCompetitiveLifecyclePhaseV1,
+    pub current_lifecycle_snapshot_commitment_sha256: String,
+    pub current_match_identity_sha256: Option<String>,
+    pub current_game_number: Option<u8>,
+    pub current_frame_id: u64,
+    pub current_frame_sequence: u64,
+    pub lifecycle_transition_count: u64,
+    pub confirmed_lifecycle_action_count: u64,
+    pub observed_lifecycle_advance_count: u64,
+    pub gameplay_lease_count: u64,
+    pub event_monitor_chain_commitment_sha256: Option<String>,
+    pub event_monitor_observation_count: u64,
+    pub terminal_event_record_confirmed: bool,
+    pub closed_to_event_browser: bool,
+}
+
+/// Move-only coordinator for one exact, visibly confirmed League or Challenge
+/// entry. It owns the spent entry authorization, the reusable exact-mode
+/// lifecycle authorization, the current opaque classifier-backed frame, and an
+/// optional monotonic event-record monitor. It cannot create another entry or
+/// expose pixels, coordinates, process handles, or input primitives.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveEventRuntimeV1;
+/// let _forged = OpaqueMtgoCompetitiveEventRuntimeV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveEventRuntimeV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveEventRuntimeV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveEventRuntimeV1 {
+    _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
+    lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    current_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
+    commitments: MtgoCompetitiveEventRuntimeCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitiveEventRuntimeV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveEventRuntimeCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.commitments.event_kind
+    }
+
+    pub fn current_phase_v1(&self) -> MtgoCompetitiveLifecyclePhaseV1 {
+        self.commitments.current_phase
+    }
+
+    pub fn terminal_event_record_confirmed_v1(&self) -> bool {
+        self.commitments.terminal_event_record_confirmed
+    }
+
+    pub fn closed_v1(&self) -> bool {
+        self.commitments.closed_to_event_browser
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_additional_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_additional_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1 {
+    pub prior_event_runtime_commitment_sha256: String,
+    pub lifecycle_preparation_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub action: MtgoCompetitiveLifecycleActionV1,
+    pub source_frame_sequence: u64,
+}
+
+pub struct OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1 {
+    _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
+    prepared: OpaqueMtgoPreparedCompetitiveLifecycleControlV1,
+    event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
+    prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
+    commitments: MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1,
+}
+
+impl OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1 {
+    pub fn commitments_v1(&self) -> MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPendingCompetitiveEventLifecycleControlCommitmentsV1 {
+    pub prior_event_runtime_commitment_sha256: String,
+    pub lifecycle_input_receipt_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub action: MtgoCompetitiveLifecycleActionV1,
+    pub input_sent_at_unix_millis: u128,
+}
+
+pub struct OpaqueMtgoPendingCompetitiveEventLifecycleControlV1 {
+    _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
+    pending: OpaqueMtgoPendingCompetitiveLifecycleControlV1,
+    event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
+    prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
+    commitments: MtgoPendingCompetitiveEventLifecycleControlCommitmentsV1,
+}
+
+impl OpaqueMtgoPendingCompetitiveEventLifecycleControlV1 {
+    pub fn commitments_v1(&self) -> MtgoPendingCompetitiveEventLifecycleControlCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveEventGameplayLeaseCommitmentsV1 {
+    pub event_runtime_commitment_sha256: String,
+    pub initial_game_session_commitment_sha256: String,
+    pub gameplay_lease_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: String,
+    pub match_identity_sha256: String,
+    pub game_number: u8,
+    pub checkout_frame_sequence: u64,
+    pub initial_confirmed_action_count: u64,
+}
+
+/// Move-only token withholding the event coordinator while the existing exact
+/// game session is used. The event runtime cannot advance until this token is
+/// reunited with that same session lineage.
+pub struct OpaqueMtgoCompetitiveEventGameplayLeaseV1 {
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    commitments: MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitiveEventGameplayLeaseV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveEventGameplayLeaseCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
         false
     }
 }
@@ -2039,6 +2367,772 @@ pub fn ratify_competitive_entry_authorization_v1(
         visible_account_alias,
         RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1,
     )
+}
+
+/// Computes the complete non-authorizing production candidate for all five
+/// non-entry lifecycle controls in one exact League or Challenge mode.
+pub fn review_competitive_lifecycle_ratification_candidate_from_correspondence_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    profile: &AdmittedMtgoCompetitiveNavigationProfileV1,
+    visible_account_alias: &str,
+    event_kind: MtgoCompetitiveEventKindV1,
+) -> Result<MtgoReviewedCompetitiveLifecycleRatificationCandidateV1, String> {
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(event_kind)
+        .map_err(|error| format!("competitive lifecycle correspondence scope: {error}"))?;
+    let mode_authorization_commitment_sha256 = validate_exact_competitive_mode_authorization_v1(
+        &scope,
+        visible_account_alias,
+        event_kind,
+        "competitive lifecycle ratification",
+    )?;
+    let runtime = profile.checked_runtime_profile();
+    if runtime.approved_account_alias_sha256() != scope.account_alias_sha256 {
+        return Err(
+            "competitive lifecycle profile and correspondence approve different accounts"
+                .to_owned(),
+        );
+    }
+    let allowed_actions_commitment_sha256 = competitive_lifecycle_allowed_actions_commitment_v1();
+    let ratification_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_LIFECYCLE_AUTHORIZATION_DOMAIN_V1,
+        &[
+            correspondence.correspondence_sha256().as_bytes(),
+            correspondence.review_commitment_sha256().as_bytes(),
+            mode_authorization_commitment_sha256.as_bytes(),
+            scope.account_alias_sha256.as_bytes(),
+            profile.profile_commitment_sha256().as_bytes(),
+            profile.admission_commitment_sha256().as_bytes(),
+            allowed_actions_commitment_sha256.as_bytes(),
+            competitive_event_kind_tag_v1(event_kind),
+            b"all_five_non_entry_lifecycle_controls_one_click_each_exact_postcondition",
+        ],
+    );
+    Ok(MtgoReviewedCompetitiveLifecycleRatificationCandidateV1 {
+        correspondence_sha256: correspondence.correspondence_sha256().to_owned(),
+        permission_review_commitment_sha256: correspondence.review_commitment_sha256().to_owned(),
+        mode_authorization_commitment_sha256,
+        approved_account_alias_sha256: scope.account_alias_sha256,
+        lifecycle_profile_commitment_sha256: profile.profile_commitment_sha256().to_owned(),
+        lifecycle_profile_admission_commitment_sha256: profile
+            .admission_commitment_sha256()
+            .to_owned(),
+        allowed_actions_commitment_sha256,
+        event_kind,
+        ratification_commitment_sha256,
+    })
+}
+
+pub fn ratify_competitive_lifecycle_authorization_from_correspondence_v1(
+    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    profile: &AdmittedMtgoCompetitiveNavigationProfileV1,
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+) -> Result<RatifiedMtgoCompetitiveLifecycleAuthorizationV1, String> {
+    ratify_competitive_lifecycle_authorization_with_commitment_v1(
+        correspondence,
+        profile,
+        visible_account_alias,
+        event_kind,
+        RATIFIED_COMPETITIVE_LIFECYCLE_AUTHORIZATION_COMMITMENT_V1,
+    )
+}
+
+pub fn prepare_ratified_competitive_lifecycle_control_v1(
+    authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    control: OpaqueMtgoCompetitiveLifecycleControlV1,
+) -> Result<OpaqueMtgoPreparedCompetitiveLifecycleControlV1, String> {
+    let control_commitments = control.commitments_v1();
+    let authorization_commitments = authorization.commitments_v1();
+    if control_commitments.event_kind != authorization_commitments.event_kind
+        || control_commitments.approved_account_alias_sha256
+            != authorization_commitments.approved_account_alias_sha256
+        || control_commitments.source_frame.profile_commitment_sha256
+            != authorization_commitments.lifecycle_profile_commitment_sha256
+        || control_commitments
+            .source_frame
+            .profile_admission_commitment_sha256
+            != authorization_commitments.lifecycle_profile_admission_commitment_sha256
+        || authorization_commitments.allowed_actions_commitment_sha256
+            != competitive_lifecycle_allowed_actions_commitment_v1()
+        || !is_non_entry_lifecycle_action_v1(control_commitments.action)
+    {
+        return Err(
+            "competitive lifecycle control differs from its exact ratified mode, account, profile, or action set"
+                .to_owned(),
+        );
+    }
+    let pointer_target = resolve_competitive_entry_pointer_target_v1(
+        &control._source,
+        &control._control_rect_client_px,
+    )?;
+    let source_captured_at_unix_millis = control_commitments
+        .source_frame
+        .source_capture
+        .captured_at_unix_millis;
+    let preparation_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_LIFECYCLE_PREPARATION_DOMAIN_V1,
+        &[
+            authorization_commitments
+                .ratification_commitment_sha256
+                .as_bytes(),
+            control_commitments
+                .control_binding_commitment_sha256
+                .as_bytes(),
+            control_commitments
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+                .as_bytes(),
+            control_commitments
+                .classification_result_commitment_sha256
+                .as_bytes(),
+            competitive_event_kind_tag_v1(control_commitments.event_kind),
+            competitive_lifecycle_action_tag_v1(control_commitments.action),
+            control_commitments.event_identity_sha256.as_bytes(),
+            control_commitments
+                .match_identity_sha256
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes(),
+            control_commitments
+                .game_number
+                .map_or([0_u8, 0_u8], |value| [1_u8, value])
+                .as_slice(),
+            control_commitments.frame_id.to_be_bytes().as_slice(),
+            control_commitments.frame_sequence.to_be_bytes().as_slice(),
+            source_captured_at_unix_millis.to_be_bytes().as_slice(),
+            b"fresh_exact_enabled_control_one_click_pending_visible_postcondition",
+        ],
+    );
+    let commitments = MtgoPreparedCompetitiveLifecycleControlCommitmentsV1 {
+        lifecycle_authorization_commitment_sha256: authorization_commitments
+            .ratification_commitment_sha256,
+        control_binding_commitment_sha256: control_commitments.control_binding_commitment_sha256,
+        preparation_commitment_sha256,
+        event_kind: control_commitments.event_kind,
+        action: control_commitments.action,
+        event_identity_sha256: control_commitments.event_identity_sha256,
+        match_identity_sha256: control_commitments.match_identity_sha256,
+        game_number: control_commitments.game_number,
+        source_frame_id: control_commitments.frame_id,
+        source_frame_sequence: control_commitments.frame_sequence,
+        source_captured_at_unix_millis,
+    };
+    Ok(OpaqueMtgoPreparedCompetitiveLifecycleControlV1 {
+        authorization,
+        control,
+        pointer_target,
+        commitments,
+    })
+}
+
+pub fn execute_prepared_competitive_lifecycle_control_v1(
+    prepared: OpaqueMtgoPreparedCompetitiveLifecycleControlV1,
+) -> Result<OpaqueMtgoPendingCompetitiveLifecycleControlV1, String> {
+    reserve_input_gate_v3()?;
+    let input_sent_at_unix_millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis(),
+        Err(error) => {
+            release_unattempted_reservation_v3()?;
+            return Err(format!("system clock is before epoch: {error}"));
+        }
+    };
+    let prepared_commitments = prepared.commitments_v1();
+    if validate_preinput_capture_freshness_v3(
+        prepared_commitments.source_captured_at_unix_millis,
+        input_sent_at_unix_millis,
+    )
+    .is_err()
+    {
+        release_unattempted_reservation_v3()?;
+        return Err(
+            "the competitive lifecycle control capture is stale or future-dated".to_owned(),
+        );
+    }
+    halt_before_input_attempt_v3()?;
+    let cursor_parked_outside_client = send_exactly_one_left_click_v3(&prepared)?;
+    let input_receipt_sha256 = hash_parts_v2(
+        COMPETITIVE_LIFECYCLE_INPUT_RECEIPT_DOMAIN_V1,
+        &[
+            prepared_commitments
+                .preparation_commitment_sha256
+                .as_bytes(),
+            prepared_commitments
+                .lifecycle_authorization_commitment_sha256
+                .as_bytes(),
+            competitive_event_kind_tag_v1(prepared_commitments.event_kind),
+            competitive_lifecycle_action_tag_v1(prepared_commitments.action),
+            prepared_commitments
+                .source_frame_id
+                .to_be_bytes()
+                .as_slice(),
+            prepared_commitments
+                .source_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            input_sent_at_unix_millis.to_be_bytes().as_slice(),
+            &[u8::from(cursor_parked_outside_client)],
+            b"exactly_one_left_click_shared_gate_pending_visible_postcondition",
+        ],
+    );
+    set_pending_v3(&input_receipt_sha256)?;
+    let commitments = MtgoCompetitiveLifecycleInputReceiptCommitmentsV1 {
+        preparation_commitment_sha256: prepared_commitments.preparation_commitment_sha256,
+        lifecycle_authorization_commitment_sha256: prepared_commitments
+            .lifecycle_authorization_commitment_sha256,
+        input_receipt_sha256,
+        event_kind: prepared_commitments.event_kind,
+        action: prepared_commitments.action,
+        source_frame_id: prepared_commitments.source_frame_id,
+        source_frame_sequence: prepared_commitments.source_frame_sequence,
+        input_sent_at_unix_millis,
+        cursor_parked_outside_client,
+    };
+    Ok(OpaqueMtgoPendingCompetitiveLifecycleControlV1 {
+        prepared,
+        commitments,
+    })
+}
+
+pub fn confirm_pending_competitive_lifecycle_control_v1(
+    pending: OpaqueMtgoPendingCompetitiveLifecycleControlV1,
+    after: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+) -> Result<OpaqueMtgoConfirmedCompetitiveLifecycleControlV1, String> {
+    require_matching_pending_v3(&pending.commitments.input_receipt_sha256)?;
+    let OpaqueMtgoPendingCompetitiveLifecycleControlV1 {
+        prepared,
+        commitments: input,
+    } = pending;
+    let OpaqueMtgoPreparedCompetitiveLifecycleControlV1 {
+        authorization,
+        control,
+        pointer_target: _,
+        commitments: prepared_commitments,
+    } = prepared;
+    let visible_postcondition = match confirm_opaque_competitive_lifecycle_control_postcondition_v1(
+        control,
+        after,
+        &authorization.scope,
+        input.input_sent_at_unix_millis,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            halt_gate_v3()?;
+            return Err(format!(
+                "competitive lifecycle postcondition failed and the input gate is halted: {error}"
+            ));
+        }
+    };
+    let visible = visible_postcondition.commitments_v1();
+    if visible.control_binding_commitment_sha256
+        != prepared_commitments.control_binding_commitment_sha256
+        || visible.event_kind != prepared_commitments.event_kind
+        || visible.action != prepared_commitments.action
+        || visible.event_identity_sha256 != prepared_commitments.event_identity_sha256
+        || visible.match_identity_sha256 != prepared_commitments.match_identity_sha256
+        || visible.before_frame_id != prepared_commitments.source_frame_id
+        || visible.before_frame_sequence != prepared_commitments.source_frame_sequence
+        || visible.after_frame_sequence <= prepared_commitments.source_frame_sequence
+        || visible.after_captured_at_unix_millis <= input.input_sent_at_unix_millis
+    {
+        halt_gate_v3()?;
+        return Err(
+            "competitive lifecycle confirmation changed the exact action lineage and halted the input gate"
+                .to_owned(),
+        );
+    }
+    let confirmation_receipt_sha256 = hash_parts_v2(
+        COMPETITIVE_LIFECYCLE_CONFIRMATION_RECEIPT_DOMAIN_V1,
+        &[
+            input.input_receipt_sha256.as_bytes(),
+            prepared_commitments
+                .preparation_commitment_sha256
+                .as_bytes(),
+            prepared_commitments
+                .lifecycle_authorization_commitment_sha256
+                .as_bytes(),
+            visible.transition_commitment_sha256.as_bytes(),
+            competitive_event_kind_tag_v1(visible.event_kind),
+            competitive_lifecycle_action_tag_v1(visible.action),
+            visible.after_frame_id.to_be_bytes().as_slice(),
+            visible.after_frame_sequence.to_be_bytes().as_slice(),
+            visible
+                .after_captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
+            b"exact_action_visibly_confirmed_shared_gate_released",
+        ],
+    );
+    release_confirmed_pending_v3(&input.input_receipt_sha256)?;
+    Ok(OpaqueMtgoConfirmedCompetitiveLifecycleControlV1 {
+        _authorization: authorization,
+        _visible_postcondition: visible_postcondition,
+        commitments: MtgoConfirmedCompetitiveLifecycleControlCommitmentsV1 {
+            input_receipt_sha256: input.input_receipt_sha256,
+            preparation_commitment_sha256: prepared_commitments.preparation_commitment_sha256,
+            lifecycle_authorization_commitment_sha256: prepared_commitments
+                .lifecycle_authorization_commitment_sha256,
+            visible_transition: visible.clone(),
+            confirmation_receipt_sha256,
+            event_kind: visible.event_kind,
+            action: visible.action,
+            after_frame_id: visible.after_frame_id,
+            after_frame_sequence: visible.after_frame_sequence,
+            after_captured_at_unix_millis: visible.after_captured_at_unix_millis,
+        },
+    })
+}
+
+/// Starts the single-event coordinator only after an exact entry click has a
+/// strictly newer entered-waiting visible postcondition. The separately
+/// ratified lifecycle authority must name the same account, mode, evaluated
+/// profile, and admission. Production construction remains disabled while the
+/// entry and lifecycle ratification roots are empty.
+pub fn begin_competitive_event_runtime_after_entry_v1(
+    confirmed_entry: OpaqueMtgoConfirmedCompetitiveEntryV1,
+    lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+) -> Result<OpaqueMtgoCompetitiveEventRuntimeV1, String> {
+    let OpaqueMtgoConfirmedCompetitiveEntryV1 {
+        _authorization: spent_entry_authorization,
+        _visible_confirmation: visible_confirmation,
+        commitments: entry,
+    } = confirmed_entry;
+    let visible = visible_confirmation.commitments_v1();
+    let current_frame = visible_confirmation.into_after_frame_v1();
+    let current = current_frame.commitments_v1();
+    let lifecycle = current_frame.lifecycle_snapshot_v1();
+    let entry_ratification = spent_entry_authorization.commitments_v1();
+    let lifecycle_ratification = lifecycle_authorization.commitments_v1();
+    if current.phase != MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing
+        || lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing
+        || entry.event_kind != lifecycle_ratification.event_kind
+        || entry.event_kind != current.event_kind
+        || entry_ratification.event_kind != entry.event_kind
+        || entry.entry_ratification_commitment_sha256
+            != entry_ratification.ratification_commitment_sha256
+        || visible
+            .frame_transition
+            .after_lifecycle_snapshot_commitment_sha256
+            != current.lifecycle_snapshot_commitment_sha256
+        || visible.frame_transition.after_frame_id != current.frame_id
+        || visible.frame_transition.after_frame_sequence != current.frame_sequence
+        || visible.frame_transition.event_identity_sha256
+            != entry_ratification.event_identity_sha256
+        || lifecycle.event_identity_sha256_v1()
+            != Some(entry_ratification.event_identity_sha256.as_str())
+        || lifecycle_ratification.approved_account_alias_sha256
+            != entry_ratification.account_alias_sha256
+        || lifecycle_ratification.lifecycle_profile_commitment_sha256
+            != current.source_frame.profile_commitment_sha256
+        || lifecycle_ratification.lifecycle_profile_admission_commitment_sha256
+            != current.source_frame.profile_admission_commitment_sha256
+        || lifecycle_ratification.approved_account_alias_sha256
+            != current.source_frame.approved_account_alias_sha256
+    {
+        return Err(
+            "competitive event runtime entry, account, mode, profile, or visible postcondition changed"
+                .to_owned(),
+        );
+    }
+    let mut commitments = MtgoCompetitiveEventRuntimeCommitmentsV1 {
+        runtime_commitment_sha256: String::new(),
+        entry_confirmation_receipt_sha256: entry.confirmation_receipt_sha256,
+        entry_ratification_commitment_sha256: entry_ratification.ratification_commitment_sha256,
+        lifecycle_authorization_commitment_sha256: lifecycle_ratification
+            .ratification_commitment_sha256,
+        mode_authorization_commitment_sha256: lifecycle_ratification
+            .mode_authorization_commitment_sha256,
+        navigation_profile_commitment_sha256: lifecycle_ratification
+            .lifecycle_profile_commitment_sha256,
+        navigation_profile_admission_commitment_sha256: lifecycle_ratification
+            .lifecycle_profile_admission_commitment_sha256,
+        approved_account_alias_sha256: lifecycle_ratification.approved_account_alias_sha256,
+        bound_event_identity_sha256: entry_ratification.event_identity_sha256,
+        event_kind: entry.event_kind,
+        current_phase: current.phase,
+        current_lifecycle_snapshot_commitment_sha256: current.lifecycle_snapshot_commitment_sha256,
+        current_match_identity_sha256: lifecycle.match_identity_sha256_v1().map(str::to_owned),
+        current_game_number: lifecycle.game_number_v1(),
+        current_frame_id: current.frame_id,
+        current_frame_sequence: current.frame_sequence,
+        lifecycle_transition_count: 0,
+        confirmed_lifecycle_action_count: 0,
+        observed_lifecycle_advance_count: 0,
+        gameplay_lease_count: 0,
+        event_monitor_chain_commitment_sha256: None,
+        event_monitor_observation_count: 0,
+        terminal_event_record_confirmed: false,
+        closed_to_event_browser: false,
+    };
+    commitments.runtime_commitment_sha256 = competitive_event_runtime_commitment_v1(
+        COMPETITIVE_EVENT_RUNTIME_INITIAL_DOMAIN_V1,
+        None,
+        &commitments,
+        b"entered_waiting_after_exactly_one_confirmed_entry",
+    );
+    Ok(OpaqueMtgoCompetitiveEventRuntimeV1 {
+        _spent_entry_authorization: spent_entry_authorization,
+        lifecycle_authorization,
+        current_frame,
+        event_monitor: None,
+        commitments,
+    })
+}
+
+/// Consumes the event runtime and prepares one exact enabled lifecycle control
+/// from its current retained frame. Entry actions are impossible here. Closing
+/// an event also requires a terminal event-record monitor already attached.
+pub fn prepare_competitive_event_runtime_lifecycle_control_v1(
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    action: MtgoCompetitiveLifecycleActionV1,
+) -> Result<OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1, String> {
+    if runtime.commitments.closed_to_event_browser {
+        return Err("a closed competitive event runtime cannot prepare another control".to_owned());
+    }
+    if !is_non_entry_lifecycle_action_v1(action) {
+        return Err("competitive event runtime excludes all event-entry actions".to_owned());
+    }
+    if action == MtgoCompetitiveLifecycleActionV1::CloseCompletedEvent
+        && !runtime.commitments.terminal_event_record_confirmed
+    {
+        return Err(
+            "closing a competitive event requires its terminal visible event record".to_owned(),
+        );
+    }
+    let OpaqueMtgoCompetitiveEventRuntimeV1 {
+        _spent_entry_authorization,
+        lifecycle_authorization,
+        current_frame,
+        event_monitor,
+        commitments: prior,
+    } = runtime;
+    let control = crate::probe::bind_classified_navigation_frame_to_lifecycle_control_v1(
+        current_frame,
+        action,
+    )?;
+    let prepared =
+        prepare_ratified_competitive_lifecycle_control_v1(lifecycle_authorization, control)?;
+    let lifecycle = prepared.commitments_v1();
+    if lifecycle.event_kind != prior.event_kind
+        || lifecycle.action != action
+        || lifecycle.event_identity_sha256 != prior.bound_event_identity_sha256
+        || lifecycle.source_frame_sequence != prior.current_frame_sequence
+    {
+        return Err(
+            "prepared lifecycle control differs from the exact event runtime state".to_owned(),
+        );
+    }
+    let commitments = MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1 {
+        prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
+        lifecycle_preparation_commitment_sha256: lifecycle.preparation_commitment_sha256,
+        event_kind: lifecycle.event_kind,
+        action,
+        source_frame_sequence: lifecycle.source_frame_sequence,
+    };
+    Ok(OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1 {
+        _spent_entry_authorization,
+        prepared,
+        event_monitor,
+        prior,
+        commitments,
+    })
+}
+
+pub fn execute_prepared_competitive_event_lifecycle_control_v1(
+    prepared: OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1,
+) -> Result<OpaqueMtgoPendingCompetitiveEventLifecycleControlV1, String> {
+    let OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1 {
+        _spent_entry_authorization,
+        prepared,
+        event_monitor,
+        prior,
+        commitments: prepared_commitments,
+    } = prepared;
+    let pending = execute_prepared_competitive_lifecycle_control_v1(prepared)?;
+    let input = pending.commitments_v1();
+    if input.preparation_commitment_sha256
+        != prepared_commitments.lifecycle_preparation_commitment_sha256
+        || input.event_kind != prepared_commitments.event_kind
+        || input.action != prepared_commitments.action
+    {
+        halt_gate_v3()?;
+        return Err(
+            "event lifecycle input receipt differs from its exact preparation and halted the gate"
+                .to_owned(),
+        );
+    }
+    let commitments = MtgoPendingCompetitiveEventLifecycleControlCommitmentsV1 {
+        prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
+        lifecycle_input_receipt_sha256: input.input_receipt_sha256,
+        event_kind: input.event_kind,
+        action: input.action,
+        input_sent_at_unix_millis: input.input_sent_at_unix_millis,
+    };
+    Ok(OpaqueMtgoPendingCompetitiveEventLifecycleControlV1 {
+        _spent_entry_authorization,
+        pending,
+        event_monitor,
+        prior,
+        commitments,
+    })
+}
+
+pub fn confirm_pending_competitive_event_lifecycle_control_v1(
+    pending: OpaqueMtgoPendingCompetitiveEventLifecycleControlV1,
+    after: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+) -> Result<OpaqueMtgoCompetitiveEventRuntimeV1, String> {
+    let OpaqueMtgoPendingCompetitiveEventLifecycleControlV1 {
+        _spent_entry_authorization,
+        pending,
+        event_monitor,
+        prior,
+        commitments: event_input,
+    } = pending;
+    let confirmed = confirm_pending_competitive_lifecycle_control_v1(pending, after)?;
+    let OpaqueMtgoConfirmedCompetitiveLifecycleControlV1 {
+        _authorization: lifecycle_authorization,
+        _visible_postcondition: visible_postcondition,
+        commitments: confirmed,
+    } = confirmed;
+    let visible = visible_postcondition.commitments_v1();
+    let current_frame = visible_postcondition.into_after_frame_v1();
+    let current = current_frame.commitments_v1();
+    if event_input.prior_event_runtime_commitment_sha256 != prior.runtime_commitment_sha256
+        || event_input.lifecycle_input_receipt_sha256 != confirmed.input_receipt_sha256
+        || confirmed.event_kind != prior.event_kind
+        || confirmed.action != event_input.action
+        || visible.before_lifecycle_snapshot_commitment_sha256
+            != prior.current_lifecycle_snapshot_commitment_sha256
+        || visible.after_lifecycle_snapshot_commitment_sha256
+            != current.lifecycle_snapshot_commitment_sha256
+        || visible.event_identity_sha256 != prior.bound_event_identity_sha256
+    {
+        halt_gate_v3()?;
+        return Err(
+            "confirmed event lifecycle control changed the runtime lineage and halted the gate"
+                .to_owned(),
+        );
+    }
+    let commitments = advance_competitive_event_runtime_commitments_v1(
+        &prior,
+        &current_frame,
+        Some((
+            confirmed.action,
+            confirmed.confirmation_receipt_sha256.as_str(),
+        )),
+        None,
+        event_monitor.as_ref().map(|value| value.commitments_v1()),
+    )?;
+    Ok(OpaqueMtgoCompetitiveEventRuntimeV1 {
+        _spent_entry_authorization,
+        lifecycle_authorization,
+        current_frame,
+        event_monitor,
+        commitments,
+    })
+}
+
+/// Advances the coordinator for one exact server- or client-observed state
+/// change without emitting input. Both frames came through the same admitted
+/// classifier runtime, and the black-box lifecycle state machine revalidates
+/// the transition over the already checked snapshots.
+pub fn advance_competitive_event_runtime_observed_v1(
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    observed: MtgoObservedCompetitiveLifecycleAdvanceV1,
+    next: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+) -> Result<OpaqueMtgoCompetitiveEventRuntimeV1, String> {
+    if runtime.commitments.closed_to_event_browser {
+        return Err("a closed competitive event runtime cannot advance".to_owned());
+    }
+    require_same_competitive_navigation_lineage_v1(&runtime.current_frame, &next)?;
+    let transition = validate_checked_observed_competitive_lifecycle_advance_v1(
+        runtime.current_frame.lifecycle_snapshot_v1(),
+        observed,
+        next.lifecycle_snapshot_v1(),
+    )
+    .map_err(|error| format!("validate observed competitive lifecycle advance: {error}"))?;
+    if transition.source_snapshot_commitment_sha256()
+        != runtime
+            .commitments
+            .current_lifecycle_snapshot_commitment_sha256
+        || transition.next_snapshot_commitment_sha256()
+            != next.commitments_v1().lifecycle_snapshot_commitment_sha256
+    {
+        return Err(
+            "observed lifecycle transition changed the runtime snapshot lineage".to_owned(),
+        );
+    }
+    let observed_receipt_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+        &[
+            runtime.commitments.runtime_commitment_sha256.as_bytes(),
+            transition.source_snapshot_commitment_sha256().as_bytes(),
+            transition.next_snapshot_commitment_sha256().as_bytes(),
+            observed_lifecycle_advance_tag_v1(observed),
+            b"same_classifier_lineage_observation_only",
+        ],
+    );
+    let commitments = advance_competitive_event_runtime_commitments_v1(
+        &runtime.commitments,
+        &next,
+        None,
+        Some((observed, observed_receipt_sha256.as_str())),
+        runtime
+            .event_monitor
+            .as_ref()
+            .map(|value| value.commitments_v1()),
+    )?;
+    Ok(OpaqueMtgoCompetitiveEventRuntimeV1 {
+        _spent_entry_authorization: runtime._spent_entry_authorization,
+        lifecycle_authorization: runtime.lifecycle_authorization,
+        current_frame: next,
+        event_monitor: runtime.event_monitor,
+        commitments,
+    })
+}
+
+pub fn attach_competitive_event_monitor_to_runtime_v1(
+    mut runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    monitor: OpaqueMtgoCompetitiveEventMonitorV1,
+) -> Result<OpaqueMtgoCompetitiveEventRuntimeV1, String> {
+    if runtime.event_monitor.is_some() {
+        return Err("competitive event runtime already owns an event monitor".to_owned());
+    }
+    let monitor_commitments = monitor.commitments_v1();
+    validate_event_monitor_against_runtime_v1(&runtime.commitments, &monitor_commitments)?;
+    runtime.event_monitor = Some(monitor);
+    apply_event_monitor_to_runtime_commitments_v1(
+        &mut runtime.commitments,
+        &monitor_commitments,
+        b"attached_exact_event_monitor",
+    );
+    Ok(runtime)
+}
+
+pub fn advance_competitive_event_monitor_in_runtime_v1(
+    mut runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    next: crate::probe::OpaqueMtgoClassifiedCompetitiveEventRecordV1,
+) -> Result<OpaqueMtgoCompetitiveEventRuntimeV1, String> {
+    let monitor = runtime
+        .event_monitor
+        .take()
+        .ok_or("competitive event runtime has no attached event monitor")?;
+    let monitor = advance_checked_untrusted_competitive_event_monitor_v1(monitor, next)?;
+    let monitor_commitments = monitor.commitments_v1();
+    validate_event_monitor_against_runtime_v1(&runtime.commitments, &monitor_commitments)?;
+    runtime.event_monitor = Some(monitor);
+    apply_event_monitor_to_runtime_commitments_v1(
+        &mut runtime.commitments,
+        &monitor_commitments,
+        b"advanced_exact_event_monitor",
+    );
+    Ok(runtime)
+}
+
+/// Withholds the event coordinator while the existing all-family exact-game
+/// session is used. The lease and the returned game session must later be
+/// reunited before any lifecycle or result transition can continue.
+pub fn checkout_competitive_event_gameplay_session_v1(
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+) -> Result<
+    (
+        OpaqueMtgoCompetitiveEventGameplayLeaseV1,
+        OpaqueMtgoCompetitiveGestureGameSessionV1,
+    ),
+    String,
+> {
+    validate_game_session_against_event_runtime_v1(&runtime, &session)?;
+    let game = session.commitments_v1();
+    let match_identity_sha256 = runtime
+        .commitments
+        .current_match_identity_sha256
+        .clone()
+        .ok_or("gameplay checkout requires an exact current match identity")?;
+    let gameplay_lease_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_GAMEPLAY_LEASE_DOMAIN_V1,
+        &[
+            runtime.commitments.runtime_commitment_sha256.as_bytes(),
+            game.session_commitment_sha256.as_bytes(),
+            runtime.commitments.bound_event_identity_sha256.as_bytes(),
+            match_identity_sha256.as_bytes(),
+            game.game_number.to_be_bytes().as_slice(),
+            runtime
+                .commitments
+                .current_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            game.confirmed_action_count.to_be_bytes().as_slice(),
+            b"move_only_gameplay_lease_event_runtime_withheld",
+        ],
+    );
+    let commitments = MtgoCompetitiveEventGameplayLeaseCommitmentsV1 {
+        event_runtime_commitment_sha256: runtime.commitments.runtime_commitment_sha256.clone(),
+        initial_game_session_commitment_sha256: game.session_commitment_sha256,
+        gameplay_lease_commitment_sha256,
+        event_kind: runtime.commitments.event_kind,
+        event_identity_sha256: runtime.commitments.bound_event_identity_sha256.clone(),
+        match_identity_sha256,
+        game_number: game.game_number,
+        checkout_frame_sequence: runtime.commitments.current_frame_sequence,
+        initial_confirmed_action_count: game.confirmed_action_count,
+    };
+    Ok((
+        OpaqueMtgoCompetitiveEventGameplayLeaseV1 {
+            runtime,
+            commitments,
+        },
+        session,
+    ))
+}
+
+pub fn return_competitive_event_gameplay_session_v1(
+    lease: OpaqueMtgoCompetitiveEventGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+) -> Result<OpaqueMtgoCompetitiveEventRuntimeV1, String> {
+    validate_game_session_against_event_runtime_v1(&lease.runtime, &session)?;
+    let game = session.commitments_v1();
+    if lease.commitments.event_runtime_commitment_sha256
+        != lease.runtime.commitments.runtime_commitment_sha256
+        || lease.commitments.event_kind != game.event_kind
+        || lease.commitments.game_number != game.game_number
+        || game.confirmed_action_count < lease.commitments.initial_confirmed_action_count
+        || game.last_confirmed_frame_sequence < lease.commitments.checkout_frame_sequence
+        || game.last_confirmed_frame_sequence > game.valid_through_frame_sequence
+    {
+        return Err("returned gameplay session differs from its exact event lease".to_owned());
+    }
+    let return_receipt_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_GAMEPLAY_RETURN_DOMAIN_V1,
+        &[
+            lease
+                .commitments
+                .gameplay_lease_commitment_sha256
+                .as_bytes(),
+            lease
+                .commitments
+                .initial_game_session_commitment_sha256
+                .as_bytes(),
+            game.session_commitment_sha256.as_bytes(),
+            game.last_confirmed_frame_sequence.to_be_bytes().as_slice(),
+            game.confirmed_action_count.to_be_bytes().as_slice(),
+            b"same_exact_game_session_returned_event_runtime_released",
+        ],
+    );
+    let mut runtime = lease.runtime;
+    runtime.commitments.gameplay_lease_count = runtime
+        .commitments
+        .gameplay_lease_count
+        .checked_add(1)
+        .ok_or("competitive event gameplay lease count overflow")?;
+    runtime.commitments.runtime_commitment_sha256 = competitive_event_runtime_commitment_v1(
+        COMPETITIVE_EVENT_GAMEPLAY_RETURN_DOMAIN_V1,
+        Some(lease.commitments.event_runtime_commitment_sha256.as_str()),
+        &runtime.commitments,
+        return_receipt_sha256.as_bytes(),
+    );
+    Ok(runtime)
 }
 
 /// Reacquires and reclassifies the exact owner-reviewed League or Challenge
@@ -4858,6 +5952,353 @@ pub fn confirm_pending_pregame_keep_to_first_main_v3(
     }
 }
 
+fn ratify_competitive_lifecycle_authorization_with_commitment_v1(
+    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    profile: &AdmittedMtgoCompetitiveNavigationProfileV1,
+    visible_account_alias: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    expected_ratification_commitment_sha256: Option<&str>,
+) -> Result<RatifiedMtgoCompetitiveLifecycleAuthorizationV1, String> {
+    let candidate = review_competitive_lifecycle_ratification_candidate_from_correspondence_v1(
+        &correspondence,
+        profile,
+        &visible_account_alias,
+        event_kind,
+    )?;
+    let expected = expected_ratification_commitment_sha256
+        .ok_or("the exact competitive lifecycle authorization is not ratified in this build")?;
+    if candidate.ratification_commitment_sha256 != expected {
+        return Err(
+            "competitive lifecycle candidate differs from the production ratification root"
+                .to_owned(),
+        );
+    }
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(event_kind)
+        .map_err(|error| format!("competitive lifecycle ratified scope: {error}"))?;
+    Ok(RatifiedMtgoCompetitiveLifecycleAuthorizationV1 {
+        _permission_correspondence: correspondence,
+        scope,
+        commitments: candidate,
+    })
+}
+
+fn competitive_lifecycle_allowed_actions_commitment_v1() -> String {
+    hash_parts_v2(
+        COMPETITIVE_LIFECYCLE_ACTION_SET_DOMAIN_V1,
+        &[
+            competitive_lifecycle_action_tag_v1(MtgoCompetitiveLifecycleActionV1::AcceptPairing),
+            competitive_lifecycle_action_tag_v1(MtgoCompetitiveLifecycleActionV1::SubmitSideboard),
+            competitive_lifecycle_action_tag_v1(
+                MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch,
+            ),
+            competitive_lifecycle_action_tag_v1(MtgoCompetitiveLifecycleActionV1::ResumeMatch),
+            competitive_lifecycle_action_tag_v1(
+                MtgoCompetitiveLifecycleActionV1::CloseCompletedEvent,
+            ),
+            b"canonical_order_exactly_five_no_entry_actions",
+        ],
+    )
+}
+
+fn is_non_entry_lifecycle_action_v1(action: MtgoCompetitiveLifecycleActionV1) -> bool {
+    matches!(
+        action,
+        MtgoCompetitiveLifecycleActionV1::AcceptPairing
+            | MtgoCompetitiveLifecycleActionV1::SubmitSideboard
+            | MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch
+            | MtgoCompetitiveLifecycleActionV1::ResumeMatch
+            | MtgoCompetitiveLifecycleActionV1::CloseCompletedEvent
+    )
+}
+
+fn require_same_competitive_navigation_lineage_v1(
+    current: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    next: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+) -> Result<(), String> {
+    let current = current.commitments_v1();
+    let next = next.commitments_v1();
+    if current.source_frame.profile_commitment_sha256 != next.source_frame.profile_commitment_sha256
+        || current.source_frame.profile_admission_commitment_sha256
+            != next.source_frame.profile_admission_commitment_sha256
+        || current.source_frame.approved_account_alias_sha256
+            != next.source_frame.approved_account_alias_sha256
+        || current.runtime_identity_commitment_sha256 != next.runtime_identity_commitment_sha256
+        || current.event_kind != next.event_kind
+        || next.frame_id == current.frame_id
+        || next.frame_sequence <= current.frame_sequence
+    {
+        return Err(
+            "competitive event navigation advance changed profile, account, runtime, mode, or frame order"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn advance_competitive_event_runtime_commitments_v1(
+    prior: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    current_frame: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    confirmed_action: Option<(MtgoCompetitiveLifecycleActionV1, &str)>,
+    observed_advance: Option<(MtgoObservedCompetitiveLifecycleAdvanceV1, &str)>,
+    monitor: Option<MtgoCompetitiveEventMonitorCommitmentsV1>,
+) -> Result<MtgoCompetitiveEventRuntimeCommitmentsV1, String> {
+    if confirmed_action.is_some() == observed_advance.is_some() {
+        return Err(
+            "competitive event runtime advance requires exactly one action or observation receipt"
+                .to_owned(),
+        );
+    }
+    let current = current_frame.commitments_v1();
+    let lifecycle = current_frame.lifecycle_snapshot_v1();
+    if current.event_kind != prior.event_kind
+        || current.source_frame.profile_commitment_sha256
+            != prior.navigation_profile_commitment_sha256
+        || current.source_frame.profile_admission_commitment_sha256
+            != prior.navigation_profile_admission_commitment_sha256
+        || current.source_frame.approved_account_alias_sha256 != prior.approved_account_alias_sha256
+        || (current.phase != MtgoCompetitiveLifecyclePhaseV1::EventBrowser
+            && lifecycle.event_identity_sha256_v1()
+                != Some(prior.bound_event_identity_sha256.as_str()))
+        || current.frame_sequence <= prior.current_frame_sequence
+    {
+        return Err(
+            "competitive event runtime next frame changed its exact event lineage".to_owned(),
+        );
+    }
+    let mut next = prior.clone();
+    next.current_phase = current.phase;
+    next.current_lifecycle_snapshot_commitment_sha256 =
+        current.lifecycle_snapshot_commitment_sha256;
+    next.current_match_identity_sha256 = lifecycle.match_identity_sha256_v1().map(str::to_owned);
+    next.current_game_number = lifecycle.game_number_v1();
+    next.current_frame_id = current.frame_id;
+    next.current_frame_sequence = current.frame_sequence;
+    next.lifecycle_transition_count = prior
+        .lifecycle_transition_count
+        .checked_add(1)
+        .ok_or("competitive event lifecycle transition count overflow")?;
+    let (transition_receipt, transition_label): (&str, &[u8]) =
+        if let Some((action, receipt)) = confirmed_action {
+            next.confirmed_lifecycle_action_count = prior
+                .confirmed_lifecycle_action_count
+                .checked_add(1)
+                .ok_or("competitive event lifecycle action count overflow")?;
+            if action == MtgoCompetitiveLifecycleActionV1::CloseCompletedEvent {
+                if !prior.terminal_event_record_confirmed
+                    || current.phase != MtgoCompetitiveLifecyclePhaseV1::EventBrowser
+                {
+                    return Err(
+                        "event closure requires the terminal record and visible Event Browser"
+                            .to_owned(),
+                    );
+                }
+                next.closed_to_event_browser = true;
+            }
+            (receipt, competitive_lifecycle_action_tag_v1(action))
+        } else if let Some((observed, receipt)) = observed_advance {
+            next.observed_lifecycle_advance_count = prior
+                .observed_lifecycle_advance_count
+                .checked_add(1)
+                .ok_or("competitive event observed advance count overflow")?;
+            (receipt, observed_lifecycle_advance_tag_v1(observed))
+        } else {
+            unreachable!()
+        };
+    if let Some(monitor) = monitor {
+        next.event_monitor_chain_commitment_sha256 = Some(monitor.monitor_chain_commitment_sha256);
+        next.event_monitor_observation_count = monitor.observation_count;
+        next.terminal_event_record_confirmed = monitor.terminal;
+    }
+    next.runtime_commitment_sha256 = competitive_event_runtime_commitment_v1(
+        COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+        Some(prior.runtime_commitment_sha256.as_str()),
+        &next,
+        &[transition_label, transition_receipt.as_bytes()].concat(),
+    );
+    Ok(next)
+}
+
+fn validate_event_monitor_against_runtime_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    monitor: &MtgoCompetitiveEventMonitorCommitmentsV1,
+) -> Result<(), String> {
+    if monitor.navigation_profile_commitment_sha256 != runtime.navigation_profile_commitment_sha256
+        || monitor.navigation_profile_admission_commitment_sha256
+            != runtime.navigation_profile_admission_commitment_sha256
+        || monitor.approved_account_alias_sha256 != runtime.approved_account_alias_sha256
+        || monitor.event_identity_sha256 != runtime.bound_event_identity_sha256
+        || monitor.event_kind != runtime.event_kind
+        || monitor.last_frame_sequence < runtime.current_frame_sequence
+    {
+        return Err(
+            "competitive event monitor differs from the exact runtime event or is stale".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn apply_event_monitor_to_runtime_commitments_v1(
+    runtime: &mut MtgoCompetitiveEventRuntimeCommitmentsV1,
+    monitor: &MtgoCompetitiveEventMonitorCommitmentsV1,
+    label: &[u8],
+) {
+    let prior_runtime_commitment_sha256 = runtime.runtime_commitment_sha256.clone();
+    runtime.event_monitor_chain_commitment_sha256 =
+        Some(monitor.monitor_chain_commitment_sha256.clone());
+    runtime.event_monitor_observation_count = monitor.observation_count;
+    runtime.terminal_event_record_confirmed = monitor.terminal;
+    runtime.runtime_commitment_sha256 = competitive_event_runtime_commitment_v1(
+        COMPETITIVE_EVENT_RUNTIME_MONITOR_DOMAIN_V1,
+        Some(prior_runtime_commitment_sha256.as_str()),
+        runtime,
+        &[label, monitor.monitor_chain_commitment_sha256.as_bytes()].concat(),
+    );
+}
+
+fn validate_game_session_against_event_runtime_v1(
+    runtime: &OpaqueMtgoCompetitiveEventRuntimeV1,
+    session: &OpaqueMtgoCompetitiveGestureGameSessionV1,
+) -> Result<(), String> {
+    let game = session.commitments_v1();
+    let gameplay = &session.launch.pass_match_launch.authorization;
+    if runtime.commitments.closed_to_event_browser
+        || runtime.commitments.current_phase != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+        || game.event_kind != runtime.commitments.event_kind
+        || game.mode_authorization_commitment_sha256
+            != runtime.commitments.mode_authorization_commitment_sha256
+        || gameplay.account_alias_sha256 != runtime.commitments.approved_account_alias_sha256
+        || gameplay.event_identity_sha256 != runtime.commitments.bound_event_identity_sha256
+        || runtime.commitments.current_match_identity_sha256.as_deref()
+            != Some(gameplay.match_identity_sha256.as_str())
+        || runtime.commitments.current_game_number != Some(game.game_number)
+        || gameplay.game_number != game.game_number
+        || game.valid_from_frame_sequence < runtime.commitments.current_frame_sequence
+        || game.valid_from_frame_sequence > game.valid_through_frame_sequence
+    {
+        return Err(
+            "competitive game session differs from the current exact event, match, game, account, or frame lifetime"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn competitive_event_runtime_commitment_v1(
+    domain: &[u8],
+    prior_runtime_commitment_sha256: Option<&str>,
+    value: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    receipt: &[u8],
+) -> String {
+    hash_parts_v2(
+        domain,
+        &[
+            prior_runtime_commitment_sha256.unwrap_or("").as_bytes(),
+            value.entry_confirmation_receipt_sha256.as_bytes(),
+            value.entry_ratification_commitment_sha256.as_bytes(),
+            value.lifecycle_authorization_commitment_sha256.as_bytes(),
+            value.mode_authorization_commitment_sha256.as_bytes(),
+            value.navigation_profile_commitment_sha256.as_bytes(),
+            value
+                .navigation_profile_admission_commitment_sha256
+                .as_bytes(),
+            value.approved_account_alias_sha256.as_bytes(),
+            value.bound_event_identity_sha256.as_bytes(),
+            competitive_event_kind_tag_v1(value.event_kind),
+            competitive_lifecycle_phase_tag_v1(value.current_phase),
+            value
+                .current_lifecycle_snapshot_commitment_sha256
+                .as_bytes(),
+            value
+                .current_match_identity_sha256
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes(),
+            value
+                .current_game_number
+                .map_or([0_u8, 0_u8], |game| [1_u8, game])
+                .as_slice(),
+            value.current_frame_id.to_be_bytes().as_slice(),
+            value.current_frame_sequence.to_be_bytes().as_slice(),
+            value.lifecycle_transition_count.to_be_bytes().as_slice(),
+            value
+                .confirmed_lifecycle_action_count
+                .to_be_bytes()
+                .as_slice(),
+            value
+                .observed_lifecycle_advance_count
+                .to_be_bytes()
+                .as_slice(),
+            value.gameplay_lease_count.to_be_bytes().as_slice(),
+            value
+                .event_monitor_chain_commitment_sha256
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes(),
+            value
+                .event_monitor_observation_count
+                .to_be_bytes()
+                .as_slice(),
+            &[
+                u8::from(value.terminal_event_record_confirmed),
+                u8::from(value.closed_to_event_browser),
+            ],
+            receipt,
+            b"one_exact_event_move_only_no_reentry_no_additional_spending",
+        ],
+    )
+}
+
+fn competitive_lifecycle_phase_tag_v1(phase: MtgoCompetitiveLifecyclePhaseV1) -> &'static [u8] {
+    match phase {
+        MtgoCompetitiveLifecyclePhaseV1::EventBrowser => b"event_browser",
+        MtgoCompetitiveLifecyclePhaseV1::EntryReview => b"entry_review",
+        MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing => b"entered_waiting_for_pairing",
+        MtgoCompetitiveLifecyclePhaseV1::PairingReady => b"pairing_ready",
+        MtgoCompetitiveLifecyclePhaseV1::MatchInProgress => b"match_in_progress",
+        MtgoCompetitiveLifecyclePhaseV1::Sideboarding => b"sideboarding",
+        MtgoCompetitiveLifecyclePhaseV1::MatchComplete => b"match_complete",
+        MtgoCompetitiveLifecyclePhaseV1::EventComplete => b"event_complete",
+        MtgoCompetitiveLifecyclePhaseV1::Reconnect => b"reconnect",
+    }
+}
+
+fn observed_lifecycle_advance_tag_v1(
+    observed: MtgoObservedCompetitiveLifecycleAdvanceV1,
+) -> &'static [u8] {
+    match observed {
+        MtgoObservedCompetitiveLifecycleAdvanceV1::PairingPosted => b"pairing_posted",
+        MtgoObservedCompetitiveLifecycleAdvanceV1::GameEndedForSideboarding => {
+            b"game_ended_for_sideboarding"
+        }
+        MtgoObservedCompetitiveLifecycleAdvanceV1::MatchEnded => b"match_ended",
+        MtgoObservedCompetitiveLifecycleAdvanceV1::EventEnded => b"event_ended",
+        MtgoObservedCompetitiveLifecycleAdvanceV1::ConnectionInterrupted => {
+            b"connection_interrupted"
+        }
+    }
+}
+
+fn competitive_event_kind_tag_v1(event_kind: MtgoCompetitiveEventKindV1) -> &'static [u8] {
+    match event_kind {
+        MtgoCompetitiveEventKindV1::League => b"league",
+        MtgoCompetitiveEventKindV1::Challenge => b"challenge",
+    }
+}
+
+fn competitive_lifecycle_action_tag_v1(action: MtgoCompetitiveLifecycleActionV1) -> &'static [u8] {
+    match action {
+        MtgoCompetitiveLifecycleActionV1::OpenEntryReview => b"open_entry_review",
+        MtgoCompetitiveLifecycleActionV1::CancelEntry => b"cancel_entry",
+        MtgoCompetitiveLifecycleActionV1::ConfirmEntry => b"confirm_entry",
+        MtgoCompetitiveLifecycleActionV1::AcceptPairing => b"accept_pairing",
+        MtgoCompetitiveLifecycleActionV1::SubmitSideboard => b"submit_sideboard_no_changes",
+        MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch => b"continue_after_match",
+        MtgoCompetitiveLifecycleActionV1::ResumeMatch => b"resume_match",
+        MtgoCompetitiveLifecycleActionV1::CloseCompletedEvent => b"close_completed_event",
+    }
+}
+
 fn validate_private_match_authorization_v3(
     authorization: &MtgoAuthorizationScopeV1,
     visible_account_alias: &str,
@@ -6431,6 +7872,44 @@ impl VerifiedPointerTargetV3 for OpaqueMtgoPreparedCompetitiveDuelPassV1 {
 }
 
 impl VerifiedPointerTargetV3 for OpaqueMtgoPreparedCompetitiveEntryV1 {
+    fn hwnd_v3(&self) -> u64 {
+        self.pointer_target.hwnd
+    }
+
+    fn process_id_v3(&self) -> u32 {
+        self.pointer_target.process_id
+    }
+
+    fn process_start_filetime_100ns_v3(&self) -> u64 {
+        self.pointer_target.process_start_filetime_100ns
+    }
+
+    fn dpi_v3(&self) -> u32 {
+        self.pointer_target.dpi
+    }
+
+    fn client_rect_desktop_px_v3(&self) -> &crate::SignedRectV1 {
+        &self.pointer_target.client_rect_desktop_px
+    }
+
+    fn target_x_desktop_px_v3(&self) -> i32 {
+        self.pointer_target.target_x_desktop_px
+    }
+
+    fn target_y_desktop_px_v3(&self) -> i32 {
+        self.pointer_target.target_y_desktop_px
+    }
+
+    fn park_x_desktop_px_v3(&self) -> i32 {
+        self.pointer_target.park_x_desktop_px
+    }
+
+    fn park_y_desktop_px_v3(&self) -> i32 {
+        self.pointer_target.park_y_desktop_px
+    }
+}
+
+impl VerifiedPointerTargetV3 for OpaqueMtgoPreparedCompetitiveLifecycleControlV1 {
     fn hwnd_v3(&self) -> u64 {
         self.pointer_target.hwnd
     }
@@ -9527,6 +11006,119 @@ mod tests {
         assert_ne!(
             baseline,
             input_receipt_commitment_v3(&prepared, &different_permission, 1_100, true)
+        );
+    }
+
+    #[test]
+    fn competitive_lifecycle_input_stays_unratified_and_excludes_entry_actions() {
+        assert_eq!(
+            RATIFIED_COMPETITIVE_LIFECYCLE_AUTHORIZATION_COMMITMENT_V1,
+            None
+        );
+
+        let allowed = [
+            MtgoCompetitiveLifecycleActionV1::AcceptPairing,
+            MtgoCompetitiveLifecycleActionV1::SubmitSideboard,
+            MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch,
+            MtgoCompetitiveLifecycleActionV1::ResumeMatch,
+            MtgoCompetitiveLifecycleActionV1::CloseCompletedEvent,
+        ];
+        assert!(allowed.into_iter().all(is_non_entry_lifecycle_action_v1));
+        assert!(!is_non_entry_lifecycle_action_v1(
+            MtgoCompetitiveLifecycleActionV1::OpenEntryReview
+        ));
+        assert!(!is_non_entry_lifecycle_action_v1(
+            MtgoCompetitiveLifecycleActionV1::CancelEntry
+        ));
+        assert!(!is_non_entry_lifecycle_action_v1(
+            MtgoCompetitiveLifecycleActionV1::ConfirmEntry
+        ));
+
+        let commitment = competitive_lifecycle_allowed_actions_commitment_v1();
+        assert_eq!(commitment.len(), 64);
+        assert_eq!(
+            commitment,
+            competitive_lifecycle_allowed_actions_commitment_v1()
+        );
+    }
+
+    #[test]
+    fn competitive_event_runtime_commitment_binds_mode_state_monitor_and_counts() {
+        let mut state = MtgoCompetitiveEventRuntimeCommitmentsV1 {
+            runtime_commitment_sha256: String::new(),
+            entry_confirmation_receipt_sha256: "1".repeat(64),
+            entry_ratification_commitment_sha256: "2".repeat(64),
+            lifecycle_authorization_commitment_sha256: "3".repeat(64),
+            mode_authorization_commitment_sha256: "4".repeat(64),
+            navigation_profile_commitment_sha256: "5".repeat(64),
+            navigation_profile_admission_commitment_sha256: "6".repeat(64),
+            approved_account_alias_sha256: "7".repeat(64),
+            bound_event_identity_sha256: "8".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            current_phase: MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            current_lifecycle_snapshot_commitment_sha256: "9".repeat(64),
+            current_match_identity_sha256: Some("a".repeat(64)),
+            current_game_number: Some(1),
+            current_frame_id: 10,
+            current_frame_sequence: 20,
+            lifecycle_transition_count: 3,
+            confirmed_lifecycle_action_count: 1,
+            observed_lifecycle_advance_count: 2,
+            gameplay_lease_count: 0,
+            event_monitor_chain_commitment_sha256: Some("b".repeat(64)),
+            event_monitor_observation_count: 4,
+            terminal_event_record_confirmed: false,
+            closed_to_event_browser: false,
+        };
+        let prior = "c".repeat(64);
+        let baseline = competitive_event_runtime_commitment_v1(
+            COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+            Some(&prior),
+            &state,
+            b"transition",
+        );
+        assert_eq!(baseline.len(), 64);
+        assert_eq!(
+            baseline,
+            competitive_event_runtime_commitment_v1(
+                COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+                Some(&prior),
+                &state,
+                b"transition",
+            )
+        );
+
+        state.event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        assert_ne!(
+            baseline,
+            competitive_event_runtime_commitment_v1(
+                COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+                Some(&prior),
+                &state,
+                b"transition",
+            )
+        );
+        state.event_kind = MtgoCompetitiveEventKindV1::League;
+        state.gameplay_lease_count = 1;
+        assert_ne!(
+            baseline,
+            competitive_event_runtime_commitment_v1(
+                COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+                Some(&prior),
+                &state,
+                b"transition",
+            )
+        );
+        state.gameplay_lease_count = 0;
+        state.terminal_event_record_confirmed = true;
+        assert_ne!(
+            baseline,
+            competitive_event_runtime_commitment_v1(
+                COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+                Some(&prior),
+                &state,
+                b"transition",
+            )
         );
     }
 }

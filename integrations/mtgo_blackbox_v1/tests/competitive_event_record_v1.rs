@@ -7,11 +7,30 @@ fn digest(byte: char) -> String {
 fn lifecycle_facts(phase: MtgoCompetitiveLifecyclePhaseV1) -> Vec<MtgoLifecycleVisibleFactV1> {
     use MtgoLifecycleVisibleFactKindV1::*;
     let kinds: &[MtgoLifecycleVisibleFactKindV1] = match phase {
+        MtgoCompetitiveLifecyclePhaseV1::EventBrowser => &[EventBrowserVisible],
+        MtgoCompetitiveLifecyclePhaseV1::EntryReview => &[EntryReviewVisible, EntryTermsVisible],
         MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing => &[EnteredEventVisible],
-        MtgoCompetitiveLifecyclePhaseV1::PairingReady => &[PairingVisible],
-        MtgoCompetitiveLifecyclePhaseV1::MatchComplete => &[MatchResultVisible],
-        MtgoCompetitiveLifecyclePhaseV1::EventComplete => &[EventResultVisible],
-        _ => &[EventBrowserVisible],
+        MtgoCompetitiveLifecyclePhaseV1::PairingReady => {
+            &[PairingVisible, PairingAcceptControlEnabled]
+        }
+        MtgoCompetitiveLifecyclePhaseV1::MatchInProgress => {
+            &[MatchSurfaceVisible, LocalClockVisible, OpponentClockVisible]
+        }
+        MtgoCompetitiveLifecyclePhaseV1::Sideboarding => &[
+            SideboardSurfaceVisible,
+            SideboardTimerVisible,
+            SideboardNoChangesConfirmed,
+            SideboardSubmitControlEnabled,
+        ],
+        MtgoCompetitiveLifecyclePhaseV1::MatchComplete => {
+            &[MatchResultVisible, MatchContinueControlEnabled]
+        }
+        MtgoCompetitiveLifecyclePhaseV1::EventComplete => {
+            &[EventResultVisible, EventCloseControlEnabled]
+        }
+        MtgoCompetitiveLifecyclePhaseV1::Reconnect => {
+            &[ReconnectVisible, ReconnectResumeControlEnabled]
+        }
     };
     kinds
         .iter()
@@ -39,7 +58,10 @@ fn lifecycle(
     let match_related = matches!(
         phase,
         MtgoCompetitiveLifecyclePhaseV1::PairingReady
+            | MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+            | MtgoCompetitiveLifecyclePhaseV1::Sideboarding
             | MtgoCompetitiveLifecyclePhaseV1::MatchComplete
+            | MtgoCompetitiveLifecyclePhaseV1::Reconnect
     );
     validate_visible_competitive_lifecycle_snapshot_v1(MtgoVisibleCompetitiveLifecycleSnapshotV1 {
         schema_version: MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
@@ -57,7 +79,13 @@ fn lifecycle(
         },
         event_identity_sha256: Some(digest('b')),
         match_identity_sha256: match_related.then(|| digest('c')),
-        game_number: None,
+        game_number: matches!(
+            phase,
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+                | MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+                | MtgoCompetitiveLifecyclePhaseV1::Reconnect
+        )
+        .then_some(1),
         entry_terms: None,
         visible_state_complete: true,
         facts: lifecycle_facts(phase),

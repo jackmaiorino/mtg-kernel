@@ -973,6 +973,7 @@ fn error(code: &'static str, message: impl Into<String>) -> MtgoContractErrorV1 
 mod tests {
     use super::*;
     use crate::{
+        canonical_competitive_lifecycle_slices_v1,
         check_untrusted_competitive_navigation_runtime_profile_v1,
         checked_untrusted_competitive_navigation_source_for_test_v1,
         MtgoCompetitiveEventCompletionV1, MtgoCompetitiveEventRecordVisibleFactKindV1,
@@ -1012,14 +1013,7 @@ mod tests {
                 canonical_pixel_format: "bgra8_unorm_top_down_tightly_packed_v1".to_owned(),
                 classifier_binary_sha256: digest('5'),
                 classifier_assets_manifest_sha256: digest('6'),
-                supported_slices: vec![
-                    crate::MtgoCompetitiveNavigationSliceV1::LeagueEventBrowser,
-                    crate::MtgoCompetitiveNavigationSliceV1::LeagueEntryReview,
-                    crate::MtgoCompetitiveNavigationSliceV1::LeagueEnteredWaitingForPairing,
-                    crate::MtgoCompetitiveNavigationSliceV1::ChallengeEventBrowser,
-                    crate::MtgoCompetitiveNavigationSliceV1::ChallengeEntryReview,
-                    crate::MtgoCompetitiveNavigationSliceV1::ChallengeEnteredWaitingForPairing,
-                ],
+                supported_slices: canonical_competitive_lifecycle_slices_v1().to_vec(),
             },
         )
         .unwrap()
@@ -1031,19 +1025,22 @@ mod tests {
         phase: MtgoCompetitiveLifecyclePhaseV1,
         frame_id: u64,
     ) -> MtgoVisibleCompetitiveLifecycleSnapshotV1 {
-        let fact_kind = match phase {
+        let fact_kinds: &[MtgoLifecycleVisibleFactKindV1] = match phase {
             MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing => {
-                MtgoLifecycleVisibleFactKindV1::EnteredEventVisible
+                &[MtgoLifecycleVisibleFactKindV1::EnteredEventVisible]
             }
-            MtgoCompetitiveLifecyclePhaseV1::PairingReady => {
-                MtgoLifecycleVisibleFactKindV1::PairingVisible
-            }
-            MtgoCompetitiveLifecyclePhaseV1::MatchComplete => {
-                MtgoLifecycleVisibleFactKindV1::MatchResultVisible
-            }
-            MtgoCompetitiveLifecyclePhaseV1::EventComplete => {
-                MtgoLifecycleVisibleFactKindV1::EventResultVisible
-            }
+            MtgoCompetitiveLifecyclePhaseV1::PairingReady => &[
+                MtgoLifecycleVisibleFactKindV1::PairingVisible,
+                MtgoLifecycleVisibleFactKindV1::PairingAcceptControlEnabled,
+            ],
+            MtgoCompetitiveLifecyclePhaseV1::MatchComplete => &[
+                MtgoLifecycleVisibleFactKindV1::MatchResultVisible,
+                MtgoLifecycleVisibleFactKindV1::MatchContinueControlEnabled,
+            ],
+            MtgoCompetitiveLifecyclePhaseV1::EventComplete => &[
+                MtgoLifecycleVisibleFactKindV1::EventResultVisible,
+                MtgoLifecycleVisibleFactKindV1::EventCloseControlEnabled,
+            ],
             _ => unreachable!(),
         };
         let match_related = matches!(
@@ -1070,17 +1067,21 @@ mod tests {
             game_number: None,
             entry_terms: None,
             visible_state_complete: true,
-            facts: vec![MtgoLifecycleVisibleFactV1 {
-                kind: fact_kind,
-                rect_client_px: MtgoRectPxV1 {
-                    x: 80,
-                    y: 80,
-                    width: 600,
-                    height: 400,
-                },
-                content_sha256: digest('d'),
-                confidence_bps: 10_000,
-            }],
+            facts: fact_kinds
+                .iter()
+                .enumerate()
+                .map(|(index, kind)| MtgoLifecycleVisibleFactV1 {
+                    kind: *kind,
+                    rect_client_px: MtgoRectPxV1 {
+                        x: 80 + u32::try_from(index).unwrap() * 20,
+                        y: 80 + u32::try_from(index).unwrap() * 20,
+                        width: 600,
+                        height: 400,
+                    },
+                    content_sha256: format!("{:064x}", index + 13),
+                    confidence_bps: 10_000,
+                })
+                .collect(),
         }
     }
 

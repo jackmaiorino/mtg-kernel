@@ -623,7 +623,7 @@ pub fn classify_checked_untrusted_competitive_event_record_v1(
         return Err("event-record classifier timeout must be between 100 and 60000 ms".to_owned());
     }
     if profile.scope()
-        != MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeEntryTransitionClassification
+        != MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeLifecycleClassification
     {
         return Err("navigation profile does not cover the exact classifier runtime".to_owned());
     }
