@@ -256,6 +256,28 @@ impl OpaqueMtgoClassifiedCompetitiveNavigationFrameV1 {
     ) -> &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1 {
         &self._lifecycle
     }
+
+    pub(super) fn into_event_listing_parts_v1(
+        self,
+    ) -> (
+        OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+        CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+        OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    ) {
+        let Self {
+            _source_frame,
+            _lifecycle,
+            _source,
+            _prediction,
+            commitments,
+        } = self;
+        let retained = OpaqueMtgoRetainedCompetitiveNavigationClassificationV1 {
+            _source,
+            _prediction,
+            commitments,
+        };
+        (_source_frame, _lifecycle, retained)
+    }
 }
 
 /// Consumes one exact classifier result and carries its complete profile,

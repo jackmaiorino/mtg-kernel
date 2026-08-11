@@ -3,6 +3,7 @@ compile_error!("mtgo-dxgi-capture-v1 is Windows-only");
 
 mod bottoming_model;
 mod competitive_entry_runtime;
+mod competitive_event_listing_runtime;
 mod competitive_event_record_runtime;
 mod competitive_lifecycle_control_runtime;
 mod competitive_navigation_profile_frame;
@@ -14,6 +15,7 @@ mod live_frame;
 mod pregame_heuristic;
 pub use bottoming_model::*;
 pub use competitive_entry_runtime::*;
+pub use competitive_event_listing_runtime::*;
 pub use competitive_event_record_runtime::*;
 pub use competitive_lifecycle_control_runtime::*;
 pub use competitive_navigation_profile_frame::*;

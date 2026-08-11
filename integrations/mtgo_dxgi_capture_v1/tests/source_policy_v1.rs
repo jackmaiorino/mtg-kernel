@@ -207,6 +207,50 @@ fn competitive_navigation_classifier_is_exact_bounded_and_non_actionable() {
 }
 
 #[test]
+fn competitive_event_listing_is_current_pixel_bound_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_event_listing_runtime.rs");
+    for required in [
+        "bind_classified_navigation_frame_to_competitive_event_listing_v1",
+        "check_untrusted_competitive_event_listing_pixels_v1",
+        "OpaqueMtgoClassifiedCompetitiveNavigationFrameV1",
+        "OpaqueMtgoSourceBoundCompetitiveEventListingV1",
+        "visible_frame_region_content_sha256_v1",
+        "event_label_region_sha256",
+        "open_entry_review_control_region_sha256",
+        "approved_account_alias_sha256",
+        "opaque_current_pixels_no_open_review_no_entry_no_spending_no_input",
+        "permits_open_entry_review_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+        "permits_spending_v1(&self) -> bool {\n        false",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "source-bound competitive event listing is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn control_rect_client_px",
+        "pub fn click",
+        "pub fn confirm_entry",
+        "permits_open_entry_review_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "SetCursorPos",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "source-bound competitive event listing exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn competitive_event_record_is_same_frame_pixel_bound_and_non_actionable() {
     let source = include_str!("../src/probe/competitive_event_record_runtime.rs");
     for required in [
