@@ -1,6 +1,6 @@
 use super::{
-    capture_commitment_v3, OpaqueMtgoDxgiFrameCandidateV3,
-    OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    capture_commitment_v3, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
 };
 use crate::sha256_hex_v1;
 use mtgo_blackbox_v1::{
@@ -17,6 +17,10 @@ const OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2: &[u8]
     b"mtgo-opaque-competitive-classifier-bound-entry-review-identity-v2";
 const OPAQUE_COMPETITIVE_ENTRY_CONTROL_DRY_RUN_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-entry-control-dry-run-v1";
+const COMPETITIVE_ENTRY_FRAME_TRANSITION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-entry-frame-transition-v1";
+const COMPETITIVE_ENTRY_WINDOW_CONTINUITY_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-entry-window-continuity-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
@@ -72,6 +76,49 @@ pub struct MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
     pub frame_sequence: u64,
     pub resource: MtgoCompetitiveEntryResourceV1,
     pub amount: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveEntryFrameTransitionCommitmentsV1 {
+    pub navigation_profile_commitment_sha256: String,
+    pub navigation_profile_admission_commitment_sha256: String,
+    pub approved_account_alias_sha256: String,
+    pub runtime_identity_commitment_sha256: String,
+    pub window_continuity_commitment_sha256: String,
+    pub source_identity_commitment_sha256: String,
+    pub before_capture_commitment_sha256: String,
+    pub before_classification_result_commitment_sha256: String,
+    pub before_lifecycle_snapshot_commitment_sha256: String,
+    pub after_capture_commitment_sha256: String,
+    pub after_classification_result_commitment_sha256: String,
+    pub after_lifecycle_snapshot_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: String,
+    pub before_frame_id: u64,
+    pub before_frame_sequence: u64,
+    pub after_frame_id: u64,
+    pub after_frame_sequence: u64,
+    pub transition_commitment_sha256: String,
+}
+
+#[derive(Clone)]
+struct MtgoCompetitiveEntryFrameTransitionViewV1 {
+    navigation_profile_commitment_sha256: String,
+    navigation_profile_admission_commitment_sha256: String,
+    approved_account_alias_sha256: String,
+    runtime_identity_commitment_sha256: String,
+    window_continuity_commitment_sha256: String,
+    source_identity_commitment_sha256: Option<String>,
+    capture_commitment_sha256: String,
+    canonical_bgra8_sha256: String,
+    classification_result_commitment_sha256: String,
+    lifecycle_snapshot_commitment_sha256: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    phase: MtgoCompetitiveLifecyclePhaseV1,
+    event_identity_sha256: String,
+    frame_id: u64,
+    frame_sequence: u64,
+    captured_at_unix_millis: u128,
 }
 
 /// One human-reviewed visible Confirm Entry control bound to the exact opaque
@@ -296,6 +343,318 @@ pub fn bind_classifier_backed_competitive_entry_control_dry_run_v1(
         _visible_control_label: visible_control_label,
         _control_rect_client_px: control_rect_client_px,
         commitments,
+    })
+}
+
+pub(crate) fn validate_classifier_backed_competitive_entry_frame_transition_v1(
+    before: &OpaqueMtgoCompetitiveEntryReviewIdentityV1,
+    after: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+) -> Result<MtgoCompetitiveEntryFrameTransitionCommitmentsV1, String> {
+    let before_view = entry_review_transition_view_v1(before)?;
+    let after_view = entered_waiting_transition_view_v1(after)?;
+    bind_competitive_entry_frame_transition_views_v1(&before_view, &after_view)
+}
+
+fn entry_review_transition_view_v1(
+    source: &OpaqueMtgoCompetitiveEntryReviewIdentityV1,
+) -> Result<MtgoCompetitiveEntryFrameTransitionViewV1, String> {
+    let identity = source.commitments_v1();
+    let classification = source
+        ._navigation_classification
+        .as_ref()
+        .ok_or("competitive entry transition requires retained before-frame classifier lineage")?
+        .commitments_v1();
+    if classification.phase != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || source.lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || classification.event_kind != source.lifecycle.event_kind()
+        || classification.frame_id != source.lifecycle.frame_id_v1()
+        || classification.frame_sequence != source.lifecycle.frame_sequence()
+        || classification.lifecycle_snapshot_commitment_sha256
+            != source.lifecycle.snapshot_commitment_sha256()
+        || identity
+            .source_navigation_classification_result_commitment_sha256
+            .as_deref()
+            != Some(
+                classification
+                    .classification_result_commitment_sha256
+                    .as_str(),
+            )
+        || identity.source_capture_commitment_sha256
+            != classification
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+        || identity.source_lifecycle_snapshot_commitment_sha256
+            != classification.lifecycle_snapshot_commitment_sha256
+    {
+        return Err("competitive entry transition before-frame lineage changed".to_owned());
+    }
+    let capture_commitment = capture_commitment_v3(
+        &source._source_frame.manifest,
+        &source._source_frame.canonical_bgra8,
+        &source._source_frame.preview_png,
+    )?;
+    if capture_commitment != source._source_frame.capture_commitment_sha256
+        || capture_commitment != identity.source_capture_commitment_sha256
+    {
+        return Err("competitive entry transition before capture changed".to_owned());
+    }
+    classified_transition_view_v1(
+        &source._source_frame,
+        &classification,
+        source.lifecycle_v1(),
+        Some(identity.source_identity_commitment_sha256),
+    )
+}
+
+fn entered_waiting_transition_view_v1(
+    source: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+) -> Result<MtgoCompetitiveEntryFrameTransitionViewV1, String> {
+    let classification = source.commitments_v1();
+    if classification.phase != MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing
+        || source._lifecycle.phase() != MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing
+        || classification.event_kind != source._lifecycle.event_kind()
+        || classification.frame_id != source._lifecycle.frame_id_v1()
+        || classification.frame_sequence != source._lifecycle.frame_sequence()
+        || classification.lifecycle_snapshot_commitment_sha256
+            != source._lifecycle.snapshot_commitment_sha256()
+    {
+        return Err(
+            "competitive entry transition after frame is not the exact entered-waiting lifecycle"
+                .to_owned(),
+        );
+    }
+    let frame = &source._source_frame.source_frame;
+    let capture_commitment =
+        capture_commitment_v3(&frame.manifest, &frame.canonical_bgra8, &frame.preview_png)?;
+    if capture_commitment != frame.capture_commitment_sha256
+        || capture_commitment
+            != classification
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+        || source._source_frame.commitments_v1() != classification.source_frame
+    {
+        return Err("competitive entry transition after capture changed".to_owned());
+    }
+    classified_transition_view_v1(frame, &classification, &source._lifecycle, None)
+}
+
+fn classified_transition_view_v1(
+    frame: &OpaqueMtgoDxgiFrameCandidateV3,
+    classification: &super::MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
+    lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    source_identity_commitment_sha256: Option<String>,
+) -> Result<MtgoCompetitiveEntryFrameTransitionViewV1, String> {
+    let event_identity_sha256 = lifecycle
+        .event_identity_sha256_v1()
+        .ok_or("competitive entry transition requires one visible event identity")?
+        .to_owned();
+    if !looks_like_lower_sha256_v1(&event_identity_sha256)
+        || classification
+            .source_frame
+            .source_capture
+            .canonical_bgra8_sha256
+            != frame.manifest.frame.canonical_bgra8_sha256
+        || classification.source_frame.source_capture.canonical_width
+            != frame.manifest.frame.canonical_width
+        || classification.source_frame.source_capture.canonical_height
+            != frame.manifest.frame.canonical_height
+        || classification.frame_id == 0
+        || classification.frame_sequence == 0
+    {
+        return Err("competitive entry transition frame identity is incomplete".to_owned());
+    }
+    let output = canonical_json_v1(&frame.manifest.output, "entry transition output identity")?;
+    let pre = &frame.manifest.pre;
+    let window_continuity_commitment_sha256 = commitment_v1(
+        COMPETITIVE_ENTRY_WINDOW_CONTINUITY_DOMAIN_V1,
+        &[
+            pre.hwnd.to_be_bytes().as_slice(),
+            pre.process_id.to_be_bytes().as_slice(),
+            pre.process_start_filetime_100ns.to_be_bytes().as_slice(),
+            pre.process_image.as_bytes(),
+            pre.executable_sha256.as_bytes(),
+            pre.signer_thumbprint.as_bytes(),
+            pre.signer_subject_sha256.as_bytes(),
+            pre.title.as_bytes(),
+            pre.dpi.to_be_bytes().as_slice(),
+            &canonical_json_v1(
+                &pre.client_rect_desktop_px,
+                "entry transition client rectangle",
+            )?,
+            &canonical_json_v1(
+                &pre.extended_frame_rect_desktop_px,
+                "entry transition extended-frame rectangle",
+            )?,
+            &output,
+            b"same_process_window_geometry_and_output_no_entry_no_spending_no_input",
+        ],
+    );
+    Ok(MtgoCompetitiveEntryFrameTransitionViewV1 {
+        navigation_profile_commitment_sha256: classification
+            .source_frame
+            .profile_commitment_sha256
+            .clone(),
+        navigation_profile_admission_commitment_sha256: classification
+            .source_frame
+            .profile_admission_commitment_sha256
+            .clone(),
+        approved_account_alias_sha256: classification
+            .source_frame
+            .approved_account_alias_sha256
+            .clone(),
+        runtime_identity_commitment_sha256: classification
+            .runtime_identity_commitment_sha256
+            .clone(),
+        window_continuity_commitment_sha256,
+        source_identity_commitment_sha256,
+        capture_commitment_sha256: classification
+            .source_frame
+            .source_capture
+            .capture_commitment_sha256
+            .clone(),
+        canonical_bgra8_sha256: classification
+            .source_frame
+            .source_capture
+            .canonical_bgra8_sha256
+            .clone(),
+        classification_result_commitment_sha256: classification
+            .classification_result_commitment_sha256
+            .clone(),
+        lifecycle_snapshot_commitment_sha256: classification
+            .lifecycle_snapshot_commitment_sha256
+            .clone(),
+        event_kind: classification.event_kind,
+        phase: classification.phase,
+        event_identity_sha256,
+        frame_id: classification.frame_id,
+        frame_sequence: classification.frame_sequence,
+        captured_at_unix_millis: classification
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis,
+    })
+}
+
+fn bind_competitive_entry_frame_transition_views_v1(
+    before: &MtgoCompetitiveEntryFrameTransitionViewV1,
+    after: &MtgoCompetitiveEntryFrameTransitionViewV1,
+) -> Result<MtgoCompetitiveEntryFrameTransitionCommitmentsV1, String> {
+    let source_identity_commitment_sha256 = before
+        .source_identity_commitment_sha256
+        .as_deref()
+        .ok_or("competitive entry transition requires the exact before-frame source identity")?;
+    if before.phase != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+        || after.phase != MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing
+        || before.event_kind != after.event_kind
+        || before.event_identity_sha256 != after.event_identity_sha256
+        || before.navigation_profile_commitment_sha256 != after.navigation_profile_commitment_sha256
+        || before.navigation_profile_admission_commitment_sha256
+            != after.navigation_profile_admission_commitment_sha256
+        || before.approved_account_alias_sha256 != after.approved_account_alias_sha256
+        || before.runtime_identity_commitment_sha256 != after.runtime_identity_commitment_sha256
+        || before.window_continuity_commitment_sha256 != after.window_continuity_commitment_sha256
+    {
+        return Err(
+            "competitive entry transition changed mode, event, account, profile, runtime, process, window, geometry, or output"
+                .to_owned(),
+        );
+    }
+    if after.frame_id == before.frame_id
+        || after.frame_sequence <= before.frame_sequence
+        || after.captured_at_unix_millis <= before.captured_at_unix_millis
+        || after.capture_commitment_sha256 == before.capture_commitment_sha256
+        || after.canonical_bgra8_sha256 == before.canonical_bgra8_sha256
+        || after.classification_result_commitment_sha256
+            == before.classification_result_commitment_sha256
+        || after.lifecycle_snapshot_commitment_sha256 == before.lifecycle_snapshot_commitment_sha256
+    {
+        return Err(
+            "competitive entry transition requires a changed strictly newer classified frame"
+                .to_owned(),
+        );
+    }
+    for digest in [
+        source_identity_commitment_sha256,
+        before.navigation_profile_commitment_sha256.as_str(),
+        before
+            .navigation_profile_admission_commitment_sha256
+            .as_str(),
+        before.approved_account_alias_sha256.as_str(),
+        before.runtime_identity_commitment_sha256.as_str(),
+        before.window_continuity_commitment_sha256.as_str(),
+        before.capture_commitment_sha256.as_str(),
+        before.classification_result_commitment_sha256.as_str(),
+        before.lifecycle_snapshot_commitment_sha256.as_str(),
+        after.capture_commitment_sha256.as_str(),
+        after.classification_result_commitment_sha256.as_str(),
+        after.lifecycle_snapshot_commitment_sha256.as_str(),
+        before.event_identity_sha256.as_str(),
+    ] {
+        if !looks_like_lower_sha256_v1(digest) {
+            return Err("competitive entry transition contains an invalid commitment".to_owned());
+        }
+    }
+    let event_kind = canonical_json_v1(&before.event_kind, "entry transition mode")?;
+    let transition_commitment_sha256 = commitment_v1(
+        COMPETITIVE_ENTRY_FRAME_TRANSITION_DOMAIN_V1,
+        &[
+            source_identity_commitment_sha256.as_bytes(),
+            before.navigation_profile_commitment_sha256.as_bytes(),
+            before
+                .navigation_profile_admission_commitment_sha256
+                .as_bytes(),
+            before.approved_account_alias_sha256.as_bytes(),
+            before.runtime_identity_commitment_sha256.as_bytes(),
+            before.window_continuity_commitment_sha256.as_bytes(),
+            before.capture_commitment_sha256.as_bytes(),
+            before.classification_result_commitment_sha256.as_bytes(),
+            before.lifecycle_snapshot_commitment_sha256.as_bytes(),
+            after.capture_commitment_sha256.as_bytes(),
+            after.classification_result_commitment_sha256.as_bytes(),
+            after.lifecycle_snapshot_commitment_sha256.as_bytes(),
+            &event_kind,
+            before.event_identity_sha256.as_bytes(),
+            before.frame_id.to_be_bytes().as_slice(),
+            before.frame_sequence.to_be_bytes().as_slice(),
+            after.frame_id.to_be_bytes().as_slice(),
+            after.frame_sequence.to_be_bytes().as_slice(),
+            before.captured_at_unix_millis.to_be_bytes().as_slice(),
+            after.captured_at_unix_millis.to_be_bytes().as_slice(),
+            b"entry_review_to_entered_waiting_visible_pair_no_causality_no_entry_no_spending_no_input",
+        ],
+    );
+    Ok(MtgoCompetitiveEntryFrameTransitionCommitmentsV1 {
+        navigation_profile_commitment_sha256: before.navigation_profile_commitment_sha256.clone(),
+        navigation_profile_admission_commitment_sha256: before
+            .navigation_profile_admission_commitment_sha256
+            .clone(),
+        approved_account_alias_sha256: before.approved_account_alias_sha256.clone(),
+        runtime_identity_commitment_sha256: before.runtime_identity_commitment_sha256.clone(),
+        window_continuity_commitment_sha256: before.window_continuity_commitment_sha256.clone(),
+        source_identity_commitment_sha256: source_identity_commitment_sha256.to_owned(),
+        before_capture_commitment_sha256: before.capture_commitment_sha256.clone(),
+        before_classification_result_commitment_sha256: before
+            .classification_result_commitment_sha256
+            .clone(),
+        before_lifecycle_snapshot_commitment_sha256: before
+            .lifecycle_snapshot_commitment_sha256
+            .clone(),
+        after_capture_commitment_sha256: after.capture_commitment_sha256.clone(),
+        after_classification_result_commitment_sha256: after
+            .classification_result_commitment_sha256
+            .clone(),
+        after_lifecycle_snapshot_commitment_sha256: after
+            .lifecycle_snapshot_commitment_sha256
+            .clone(),
+        event_kind: before.event_kind,
+        event_identity_sha256: before.event_identity_sha256.clone(),
+        before_frame_id: before.frame_id,
+        before_frame_sequence: before.frame_sequence,
+        after_frame_id: after.frame_id,
+        after_frame_sequence: after.frame_sequence,
+        transition_commitment_sha256,
     })
 }
 
@@ -1053,5 +1412,117 @@ mod tests {
         let mut wrong_frame = classified;
         wrong_frame.frame_sequence = 12;
         assert!(bind(&wrong_frame, "Join Event", &valid_control, true).is_err());
+    }
+
+    fn transition_view_v1(
+        event_kind: MtgoCompetitiveEventKindV1,
+        phase: MtgoCompetitiveLifecyclePhaseV1,
+        frame_id: u64,
+        frame_sequence: u64,
+    ) -> MtgoCompetitiveEntryFrameTransitionViewV1 {
+        let before = phase == MtgoCompetitiveLifecyclePhaseV1::EntryReview;
+        MtgoCompetitiveEntryFrameTransitionViewV1 {
+            navigation_profile_commitment_sha256: "1".repeat(64),
+            navigation_profile_admission_commitment_sha256: "2".repeat(64),
+            approved_account_alias_sha256: "3".repeat(64),
+            runtime_identity_commitment_sha256: "4".repeat(64),
+            window_continuity_commitment_sha256: "5".repeat(64),
+            source_identity_commitment_sha256: before.then(|| "6".repeat(64)),
+            capture_commitment_sha256: if before {
+                "7".repeat(64)
+            } else {
+                "8".repeat(64)
+            },
+            canonical_bgra8_sha256: if before {
+                "9".repeat(64)
+            } else {
+                "a".repeat(64)
+            },
+            classification_result_commitment_sha256: if before {
+                "b".repeat(64)
+            } else {
+                "c".repeat(64)
+            },
+            lifecycle_snapshot_commitment_sha256: if before {
+                "d".repeat(64)
+            } else {
+                "e".repeat(64)
+            },
+            event_kind,
+            phase,
+            event_identity_sha256: "f".repeat(64),
+            frame_id,
+            frame_sequence,
+            captured_at_unix_millis: u128::from(frame_sequence) * 10,
+        }
+    }
+
+    #[test]
+    fn entry_postcondition_pair_requires_exact_new_entered_waiting_state() {
+        for event_kind in [
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveEventKindV1::Challenge,
+        ] {
+            let before = transition_view_v1(
+                event_kind,
+                MtgoCompetitiveLifecyclePhaseV1::EntryReview,
+                7,
+                11,
+            );
+            let after = transition_view_v1(
+                event_kind,
+                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
+                8,
+                12,
+            );
+            let transition =
+                bind_competitive_entry_frame_transition_views_v1(&before, &after).unwrap();
+            assert_eq!(transition.event_kind, event_kind);
+            assert_eq!(transition.before_frame_sequence, 11);
+            assert_eq!(transition.after_frame_sequence, 12);
+            assert_eq!(transition.transition_commitment_sha256.len(), 64);
+        }
+    }
+
+    #[test]
+    fn entry_postcondition_pair_rejects_stale_or_cross_identity_frames() {
+        let before = transition_view_v1(
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveLifecyclePhaseV1::EntryReview,
+            7,
+            11,
+        );
+        let valid_after = transition_view_v1(
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
+            8,
+            12,
+        );
+
+        let mut wrong_phase = valid_after.clone();
+        wrong_phase.phase = MtgoCompetitiveLifecyclePhaseV1::EventBrowser;
+        assert!(bind_competitive_entry_frame_transition_views_v1(&before, &wrong_phase).is_err());
+
+        let mut stale = valid_after.clone();
+        stale.frame_sequence = before.frame_sequence;
+        assert!(bind_competitive_entry_frame_transition_views_v1(&before, &stale).is_err());
+
+        let mut wrong_event = valid_after.clone();
+        wrong_event.event_identity_sha256 = "0".repeat(64);
+        assert!(bind_competitive_entry_frame_transition_views_v1(&before, &wrong_event).is_err());
+
+        let mut wrong_profile = valid_after.clone();
+        wrong_profile.navigation_profile_commitment_sha256 = "0".repeat(64);
+        assert!(bind_competitive_entry_frame_transition_views_v1(&before, &wrong_profile).is_err());
+
+        let mut wrong_window = valid_after.clone();
+        wrong_window.window_continuity_commitment_sha256 = "0".repeat(64);
+        assert!(bind_competitive_entry_frame_transition_views_v1(&before, &wrong_window).is_err());
+
+        let mut unchanged_pixels = valid_after;
+        unchanged_pixels.canonical_bgra8_sha256 = before.canonical_bgra8_sha256.clone();
+        assert!(
+            bind_competitive_entry_frame_transition_views_v1(&before, &unchanged_pixels).is_err()
+        );
     }
 }
