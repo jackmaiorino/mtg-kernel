@@ -3,18 +3,21 @@ use crate::probe::{
     advance_prepared_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
     capture_admitted_mtgo_competitive_navigation_frame_v1,
     classify_admitted_mtgo_competitive_navigation_frame_v1,
+    classify_checked_untrusted_competitive_sideboard_v1,
     confirm_opaque_competitive_duel_gesture_postcondition_v1,
     confirm_opaque_competitive_duel_pass_postcondition_v1,
     confirm_opaque_competitive_entry_postcondition_v1,
     confirm_opaque_competitive_lifecycle_control_postcondition_v1,
     confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
+    plan_classified_competitive_sideboard_v1,
     prepare_opaque_competitive_duel_gesture_continuation_stage_from_pinned_runtime_v1,
     prepare_opaque_competitive_duel_gesture_source_stage_from_pinned_runtime_v1,
     prepare_pregame_actuation_v3, resolve_competitive_entry_pointer_target_v1,
     validate_classifier_backed_competitive_entry_frame_transition_v1,
     validate_classifier_backed_competitive_entry_immediate_recapture_v1,
-    MtgoCompetitiveEntryControlDryRunPartsV1, MtgoCompetitiveEntryFrameTransitionCommitmentsV1,
+    MtgoClassifiedCompetitiveSideboardCommitmentsV1, MtgoCompetitiveEntryControlDryRunPartsV1,
+    MtgoCompetitiveEntryFrameTransitionCommitmentsV1,
     MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1, MtgoCompetitiveEntryPointerTargetV1,
     MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1, MtgoCompetitiveEventMonitorCommitmentsV1,
     MtgoCompetitiveLifecycleControlTransitionCommitmentsV1,
@@ -27,8 +30,9 @@ use crate::probe::{
     MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
     MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
     MtgoOpaquePinnedCompetitiveDuelGestureContinuationCommitmentsV1,
-    MtgoPlannedPregamePostconditionV3, OpaqueMtgoAdmittedDuelPerceptionV1,
-    OpaqueMtgoClassifiedCompetitiveNavigationFrameV1, OpaqueMtgoCompetitiveDuelGestureSequenceV1,
+    MtgoPlannedCompetitiveSideboardCommitmentsV1, MtgoPlannedPregamePostconditionV3,
+    OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    OpaqueMtgoClassifiedCompetitiveSideboardV1, OpaqueMtgoCompetitiveDuelGestureSequenceV1,
     OpaqueMtgoCompetitiveEntryControlDryRunV1, OpaqueMtgoCompetitiveEntryReviewIdentityV1,
     OpaqueMtgoCompetitiveEventMonitorV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
     OpaqueMtgoCompetitiveLifecycleControlV1, OpaqueMtgoConfirmedCompetitiveDuelGestureV1,
@@ -37,7 +41,8 @@ use crate::probe::{
     OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, OpaqueMtgoConfirmedKeepToFirstMainTransitionV3,
     OpaqueMtgoConfirmedMulliganTransitionV3, OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
     OpaqueMtgoDxgiFirstMainMeasurementV3, OpaqueMtgoDxgiMulliganMeasurementV3,
-    OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1, OpaqueMtgoPregameActionPlanV3,
+    OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1, OpaqueMtgoPlannedCompetitiveSideboardV1,
+    OpaqueMtgoPregameActionPlanV3,
     OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 as ProbeOpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1,
     OpaqueMtgoPreparedCompetitiveDuelPassV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
@@ -46,16 +51,22 @@ use crate::probe::{
 use mtgo_blackbox_v1::{
     canonical_duel_gesture_action_families_v1,
     competitive_match_gameplay_authorization_commitment_v1,
-    competitive_mode_authorization_commitment_v1, make_offline_competitive_lifecycle_intent_v1,
-    validate_authorization_for_mode_v1, validate_checked_observed_competitive_lifecycle_advance_v1,
+    competitive_mode_authorization_commitment_v1, confirm_competitive_sideboard_target_visible_v1,
+    make_offline_competitive_lifecycle_intent_v1, validate_authorization_for_mode_v1,
+    validate_checked_observed_competitive_lifecycle_advance_v1,
     AdmittedMtgoCompetitiveNavigationProfileV1, AdmittedMtgoDuelGestureProfileV1,
     AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
-    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoAuthorizationScopeV1,
+    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    CheckedUntrustedMtgoCompetitiveSideboardReadyV1, MtgoAuthorizationScopeV1,
+    MtgoCompetitiveDeckConfigurationV1, MtgoCompetitiveDeckPartitionV1,
     MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
     MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
-    MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1, MtgoDuelPrimaryActivationV1,
-    MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
+    MtgoCompetitiveSideboardSelectionV1, MtgoCompetitiveSideboardTransferDirectionV1,
+    MtgoCompetitiveSideboardTransferV1, MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1,
+    MtgoDuelPrimaryActivationV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
+    MtgoPregameActionSemanticV1, MtgoRuntimeModeV1, MtgoVisibleCompetitiveSideboardCardV1,
+    MtgoVisibleCompetitiveSideboardZoneV1, ValidatedMtgoCompetitiveDeckManifestV1,
     MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
@@ -170,6 +181,18 @@ const COMPETITIVE_EVENT_RUNTIME_MONITOR_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-runtime-monitor-v1";
 const COMPETITIVE_EVENT_GAMEPLAY_LEASE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-gameplay-lease-v1";
+const COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-sideboard-measurement-v1";
+const COMPETITIVE_EVENT_SIDEBOARD_PLAN_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-sideboard-plan-v1";
+const COMPETITIVE_EVENT_SIDEBOARD_SEQUENCE_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-sideboard-sequence-v1";
+const COMPETITIVE_EVENT_SIDEBOARD_TRANSFER_PREPARATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-sideboard-transfer-preparation-v1";
+const COMPETITIVE_EVENT_SIDEBOARD_TRANSFER_CONFIRMATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-sideboard-transfer-confirmation-v1";
+const COMPETITIVE_EVENT_SIDEBOARD_READY_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-sideboard-ready-v1";
 const COMPETITIVE_GESTURE_GAME_SESSION_EVENT_DECK_BIND_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-gesture-game-session-event-deck-bind-v1";
 const COMPETITIVE_EVENT_GAMEPLAY_RETURN_DOMAIN_V1: &[u8] =
@@ -744,6 +767,227 @@ impl OpaqueMtgoCompetitiveEventRuntimeV1 {
     pub fn permits_additional_spending_v1(&self) -> bool {
         false
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
+    pub prior_event_runtime_commitment_sha256: String,
+    pub sideboard_classification: MtgoClassifiedCompetitiveSideboardCommitmentsV1,
+    pub measurement_binding_commitment_sha256: String,
+}
+
+/// The event coordinator withheld while its exact current sideboard frame is
+/// measured. The coordinate-free configuration may be inspected for model
+/// selection, but no pixels, rectangles, input, or submit operation is exposed.
+pub struct OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
+    _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
+    lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    classified: OpaqueMtgoClassifiedCompetitiveSideboardV1,
+    manifest: ValidatedMtgoCompetitiveDeckManifestV1,
+    event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
+    prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
+    commitments: MtgoMeasuredCompetitiveEventSideboardCommitmentsV1,
+}
+
+impl OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
+    pub fn commitments_v1(&self) -> MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
+        self.classified.configuration_v1()
+    }
+
+    pub fn source_snapshot_commitment_sha256_v1(&self) -> &str {
+        self.classified.source_snapshot_commitment_sha256_v1()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPlannedCompetitiveEventSideboardCommitmentsV1 {
+    pub prior_event_runtime_commitment_sha256: String,
+    pub measurement_binding_commitment_sha256: String,
+    pub sideboard_plan: MtgoPlannedCompetitiveSideboardCommitmentsV1,
+    pub event_plan_binding_commitment_sha256: String,
+}
+
+/// The event coordinator withheld with one exact coordinate-free model plan.
+/// Transfer semantics are observable, while pixels, rectangles, process
+/// handles, input primitives, and sideboard submission remain private or absent.
+pub struct OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
+    _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
+    lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    planned: OpaqueMtgoPlannedCompetitiveSideboardV1,
+    manifest: ValidatedMtgoCompetitiveDeckManifestV1,
+    event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
+    prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
+    commitments: MtgoPlannedCompetitiveEventSideboardCommitmentsV1,
+}
+
+impl OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
+    pub fn commitments_v1(&self) -> MtgoPlannedCompetitiveEventSideboardCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn target_configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
+        self.planned.target_configuration_v1()
+    }
+
+    pub fn transfers_v1(&self) -> &[MtgoCompetitiveSideboardTransferV1] {
+        self.planned.transfers_v1()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoAtomicCompetitiveSideboardTransferV1 {
+    pub step_index: u16,
+    pub card_db_id: u16,
+    pub card_name: String,
+    pub direction: MtgoCompetitiveSideboardTransferDirectionV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveEventSideboardSequenceCommitmentsV1 {
+    pub prior_event_runtime_commitment_sha256: String,
+    pub event_plan_binding_commitment_sha256: String,
+    pub plan_commitment_sha256: String,
+    pub sequence_chain_commitment_sha256: String,
+    pub current_sideboard_snapshot_commitment_sha256: String,
+    pub current_frame_sequence: u64,
+    pub total_transfer_steps: u16,
+    pub confirmed_transfer_steps: u16,
+    pub next_transfer: MtgoAtomicCompetitiveSideboardTransferV1,
+}
+
+/// A deterministic one-card-at-a-time sideboard sequence. All transfers from
+/// sideboard to mainboard are ordered first so every intermediate state keeps
+/// the mainboard at or above its legal minimum and the sideboard at or below
+/// its starting capacity.
+pub struct OpaqueMtgoCompetitiveEventSideboardSequenceV1 {
+    _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
+    lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    current_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    manifest: ValidatedMtgoCompetitiveDeckManifestV1,
+    plan: mtgo_blackbox_v1::CheckedUntrustedMtgoCompetitiveSideboardPlanV1,
+    current_configuration: MtgoCompetitiveDeckConfigurationV1,
+    current_visible_cards: Vec<MtgoVisibleCompetitiveSideboardCardV1>,
+    current_mainboard_zone: MtgoVisibleCompetitiveSideboardZoneV1,
+    current_sideboard_zone: MtgoVisibleCompetitiveSideboardZoneV1,
+    atomic_transfers: Vec<MtgoAtomicCompetitiveSideboardTransferV1>,
+    event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
+    prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
+    commitments: MtgoCompetitiveEventSideboardSequenceCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitiveEventSideboardSequenceV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveEventSideboardSequenceCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn next_transfer_v1(&self) -> MtgoAtomicCompetitiveSideboardTransferV1 {
+        self.commitments.next_transfer.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPreparedCompetitiveEventSideboardTransferCommitmentsV1 {
+    pub sequence_chain_commitment_sha256: String,
+    pub plan_commitment_sha256: String,
+    pub source_sideboard_snapshot_commitment_sha256: String,
+    pub transfer: MtgoAtomicCompetitiveSideboardTransferV1,
+    pub source_card_region_sha256: String,
+    pub destination_empty_drop_region_sha256: String,
+    pub source_frame_sequence: u64,
+    pub preparation_commitment_sha256: String,
+}
+
+/// One pixel-bound drag proposal for the next semantic transfer. The source
+/// card and empty destination rectangles stay private. No execution method is
+/// attached in this tranche.
+pub struct OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1 {
+    sequence: OpaqueMtgoCompetitiveEventSideboardSequenceV1,
+    _source_card: MtgoVisibleCompetitiveSideboardCardV1,
+    _destination_zone: MtgoVisibleCompetitiveSideboardZoneV1,
+    commitments: MtgoPreparedCompetitiveEventSideboardTransferCommitmentsV1,
+}
+
+impl OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1 {
+    pub fn commitments_v1(&self) -> MtgoPreparedCompetitiveEventSideboardTransferCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoReadyCompetitiveEventSideboardCommitmentsV1 {
+    pub prior_event_runtime_commitment_sha256: String,
+    pub event_plan_binding_commitment_sha256: String,
+    pub plan_commitment_sha256: String,
+    pub ready_commitment_sha256: String,
+    pub event_ready_binding_commitment_sha256: String,
+    pub final_sideboard_snapshot_commitment_sha256: String,
+    pub final_frame_id: u64,
+    pub final_frame_sequence: u64,
+    pub confirmed_transfer_steps: u16,
+}
+
+/// Exact target configuration observed after every individual semantic drag.
+/// It still cannot submit the deck or emit input.
+pub struct OpaqueMtgoReadyCompetitiveEventSideboardV1 {
+    _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
+    _lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    _current_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    _manifest: ValidatedMtgoCompetitiveDeckManifestV1,
+    _ready: CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
+    _event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
+    _effective_prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
+    commitments: MtgoReadyCompetitiveEventSideboardCommitmentsV1,
+}
+
+impl OpaqueMtgoReadyCompetitiveEventSideboardV1 {
+    pub fn commitments_v1(&self) -> MtgoReadyCompetitiveEventSideboardCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+}
+
+pub enum MtgoCompetitiveEventSideboardTransferAdvanceV1 {
+    AwaitingNext(Box<OpaqueMtgoCompetitiveEventSideboardSequenceV1>),
+    ReadyToSubmit(Box<OpaqueMtgoReadyCompetitiveEventSideboardV1>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2854,6 +3098,571 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         event_monitor: None,
         commitments,
     })
+}
+
+/// Consumes the event coordinator while its exact current Sideboarding frame
+/// is parsed against the entry-bound deck and policy. This is a checked-untrusted
+/// measurement only. It neither ratifies the parser nor releases input authority.
+pub fn measure_competitive_event_runtime_sideboard_v1(
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    manifest: ValidatedMtgoCompetitiveDeckManifestV1,
+    classifier_runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoMeasuredCompetitiveEventSideboardV1, String> {
+    if runtime.commitments.closed_to_event_browser
+        || runtime.commitments.current_phase != MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+        || manifest.deck_list_sha256() != runtime.commitments.deck_manifest_sha256
+        || manifest.format_sha256() != runtime.commitments.deck_format_sha256
+    {
+        return Err(
+            "sideboard measurement requires the current exact between-game event, deck list, and format"
+                .to_owned(),
+        );
+    }
+    let OpaqueMtgoCompetitiveEventRuntimeV1 {
+        _spent_entry_authorization,
+        lifecycle_authorization,
+        current_frame,
+        event_monitor,
+        commitments: prior,
+    } = runtime;
+    let classified = classify_checked_untrusted_competitive_sideboard_v1(
+        current_frame,
+        &manifest,
+        prior.policy_deployment_commitment_sha256.clone(),
+        classifier_runtime,
+        timeout_ms,
+    )?;
+    let sideboard = classified.commitments_v1();
+    if sideboard.navigation_profile_commitment_sha256 != prior.navigation_profile_commitment_sha256
+        || sideboard.navigation_profile_admission_commitment_sha256
+            != prior.navigation_profile_admission_commitment_sha256
+        || sideboard.approved_account_alias_sha256 != prior.approved_account_alias_sha256
+        || sideboard.source_navigation_classification_result_commitment_sha256
+            != classified
+                .source_frame
+                .commitments_v1()
+                .classification_result_commitment_sha256
+        || sideboard.source_lifecycle_snapshot_commitment_sha256
+            != prior.current_lifecycle_snapshot_commitment_sha256
+        || sideboard.deck_list_sha256 != prior.deck_manifest_sha256
+        || sideboard.deck_format_sha256 != prior.deck_format_sha256
+        || sideboard.policy_deployment_commitment_sha256
+            != prior.policy_deployment_commitment_sha256
+        || sideboard.event_kind != prior.event_kind
+        || sideboard.event_identity_sha256 != prior.bound_event_identity_sha256
+        || prior.current_match_identity_sha256.as_deref()
+            != Some(sideboard.match_identity_sha256.as_str())
+        || prior.current_game_number != Some(sideboard.game_number)
+        || sideboard.frame_id != prior.current_frame_id
+        || sideboard.frame_sequence != prior.current_frame_sequence
+    {
+        return Err("sideboard measurement changed the exact event runtime lineage".to_owned());
+    }
+    let measurement_binding_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1,
+        &[
+            prior.runtime_commitment_sha256.as_bytes(),
+            sideboard.classification_result_commitment_sha256.as_bytes(),
+            sideboard.sideboard_snapshot_commitment_sha256.as_bytes(),
+            sideboard.deck_list_sha256.as_bytes(),
+            sideboard.deck_manifest_commitment_sha256.as_bytes(),
+            sideboard.deck_format_sha256.as_bytes(),
+            sideboard.policy_deployment_commitment_sha256.as_bytes(),
+            sideboard.frame_sequence.to_be_bytes().as_slice(),
+            b"event_runtime_withheld_during_checked_untrusted_sideboard_measurement_no_input_no_submit",
+        ],
+    );
+    let commitments = MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
+        prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
+        sideboard_classification: sideboard,
+        measurement_binding_commitment_sha256,
+    };
+    Ok(OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
+        _spent_entry_authorization,
+        lifecycle_authorization,
+        classified,
+        manifest,
+        event_monitor,
+        prior,
+        commitments,
+    })
+}
+
+/// Binds a coordinate-free model target to the exact measured event state.
+/// The resulting wrapper still cannot prepare or emit any input.
+pub fn plan_measured_competitive_event_sideboard_v1(
+    measured: OpaqueMtgoMeasuredCompetitiveEventSideboardV1,
+    selection: MtgoCompetitiveSideboardSelectionV1,
+) -> Result<OpaqueMtgoPlannedCompetitiveEventSideboardV1, String> {
+    let OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
+        _spent_entry_authorization,
+        lifecycle_authorization,
+        classified,
+        manifest,
+        event_monitor,
+        prior,
+        commitments: measurement,
+    } = measured;
+    let planned = plan_classified_competitive_sideboard_v1(classified, selection)?;
+    let plan = planned.commitments_v1();
+    if measurement.prior_event_runtime_commitment_sha256 != prior.runtime_commitment_sha256
+        || measurement
+            .sideboard_classification
+            .classification_result_commitment_sha256
+            != plan.classification_result_commitment_sha256
+        || measurement
+            .sideboard_classification
+            .sideboard_snapshot_commitment_sha256
+            != plan.source_snapshot_commitment_sha256
+        || plan.deck_list_sha256 != prior.deck_manifest_sha256
+        || plan.deck_format_sha256 != prior.deck_format_sha256
+        || plan.policy_deployment_commitment_sha256 != prior.policy_deployment_commitment_sha256
+        || plan.event_kind != prior.event_kind
+        || plan.event_identity_sha256 != prior.bound_event_identity_sha256
+        || prior.current_match_identity_sha256.as_deref()
+            != Some(plan.match_identity_sha256.as_str())
+        || prior.current_game_number != Some(plan.game_number)
+        || plan.source_frame_sequence != prior.current_frame_sequence
+    {
+        return Err("model sideboard plan changed the exact event runtime lineage".to_owned());
+    }
+    let event_plan_binding_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_PLAN_DOMAIN_V1,
+        &[
+            prior.runtime_commitment_sha256.as_bytes(),
+            measurement.measurement_binding_commitment_sha256.as_bytes(),
+            plan.classification_result_commitment_sha256.as_bytes(),
+            plan.source_snapshot_commitment_sha256.as_bytes(),
+            plan.plan_commitment_sha256.as_bytes(),
+            plan.model_plan_binding_commitment_sha256.as_bytes(),
+            plan.deck_list_sha256.as_bytes(),
+            plan.deck_manifest_commitment_sha256.as_bytes(),
+            plan.deck_format_sha256.as_bytes(),
+            plan.policy_deployment_commitment_sha256.as_bytes(),
+            plan.source_frame_sequence.to_be_bytes().as_slice(),
+            plan.transfer_count.to_be_bytes().as_slice(),
+            b"coordinate_free_event_bound_sideboard_plan_no_input_no_submit",
+        ],
+    );
+    let commitments = MtgoPlannedCompetitiveEventSideboardCommitmentsV1 {
+        prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
+        measurement_binding_commitment_sha256: measurement.measurement_binding_commitment_sha256,
+        sideboard_plan: plan,
+        event_plan_binding_commitment_sha256,
+    };
+    Ok(OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
+        _spent_entry_authorization,
+        lifecycle_authorization,
+        planned,
+        manifest,
+        event_monitor,
+        prior,
+        commitments,
+    })
+}
+
+pub fn begin_competitive_event_sideboard_transfer_sequence_v1(
+    planned_event: OpaqueMtgoPlannedCompetitiveEventSideboardV1,
+) -> Result<OpaqueMtgoCompetitiveEventSideboardSequenceV1, String> {
+    let event_commitments = planned_event.commitments.clone();
+    let OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
+        _spent_entry_authorization,
+        lifecycle_authorization,
+        planned,
+        manifest,
+        event_monitor,
+        prior,
+        commitments: _,
+    } = planned_event;
+    let OpaqueMtgoPlannedCompetitiveSideboardV1 {
+        source_frame,
+        plan,
+        visible_cards,
+        mainboard_zone,
+        sideboard_zone,
+        commitments: plan_commitments,
+    } = planned;
+    if plan_commitments != event_commitments.sideboard_plan
+        || plan_commitments.no_changes_selected
+        || plan_commitments.transfer_count == 0
+    {
+        return Err(
+            "changed-sideboard transfer sequencing requires the exact nonempty event plan"
+                .to_owned(),
+        );
+    }
+    let atomic_transfers = expand_atomic_sideboard_transfers_v1(plan.transfers_v1())?;
+    let total_transfer_steps = u16::try_from(atomic_transfers.len())
+        .map_err(|_| "atomic sideboard transfer count overflow")?;
+    if total_transfer_steps == 0 {
+        return Err("changed-sideboard transfer sequence is empty".to_owned());
+    }
+    let next_transfer = atomic_transfers[0].clone();
+    let sequence_chain_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_SEQUENCE_DOMAIN_V1,
+        &[
+            prior.runtime_commitment_sha256.as_bytes(),
+            event_commitments
+                .event_plan_binding_commitment_sha256
+                .as_bytes(),
+            plan_commitments.plan_commitment_sha256.as_bytes(),
+            plan_commitments
+                .source_snapshot_commitment_sha256
+                .as_bytes(),
+            total_transfer_steps.to_be_bytes().as_slice(),
+            b"sideboard_to_mainboard_first_one_card_per_step_visible_confirmation_required_no_input",
+        ],
+    );
+    let commitments = MtgoCompetitiveEventSideboardSequenceCommitmentsV1 {
+        prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
+        event_plan_binding_commitment_sha256: event_commitments
+            .event_plan_binding_commitment_sha256,
+        plan_commitment_sha256: plan_commitments.plan_commitment_sha256,
+        sequence_chain_commitment_sha256,
+        current_sideboard_snapshot_commitment_sha256: plan_commitments
+            .source_snapshot_commitment_sha256,
+        current_frame_sequence: plan_commitments.source_frame_sequence,
+        total_transfer_steps,
+        confirmed_transfer_steps: 0,
+        next_transfer,
+    };
+    let current_configuration = plan.source_configuration_v1().clone();
+    Ok(OpaqueMtgoCompetitiveEventSideboardSequenceV1 {
+        _spent_entry_authorization,
+        lifecycle_authorization,
+        current_frame: source_frame,
+        manifest,
+        plan,
+        current_configuration,
+        current_visible_cards: visible_cards,
+        current_mainboard_zone: mainboard_zone,
+        current_sideboard_zone: sideboard_zone,
+        atomic_transfers,
+        event_monitor,
+        prior,
+        commitments,
+    })
+}
+
+pub fn prepare_competitive_event_sideboard_transfer_drag_v1(
+    sequence: OpaqueMtgoCompetitiveEventSideboardSequenceV1,
+) -> Result<OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1, String> {
+    let transfer = sequence.commitments.next_transfer.clone();
+    if usize::from(transfer.step_index) >= sequence.atomic_transfers.len()
+        || sequence.atomic_transfers[usize::from(transfer.step_index)] != transfer
+        || transfer.step_index != sequence.commitments.confirmed_transfer_steps
+    {
+        return Err("sideboard sequence next-transfer index changed".to_owned());
+    }
+    let source_partition = match transfer.direction {
+        MtgoCompetitiveSideboardTransferDirectionV1::SideboardToMainboard => {
+            MtgoCompetitiveDeckPartitionV1::Sideboard
+        }
+        MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard => {
+            MtgoCompetitiveDeckPartitionV1::Mainboard
+        }
+    };
+    let source_card = sequence
+        .current_visible_cards
+        .iter()
+        .find(|card| {
+            card.partition == source_partition
+                && card.card_db_id == transfer.card_db_id
+                && card.card_name == transfer.card_name
+                && card.count > 0
+        })
+        .cloned()
+        .ok_or("next sideboard transfer source card is not visibly present")?;
+    let destination_zone = match transfer.direction {
+        MtgoCompetitiveSideboardTransferDirectionV1::SideboardToMainboard => {
+            sequence.current_mainboard_zone.clone()
+        }
+        MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard => {
+            sequence.current_sideboard_zone.clone()
+        }
+    };
+    let preparation_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_TRANSFER_PREPARATION_DOMAIN_V1,
+        &[
+            sequence
+                .commitments
+                .sequence_chain_commitment_sha256
+                .as_bytes(),
+            sequence.commitments.plan_commitment_sha256.as_bytes(),
+            sequence
+                .commitments
+                .current_sideboard_snapshot_commitment_sha256
+                .as_bytes(),
+            transfer.step_index.to_be_bytes().as_slice(),
+            transfer.card_db_id.to_be_bytes().as_slice(),
+            transfer.card_name.as_bytes(),
+            competitive_sideboard_transfer_direction_tag_v1(transfer.direction),
+            source_card.rect_client_px.x.to_be_bytes().as_slice(),
+            source_card.rect_client_px.y.to_be_bytes().as_slice(),
+            source_card.rect_client_px.width.to_be_bytes().as_slice(),
+            source_card.rect_client_px.height.to_be_bytes().as_slice(),
+            source_card.content_sha256.as_bytes(),
+            destination_zone
+                .empty_drop_rect_client_px
+                .x
+                .to_be_bytes()
+                .as_slice(),
+            destination_zone
+                .empty_drop_rect_client_px
+                .y
+                .to_be_bytes()
+                .as_slice(),
+            destination_zone
+                .empty_drop_rect_client_px
+                .width
+                .to_be_bytes()
+                .as_slice(),
+            destination_zone
+                .empty_drop_rect_client_px
+                .height
+                .to_be_bytes()
+                .as_slice(),
+            destination_zone.empty_drop_content_sha256.as_bytes(),
+            sequence
+                .commitments
+                .current_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            b"official_mtgo_drag_between_visible_zones_preparation_only_no_input",
+        ],
+    );
+    let commitments = MtgoPreparedCompetitiveEventSideboardTransferCommitmentsV1 {
+        sequence_chain_commitment_sha256: sequence
+            .commitments
+            .sequence_chain_commitment_sha256
+            .clone(),
+        plan_commitment_sha256: sequence.commitments.plan_commitment_sha256.clone(),
+        source_sideboard_snapshot_commitment_sha256: sequence
+            .commitments
+            .current_sideboard_snapshot_commitment_sha256
+            .clone(),
+        transfer,
+        source_card_region_sha256: source_card.content_sha256.clone(),
+        destination_empty_drop_region_sha256: destination_zone.empty_drop_content_sha256.clone(),
+        source_frame_sequence: sequence.commitments.current_frame_sequence,
+        preparation_commitment_sha256,
+    };
+    Ok(OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1 {
+        sequence,
+        _source_card: source_card,
+        _destination_zone: destination_zone,
+        commitments,
+    })
+}
+
+/// Confirms exactly one semantic transfer from a strictly newer, independently
+/// parsed visible frame. This does not claim that an input caused the change.
+pub fn confirm_competitive_event_sideboard_transfer_visible_v1(
+    prepared: OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1,
+    next_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    classifier_runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    timeout_ms: u32,
+) -> Result<MtgoCompetitiveEventSideboardTransferAdvanceV1, String> {
+    let OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1 {
+        mut sequence,
+        _source_card: _,
+        _destination_zone: _,
+        commitments: preparation,
+    } = prepared;
+    if preparation.sequence_chain_commitment_sha256
+        != sequence.commitments.sequence_chain_commitment_sha256
+        || preparation.plan_commitment_sha256 != sequence.commitments.plan_commitment_sha256
+        || preparation.source_sideboard_snapshot_commitment_sha256
+            != sequence
+                .commitments
+                .current_sideboard_snapshot_commitment_sha256
+        || preparation.transfer != sequence.commitments.next_transfer
+        || preparation.source_frame_sequence != sequence.commitments.current_frame_sequence
+    {
+        return Err("prepared sideboard transfer changed its exact sequence lineage".to_owned());
+    }
+    require_same_competitive_navigation_lineage_v1(&sequence.current_frame, &next_frame)?;
+    let classified = classify_checked_untrusted_competitive_sideboard_v1(
+        next_frame,
+        &sequence.manifest,
+        sequence.prior.policy_deployment_commitment_sha256.clone(),
+        classifier_runtime,
+        timeout_ms,
+    )?;
+    let next = classified.commitments_v1();
+    let current_frame = sequence.current_frame.commitments_v1();
+    if next.navigation_profile_commitment_sha256
+        != sequence.prior.navigation_profile_commitment_sha256
+        || next.navigation_profile_admission_commitment_sha256
+            != sequence
+                .prior
+                .navigation_profile_admission_commitment_sha256
+        || next.approved_account_alias_sha256 != sequence.prior.approved_account_alias_sha256
+        || next.deck_list_sha256 != sequence.prior.deck_manifest_sha256
+        || next.deck_format_sha256 != sequence.prior.deck_format_sha256
+        || next.policy_deployment_commitment_sha256
+            != sequence.prior.policy_deployment_commitment_sha256
+        || next.event_kind != sequence.prior.event_kind
+        || next.event_identity_sha256 != sequence.prior.bound_event_identity_sha256
+        || sequence.prior.current_match_identity_sha256.as_deref()
+            != Some(next.match_identity_sha256.as_str())
+        || sequence.prior.current_game_number != Some(next.game_number)
+        || next.frame_sequence <= sequence.commitments.current_frame_sequence
+        || next.source_capture_commitment_sha256
+            == current_frame
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+        || next.sideboard_snapshot_commitment_sha256
+            == sequence
+                .commitments
+                .current_sideboard_snapshot_commitment_sha256
+    {
+        return Err("next sideboard frame changed identity or did not advance".to_owned());
+    }
+    let expected_configuration =
+        apply_atomic_sideboard_transfer_v1(&sequence.current_configuration, &preparation.transfer)?;
+    if classified.configuration_v1() != &expected_configuration {
+        return Err(
+            "next visible sideboard configuration is not exactly one declared transfer".to_owned(),
+        );
+    }
+    let next_step_count = sequence
+        .commitments
+        .confirmed_transfer_steps
+        .checked_add(1)
+        .ok_or("confirmed sideboard transfer count overflow")?;
+    let confirmation_receipt_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_TRANSFER_CONFIRMATION_DOMAIN_V1,
+        &[
+            preparation.preparation_commitment_sha256.as_bytes(),
+            sequence
+                .commitments
+                .sequence_chain_commitment_sha256
+                .as_bytes(),
+            next.classification_result_commitment_sha256.as_bytes(),
+            next.sideboard_snapshot_commitment_sha256.as_bytes(),
+            next.frame_sequence.to_be_bytes().as_slice(),
+            next_step_count.to_be_bytes().as_slice(),
+            b"exactly_one_newer_visible_sideboard_transfer_no_causality_no_input",
+        ],
+    );
+    let OpaqueMtgoClassifiedCompetitiveSideboardV1 {
+        source_frame,
+        sideboard,
+        visible_cards,
+        mainboard_zone,
+        sideboard_zone,
+        commitments: _,
+    } = classified;
+    if next_step_count < sequence.commitments.total_transfer_steps {
+        let next_transfer = sequence.atomic_transfers[usize::from(next_step_count)].clone();
+        let sequence_chain_commitment_sha256 = hash_parts_v2(
+            COMPETITIVE_EVENT_SIDEBOARD_SEQUENCE_DOMAIN_V1,
+            &[
+                sequence
+                    .commitments
+                    .sequence_chain_commitment_sha256
+                    .as_bytes(),
+                confirmation_receipt_sha256.as_bytes(),
+                next.sideboard_snapshot_commitment_sha256.as_bytes(),
+                next.frame_sequence.to_be_bytes().as_slice(),
+                next_step_count.to_be_bytes().as_slice(),
+                b"awaiting_next_exact_visible_sideboard_transfer_no_input",
+            ],
+        );
+        sequence.current_frame = source_frame;
+        sequence.current_configuration = expected_configuration;
+        sequence.current_visible_cards = visible_cards;
+        sequence.current_mainboard_zone = mainboard_zone;
+        sequence.current_sideboard_zone = sideboard_zone;
+        sequence.commitments.sequence_chain_commitment_sha256 = sequence_chain_commitment_sha256;
+        sequence
+            .commitments
+            .current_sideboard_snapshot_commitment_sha256 =
+            next.sideboard_snapshot_commitment_sha256;
+        sequence.commitments.current_frame_sequence = next.frame_sequence;
+        sequence.commitments.confirmed_transfer_steps = next_step_count;
+        sequence.commitments.next_transfer = next_transfer;
+        return Ok(
+            MtgoCompetitiveEventSideboardTransferAdvanceV1::AwaitingNext(Box::new(sequence)),
+        );
+    }
+    if next_step_count != sequence.commitments.total_transfer_steps
+        || expected_configuration != *sequence.plan.target_configuration_v1()
+    {
+        return Err("sideboard sequence reached an invalid terminal transfer count".to_owned());
+    }
+    let ready = confirm_competitive_sideboard_target_visible_v1(sequence.plan, sideboard)
+        .map_err(|error| format!("confirm final visible sideboard target: {error}"))?;
+    if ready.after_frame_id() != next.frame_id
+        || ready.after_frame_sequence() != next.frame_sequence
+        || ready.after_snapshot_commitment_sha256() != next.sideboard_snapshot_commitment_sha256
+        || ready.event_identity_sha256() != sequence.prior.bound_event_identity_sha256
+        || sequence.prior.current_match_identity_sha256.as_deref()
+            != Some(ready.match_identity_sha256())
+        || ready.policy_deployment_commitment_sha256()
+            != sequence.prior.policy_deployment_commitment_sha256
+    {
+        return Err("final sideboard ready state changed the event lineage".to_owned());
+    }
+    let mut effective_prior = sequence.prior;
+    effective_prior.current_lifecycle_snapshot_commitment_sha256 =
+        next.source_lifecycle_snapshot_commitment_sha256;
+    effective_prior.current_frame_id = next.frame_id;
+    effective_prior.current_frame_sequence = next.frame_sequence;
+    effective_prior.runtime_commitment_sha256 = competitive_event_runtime_commitment_v1(
+        COMPETITIVE_EVENT_SIDEBOARD_READY_DOMAIN_V1,
+        Some(effective_prior.runtime_commitment_sha256.as_str()),
+        &effective_prior,
+        confirmation_receipt_sha256.as_bytes(),
+    );
+    let event_ready_binding_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_READY_DOMAIN_V1,
+        &[
+            sequence
+                .commitments
+                .event_plan_binding_commitment_sha256
+                .as_bytes(),
+            sequence.commitments.plan_commitment_sha256.as_bytes(),
+            ready.ready_commitment_sha256().as_bytes(),
+            confirmation_receipt_sha256.as_bytes(),
+            effective_prior.runtime_commitment_sha256.as_bytes(),
+            next.frame_sequence.to_be_bytes().as_slice(),
+            next_step_count.to_be_bytes().as_slice(),
+            b"all_model_selected_sideboard_transfers_visibly_confirmed_no_submit_no_input",
+        ],
+    );
+    let commitments = MtgoReadyCompetitiveEventSideboardCommitmentsV1 {
+        prior_event_runtime_commitment_sha256: sequence
+            .commitments
+            .prior_event_runtime_commitment_sha256,
+        event_plan_binding_commitment_sha256: sequence
+            .commitments
+            .event_plan_binding_commitment_sha256,
+        plan_commitment_sha256: sequence.commitments.plan_commitment_sha256,
+        ready_commitment_sha256: ready.ready_commitment_sha256().to_owned(),
+        event_ready_binding_commitment_sha256,
+        final_sideboard_snapshot_commitment_sha256: next.sideboard_snapshot_commitment_sha256,
+        final_frame_id: next.frame_id,
+        final_frame_sequence: next.frame_sequence,
+        confirmed_transfer_steps: next_step_count,
+    };
+    Ok(
+        MtgoCompetitiveEventSideboardTransferAdvanceV1::ReadyToSubmit(Box::new(
+            OpaqueMtgoReadyCompetitiveEventSideboardV1 {
+                _spent_entry_authorization: sequence._spent_entry_authorization,
+                _lifecycle_authorization: sequence.lifecycle_authorization,
+                _current_frame: source_frame,
+                _manifest: sequence.manifest,
+                _ready: ready,
+                _event_monitor: sequence.event_monitor,
+                _effective_prior: effective_prior,
+                commitments,
+            },
+        )),
+    )
 }
 
 /// Consumes the event runtime and prepares one exact enabled lifecycle control
@@ -5665,6 +6474,126 @@ fn validate_attended_launch_display_label_v4(
         ));
     }
     Ok(())
+}
+
+fn expand_atomic_sideboard_transfers_v1(
+    transfers: &[MtgoCompetitiveSideboardTransferV1],
+) -> Result<Vec<MtgoAtomicCompetitiveSideboardTransferV1>, String> {
+    let mut atomic = Vec::new();
+    for direction in [
+        MtgoCompetitiveSideboardTransferDirectionV1::SideboardToMainboard,
+        MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard,
+    ] {
+        for transfer in transfers
+            .iter()
+            .filter(|transfer| transfer.direction == direction)
+        {
+            for _ in 0..transfer.count {
+                let step_index = u16::try_from(atomic.len())
+                    .map_err(|_| "atomic sideboard transfer count overflow")?;
+                atomic.push(MtgoAtomicCompetitiveSideboardTransferV1 {
+                    step_index,
+                    card_db_id: transfer.card_db_id,
+                    card_name: transfer.card_name.clone(),
+                    direction,
+                });
+            }
+        }
+    }
+    Ok(atomic)
+}
+
+fn apply_atomic_sideboard_transfer_v1(
+    current: &MtgoCompetitiveDeckConfigurationV1,
+    transfer: &MtgoAtomicCompetitiveSideboardTransferV1,
+) -> Result<MtgoCompetitiveDeckConfigurationV1, String> {
+    let mut next = current.clone();
+    match transfer.direction {
+        MtgoCompetitiveSideboardTransferDirectionV1::SideboardToMainboard => {
+            remove_one_sideboard_card_v1(
+                &mut next.sideboard,
+                transfer.card_db_id,
+                &transfer.card_name,
+            )?;
+            add_one_sideboard_card_v1(
+                &mut next.mainboard,
+                transfer.card_db_id,
+                &transfer.card_name,
+            )?;
+        }
+        MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard => {
+            remove_one_sideboard_card_v1(
+                &mut next.mainboard,
+                transfer.card_db_id,
+                &transfer.card_name,
+            )?;
+            add_one_sideboard_card_v1(
+                &mut next.sideboard,
+                transfer.card_db_id,
+                &transfer.card_name,
+            )?;
+        }
+    }
+    Ok(next)
+}
+
+fn remove_one_sideboard_card_v1(
+    partition: &mut Vec<mtgo_blackbox_v1::MtgoCompetitiveDeckCardCountV1>,
+    card_db_id: u16,
+    card_name: &str,
+) -> Result<(), String> {
+    let index = partition
+        .iter()
+        .position(|card| card.card_db_id == card_db_id && card.card_name == card_name)
+        .ok_or("sideboard transfer source card is absent from the current configuration")?;
+    if partition[index].count == 0 {
+        return Err("sideboard transfer source card has zero copies".to_owned());
+    }
+    partition[index].count -= 1;
+    if partition[index].count == 0 {
+        partition.remove(index);
+    }
+    Ok(())
+}
+
+fn add_one_sideboard_card_v1(
+    partition: &mut Vec<mtgo_blackbox_v1::MtgoCompetitiveDeckCardCountV1>,
+    card_db_id: u16,
+    card_name: &str,
+) -> Result<(), String> {
+    match partition.binary_search_by_key(&card_db_id, |card| card.card_db_id) {
+        Ok(index) => {
+            if partition[index].card_name != card_name {
+                return Err("sideboard destination card identity changed".to_owned());
+            }
+            partition[index].count = partition[index]
+                .count
+                .checked_add(1)
+                .ok_or("sideboard destination card count overflow")?;
+        }
+        Err(index) => partition.insert(
+            index,
+            mtgo_blackbox_v1::MtgoCompetitiveDeckCardCountV1 {
+                card_db_id,
+                card_name: card_name.to_owned(),
+                count: 1,
+            },
+        ),
+    }
+    Ok(())
+}
+
+fn competitive_sideboard_transfer_direction_tag_v1(
+    direction: MtgoCompetitiveSideboardTransferDirectionV1,
+) -> &'static [u8] {
+    match direction {
+        MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard => {
+            b"mainboard_to_sideboard"
+        }
+        MtgoCompetitiveSideboardTransferDirectionV1::SideboardToMainboard => {
+            b"sideboard_to_mainboard"
+        }
+    }
 }
 
 fn hash_parts_v2(domain: &[u8], parts: &[&[u8]]) -> String {
@@ -12076,5 +13005,85 @@ mod tests {
 
         runtime.last_returned_gameplay_frame_sequence = None;
         validate_competitive_event_next_frame_order_v1(&runtime, 31).unwrap();
+    }
+
+    #[test]
+    fn atomic_sideboard_sequence_moves_in_before_out_and_applies_one_copy() {
+        let transfers = vec![
+            MtgoCompetitiveSideboardTransferV1 {
+                card_db_id: 1,
+                card_name: "Out".to_owned(),
+                direction: MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard,
+                count: 2,
+            },
+            MtgoCompetitiveSideboardTransferV1 {
+                card_db_id: 2,
+                card_name: "In".to_owned(),
+                direction: MtgoCompetitiveSideboardTransferDirectionV1::SideboardToMainboard,
+                count: 2,
+            },
+        ];
+        let atomic = expand_atomic_sideboard_transfers_v1(&transfers).unwrap();
+        assert_eq!(atomic.len(), 4);
+        assert_eq!(atomic[0].step_index, 0);
+        assert_eq!(
+            atomic[0].direction,
+            MtgoCompetitiveSideboardTransferDirectionV1::SideboardToMainboard
+        );
+        assert_eq!(atomic[2].step_index, 2);
+        assert_eq!(
+            atomic[2].direction,
+            MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard
+        );
+
+        let configuration = MtgoCompetitiveDeckConfigurationV1 {
+            mainboard: vec![mtgo_blackbox_v1::MtgoCompetitiveDeckCardCountV1 {
+                card_db_id: 1,
+                card_name: "Out".to_owned(),
+                count: 2,
+            }],
+            sideboard: vec![mtgo_blackbox_v1::MtgoCompetitiveDeckCardCountV1 {
+                card_db_id: 2,
+                card_name: "In".to_owned(),
+                count: 2,
+            }],
+        };
+        let first = apply_atomic_sideboard_transfer_v1(&configuration, &atomic[0]).unwrap();
+        assert_eq!(first.mainboard[0].card_db_id, 1);
+        assert_eq!(first.mainboard[1].card_db_id, 2);
+        assert_eq!(first.mainboard[1].count, 1);
+        assert_eq!(first.sideboard[0].count, 1);
+        let second = apply_atomic_sideboard_transfer_v1(&first, &atomic[1]).unwrap();
+        assert_eq!(second.mainboard[1].count, 2);
+        assert!(second.sideboard.is_empty());
+        let third = apply_atomic_sideboard_transfer_v1(&second, &atomic[2]).unwrap();
+        assert_eq!(third.mainboard[0].count, 1);
+        assert_eq!(third.sideboard[0].card_db_id, 1);
+        assert_eq!(third.sideboard[0].count, 1);
+        let fourth = apply_atomic_sideboard_transfer_v1(&third, &atomic[3]).unwrap();
+        assert_eq!(fourth.mainboard.len(), 1);
+        assert_eq!(fourth.mainboard[0].card_db_id, 2);
+        assert_eq!(fourth.sideboard[0].count, 2);
+    }
+
+    #[test]
+    fn atomic_sideboard_application_rejects_absent_source_or_crossed_name() {
+        let configuration = MtgoCompetitiveDeckConfigurationV1 {
+            mainboard: vec![mtgo_blackbox_v1::MtgoCompetitiveDeckCardCountV1 {
+                card_db_id: 1,
+                card_name: "Exact".to_owned(),
+                count: 1,
+            }],
+            sideboard: Vec::new(),
+        };
+        for (card_db_id, card_name) in [(2, "Missing"), (1, "Crossed")] {
+            let transfer = MtgoAtomicCompetitiveSideboardTransferV1 {
+                step_index: 0,
+                card_db_id,
+                card_name: card_name.to_owned(),
+                direction: MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard,
+            };
+            assert!(apply_atomic_sideboard_transfer_v1(&configuration, &transfer).is_err());
+        }
     }
 }

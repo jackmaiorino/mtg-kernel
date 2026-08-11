@@ -830,6 +830,24 @@ pub(super) fn invoke_verified_competitive_event_record_classifier_process_v1(
     )
 }
 
+pub(super) fn invoke_verified_competitive_sideboard_classifier_process_v1(
+    runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    header_json: &[u8],
+    classifier_assets_manifest: &[u8],
+    canonical_bgra8: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
+    invoke_verified_classifier_process_v1(
+        runtime,
+        "--mtgo-visible-competitive-sideboard-v1",
+        b"MTGO_VISIBLE_COMPETITIVE_SIDEBOARD_V1\0",
+        header_json,
+        classifier_assets_manifest,
+        canonical_bgra8,
+        timeout,
+    )
+}
+
 pub(super) fn competitive_navigation_classifier_assets_manifest_bytes_v1(
     runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
 ) -> &[u8] {

@@ -108,6 +108,16 @@ pub struct MtgoVisibleCompetitiveSideboardCardV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct MtgoVisibleCompetitiveSideboardZoneV1 {
+    pub rect_client_px: MtgoRectPxV1,
+    pub content_sha256: String,
+    pub empty_drop_rect_client_px: MtgoRectPxV1,
+    pub empty_drop_content_sha256: String,
+    pub confidence_bps: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MtgoVisibleCompetitiveSideboardSnapshotV1 {
     pub schema_version: u32,
     pub snapshot_id: String,
@@ -122,6 +132,8 @@ pub struct MtgoVisibleCompetitiveSideboardSnapshotV1 {
     pub deck_manifest_commitment_sha256: String,
     pub policy_deployment_commitment_sha256: String,
     pub visible_configuration_complete: bool,
+    pub mainboard_zone: MtgoVisibleCompetitiveSideboardZoneV1,
+    pub sideboard_zone: MtgoVisibleCompetitiveSideboardZoneV1,
     pub cards: Vec<MtgoVisibleCompetitiveSideboardCardV1>,
 }
 
@@ -255,6 +267,10 @@ pub struct CheckedUntrustedMtgoCompetitiveSideboardPlanV1 {
 }
 
 impl CheckedUntrustedMtgoCompetitiveSideboardPlanV1 {
+    pub fn source_configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
+        self.source.configuration_v1()
+    }
+
     pub fn target_configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
         &self.target_configuration
     }
@@ -290,8 +306,15 @@ pub struct CheckedUntrustedMtgoCompetitiveSideboardReadyV1 {
     _plan: CheckedUntrustedMtgoCompetitiveSideboardPlanV1,
     _confirmed_snapshot: CheckedUntrustedMtgoCompetitiveSideboardSnapshotV1,
     event_kind: MtgoCompetitiveEventKindV1,
+    event_identity_sha256: String,
+    match_identity_sha256: String,
     game_number: u8,
+    deck_manifest_commitment_sha256: String,
+    policy_deployment_commitment_sha256: String,
+    after_snapshot_commitment_sha256: String,
+    after_frame_id: u64,
     after_frame_sequence: u64,
+    after_frame_sha256: String,
     ready_commitment_sha256: String,
 }
 
@@ -304,8 +327,36 @@ impl CheckedUntrustedMtgoCompetitiveSideboardReadyV1 {
         self.game_number
     }
 
+    pub fn event_identity_sha256(&self) -> &str {
+        &self.event_identity_sha256
+    }
+
+    pub fn match_identity_sha256(&self) -> &str {
+        &self.match_identity_sha256
+    }
+
+    pub fn deck_manifest_commitment_sha256(&self) -> &str {
+        &self.deck_manifest_commitment_sha256
+    }
+
+    pub fn policy_deployment_commitment_sha256(&self) -> &str {
+        &self.policy_deployment_commitment_sha256
+    }
+
+    pub fn after_snapshot_commitment_sha256(&self) -> &str {
+        &self.after_snapshot_commitment_sha256
+    }
+
+    pub fn after_frame_id(&self) -> u64 {
+        self.after_frame_id
+    }
+
     pub fn after_frame_sequence(&self) -> u64 {
         self.after_frame_sequence
+    }
+
+    pub fn after_frame_sha256(&self) -> &str {
+        &self.after_frame_sha256
     }
 
     pub fn ready_commitment_sha256(&self) -> &str {
@@ -416,7 +467,17 @@ pub fn validate_visible_competitive_sideboard_snapshot_v1(
             "deck, policy, frame, event, or match identity is invalid or mismatched",
         ));
     }
-    validate_visible_cards_v1(&snapshot.cards, lifecycle.client_bounds_v1())?;
+    validate_visible_zones_v1(
+        &snapshot.mainboard_zone,
+        &snapshot.sideboard_zone,
+        lifecycle.client_bounds_v1(),
+    )?;
+    validate_visible_cards_v1(
+        &snapshot.cards,
+        &snapshot.mainboard_zone,
+        &snapshot.sideboard_zone,
+        lifecycle.client_bounds_v1(),
+    )?;
     let configuration = configuration_from_visible_cards_v1(&snapshot.cards);
     validate_configuration_against_manifest_v1(&configuration, manifest)?;
     let snapshot_bytes = canonical_json_v1(&snapshot, "sideboard snapshot")?;
@@ -546,8 +607,15 @@ pub fn confirm_competitive_sideboard_target_visible_v1(
     );
     Ok(CheckedUntrustedMtgoCompetitiveSideboardReadyV1 {
         event_kind: source.event_kind,
+        event_identity_sha256: source.event_identity_sha256.clone(),
+        match_identity_sha256: source.match_identity_sha256.clone(),
         game_number: source.game_number,
+        deck_manifest_commitment_sha256: source.deck_manifest_commitment_sha256.clone(),
+        policy_deployment_commitment_sha256: source.policy_deployment_commitment_sha256.clone(),
+        after_snapshot_commitment_sha256: confirmed.snapshot_commitment_sha256.clone(),
+        after_frame_id: confirmed.frame_id,
         after_frame_sequence: confirmed.frame_sequence,
+        after_frame_sha256: confirmed.frame_sha256.clone(),
         _plan: plan,
         _confirmed_snapshot: confirmed,
         ready_commitment_sha256,
@@ -556,6 +624,8 @@ pub fn confirm_competitive_sideboard_target_visible_v1(
 
 fn validate_visible_cards_v1(
     cards: &[MtgoVisibleCompetitiveSideboardCardV1],
+    mainboard_zone: &MtgoVisibleCompetitiveSideboardZoneV1,
+    sideboard_zone: &MtgoVisibleCompetitiveSideboardZoneV1,
     client_bounds: &MtgoRectPxV1,
 ) -> Result<(), MtgoContractErrorV1> {
     if cards.is_empty() || cards.len() > MAX_DECK_CARD_KINDS_V1 * 2 {
@@ -585,6 +655,17 @@ fn validate_visible_cards_v1(
             ));
         }
         validate_rect_inside_v1(&card.rect_client_px, client_bounds)?;
+        let zone = match card.partition {
+            MtgoCompetitiveDeckPartitionV1::Mainboard => mainboard_zone,
+            MtgoCompetitiveDeckPartitionV1::Sideboard => sideboard_zone,
+        };
+        validate_rect_inside_v1(&card.rect_client_px, &zone.rect_client_px)?;
+        if rects_intersect_v1(&card.rect_client_px, &zone.empty_drop_rect_client_px)? {
+            return Err(error(
+                "sideboard_visible_drop_overlap",
+                "visible card evidence must not overlap the reviewed empty drop target",
+            ));
+        }
         for other in &cards[..index] {
             if rects_intersect_v1(&card.rect_client_px, &other.rect_client_px)? {
                 return Err(error(
@@ -593,6 +674,34 @@ fn validate_visible_cards_v1(
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_visible_zones_v1(
+    mainboard: &MtgoVisibleCompetitiveSideboardZoneV1,
+    sideboard: &MtgoVisibleCompetitiveSideboardZoneV1,
+    client_bounds: &MtgoRectPxV1,
+) -> Result<(), MtgoContractErrorV1> {
+    for zone in [mainboard, sideboard] {
+        validate_rect_inside_v1(&zone.rect_client_px, client_bounds)?;
+        validate_rect_inside_v1(&zone.empty_drop_rect_client_px, &zone.rect_client_px)?;
+        if !is_sha256_v1(&zone.content_sha256)
+            || !is_sha256_v1(&zone.empty_drop_content_sha256)
+            || zone.confidence_bps < MIN_SIDEBOARD_CONFIDENCE_BPS_V1
+            || zone.confidence_bps > 10_000
+        {
+            return Err(error(
+                "sideboard_visible_zone_evidence",
+                "each board zone and empty drop target require high-confidence pixel commitments",
+            ));
+        }
+    }
+    if rects_intersect_v1(&mainboard.rect_client_px, &sideboard.rect_client_px)? {
+        return Err(error(
+            "sideboard_visible_zone_overlap",
+            "mainboard and sideboard zones must not overlap",
+        ));
     }
     Ok(())
 }

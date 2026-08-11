@@ -113,7 +113,10 @@ fn visible_cards(
                 count: card.count,
                 rect_client_px: MtgoRectPxV1 {
                     x: 20 + (index as u32 * 80),
-                    y: 100,
+                    y: match partition {
+                        MtgoCompetitiveDeckPartitionV1::Mainboard => 100,
+                        MtgoCompetitiveDeckPartitionV1::Sideboard => 420,
+                    },
                     width: 60,
                     height: 80,
                 },
@@ -143,6 +146,40 @@ fn snapshot_raw(
         deck_manifest_commitment_sha256: manifest.manifest_commitment_sha256().to_owned(),
         policy_deployment_commitment_sha256: digest('5'),
         visible_configuration_complete: true,
+        mainboard_zone: MtgoVisibleCompetitiveSideboardZoneV1 {
+            rect_client_px: MtgoRectPxV1 {
+                x: 0,
+                y: 80,
+                width: 1_000,
+                height: 250,
+            },
+            content_sha256: digest('6'),
+            empty_drop_rect_client_px: MtgoRectPxV1 {
+                x: 900,
+                y: 100,
+                width: 60,
+                height: 80,
+            },
+            empty_drop_content_sha256: digest('7'),
+            confidence_bps: 10_000,
+        },
+        sideboard_zone: MtgoVisibleCompetitiveSideboardZoneV1 {
+            rect_client_px: MtgoRectPxV1 {
+                x: 0,
+                y: 400,
+                width: 1_000,
+                height: 250,
+            },
+            content_sha256: digest('8'),
+            empty_drop_rect_client_px: MtgoRectPxV1 {
+                x: 900,
+                y: 420,
+                width: 60,
+                height: 80,
+            },
+            empty_drop_content_sha256: digest('9'),
+            confidence_bps: 10_000,
+        },
         cards: visible_cards(configuration),
     }
 }
@@ -296,6 +333,31 @@ fn visible_snapshot_rejects_incomplete_stale_or_ambiguous_evidence() {
 }
 
 #[test]
+fn visible_snapshot_rejects_crossed_zones_or_nonempty_drop_targets() {
+    let manifest = validate_competitive_deck_manifest_v1(manifest_raw()).unwrap();
+
+    for mutation in 0..4 {
+        let lifecycle =
+            validate_visible_competitive_lifecycle_snapshot_v1(lifecycle_raw(10)).unwrap();
+        let mut candidate = snapshot_raw(&lifecycle, &manifest, &starting_configuration());
+        match mutation {
+            0 => candidate.sideboard_zone.rect_client_px.y = 300,
+            1 => candidate.mainboard_zone.empty_drop_rect_client_px.x = 1_100,
+            2 => {
+                candidate.mainboard_zone.empty_drop_rect_client_px =
+                    candidate.cards[0].rect_client_px.clone()
+            }
+            3 => candidate.cards[0].rect_client_px.y = 420,
+            _ => unreachable!(),
+        }
+        assert!(validate_visible_competitive_sideboard_snapshot_v1(
+            lifecycle, &manifest, candidate,
+        )
+        .is_err());
+    }
+}
+
+#[test]
 fn no_change_selection_is_valid_and_coordinate_free() {
     let manifest = validate_competitive_deck_manifest_v1(manifest_raw()).unwrap();
     let source = checked_snapshot(&manifest, &starting_configuration(), 10);
@@ -358,7 +420,16 @@ fn ready_confirmation_requires_exact_target_on_changed_newer_frame() {
     let confirmed = checked_snapshot(&manifest, &swapped_configuration(), 11);
     let ready = confirm_competitive_sideboard_target_visible_v1(plan, confirmed).unwrap();
     assert_eq!(ready.game_number(), 1);
+    assert_eq!(ready.event_identity_sha256(), digest('3'));
+    assert_eq!(ready.match_identity_sha256(), digest('4'));
+    assert_eq!(
+        ready.deck_manifest_commitment_sha256(),
+        manifest.manifest_commitment_sha256()
+    );
+    assert_eq!(ready.policy_deployment_commitment_sha256(), digest('5'));
+    assert_eq!(ready.after_frame_id(), 11);
     assert_eq!(ready.after_frame_sequence(), 11);
+    assert_eq!(ready.after_frame_sha256(), format!("{:064x}", 11));
     assert_eq!(ready.ready_commitment_sha256().len(), 64);
     assert!(!ready.safe_for_live_input_v1());
     assert!(!ready.permits_sideboard_submission_v1());

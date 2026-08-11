@@ -345,6 +345,78 @@ fn competitive_lifecycle_controls_are_exact_frame_bound_and_non_actionable() {
 }
 
 #[test]
+fn competitive_sideboard_measurement_is_pixel_bound_event_bound_and_non_actionable() {
+    let parser = include_str!("../src/probe/competitive_sideboard_runtime.rs");
+    for required in [
+        "check_untrusted_competitive_sideboard_classifier_request_v1",
+        "classify_checked_untrusted_competitive_sideboard_v1",
+        "plan_classified_competitive_sideboard_v1",
+        "OpaqueMtgoClassifiedCompetitiveSideboardV1",
+        "OpaqueMtgoPlannedCompetitiveSideboardV1",
+        "source_navigation_classification_result_commitment_sha256",
+        "source_lifecycle_snapshot_commitment_sha256",
+        "deck_list_sha256",
+        "deck_manifest_commitment_sha256",
+        "deck_format_sha256",
+        "policy_deployment_commitment_sha256",
+        "visible_frame_region_content_sha256_v1",
+        "same_frame_rehashed_sideboard_checked_untrusted_no_input_no_submit",
+        "coordinate_free_model_sideboard_plan_no_input_no_submit",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "permits_sideboard_submission_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            parser.contains(required),
+            "sideboard measurement seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn card_rectangles",
+        "pub fn input_command",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !parser.contains(forbidden),
+            "sideboard measurement exposes forbidden authority: {forbidden}"
+        );
+    }
+
+    let coordinator = include_str!("../src/actuator.rs");
+    for required in [
+        "measure_competitive_event_runtime_sideboard_v1",
+        "plan_measured_competitive_event_sideboard_v1",
+        "OpaqueMtgoMeasuredCompetitiveEventSideboardV1",
+        "OpaqueMtgoPlannedCompetitiveEventSideboardV1",
+        "COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1",
+        "COMPETITIVE_EVENT_SIDEBOARD_PLAN_DOMAIN_V1",
+        "event_runtime_withheld_during_checked_untrusted_sideboard_measurement_no_input_no_submit",
+        "coordinate_free_event_bound_sideboard_plan_no_input_no_submit",
+        "manifest.deck_list_sha256() != runtime.commitments.deck_manifest_sha256",
+        "manifest.format_sha256() != runtime.commitments.deck_format_sha256",
+        "sideboard.policy_deployment_commitment_sha256",
+        "begin_competitive_event_sideboard_transfer_sequence_v1",
+        "prepare_competitive_event_sideboard_transfer_drag_v1",
+        "confirm_competitive_event_sideboard_transfer_visible_v1",
+        "OpaqueMtgoCompetitiveEventSideboardSequenceV1",
+        "OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1",
+        "OpaqueMtgoReadyCompetitiveEventSideboardV1",
+        "sideboard_to_mainboard_first_one_card_per_step_visible_confirmation_required_no_input",
+        "official_mtgo_drag_between_visible_zones_preparation_only_no_input",
+        "exactly_one_newer_visible_sideboard_transfer_no_causality_no_input",
+        "all_model_selected_sideboard_transfers_visibly_confirmed_no_submit_no_input",
+    ] {
+        assert!(
+            coordinator.contains(required),
+            "event sideboard coordinator is missing: {required}"
+        );
+    }
+}
+
+#[test]
 fn competitive_event_runtime_is_move_only_identity_bound_and_terminal_record_gated() {
     let source = include_str!("../src/actuator.rs");
     for required in [
