@@ -1422,6 +1422,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "end_to_end_operator_loop_present: false",
         "native_checkpoint_duel_action_interface_present: true",
         "native_checkpoint_pregame_interface_present: false",
+        "competitive_pregame_heuristic_deployment_ratification_present:",
         "competitive_pregame_session_ownership_bridge_present: true",
         "competitive_pregame_capture_profile_present: false",
         "competitive_pregame_input_actuator_present: false",
@@ -1449,6 +1450,47 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         assert!(
             !source.contains(forbidden) && !binary.contains(forbidden),
             "readiness preflight exposes a forbidden operation: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_pregame_heuristic_is_deck_bound_separately_ratified_and_non_actuating() {
+    let source = include_str!("../src/competitive_pregame_policy.rs");
+    for required in [
+        "RATIFIED_COMPETITIVE_PREGAME_HEURISTIC_REVIEW_COMMITMENT_V1: Option<&str> = None",
+        "check_untrusted_competitive_pregame_heuristic_v1",
+        "admit_ratified_competitive_pregame_heuristic_v1",
+        "bind_competitive_operator_pregame_resources_v1",
+        "every_main_deck_card_feature_reviewed",
+        "mulligan_behavior_reviewed",
+        "london_bottoming_behavior_reviewed",
+        "league_and_challenge_use_reviewed",
+        "no_sideboard_policy_claimed",
+        "do not share one exact deck and gameplay deployment",
+        "safe_for_live_scoring_v1(&self) -> bool",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+        "permits_sideboard_selection_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame heuristic seam is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "execute_prepared_competitive_entry_v1",
+        "execute_prepared_competitive_duel_gesture_primitive_v1",
+        "ReadProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame heuristic seam exposes a forbidden capability: {forbidden}"
         );
     }
 }

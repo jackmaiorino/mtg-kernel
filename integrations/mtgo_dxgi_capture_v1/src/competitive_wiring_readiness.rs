@@ -1,3 +1,4 @@
+use crate::competitive_pregame_policy::competitive_pregame_heuristic_ratification_present_v1;
 use crate::{
     competitive_authorization_ratification_readiness_v1,
     MtgoCompetitiveAuthorizationRatificationReadinessV1,
@@ -24,6 +25,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub native_checkpoint_duel_action_interface_present: bool,
     pub native_checkpoint_pregame_interface_present: bool,
     pub non_model_pregame_scorer_present: bool,
+    pub competitive_pregame_heuristic_deployment_ratification_present: bool,
     pub competitive_pregame_session_ownership_bridge_present: bool,
     pub competitive_pregame_capture_profile_present: bool,
     pub competitive_pregame_input_actuator_present: bool,
@@ -65,6 +67,8 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             native_checkpoint_duel_action_interface_present: true,
             native_checkpoint_pregame_interface_present: false,
             non_model_pregame_scorer_present: true,
+            competitive_pregame_heuristic_deployment_ratification_present:
+                competitive_pregame_heuristic_ratification_present_v1(),
             competitive_pregame_session_ownership_bridge_present: true,
             competitive_pregame_capture_profile_present: false,
             competitive_pregame_input_actuator_present: false,
@@ -113,6 +117,11 @@ mod tests {
                 .native_checkpoint_pregame_interface_present
         );
         assert!(report.known_wiring_gaps.non_model_pregame_scorer_present);
+        assert!(
+            !report
+                .known_wiring_gaps
+                .competitive_pregame_heuristic_deployment_ratification_present
+        );
         assert!(
             report
                 .known_wiring_gaps

@@ -32,6 +32,7 @@ const MTGO_HEURISTIC_ALL_COLORS_V1: u8 = MTGO_HEURISTIC_COLOR_WHITE_V1
 const HEURISTIC_PROFILE_DOMAIN_V1: &[u8] = b"mtgo-non-model-pregame-heuristic-profile-v1";
 const HEURISTIC_COMPATIBILITY_DIGEST_DOMAIN_V1: &[u8] =
     b"mtgo-non-model-pregame-heuristic-compatibility-digest-v1";
+const HEURISTIC_ALGORITHM_IDENTITY_V1: &[u8] = b"mtgo-non-model-pregame-heuristic-algorithm-v1\0keep-score-land-range-color-coverage-v1\0bottom-lowest-retention-submit-when-complete-v1\0stable-first-argmax-v1";
 const FIXED_BASICS_PROFILE_ID_V1: &str = "fixed-30-plains-30-island-wiring-only-v1";
 const KERNEL_BASICS_PROFILE_ID_V1: &str = "fixed-30-forest-30-island-wiring-only-v1";
 
@@ -306,6 +307,13 @@ pub fn non_model_pregame_heuristic_profile_commitment_v1(
 ) -> Result<String, String> {
     validate_heuristic_profile_v1(profile)?;
     canonical_json_commitment_v3(HEURISTIC_PROFILE_DOMAIN_V1, profile)
+}
+
+/// Stable identity for the exact deterministic scoring code reviewed with a
+/// competitive deck profile. Any behavior change must introduce a new
+/// algorithm identity before a deck-specific deployment can be ratified.
+pub fn non_model_pregame_heuristic_algorithm_commitment_v1() -> String {
+    sha256_hex_v1(HEURISTIC_ALGORITHM_IDENTITY_V1)
 }
 
 fn validate_heuristic_profile_v1(

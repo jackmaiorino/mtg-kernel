@@ -9,6 +9,8 @@ mod competitive_wiring_readiness;
 
 #[cfg(target_os = "windows")]
 mod competitive_operator_bootstrap;
+#[cfg(target_os = "windows")]
+mod competitive_pregame_policy;
 
 #[cfg(target_os = "windows")]
 mod probe;
@@ -168,6 +170,20 @@ pub use competitive_operator_bootstrap::{
     bind_competitive_operator_resources_v1, MtgoCompetitiveOperatorResourceCommitmentsV1,
     MtgoCompetitiveOperatorResourcesPartsV1, OpaqueMtgoCompetitiveOperatorResourcesV1,
 };
+#[cfg(target_os = "windows")]
+pub use competitive_pregame_policy::{
+    admit_ratified_competitive_pregame_heuristic_v1,
+    bind_competitive_operator_pregame_resources_v1,
+    check_untrusted_competitive_pregame_heuristic_v1, AdmittedMtgoCompetitivePregameHeuristicV1,
+    CheckedUntrustedMtgoCompetitivePregameHeuristicV1,
+    MtgoAdmittedCompetitivePregameHeuristicCommitmentsV1,
+    MtgoCompetitiveOperatorPregameResourceCommitmentsV1,
+    MtgoCompetitiveOperatorPregameResourcesPartsV1,
+    MtgoCompetitivePregameHeuristicReviewDeclarationsV1,
+    MtgoReviewedCompetitivePregameHeuristicCandidateV1,
+    OpaqueMtgoCompetitiveOperatorPregameResourcesV1,
+    MTGO_COMPETITIVE_PREGAME_HEURISTIC_REVIEW_SCHEMA_V1,
+};
 
 #[cfg(target_os = "windows")]
 pub use probe::{
@@ -218,6 +234,7 @@ pub use probe::{
     measure_pinned_current_solitaire_first_main_visible_hand_v1,
     measure_pinned_current_solitaire_mulligan_ladder_v1,
     measure_pinned_current_solitaire_mulligan_visible_hand_v1,
+    non_model_pregame_heuristic_algorithm_commitment_v1,
     non_model_pregame_heuristic_profile_commitment_v1, perceive_admitted_duel_frame_v1,
     plan_classified_competitive_sideboard_v1, pregame_scoring_request_commitment_v3,
     prepare_opaque_competitive_duel_action_plan_v1,
