@@ -143,6 +143,8 @@ const CLASSIFIER_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V3: &[u8] =
     b"mtgo-classifier-bound-competitive-entry-review-v3";
 const CONTROL_BOUND_COMPETITIVE_ENTRY_REVIEW_DOMAIN_V4: &[u8] =
     b"mtgo-control-bound-competitive-entry-review-v4";
+const ATTENDED_COMPETITIVE_DECK_REVIEW_RECEIPT_DOMAIN_V1: &[u8] =
+    b"mtgo-attended-competitive-deck-review-receipt-v1";
 const COMPETITIVE_ENTRY_POSTCONDITION_DRY_RUN_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-postcondition-dry-run-v1";
 const COMPETITIVE_ENTRY_PREPARATION_DOMAIN_V1: &[u8] = b"mtgo-competitive-entry-preparation-v1";
@@ -168,6 +170,8 @@ const COMPETITIVE_EVENT_RUNTIME_MONITOR_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-runtime-monitor-v1";
 const COMPETITIVE_EVENT_GAMEPLAY_LEASE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-gameplay-lease-v1";
+const COMPETITIVE_GESTURE_GAME_SESSION_EVENT_DECK_BIND_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-gesture-game-session-event-deck-bind-v1";
 const COMPETITIVE_EVENT_GAMEPLAY_RETURN_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-gameplay-return-v1";
 const ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V4: u64 = 512;
@@ -429,6 +433,12 @@ pub struct MtgoReviewedCompetitiveEntryRatificationCandidateV1 {
     pub source_capture_commitment_sha256: String,
     pub source_navigation_classification_result_commitment_sha256: String,
     pub visible_control_region_sha256: String,
+    pub selected_deck_label_sha256: String,
+    pub selected_deck_region_sha256: String,
+    pub deck_manifest_sha256: String,
+    pub deck_format_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
+    pub deck_review_receipt_sha256: String,
     pub event_identity_sha256: String,
     pub entry_terms_sha256: String,
     pub ratification_commitment_sha256: String,
@@ -649,6 +659,11 @@ pub struct MtgoCompetitiveEventRuntimeCommitmentsV1 {
     pub entry_authorization_sha256: String,
     pub correspondence_sha256: String,
     pub permission_review_commitment_sha256: String,
+    pub deck_manifest_sha256: String,
+    pub deck_format_sha256: String,
+    pub selected_deck_label_sha256: String,
+    pub selected_deck_region_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
     pub lifecycle_authorization_commitment_sha256: String,
     pub mode_authorization_commitment_sha256: String,
     pub navigation_profile_commitment_sha256: String,
@@ -793,6 +808,12 @@ pub struct MtgoCompetitiveEventGameplayLeaseCommitmentsV1 {
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub event_identity_sha256: String,
     pub match_identity_sha256: String,
+    pub entry_ratification_commitment_sha256: String,
+    pub selected_deck_label_sha256: String,
+    pub selected_deck_region_sha256: String,
+    pub deck_manifest_sha256: String,
+    pub deck_format_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
     pub game_number: u8,
     pub checkout_frame_sequence: u64,
     pub initial_confirmed_action_count: u64,
@@ -1177,6 +1198,7 @@ impl CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoControlBoundCompetitiveEntryReviewCommitmentsV4 {
     pub control_bound_review_commitment_sha256: String,
+    pub deck_review_receipt_sha256: String,
     pub classifier_bound_review: MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3,
     pub entry_control_dry_run: MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
 }
@@ -1202,6 +1224,8 @@ pub struct CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4 {
     _classifier_bound_review: CheckedUntrustedMtgoClassifierBoundCompetitiveEntryReviewV3,
     _visible_control_label: String,
     _control_rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1,
+    _selected_deck_label: String,
+    _selected_deck_rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1,
     entry_authorization: MtgoCompetitiveEntryAuthorizationV1,
     commitments: MtgoControlBoundCompetitiveEntryReviewCommitmentsV4,
 }
@@ -1438,6 +1462,12 @@ pub struct MtgoCompetitiveGestureGameSessionCommitmentsV1 {
     pub gesture_match_launch_commitment_sha256: String,
     pub gesture_evaluation_commitment_sha256: String,
     pub gesture_profile_admission_commitment_sha256: String,
+    pub entry_ratification_commitment_sha256: Option<String>,
+    pub selected_deck_label_sha256: Option<String>,
+    pub selected_deck_region_sha256: Option<String>,
+    pub deck_manifest_sha256: Option<String>,
+    pub deck_format_sha256: Option<String>,
+    pub policy_deployment_commitment_sha256: Option<String>,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub game_number: u8,
     pub valid_from_frame_sequence: u64,
@@ -1466,6 +1496,12 @@ pub struct OpaqueMtgoCompetitiveGestureGameSessionV1 {
     session_commitment_sha256: String,
     last_confirmed_frame_sequence: u64,
     confirmed_action_count: u64,
+    entry_ratification_commitment_sha256: Option<String>,
+    selected_deck_label_sha256: Option<String>,
+    selected_deck_region_sha256: Option<String>,
+    deck_manifest_sha256: Option<String>,
+    deck_format_sha256: Option<String>,
+    policy_deployment_commitment_sha256: Option<String>,
 }
 
 impl OpaqueMtgoCompetitiveGestureGameSessionV1 {
@@ -1517,6 +1553,12 @@ impl OpaqueMtgoCompetitiveGestureGameSessionV1 {
                 .gesture_authorization
                 .gesture_profile_admission_commitment_sha256
                 .clone(),
+            entry_ratification_commitment_sha256: self.entry_ratification_commitment_sha256.clone(),
+            selected_deck_label_sha256: self.selected_deck_label_sha256.clone(),
+            selected_deck_region_sha256: self.selected_deck_region_sha256.clone(),
+            deck_manifest_sha256: self.deck_manifest_sha256.clone(),
+            deck_format_sha256: self.deck_format_sha256.clone(),
+            policy_deployment_commitment_sha256: self.policy_deployment_commitment_sha256.clone(),
             event_kind: self.launch.pass_match_launch.authorization.event_kind,
             game_number: self.launch.pass_match_launch.authorization.game_number,
             valid_from_frame_sequence: self.launch.pass_match_launch.valid_from_frame_sequence,
@@ -1550,6 +1592,12 @@ pub struct MtgoSessionBoundCompetitiveDuelGestureCommitmentsV1 {
     pub gesture_match_launch_commitment_sha256: String,
     pub gesture_evaluation_commitment_sha256: String,
     pub gesture_profile_admission_commitment_sha256: String,
+    pub entry_ratification_commitment_sha256: String,
+    pub selected_deck_label_sha256: String,
+    pub selected_deck_region_sha256: String,
+    pub deck_manifest_sha256: String,
+    pub deck_format_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
     pub competitive_action_plan_commitment_sha256: String,
     pub gesture_plan_commitment_sha256: String,
     pub gesture_sequence_commitment_sha256: String,
@@ -2761,6 +2809,11 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         entry_authorization_sha256: entry_ratification.entry_authorization_sha256,
         correspondence_sha256: entry_ratification.correspondence_sha256,
         permission_review_commitment_sha256: entry_ratification.permission_review_commitment_sha256,
+        deck_manifest_sha256: entry_ratification.deck_manifest_sha256,
+        deck_format_sha256: entry_ratification.deck_format_sha256,
+        selected_deck_label_sha256: entry_ratification.selected_deck_label_sha256,
+        selected_deck_region_sha256: entry_ratification.selected_deck_region_sha256,
+        policy_deployment_commitment_sha256: entry_ratification.policy_deployment_commitment_sha256,
         lifecycle_authorization_commitment_sha256: lifecycle_ratification
             .ratification_commitment_sha256,
         mode_authorization_commitment_sha256: lifecycle_ratification
@@ -3058,7 +3111,7 @@ pub fn advance_competitive_event_monitor_in_runtime_v1(
 /// reunited before any lifecycle or result transition can continue.
 pub fn checkout_competitive_event_gameplay_session_v1(
     runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
-    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    mut session: OpaqueMtgoCompetitiveGestureGameSessionV1,
 ) -> Result<
     (
         OpaqueMtgoCompetitiveEventGameplayLeaseV1,
@@ -3067,6 +3120,31 @@ pub fn checkout_competitive_event_gameplay_session_v1(
     String,
 > {
     validate_game_session_against_event_runtime_v1(&runtime, &session)?;
+    let unbound = session.commitments_v1();
+    let deck_bound_session_commitment_sha256 =
+        competitive_gesture_game_session_event_deck_binding_commitment_v1(
+            &unbound,
+            &runtime.commitments,
+        )?;
+    session.entry_ratification_commitment_sha256 = Some(
+        runtime
+            .commitments
+            .entry_ratification_commitment_sha256
+            .clone(),
+    );
+    session.selected_deck_label_sha256 =
+        Some(runtime.commitments.selected_deck_label_sha256.clone());
+    session.selected_deck_region_sha256 =
+        Some(runtime.commitments.selected_deck_region_sha256.clone());
+    session.deck_manifest_sha256 = Some(runtime.commitments.deck_manifest_sha256.clone());
+    session.deck_format_sha256 = Some(runtime.commitments.deck_format_sha256.clone());
+    session.policy_deployment_commitment_sha256 = Some(
+        runtime
+            .commitments
+            .policy_deployment_commitment_sha256
+            .clone(),
+    );
+    session.session_commitment_sha256 = deck_bound_session_commitment_sha256;
     let game = session.commitments_v1();
     let match_identity_sha256 = runtime
         .commitments
@@ -3080,6 +3158,18 @@ pub fn checkout_competitive_event_gameplay_session_v1(
             game.session_commitment_sha256.as_bytes(),
             runtime.commitments.bound_event_identity_sha256.as_bytes(),
             match_identity_sha256.as_bytes(),
+            runtime
+                .commitments
+                .entry_ratification_commitment_sha256
+                .as_bytes(),
+            runtime.commitments.selected_deck_label_sha256.as_bytes(),
+            runtime.commitments.selected_deck_region_sha256.as_bytes(),
+            runtime.commitments.deck_manifest_sha256.as_bytes(),
+            runtime.commitments.deck_format_sha256.as_bytes(),
+            runtime
+                .commitments
+                .policy_deployment_commitment_sha256
+                .as_bytes(),
             game.game_number.to_be_bytes().as_slice(),
             runtime
                 .commitments
@@ -3097,6 +3187,18 @@ pub fn checkout_competitive_event_gameplay_session_v1(
         event_kind: runtime.commitments.event_kind,
         event_identity_sha256: runtime.commitments.bound_event_identity_sha256.clone(),
         match_identity_sha256,
+        entry_ratification_commitment_sha256: runtime
+            .commitments
+            .entry_ratification_commitment_sha256
+            .clone(),
+        selected_deck_label_sha256: runtime.commitments.selected_deck_label_sha256.clone(),
+        selected_deck_region_sha256: runtime.commitments.selected_deck_region_sha256.clone(),
+        deck_manifest_sha256: runtime.commitments.deck_manifest_sha256.clone(),
+        deck_format_sha256: runtime.commitments.deck_format_sha256.clone(),
+        policy_deployment_commitment_sha256: runtime
+            .commitments
+            .policy_deployment_commitment_sha256
+            .clone(),
         game_number: game.game_number,
         checkout_frame_sequence: runtime.commitments.current_frame_sequence,
         initial_confirmed_action_count: game.confirmed_action_count,
@@ -3120,6 +3222,27 @@ pub fn return_competitive_event_gameplay_session_v1(
         != lease.runtime.commitments.runtime_commitment_sha256
         || lease.commitments.event_kind != game.event_kind
         || lease.commitments.game_number != game.game_number
+        || game.entry_ratification_commitment_sha256.as_deref()
+            != Some(
+                lease
+                    .commitments
+                    .entry_ratification_commitment_sha256
+                    .as_str(),
+            )
+        || game.selected_deck_label_sha256.as_deref()
+            != Some(lease.commitments.selected_deck_label_sha256.as_str())
+        || game.selected_deck_region_sha256.as_deref()
+            != Some(lease.commitments.selected_deck_region_sha256.as_str())
+        || game.deck_manifest_sha256.as_deref()
+            != Some(lease.commitments.deck_manifest_sha256.as_str())
+        || game.deck_format_sha256.as_deref() != Some(lease.commitments.deck_format_sha256.as_str())
+        || game.policy_deployment_commitment_sha256.as_deref()
+            != Some(
+                lease
+                    .commitments
+                    .policy_deployment_commitment_sha256
+                    .as_str(),
+            )
         || game.confirmed_action_count < lease.commitments.initial_confirmed_action_count
         || game.last_confirmed_frame_sequence < lease.commitments.checkout_frame_sequence
         || game.last_confirmed_frame_sequence > game.valid_through_frame_sequence
@@ -3143,6 +3266,18 @@ pub fn return_competitive_event_gameplay_session_v1(
                 .initial_game_session_commitment_sha256
                 .as_bytes(),
             game.session_commitment_sha256.as_bytes(),
+            lease
+                .commitments
+                .entry_ratification_commitment_sha256
+                .as_bytes(),
+            lease.commitments.selected_deck_label_sha256.as_bytes(),
+            lease.commitments.selected_deck_region_sha256.as_bytes(),
+            lease.commitments.deck_manifest_sha256.as_bytes(),
+            lease.commitments.deck_format_sha256.as_bytes(),
+            lease
+                .commitments
+                .policy_deployment_commitment_sha256
+                .as_bytes(),
             game.last_confirmed_frame_sequence.to_be_bytes().as_slice(),
             game.confirmed_action_count.to_be_bytes().as_slice(),
             b"same_exact_game_session_returned_event_runtime_released",
@@ -3199,6 +3334,7 @@ pub fn prepare_ratified_competitive_entry_v1(
         validate_classifier_backed_competitive_entry_immediate_recapture_v1(
             source,
             &review._control_rect_client_px,
+            &review._selected_deck_rect_client_px,
             &review.commitments.entry_control_dry_run,
             &immediate,
         )?
@@ -3557,10 +3693,12 @@ pub fn review_competitive_entry_attended_v4(
         source_identity,
         visible_control_label,
         control_rect_client_px,
+        selected_deck_label,
+        selected_deck_rect_client_px,
         commitments: entry_control_dry_run,
     } = dry_run.into_parts_v1();
     let source_description = format!(
-        "exact profile-pinned classifier plus human-reviewed visibly enabled control {visible_control_label:?} over opaque composed-desktop navigation pixels"
+        "exact profile-pinned classifier plus human-reviewed visibly enabled control {visible_control_label:?} and selected deck {selected_deck_label:?} over opaque composed-desktop navigation pixels"
     );
     let classifier_bound_review = review_competitive_entry_attended_v3_with_source_description(
         correspondence,
@@ -3569,19 +3707,29 @@ pub fn review_competitive_entry_attended_v4(
         &source_description,
     )?;
     let classifier_bound_commitments = classifier_bound_review.commitments_v3();
+    let deck_review_receipt_sha256 = prompt_attended_competitive_deck_selection_review_v1(
+        visible_account_alias,
+        &selected_deck_label,
+        &entry_control_dry_run,
+        &classifier_bound_commitments,
+    )?;
     let control_bound_review_commitment_sha256 =
         bind_control_bound_competitive_entry_review_commitment_v4(
             &classifier_bound_commitments,
             &entry_control_dry_run,
+            &deck_review_receipt_sha256,
         )?;
     let entry_authorization = classifier_bound_review.entry_authorization_record_v3();
     Ok(CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4 {
         _classifier_bound_review: classifier_bound_review,
         _visible_control_label: visible_control_label,
         _control_rect_client_px: control_rect_client_px,
+        _selected_deck_label: selected_deck_label,
+        _selected_deck_rect_client_px: selected_deck_rect_client_px,
         entry_authorization,
         commitments: MtgoControlBoundCompetitiveEntryReviewCommitmentsV4 {
             control_bound_review_commitment_sha256,
+            deck_review_receipt_sha256,
             classifier_bound_review: classifier_bound_commitments,
             entry_control_dry_run,
         },
@@ -3785,6 +3933,7 @@ fn classifier_bound_competitive_entry_review_commitment_v3(
 fn bind_control_bound_competitive_entry_review_commitment_v4(
     classifier_bound: &MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3,
     dry_run: &MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
+    deck_review_receipt_sha256: &str,
 ) -> Result<String, String> {
     let source_bound = &classifier_bound.source_bound_review;
     let attended = &source_bound.attended_review;
@@ -3822,6 +3971,12 @@ fn bind_control_bound_competitive_entry_review_commitment_v4(
         dry_run.dry_run_commitment_sha256.as_str(),
         dry_run.visible_control_label_sha256.as_str(),
         dry_run.visible_control_region_sha256.as_str(),
+        dry_run.selected_deck_label_sha256.as_str(),
+        dry_run.selected_deck_region_sha256.as_str(),
+        dry_run.deck_manifest_sha256.as_str(),
+        dry_run.deck_format_sha256.as_str(),
+        dry_run.policy_deployment_commitment_sha256.as_str(),
+        deck_review_receipt_sha256,
     ] {
         if !is_sha256_v2(commitment) {
             return Err(
@@ -3846,10 +4001,16 @@ fn bind_control_bound_competitive_entry_review_commitment_v4(
                 .as_bytes(),
             dry_run.visible_control_label_sha256.as_bytes(),
             dry_run.visible_control_region_sha256.as_bytes(),
+            dry_run.selected_deck_label_sha256.as_bytes(),
+            dry_run.selected_deck_region_sha256.as_bytes(),
+            dry_run.deck_manifest_sha256.as_bytes(),
+            dry_run.deck_format_sha256.as_bytes(),
+            dry_run.policy_deployment_commitment_sha256.as_bytes(),
+            deck_review_receipt_sha256.as_bytes(),
             &[u8::from(dry_run.visibly_enabled_confirmed)],
             attended.owner_review_receipt_sha256.as_bytes(),
             attended.entry_authorization_sha256.as_bytes(),
-            b"owner_attended_control_bound_entry_dry_run_no_join_no_spending_no_input",
+            b"owner_attended_control_and_selected_deck_bound_entry_dry_run_no_join_no_spending_no_input",
         ],
     ))
 }
@@ -3917,6 +4078,106 @@ fn prompt_attended_competitive_entry_review_v1(
         challenge_nonce,
         issued_at_unix_millis,
         supplied_phrase.trim_end_matches(['\r', '\n']).to_owned(),
+    ))
+}
+
+fn prompt_attended_competitive_deck_selection_review_v1(
+    visible_account_alias: &str,
+    selected_deck_label: &str,
+    dry_run: &MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
+    classifier_bound: &MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3,
+) -> Result<String, String> {
+    validate_attended_launch_display_label_v4(selected_deck_label, 96, "selected deck label")?;
+    let selected_deck_label_sha256 =
+        format!("{:x}", Sha256::digest(selected_deck_label.as_bytes()));
+    if selected_deck_label_sha256 != dry_run.selected_deck_label_sha256 {
+        return Err("attended selected-deck label changed from its visible dry run".to_owned());
+    }
+    for value in [
+        dry_run.dry_run_commitment_sha256.as_str(),
+        dry_run.selected_deck_label_sha256.as_str(),
+        dry_run.selected_deck_region_sha256.as_str(),
+        dry_run.deck_manifest_sha256.as_str(),
+        dry_run.deck_format_sha256.as_str(),
+        dry_run.policy_deployment_commitment_sha256.as_str(),
+        classifier_bound
+            .classifier_bound_review_commitment_sha256
+            .as_str(),
+    ] {
+        if !is_sha256_v2(value) {
+            return Err("attended selected-deck review contains an invalid commitment".to_owned());
+        }
+    }
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    if !stdin.is_terminal() || !stdout.is_terminal() {
+        return Err("attended selected-deck review requires an interactive terminal".to_owned());
+    }
+    let mut challenge_nonce = [0_u8; 8];
+    unsafe {
+        BCryptGenRandom(None, &mut challenge_nonce, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+            .ok()
+            .map_err(|error| format!("generate attended selected-deck challenge: {error}"))?;
+    }
+    let issued_at_unix_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before epoch: {error}"))?
+        .as_millis();
+    let expected_phrase =
+        attended_competitive_deck_selection_confirmation_phrase_v1(&challenge_nonce);
+    writeln!(stdout, "MTGO attended selected-deck review")
+        .map_err(|error| format!("write attended selected-deck prompt: {error}"))?;
+    writeln!(stdout, "Account: {visible_account_alias}")
+        .map_err(|error| format!("write attended selected-deck account: {error}"))?;
+    writeln!(stdout, "Visible selected deck: {selected_deck_label}")
+        .map_err(|error| format!("write attended selected-deck label: {error}"))?;
+    writeln!(
+        stdout,
+        "Deck manifest: {}; format: {}; policy deployment: {}; visible region: {}",
+        &dry_run.deck_manifest_sha256[..12],
+        &dry_run.deck_format_sha256[..12],
+        &dry_run.policy_deployment_commitment_sha256[..12],
+        &dry_run.selected_deck_region_sha256[..12],
+    )
+    .map_err(|error| format!("write attended selected-deck commitments: {error}"))?;
+    writeln!(
+        stdout,
+        "This records the exact deck and policy deployment selected for the reviewed entry. It does not enter the event, spend resources, or enable input."
+    )
+    .map_err(|error| format!("write attended selected-deck scope: {error}"))?;
+    writeln!(stdout, "Type exactly: {expected_phrase}")
+        .map_err(|error| format!("write attended selected-deck challenge: {error}"))?;
+    stdout
+        .flush()
+        .map_err(|error| format!("flush attended selected-deck prompt: {error}"))?;
+    let mut supplied_phrase = String::new();
+    stdin
+        .read_line(&mut supplied_phrase)
+        .map_err(|error| format!("read attended selected-deck confirmation: {error}"))?;
+    let supplied_phrase = supplied_phrase.trim_end_matches(['\r', '\n']);
+    if supplied_phrase != expected_phrase {
+        return Err("attended selected-deck confirmation phrase did not match".to_owned());
+    }
+    let account_alias_sha256 = format!("{:x}", Sha256::digest(visible_account_alias.as_bytes()));
+    Ok(hash_parts_v2(
+        ATTENDED_COMPETITIVE_DECK_REVIEW_RECEIPT_DOMAIN_V1,
+        &[
+            classifier_bound
+                .classifier_bound_review_commitment_sha256
+                .as_bytes(),
+            dry_run.dry_run_commitment_sha256.as_bytes(),
+            account_alias_sha256.as_bytes(),
+            selected_deck_label.as_bytes(),
+            dry_run.selected_deck_label_sha256.as_bytes(),
+            dry_run.selected_deck_region_sha256.as_bytes(),
+            dry_run.deck_manifest_sha256.as_bytes(),
+            dry_run.deck_format_sha256.as_bytes(),
+            dry_run.policy_deployment_commitment_sha256.as_bytes(),
+            &challenge_nonce,
+            issued_at_unix_millis.to_be_bytes().as_slice(),
+            supplied_phrase.as_bytes(),
+            b"owner_confirmed_exact_visible_selected_deck_no_entry_no_spending_no_input",
+        ],
     ))
 }
 
@@ -4151,6 +4412,12 @@ pub fn begin_competitive_gesture_game_session_v1(
         session_commitment_sha256,
         last_confirmed_frame_sequence,
         confirmed_action_count: 0,
+        entry_ratification_commitment_sha256: None,
+        selected_deck_label_sha256: None,
+        selected_deck_region_sha256: None,
+        deck_manifest_sha256: None,
+        deck_format_sha256: None,
+        policy_deployment_commitment_sha256: None,
     })
 }
 
@@ -4957,6 +5224,14 @@ fn attended_competitive_entry_review_confirmation_phrase_v1(
     )
 }
 
+fn attended_competitive_deck_selection_confirmation_phrase_v1(challenge_nonce: &[u8; 8]) -> String {
+    let nonce = challenge_nonce
+        .iter()
+        .map(|value| format!("{value:02X}"))
+        .collect::<String>();
+    format!("CONFIRM MTGO SELECTED DECK {nonce}")
+}
+
 fn competitive_entry_resource_label_v1(resource: MtgoCompetitiveEntryResourceV1) -> &'static str {
     match resource {
         MtgoCompetitiveEntryResourceV1::NoCost => "no cost",
@@ -5536,8 +5811,11 @@ fn competitive_entry_ratification_candidate_from_parts_v1(
             "competitive entry ratification changed the classifier-bound review".to_owned(),
         );
     }
-    let expected_control_bound =
-        bind_control_bound_competitive_entry_review_commitment_v4(classifier, dry_run)?;
+    let expected_control_bound = bind_control_bound_competitive_entry_review_commitment_v4(
+        classifier,
+        dry_run,
+        &review.deck_review_receipt_sha256,
+    )?;
     if review.control_bound_review_commitment_sha256 != expected_control_bound {
         return Err("competitive entry ratification changed the control-bound review".to_owned());
     }
@@ -5601,6 +5879,7 @@ fn competitive_entry_ratification_candidate_from_parts_v1(
         scope.written_permission_sha256.as_str(),
         mode_authorization_commitment_sha256.as_str(),
         review.control_bound_review_commitment_sha256.as_str(),
+        review.deck_review_receipt_sha256.as_str(),
         classifier
             .classifier_bound_review_commitment_sha256
             .as_str(),
@@ -5615,6 +5894,11 @@ fn competitive_entry_ratification_candidate_from_parts_v1(
         dry_run.dry_run_commitment_sha256.as_str(),
         dry_run.visible_control_label_sha256.as_str(),
         dry_run.visible_control_region_sha256.as_str(),
+        dry_run.selected_deck_label_sha256.as_str(),
+        dry_run.selected_deck_region_sha256.as_str(),
+        dry_run.deck_manifest_sha256.as_str(),
+        dry_run.deck_format_sha256.as_str(),
+        dry_run.policy_deployment_commitment_sha256.as_str(),
         event_identity_sha256.as_str(),
         entry_terms.terms_sha256.as_str(),
     ] {
@@ -5640,6 +5924,7 @@ fn competitive_entry_ratification_candidate_from_parts_v1(
             scope.written_permission_sha256.as_bytes(),
             mode_authorization_commitment_sha256.as_bytes(),
             review.control_bound_review_commitment_sha256.as_bytes(),
+            review.deck_review_receipt_sha256.as_bytes(),
             classifier
                 .classifier_bound_review_commitment_sha256
                 .as_bytes(),
@@ -5654,12 +5939,17 @@ fn competitive_entry_ratification_candidate_from_parts_v1(
             dry_run.dry_run_commitment_sha256.as_bytes(),
             dry_run.visible_control_label_sha256.as_bytes(),
             dry_run.visible_control_region_sha256.as_bytes(),
+            dry_run.selected_deck_label_sha256.as_bytes(),
+            dry_run.selected_deck_region_sha256.as_bytes(),
+            dry_run.deck_manifest_sha256.as_bytes(),
+            dry_run.deck_format_sha256.as_bytes(),
+            dry_run.policy_deployment_commitment_sha256.as_bytes(),
             event_kind,
             event_identity_sha256.as_bytes(),
             entry_terms.terms_sha256.as_bytes(),
             resource,
             entry_terms.amount.to_be_bytes().as_slice(),
-            b"exact_owner_reviewed_existing_account_resource_entry_requires_fresh_recapture_and_visible_postcondition",
+            b"exact_owner_reviewed_existing_account_resource_and_selected_deck_entry_requires_fresh_recapture_and_visible_postcondition",
         ],
     );
     Ok(MtgoReviewedCompetitiveEntryRatificationCandidateV1 {
@@ -5679,6 +5969,12 @@ fn competitive_entry_ratification_candidate_from_parts_v1(
         source_navigation_classification_result_commitment_sha256: retained_classifier_commitment
             .to_owned(),
         visible_control_region_sha256: dry_run.visible_control_region_sha256.clone(),
+        selected_deck_label_sha256: dry_run.selected_deck_label_sha256.clone(),
+        selected_deck_region_sha256: dry_run.selected_deck_region_sha256.clone(),
+        deck_manifest_sha256: dry_run.deck_manifest_sha256.clone(),
+        deck_format_sha256: dry_run.deck_format_sha256.clone(),
+        policy_deployment_commitment_sha256: dry_run.policy_deployment_commitment_sha256.clone(),
+        deck_review_receipt_sha256: review.deck_review_receipt_sha256.clone(),
         event_identity_sha256,
         entry_terms_sha256: entry_terms.terms_sha256.clone(),
         ratification_commitment_sha256,
@@ -5700,6 +5996,12 @@ fn competitive_entry_preparation_from_commitments_v1(
         || authorization.source_navigation_classification_result_commitment_sha256
             != recapture.source_classification_result_commitment_sha256
         || authorization.visible_control_region_sha256 != recapture.visible_control_region_sha256
+        || authorization.selected_deck_label_sha256 != recapture.selected_deck_label_sha256
+        || authorization.selected_deck_region_sha256 != recapture.selected_deck_region_sha256
+        || authorization.deck_manifest_sha256 != recapture.deck_manifest_sha256
+        || authorization.deck_format_sha256 != recapture.deck_format_sha256
+        || authorization.policy_deployment_commitment_sha256
+            != recapture.policy_deployment_commitment_sha256
         || authorization.event_identity_sha256 != recapture.event_identity_sha256
         || authorization.entry_terms_sha256 != recapture.entry_terms_sha256
         || authorization.event_kind != recapture.event_kind
@@ -5707,7 +6009,7 @@ fn competitive_entry_preparation_from_commitments_v1(
         || authorization.amount != recapture.amount
     {
         return Err(
-            "competitive entry preparation changed the ratified account, source, control, event, or terms"
+            "competitive entry preparation changed the ratified account, source, control, selected deck, event, or terms"
                 .to_owned(),
         );
     }
@@ -5750,6 +6052,11 @@ fn competitive_entry_preparation_from_commitments_v1(
         recapture.event_label_region_sha256.as_str(),
         recapture.visible_control_label_sha256.as_str(),
         recapture.visible_control_region_sha256.as_str(),
+        recapture.selected_deck_label_sha256.as_str(),
+        recapture.selected_deck_region_sha256.as_str(),
+        recapture.deck_manifest_sha256.as_str(),
+        recapture.deck_format_sha256.as_str(),
+        recapture.policy_deployment_commitment_sha256.as_str(),
         recapture.event_identity_sha256.as_str(),
         recapture.entry_terms_sha256.as_str(),
         recapture.recapture_commitment_sha256.as_str(),
@@ -5798,6 +6105,11 @@ fn competitive_entry_preparation_from_commitments_v1(
             recapture.event_label_region_sha256.as_bytes(),
             recapture.visible_control_label_sha256.as_bytes(),
             recapture.visible_control_region_sha256.as_bytes(),
+            recapture.selected_deck_label_sha256.as_bytes(),
+            recapture.selected_deck_region_sha256.as_bytes(),
+            recapture.deck_manifest_sha256.as_bytes(),
+            recapture.deck_format_sha256.as_bytes(),
+            recapture.policy_deployment_commitment_sha256.as_bytes(),
             event_kind,
             recapture.event_identity_sha256.as_bytes(),
             recapture.entry_terms_sha256.as_bytes(),
@@ -6203,6 +6515,62 @@ fn apply_event_monitor_to_runtime_commitments_v1(
     );
 }
 
+fn competitive_gesture_game_session_event_deck_binding_commitment_v1(
+    session: &MtgoCompetitiveGestureGameSessionCommitmentsV1,
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+) -> Result<String, String> {
+    if session.entry_ratification_commitment_sha256.is_some()
+        || session.selected_deck_label_sha256.is_some()
+        || session.selected_deck_region_sha256.is_some()
+        || session.deck_manifest_sha256.is_some()
+        || session.deck_format_sha256.is_some()
+        || session.policy_deployment_commitment_sha256.is_some()
+    {
+        return Err(
+            "competitive gameplay checkout requires an unbound exact-game session".to_owned(),
+        );
+    }
+    for digest in [
+        session.session_commitment_sha256.as_str(),
+        runtime.runtime_commitment_sha256.as_str(),
+        runtime.entry_ratification_commitment_sha256.as_str(),
+        runtime.selected_deck_label_sha256.as_str(),
+        runtime.selected_deck_region_sha256.as_str(),
+        runtime.deck_manifest_sha256.as_str(),
+        runtime.deck_format_sha256.as_str(),
+        runtime.policy_deployment_commitment_sha256.as_str(),
+    ] {
+        if !is_sha256_v2(digest) {
+            return Err(
+                "competitive gameplay deck binding contains an invalid commitment".to_owned(),
+            );
+        }
+    }
+    if runtime.deck_manifest_sha256 == runtime.deck_format_sha256
+        || runtime.deck_manifest_sha256 == runtime.policy_deployment_commitment_sha256
+        || runtime.deck_format_sha256 == runtime.policy_deployment_commitment_sha256
+    {
+        return Err(
+            "competitive gameplay deck, format, and policy commitments must remain distinct"
+                .to_owned(),
+        );
+    }
+    Ok(hash_parts_v2(
+        COMPETITIVE_GESTURE_GAME_SESSION_EVENT_DECK_BIND_DOMAIN_V1,
+        &[
+            session.session_commitment_sha256.as_bytes(),
+            runtime.runtime_commitment_sha256.as_bytes(),
+            runtime.entry_ratification_commitment_sha256.as_bytes(),
+            runtime.selected_deck_label_sha256.as_bytes(),
+            runtime.selected_deck_region_sha256.as_bytes(),
+            runtime.deck_manifest_sha256.as_bytes(),
+            runtime.deck_format_sha256.as_bytes(),
+            runtime.policy_deployment_commitment_sha256.as_bytes(),
+            b"exact_event_entry_selected_deck_bound_to_all_family_game_session",
+        ],
+    ))
+}
+
 fn validate_game_session_against_event_runtime_v1(
     runtime: &OpaqueMtgoCompetitiveEventRuntimeV1,
     session: &OpaqueMtgoCompetitiveGestureGameSessionV1,
@@ -6241,6 +6609,22 @@ fn validate_game_session_commitments_against_event_runtime_v1(
     game: &MtgoCompetitiveGestureGameSessionCommitmentsV1,
     gameplay: &MtgoCompetitiveMatchGameplayAuthorizationV1,
 ) -> Result<(), String> {
+    let deck_unbound = game.entry_ratification_commitment_sha256.is_none()
+        && game.selected_deck_label_sha256.is_none()
+        && game.selected_deck_region_sha256.is_none()
+        && game.deck_manifest_sha256.is_none()
+        && game.deck_format_sha256.is_none()
+        && game.policy_deployment_commitment_sha256.is_none();
+    let deck_exact = game.entry_ratification_commitment_sha256.as_deref()
+        == Some(runtime.entry_ratification_commitment_sha256.as_str())
+        && game.selected_deck_label_sha256.as_deref()
+            == Some(runtime.selected_deck_label_sha256.as_str())
+        && game.selected_deck_region_sha256.as_deref()
+            == Some(runtime.selected_deck_region_sha256.as_str())
+        && game.deck_manifest_sha256.as_deref() == Some(runtime.deck_manifest_sha256.as_str())
+        && game.deck_format_sha256.as_deref() == Some(runtime.deck_format_sha256.as_str())
+        && game.policy_deployment_commitment_sha256.as_deref()
+            == Some(runtime.policy_deployment_commitment_sha256.as_str());
     if runtime.closed_to_event_browser
         || runtime.current_phase != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
         || game.event_kind != runtime.event_kind
@@ -6256,9 +6640,10 @@ fn validate_game_session_commitments_against_event_runtime_v1(
         || gameplay.game_number != game.game_number
         || game.valid_from_frame_sequence < runtime.current_frame_sequence
         || game.valid_from_frame_sequence > game.valid_through_frame_sequence
+        || !(deck_unbound || deck_exact)
     {
         return Err(
-            "competitive game session differs from the current exact entry, event, match, game, account, or frame lifetime"
+            "competitive game session differs from the current exact entry, selected deck, event, match, game, account, or frame lifetime"
                 .to_owned(),
         );
     }
@@ -6280,6 +6665,11 @@ fn competitive_event_runtime_commitment_v1(
             value.entry_authorization_sha256.as_bytes(),
             value.correspondence_sha256.as_bytes(),
             value.permission_review_commitment_sha256.as_bytes(),
+            value.deck_manifest_sha256.as_bytes(),
+            value.deck_format_sha256.as_bytes(),
+            value.selected_deck_label_sha256.as_bytes(),
+            value.selected_deck_region_sha256.as_bytes(),
+            value.policy_deployment_commitment_sha256.as_bytes(),
             value.lifecycle_authorization_commitment_sha256.as_bytes(),
             value.mode_authorization_commitment_sha256.as_bytes(),
             value.navigation_profile_commitment_sha256.as_bytes(),
@@ -6722,6 +7112,30 @@ fn competitive_duel_gesture_sequence_session_binding_from_parts_v1(
     sequence: &MtgoOpaqueCompetitiveDuelGestureSequenceCommitmentsV1,
     session: &MtgoCompetitiveGestureGameSessionCommitmentsV1,
 ) -> Result<MtgoSessionBoundCompetitiveDuelGestureCommitmentsV1, String> {
+    let entry_ratification_commitment_sha256 = session
+        .entry_ratification_commitment_sha256
+        .as_deref()
+        .ok_or("gesture session is not bound to an exact event entry and selected deck")?;
+    let selected_deck_label_sha256 = session
+        .selected_deck_label_sha256
+        .as_deref()
+        .ok_or("gesture session is not bound to an exact selected-deck label")?;
+    let selected_deck_region_sha256 = session
+        .selected_deck_region_sha256
+        .as_deref()
+        .ok_or("gesture session is not bound to exact selected-deck pixels")?;
+    let deck_manifest_sha256 = session
+        .deck_manifest_sha256
+        .as_deref()
+        .ok_or("gesture session is not bound to an exact deck manifest")?;
+    let deck_format_sha256 = session
+        .deck_format_sha256
+        .as_deref()
+        .ok_or("gesture session is not bound to an exact deck format")?;
+    let policy_deployment_commitment_sha256 = session
+        .policy_deployment_commitment_sha256
+        .as_deref()
+        .ok_or("gesture session is not bound to an exact policy deployment")?;
     for commitment in [
         sequence.competitive_action_plan_commitment_sha256.as_str(),
         sequence.gesture_plan_commitment_sha256.as_str(),
@@ -6731,6 +7145,7 @@ fn competitive_duel_gesture_sequence_session_binding_from_parts_v1(
         sequence
             .competitive_match_gameplay_authorization_commitment_sha256
             .as_str(),
+        sequence.policy_deployment_commitment_sha256.as_str(),
         sequence.current_stage_binding_commitment_sha256.as_str(),
         sequence.current_opaque_stage_commitment_sha256.as_str(),
         sequence.sequence_commitment_sha256.as_str(),
@@ -6746,6 +7161,12 @@ fn competitive_duel_gesture_sequence_session_binding_from_parts_v1(
         session.gesture_match_launch_commitment_sha256.as_str(),
         session.gesture_evaluation_commitment_sha256.as_str(),
         session.gesture_profile_admission_commitment_sha256.as_str(),
+        entry_ratification_commitment_sha256,
+        selected_deck_label_sha256,
+        selected_deck_region_sha256,
+        deck_manifest_sha256,
+        deck_format_sha256,
+        policy_deployment_commitment_sha256,
     ] {
         if !is_sha256_v2(commitment) {
             return Err("gesture session binding contains an invalid commitment".to_owned());
@@ -6771,6 +7192,7 @@ fn competitive_duel_gesture_sequence_session_binding_from_parts_v1(
             != session.mode_authorization_commitment_sha256
         || sequence.competitive_match_gameplay_authorization_commitment_sha256
             != session.match_gameplay_authorization_commitment_sha256
+        || sequence.policy_deployment_commitment_sha256 != policy_deployment_commitment_sha256
         || sequence.gameplay_authorization_valid_through_frame_sequence
             != session.valid_through_frame_sequence
         || sequence.current_frame_sequence < session.valid_from_frame_sequence
@@ -6778,7 +7200,7 @@ fn competitive_duel_gesture_sequence_session_binding_from_parts_v1(
         || sequence.current_frame_sequence > session.valid_through_frame_sequence
     {
         return Err(
-            "gesture sequence does not match the exact game session mode, game, or frame lifetime"
+            "gesture sequence does not match the exact game session mode, policy deployment, game, or frame lifetime"
                 .to_owned(),
         );
     }
@@ -6800,6 +7222,12 @@ fn competitive_duel_gesture_sequence_session_binding_from_parts_v1(
             session
                 .gesture_profile_admission_commitment_sha256
                 .as_bytes(),
+            entry_ratification_commitment_sha256.as_bytes(),
+            selected_deck_label_sha256.as_bytes(),
+            selected_deck_region_sha256.as_bytes(),
+            deck_manifest_sha256.as_bytes(),
+            deck_format_sha256.as_bytes(),
+            policy_deployment_commitment_sha256.as_bytes(),
             sequence
                 .competitive_action_plan_commitment_sha256
                 .as_bytes(),
@@ -6826,6 +7254,12 @@ fn competitive_duel_gesture_sequence_session_binding_from_parts_v1(
         gesture_profile_admission_commitment_sha256: session
             .gesture_profile_admission_commitment_sha256
             .clone(),
+        entry_ratification_commitment_sha256: entry_ratification_commitment_sha256.to_owned(),
+        selected_deck_label_sha256: selected_deck_label_sha256.to_owned(),
+        selected_deck_region_sha256: selected_deck_region_sha256.to_owned(),
+        deck_manifest_sha256: deck_manifest_sha256.to_owned(),
+        deck_format_sha256: deck_format_sha256.to_owned(),
+        policy_deployment_commitment_sha256: policy_deployment_commitment_sha256.to_owned(),
         competitive_action_plan_commitment_sha256: sequence
             .competitive_action_plan_commitment_sha256
             .clone(),
@@ -8678,6 +9112,11 @@ mod tests {
             source_navigation_classification_result_commitment_sha256: classifier_commitment_sha256,
             visible_control_label_sha256: "c".repeat(64),
             visible_control_region_sha256: "d".repeat(64),
+            selected_deck_label_sha256: "f".repeat(64),
+            selected_deck_region_sha256: "0".repeat(64),
+            deck_manifest_sha256: "1".repeat(64),
+            deck_format_sha256: "2".repeat(64),
+            policy_deployment_commitment_sha256: "3".repeat(64),
             visibly_enabled_confirmed: true,
             dry_run_commitment_sha256: "e".repeat(64),
             event_kind: MtgoCompetitiveEventKindV1::League,
@@ -8775,6 +9214,11 @@ mod tests {
             source_navigation_classification_result_commitment_sha256: classifier_commitment,
             visible_control_label_sha256: "c".repeat(64),
             visible_control_region_sha256: "d".repeat(64),
+            selected_deck_label_sha256: "f".repeat(64),
+            selected_deck_region_sha256: "0".repeat(64),
+            deck_manifest_sha256: "1".repeat(64),
+            deck_format_sha256: "2".repeat(64),
+            policy_deployment_commitment_sha256: "4".repeat(64),
             visibly_enabled_confirmed: true,
             dry_run_commitment_sha256: "e".repeat(64),
             event_kind,
@@ -8783,11 +9227,17 @@ mod tests {
             resource,
             amount,
         };
+        let deck_review_receipt_sha256 = "3".repeat(64);
         let control_bound_review_commitment_sha256 =
-            bind_control_bound_competitive_entry_review_commitment_v4(&classifier_bound, &dry_run)
-                .unwrap();
+            bind_control_bound_competitive_entry_review_commitment_v4(
+                &classifier_bound,
+                &dry_run,
+                &deck_review_receipt_sha256,
+            )
+            .unwrap();
         let control_bound = MtgoControlBoundCompetitiveEntryReviewCommitmentsV4 {
             control_bound_review_commitment_sha256,
+            deck_review_receipt_sha256,
             classifier_bound_review: classifier_bound,
             entry_control_dry_run: dry_run,
         };
@@ -8821,6 +9271,13 @@ mod tests {
             event_label_region_sha256: "e".repeat(64),
             visible_control_label_sha256: "f".repeat(64),
             visible_control_region_sha256: candidate.visible_control_region_sha256.clone(),
+            selected_deck_label_sha256: candidate.selected_deck_label_sha256.clone(),
+            selected_deck_region_sha256: candidate.selected_deck_region_sha256.clone(),
+            deck_manifest_sha256: candidate.deck_manifest_sha256.clone(),
+            deck_format_sha256: candidate.deck_format_sha256.clone(),
+            policy_deployment_commitment_sha256: candidate
+                .policy_deployment_commitment_sha256
+                .clone(),
             event_identity_sha256: candidate.event_identity_sha256.clone(),
             entry_terms_sha256: candidate.entry_terms_sha256.clone(),
             event_kind: candidate.event_kind,
@@ -9330,6 +9787,12 @@ mod tests {
             gesture_match_launch_commitment_sha256: "6".repeat(64),
             gesture_evaluation_commitment_sha256: "7".repeat(64),
             gesture_profile_admission_commitment_sha256: "8".repeat(64),
+            entry_ratification_commitment_sha256: Some("e".repeat(64)),
+            selected_deck_label_sha256: Some("f".repeat(64)),
+            selected_deck_region_sha256: Some("0".repeat(64)),
+            deck_manifest_sha256: Some("1".repeat(64)),
+            deck_format_sha256: Some("2".repeat(64)),
+            policy_deployment_commitment_sha256: Some("3".repeat(64)),
             event_kind: MtgoCompetitiveEventKindV1::League,
             game_number: 2,
             valid_from_frame_sequence: 40,
@@ -9346,6 +9809,10 @@ mod tests {
             competitive_match_gameplay_authorization_commitment_sha256: session
                 .match_gameplay_authorization_commitment_sha256
                 .clone(),
+            policy_deployment_commitment_sha256: session
+                .policy_deployment_commitment_sha256
+                .clone()
+                .unwrap(),
             current_stage_binding_commitment_sha256: "b".repeat(64),
             current_opaque_stage_commitment_sha256: "c".repeat(64),
             last_visible_transition_commitment_sha256: None,
@@ -9372,12 +9839,37 @@ mod tests {
         assert_eq!(bound.source_frame_sequence, 40);
         assert_eq!(bound.gesture_stage_count, 1);
         assert_eq!(bound.binding_commitment_sha256.len(), 64);
+        assert_eq!(
+            bound.deck_manifest_sha256,
+            session.deck_manifest_sha256.as_deref().unwrap()
+        );
+
+        let mut unbound = session.clone();
+        unbound.entry_ratification_commitment_sha256 = None;
+        unbound.selected_deck_label_sha256 = None;
+        unbound.selected_deck_region_sha256 = None;
+        unbound.deck_manifest_sha256 = None;
+        unbound.deck_format_sha256 = None;
+        unbound.policy_deployment_commitment_sha256 = None;
+        assert!(
+            competitive_duel_gesture_sequence_session_binding_from_parts_v1(&sequence, &unbound,)
+                .is_err()
+        );
 
         let mut wrong_mode = sequence.clone();
         wrong_mode.competitive_mode_authorization_commitment_sha256 = "e".repeat(64);
         assert!(
             competitive_duel_gesture_sequence_session_binding_from_parts_v1(&wrong_mode, &session)
                 .is_err()
+        );
+        let mut wrong_policy = sequence.clone();
+        wrong_policy.policy_deployment_commitment_sha256 = "4".repeat(64);
+        assert!(
+            competitive_duel_gesture_sequence_session_binding_from_parts_v1(
+                &wrong_policy,
+                &session,
+            )
+            .is_err()
         );
         let mut wrong_game = sequence.clone();
         wrong_game.game_number = 1;
@@ -9426,6 +9918,12 @@ mod tests {
             gesture_match_launch_commitment_sha256: "6".repeat(64),
             gesture_evaluation_commitment_sha256: "7".repeat(64),
             gesture_profile_admission_commitment_sha256: "8".repeat(64),
+            entry_ratification_commitment_sha256: Some("e".repeat(64)),
+            selected_deck_label_sha256: Some("f".repeat(64)),
+            selected_deck_region_sha256: Some("0".repeat(64)),
+            deck_manifest_sha256: Some("1".repeat(64)),
+            deck_format_sha256: Some("2".repeat(64)),
+            policy_deployment_commitment_sha256: Some("3".repeat(64)),
             event_kind: MtgoCompetitiveEventKindV1::Challenge,
             game_number: 1,
             valid_from_frame_sequence: 90,
@@ -9442,6 +9940,10 @@ mod tests {
             competitive_match_gameplay_authorization_commitment_sha256: session
                 .match_gameplay_authorization_commitment_sha256
                 .clone(),
+            policy_deployment_commitment_sha256: session
+                .policy_deployment_commitment_sha256
+                .clone()
+                .unwrap(),
             current_stage_binding_commitment_sha256: "b".repeat(64),
             current_opaque_stage_commitment_sha256: "c".repeat(64),
             last_visible_transition_commitment_sha256: None,
@@ -9778,6 +10280,12 @@ mod tests {
             gesture_match_launch_commitment_sha256: "6".repeat(64),
             gesture_evaluation_commitment_sha256: "7".repeat(64),
             gesture_profile_admission_commitment_sha256: "8".repeat(64),
+            entry_ratification_commitment_sha256: Some("e".repeat(64)),
+            selected_deck_label_sha256: Some("f".repeat(64)),
+            selected_deck_region_sha256: Some("0".repeat(64)),
+            deck_manifest_sha256: Some("1".repeat(64)),
+            deck_format_sha256: Some("2".repeat(64)),
+            policy_deployment_commitment_sha256: Some("3".repeat(64)),
             event_kind: MtgoCompetitiveEventKindV1::League,
             game_number: 2,
             valid_from_frame_sequence: 80,
@@ -10003,9 +10511,13 @@ mod tests {
         let classifier = "b".repeat(64);
         let classifier_bound = classifier_bound_entry_review_commitments_v4(classifier.clone());
         let dry_run = entry_control_dry_run_commitments_v4(classifier);
-        let baseline =
-            bind_control_bound_competitive_entry_review_commitment_v4(&classifier_bound, &dry_run)
-                .unwrap();
+        let deck_review_receipt_sha256 = "3".repeat(64);
+        let baseline = bind_control_bound_competitive_entry_review_commitment_v4(
+            &classifier_bound,
+            &dry_run,
+            &deck_review_receipt_sha256,
+        )
+        .unwrap();
         assert_eq!(baseline.len(), 64);
 
         let mut disabled = dry_run.clone();
@@ -10013,6 +10525,7 @@ mod tests {
         assert!(bind_control_bound_competitive_entry_review_commitment_v4(
             &classifier_bound,
             &disabled,
+            &deck_review_receipt_sha256,
         )
         .is_err());
 
@@ -10021,6 +10534,7 @@ mod tests {
         assert!(bind_control_bound_competitive_entry_review_commitment_v4(
             &classifier_bound,
             &wrong_frame,
+            &deck_review_receipt_sha256,
         )
         .is_err());
 
@@ -10029,17 +10543,37 @@ mod tests {
         assert!(bind_control_bound_competitive_entry_review_commitment_v4(
             &classifier_bound,
             &wrong_classifier,
+            &deck_review_receipt_sha256,
         )
         .is_err());
 
-        let mut changed_control = dry_run;
+        let mut changed_control = dry_run.clone();
         changed_control.visible_control_region_sha256 = "0".repeat(64);
         let changed = bind_control_bound_competitive_entry_review_commitment_v4(
             &classifier_bound,
             &changed_control,
+            &deck_review_receipt_sha256,
         )
         .unwrap();
         assert_ne!(baseline, changed);
+
+        let mut changed_deck = changed_control;
+        changed_deck.deck_manifest_sha256 = "4".repeat(64);
+        let changed = bind_control_bound_competitive_entry_review_commitment_v4(
+            &classifier_bound,
+            &changed_deck,
+            &deck_review_receipt_sha256,
+        )
+        .unwrap();
+        assert_ne!(baseline, changed);
+
+        let changed_receipt = bind_control_bound_competitive_entry_review_commitment_v4(
+            &classifier_bound,
+            &dry_run,
+            &"4".repeat(64),
+        )
+        .unwrap();
+        assert_ne!(baseline, changed_receipt);
     }
 
     #[test]
@@ -10120,6 +10654,10 @@ mod tests {
             .entry_control_dry_run
             .visible_control_region_sha256 = "0".repeat(64);
         assert!(check(&source_identity, &entry_authorization, &wrong_control).is_err());
+
+        let mut wrong_deck = review.clone();
+        wrong_deck.entry_control_dry_run.deck_manifest_sha256 = "4".repeat(64);
+        assert!(check(&source_identity, &entry_authorization, &wrong_deck).is_err());
 
         let mut wrong_classifier = source_identity.clone();
         wrong_classifier.source_navigation_classification_result_commitment_sha256 =
@@ -10210,6 +10748,18 @@ mod tests {
         wrong_control.visible_control_region_sha256 = "1".repeat(64);
         assert!(
             competitive_entry_preparation_from_commitments_v1(&candidate, &wrong_control).is_err()
+        );
+
+        let mut wrong_deck = recapture.clone();
+        wrong_deck.selected_deck_region_sha256 = "1".repeat(64);
+        assert!(
+            competitive_entry_preparation_from_commitments_v1(&candidate, &wrong_deck).is_err()
+        );
+
+        let mut wrong_manifest = recapture.clone();
+        wrong_manifest.deck_manifest_sha256 = "4".repeat(64);
+        assert!(
+            competitive_entry_preparation_from_commitments_v1(&candidate, &wrong_manifest).is_err()
         );
 
         let mut wrong_terms = recapture.clone();
@@ -11150,6 +11700,11 @@ mod tests {
             entry_authorization_sha256: "d".repeat(64),
             correspondence_sha256: "e".repeat(64),
             permission_review_commitment_sha256: "f".repeat(64),
+            deck_manifest_sha256: "0".repeat(64),
+            deck_format_sha256: "1".repeat(64),
+            selected_deck_label_sha256: "2".repeat(64),
+            selected_deck_region_sha256: "3".repeat(64),
+            policy_deployment_commitment_sha256: "4".repeat(64),
             lifecycle_authorization_commitment_sha256: "3".repeat(64),
             mode_authorization_commitment_sha256: "4".repeat(64),
             navigation_profile_commitment_sha256: "5".repeat(64),
@@ -11213,6 +11768,17 @@ mod tests {
             )
         );
         state.entry_authorization_sha256 = "d".repeat(64);
+        state.deck_manifest_sha256 = "3".repeat(64);
+        assert_ne!(
+            baseline,
+            competitive_event_runtime_commitment_v1(
+                COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+                Some(&prior),
+                &state,
+                b"transition",
+            )
+        );
+        state.deck_manifest_sha256 = "0".repeat(64);
         state.gameplay_lease_count = 1;
         assert_ne!(
             baseline,
@@ -11256,6 +11822,11 @@ mod tests {
             entry_authorization_sha256: "3".repeat(64),
             correspondence_sha256: "c".repeat(64),
             permission_review_commitment_sha256: "d".repeat(64),
+            deck_manifest_sha256: "e".repeat(64),
+            deck_format_sha256: "f".repeat(64),
+            selected_deck_label_sha256: "0".repeat(64),
+            selected_deck_region_sha256: "1".repeat(64),
+            policy_deployment_commitment_sha256: "2".repeat(64),
             lifecycle_authorization_commitment_sha256: "4".repeat(64),
             mode_authorization_commitment_sha256: "5".repeat(64),
             navigation_profile_commitment_sha256: "6".repeat(64),
@@ -11294,6 +11865,16 @@ mod tests {
             gesture_match_launch_commitment_sha256: "0".repeat(64),
             gesture_evaluation_commitment_sha256: "1".repeat(64),
             gesture_profile_admission_commitment_sha256: "2".repeat(64),
+            entry_ratification_commitment_sha256: Some(
+                runtime.entry_ratification_commitment_sha256.clone(),
+            ),
+            selected_deck_label_sha256: Some(runtime.selected_deck_label_sha256.clone()),
+            selected_deck_region_sha256: Some(runtime.selected_deck_region_sha256.clone()),
+            deck_manifest_sha256: Some(runtime.deck_manifest_sha256.clone()),
+            deck_format_sha256: Some(runtime.deck_format_sha256.clone()),
+            policy_deployment_commitment_sha256: Some(
+                runtime.policy_deployment_commitment_sha256.clone(),
+            ),
             event_kind: MtgoCompetitiveEventKindV1::League,
             game_number: 1,
             valid_from_frame_sequence: 30,
@@ -11314,6 +11895,38 @@ mod tests {
             exact_match_gameplay_authorized: true,
             valid_through_frame_sequence: 542,
         };
+
+        let mut unbound_game = game.clone();
+        unbound_game.entry_ratification_commitment_sha256 = None;
+        unbound_game.selected_deck_label_sha256 = None;
+        unbound_game.selected_deck_region_sha256 = None;
+        unbound_game.deck_manifest_sha256 = None;
+        unbound_game.deck_format_sha256 = None;
+        unbound_game.policy_deployment_commitment_sha256 = None;
+        let deck_binding = competitive_gesture_game_session_event_deck_binding_commitment_v1(
+            &unbound_game,
+            &runtime,
+        )
+        .unwrap();
+        let mut changed_deck_runtime = runtime.clone();
+        changed_deck_runtime.deck_manifest_sha256 = "6".repeat(64);
+        assert_ne!(
+            deck_binding,
+            competitive_gesture_game_session_event_deck_binding_commitment_v1(
+                &unbound_game,
+                &changed_deck_runtime,
+            )
+            .unwrap()
+        );
+        let mut partially_bound = unbound_game.clone();
+        partially_bound.deck_manifest_sha256 = Some(runtime.deck_manifest_sha256.clone());
+        assert!(
+            competitive_gesture_game_session_event_deck_binding_commitment_v1(
+                &partially_bound,
+                &runtime,
+            )
+            .is_err()
+        );
 
         validate_game_session_commitments_against_event_runtime_v1(&runtime, &game, &gameplay)
             .unwrap();
@@ -11342,6 +11955,25 @@ mod tests {
             &gameplay,
         )
         .is_err());
+
+        mismatched_game.permission_review_commitment_sha256 =
+            runtime.permission_review_commitment_sha256.clone();
+        mismatched_game.deck_manifest_sha256 = Some("6".repeat(64));
+        assert!(validate_game_session_commitments_against_event_runtime_v1(
+            &runtime,
+            &mismatched_game,
+            &gameplay,
+        )
+        .is_err());
+
+        mismatched_game.deck_manifest_sha256 = Some(runtime.deck_manifest_sha256.clone());
+        mismatched_game.policy_deployment_commitment_sha256 = Some("6".repeat(64));
+        assert!(validate_game_session_commitments_against_event_runtime_v1(
+            &runtime,
+            &mismatched_game,
+            &gameplay,
+        )
+        .is_err());
     }
 
     #[test]
@@ -11358,6 +11990,12 @@ mod tests {
             source_capture_commitment_sha256: "9".repeat(64),
             source_navigation_classification_result_commitment_sha256: "a".repeat(64),
             visible_control_region_sha256: "b".repeat(64),
+            selected_deck_label_sha256: "f".repeat(64),
+            selected_deck_region_sha256: "0".repeat(64),
+            deck_manifest_sha256: "1".repeat(64),
+            deck_format_sha256: "2".repeat(64),
+            policy_deployment_commitment_sha256: "4".repeat(64),
+            deck_review_receipt_sha256: "3".repeat(64),
             event_identity_sha256: "c".repeat(64),
             entry_terms_sha256: "d".repeat(64),
             ratification_commitment_sha256: "e".repeat(64),
@@ -11403,6 +12041,11 @@ mod tests {
             entry_authorization_sha256: "3".repeat(64),
             correspondence_sha256: "4".repeat(64),
             permission_review_commitment_sha256: "5".repeat(64),
+            deck_manifest_sha256: "d".repeat(64),
+            deck_format_sha256: "e".repeat(64),
+            selected_deck_label_sha256: "f".repeat(64),
+            selected_deck_region_sha256: "0".repeat(64),
+            policy_deployment_commitment_sha256: "6".repeat(64),
             lifecycle_authorization_commitment_sha256: "6".repeat(64),
             mode_authorization_commitment_sha256: "7".repeat(64),
             navigation_profile_commitment_sha256: "8".repeat(64),

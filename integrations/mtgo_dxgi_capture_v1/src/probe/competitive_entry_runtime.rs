@@ -21,8 +21,8 @@ const OPAQUE_COMPETITIVE_ENTRY_REVIEW_IDENTITY_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-entry-review-identity-v1";
 const OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2: &[u8] =
     b"mtgo-opaque-competitive-classifier-bound-entry-review-identity-v2";
-const OPAQUE_COMPETITIVE_ENTRY_CONTROL_DRY_RUN_DOMAIN_V1: &[u8] =
-    b"mtgo-opaque-competitive-entry-control-dry-run-v1";
+const OPAQUE_COMPETITIVE_ENTRY_CONTROL_AND_DECK_DRY_RUN_DOMAIN_V2: &[u8] =
+    b"mtgo-opaque-competitive-entry-control-and-deck-dry-run-v2";
 const COMPETITIVE_ENTRY_FRAME_TRANSITION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-frame-transition-v1";
 const COMPETITIVE_ENTRY_WINDOW_CONTINUITY_DOMAIN_V1: &[u8] =
@@ -79,6 +79,11 @@ pub struct MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
     pub source_navigation_classification_result_commitment_sha256: String,
     pub visible_control_label_sha256: String,
     pub visible_control_region_sha256: String,
+    pub selected_deck_label_sha256: String,
+    pub selected_deck_region_sha256: String,
+    pub deck_manifest_sha256: String,
+    pub deck_format_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
     pub visibly_enabled_confirmed: bool,
     pub dry_run_commitment_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
@@ -86,6 +91,15 @@ pub struct MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
     pub frame_sequence: u64,
     pub resource: MtgoCompetitiveEntryResourceV1,
     pub amount: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveEntryDeckSelectionReviewInputV1 {
+    pub selected_deck_label: String,
+    pub selected_deck_rect_client_px: MtgoRectPxV1,
+    pub deck_manifest_sha256: String,
+    pub deck_format_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +142,11 @@ pub struct MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1 {
     pub event_label_region_sha256: String,
     pub visible_control_label_sha256: String,
     pub visible_control_region_sha256: String,
+    pub selected_deck_label_sha256: String,
+    pub selected_deck_region_sha256: String,
+    pub deck_manifest_sha256: String,
+    pub deck_format_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
     pub event_identity_sha256: String,
     pub entry_terms_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
@@ -225,6 +244,8 @@ pub struct OpaqueMtgoCompetitiveEntryControlDryRunV1 {
     _source_identity: OpaqueMtgoCompetitiveEntryReviewIdentityV1,
     _visible_control_label: String,
     _control_rect_client_px: MtgoRectPxV1,
+    _selected_deck_label: String,
+    _selected_deck_rect_client_px: MtgoRectPxV1,
     commitments: MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
 }
 
@@ -232,6 +253,8 @@ pub(crate) struct MtgoCompetitiveEntryControlDryRunPartsV1 {
     pub source_identity: OpaqueMtgoCompetitiveEntryReviewIdentityV1,
     pub visible_control_label: String,
     pub control_rect_client_px: MtgoRectPxV1,
+    pub selected_deck_label: String,
+    pub selected_deck_rect_client_px: MtgoRectPxV1,
     pub commitments: MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
 }
 
@@ -257,6 +280,8 @@ impl OpaqueMtgoCompetitiveEntryControlDryRunV1 {
             source_identity: self._source_identity,
             visible_control_label: self._visible_control_label,
             control_rect_client_px: self._control_rect_client_px,
+            selected_deck_label: self._selected_deck_label,
+            selected_deck_rect_client_px: self._selected_deck_rect_client_px,
             commitments: self.commitments,
         }
     }
@@ -372,14 +397,15 @@ pub(super) fn bind_opaque_navigation_frame_to_competitive_entry_review_identity_
     })
 }
 
-/// Adds a coordinate-private, human-reviewed Confirm Entry control calibration
-/// to one exact classifier-backed entry-review identity. This function only
-/// records a dry run and cannot enter the event.
-pub fn bind_classifier_backed_competitive_entry_control_dry_run_v1(
+/// Adds a coordinate-private, human-reviewed Confirm Entry control and exact
+/// visible selected-deck calibration to one classifier-backed entry-review
+/// identity. This function only records a dry run and cannot enter the event.
+pub fn bind_classifier_backed_competitive_entry_control_and_deck_dry_run_v2(
     source_identity: OpaqueMtgoCompetitiveEntryReviewIdentityV1,
     visible_control_label: String,
     control_rect_client_px: MtgoRectPxV1,
     visibly_enabled_confirmed: bool,
+    deck_selection: MtgoCompetitiveEntryDeckSelectionReviewInputV1,
 ) -> Result<OpaqueMtgoCompetitiveEntryControlDryRunV1, String> {
     let source_commitments = source_identity.commitments_v1();
     let retained_classifier_commitment = source_identity
@@ -422,11 +448,18 @@ pub fn bind_classifier_backed_competitive_entry_control_dry_run_v1(
         &visible_control_label,
         &control_rect_client_px,
         visibly_enabled_confirmed,
+        &deck_selection.selected_deck_label,
+        &deck_selection.selected_deck_rect_client_px,
+        &deck_selection.deck_manifest_sha256,
+        &deck_selection.deck_format_sha256,
+        &deck_selection.policy_deployment_commitment_sha256,
     )?;
     Ok(OpaqueMtgoCompetitiveEntryControlDryRunV1 {
         _source_identity: source_identity,
         _visible_control_label: visible_control_label,
         _control_rect_client_px: control_rect_client_px,
+        _selected_deck_label: deck_selection.selected_deck_label,
+        _selected_deck_rect_client_px: deck_selection.selected_deck_rect_client_px,
         commitments,
     })
 }
@@ -443,6 +476,7 @@ pub(crate) fn validate_classifier_backed_competitive_entry_frame_transition_v1(
 pub(crate) fn validate_classifier_backed_competitive_entry_immediate_recapture_v1(
     source: &OpaqueMtgoCompetitiveEntryReviewIdentityV1,
     control_rect_client_px: &MtgoRectPxV1,
+    selected_deck_rect_client_px: &MtgoRectPxV1,
     expected_control: &MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
     immediate: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
 ) -> Result<MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1, String> {
@@ -530,6 +564,18 @@ pub(crate) fn validate_classifier_backed_competitive_entry_immediate_recapture_v
         control_rect_client_px,
     )
     .map_err(|error| format!("rehash immediate entry control: {error}"))?;
+    let source_selected_deck_region_sha256 = visible_frame_region_content_sha256_v1(
+        &source._source_frame.canonical_bgra8,
+        &source_size,
+        selected_deck_rect_client_px,
+    )
+    .map_err(|error| format!("rehash source selected deck: {error}"))?;
+    let immediate_selected_deck_region_sha256 = visible_frame_region_content_sha256_v1(
+        &immediate_frame.canonical_bgra8,
+        &immediate_size,
+        selected_deck_rect_client_px,
+    )
+    .map_err(|error| format!("rehash immediate selected deck: {error}"))?;
     validate_competitive_entry_immediate_visible_state_v1(
         &source_view,
         &source_identity,
@@ -542,6 +588,8 @@ pub(crate) fn validate_classifier_backed_competitive_entry_immediate_recapture_v
         &immediate_event_label_region_sha256,
         &source_control_region_sha256,
         &immediate_control_region_sha256,
+        &source_selected_deck_region_sha256,
+        &immediate_selected_deck_region_sha256,
     )?;
     for digest in [
         source_identity.source_identity_commitment_sha256.as_str(),
@@ -563,6 +611,13 @@ pub(crate) fn validate_classifier_backed_competitive_entry_immediate_recapture_v
         source_identity.event_label_region_sha256.as_str(),
         expected_control.visible_control_label_sha256.as_str(),
         expected_control.visible_control_region_sha256.as_str(),
+        expected_control.selected_deck_label_sha256.as_str(),
+        expected_control.selected_deck_region_sha256.as_str(),
+        expected_control.deck_manifest_sha256.as_str(),
+        expected_control.deck_format_sha256.as_str(),
+        expected_control
+            .policy_deployment_commitment_sha256
+            .as_str(),
         source_view.event_identity_sha256.as_str(),
         source_terms.terms_sha256.as_str(),
     ] {
@@ -602,6 +657,13 @@ pub(crate) fn validate_classifier_backed_competitive_entry_immediate_recapture_v
             source_identity.event_label_region_sha256.as_bytes(),
             expected_control.visible_control_label_sha256.as_bytes(),
             expected_control.visible_control_region_sha256.as_bytes(),
+            expected_control.selected_deck_label_sha256.as_bytes(),
+            expected_control.selected_deck_region_sha256.as_bytes(),
+            expected_control.deck_manifest_sha256.as_bytes(),
+            expected_control.deck_format_sha256.as_bytes(),
+            expected_control
+                .policy_deployment_commitment_sha256
+                .as_bytes(),
             &lifecycle_facts,
             &event_kind,
             source_view.event_identity_sha256.as_bytes(),
@@ -617,7 +679,7 @@ pub(crate) fn validate_classifier_backed_competitive_entry_immediate_recapture_v
                 .captured_at_unix_millis
                 .to_be_bytes()
                 .as_slice(),
-            b"fresh_entry_review_event_terms_and_enabled_control_exact_no_input_no_entry_no_spending",
+            b"fresh_entry_review_event_terms_enabled_control_and_selected_deck_exact_no_input_no_entry_no_spending",
         ],
     );
     Ok(MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1 {
@@ -641,6 +703,13 @@ pub(crate) fn validate_classifier_backed_competitive_entry_immediate_recapture_v
         event_label_region_sha256: source_identity.event_label_region_sha256,
         visible_control_label_sha256: expected_control.visible_control_label_sha256.clone(),
         visible_control_region_sha256: expected_control.visible_control_region_sha256.clone(),
+        selected_deck_label_sha256: expected_control.selected_deck_label_sha256.clone(),
+        selected_deck_region_sha256: expected_control.selected_deck_region_sha256.clone(),
+        deck_manifest_sha256: expected_control.deck_manifest_sha256.clone(),
+        deck_format_sha256: expected_control.deck_format_sha256.clone(),
+        policy_deployment_commitment_sha256: expected_control
+            .policy_deployment_commitment_sha256
+            .clone(),
         event_identity_sha256: source_view.event_identity_sha256,
         entry_terms_sha256: source_terms.terms_sha256.clone(),
         event_kind: source_view.event_kind,
@@ -1012,6 +1081,8 @@ fn validate_competitive_entry_immediate_visible_state_v1(
     immediate_event_label_region_sha256: &str,
     source_control_region_sha256: &str,
     immediate_control_region_sha256: &str,
+    source_selected_deck_region_sha256: &str,
+    immediate_selected_deck_region_sha256: &str,
 ) -> Result<(), String> {
     if expected_control.source_identity_commitment_sha256
         != source_identity.source_identity_commitment_sha256
@@ -1047,9 +1118,11 @@ fn validate_competitive_entry_immediate_visible_state_v1(
         || immediate_event_label_region_sha256 != source_identity.event_label_region_sha256
         || source_control_region_sha256 != expected_control.visible_control_region_sha256
         || immediate_control_region_sha256 != expected_control.visible_control_region_sha256
+        || source_selected_deck_region_sha256 != expected_control.selected_deck_region_sha256
+        || immediate_selected_deck_region_sha256 != expected_control.selected_deck_region_sha256
     {
         return Err(
-            "competitive entry immediate recapture changed event-label or enabled-control pixels"
+            "competitive entry immediate recapture changed event-label, enabled-control, or selected-deck pixels"
                 .to_owned(),
         );
     }
@@ -1408,6 +1481,11 @@ fn bind_competitive_entry_control_dry_run_parts_v1(
     visible_control_label: &str,
     control_rect_client_px: &MtgoRectPxV1,
     visibly_enabled_confirmed: bool,
+    selected_deck_label: &str,
+    selected_deck_rect_client_px: &MtgoRectPxV1,
+    deck_manifest_sha256: &str,
+    deck_format_sha256: &str,
+    policy_deployment_commitment_sha256: &str,
 ) -> Result<MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1, String> {
     let classifier_commitment = source
         .source_navigation_classification_result_commitment_sha256
@@ -1429,6 +1507,19 @@ fn bind_competitive_entry_control_dry_run_parts_v1(
         );
     }
     validate_entry_control_label_v1(visible_control_label)?;
+    validate_selected_deck_label_v1(selected_deck_label)?;
+    if !looks_like_lower_sha256_v1(deck_manifest_sha256)
+        || !looks_like_lower_sha256_v1(deck_format_sha256)
+        || !looks_like_lower_sha256_v1(policy_deployment_commitment_sha256)
+        || deck_manifest_sha256 == deck_format_sha256
+        || deck_manifest_sha256 == policy_deployment_commitment_sha256
+        || deck_format_sha256 == policy_deployment_commitment_sha256
+    {
+        return Err(
+            "competitive entry deck manifest, format, and policy deployment must be distinct lowercase SHA-256 commitments"
+                .to_owned(),
+        );
+    }
     if !visibly_enabled_confirmed {
         return Err(
             "competitive entry control dry run requires an explicitly reviewed enabled control"
@@ -1437,6 +1528,9 @@ fn bind_competitive_entry_control_dry_run_parts_v1(
     }
     if control_rect_client_px.width < 8 || control_rect_client_px.height < 8 {
         return Err("competitive entry control region is too small for human review".to_owned());
+    }
+    if selected_deck_rect_client_px.width < 8 || selected_deck_rect_client_px.height < 8 {
+        return Err("competitive selected-deck region is too small for human review".to_owned());
     }
     let review_surface = lifecycle
         .visible_facts_v1()
@@ -1450,18 +1544,41 @@ fn bind_competitive_entry_control_dry_run_parts_v1(
                 .to_owned(),
         );
     }
+    if !rect_contains_rect_v1(review_surface, selected_deck_rect_client_px)? {
+        return Err(
+            "competitive selected-deck region is outside the visible entry-review surface"
+                .to_owned(),
+        );
+    }
     if rects_intersect_v1(event_label_rect_client_px, control_rect_client_px)? {
         return Err("competitive entry control overlaps the reviewed event label".to_owned());
+    }
+    if rects_intersect_v1(event_label_rect_client_px, selected_deck_rect_client_px)?
+        || rects_intersect_v1(control_rect_client_px, selected_deck_rect_client_px)?
+    {
+        return Err(
+            "competitive selected-deck region overlaps the reviewed event label or entry control"
+                .to_owned(),
+        );
     }
     let visible_control_region_sha256 =
         visible_frame_region_content_sha256_v1(source_pixels, source_size, control_rect_client_px)
             .map_err(|error| format!("hash competitive entry control pixels: {error}"))?;
     let visible_control_label_sha256 = sha256_hex_v1(visible_control_label.as_bytes());
+    let selected_deck_region_sha256 = visible_frame_region_content_sha256_v1(
+        source_pixels,
+        source_size,
+        selected_deck_rect_client_px,
+    )
+    .map_err(|error| format!("hash competitive selected-deck pixels: {error}"))?;
+    let selected_deck_label_sha256 = sha256_hex_v1(selected_deck_label.as_bytes());
     let control_rect_json = canonical_json_v1(control_rect_client_px, "entry control region")?;
+    let selected_deck_rect_json =
+        canonical_json_v1(selected_deck_rect_client_px, "selected deck region")?;
     let event_kind = canonical_json_v1(&source.event_kind, "entry control mode")?;
     let resource = canonical_json_v1(&source.resource, "entry control resource")?;
     let dry_run_commitment_sha256 = commitment_v1(
-        OPAQUE_COMPETITIVE_ENTRY_CONTROL_DRY_RUN_DOMAIN_V1,
+        OPAQUE_COMPETITIVE_ENTRY_CONTROL_AND_DECK_DRY_RUN_DOMAIN_V2,
         &[
             source.source_identity_commitment_sha256.as_bytes(),
             source.source_capture_commitment_sha256.as_bytes(),
@@ -1474,12 +1591,19 @@ fn bind_competitive_entry_control_dry_run_parts_v1(
             &control_rect_json,
             visible_control_region_sha256.as_bytes(),
             &[u8::from(visibly_enabled_confirmed)],
+            selected_deck_label.as_bytes(),
+            selected_deck_label_sha256.as_bytes(),
+            &selected_deck_rect_json,
+            selected_deck_region_sha256.as_bytes(),
+            deck_manifest_sha256.as_bytes(),
+            deck_format_sha256.as_bytes(),
+            policy_deployment_commitment_sha256.as_bytes(),
             &event_kind,
             source.frame_id.to_be_bytes().as_slice(),
             source.frame_sequence.to_be_bytes().as_slice(),
             &resource,
             source.amount.to_be_bytes().as_slice(),
-            b"human_reviewed_confirm_entry_control_dry_run_no_join_no_spending_no_input",
+            b"human_reviewed_confirm_entry_control_and_selected_deck_dry_run_no_join_no_spending_no_input",
         ],
     );
     Ok(MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
@@ -1491,6 +1615,11 @@ fn bind_competitive_entry_control_dry_run_parts_v1(
         source_navigation_classification_result_commitment_sha256: classifier_commitment.to_owned(),
         visible_control_label_sha256,
         visible_control_region_sha256,
+        selected_deck_label_sha256,
+        selected_deck_region_sha256,
+        deck_manifest_sha256: deck_manifest_sha256.to_owned(),
+        deck_format_sha256: deck_format_sha256.to_owned(),
+        policy_deployment_commitment_sha256: policy_deployment_commitment_sha256.to_owned(),
         visibly_enabled_confirmed,
         dry_run_commitment_sha256,
         event_kind: source.event_kind,
@@ -1678,6 +1807,20 @@ fn validate_entry_control_label_v1(value: &str) -> Result<(), String> {
     if !normalized.contains("join") && !normalized.contains("enter") {
         return Err(
             "competitive entry control label does not visibly identify Join or Enter".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_selected_deck_label_v1(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 96
+        || value.trim() != value
+        || !value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+    {
+        return Err(
+            "competitive selected-deck label must be nonempty, trimmed, bounded ASCII display text"
+                .to_owned(),
         );
     }
     Ok(())
@@ -2051,6 +2194,12 @@ mod tests {
                 width: 30,
                 height: 8,
             };
+            let selected_deck_rect = MtgoRectPxV1 {
+                x: 50,
+                y: 35,
+                width: 30,
+                height: 8,
+            };
             let dry_run = bind_competitive_entry_control_dry_run_parts_v1(
                 &source,
                 &lifecycle,
@@ -2063,6 +2212,11 @@ mod tests {
                 "Join Event",
                 &control_rect,
                 true,
+                "mtgkernel-modern-v1",
+                &selected_deck_rect,
+                &"1".repeat(64),
+                &"2".repeat(64),
+                &"3".repeat(64),
             )
             .unwrap();
             assert_eq!(dry_run.event_kind, event_kind);
@@ -2072,6 +2226,8 @@ mod tests {
             assert_eq!(dry_run.dry_run_commitment_sha256.len(), 64);
             assert_eq!(dry_run.visible_control_label_sha256.len(), 64);
             assert_eq!(dry_run.visible_control_region_sha256.len(), 64);
+            assert_eq!(dry_run.selected_deck_label_sha256.len(), 64);
+            assert_eq!(dry_run.selected_deck_region_sha256.len(), 64);
 
             let relabeled = bind_competitive_entry_control_dry_run_parts_v1(
                 &source,
@@ -2085,6 +2241,11 @@ mod tests {
                 "Enter Event",
                 &control_rect,
                 true,
+                "mtgkernel-modern-v1",
+                &selected_deck_rect,
+                &"1".repeat(64),
+                &"2".repeat(64),
+                &"3".repeat(64),
             )
             .unwrap();
             assert_ne!(
@@ -2136,6 +2297,12 @@ mod tests {
             width: 30,
             height: 8,
         };
+        let valid_deck = MtgoRectPxV1 {
+            x: 50,
+            y: 35,
+            width: 30,
+            height: 8,
+        };
         let bind = |source: &MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
                     label: &str,
                     rect: &MtgoRectPxV1,
@@ -2149,6 +2316,11 @@ mod tests {
                 label,
                 rect,
                 visibly_enabled,
+                "mtgkernel-modern-v1",
+                &valid_deck,
+                &"1".repeat(64),
+                &"2".repeat(64),
+                &"3".repeat(64),
             )
         };
 
@@ -2343,6 +2515,12 @@ mod tests {
             width: 30,
             height: 8,
         };
+        let selected_deck_rect = MtgoRectPxV1 {
+            x: 50,
+            y: 35,
+            width: 30,
+            height: 8,
+        };
         let source_identity = bind_competitive_entry_review_source_parts_v1(
             &"1".repeat(64),
             lifecycle.frame_sha256_v1(),
@@ -2370,6 +2548,11 @@ mod tests {
             "Join Event",
             &control_rect,
             true,
+            "mtgkernel-modern-v1",
+            &selected_deck_rect,
+            &"1".repeat(64),
+            &"2".repeat(64),
+            &"3".repeat(64),
         )
         .unwrap();
         let mut source_view = transition_view_v1(
@@ -2389,11 +2572,13 @@ mod tests {
         let terms = lifecycle.entry_terms_v1().unwrap();
         let event_region = source_identity.event_label_region_sha256.clone();
         let control_region = control.visible_control_region_sha256.clone();
+        let selected_deck_region = control.selected_deck_region_sha256.clone();
         let check = |candidate_control: &MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
                      immediate_terms: &MtgoCompetitiveEntryTermsV1,
                      immediate_facts: &[MtgoLifecycleVisibleFactV1],
                      immediate_event_region: &str,
-                     immediate_control_region: &str| {
+                     immediate_control_region: &str,
+                     immediate_selected_deck_region: &str| {
             validate_competitive_entry_immediate_visible_state_v1(
                 &source_view,
                 &source_identity,
@@ -2406,6 +2591,8 @@ mod tests {
                 immediate_event_region,
                 &control_region,
                 immediate_control_region,
+                &selected_deck_region,
+                immediate_selected_deck_region,
             )
         };
         check(
@@ -2414,6 +2601,7 @@ mod tests {
             lifecycle.visible_facts_v1(),
             &event_region,
             &control_region,
+            &selected_deck_region,
         )
         .unwrap();
 
@@ -2425,6 +2613,7 @@ mod tests {
             lifecycle.visible_facts_v1(),
             &event_region,
             &control_region,
+            &selected_deck_region,
         )
         .is_err());
 
@@ -2436,6 +2625,7 @@ mod tests {
             &changed_facts,
             &event_region,
             &control_region,
+            &selected_deck_region,
         )
         .is_err());
 
@@ -2445,6 +2635,17 @@ mod tests {
             lifecycle.visible_facts_v1(),
             &"0".repeat(64),
             &control_region,
+            &selected_deck_region,
+        )
+        .is_err());
+
+        assert!(check(
+            &control,
+            terms,
+            lifecycle.visible_facts_v1(),
+            &event_region,
+            &control_region,
+            &"0".repeat(64),
         )
         .is_err());
 
@@ -2456,6 +2657,7 @@ mod tests {
             lifecycle.visible_facts_v1(),
             &event_region,
             &control_region,
+            &selected_deck_region,
         )
         .is_err());
     }

@@ -817,6 +817,7 @@ pub struct MtgoOpaqueCompetitiveDuelActionPlanCommitmentsV1 {
     pub competitive_scope_commitment_sha256: String,
     pub competitive_mode_authorization_commitment_sha256: String,
     pub competitive_authorization_commitment_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
     pub opaque_competitive_action_plan_commitment_sha256: String,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub game_number: u8,
@@ -871,6 +872,11 @@ impl OpaqueMtgoCompetitiveDuelActionPlanV1 {
                 .competitive
                 .authorization_commitment_sha256()
                 .to_owned(),
+            policy_deployment_commitment_sha256: self
+                .control
+                .selection
+                .deployment_commitment_sha256
+                .clone(),
             opaque_competitive_action_plan_commitment_sha256: self
                 .opaque_competitive_action_plan_commitment_sha256
                 .clone(),
@@ -979,6 +985,7 @@ pub struct MtgoOpaqueCompetitiveDuelGestureSequenceCommitmentsV1 {
     pub gesture_plan_commitment_sha256: String,
     pub competitive_mode_authorization_commitment_sha256: String,
     pub competitive_match_gameplay_authorization_commitment_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
     pub current_stage_binding_commitment_sha256: String,
     pub current_opaque_stage_commitment_sha256: String,
     pub last_visible_transition_commitment_sha256: Option<String>,
@@ -1970,6 +1977,7 @@ pub fn begin_opaque_competitive_duel_gesture_sequence_v1(
             action_plan
                 .competitive_authorization_commitment_sha256
                 .as_bytes(),
+            action_plan.policy_deployment_commitment_sha256.as_bytes(),
             selected_family_json.as_slice(),
             event_kind_json.as_slice(),
             &[action_plan.game_number],
@@ -1989,6 +1997,7 @@ pub fn begin_opaque_competitive_duel_gesture_sequence_v1(
             .competitive_mode_authorization_commitment_sha256,
         competitive_match_gameplay_authorization_commitment_sha256: action_plan
             .competitive_authorization_commitment_sha256,
+        policy_deployment_commitment_sha256: action_plan.policy_deployment_commitment_sha256,
         current_stage_binding_commitment_sha256: stage.gesture_stage_binding_commitment_sha256,
         current_opaque_stage_commitment_sha256: stage.opaque_gesture_stage_commitment_sha256,
         last_visible_transition_commitment_sha256: None,
@@ -2536,6 +2545,7 @@ pub fn advance_opaque_competitive_duel_gesture_sequence_v1(
                 .competitive_mode_authorization_commitment_sha256,
             competitive_match_gameplay_authorization_commitment_sha256: prior_sequence
                 .competitive_match_gameplay_authorization_commitment_sha256,
+            policy_deployment_commitment_sha256: prior_sequence.policy_deployment_commitment_sha256,
             current_stage_binding_commitment_sha256: next.gesture_stage_binding_commitment_sha256,
             current_opaque_stage_commitment_sha256: next.opaque_gesture_stage_commitment_sha256,
             last_visible_transition_commitment_sha256: Some(visible_transition_commitment_sha256),
