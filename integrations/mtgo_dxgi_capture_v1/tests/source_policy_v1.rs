@@ -1477,6 +1477,8 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "native_checkpoint_pregame_interface_present: false",
         "competitive_pregame_heuristic_deployment_ratification_present:",
         "competitive_pregame_session_ownership_bridge_present: true",
+        "visible_accessibility_exact_text_probe_present: true",
+        "visible_accessibility_same_frame_pixel_corroboration_present: false",
         "competitive_pregame_capture_profile_present: false",
         "competitive_pregame_card_and_control_surface_present: true",
         "competitive_pregame_deck_bound_action_planner_present: true",
@@ -1507,6 +1509,54 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         assert!(
             !source.contains(forbidden) && !binary.contains(forbidden),
             "readiness preflight exposes a forbidden operation: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn visible_accessibility_probe_is_read_only_private_and_requires_pixel_corroboration() {
+    let source = include_str!("../src/probe/visible_accessibility.rs");
+    let binary = include_str!("../src/bin/probe_mtgo_visible_accessibility_v1.rs");
+
+    for required in [
+        "CurrentProcessId",
+        "CurrentIsOffscreen",
+        "CurrentBoundingRectangle",
+        "CurrentName",
+        "requires_same_frame_pixel_corroboration: true",
+        "raw_visible_text_exposed: false",
+        "safe_for_semantic_evidence: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+        "private_match_set_commitment_sha256",
+    ] {
+        assert!(
+            source.contains(required),
+            "visible accessibility probe is missing guard: {required}"
+        );
+    }
+
+    let offscreen_check = source.find(".CurrentIsOffscreen()").unwrap();
+    let bounds_check = source.find(".CurrentBoundingRectangle()").unwrap();
+    let name_read = source.find(".CurrentName()").unwrap();
+    assert!(offscreen_check < bounds_check && bounds_check < name_read);
+
+    for forbidden in [
+        "GetCurrentPattern",
+        ".Invoke(",
+        ".SetFocus(",
+        "SendInput",
+        ".SetValue(",
+        "expected_visible_text: String,\n    pub",
+    ] {
+        assert!(
+            !binary.contains(forbidden)
+                && !source
+                    .split("#[cfg(test)]")
+                    .next()
+                    .unwrap()
+                    .contains(forbidden),
+            "visible accessibility probe exposes forbidden operation or raw result: {forbidden}"
         );
     }
 }

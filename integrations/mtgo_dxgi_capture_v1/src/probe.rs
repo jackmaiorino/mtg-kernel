@@ -14,6 +14,7 @@ mod duel_perception_runtime;
 mod duel_profile_frame;
 mod live_frame;
 mod pregame_heuristic;
+mod visible_accessibility;
 pub use bottoming_model::*;
 pub use competitive_entry_runtime::*;
 pub use competitive_event_listing_runtime::*;
@@ -27,6 +28,7 @@ pub use duel_perception_runtime::*;
 pub use duel_profile_frame::*;
 pub use live_frame::*;
 pub use pregame_heuristic::*;
+pub use visible_accessibility::*;
 
 use crate::{
     copy_tightly_packed_bgra8_v1, sha256_hex_v1, validate_visible_mtgo_title_v2,
