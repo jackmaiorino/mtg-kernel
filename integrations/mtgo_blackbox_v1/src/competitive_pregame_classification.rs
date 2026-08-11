@@ -849,6 +849,32 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 }
 
 #[cfg(test)]
+pub(crate) fn checked_untrusted_competitive_pregame_classification_for_context_test_v1(
+    source_capture_commitment_sha256: String,
+    source_frame_profile_binding_sha256: String,
+    classification_commitment_sha256: String,
+    visible_interaction_commitment_sha256: String,
+    frame_id: u64,
+    frame_sequence: u64,
+) -> CheckedUntrustedMtgoCompetitivePregameClassificationV1 {
+    CheckedUntrustedMtgoCompetitivePregameClassificationV1 {
+        source_capture_commitment_sha256,
+        source_frame_profile_binding_sha256,
+        classifier_runtime_identity_commitment_sha256: "e".repeat(64),
+        pregame_evaluation_commitment_sha256: "f".repeat(64),
+        pregame_profile_admission_commitment_sha256: "1".repeat(64),
+        request_commitment_sha256: "2".repeat(64),
+        classification_commitment_sha256,
+        visible_interaction_commitment_sha256,
+        frame_id,
+        frame_sequence,
+        stage: MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+            prospective_keep_size: 7,
+        },
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{

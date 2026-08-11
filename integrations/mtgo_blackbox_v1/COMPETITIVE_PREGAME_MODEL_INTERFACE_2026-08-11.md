@@ -13,6 +13,13 @@ The competitive adapter also lacks two public facts needed by a serious
 pregame policy: whether the acting player is on the play or draw, and the
 current public match score. Game number alone is not enough.
 
+The adapter now has a checked-untrusted structural contract for those facts.
+It requires the canonical play-or-draw, acting-player score, and opponent-score
+regions in that order, rehashes each region from the supplied BGRA frame,
+enforces legal best-of-three score progression, and binds the result to the
+same exact pregame classification frame. It intentionally grants no model or
+input authority until a heldout visible-context evaluation is admitted.
+
 ## Required mtg-kernel surface
 
 Add one typed pregame decision surface with these minimum fields:
