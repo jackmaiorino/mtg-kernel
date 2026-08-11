@@ -1199,6 +1199,9 @@ pub(crate) fn run_async_flat_scored_rollout_native_environment_randomization_v2<
 /// Population-aware environment-randomization native-trainer sibling. Also
 /// the kernel-native search authority's environment-randomization entry
 /// point; see `run_async_flat_scored_rollout_native_observed_with_population_v1`.
+// Same 7-to-8-argument shape as its non-environment-randomization sibling
+// above and the v1 core underneath both; see the comment there.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_async_flat_scored_rollout_native_environment_randomization_with_population_v1<
     O: FlatScoredTrajectoryObserverV2,
 >(
@@ -1261,6 +1264,9 @@ fn run_async_flat_scored_rollout_observed_with_schedule_v2<O: FlatScoredTrajecto
     }
 }
 
+// Same 7-to-8-argument shape as its two public callers above; see the
+// comment on the v1 core this bottoms out in.
+#[allow(clippy::too_many_arguments)]
 fn run_async_flat_scored_rollout_observed_with_schedule_and_population_v1<
     O: FlatScoredTrajectoryObserverV2,
 >(

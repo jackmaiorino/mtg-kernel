@@ -3327,6 +3327,11 @@ pub(crate) const fn opponent_authority_installation_is_valid_v1(
     (ladder_installed as u8 + population_installed as u8 + search_installed as u8) <= 1
 }
 
+// The kernel-native search authority parameter pushes this from 7 to 8
+// arguments. A bundling struct would only paper over the real complexity
+// (three mutually exclusive optional opponent authorities plus the
+// pre-existing five), so this stays a flat argument list like its siblings.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_async_flat_scored_rollout_core_with_population_v1<
     F: FlatScoredFamilyCore,
     S: FlatBatchScorerCore<F>,
