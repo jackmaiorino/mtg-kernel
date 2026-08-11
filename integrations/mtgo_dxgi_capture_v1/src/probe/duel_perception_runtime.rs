@@ -14,18 +14,19 @@ use mtgo_blackbox_v1::{
     resolve_profile_bound_selected_visible_control_v1,
     score_and_select_profile_bound_duel_candidate_v1,
     validate_dxgi_bound_observation_reconstruction_audit_v1, validate_observed_decision_v1,
-    visible_frame_region_content_sha256_v1, AdmittedMtgoDuelPerceptionProfileV1,
-    CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
+    validate_profile_bound_duel_gesture_plan_v1, visible_frame_region_content_sha256_v1,
+    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
     CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
     CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
-    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, CheckedUntrustedMtgoDuelGesturePlanV1,
     CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
     CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
     CheckedUntrustedMtgoProfileBoundResolvedActionControlV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1,
-    MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDuelActionFamilyV1, MtgoDxgiCaptureRoleV2,
-    MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1, MtgoExternalObservationScorerV1,
-    MtgoLifecycleVisibleFactKindV1, MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
+    MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDuelActionFamilyV1, MtgoDuelGesturePlanV1,
+    MtgoDxgiCaptureRoleV2, MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1,
+    MtgoExternalObservationScorerV1, MtgoLifecycleVisibleFactKindV1,
+    MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
     MtgoProfileBoundPostconditionAfterFrameMetadataV1,
     MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoProfileBoundPostconditionCalibrationV1,
     MtgoProfileBoundPostconditionCandidateStatusV1, MtgoProfileBoundPostconditionRegionSetV1,
@@ -641,6 +642,7 @@ pub struct MtgoOpaqueDuelResolvedControlCommitmentsV1 {
     pub decision_commitment_sha256: String,
     pub selection_commitment_sha256: String,
     pub control_resolution_commitment_sha256: String,
+    pub profile_bound_resolution_commitment_sha256: String,
     pub opaque_control_resolution_commitment_sha256: String,
     pub control_id: String,
     pub frame_id: u64,
@@ -689,6 +691,8 @@ impl OpaqueMtgoProfileBoundDuelResolvedControlV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoOpaqueCompetitiveDuelActionPlanCommitmentsV1 {
     pub opaque_control_resolution_commitment_sha256: String,
+    pub gesture_plan_commitment_sha256: String,
+    pub gesture_stage_count: u16,
     pub postcondition_plan_commitment_sha256: String,
     pub competitive_scope_commitment_sha256: String,
     pub competitive_mode_authorization_commitment_sha256: String,
@@ -719,6 +723,7 @@ pub struct MtgoOpaqueCompetitiveDuelActionPlanCommitmentsV1 {
 /// ```
 pub struct OpaqueMtgoCompetitiveDuelActionPlanV1 {
     control: OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    gesture: CheckedUntrustedMtgoDuelGesturePlanV1,
     competitive: CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
     opaque_competitive_action_plan_commitment_sha256: String,
 }
@@ -726,10 +731,13 @@ pub struct OpaqueMtgoCompetitiveDuelActionPlanV1 {
 impl OpaqueMtgoCompetitiveDuelActionPlanV1 {
     pub fn commitments_v1(&self) -> MtgoOpaqueCompetitiveDuelActionPlanCommitmentsV1 {
         let control = self.control.commitments_v1();
+        let gesture = self.gesture.commitments_v1();
         let postcondition = self.competitive.postcondition_plan_commitments_v1();
         MtgoOpaqueCompetitiveDuelActionPlanCommitmentsV1 {
             opaque_control_resolution_commitment_sha256: control
                 .opaque_control_resolution_commitment_sha256,
+            gesture_plan_commitment_sha256: gesture.plan_commitment_sha256,
+            gesture_stage_count: gesture.stage_count,
             postcondition_plan_commitment_sha256: postcondition.plan_commitment_sha256,
             competitive_scope_commitment_sha256: self
                 .competitive
@@ -1316,6 +1324,9 @@ pub fn resolve_opaque_profile_bound_duel_control_v1(
         control_resolution_commitment_sha256: resolved
             .control_resolution_commitment_sha256()
             .to_owned(),
+        profile_bound_resolution_commitment_sha256: resolved
+            .profile_bound_resolution_commitment_sha256()
+            .to_owned(),
         opaque_control_resolution_commitment_sha256: opaque_control_resolution_commitment_sha256
             .clone(),
         control_id: resolved.control_id().to_owned(),
@@ -1340,12 +1351,21 @@ pub fn resolve_opaque_profile_bound_duel_control_v1(
 /// This still creates no input command and grants no event-entry authority.
 pub fn prepare_opaque_competitive_duel_action_plan_v1(
     mut control: OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    gesture_plan: MtgoDuelGesturePlanV1,
     calibration: MtgoProfileBoundPostconditionCalibrationV1,
     region_set: MtgoProfileBoundPostconditionRegionSetV1,
     lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     mode_authorization: &MtgoAuthorizationScopeV1,
     gameplay_authorization: &MtgoCompetitiveMatchGameplayAuthorizationV1,
 ) -> Result<OpaqueMtgoCompetitiveDuelActionPlanV1, String> {
+    let gesture = validate_profile_bound_duel_gesture_plan_v1(
+        control
+            .resolved
+            .as_ref()
+            .ok_or("opaque duel control resolution was already consumed")?,
+        gesture_plan,
+    )
+    .map_err(|error| format!("validate opaque duel gesture plan: {error}"))?;
     let resolved = control
         .resolved
         .take()
@@ -1360,7 +1380,7 @@ pub fn prepare_opaque_competitive_duel_action_plan_v1(
         gameplay_authorization,
     )
     .map_err(|error| format!("scope opaque duel action to competitive match: {error}"))?;
-    bind_opaque_duel_control_to_competitive_action_plan_v1(control, competitive)
+    bind_opaque_duel_control_to_competitive_action_plan_v1(control, gesture, competitive)
 }
 
 /// Recaptures and reclassifies the exact current duel state immediately before
@@ -1835,15 +1855,27 @@ pub(crate) fn confirm_opaque_competitive_duel_pass_postcondition_v1(
 /// compared before either move-only input is retained.
 pub fn bind_opaque_duel_control_to_competitive_action_plan_v1(
     control: OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    gesture: CheckedUntrustedMtgoDuelGesturePlanV1,
     competitive: CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
 ) -> Result<OpaqueMtgoCompetitiveDuelActionPlanV1, String> {
     let opaque = opaque_duel_action_binding_view_v1(&control)?;
+    let gesture_commitments = gesture.commitments_v1();
     let postcondition = competitive.postcondition_plan_commitments_v1();
     validate_opaque_competitive_action_binding_v1(
         &opaque,
         &postcondition,
         competitive.selected_semantic(),
     )?;
+    if gesture_commitments.profile_bound_resolution_commitment_sha256
+        != opaque.profile_bound_resolution_commitment_sha256
+        || gesture_commitments.decision_commitment_sha256 != opaque.decision_commitment_sha256
+        || gesture_commitments.selection_commitment_sha256 != opaque.selection_commitment_sha256
+        || gesture_commitments.frame_id != opaque.frame_id
+        || gesture_commitments.frame_sequence != opaque.frame_sequence
+        || gesture_commitments.selected_action_family != control.selected_action_family
+    {
+        return Err("gesture plan does not retain the exact opaque duel control".to_owned());
+    }
 
     let selected_semantic_json = serde_json::to_vec(competitive.selected_semantic())
         .map_err(|error| format!("serialize competitive duel semantic: {error}"))?;
@@ -1853,6 +1885,8 @@ pub fn bind_opaque_duel_control_to_competitive_action_plan_v1(
             opaque
                 .opaque_control_resolution_commitment_sha256
                 .as_bytes(),
+            gesture_commitments.plan_commitment_sha256.as_bytes(),
+            &gesture_commitments.stage_count.to_be_bytes(),
             postcondition.plan_commitment_sha256.as_bytes(),
             competitive.competitive_scope_commitment_sha256().as_bytes(),
             competitive
@@ -1865,6 +1899,7 @@ pub fn bind_opaque_duel_control_to_competitive_action_plan_v1(
     );
     Ok(OpaqueMtgoCompetitiveDuelActionPlanV1 {
         control,
+        gesture,
         competitive,
         opaque_competitive_action_plan_commitment_sha256,
     })
@@ -1873,6 +1908,7 @@ pub fn bind_opaque_duel_control_to_competitive_action_plan_v1(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OpaqueDuelActionBindingViewV1 {
     opaque_control_resolution_commitment_sha256: String,
+    profile_bound_resolution_commitment_sha256: String,
     decision_commitment_sha256: String,
     selection_commitment_sha256: String,
     control_resolution_commitment_sha256: String,
@@ -1928,6 +1964,8 @@ fn opaque_duel_action_binding_view_v1(
     Ok(OpaqueDuelActionBindingViewV1 {
         opaque_control_resolution_commitment_sha256: commitments
             .opaque_control_resolution_commitment_sha256,
+        profile_bound_resolution_commitment_sha256: commitments
+            .profile_bound_resolution_commitment_sha256,
         decision_commitment_sha256: commitments.decision_commitment_sha256,
         selection_commitment_sha256: commitments.selection_commitment_sha256,
         control_resolution_commitment_sha256: commitments.control_resolution_commitment_sha256,
@@ -2669,6 +2707,7 @@ mod tests {
         let semantic_json = serde_json::to_vec(&semantic).unwrap();
         let opaque = OpaqueDuelActionBindingViewV1 {
             opaque_control_resolution_commitment_sha256: "0".repeat(64),
+            profile_bound_resolution_commitment_sha256: "9".repeat(64),
             decision_commitment_sha256: "1".repeat(64),
             selection_commitment_sha256: "2".repeat(64),
             control_resolution_commitment_sha256: "3".repeat(64),
