@@ -50,6 +50,7 @@ pub use actuator::{
 
 #[cfg(target_os = "windows")]
 pub use probe::{
+    bind_classified_navigation_frame_to_visible_event_record_v1,
     bind_classified_navigation_frame_to_competitive_entry_review_identity_v1,
     bind_classifier_backed_competitive_entry_control_dry_run_v1,
     bind_opaque_duel_control_to_competitive_action_plan_v1,
@@ -116,6 +117,7 @@ pub use probe::{
     MtgoOpaqueDuelResolvedControlCommitmentsV1, MtgoPinnedSolitaireVisibleFrameCommitmentsV1,
     MtgoPlannedBottomingPostconditionV5, MtgoPlannedPregamePostconditionV3,
     MtgoPregameScoreResponseV3, MtgoPregameScoringRequestV3,
+    MtgoSourceBoundCompetitiveEventRecordCommitmentsV1,
     MtgoVerifiedCompetitiveNavigationClassifierRuntimeCommitmentsV1,
     MtgoVerifiedDuelPerceptionRuntimeCommitmentsV1, OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
     OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoAdmittedDuelVisibleFrameV1,
@@ -137,6 +139,7 @@ pub use probe::{
     OpaqueMtgoPinnedSolitaireVisibleFrameV1, OpaqueMtgoPregameActionPlanV3,
     OpaqueMtgoPregameModelSelectionV3, OpaqueMtgoPreparedCompetitiveDuelPassV1,
     OpaqueMtgoProfileBoundDuelModelSelectionV1, OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    OpaqueMtgoSourceBoundCompetitiveEventRecordV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
     OpaqueMtgoVerifiedDuelPerceptionRuntimeV1, MTGO_BOTTOMING_CARD_AWARE_SCORING_SCHEMA_V5,
     MTGO_HEURISTIC_COLORLESS_V1, MTGO_HEURISTIC_COLOR_BLACK_V1, MTGO_HEURISTIC_COLOR_BLUE_V1,

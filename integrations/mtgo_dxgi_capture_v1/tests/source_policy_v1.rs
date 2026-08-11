@@ -207,6 +207,47 @@ fn competitive_navigation_classifier_is_exact_bounded_and_non_actionable() {
 }
 
 #[test]
+fn competitive_event_record_is_same_frame_pixel_bound_and_non_actionable() {
+    let source = include_str!("../src/probe/competitive_event_record_runtime.rs");
+    for required in [
+        "bind_classified_navigation_frame_to_visible_event_record_v1",
+        "OpaqueMtgoClassifiedCompetitiveNavigationFrameV1",
+        "OpaqueMtgoSourceBoundCompetitiveEventRecordV1",
+        "validate_visible_competitive_event_record_v1",
+        "visible_frame_region_content_sha256_v1",
+        "source_capture_commitment_sha256",
+        "source_frame_profile_binding_sha256",
+        "source_classification_result_commitment_sha256",
+        "source_lifecycle_snapshot_commitment_sha256",
+        "approved_account_alias_sha256",
+        "event_identity_sha256",
+        "exact_same_frame_event_record_pixels_rehashed_no_input_no_entry_no_spending_no_gameplay",
+    ] {
+        assert!(
+            source.contains(required),
+            "source-bound competitive event record is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn visible_fact_rectangles",
+        "pub fn input_command",
+        "safe_for_live_input_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "permits_gameplay_v1(&self) -> bool {\n        true",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "source-bound competitive event record exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_authority() {
     let source = include_str!("../src/probe/duel_perception_runtime.rs");
     for required in [
