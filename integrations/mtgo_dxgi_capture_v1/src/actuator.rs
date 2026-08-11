@@ -12,7 +12,6 @@ use crate::probe::{
     confirm_opaque_competitive_lifecycle_control_postcondition_v1,
     confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
-    plan_classified_competitive_sideboard_v1,
     prepare_opaque_competitive_duel_gesture_continuation_stage_from_pinned_runtime_v1,
     prepare_opaque_competitive_duel_gesture_source_stage_from_pinned_runtime_v1,
     prepare_opaque_competitive_event_listing_open_source_v1, prepare_pregame_actuation_v3,
@@ -74,13 +73,12 @@ use mtgo_blackbox_v1::{
     MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
     MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
-    MtgoCompetitiveSideboardSelectionV1, MtgoCompetitiveSideboardTransferDirectionV1,
-    MtgoCompetitiveSideboardTransferV1, MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1,
-    MtgoDuelPrimaryActivationV1, MtgoLifecycleVisibleFactKindV1,
-    MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
-    MtgoVisibleCompetitiveSideboardCardV1, MtgoVisibleCompetitiveSideboardZoneV1,
-    ValidatedMtgoCompetitiveDeckManifestV1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
-    MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
+    MtgoCompetitiveSideboardTransferDirectionV1, MtgoCompetitiveSideboardTransferV1,
+    MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1, MtgoDuelPrimaryActivationV1,
+    MtgoLifecycleVisibleFactKindV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
+    MtgoPregameActionSemanticV1, MtgoRuntimeModeV1, MtgoVisibleCompetitiveSideboardCardV1,
+    MtgoVisibleCompetitiveSideboardZoneV1, ValidatedMtgoCompetitiveDeckManifestV1,
+    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -219,8 +217,6 @@ const COMPETITIVE_EVENT_MATCH_LAUNCH_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-match-launch-binding-v1";
 const COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-sideboard-measurement-v1";
-const COMPETITIVE_EVENT_SIDEBOARD_PLAN_DOMAIN_V1: &[u8] =
-    b"mtgo-competitive-event-sideboard-plan-v1";
 const COMPETITIVE_EVENT_SIDEBOARD_SEQUENCE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-sideboard-sequence-v1";
 const COMPETITIVE_EVENT_SIDEBOARD_TRANSFER_PREPARATION_DOMAIN_V1: &[u8] =
@@ -1442,12 +1438,12 @@ pub struct MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
 /// selection, but no pixels, rectangles, input, or submit operation is exposed.
 pub struct OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
-    lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
-    sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
+    _lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    _sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
     classified: OpaqueMtgoClassifiedCompetitiveSideboardV1,
-    manifest: ValidatedMtgoCompetitiveDeckManifestV1,
-    event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
-    prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
+    _manifest: ValidatedMtgoCompetitiveDeckManifestV1,
+    _event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
+    _prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
     commitments: MtgoMeasuredCompetitiveEventSideboardCommitmentsV1,
 }
 
@@ -4669,99 +4665,12 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
     };
     Ok(OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
         _spent_entry_authorization,
-        lifecycle_authorization,
-        sideboard_authorization,
+        _lifecycle_authorization: lifecycle_authorization,
+        _sideboard_authorization: sideboard_authorization,
         classified,
-        manifest,
-        event_monitor,
-        prior,
-        commitments,
-    })
-}
-
-/// Binds a coordinate-free model target to the exact measured event state.
-/// The resulting wrapper still cannot prepare or emit any input.
-pub fn plan_measured_competitive_event_sideboard_v1(
-    measured: OpaqueMtgoMeasuredCompetitiveEventSideboardV1,
-    selection: MtgoCompetitiveSideboardSelectionV1,
-) -> Result<OpaqueMtgoPlannedCompetitiveEventSideboardV1, String> {
-    let OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
-        _spent_entry_authorization,
-        lifecycle_authorization,
-        sideboard_authorization,
-        classified,
-        manifest,
-        event_monitor,
-        prior,
-        commitments: measurement,
-    } = measured;
-    if measurement.sideboard_automation_ratification_commitment_sha256
-        != sideboard_authorization
-            .commitments
-            .ratification_commitment_sha256
-    {
-        return Err("sideboard measurement lost its exact automation authorization".to_owned());
-    }
-    let planned = plan_classified_competitive_sideboard_v1(classified, selection)?;
-    let plan = planned.commitments_v1();
-    if measurement.prior_event_runtime_commitment_sha256 != prior.runtime_commitment_sha256
-        || measurement
-            .sideboard_classification
-            .classification_result_commitment_sha256
-            != plan.classification_result_commitment_sha256
-        || measurement
-            .sideboard_classification
-            .sideboard_snapshot_commitment_sha256
-            != plan.source_snapshot_commitment_sha256
-        || plan.deck_list_sha256 != prior.deck_manifest_sha256
-        || plan.deck_format_sha256 != prior.deck_format_sha256
-        || plan.policy_deployment_commitment_sha256 != prior.policy_deployment_commitment_sha256
-        || plan.event_kind != prior.event_kind
-        || plan.event_identity_sha256 != prior.bound_event_identity_sha256
-        || prior.current_match_identity_sha256.as_deref()
-            != Some(plan.match_identity_sha256.as_str())
-        || prior.current_game_number != Some(plan.game_number)
-        || plan.source_frame_sequence != prior.current_frame_sequence
-    {
-        return Err("model sideboard plan changed the exact event runtime lineage".to_owned());
-    }
-    let event_plan_binding_commitment_sha256 = hash_parts_v2(
-        COMPETITIVE_EVENT_SIDEBOARD_PLAN_DOMAIN_V1,
-        &[
-            prior.runtime_commitment_sha256.as_bytes(),
-            measurement
-                .sideboard_automation_ratification_commitment_sha256
-                .as_bytes(),
-            measurement.measurement_binding_commitment_sha256.as_bytes(),
-            plan.classification_result_commitment_sha256.as_bytes(),
-            plan.source_snapshot_commitment_sha256.as_bytes(),
-            plan.plan_commitment_sha256.as_bytes(),
-            plan.model_plan_binding_commitment_sha256.as_bytes(),
-            plan.deck_list_sha256.as_bytes(),
-            plan.deck_manifest_commitment_sha256.as_bytes(),
-            plan.deck_format_sha256.as_bytes(),
-            plan.policy_deployment_commitment_sha256.as_bytes(),
-            plan.source_frame_sequence.to_be_bytes().as_slice(),
-            plan.transfer_count.to_be_bytes().as_slice(),
-            b"coordinate_free_event_bound_sideboard_plan_no_input_no_submit",
-        ],
-    );
-    let commitments = MtgoPlannedCompetitiveEventSideboardCommitmentsV1 {
-        prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
-        sideboard_automation_ratification_commitment_sha256: measurement
-            .sideboard_automation_ratification_commitment_sha256,
-        measurement_binding_commitment_sha256: measurement.measurement_binding_commitment_sha256,
-        sideboard_plan: plan,
-        event_plan_binding_commitment_sha256,
-    };
-    Ok(OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
-        _spent_entry_authorization,
-        lifecycle_authorization,
-        sideboard_authorization,
-        planned,
-        manifest,
-        event_monitor,
-        prior,
+        _manifest: manifest,
+        _event_monitor: event_monitor,
+        _prior: prior,
         commitments,
     })
 }

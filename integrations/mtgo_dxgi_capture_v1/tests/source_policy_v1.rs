@@ -456,13 +456,10 @@ fn competitive_sideboard_measurement_is_pixel_bound_event_bound_and_non_actionab
     let coordinator = include_str!("../src/actuator.rs");
     for required in [
         "measure_competitive_event_runtime_sideboard_v1",
-        "plan_measured_competitive_event_sideboard_v1",
         "OpaqueMtgoMeasuredCompetitiveEventSideboardV1",
         "OpaqueMtgoPlannedCompetitiveEventSideboardV1",
         "COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1",
-        "COMPETITIVE_EVENT_SIDEBOARD_PLAN_DOMAIN_V1",
         "event_runtime_withheld_during_checked_untrusted_sideboard_measurement_no_input_no_submit",
-        "coordinate_free_event_bound_sideboard_plan_no_input_no_submit",
         "manifest.deck_list_sha256() != runtime.commitments.deck_manifest_sha256",
         "manifest.format_sha256() != runtime.commitments.deck_format_sha256",
         "sideboard.policy_deployment_commitment_sha256",
@@ -507,6 +504,7 @@ fn competitive_sideboard_measurement_is_pixel_bound_event_bound_and_non_actionab
     }
 
     for forbidden in [
+        "plan_measured_competitive_event_sideboard_v1",
         "RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1: Option<&str> = Some",
         "mouse_event",
         "keybd_event",
