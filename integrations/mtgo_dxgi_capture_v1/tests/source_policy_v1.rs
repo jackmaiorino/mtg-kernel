@@ -356,6 +356,8 @@ fn competitive_event_runtime_is_move_only_identity_bound_and_terminal_record_gat
         "advance_competitive_event_monitor_in_runtime_v1",
         "checkout_competitive_event_gameplay_session_v1",
         "return_competitive_event_gameplay_session_v1",
+        "gameplay.entry_authorization_sha256 != runtime.entry_authorization_sha256",
+        "current exact entry, event, match, game, account, or frame lifetime",
         "closing a competitive event requires its terminal visible event record",
         "move_only_gameplay_lease_event_runtime_withheld",
         "one_exact_event_move_only_no_reentry_no_additional_spending",

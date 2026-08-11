@@ -646,6 +646,7 @@ pub struct MtgoCompetitiveEventRuntimeCommitmentsV1 {
     pub runtime_commitment_sha256: String,
     pub entry_confirmation_receipt_sha256: String,
     pub entry_ratification_commitment_sha256: String,
+    pub entry_authorization_sha256: String,
     pub lifecycle_authorization_commitment_sha256: String,
     pub mode_authorization_commitment_sha256: String,
     pub navigation_profile_commitment_sha256: String,
@@ -2739,6 +2740,7 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         runtime_commitment_sha256: String::new(),
         entry_confirmation_receipt_sha256: entry.confirmation_receipt_sha256,
         entry_ratification_commitment_sha256: entry_ratification.ratification_commitment_sha256,
+        entry_authorization_sha256: entry_ratification.entry_authorization_sha256,
         lifecycle_authorization_commitment_sha256: lifecycle_ratification
             .ratification_commitment_sha256,
         mode_authorization_commitment_sha256: lifecycle_ratification
@@ -6162,22 +6164,34 @@ fn validate_game_session_against_event_runtime_v1(
 ) -> Result<(), String> {
     let game = session.commitments_v1();
     let gameplay = &session.launch.pass_match_launch.authorization;
-    if runtime.commitments.closed_to_event_browser
-        || runtime.commitments.current_phase != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
-        || game.event_kind != runtime.commitments.event_kind
-        || game.mode_authorization_commitment_sha256
-            != runtime.commitments.mode_authorization_commitment_sha256
-        || gameplay.account_alias_sha256 != runtime.commitments.approved_account_alias_sha256
-        || gameplay.event_identity_sha256 != runtime.commitments.bound_event_identity_sha256
-        || runtime.commitments.current_match_identity_sha256.as_deref()
+    validate_game_session_commitments_against_event_runtime_v1(
+        &runtime.commitments,
+        &game,
+        gameplay,
+    )
+}
+
+fn validate_game_session_commitments_against_event_runtime_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    game: &MtgoCompetitiveGestureGameSessionCommitmentsV1,
+    gameplay: &MtgoCompetitiveMatchGameplayAuthorizationV1,
+) -> Result<(), String> {
+    if runtime.closed_to_event_browser
+        || runtime.current_phase != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+        || game.event_kind != runtime.event_kind
+        || game.mode_authorization_commitment_sha256 != runtime.mode_authorization_commitment_sha256
+        || gameplay.account_alias_sha256 != runtime.approved_account_alias_sha256
+        || gameplay.entry_authorization_sha256 != runtime.entry_authorization_sha256
+        || gameplay.event_identity_sha256 != runtime.bound_event_identity_sha256
+        || runtime.current_match_identity_sha256.as_deref()
             != Some(gameplay.match_identity_sha256.as_str())
-        || runtime.commitments.current_game_number != Some(game.game_number)
+        || runtime.current_game_number != Some(game.game_number)
         || gameplay.game_number != game.game_number
-        || game.valid_from_frame_sequence < runtime.commitments.current_frame_sequence
+        || game.valid_from_frame_sequence < runtime.current_frame_sequence
         || game.valid_from_frame_sequence > game.valid_through_frame_sequence
     {
         return Err(
-            "competitive game session differs from the current exact event, match, game, account, or frame lifetime"
+            "competitive game session differs from the current exact entry, event, match, game, account, or frame lifetime"
                 .to_owned(),
         );
     }
@@ -6196,6 +6210,7 @@ fn competitive_event_runtime_commitment_v1(
             prior_runtime_commitment_sha256.unwrap_or("").as_bytes(),
             value.entry_confirmation_receipt_sha256.as_bytes(),
             value.entry_ratification_commitment_sha256.as_bytes(),
+            value.entry_authorization_sha256.as_bytes(),
             value.lifecycle_authorization_commitment_sha256.as_bytes(),
             value.mode_authorization_commitment_sha256.as_bytes(),
             value.navigation_profile_commitment_sha256.as_bytes(),
@@ -11048,6 +11063,7 @@ mod tests {
             runtime_commitment_sha256: String::new(),
             entry_confirmation_receipt_sha256: "1".repeat(64),
             entry_ratification_commitment_sha256: "2".repeat(64),
+            entry_authorization_sha256: "d".repeat(64),
             lifecycle_authorization_commitment_sha256: "3".repeat(64),
             mode_authorization_commitment_sha256: "4".repeat(64),
             navigation_profile_commitment_sha256: "5".repeat(64),
@@ -11099,6 +11115,17 @@ mod tests {
             )
         );
         state.event_kind = MtgoCompetitiveEventKindV1::League;
+        state.entry_authorization_sha256 = "e".repeat(64);
+        assert_ne!(
+            baseline,
+            competitive_event_runtime_commitment_v1(
+                COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+                Some(&prior),
+                &state,
+                b"transition",
+            )
+        );
+        state.entry_authorization_sha256 = "d".repeat(64);
         state.gameplay_lease_count = 1;
         assert_ne!(
             baseline,
@@ -11120,5 +11147,76 @@ mod tests {
                 b"transition",
             )
         );
+    }
+
+    #[test]
+    fn competitive_event_gameplay_rejects_a_different_exact_entry() {
+        let runtime = MtgoCompetitiveEventRuntimeCommitmentsV1 {
+            runtime_commitment_sha256: "0".repeat(64),
+            entry_confirmation_receipt_sha256: "1".repeat(64),
+            entry_ratification_commitment_sha256: "2".repeat(64),
+            entry_authorization_sha256: "3".repeat(64),
+            lifecycle_authorization_commitment_sha256: "4".repeat(64),
+            mode_authorization_commitment_sha256: "5".repeat(64),
+            navigation_profile_commitment_sha256: "6".repeat(64),
+            navigation_profile_admission_commitment_sha256: "7".repeat(64),
+            approved_account_alias_sha256: "8".repeat(64),
+            bound_event_identity_sha256: "9".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            current_phase: MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            current_lifecycle_snapshot_commitment_sha256: "a".repeat(64),
+            current_match_identity_sha256: Some("b".repeat(64)),
+            current_game_number: Some(1),
+            current_frame_id: 20,
+            current_frame_sequence: 30,
+            lifecycle_transition_count: 4,
+            confirmed_lifecycle_action_count: 1,
+            observed_lifecycle_advance_count: 3,
+            gameplay_lease_count: 0,
+            event_monitor_chain_commitment_sha256: None,
+            event_monitor_observation_count: 0,
+            terminal_event_record_confirmed: false,
+            closed_to_event_browser: false,
+        };
+        let game = MtgoCompetitiveGestureGameSessionCommitmentsV1 {
+            session_commitment_sha256: "c".repeat(64),
+            general_gesture_permission_commitment_sha256: "d".repeat(64),
+            mode_authorization_commitment_sha256: runtime
+                .mode_authorization_commitment_sha256
+                .clone(),
+            pass_match_launch_commitment_sha256: "e".repeat(64),
+            match_gameplay_authorization_commitment_sha256: "f".repeat(64),
+            gesture_match_launch_commitment_sha256: "0".repeat(64),
+            gesture_evaluation_commitment_sha256: "1".repeat(64),
+            gesture_profile_admission_commitment_sha256: "2".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            game_number: 1,
+            valid_from_frame_sequence: 30,
+            valid_through_frame_sequence: 542,
+            last_confirmed_frame_sequence: 30,
+            confirmed_action_count: 0,
+        };
+        let mut gameplay = MtgoCompetitiveMatchGameplayAuthorizationV1 {
+            schema_version: 1,
+            account_alias_sha256: runtime.approved_account_alias_sha256.clone(),
+            written_permission_sha256: "4".repeat(64),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            event_identity_sha256: runtime.bound_event_identity_sha256.clone(),
+            match_identity_sha256: runtime.current_match_identity_sha256.clone().unwrap(),
+            game_number: 1,
+            entry_authorization_sha256: runtime.entry_authorization_sha256.clone(),
+            owner_launch_authorization_sha256: "5".repeat(64),
+            exact_match_gameplay_authorized: true,
+            valid_through_frame_sequence: 542,
+        };
+
+        validate_game_session_commitments_against_event_runtime_v1(&runtime, &game, &gameplay)
+            .unwrap();
+
+        gameplay.entry_authorization_sha256 = "6".repeat(64);
+        assert!(validate_game_session_commitments_against_event_runtime_v1(
+            &runtime, &game, &gameplay,
+        )
+        .is_err());
     }
 }
