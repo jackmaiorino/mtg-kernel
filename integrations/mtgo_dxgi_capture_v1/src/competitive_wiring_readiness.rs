@@ -22,6 +22,11 @@ pub enum MtgoCompetitiveStaticReadinessStatusV1 {
 pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub operator_resource_bootstrap_present: bool,
     pub end_to_end_operator_loop_present: bool,
+    pub selected_listing_classifier_protocol_present: bool,
+    pub navigation_lifecycle_classifier_protocol_present: bool,
+    pub event_record_classifier_protocol_present: bool,
+    pub sideboard_classifier_protocol_present: bool,
+    pub duel_perception_classifier_protocol_present: bool,
     pub native_checkpoint_duel_action_interface_present: bool,
     pub native_checkpoint_pregame_interface_present: bool,
     pub competitive_pregame_public_context_contract_present: bool,
@@ -74,6 +79,11 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
         known_wiring_gaps: MtgoCompetitiveKnownWiringGapsV1 {
             operator_resource_bootstrap_present: true,
             end_to_end_operator_loop_present: false,
+            selected_listing_classifier_protocol_present: true,
+            navigation_lifecycle_classifier_protocol_present: true,
+            event_record_classifier_protocol_present: false,
+            sideboard_classifier_protocol_present: false,
+            duel_perception_classifier_protocol_present: false,
             native_checkpoint_duel_action_interface_present: true,
             native_checkpoint_pregame_interface_present: false,
             competitive_pregame_public_context_contract_present: true,
@@ -131,6 +141,31 @@ mod tests {
             .unchanged_sideboard_event_path_present_v1());
         assert!(report.known_wiring_gaps.operator_resource_bootstrap_present);
         assert!(!report.known_wiring_gaps.end_to_end_operator_loop_present);
+        assert!(
+            report
+                .known_wiring_gaps
+                .selected_listing_classifier_protocol_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .navigation_lifecycle_classifier_protocol_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .event_record_classifier_protocol_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .sideboard_classifier_protocol_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .duel_perception_classifier_protocol_present
+        );
         assert!(
             report
                 .known_wiring_gaps

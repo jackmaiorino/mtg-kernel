@@ -1586,7 +1586,7 @@ fn preview_ocr_probe_is_offline_expected_text_only_and_non_actuating() {
 }
 
 #[test]
-fn selected_listing_classifier_is_bounded_exact_and_non_actuating() {
+fn competitive_classifier_modes_are_bounded_exact_and_non_actuating() {
     let source = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
     for required in [
         "MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1\\0",
@@ -1601,10 +1601,17 @@ fn selected_listing_classifier_is_bounded_exact_and_non_actuating() {
         "request_commitment_sha256",
         "current_exe",
         "deny_unknown_fields",
+        "--mtgo-visible-competitive-navigation-v1",
+        "MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1\\0",
+        "league_and_challenge_navigation_and_listing_exact_visible_regions_v1",
+        "validate_visible_competitive_lifecycle_snapshot_v1",
+        "expected exactly one reviewed navigation profile match",
+        "accepted_reference_sha256s",
+        "navigation fact changed after profile selection",
     ] {
         assert!(
             source.contains(required),
-            "selected-listing classifier is missing: {required}"
+            "competitive classifier is missing: {required}"
         );
     }
     for forbidden in [
@@ -1621,7 +1628,7 @@ fn selected_listing_classifier_is_bounded_exact_and_non_actuating() {
     ] {
         assert!(
             !source.contains(forbidden),
-            "selected-listing classifier exposes a forbidden operation: {forbidden}"
+            "competitive classifier exposes a forbidden operation: {forbidden}"
         );
     }
 }

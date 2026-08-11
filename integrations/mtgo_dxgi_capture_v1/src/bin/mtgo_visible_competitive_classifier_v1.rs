@@ -3,14 +3,19 @@ compile_error!("mtgo_visible_competitive_classifier_v1 is Windows-only");
 
 #[cfg(target_os = "windows")]
 use mtgo_blackbox_v1::{
-    visible_frame_region_content_sha256_v1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitiveEventListingTargetV1, MtgoRectPxV1, MtgoSizePxV1,
-    MtgoVisibleCompetitiveEventListingSelectionV1, MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
+    validate_visible_competitive_lifecycle_snapshot_v1, visible_frame_region_content_sha256_v1,
+    MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveEventListingTargetV1,
+    MtgoCompetitiveLifecyclePhaseV1, MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1,
+    MtgoRectPxV1, MtgoSizePxV1, MtgoVisibleCompetitiveEventListingSelectionV1,
+    MtgoVisibleCompetitiveLifecycleSnapshotV1, MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
+    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
 };
 #[cfg(target_os = "windows")]
 use mtgo_dxgi_capture_v1::{
     MtgoCompetitiveEventListingClassifierProcessResponseV1,
     MtgoCompetitiveEventListingClassifierRequestHeaderV1,
+    MtgoCompetitiveNavigationClassifierProcessResponseV1,
+    MtgoCompetitiveNavigationClassifierRequestHeaderV1,
 };
 #[cfg(target_os = "windows")]
 use serde::{Deserialize, Serialize};
@@ -33,20 +38,32 @@ use windows::{
 };
 
 #[cfg(target_os = "windows")]
-const MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-event-listing-v1";
+const EVENT_LISTING_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-event-listing-v1";
 #[cfg(target_os = "windows")]
-const PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1\0";
+const NAVIGATION_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-navigation-v1";
 #[cfg(target_os = "windows")]
-const REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_event_listing_v1";
+const EVENT_LISTING_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1\0";
+#[cfg(target_os = "windows")]
+const NAVIGATION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1\0";
+#[cfg(target_os = "windows")]
+const EVENT_LISTING_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_event_listing_v1";
+#[cfg(target_os = "windows")]
+const NAVIGATION_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_navigation_v1";
 #[cfg(target_os = "windows")]
 const REQUEST_SCOPE_V1: &str =
     "league_and_challenge_selected_listing_exact_semantics_checked_untrusted_v1";
 #[cfg(target_os = "windows")]
 const ASSET_SCOPE_V1: &str = "league_and_challenge_selected_listing_windows_ocr_exact_control_v1";
 #[cfg(target_os = "windows")]
+const COMBINED_ASSET_SCOPE_V1: &str =
+    "league_and_challenge_navigation_and_listing_exact_visible_regions_v1";
+#[cfg(target_os = "windows")]
 const PIXEL_FORMAT_V1: &str = "bgra8_unorm_top_down_tightly_packed_v1";
 #[cfg(target_os = "windows")]
 const REQUEST_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-competitive-event-listing-classifier-request-v1";
+#[cfg(target_os = "windows")]
+const NAVIGATION_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-navigation-classifier-request-v1";
 #[cfg(target_os = "windows")]
 const TARGET_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-competitive-event-listing-target-v1";
 #[cfg(target_os = "windows")]
@@ -72,6 +89,33 @@ struct MtgoCompetitiveEventListingClassifierAssetsV1 {
     scope: String,
     canonical_pixel_format: String,
     profiles: Vec<MtgoCompetitiveEventListingOcrProfileV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    navigation_profiles: Vec<MtgoCompetitiveNavigationRegionProfileV1>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoCompetitiveNavigationRegionProfileV1 {
+    profile_id: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    phase: MtgoCompetitiveLifecyclePhaseV1,
+    client_size_px: MtgoSizePxV1,
+    event_identity_sha256: Option<String>,
+    match_identity_sha256: Option<String>,
+    game_number: Option<u8>,
+    entry_terms: Option<MtgoCompetitiveEntryTermsV1>,
+    facts: Vec<MtgoCompetitiveNavigationFactProfileV1>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoCompetitiveNavigationFactProfileV1 {
+    kind: MtgoLifecycleVisibleFactKindV1,
+    rect_client_px: MtgoRectPxV1,
+    accepted_reference_sha256s: Vec<String>,
+    confidence_bps: u16,
 }
 
 #[cfg(target_os = "windows")]
@@ -119,31 +163,25 @@ impl Drop for ComGuardV1 {
 #[cfg(target_os = "windows")]
 fn main() -> ExitCode {
     match run_v1() {
-        Ok(response) => match serde_json::to_vec(&response) {
-            Ok(bytes) => match io::stdout().write_all(&bytes) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(error) => {
-                    eprintln!("MTGO_EVENT_LISTING_CLASSIFIER_REJECTED:write response: {error}");
-                    ExitCode::FAILURE
-                }
-            },
+        Ok(bytes) => match io::stdout().write_all(&bytes) {
+            Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
-                eprintln!("MTGO_EVENT_LISTING_CLASSIFIER_REJECTED:serialize response: {error}");
+                eprintln!("MTGO_VISIBLE_COMPETITIVE_CLASSIFIER_REJECTED:write response: {error}");
                 ExitCode::FAILURE
             }
         },
         Err(error) => {
-            eprintln!("MTGO_EVENT_LISTING_CLASSIFIER_REJECTED:{error}");
+            eprintln!("MTGO_VISIBLE_COMPETITIVE_CLASSIFIER_REJECTED:{error}");
             ExitCode::FAILURE
         }
     }
 }
 
 #[cfg(target_os = "windows")]
-fn run_v1() -> Result<MtgoCompetitiveEventListingClassifierProcessResponseV1, String> {
+fn run_v1() -> Result<Vec<u8>, String> {
     let args = std::env::args().collect::<Vec<_>>();
-    if args.len() != 2 || args[1] != MODE_ARGUMENT_V1 {
-        return Err("only the bounded selected-listing protocol mode is supported".to_owned());
+    if args.len() != 2 {
+        return Err("exactly one bounded classifier mode is required".to_owned());
     }
     let current_exe = std::env::current_exe()
         .map_err(|error| format!("resolve classifier executable: {error}"))?;
@@ -152,12 +190,21 @@ fn run_v1() -> Result<MtgoCompetitiveEventListingClassifierProcessResponseV1, St
         MAX_RUNTIME_ARTIFACT_BYTES_V1,
         "classifier executable",
     )?;
+    match args[1].as_str() {
+        EVENT_LISTING_MODE_ARGUMENT_V1 => run_event_listing_v1(&actual_classifier_sha256),
+        NAVIGATION_MODE_ARGUMENT_V1 => run_navigation_v1(&actual_classifier_sha256),
+        _ => Err("unsupported bounded classifier mode".to_owned()),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn run_event_listing_v1(actual_classifier_sha256: &str) -> Result<Vec<u8>, String> {
     let mut stdin = io::stdin().lock();
-    let mut magic = vec![0_u8; PROTOCOL_MAGIC_V1.len()];
+    let mut magic = vec![0_u8; EVENT_LISTING_PROTOCOL_MAGIC_V1.len()];
     stdin
         .read_exact(&mut magic)
         .map_err(|error| format!("read protocol magic: {error}"))?;
-    if magic != PROTOCOL_MAGIC_V1 {
+    if magic != EVENT_LISTING_PROTOCOL_MAGIC_V1 {
         return Err("selected-listing protocol magic differs".to_owned());
     }
     let header_length = read_u64_be_v1(&mut stdin, "header length")?;
@@ -170,7 +217,7 @@ fn run_v1() -> Result<MtgoCompetitiveEventListingClassifierProcessResponseV1, St
         &header_json,
         "request header",
     )?;
-    validate_header_identity_v1(&header, &assets_json, &actual_classifier_sha256)?;
+    validate_header_identity_v1(&header, &assets_json, actual_classifier_sha256)?;
     let pixel_length = bounded_usize_v1(
         header.canonical_byte_length,
         usize::try_from(MAX_CANONICAL_BYTES_V1)
@@ -201,13 +248,138 @@ fn run_v1() -> Result<MtgoCompetitiveEventListingClassifierProcessResponseV1, St
         header.canonical_height,
         &canonical_bgra8,
     )?;
-    classify_from_words_v1(
+    let response = classify_from_words_v1(
         &header,
         profile,
         &canonical_bgra8,
         &words,
         request_commitment_sha256,
-    )
+    )?;
+    serde_json::to_vec(&response)
+        .map_err(|error| format!("serialize selected-listing response: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn run_navigation_v1(actual_classifier_sha256: &str) -> Result<Vec<u8>, String> {
+    let mut stdin = io::stdin().lock();
+    let mut magic = vec![0_u8; NAVIGATION_PROTOCOL_MAGIC_V1.len()];
+    stdin
+        .read_exact(&mut magic)
+        .map_err(|error| format!("read navigation protocol magic: {error}"))?;
+    if magic != NAVIGATION_PROTOCOL_MAGIC_V1 {
+        return Err("navigation protocol magic differs".to_owned());
+    }
+    let header_length = read_u64_be_v1(&mut stdin, "navigation header length")?;
+    let assets_length = read_u64_be_v1(&mut stdin, "navigation assets length")?;
+    let header_length = bounded_usize_v1(header_length, MAX_HEADER_BYTES_V1, "navigation header")?;
+    let assets_length = bounded_usize_v1(assets_length, MAX_ASSETS_BYTES_V1, "navigation assets")?;
+    let header_json = read_exact_vec_v1(&mut stdin, header_length, "navigation header")?;
+    let assets_json = read_exact_vec_v1(&mut stdin, assets_length, "navigation assets")?;
+    let header = parse_canonical_json_v1::<MtgoCompetitiveNavigationClassifierRequestHeaderV1>(
+        &header_json,
+        "navigation request header",
+    )?;
+    validate_navigation_header_identity_v1(&header, &assets_json, actual_classifier_sha256)?;
+    let pixel_length = bounded_usize_v1(
+        header.canonical_byte_length,
+        usize::try_from(MAX_CANONICAL_BYTES_V1)
+            .map_err(|_| "classifier byte bound does not fit this process".to_owned())?,
+        "navigation canonical pixels",
+    )?;
+    let canonical_bgra8 =
+        read_exact_vec_v1(&mut stdin, pixel_length, "navigation canonical pixels")?;
+    let mut trailing = [0_u8; 1];
+    if stdin
+        .read(&mut trailing)
+        .map_err(|error| format!("check navigation request end: {error}"))?
+        != 0
+    {
+        return Err("navigation request has trailing bytes".to_owned());
+    }
+    validate_navigation_pixels_v1(&header, &canonical_bgra8)?;
+    let assets = parse_canonical_json_v1::<MtgoCompetitiveEventListingClassifierAssetsV1>(
+        &assets_json,
+        "combined classifier assets",
+    )?;
+    let profile =
+        validate_navigation_assets_and_match_profile_v1(&assets, &header, &canonical_bgra8)?;
+    let request_commitment_sha256 = commitment_v1(
+        NAVIGATION_REQUEST_COMMITMENT_DOMAIN_V1,
+        &[&header_json, &assets_json, &canonical_bgra8],
+    );
+    let response = classify_navigation_profile_v1(
+        &header,
+        profile,
+        &canonical_bgra8,
+        request_commitment_sha256,
+    )?;
+    serde_json::to_vec(&response).map_err(|error| format!("serialize navigation response: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn classify_navigation_profile_v1(
+    header: &MtgoCompetitiveNavigationClassifierRequestHeaderV1,
+    profile: &MtgoCompetitiveNavigationRegionProfileV1,
+    canonical_bgra8: &[u8],
+    request_commitment_sha256: String,
+) -> Result<MtgoCompetitiveNavigationClassifierProcessResponseV1, String> {
+    let size = profile.client_size_px.clone();
+    let facts = profile
+        .facts
+        .iter()
+        .map(|fact| {
+            let content_sha256 = visible_frame_region_content_sha256_v1(
+                canonical_bgra8,
+                &size,
+                &fact.rect_client_px,
+            )
+            .map_err(|error| format!("hash navigation fact pixels: {error}"))?;
+            if fact
+                .accepted_reference_sha256s
+                .binary_search(&content_sha256)
+                .is_err()
+            {
+                return Err("navigation fact changed after profile selection".to_owned());
+            }
+            Ok(MtgoLifecycleVisibleFactV1 {
+                kind: fact.kind,
+                rect_client_px: fact.rect_client_px.clone(),
+                content_sha256,
+                confidence_bps: fact.confidence_bps,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let lifecycle = MtgoVisibleCompetitiveLifecycleSnapshotV1 {
+        schema_version: MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+        snapshot_id: format!(
+            "visible-region-navigation-v1-{}",
+            &request_commitment_sha256[..24]
+        ),
+        event_kind: profile.event_kind,
+        phase: profile.phase,
+        frame_id: header.frame_id,
+        frame_sequence: header.frame_sequence,
+        frame_sha256: header.canonical_bgra8_sha256.clone(),
+        client_bounds: MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: header.canonical_width,
+            height: header.canonical_height,
+        },
+        event_identity_sha256: profile.event_identity_sha256.clone(),
+        match_identity_sha256: profile.match_identity_sha256.clone(),
+        game_number: profile.game_number,
+        entry_terms: profile.entry_terms.clone(),
+        visible_state_complete: true,
+        facts,
+    };
+    validate_visible_competitive_lifecycle_snapshot_v1(lifecycle.clone())
+        .map_err(|error| format!("validate classified navigation lifecycle: {error}"))?;
+    Ok(MtgoCompetitiveNavigationClassifierProcessResponseV1 {
+        schema_version: 1,
+        request_commitment_sha256,
+        lifecycle,
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -300,7 +472,7 @@ fn validate_header_identity_v1(
     actual_classifier_sha256: &str,
 ) -> Result<(), String> {
     if header.schema_version != 1
-        || header.protocol != REQUEST_PROTOCOL_V1
+        || header.protocol != EVENT_LISTING_REQUEST_PROTOCOL_V1
         || header.parser_scope != REQUEST_SCOPE_V1
         || header.frame_id == 0
         || header.frame_sequence == 0
@@ -354,12 +526,68 @@ fn validate_pixels_v1(
 }
 
 #[cfg(target_os = "windows")]
+fn validate_navigation_header_identity_v1(
+    header: &MtgoCompetitiveNavigationClassifierRequestHeaderV1,
+    assets_json: &[u8],
+    actual_classifier_sha256: &str,
+) -> Result<(), String> {
+    if header.schema_version != 1
+        || header.protocol != NAVIGATION_REQUEST_PROTOCOL_V1
+        || header.frame_id == 0
+        || header.frame_sequence == 0
+        || header.captured_at_unix_millis == 0
+        || header.canonical_width == 0
+        || header.canonical_height == 0
+        || header.canonical_width > 16_384
+        || header.canonical_height > 16_384
+    {
+        return Err("navigation request identity is invalid".to_owned());
+    }
+    let expected_stride = header
+        .canonical_width
+        .checked_mul(4)
+        .ok_or("navigation stride overflow")?;
+    let expected_length = u64::from(expected_stride)
+        .checked_mul(u64::from(header.canonical_height))
+        .ok_or("navigation pixel length overflow")?;
+    if header.canonical_stride != expected_stride
+        || header.canonical_byte_length != expected_length
+        || expected_length == 0
+        || expected_length > MAX_CANONICAL_BYTES_V1
+        || header.classifier_assets_manifest_sha256 != sha256_hex_v1(assets_json)
+        || header.classifier_binary_sha256 != actual_classifier_sha256
+    {
+        return Err("navigation runtime, geometry, or assets differ".to_owned());
+    }
+    for digest in navigation_header_digests_v1(header) {
+        validate_sha256_v1(digest, "navigation request commitment")?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_navigation_pixels_v1(
+    header: &MtgoCompetitiveNavigationClassifierRequestHeaderV1,
+    canonical_bgra8: &[u8],
+) -> Result<(), String> {
+    if u64::try_from(canonical_bgra8.len()).ok() != Some(header.canonical_byte_length)
+        || sha256_hex_v1(canonical_bgra8) != header.canonical_bgra8_sha256
+    {
+        return Err("navigation pixels differ from the request header".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 fn validate_assets_and_select_profile_v1<'a>(
     assets: &'a MtgoCompetitiveEventListingClassifierAssetsV1,
     header: &MtgoCompetitiveEventListingClassifierRequestHeaderV1,
 ) -> Result<&'a MtgoCompetitiveEventListingOcrProfileV1, String> {
     if assets.schema_version != 1
-        || assets.scope != ASSET_SCOPE_V1
+        || !matches!(
+            assets.scope.as_str(),
+            ASSET_SCOPE_V1 | COMBINED_ASSET_SCOPE_V1
+        )
         || assets.canonical_pixel_format != PIXEL_FORMAT_V1
         || assets.profiles.is_empty()
         || assets.profiles.len() > MAX_PROFILES_V1
@@ -430,6 +658,161 @@ fn validate_assets_and_select_profile_v1<'a>(
         return Err("no unique OCR profile matches the exact target label and mode".to_owned());
     }
     Ok(matches[0])
+}
+
+#[cfg(target_os = "windows")]
+fn validate_navigation_assets_and_match_profile_v1<'a>(
+    assets: &'a MtgoCompetitiveEventListingClassifierAssetsV1,
+    header: &MtgoCompetitiveNavigationClassifierRequestHeaderV1,
+    canonical_bgra8: &[u8],
+) -> Result<&'a MtgoCompetitiveNavigationRegionProfileV1, String> {
+    if assets.schema_version != 1
+        || assets.scope != COMBINED_ASSET_SCOPE_V1
+        || assets.canonical_pixel_format != PIXEL_FORMAT_V1
+        || assets.navigation_profiles.is_empty()
+        || assets.navigation_profiles.len() > MAX_PROFILES_V1
+    {
+        return Err("navigation assets identity or profile count is invalid".to_owned());
+    }
+    let client_bounds = MtgoRectPxV1 {
+        x: 0,
+        y: 0,
+        width: header.canonical_width,
+        height: header.canonical_height,
+    };
+    let size = MtgoSizePxV1 {
+        width: header.canonical_width,
+        height: header.canonical_height,
+    };
+    let mut profile_ids = HashSet::new();
+    let mut previous_profile_id: Option<&str> = None;
+    let mut matching_profiles = Vec::new();
+    for profile in &assets.navigation_profiles {
+        validate_identifier_v1(&profile.profile_id, "navigation profile id")?;
+        if !profile_ids.insert(profile.profile_id.as_str())
+            || previous_profile_id.is_some_and(|previous| previous >= profile.profile_id.as_str())
+            || profile.client_size_px != size
+            || profile.facts.is_empty()
+            || profile.facts.len() > 32
+        {
+            return Err("navigation profile identity, geometry, or order is invalid".to_owned());
+        }
+        previous_profile_id = Some(profile.profile_id.as_str());
+        let mut fact_kinds = HashSet::new();
+        let mut previous_fact_rank = None;
+        let mut profile_matches = true;
+        for fact in &profile.facts {
+            let fact_rank = lifecycle_fact_rank_v1(fact.kind);
+            if !fact_kinds.insert(fact.kind)
+                || previous_fact_rank.is_some_and(|previous| previous >= fact_rank)
+                || !rect_inside_v1(&fact.rect_client_px, &client_bounds)
+                || fact.accepted_reference_sha256s.is_empty()
+                || fact.accepted_reference_sha256s.len() > MAX_CONTROL_REFERENCES_V1
+                || !(9_500..=10_000).contains(&fact.confidence_bps)
+            {
+                return Err("navigation fact profile is invalid or unordered".to_owned());
+            }
+            previous_fact_rank = Some(fact_rank);
+            let mut previous_reference: Option<&str> = None;
+            for reference in &fact.accepted_reference_sha256s {
+                validate_sha256_v1(reference, "navigation fact reference")?;
+                if previous_reference.is_some_and(|previous| previous >= reference.as_str()) {
+                    return Err("navigation fact references must be unique and sorted".to_owned());
+                }
+                previous_reference = Some(reference.as_str());
+            }
+            let observed = visible_frame_region_content_sha256_v1(
+                canonical_bgra8,
+                &size,
+                &fact.rect_client_px,
+            )
+            .map_err(|error| format!("hash navigation profile region: {error}"))?;
+            if fact
+                .accepted_reference_sha256s
+                .binary_search(&observed)
+                .is_err()
+            {
+                profile_matches = false;
+            }
+        }
+        validate_navigation_profile_contract_v1(profile)?;
+        if profile_matches {
+            matching_profiles.push(profile);
+        }
+    }
+    if matching_profiles.len() != 1 {
+        return Err(format!(
+            "expected exactly one reviewed navigation profile match, found {}",
+            matching_profiles.len()
+        ));
+    }
+    Ok(matching_profiles[0])
+}
+
+#[cfg(target_os = "windows")]
+fn validate_navigation_profile_contract_v1(
+    profile: &MtgoCompetitiveNavigationRegionProfileV1,
+) -> Result<(), String> {
+    let facts = profile
+        .facts
+        .iter()
+        .map(|fact| MtgoLifecycleVisibleFactV1 {
+            kind: fact.kind,
+            rect_client_px: fact.rect_client_px.clone(),
+            content_sha256: fact.accepted_reference_sha256s[0].clone(),
+            confidence_bps: fact.confidence_bps,
+        })
+        .collect();
+    validate_visible_competitive_lifecycle_snapshot_v1(MtgoVisibleCompetitiveLifecycleSnapshotV1 {
+        schema_version: MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+        snapshot_id: "navigation-profile-contract-v1".to_owned(),
+        event_kind: profile.event_kind,
+        phase: profile.phase,
+        frame_id: 1,
+        frame_sequence: 1,
+        frame_sha256: "0".repeat(64),
+        client_bounds: MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: profile.client_size_px.width,
+            height: profile.client_size_px.height,
+        },
+        event_identity_sha256: profile.event_identity_sha256.clone(),
+        match_identity_sha256: profile.match_identity_sha256.clone(),
+        game_number: profile.game_number,
+        entry_terms: profile.entry_terms.clone(),
+        visible_state_complete: true,
+        facts,
+    })
+    .map(|_| ())
+    .map_err(|error| format!("navigation profile lifecycle contract is invalid: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn lifecycle_fact_rank_v1(kind: MtgoLifecycleVisibleFactKindV1) -> u8 {
+    use MtgoLifecycleVisibleFactKindV1::*;
+    match kind {
+        EventBrowserVisible => 0,
+        EntryReviewVisible => 1,
+        EntryTermsVisible => 2,
+        EnteredEventVisible => 3,
+        PairingVisible => 4,
+        PairingAcceptControlEnabled => 5,
+        MatchSurfaceVisible => 6,
+        LocalClockVisible => 7,
+        OpponentClockVisible => 8,
+        SideboardSurfaceVisible => 9,
+        SideboardTimerVisible => 10,
+        SideboardConfigurationVisible => 11,
+        SideboardNoChangesConfirmed => 12,
+        SideboardSubmitControlEnabled => 13,
+        MatchResultVisible => 14,
+        MatchContinueControlEnabled => 15,
+        EventResultVisible => 16,
+        EventCloseControlEnabled => 17,
+        ReconnectVisible => 18,
+        ReconnectResumeControlEnabled => 19,
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -697,6 +1080,25 @@ fn header_digests_v1(header: &MtgoCompetitiveEventListingClassifierRequestHeader
 }
 
 #[cfg(target_os = "windows")]
+fn navigation_header_digests_v1(
+    header: &MtgoCompetitiveNavigationClassifierRequestHeaderV1,
+) -> [&str; 11] {
+    [
+        &header.canonical_bgra8_sha256,
+        &header.source_manifest_sha256,
+        &header.source_capture_commitment_sha256,
+        &header.source_profile_binding_sha256,
+        &header.source_frame_profile_binding_sha256,
+        &header.navigation_profile_commitment_sha256,
+        &header.navigation_profile_admission_commitment_sha256,
+        &header.approved_account_alias_sha256,
+        &header.runtime_identity_commitment_sha256,
+        &header.classifier_binary_sha256,
+        &header.classifier_assets_manifest_sha256,
+    ]
+}
+
+#[cfg(target_os = "windows")]
 fn parse_canonical_json_v1<T>(bytes: &[u8], label: &str) -> Result<T, String>
 where
     T: for<'de> Deserialize<'de> + Serialize,
@@ -844,7 +1246,7 @@ mod tests {
         let target = target_v1(label, MtgoCompetitiveEventKindV1::League);
         MtgoCompetitiveEventListingClassifierRequestHeaderV1 {
             schema_version: 1,
-            protocol: REQUEST_PROTOCOL_V1.to_owned(),
+            protocol: EVENT_LISTING_REQUEST_PROTOCOL_V1.to_owned(),
             parser_scope: REQUEST_SCOPE_V1.to_owned(),
             frame_id: 7,
             frame_sequence: 9,
@@ -928,6 +1330,93 @@ mod tests {
         ]
     }
 
+    fn navigation_header_v1(
+        pixels: &[u8],
+        assets_sha256: String,
+    ) -> MtgoCompetitiveNavigationClassifierRequestHeaderV1 {
+        MtgoCompetitiveNavigationClassifierRequestHeaderV1 {
+            schema_version: 1,
+            protocol: NAVIGATION_REQUEST_PROTOCOL_V1.to_owned(),
+            frame_id: 17,
+            frame_sequence: 19,
+            captured_at_unix_millis: 23,
+            canonical_width: 32,
+            canonical_height: 16,
+            canonical_stride: 128,
+            canonical_byte_length: pixels.len() as u64,
+            canonical_bgra8_sha256: sha256_hex_v1(pixels),
+            source_manifest_sha256: digest('1'),
+            source_capture_commitment_sha256: digest('2'),
+            source_profile_binding_sha256: digest('3'),
+            source_frame_profile_binding_sha256: digest('4'),
+            navigation_profile_commitment_sha256: digest('5'),
+            navigation_profile_admission_commitment_sha256: digest('6'),
+            approved_account_alias_sha256: digest('7'),
+            runtime_identity_commitment_sha256: digest('8'),
+            classifier_binary_sha256: digest('9'),
+            classifier_assets_manifest_sha256: assets_sha256,
+        }
+    }
+
+    fn navigation_profile_v1(pixels: &[u8]) -> MtgoCompetitiveNavigationRegionProfileV1 {
+        let size = MtgoSizePxV1 {
+            width: 32,
+            height: 16,
+        };
+        let pairing = MtgoRectPxV1 {
+            x: 1,
+            y: 1,
+            width: 12,
+            height: 5,
+        };
+        let accept = MtgoRectPxV1 {
+            x: 20,
+            y: 4,
+            width: 8,
+            height: 4,
+        };
+        MtgoCompetitiveNavigationRegionProfileV1 {
+            profile_id: "challenge-pairing-ready-32x16-v1".to_owned(),
+            event_kind: MtgoCompetitiveEventKindV1::Challenge,
+            phase: MtgoCompetitiveLifecyclePhaseV1::PairingReady,
+            client_size_px: size.clone(),
+            event_identity_sha256: Some(digest('a')),
+            match_identity_sha256: Some(digest('b')),
+            game_number: None,
+            entry_terms: None,
+            facts: vec![
+                MtgoCompetitiveNavigationFactProfileV1 {
+                    kind: MtgoLifecycleVisibleFactKindV1::PairingVisible,
+                    rect_client_px: pairing.clone(),
+                    accepted_reference_sha256s: vec![visible_frame_region_content_sha256_v1(
+                        pixels, &size, &pairing,
+                    )
+                    .unwrap()],
+                    confidence_bps: 9_500,
+                },
+                MtgoCompetitiveNavigationFactProfileV1 {
+                    kind: MtgoLifecycleVisibleFactKindV1::PairingAcceptControlEnabled,
+                    rect_client_px: accept.clone(),
+                    accepted_reference_sha256s: vec![visible_frame_region_content_sha256_v1(
+                        pixels, &size, &accept,
+                    )
+                    .unwrap()],
+                    confidence_bps: 9_500,
+                },
+            ],
+        }
+    }
+
+    fn combined_assets_v1(pixels: &[u8]) -> MtgoCompetitiveEventListingClassifierAssetsV1 {
+        MtgoCompetitiveEventListingClassifierAssetsV1 {
+            schema_version: 1,
+            scope: COMBINED_ASSET_SCOPE_V1.to_owned(),
+            canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
+            profiles: Vec::new(),
+            navigation_profiles: vec![navigation_profile_v1(pixels)],
+        }
+    }
+
     #[test]
     fn exact_label_and_reviewed_enabled_control_produce_one_bound_selection() {
         let pixels = (0..32 * 16 * 4)
@@ -974,6 +1463,7 @@ mod tests {
             scope: ASSET_SCOPE_V1.to_owned(),
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: vec![profile_v1(&pixels, label)],
+            navigation_profiles: Vec::new(),
         };
         let assets_bytes = serde_json::to_vec(&assets).unwrap();
         let header = header_v1(&pixels, sha256_hex_v1(&assets_bytes), label);
@@ -997,6 +1487,7 @@ mod tests {
             scope: ASSET_SCOPE_V1.to_owned(),
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: vec![profile_v1(&pixels, label)],
+            navigation_profiles: Vec::new(),
         };
         let assets_bytes = serde_json::to_vec(&assets).unwrap();
         let header = header_v1(&pixels, sha256_hex_v1(&assets_bytes), label);
@@ -1015,5 +1506,70 @@ mod tests {
             validate_header_identity_v1(&header, b"{}", &header.classifier_binary_sha256).is_err()
         );
         assert!(validate_header_identity_v1(&header, &assets_bytes, &digest('9')).is_err());
+    }
+
+    #[test]
+    fn exact_navigation_regions_produce_one_valid_lifecycle_snapshot() {
+        let pixels = (0..32 * 16 * 4)
+            .map(|index| ((index * 17 + 11) % 251) as u8)
+            .collect::<Vec<_>>();
+        let assets = combined_assets_v1(&pixels);
+        let assets_bytes = serde_json::to_vec(&assets).unwrap();
+        let header = navigation_header_v1(&pixels, sha256_hex_v1(&assets_bytes));
+        assert!(validate_navigation_header_identity_v1(
+            &header,
+            &assets_bytes,
+            &header.classifier_binary_sha256
+        )
+        .is_ok());
+        assert!(validate_navigation_pixels_v1(&header, &pixels).is_ok());
+        let profile =
+            validate_navigation_assets_and_match_profile_v1(&assets, &header, &pixels).unwrap();
+        let response =
+            classify_navigation_profile_v1(&header, profile, &pixels, digest('c')).unwrap();
+        assert_eq!(
+            response.lifecycle.phase,
+            MtgoCompetitiveLifecyclePhaseV1::PairingReady
+        );
+        assert_eq!(
+            response.lifecycle.event_kind,
+            MtgoCompetitiveEventKindV1::Challenge
+        );
+        assert_eq!(response.lifecycle.facts.len(), 2);
+        assert_eq!(response.request_commitment_sha256, digest('c'));
+    }
+
+    #[test]
+    fn navigation_region_drift_and_ambiguous_profiles_fail_closed() {
+        let pixels = vec![41_u8; 32 * 16 * 4];
+        let mut assets = combined_assets_v1(&pixels);
+        let assets_bytes = serde_json::to_vec(&assets).unwrap();
+        let header = navigation_header_v1(&pixels, sha256_hex_v1(&assets_bytes));
+
+        let mut changed_pixels = pixels.clone();
+        changed_pixels[(4 * 32 + 20) * 4] ^= 1;
+        assert!(
+            validate_navigation_assets_and_match_profile_v1(&assets, &header, &changed_pixels)
+                .is_err()
+        );
+
+        let mut duplicate = assets.navigation_profiles[0].clone();
+        duplicate.profile_id = "challenge-pairing-ready-32x16-v2".to_owned();
+        assets.navigation_profiles.push(duplicate);
+        assert!(
+            validate_navigation_assets_and_match_profile_v1(&assets, &header, &pixels).is_err()
+        );
+    }
+
+    #[test]
+    fn navigation_profiles_must_satisfy_the_phase_contract() {
+        let pixels = vec![53_u8; 32 * 16 * 4];
+        let mut profile = navigation_profile_v1(&pixels);
+        profile.event_identity_sha256 = None;
+        assert!(validate_navigation_profile_contract_v1(&profile).is_err());
+
+        profile = navigation_profile_v1(&pixels);
+        profile.facts.pop();
+        assert!(validate_navigation_profile_contract_v1(&profile).is_err());
     }
 }
