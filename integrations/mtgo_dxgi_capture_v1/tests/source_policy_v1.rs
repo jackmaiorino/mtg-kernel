@@ -1484,6 +1484,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "check_competitive_wiring_static_readiness_v1",
         "MtgoCompetitiveEventKindV1::League",
         "MtgoCompetitiveEventKindV1::Challenge",
+        "post_entry_operator_loop_present: true",
         "end_to_end_operator_loop_present: false",
         "native_checkpoint_duel_action_interface_present: true",
         "native_checkpoint_pregame_interface_present: false",
@@ -1948,6 +1949,7 @@ fn competitive_operator_bootstrap_cross_checks_resources_without_authority() {
         "MtgoCompetitiveOperatorResourcesPartsV1",
         "navigation profile and runtime are crossed",
         "event evaluations are crossed",
+        "deck manifest and listing are crossed",
         "duel perception and lifecycle profiles are crossed",
         "duel gesture resources are crossed",
         "listing and checkpoint deployment are crossed",
@@ -1975,6 +1977,51 @@ fn competitive_operator_bootstrap_cross_checks_resources_without_authority() {
         assert!(
             !source.contains(forbidden),
             "operator resource bootstrap exposes a forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_entry_authority() {
+    let source = include_str!("../src/competitive_operator_loop.rs");
+    for required in [
+        "begin_competitive_post_entry_operator_v1",
+        "next_competitive_post_entry_operator_directive_v1",
+        "advance_competitive_post_entry_operator_observed_v1",
+        "prepare_competitive_post_entry_operator_lifecycle_v1",
+        "execute_prepared_competitive_post_entry_operator_lifecycle_v1",
+        "confirm_pending_competitive_post_entry_operator_lifecycle_v1",
+        "observe_competitive_post_entry_operator_event_record_v1",
+        "checkout_competitive_post_entry_operator_gameplay_v1",
+        "return_competitive_post_entry_operator_gameplay_v1",
+        "OpaqueMtgoCompetitiveOperatorGameplayLeaseV1",
+        "ResolvePregameWithNativeModel",
+        "LaunchGameplay",
+        "ResolveSideboardWithNativeModel",
+        "native_model_path_present",
+        "changed_sideboard_resources_present",
+        "safe_for_live_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+        "resources and event runtime are crossed",
+    ] {
+        assert!(
+            source.contains(required),
+            "post-entry operator loop is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "prepare_ratified_competitive_entry_v1",
+        "execute_prepared_competitive_entry_v1",
+        "ratify_competitive_entry",
+        "review_competitive_entry",
+        "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
+        "SendInput",
+        "SetCursorPos",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "post-entry operator loop exposes a forbidden new-entry capability: {forbidden}"
         );
     }
 }

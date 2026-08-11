@@ -13,6 +13,8 @@ mod competitive_model_decision_readiness;
 #[cfg(target_os = "windows")]
 mod competitive_operator_bootstrap;
 #[cfg(target_os = "windows")]
+mod competitive_operator_loop;
+#[cfg(target_os = "windows")]
 mod competitive_pregame_policy;
 
 #[cfg(target_os = "windows")]
@@ -195,6 +197,21 @@ pub use competitive_model_decision_readiness::{
 pub use competitive_operator_bootstrap::{
     bind_competitive_operator_resources_v1, MtgoCompetitiveOperatorResourceCommitmentsV1,
     MtgoCompetitiveOperatorResourcesPartsV1, OpaqueMtgoCompetitiveOperatorResourcesV1,
+};
+#[cfg(target_os = "windows")]
+pub use competitive_operator_loop::{
+    advance_competitive_post_entry_operator_observed_v1, begin_competitive_post_entry_operator_v1,
+    checkout_competitive_post_entry_operator_gameplay_v1,
+    confirm_pending_competitive_post_entry_operator_lifecycle_v1,
+    execute_prepared_competitive_post_entry_operator_lifecycle_v1,
+    next_competitive_post_entry_operator_directive_v1,
+    observe_competitive_post_entry_operator_event_record_v1,
+    prepare_competitive_post_entry_operator_lifecycle_v1,
+    return_competitive_post_entry_operator_gameplay_v1,
+    MtgoCompetitivePostEntryOperatorCommitmentsV1, MtgoCompetitivePostEntryOperatorDirectiveV1,
+    MtgoCompetitivePostEntryOperatorRouteV1, OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    OpaqueMtgoCompetitivePostEntryOperatorV1, OpaqueMtgoPendingCompetitiveOperatorLifecycleV1,
+    OpaqueMtgoPreparedCompetitiveOperatorLifecycleV1,
 };
 #[cfg(target_os = "windows")]
 pub use competitive_pregame_policy::{

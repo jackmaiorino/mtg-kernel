@@ -13,6 +13,7 @@ use mtgo_blackbox_v1::{
     MtgoReviewedCompetitiveEventListingEvaluationRatificationCandidateV1,
     MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1,
     MtgoReviewedCompetitiveSideboardEvaluationRatificationCandidateV1,
+    ValidatedMtgoCompetitiveDeckManifestV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -107,6 +108,7 @@ pub struct MtgoCompetitiveOperatorResourcesPartsV1 {
     pub navigation_runtime: OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
     pub event_listing_evaluation: AdmittedMtgoCompetitiveEventListingEvaluationV1,
     pub event_record_evaluation: AdmittedMtgoCompetitiveEventRecordEvaluationV1,
+    pub deck_manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     pub duel_perception_profile: AdmittedMtgoDuelPerceptionProfileV1,
     pub duel_perception_runtime: OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
     pub duel_lifecycle_profile: AdmittedMtgoCompetitiveDuelLifecycleProfileV1,
@@ -122,6 +124,7 @@ pub fn bind_competitive_operator_resources_v1(
     navigation_runtime: OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
     event_listing_evaluation: AdmittedMtgoCompetitiveEventListingEvaluationV1,
     event_record_evaluation: AdmittedMtgoCompetitiveEventRecordEvaluationV1,
+    deck_manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     duel_perception_profile: AdmittedMtgoDuelPerceptionProfileV1,
     duel_perception_runtime: OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
     duel_lifecycle_profile: AdmittedMtgoCompetitiveDuelLifecycleProfileV1,
@@ -158,6 +161,9 @@ pub fn bind_competitive_operator_resources_v1(
         record_admission_commitment_sha256: event_record_evaluation
             .admission_commitment_sha256_v1()
             .to_owned(),
+        deck_list_sha256: deck_manifest.deck_list_sha256().to_owned(),
+        deck_manifest_commitment_sha256: deck_manifest.manifest_commitment_sha256().to_owned(),
+        deck_format_sha256: deck_manifest.format_sha256().to_owned(),
         duel_perception_profile_commitment_sha256: duel_perception_profile
             .perception_profile_commitment_sha256()
             .to_owned(),
@@ -202,6 +208,7 @@ pub fn bind_competitive_operator_resources_v1(
             navigation_runtime,
             event_listing_evaluation,
             event_record_evaluation,
+            deck_manifest,
             duel_perception_profile,
             duel_perception_runtime,
             duel_lifecycle_profile,
@@ -224,6 +231,9 @@ struct MtgoCompetitiveOperatorResourceIdentityV1 {
     listing_admission_commitment_sha256: String,
     record: MtgoReviewedCompetitiveEventRecordEvaluationRatificationCandidateV1,
     record_admission_commitment_sha256: String,
+    deck_list_sha256: String,
+    deck_manifest_commitment_sha256: String,
+    deck_format_sha256: String,
     duel_perception_profile_commitment_sha256: String,
     duel_perception_profile_admission_commitment_sha256: String,
     perception: MtgoVerifiedDuelPerceptionRuntimeCommitmentsV1,
@@ -260,6 +270,12 @@ fn validate_operator_resource_identity_v1(
         || value.record.approved_account_alias_sha256 != value.approved_account_alias_sha256
     {
         return Err("competitive operator event evaluations are crossed".to_owned());
+    }
+    if value.listing.deck_list_sha256 != value.deck_list_sha256
+        || value.listing.deck_manifest_commitment_sha256 != value.deck_manifest_commitment_sha256
+        || value.listing.deck_format_sha256 != value.deck_format_sha256
+    {
+        return Err("competitive operator deck manifest and listing are crossed".to_owned());
     }
     if value.perception.perception_profile_commitment_sha256
         != value.duel_perception_profile_commitment_sha256
@@ -508,6 +524,9 @@ mod tests {
                 ratification_commitment_sha256: digest('1'),
             },
             record_admission_commitment_sha256: digest('2'),
+            deck_list_sha256: deck_list.clone(),
+            deck_manifest_commitment_sha256: deck_manifest.clone(),
+            deck_format_sha256: format.clone(),
             duel_perception_profile_commitment_sha256: perception_profile.clone(),
             duel_perception_profile_admission_commitment_sha256: perception_admission.clone(),
             perception: MtgoVerifiedDuelPerceptionRuntimeCommitmentsV1 {
@@ -571,6 +590,10 @@ mod tests {
         let mut lifecycle = identity_v1(false);
         lifecycle.duel_lifecycle_perception_admission_commitment_sha256 = digest('0');
         assert!(validate_operator_resource_identity_v1(&lifecycle).is_err());
+
+        let mut deck = identity_v1(false);
+        deck.deck_manifest_commitment_sha256 = digest('0');
+        assert!(validate_operator_resource_identity_v1(&deck).is_err());
 
         let mut gesture = identity_v1(false);
         gesture.gesture.gesture_profile_admission_commitment_sha256 = digest('0');
