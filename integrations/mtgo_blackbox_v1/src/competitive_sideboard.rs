@@ -312,6 +312,7 @@ pub struct CheckedUntrustedMtgoCompetitiveSideboardReadyV1 {
     deck_manifest_commitment_sha256: String,
     policy_deployment_commitment_sha256: String,
     after_snapshot_commitment_sha256: String,
+    after_lifecycle_snapshot_commitment_sha256: String,
     after_frame_id: u64,
     after_frame_sequence: u64,
     after_frame_sha256: String,
@@ -345,6 +346,10 @@ impl CheckedUntrustedMtgoCompetitiveSideboardReadyV1 {
 
     pub fn after_snapshot_commitment_sha256(&self) -> &str {
         &self.after_snapshot_commitment_sha256
+    }
+
+    pub fn after_lifecycle_snapshot_commitment_sha256(&self) -> &str {
+        &self.after_lifecycle_snapshot_commitment_sha256
     }
 
     pub fn after_frame_id(&self) -> u64 {
@@ -613,6 +618,10 @@ pub fn confirm_competitive_sideboard_target_visible_v1(
         deck_manifest_commitment_sha256: source.deck_manifest_commitment_sha256.clone(),
         policy_deployment_commitment_sha256: source.policy_deployment_commitment_sha256.clone(),
         after_snapshot_commitment_sha256: confirmed.snapshot_commitment_sha256.clone(),
+        after_lifecycle_snapshot_commitment_sha256: confirmed
+            ._lifecycle
+            .snapshot_commitment_sha256()
+            .to_owned(),
         after_frame_id: confirmed.frame_id,
         after_frame_sequence: confirmed.frame_sequence,
         after_frame_sha256: confirmed.frame_sha256.clone(),

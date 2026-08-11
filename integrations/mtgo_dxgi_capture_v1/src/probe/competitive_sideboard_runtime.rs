@@ -1,9 +1,10 @@
 use super::{
-    competitive_navigation_classifier_assets_manifest_bytes_v1,
+    choose_cursor_park_point_v3, competitive_navigation_classifier_assets_manifest_bytes_v1,
     invoke_verified_competitive_sideboard_classifier_process_v1, sha256_hex_v1,
     verify_runtime_identity_now_v1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
 };
+use crate::SignedRectV1;
 use mtgo_blackbox_v1::{
     validate_competitive_sideboard_selection_v1,
     validate_visible_competitive_lifecycle_snapshot_v1,
@@ -198,6 +199,21 @@ pub struct OpaqueMtgoPlannedCompetitiveSideboardV1 {
     pub(crate) mainboard_zone: mtgo_blackbox_v1::MtgoVisibleCompetitiveSideboardZoneV1,
     pub(crate) sideboard_zone: mtgo_blackbox_v1::MtgoVisibleCompetitiveSideboardZoneV1,
     pub(crate) commitments: MtgoPlannedCompetitiveSideboardCommitmentsV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MtgoCompetitiveSideboardDragPointerTargetV1 {
+    pub(crate) hwnd: u64,
+    pub(crate) process_id: u32,
+    pub(crate) process_start_filetime_100ns: u64,
+    pub(crate) dpi: u32,
+    pub(crate) client_rect_desktop_px: SignedRectV1,
+    pub(crate) source_x_desktop_px: i32,
+    pub(crate) source_y_desktop_px: i32,
+    pub(crate) destination_x_desktop_px: i32,
+    pub(crate) destination_y_desktop_px: i32,
+    pub(crate) park_x_desktop_px: i32,
+    pub(crate) park_y_desktop_px: i32,
 }
 
 impl OpaqueMtgoPlannedCompetitiveSideboardV1 {
@@ -613,6 +629,113 @@ pub fn plan_classified_competitive_sideboard_v1(
     })
 }
 
+pub(crate) fn resolve_competitive_sideboard_drag_pointer_target_v1(
+    frame: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    source_rect_client_px: &mtgo_blackbox_v1::MtgoRectPxV1,
+    destination_rect_client_px: &mtgo_blackbox_v1::MtgoRectPxV1,
+) -> Result<MtgoCompetitiveSideboardDragPointerTargetV1, String> {
+    if frame.phase_v1() != MtgoCompetitiveLifecyclePhaseV1::Sideboarding {
+        return Err("sideboard drag pointer target is not a Sideboarding frame".to_owned());
+    }
+    let raw = &frame._source_frame.source_frame;
+    let width = raw.manifest.frame.canonical_width;
+    let height = raw.manifest.frame.canonical_height;
+    let (source_x, source_y) =
+        sideboard_rect_center_client_v1("source card", source_rect_client_px, width, height)?;
+    let (destination_x, destination_y) = sideboard_rect_center_client_v1(
+        "destination drop target",
+        destination_rect_client_px,
+        width,
+        height,
+    )?;
+    if (source_x, source_y) == (destination_x, destination_y) {
+        return Err("sideboard drag source and destination are the same point".to_owned());
+    }
+    let client_rect = raw.manifest.pre.client_rect_desktop_px;
+    let (source_x_desktop_px, source_y_desktop_px) =
+        sideboard_client_point_to_desktop_v1("source card", &client_rect, source_x, source_y)?;
+    let (destination_x_desktop_px, destination_y_desktop_px) =
+        sideboard_client_point_to_desktop_v1(
+            "destination drop target",
+            &client_rect,
+            destination_x,
+            destination_y,
+        )?;
+    let (park_x_desktop_px, park_y_desktop_px) =
+        choose_cursor_park_point_v3(&client_rect, &raw.manifest.output.bounds_desktop_px)?;
+    let pre = &raw.manifest.pre;
+    Ok(MtgoCompetitiveSideboardDragPointerTargetV1 {
+        hwnd: pre.hwnd,
+        process_id: pre.process_id,
+        process_start_filetime_100ns: pre.process_start_filetime_100ns,
+        dpi: pre.dpi,
+        client_rect_desktop_px: client_rect,
+        source_x_desktop_px,
+        source_y_desktop_px,
+        destination_x_desktop_px,
+        destination_y_desktop_px,
+        park_x_desktop_px,
+        park_y_desktop_px,
+    })
+}
+
+fn sideboard_rect_center_client_v1(
+    label: &str,
+    rect: &mtgo_blackbox_v1::MtgoRectPxV1,
+    client_width: u32,
+    client_height: u32,
+) -> Result<(u32, u32), String> {
+    let right = rect
+        .x
+        .checked_add(rect.width)
+        .ok_or_else(|| format!("sideboard {label} x overflow"))?;
+    let bottom = rect
+        .y
+        .checked_add(rect.height)
+        .ok_or_else(|| format!("sideboard {label} y overflow"))?;
+    if rect.width == 0 || rect.height == 0 || right > client_width || bottom > client_height {
+        return Err(format!(
+            "sideboard {label} rectangle is outside the immediate client"
+        ));
+    }
+    Ok((
+        rect.x
+            .checked_add(rect.width / 2)
+            .ok_or_else(|| format!("sideboard {label} center x overflow"))?,
+        rect.y
+            .checked_add(rect.height / 2)
+            .ok_or_else(|| format!("sideboard {label} center y overflow"))?,
+    ))
+}
+
+fn sideboard_client_point_to_desktop_v1(
+    label: &str,
+    client_rect: &SignedRectV1,
+    client_x: u32,
+    client_y: u32,
+) -> Result<(i32, i32), String> {
+    let x = client_rect
+        .left
+        .checked_add(
+            i32::try_from(client_x)
+                .map_err(|_| format!("sideboard {label} x does not fit the desktop"))?,
+        )
+        .ok_or_else(|| format!("sideboard {label} desktop x overflow"))?;
+    let y = client_rect
+        .top
+        .checked_add(
+            i32::try_from(client_y)
+                .map_err(|_| format!("sideboard {label} y does not fit the desktop"))?,
+        )
+        .ok_or_else(|| format!("sideboard {label} desktop y overflow"))?;
+    if !client_rect.contains_point(x, y) {
+        return Err(format!(
+            "sideboard {label} point is outside the current client"
+        ));
+    }
+    Ok((x, y))
+}
+
 fn parse_sideboard_classifier_response_v1(
     response_bytes: &[u8],
     request_commitment_sha256: &str,
@@ -822,5 +945,39 @@ mod tests {
             &pixels,
         )
         .is_err());
+    }
+
+    #[test]
+    fn drag_geometry_handles_negative_desktop_origins_and_rejects_bad_regions() {
+        let source = mtgo_blackbox_v1::MtgoRectPxV1 {
+            x: 10,
+            y: 20,
+            width: 20,
+            height: 10,
+        };
+        let center = sideboard_rect_center_client_v1("source", &source, 1_240, 740).unwrap();
+        assert_eq!(center, (20, 25));
+        let client = SignedRectV1 {
+            left: -1_920,
+            top: -200,
+            right: -680,
+            bottom: 540,
+        };
+        assert_eq!(
+            sideboard_client_point_to_desktop_v1("source", &client, center.0, center.1).unwrap(),
+            (-1_900, -175)
+        );
+
+        let zero = mtgo_blackbox_v1::MtgoRectPxV1 {
+            width: 0,
+            ..source.clone()
+        };
+        assert!(sideboard_rect_center_client_v1("zero", &zero, 1_240, 740).is_err());
+        let overflow = mtgo_blackbox_v1::MtgoRectPxV1 {
+            x: u32::MAX,
+            ..source
+        };
+        assert!(sideboard_rect_center_client_v1("overflow", &overflow, 1_240, 740).is_err());
+        assert!(sideboard_client_point_to_desktop_v1("outside", &client, 1_240, 0).is_err());
     }
 }

@@ -14,6 +14,7 @@ use crate::probe::{
     prepare_opaque_competitive_duel_gesture_continuation_stage_from_pinned_runtime_v1,
     prepare_opaque_competitive_duel_gesture_source_stage_from_pinned_runtime_v1,
     prepare_pregame_actuation_v3, resolve_competitive_entry_pointer_target_v1,
+    resolve_competitive_sideboard_drag_pointer_target_v1,
     validate_classifier_backed_competitive_entry_frame_transition_v1,
     validate_classifier_backed_competitive_entry_immediate_recapture_v1,
     MtgoClassifiedCompetitiveSideboardCommitmentsV1, MtgoCompetitiveEntryControlDryRunPartsV1,
@@ -21,7 +22,7 @@ use crate::probe::{
     MtgoCompetitiveEntryImmediateRecaptureCommitmentsV1, MtgoCompetitiveEntryPointerTargetV1,
     MtgoCompetitiveEntryVisibleConfirmationCommitmentsV1, MtgoCompetitiveEventMonitorCommitmentsV1,
     MtgoCompetitiveLifecycleControlTransitionCommitmentsV1,
-    MtgoCompetitiveNavigationFrameIdentityV1,
+    MtgoCompetitiveNavigationFrameIdentityV1, MtgoCompetitiveSideboardDragPointerTargetV1,
     MtgoOpaqueCompetitiveDuelGestureConfirmationCommitmentsV1,
     MtgoOpaqueCompetitiveDuelGestureSequenceCommitmentsV1,
     MtgoOpaqueCompetitiveDuelGestureSourcePreparationCommitmentsV1,
@@ -167,6 +168,11 @@ const COMPETITIVE_LIFECYCLE_AUTHORIZATION_DOMAIN_V1: &[u8] =
 const COMPETITIVE_LIFECYCLE_ACTION_SET_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-lifecycle-action-set-v1";
 const RATIFIED_COMPETITIVE_LIFECYCLE_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
+const COMPETITIVE_SIDEBOARD_AUTOMATION_AUTHORIZATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-sideboard-automation-authorization-v1";
+const COMPETITIVE_SIDEBOARD_AUTOMATION_SCOPE_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-sideboard-automation-scope-v1";
+const RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1: Option<&str> = None;
 const COMPETITIVE_LIFECYCLE_PREPARATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-lifecycle-preparation-v1";
 const COMPETITIVE_LIFECYCLE_INPUT_RECEIPT_DOMAIN_V1: &[u8] =
@@ -189,6 +195,12 @@ const COMPETITIVE_EVENT_SIDEBOARD_SEQUENCE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-sideboard-sequence-v1";
 const COMPETITIVE_EVENT_SIDEBOARD_TRANSFER_PREPARATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-sideboard-transfer-preparation-v1";
+const COMPETITIVE_EVENT_SIDEBOARD_FRESH_DRAG_PREPARATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-sideboard-fresh-drag-preparation-v1";
+const COMPETITIVE_EVENT_SIDEBOARD_DRAG_INPUT_RECEIPT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-sideboard-drag-input-receipt-v1";
+const COMPETITIVE_EVENT_SIDEBOARD_DRAG_CONFIRMED_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-sideboard-drag-confirmed-v1";
 const COMPETITIVE_EVENT_SIDEBOARD_TRANSFER_CONFIRMATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-sideboard-transfer-confirmation-v1";
 const COMPETITIVE_EVENT_SIDEBOARD_READY_DOMAIN_V1: &[u8] =
@@ -566,6 +578,43 @@ pub struct RatifiedMtgoCompetitiveLifecycleAuthorizationV1 {
     commitments: MtgoReviewedCompetitiveLifecycleRatificationCandidateV1,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoReviewedCompetitiveSideboardAutomationRatificationCandidateV1 {
+    pub lifecycle_authorization_commitment_sha256: String,
+    pub permission_review_commitment_sha256: String,
+    pub mode_authorization_commitment_sha256: String,
+    pub approved_account_alias_sha256: String,
+    pub navigation_profile_commitment_sha256: String,
+    pub navigation_profile_admission_commitment_sha256: String,
+    pub deck_list_sha256: String,
+    pub deck_manifest_commitment_sha256: String,
+    pub deck_format_sha256: String,
+    pub policy_deployment_commitment_sha256: String,
+    pub automation_scope_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub ratification_commitment_sha256: String,
+}
+
+/// Separately reviewed authority for the exact visible sideboard parser,
+/// one-card drag protocol, and changed-sideboard Submit Deck bridge. The
+/// production root is empty, so this type cannot currently be constructed by
+/// application code.
+pub struct RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1 {
+    commitments: MtgoReviewedCompetitiveSideboardAutomationRatificationCandidateV1,
+}
+
+impl RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1 {
+    pub fn commitments_v1(
+        &self,
+    ) -> MtgoReviewedCompetitiveSideboardAutomationRatificationCandidateV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+}
+
 impl RatifiedMtgoCompetitiveLifecycleAuthorizationV1 {
     pub fn commitments_v1(&self) -> MtgoReviewedCompetitiveLifecycleRatificationCandidateV1 {
         self.commitments.clone()
@@ -772,6 +821,7 @@ impl OpaqueMtgoCompetitiveEventRuntimeV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
     pub prior_event_runtime_commitment_sha256: String,
+    pub sideboard_automation_ratification_commitment_sha256: String,
     pub sideboard_classification: MtgoClassifiedCompetitiveSideboardCommitmentsV1,
     pub measurement_binding_commitment_sha256: String,
 }
@@ -782,6 +832,7 @@ pub struct MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
 pub struct OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
     classified: OpaqueMtgoClassifiedCompetitiveSideboardV1,
     manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
@@ -814,6 +865,7 @@ impl OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoPlannedCompetitiveEventSideboardCommitmentsV1 {
     pub prior_event_runtime_commitment_sha256: String,
+    pub sideboard_automation_ratification_commitment_sha256: String,
     pub measurement_binding_commitment_sha256: String,
     pub sideboard_plan: MtgoPlannedCompetitiveSideboardCommitmentsV1,
     pub event_plan_binding_commitment_sha256: String,
@@ -825,6 +877,7 @@ pub struct MtgoPlannedCompetitiveEventSideboardCommitmentsV1 {
 pub struct OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
     planned: OpaqueMtgoPlannedCompetitiveSideboardV1,
     manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
@@ -882,6 +935,7 @@ pub struct MtgoCompetitiveEventSideboardSequenceCommitmentsV1 {
 pub struct OpaqueMtgoCompetitiveEventSideboardSequenceV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
     current_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     plan: mtgo_blackbox_v1::CheckedUntrustedMtgoCompetitiveSideboardPlanV1,
@@ -926,8 +980,9 @@ pub struct MtgoPreparedCompetitiveEventSideboardTransferCommitmentsV1 {
 }
 
 /// One pixel-bound drag proposal for the next semantic transfer. The source
-/// card and empty destination rectangles stay private. No execution method is
-/// attached in this tranche.
+/// card and empty destination rectangles stay private. A separate immediate
+/// recapture must reconstruct this proposal under the sideboard-automation
+/// ratification before the one-drag executor can accept it.
 pub struct OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1 {
     sequence: OpaqueMtgoCompetitiveEventSideboardSequenceV1,
     _source_card: MtgoVisibleCompetitiveSideboardCardV1,
@@ -941,6 +996,101 @@ impl OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1 {
     }
 
     pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoFreshPreparedCompetitiveEventSideboardDragCommitmentsV1 {
+    pub sideboard_automation_ratification_commitment_sha256: String,
+    pub sequence_chain_commitment_sha256: String,
+    pub plan_commitment_sha256: String,
+    pub transfer: MtgoAtomicCompetitiveSideboardTransferV1,
+    pub immediate_navigation_classification_commitment_sha256: String,
+    pub immediate_sideboard_classification_commitment_sha256: String,
+    pub immediate_sideboard_snapshot_commitment_sha256: String,
+    pub immediate_source_card_region_sha256: String,
+    pub immediate_destination_drop_region_sha256: String,
+    pub immediate_frame_id: u64,
+    pub immediate_frame_sequence: u64,
+    pub immediate_captured_at_unix_millis: u128,
+    pub fresh_drag_preparation_commitment_sha256: String,
+}
+
+/// One immediate recapture of the exact unchanged sideboard configuration,
+/// with private source and destination drag points resolved from that frame.
+/// Production construction remains impossible while the sideboard automation
+/// ratification root is empty.
+pub struct OpaqueMtgoFreshPreparedCompetitiveEventSideboardDragV1 {
+    prepared: OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1,
+    pointer_target: MtgoCompetitiveSideboardDragPointerTargetV1,
+    commitments: MtgoFreshPreparedCompetitiveEventSideboardDragCommitmentsV1,
+}
+
+impl OpaqueMtgoFreshPreparedCompetitiveEventSideboardDragV1 {
+    pub fn commitments_v1(&self) -> MtgoFreshPreparedCompetitiveEventSideboardDragCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveEventSideboardDragInputReceiptCommitmentsV1 {
+    pub fresh_drag_preparation_commitment_sha256: String,
+    pub sideboard_automation_ratification_commitment_sha256: String,
+    pub sequence_chain_commitment_sha256: String,
+    pub transfer: MtgoAtomicCompetitiveSideboardTransferV1,
+    pub input_receipt_sha256: String,
+    pub source_frame_sequence: u64,
+    pub input_sent_at_unix_millis: u128,
+    pub emitted_mouse_record_count: u8,
+    pub cursor_parked_outside_client: bool,
+}
+
+pub struct OpaqueMtgoPendingCompetitiveEventSideboardDragV1 {
+    prepared: OpaqueMtgoFreshPreparedCompetitiveEventSideboardDragV1,
+    commitments: MtgoCompetitiveEventSideboardDragInputReceiptCommitmentsV1,
+}
+
+impl OpaqueMtgoPendingCompetitiveEventSideboardDragV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveEventSideboardDragInputReceiptCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoConfirmedCompetitiveEventSideboardDragCommitmentsV1 {
+    pub input_receipt_sha256: String,
+    pub fresh_drag_preparation_commitment_sha256: String,
+    pub prior_sequence_chain_commitment_sha256: String,
+    pub resulting_sequence_or_ready_commitment_sha256: String,
+    pub transfer: MtgoAtomicCompetitiveSideboardTransferV1,
+    pub after_frame_sequence: u64,
+    pub confirmation_commitment_sha256: String,
+}
+
+pub struct OpaqueMtgoConfirmedCompetitiveEventSideboardDragV1 {
+    advance: MtgoCompetitiveEventSideboardTransferAdvanceV1,
+    commitments: MtgoConfirmedCompetitiveEventSideboardDragCommitmentsV1,
+}
+
+impl OpaqueMtgoConfirmedCompetitiveEventSideboardDragV1 {
+    pub fn commitments_v1(&self) -> MtgoConfirmedCompetitiveEventSideboardDragCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn into_advance_v1(self) -> MtgoCompetitiveEventSideboardTransferAdvanceV1 {
+        self.advance
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
         false
     }
 }
@@ -962,12 +1112,13 @@ pub struct MtgoReadyCompetitiveEventSideboardCommitmentsV1 {
 /// It still cannot submit the deck or emit input.
 pub struct OpaqueMtgoReadyCompetitiveEventSideboardV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
-    _lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
-    _current_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
-    _manifest: ValidatedMtgoCompetitiveDeckManifestV1,
+    lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
+    current_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     _ready: CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
-    _event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
-    _effective_prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
+    event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
+    effective_prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
     commitments: MtgoReadyCompetitiveEventSideboardCommitmentsV1,
 }
 
@@ -2747,6 +2898,106 @@ pub fn ratify_competitive_lifecycle_authorization_from_correspondence_v1(
     )
 }
 
+/// Computes the exact non-authorizing production candidate for visible
+/// sideboard parsing, one-card drag, per-transfer visible confirmation, and
+/// changed-sideboard Submit Deck in one already ratified mode.
+pub fn review_competitive_sideboard_automation_ratification_candidate_v1(
+    lifecycle_authorization: &RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
+    policy_deployment_commitment_sha256: &str,
+) -> Result<MtgoReviewedCompetitiveSideboardAutomationRatificationCandidateV1, String> {
+    let lifecycle = lifecycle_authorization.commitments_v1();
+    for commitment in [
+        lifecycle.ratification_commitment_sha256.as_str(),
+        lifecycle.permission_review_commitment_sha256.as_str(),
+        lifecycle.mode_authorization_commitment_sha256.as_str(),
+        lifecycle.approved_account_alias_sha256.as_str(),
+        lifecycle.lifecycle_profile_commitment_sha256.as_str(),
+        lifecycle
+            .lifecycle_profile_admission_commitment_sha256
+            .as_str(),
+        manifest.deck_list_sha256(),
+        manifest.manifest_commitment_sha256(),
+        manifest.format_sha256(),
+        policy_deployment_commitment_sha256,
+    ] {
+        if !is_sha256_v2(commitment) {
+            return Err(
+                "sideboard automation ratification contains an invalid commitment".to_owned(),
+            );
+        }
+    }
+    if manifest.deck_list_sha256() == manifest.format_sha256()
+        || manifest.deck_list_sha256() == policy_deployment_commitment_sha256
+        || manifest.manifest_commitment_sha256() == policy_deployment_commitment_sha256
+        || manifest.format_sha256() == policy_deployment_commitment_sha256
+    {
+        return Err("sideboard deck, format, and policy identities are crossed".to_owned());
+    }
+    let automation_scope_commitment_sha256 = competitive_sideboard_automation_scope_v1();
+    let ratification_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_SIDEBOARD_AUTOMATION_AUTHORIZATION_DOMAIN_V1,
+        &[
+            lifecycle.ratification_commitment_sha256.as_bytes(),
+            lifecycle.permission_review_commitment_sha256.as_bytes(),
+            lifecycle.mode_authorization_commitment_sha256.as_bytes(),
+            lifecycle.approved_account_alias_sha256.as_bytes(),
+            lifecycle.lifecycle_profile_commitment_sha256.as_bytes(),
+            lifecycle
+                .lifecycle_profile_admission_commitment_sha256
+                .as_bytes(),
+            manifest.deck_list_sha256().as_bytes(),
+            manifest.manifest_commitment_sha256().as_bytes(),
+            manifest.format_sha256().as_bytes(),
+            policy_deployment_commitment_sha256.as_bytes(),
+            automation_scope_commitment_sha256.as_bytes(),
+            competitive_event_kind_tag_v1(lifecycle.event_kind),
+            b"exact_visible_sideboard_parser_one_card_drag_confirmation_and_changed_submit",
+        ],
+    );
+    Ok(
+        MtgoReviewedCompetitiveSideboardAutomationRatificationCandidateV1 {
+            lifecycle_authorization_commitment_sha256: lifecycle.ratification_commitment_sha256,
+            permission_review_commitment_sha256: lifecycle.permission_review_commitment_sha256,
+            mode_authorization_commitment_sha256: lifecycle.mode_authorization_commitment_sha256,
+            approved_account_alias_sha256: lifecycle.approved_account_alias_sha256,
+            navigation_profile_commitment_sha256: lifecycle.lifecycle_profile_commitment_sha256,
+            navigation_profile_admission_commitment_sha256: lifecycle
+                .lifecycle_profile_admission_commitment_sha256,
+            deck_list_sha256: manifest.deck_list_sha256().to_owned(),
+            deck_manifest_commitment_sha256: manifest.manifest_commitment_sha256().to_owned(),
+            deck_format_sha256: manifest.format_sha256().to_owned(),
+            policy_deployment_commitment_sha256: policy_deployment_commitment_sha256.to_owned(),
+            automation_scope_commitment_sha256,
+            event_kind: lifecycle.event_kind,
+            ratification_commitment_sha256,
+        },
+    )
+}
+
+pub fn ratify_competitive_sideboard_automation_v1(
+    lifecycle_authorization: &RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
+    policy_deployment_commitment_sha256: &str,
+) -> Result<RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1, String> {
+    let candidate = review_competitive_sideboard_automation_ratification_candidate_v1(
+        lifecycle_authorization,
+        manifest,
+        policy_deployment_commitment_sha256,
+    )?;
+    let expected = RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1
+        .ok_or("the exact competitive sideboard automation is not ratified in this build")?;
+    if candidate.ratification_commitment_sha256 != expected {
+        return Err(
+            "competitive sideboard candidate differs from the production ratification root"
+                .to_owned(),
+        );
+    }
+    Ok(RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1 {
+        commitments: candidate,
+    })
+}
+
 pub fn prepare_ratified_competitive_lifecycle_control_v1(
     authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
     control: OpaqueMtgoCompetitiveLifecycleControlV1,
@@ -3106,6 +3357,7 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
 pub fn measure_competitive_event_runtime_sideboard_v1(
     runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
     manifest: ValidatedMtgoCompetitiveDeckManifestV1,
+    sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
     classifier_runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
     timeout_ms: u32,
 ) -> Result<OpaqueMtgoMeasuredCompetitiveEventSideboardV1, String> {
@@ -3126,6 +3378,36 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
         event_monitor,
         commitments: prior,
     } = runtime;
+    let sideboard_authorization_commitments = sideboard_authorization.commitments_v1();
+    if sideboard_authorization_commitments.lifecycle_authorization_commitment_sha256
+        != lifecycle_authorization
+            .commitments
+            .ratification_commitment_sha256
+        || sideboard_authorization_commitments.permission_review_commitment_sha256
+            != prior.permission_review_commitment_sha256
+        || sideboard_authorization_commitments.mode_authorization_commitment_sha256
+            != prior.mode_authorization_commitment_sha256
+        || sideboard_authorization_commitments.approved_account_alias_sha256
+            != prior.approved_account_alias_sha256
+        || sideboard_authorization_commitments.navigation_profile_commitment_sha256
+            != prior.navigation_profile_commitment_sha256
+        || sideboard_authorization_commitments.navigation_profile_admission_commitment_sha256
+            != prior.navigation_profile_admission_commitment_sha256
+        || sideboard_authorization_commitments.deck_list_sha256 != prior.deck_manifest_sha256
+        || sideboard_authorization_commitments.deck_manifest_commitment_sha256
+            != manifest.manifest_commitment_sha256()
+        || sideboard_authorization_commitments.deck_format_sha256 != prior.deck_format_sha256
+        || sideboard_authorization_commitments.policy_deployment_commitment_sha256
+            != prior.policy_deployment_commitment_sha256
+        || sideboard_authorization_commitments.automation_scope_commitment_sha256
+            != competitive_sideboard_automation_scope_v1()
+        || sideboard_authorization_commitments.event_kind != prior.event_kind
+    {
+        return Err(
+            "sideboard automation authorization differs from the exact event, deck, policy, or mode"
+                .to_owned(),
+        );
+    }
     let classified = classify_checked_untrusted_competitive_sideboard_v1(
         current_frame,
         &manifest,
@@ -3163,6 +3445,9 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
         COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1,
         &[
             prior.runtime_commitment_sha256.as_bytes(),
+            sideboard_authorization_commitments
+                .ratification_commitment_sha256
+                .as_bytes(),
             sideboard.classification_result_commitment_sha256.as_bytes(),
             sideboard.sideboard_snapshot_commitment_sha256.as_bytes(),
             sideboard.deck_list_sha256.as_bytes(),
@@ -3175,12 +3460,15 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
     );
     let commitments = MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
         prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
+        sideboard_automation_ratification_commitment_sha256: sideboard_authorization_commitments
+            .ratification_commitment_sha256,
         sideboard_classification: sideboard,
         measurement_binding_commitment_sha256,
     };
     Ok(OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
         _spent_entry_authorization,
         lifecycle_authorization,
+        sideboard_authorization,
         classified,
         manifest,
         event_monitor,
@@ -3198,12 +3486,20 @@ pub fn plan_measured_competitive_event_sideboard_v1(
     let OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
         _spent_entry_authorization,
         lifecycle_authorization,
+        sideboard_authorization,
         classified,
         manifest,
         event_monitor,
         prior,
         commitments: measurement,
     } = measured;
+    if measurement.sideboard_automation_ratification_commitment_sha256
+        != sideboard_authorization
+            .commitments
+            .ratification_commitment_sha256
+    {
+        return Err("sideboard measurement lost its exact automation authorization".to_owned());
+    }
     let planned = plan_classified_competitive_sideboard_v1(classified, selection)?;
     let plan = planned.commitments_v1();
     if measurement.prior_event_runtime_commitment_sha256 != prior.runtime_commitment_sha256
@@ -3231,6 +3527,9 @@ pub fn plan_measured_competitive_event_sideboard_v1(
         COMPETITIVE_EVENT_SIDEBOARD_PLAN_DOMAIN_V1,
         &[
             prior.runtime_commitment_sha256.as_bytes(),
+            measurement
+                .sideboard_automation_ratification_commitment_sha256
+                .as_bytes(),
             measurement.measurement_binding_commitment_sha256.as_bytes(),
             plan.classification_result_commitment_sha256.as_bytes(),
             plan.source_snapshot_commitment_sha256.as_bytes(),
@@ -3247,6 +3546,8 @@ pub fn plan_measured_competitive_event_sideboard_v1(
     );
     let commitments = MtgoPlannedCompetitiveEventSideboardCommitmentsV1 {
         prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
+        sideboard_automation_ratification_commitment_sha256: measurement
+            .sideboard_automation_ratification_commitment_sha256,
         measurement_binding_commitment_sha256: measurement.measurement_binding_commitment_sha256,
         sideboard_plan: plan,
         event_plan_binding_commitment_sha256,
@@ -3254,6 +3555,7 @@ pub fn plan_measured_competitive_event_sideboard_v1(
     Ok(OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
         _spent_entry_authorization,
         lifecycle_authorization,
+        sideboard_authorization,
         planned,
         manifest,
         event_monitor,
@@ -3269,12 +3571,20 @@ pub fn begin_competitive_event_sideboard_transfer_sequence_v1(
     let OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
         _spent_entry_authorization,
         lifecycle_authorization,
+        sideboard_authorization,
         planned,
         manifest,
         event_monitor,
         prior,
         commitments: _,
     } = planned_event;
+    if event_commitments.sideboard_automation_ratification_commitment_sha256
+        != sideboard_authorization
+            .commitments
+            .ratification_commitment_sha256
+    {
+        return Err("sideboard plan lost its exact automation authorization".to_owned());
+    }
     let OpaqueMtgoPlannedCompetitiveSideboardV1 {
         source_frame,
         plan,
@@ -3306,6 +3616,9 @@ pub fn begin_competitive_event_sideboard_transfer_sequence_v1(
             event_commitments
                 .event_plan_binding_commitment_sha256
                 .as_bytes(),
+            event_commitments
+                .sideboard_automation_ratification_commitment_sha256
+                .as_bytes(),
             plan_commitments.plan_commitment_sha256.as_bytes(),
             plan_commitments
                 .source_snapshot_commitment_sha256
@@ -3331,6 +3644,7 @@ pub fn begin_competitive_event_sideboard_transfer_sequence_v1(
     Ok(OpaqueMtgoCompetitiveEventSideboardSequenceV1 {
         _spent_entry_authorization,
         lifecycle_authorization,
+        sideboard_authorization,
         current_frame: source_frame,
         manifest,
         plan,
@@ -3452,6 +3766,350 @@ pub fn prepare_competitive_event_sideboard_transfer_drag_v1(
         sequence,
         _source_card: source_card,
         _destination_zone: destination_zone,
+        commitments,
+    })
+}
+
+/// Performs the mandatory immediate main-client recapture before one
+/// sideboard drag. The fresh navigation and sideboard classifiers must show
+/// the exact unchanged configuration and next semantic transfer. Only then
+/// are private source and destination points resolved.
+pub fn prepare_fresh_competitive_event_sideboard_transfer_drag_v1(
+    prepared: OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1,
+    profile: &AdmittedMtgoCompetitiveNavigationProfileV1,
+    classifier_runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    immediate_identity: MtgoCompetitiveNavigationFrameIdentityV1,
+    capture_timeout_ms: u32,
+    classifier_timeout_ms: u32,
+    sideboard_classifier_timeout_ms: u32,
+) -> Result<OpaqueMtgoFreshPreparedCompetitiveEventSideboardDragV1, String> {
+    let OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1 {
+        mut sequence,
+        _source_card: _,
+        _destination_zone: _,
+        commitments: prior_preparation,
+    } = prepared;
+    let expected_immediate_sequence = sequence
+        .commitments
+        .current_frame_sequence
+        .checked_add(1)
+        .ok_or("sideboard immediate frame sequence overflow")?;
+    if immediate_identity.frame_sequence != expected_immediate_sequence
+        || immediate_identity.frame_id == 0
+    {
+        return Err(
+            "sideboard immediate recapture must use the exact next nonzero frame identity"
+                .to_owned(),
+        );
+    }
+    let profile_runtime = profile.checked_runtime_profile();
+    let sideboard_authorization = sequence.sideboard_authorization.commitments_v1();
+    if profile.profile_commitment_sha256() != sequence.prior.navigation_profile_commitment_sha256
+        || profile.admission_commitment_sha256()
+            != sequence
+                .prior
+                .navigation_profile_admission_commitment_sha256
+        || profile_runtime.approved_account_alias_sha256()
+            != sequence.prior.approved_account_alias_sha256
+        || sideboard_authorization.ratification_commitment_sha256
+            != sequence
+                .sideboard_authorization
+                .commitments
+                .ratification_commitment_sha256
+        || prior_preparation.sequence_chain_commitment_sha256
+            != sequence.commitments.sequence_chain_commitment_sha256
+        || prior_preparation.plan_commitment_sha256 != sequence.commitments.plan_commitment_sha256
+        || prior_preparation.transfer != sequence.commitments.next_transfer
+    {
+        return Err(
+            "sideboard immediate recapture changed its profile, authority, plan, or transfer lineage"
+                .to_owned(),
+        );
+    }
+    let prior_frame = sequence.current_frame.commitments_v1();
+    let immediate_capture =
+        capture_admitted_mtgo_competitive_navigation_frame_v1(profile, capture_timeout_ms)?;
+    let immediate_navigation = classify_admitted_mtgo_competitive_navigation_frame_v1(
+        immediate_capture,
+        profile,
+        classifier_runtime,
+        immediate_identity,
+        classifier_timeout_ms,
+    )?;
+    require_same_competitive_navigation_lineage_v1(&sequence.current_frame, &immediate_navigation)?;
+    let immediate = classify_checked_untrusted_competitive_sideboard_v1(
+        immediate_navigation,
+        &sequence.manifest,
+        sequence.prior.policy_deployment_commitment_sha256.clone(),
+        classifier_runtime,
+        sideboard_classifier_timeout_ms,
+    )?;
+    let immediate_commitments = immediate.commitments_v1();
+    if immediate.configuration_v1() != &sequence.current_configuration
+        || immediate_commitments.event_kind != sequence.prior.event_kind
+        || immediate_commitments.event_identity_sha256 != sequence.prior.bound_event_identity_sha256
+        || sequence.prior.current_match_identity_sha256.as_deref()
+            != Some(immediate_commitments.match_identity_sha256.as_str())
+        || sequence.prior.current_game_number != Some(immediate_commitments.game_number)
+        || immediate_commitments.frame_sequence != expected_immediate_sequence
+        || immediate_commitments.frame_id == prior_frame.frame_id
+        || immediate_commitments.captured_at_unix_millis
+            <= prior_frame
+                .source_frame
+                .source_capture
+                .captured_at_unix_millis
+        || immediate_commitments.deck_list_sha256 != sequence.prior.deck_manifest_sha256
+        || immediate_commitments.deck_format_sha256 != sequence.prior.deck_format_sha256
+        || immediate_commitments.policy_deployment_commitment_sha256
+            != sequence.prior.policy_deployment_commitment_sha256
+    {
+        return Err(
+            "sideboard immediate recapture is not the exact unchanged current configuration"
+                .to_owned(),
+        );
+    }
+    let OpaqueMtgoClassifiedCompetitiveSideboardV1 {
+        source_frame,
+        sideboard: _,
+        visible_cards,
+        mainboard_zone,
+        sideboard_zone,
+        commitments: _,
+    } = immediate;
+    sequence.current_frame = source_frame;
+    sequence.current_visible_cards = visible_cards;
+    sequence.current_mainboard_zone = mainboard_zone;
+    sequence.current_sideboard_zone = sideboard_zone;
+    sequence.commitments.sequence_chain_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_FRESH_DRAG_PREPARATION_DOMAIN_V1,
+        &[
+            sequence
+                .commitments
+                .sequence_chain_commitment_sha256
+                .as_bytes(),
+            sideboard_authorization
+                .ratification_commitment_sha256
+                .as_bytes(),
+            prior_preparation.preparation_commitment_sha256.as_bytes(),
+            immediate_commitments
+                .classification_result_commitment_sha256
+                .as_bytes(),
+            immediate_commitments
+                .sideboard_snapshot_commitment_sha256
+                .as_bytes(),
+            immediate_commitments
+                .frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            prior_preparation
+                .transfer
+                .step_index
+                .to_be_bytes()
+                .as_slice(),
+            b"exact_next_frame_same_configuration_before_one_sideboard_drag",
+        ],
+    );
+    sequence
+        .commitments
+        .current_sideboard_snapshot_commitment_sha256 = immediate_commitments
+        .sideboard_snapshot_commitment_sha256
+        .clone();
+    sequence.commitments.current_frame_sequence = immediate_commitments.frame_sequence;
+    let refreshed = prepare_competitive_event_sideboard_transfer_drag_v1(sequence)?;
+    if refreshed.commitments.transfer != prior_preparation.transfer {
+        return Err("sideboard immediate recapture changed the next transfer".to_owned());
+    }
+    let pointer_target = resolve_competitive_sideboard_drag_pointer_target_v1(
+        &refreshed.sequence.current_frame,
+        &refreshed._source_card.rect_client_px,
+        &refreshed._destination_zone.empty_drop_rect_client_px,
+    )?;
+    let fresh_drag_preparation_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_FRESH_DRAG_PREPARATION_DOMAIN_V1,
+        &[
+            sideboard_authorization
+                .ratification_commitment_sha256
+                .as_bytes(),
+            refreshed
+                .commitments
+                .preparation_commitment_sha256
+                .as_bytes(),
+            refreshed
+                .commitments
+                .sequence_chain_commitment_sha256
+                .as_bytes(),
+            immediate_commitments
+                .classification_result_commitment_sha256
+                .as_bytes(),
+            immediate_commitments
+                .sideboard_snapshot_commitment_sha256
+                .as_bytes(),
+            refreshed.commitments.source_card_region_sha256.as_bytes(),
+            refreshed
+                .commitments
+                .destination_empty_drop_region_sha256
+                .as_bytes(),
+            immediate_commitments.frame_id.to_be_bytes().as_slice(),
+            immediate_commitments
+                .frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            immediate_commitments
+                .captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
+            b"private_fresh_drag_points_resolved_no_input_yet",
+        ],
+    );
+    let commitments = MtgoFreshPreparedCompetitiveEventSideboardDragCommitmentsV1 {
+        sideboard_automation_ratification_commitment_sha256: sideboard_authorization
+            .ratification_commitment_sha256,
+        sequence_chain_commitment_sha256: refreshed
+            .commitments
+            .sequence_chain_commitment_sha256
+            .clone(),
+        plan_commitment_sha256: refreshed.commitments.plan_commitment_sha256.clone(),
+        transfer: refreshed.commitments.transfer.clone(),
+        immediate_navigation_classification_commitment_sha256: immediate_commitments
+            .source_navigation_classification_result_commitment_sha256,
+        immediate_sideboard_classification_commitment_sha256: immediate_commitments
+            .classification_result_commitment_sha256,
+        immediate_sideboard_snapshot_commitment_sha256: immediate_commitments
+            .sideboard_snapshot_commitment_sha256,
+        immediate_source_card_region_sha256: refreshed
+            .commitments
+            .source_card_region_sha256
+            .clone(),
+        immediate_destination_drop_region_sha256: refreshed
+            .commitments
+            .destination_empty_drop_region_sha256
+            .clone(),
+        immediate_frame_id: immediate_commitments.frame_id,
+        immediate_frame_sequence: immediate_commitments.frame_sequence,
+        immediate_captured_at_unix_millis: immediate_commitments.captured_at_unix_millis,
+        fresh_drag_preparation_commitment_sha256,
+    };
+    Ok(OpaqueMtgoFreshPreparedCompetitiveEventSideboardDragV1 {
+        prepared: refreshed,
+        pointer_target,
+        commitments,
+    })
+}
+
+pub fn execute_fresh_competitive_event_sideboard_drag_v1(
+    prepared: OpaqueMtgoFreshPreparedCompetitiveEventSideboardDragV1,
+) -> Result<OpaqueMtgoPendingCompetitiveEventSideboardDragV1, String> {
+    reserve_input_gate_v3()?;
+    let input_sent_at_unix_millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis(),
+        Err(error) => {
+            release_unattempted_reservation_v3()?;
+            return Err(format!("system clock is before epoch: {error}"));
+        }
+    };
+    if validate_preinput_capture_freshness_v3(
+        prepared.commitments.immediate_captured_at_unix_millis,
+        input_sent_at_unix_millis,
+    )
+    .is_err()
+    {
+        release_unattempted_reservation_v3()?;
+        return Err("the immediate sideboard drag capture is stale or future-dated".to_owned());
+    }
+    let inner = prepared.prepared.commitments_v1();
+    let retained_authorization = prepared
+        .prepared
+        .sequence
+        .sideboard_authorization
+        .commitments_v1();
+    if inner.sequence_chain_commitment_sha256
+        != prepared.commitments.sequence_chain_commitment_sha256
+        || inner.plan_commitment_sha256 != prepared.commitments.plan_commitment_sha256
+        || inner.transfer != prepared.commitments.transfer
+        || inner.source_card_region_sha256
+            != prepared.commitments.immediate_source_card_region_sha256
+        || inner.destination_empty_drop_region_sha256
+            != prepared
+                .commitments
+                .immediate_destination_drop_region_sha256
+        || inner.source_frame_sequence != prepared.commitments.immediate_frame_sequence
+        || retained_authorization.ratification_commitment_sha256
+            != prepared
+                .commitments
+                .sideboard_automation_ratification_commitment_sha256
+    {
+        release_unattempted_reservation_v3()?;
+        return Err("fresh sideboard drag preparation changed before input".to_owned());
+    }
+    halt_before_input_attempt_v3()?;
+    let (emitted_mouse_record_count, cursor_parked_outside_client) =
+        send_exactly_one_sideboard_drag_v1(&prepared.pointer_target)?;
+    let input_receipt_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_DRAG_INPUT_RECEIPT_DOMAIN_V1,
+        &[
+            prepared
+                .commitments
+                .fresh_drag_preparation_commitment_sha256
+                .as_bytes(),
+            prepared
+                .commitments
+                .sideboard_automation_ratification_commitment_sha256
+                .as_bytes(),
+            prepared
+                .commitments
+                .sequence_chain_commitment_sha256
+                .as_bytes(),
+            prepared.commitments.plan_commitment_sha256.as_bytes(),
+            prepared
+                .commitments
+                .transfer
+                .step_index
+                .to_be_bytes()
+                .as_slice(),
+            prepared
+                .commitments
+                .transfer
+                .card_db_id
+                .to_be_bytes()
+                .as_slice(),
+            prepared.commitments.transfer.card_name.as_bytes(),
+            competitive_sideboard_transfer_direction_tag_v1(
+                prepared.commitments.transfer.direction,
+            ),
+            prepared
+                .commitments
+                .immediate_frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            input_sent_at_unix_millis.to_be_bytes().as_slice(),
+            &[emitted_mouse_record_count],
+            &[u8::from(cursor_parked_outside_client)],
+            b"exactly_one_visible_zone_drag_shared_gate_pending_exact_inventory_postcondition",
+        ],
+    );
+    set_pending_v3(&input_receipt_sha256)?;
+    let commitments = MtgoCompetitiveEventSideboardDragInputReceiptCommitmentsV1 {
+        fresh_drag_preparation_commitment_sha256: prepared
+            .commitments
+            .fresh_drag_preparation_commitment_sha256
+            .clone(),
+        sideboard_automation_ratification_commitment_sha256: prepared
+            .commitments
+            .sideboard_automation_ratification_commitment_sha256
+            .clone(),
+        sequence_chain_commitment_sha256: prepared
+            .commitments
+            .sequence_chain_commitment_sha256
+            .clone(),
+        transfer: prepared.commitments.transfer.clone(),
+        input_receipt_sha256,
+        source_frame_sequence: prepared.commitments.immediate_frame_sequence,
+        input_sent_at_unix_millis,
+        emitted_mouse_record_count,
+        cursor_parked_outside_client,
+    };
+    Ok(OpaqueMtgoPendingCompetitiveEventSideboardDragV1 {
+        prepared,
         commitments,
     })
 }
@@ -3653,16 +4311,218 @@ pub fn confirm_competitive_event_sideboard_transfer_visible_v1(
         MtgoCompetitiveEventSideboardTransferAdvanceV1::ReadyToSubmit(Box::new(
             OpaqueMtgoReadyCompetitiveEventSideboardV1 {
                 _spent_entry_authorization: sequence._spent_entry_authorization,
-                _lifecycle_authorization: sequence.lifecycle_authorization,
-                _current_frame: source_frame,
-                _manifest: sequence.manifest,
+                lifecycle_authorization: sequence.lifecycle_authorization,
+                sideboard_authorization: sequence.sideboard_authorization,
+                current_frame: source_frame,
+                manifest: sequence.manifest,
                 _ready: ready,
-                _event_monitor: sequence.event_monitor,
-                _effective_prior: effective_prior,
+                event_monitor: sequence.event_monitor,
+                effective_prior,
                 commitments,
             },
         )),
     )
+}
+
+pub fn confirm_pending_competitive_event_sideboard_drag_v1(
+    pending: OpaqueMtgoPendingCompetitiveEventSideboardDragV1,
+    next_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    classifier_runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoConfirmedCompetitiveEventSideboardDragV1, String> {
+    require_matching_pending_v3(&pending.commitments.input_receipt_sha256)?;
+    let after = next_frame.commitments_v1();
+    if after.frame_sequence <= pending.commitments.source_frame_sequence
+        || after.source_frame.source_capture.captured_at_unix_millis
+            <= pending.commitments.input_sent_at_unix_millis
+    {
+        halt_gate_v3()?;
+        return Err(
+            "sideboard drag postcondition is not a strictly newer post-input frame; input gate halted"
+                .to_owned(),
+        );
+    }
+    let OpaqueMtgoPendingCompetitiveEventSideboardDragV1 {
+        prepared,
+        commitments: input,
+    } = pending;
+    let fresh = prepared.commitments.clone();
+    let advance = match confirm_competitive_event_sideboard_transfer_visible_v1(
+        prepared.prepared,
+        next_frame,
+        classifier_runtime,
+        timeout_ms,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            halt_gate_v3()?;
+            return Err(format!(
+                "sideboard drag visible postcondition failed and the input gate is halted: {error}"
+            ));
+        }
+    };
+    let (resulting_sequence_or_ready_commitment_sha256, after_frame_sequence) = match &advance {
+        MtgoCompetitiveEventSideboardTransferAdvanceV1::AwaitingNext(sequence) => (
+            sequence
+                .commitments
+                .sequence_chain_commitment_sha256
+                .clone(),
+            sequence.commitments.current_frame_sequence,
+        ),
+        MtgoCompetitiveEventSideboardTransferAdvanceV1::ReadyToSubmit(ready) => (
+            ready
+                .commitments
+                .event_ready_binding_commitment_sha256
+                .clone(),
+            ready.commitments.final_frame_sequence,
+        ),
+    };
+    if input.fresh_drag_preparation_commitment_sha256
+        != fresh.fresh_drag_preparation_commitment_sha256
+        || input.sideboard_automation_ratification_commitment_sha256
+            != fresh.sideboard_automation_ratification_commitment_sha256
+        || input.sequence_chain_commitment_sha256 != fresh.sequence_chain_commitment_sha256
+        || input.transfer != fresh.transfer
+        || after_frame_sequence != after.frame_sequence
+    {
+        halt_gate_v3()?;
+        return Err(
+            "confirmed sideboard drag changed its exact preparation or visible result lineage; input gate halted"
+                .to_owned(),
+        );
+    }
+    let confirmation_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_EVENT_SIDEBOARD_DRAG_CONFIRMED_DOMAIN_V1,
+        &[
+            input.input_receipt_sha256.as_bytes(),
+            fresh.fresh_drag_preparation_commitment_sha256.as_bytes(),
+            fresh
+                .sideboard_automation_ratification_commitment_sha256
+                .as_bytes(),
+            fresh.sequence_chain_commitment_sha256.as_bytes(),
+            resulting_sequence_or_ready_commitment_sha256.as_bytes(),
+            input.transfer.step_index.to_be_bytes().as_slice(),
+            after_frame_sequence.to_be_bytes().as_slice(),
+            b"one_drag_exact_newer_inventory_transition_confirmed_shared_gate_released",
+        ],
+    );
+    release_confirmed_pending_v3(&input.input_receipt_sha256)?;
+    Ok(OpaqueMtgoConfirmedCompetitiveEventSideboardDragV1 {
+        advance,
+        commitments: MtgoConfirmedCompetitiveEventSideboardDragCommitmentsV1 {
+            input_receipt_sha256: input.input_receipt_sha256,
+            fresh_drag_preparation_commitment_sha256: fresh
+                .fresh_drag_preparation_commitment_sha256,
+            prior_sequence_chain_commitment_sha256: fresh.sequence_chain_commitment_sha256,
+            resulting_sequence_or_ready_commitment_sha256,
+            transfer: input.transfer,
+            after_frame_sequence,
+            confirmation_commitment_sha256,
+        },
+    })
+}
+
+/// Converts the exact visibly confirmed changed-sideboard target into the
+/// existing one-click lifecycle preparation for Submit Deck. The proof is
+/// retained inside the control and revalidated again after the visible
+/// transition into the next game.
+pub fn prepare_ready_competitive_event_sideboard_submit_v1(
+    ready_event: OpaqueMtgoReadyCompetitiveEventSideboardV1,
+) -> Result<OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1, String> {
+    let OpaqueMtgoReadyCompetitiveEventSideboardV1 {
+        _spent_entry_authorization,
+        lifecycle_authorization,
+        sideboard_authorization,
+        current_frame,
+        manifest,
+        _ready,
+        event_monitor,
+        effective_prior: prior,
+        commitments: ready_commitments,
+    } = ready_event;
+    let frame = current_frame.commitments_v1();
+    let sideboard_authorization_commitments = sideboard_authorization.commitments_v1();
+    if sideboard_authorization_commitments.lifecycle_authorization_commitment_sha256
+        != lifecycle_authorization
+            .commitments
+            .ratification_commitment_sha256
+        || sideboard_authorization_commitments.permission_review_commitment_sha256
+            != prior.permission_review_commitment_sha256
+        || sideboard_authorization_commitments.mode_authorization_commitment_sha256
+            != prior.mode_authorization_commitment_sha256
+        || sideboard_authorization_commitments.approved_account_alias_sha256
+            != prior.approved_account_alias_sha256
+        || sideboard_authorization_commitments.navigation_profile_commitment_sha256
+            != prior.navigation_profile_commitment_sha256
+        || sideboard_authorization_commitments.navigation_profile_admission_commitment_sha256
+            != prior.navigation_profile_admission_commitment_sha256
+        || sideboard_authorization_commitments.deck_list_sha256 != prior.deck_manifest_sha256
+        || sideboard_authorization_commitments.deck_manifest_commitment_sha256
+            != manifest.manifest_commitment_sha256()
+        || sideboard_authorization_commitments.deck_format_sha256 != prior.deck_format_sha256
+        || sideboard_authorization_commitments.policy_deployment_commitment_sha256
+            != prior.policy_deployment_commitment_sha256
+        || sideboard_authorization_commitments.automation_scope_commitment_sha256
+            != competitive_sideboard_automation_scope_v1()
+        || sideboard_authorization_commitments.event_kind != prior.event_kind
+        || prior.current_phase != MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+        || prior.current_lifecycle_snapshot_commitment_sha256
+            != frame.lifecycle_snapshot_commitment_sha256
+        || prior.current_frame_id != ready_commitments.final_frame_id
+        || prior.current_frame_sequence != ready_commitments.final_frame_sequence
+        || frame.frame_id != ready_commitments.final_frame_id
+        || frame.frame_sequence != ready_commitments.final_frame_sequence
+        || _ready.ready_commitment_sha256() != ready_commitments.ready_commitment_sha256
+        || _ready.after_snapshot_commitment_sha256()
+            != ready_commitments.final_sideboard_snapshot_commitment_sha256
+        || _ready.event_kind() != prior.event_kind
+        || _ready.event_identity_sha256() != prior.bound_event_identity_sha256
+        || prior.current_match_identity_sha256.as_deref() != Some(_ready.match_identity_sha256())
+        || prior.current_game_number != Some(_ready.game_number())
+        || manifest.deck_list_sha256() != prior.deck_manifest_sha256
+        || manifest.format_sha256() != prior.deck_format_sha256
+        || _ready.deck_manifest_commitment_sha256() != manifest.manifest_commitment_sha256()
+        || _ready.policy_deployment_commitment_sha256() != prior.policy_deployment_commitment_sha256
+    {
+        return Err(
+            "changed-sideboard Submit Deck proof differs from the exact event runtime".to_owned(),
+        );
+    }
+    let control =
+        crate::probe::bind_classified_navigation_frame_to_confirmed_sideboard_submit_control_v1(
+            current_frame,
+            _ready,
+            &lifecycle_authorization.scope,
+        )?;
+    let prepared =
+        prepare_ratified_competitive_lifecycle_control_v1(lifecycle_authorization, control)?;
+    let lifecycle = prepared.commitments_v1();
+    if lifecycle.event_kind != prior.event_kind
+        || lifecycle.action != MtgoCompetitiveLifecycleActionV1::SubmitSideboard
+        || lifecycle.event_identity_sha256 != prior.bound_event_identity_sha256
+        || lifecycle.match_identity_sha256 != prior.current_match_identity_sha256
+        || lifecycle.game_number != prior.current_game_number
+        || lifecycle.source_frame_sequence != prior.current_frame_sequence
+    {
+        return Err(
+            "prepared changed-sideboard Submit Deck control changed the exact event lineage"
+                .to_owned(),
+        );
+    }
+    let commitments = MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1 {
+        prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
+        lifecycle_preparation_commitment_sha256: lifecycle.preparation_commitment_sha256,
+        event_kind: lifecycle.event_kind,
+        action: lifecycle.action,
+        source_frame_sequence: lifecycle.source_frame_sequence,
+    };
+    Ok(OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1 {
+        _spent_entry_authorization,
+        prepared,
+        event_monitor,
+        prior,
+        commitments,
+    })
 }
 
 /// Consumes the event runtime and prepares one exact enabled lifecycle control
@@ -7272,6 +8132,19 @@ fn competitive_lifecycle_allowed_actions_commitment_v1() -> String {
     )
 }
 
+fn competitive_sideboard_automation_scope_v1() -> String {
+    hash_parts_v2(
+        COMPETITIVE_SIDEBOARD_AUTOMATION_SCOPE_DOMAIN_V1,
+        &[
+            b"mtgo_visible_competitive_sideboard_v1",
+            b"official_mtgo_drag_between_visible_zones_one_card_per_input",
+            b"strictly_newer_exact_inventory_confirmation_after_each_drag",
+            b"changed_sideboard_submit_only_after_exact_target_ready",
+            b"no_double_click_no_keyboard_no_hidden_channels_no_event_entry_no_spending",
+        ],
+    )
+}
+
 fn is_non_entry_lifecycle_action_v1(action: MtgoCompetitiveLifecycleActionV1) -> bool {
     matches!(
         action,
@@ -9403,6 +10276,50 @@ impl VerifiedPointerTargetV3 for OpaqueMtgoPreparedCompetitiveLifecycleControlV1
     }
 }
 
+struct VerifiedSideboardDragPointTargetV1<'a> {
+    pointer: &'a MtgoCompetitiveSideboardDragPointerTargetV1,
+    x: i32,
+    y: i32,
+}
+
+impl VerifiedPointerTargetV3 for VerifiedSideboardDragPointTargetV1<'_> {
+    fn hwnd_v3(&self) -> u64 {
+        self.pointer.hwnd
+    }
+
+    fn process_id_v3(&self) -> u32 {
+        self.pointer.process_id
+    }
+
+    fn process_start_filetime_100ns_v3(&self) -> u64 {
+        self.pointer.process_start_filetime_100ns
+    }
+
+    fn dpi_v3(&self) -> u32 {
+        self.pointer.dpi
+    }
+
+    fn client_rect_desktop_px_v3(&self) -> &crate::SignedRectV1 {
+        &self.pointer.client_rect_desktop_px
+    }
+
+    fn target_x_desktop_px_v3(&self) -> i32 {
+        self.x
+    }
+
+    fn target_y_desktop_px_v3(&self) -> i32 {
+        self.y
+    }
+
+    fn park_x_desktop_px_v3(&self) -> i32 {
+        self.pointer.park_x_desktop_px
+    }
+
+    fn park_y_desktop_px_v3(&self) -> i32 {
+        self.pointer.park_y_desktop_px
+    }
+}
+
 struct VerifiedGesturePointTargetV1<'a> {
     prepared: &'a ProbeOpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1,
     target_x_desktop_px: i32,
@@ -9528,6 +10445,70 @@ fn send_exactly_one_gesture_primitive_v1(
         }
     };
     Ok((emitted, cursor_park_guard.park_now()))
+}
+
+fn send_exactly_one_sideboard_drag_v1(
+    pointer: &MtgoCompetitiveSideboardDragPointerTargetV1,
+) -> Result<(u8, bool), String> {
+    let previous_context =
+        unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    if previous_context.is_invalid() {
+        return Err("the input thread could not enter Per-Monitor V2 DPI awareness".to_owned());
+    }
+    let _dpi_guard = ActuatorDpiGuardV3(previous_context);
+    if !unsafe {
+        AreDpiAwarenessContextsEqual(
+            GetThreadDpiAwarenessContext(),
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        )
+    }
+    .as_bool()
+    {
+        return Err("the input thread is not Per-Monitor V2 DPI aware".to_owned());
+    }
+    let source = VerifiedSideboardDragPointTargetV1 {
+        pointer,
+        x: pointer.source_x_desktop_px,
+        y: pointer.source_y_desktop_px,
+    };
+    let destination = VerifiedSideboardDragPointTargetV1 {
+        pointer,
+        x: pointer.destination_x_desktop_px,
+        y: pointer.destination_y_desktop_px,
+    };
+    verify_live_target_v3(&source, false)?;
+    verify_live_target_v3(&destination, false)?;
+    let mut cursor_park_guard = CursorParkGuardV3 {
+        x: pointer.park_x_desktop_px,
+        y: pointer.park_y_desktop_px,
+        parked: false,
+    };
+    unsafe { SetCursorPos(pointer.source_x_desktop_px, pointer.source_y_desktop_px) }
+        .map_err(|error| format!("move cursor to sideboard source card: {error}"))?;
+    verify_live_target_v3(&source, true)?;
+    let down = [mouse_input_record_v1(MOUSEEVENTF_LEFTDOWN)];
+    if unsafe { SendInput(&down, size_of::<INPUT>() as i32) } != 1 {
+        release_mouse_buttons_v1();
+        return Err("SendInput did not emit the sideboard drag press".to_owned());
+    }
+    if let Err(error) = unsafe {
+        SetCursorPos(
+            pointer.destination_x_desktop_px,
+            pointer.destination_y_desktop_px,
+        )
+    }
+    .map_err(|error| format!("move cursor to sideboard destination: {error}"))
+    .and_then(|_| verify_live_target_v3(&destination, true))
+    {
+        release_mouse_buttons_v1();
+        return Err(error);
+    }
+    let up = [mouse_input_record_v1(MOUSEEVENTF_LEFTUP)];
+    if unsafe { SendInput(&up, size_of::<INPUT>() as i32) } != 1 {
+        release_mouse_buttons_v1();
+        return Err("SendInput did not emit the sideboard drag release".to_owned());
+    }
+    Ok((2, cursor_park_guard.park_now()))
 }
 
 fn send_mouse_activation_v1(activation: MtgoDuelPrimaryActivationV1) -> Result<u8, String> {
@@ -12008,6 +12989,18 @@ mod tests {
             64
         );
         assert!(!ratified.permits_event_entry_v1());
+    }
+
+    #[test]
+    fn production_sideboard_automation_ratification_is_independently_empty() {
+        assert_eq!(
+            RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1,
+            None
+        );
+        let scope = competitive_sideboard_automation_scope_v1();
+        assert!(is_sha256_v2(&scope));
+        assert_eq!(scope, competitive_sideboard_automation_scope_v1());
+        assert_ne!(scope, competitive_lifecycle_allowed_actions_commitment_v1());
     }
 
     #[test]

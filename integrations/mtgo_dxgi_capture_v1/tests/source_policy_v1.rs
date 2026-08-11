@@ -401,17 +401,51 @@ fn competitive_sideboard_measurement_is_pixel_bound_event_bound_and_non_actionab
         "begin_competitive_event_sideboard_transfer_sequence_v1",
         "prepare_competitive_event_sideboard_transfer_drag_v1",
         "confirm_competitive_event_sideboard_transfer_visible_v1",
+        "review_competitive_sideboard_automation_ratification_candidate_v1",
+        "ratify_competitive_sideboard_automation_v1",
+        "RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1: Option<&str> = None",
+        "COMPETITIVE_SIDEBOARD_AUTOMATION_SCOPE_DOMAIN_V1",
         "OpaqueMtgoCompetitiveEventSideboardSequenceV1",
         "OpaqueMtgoPreparedCompetitiveEventSideboardTransferV1",
         "OpaqueMtgoReadyCompetitiveEventSideboardV1",
+        "OpaqueMtgoFreshPreparedCompetitiveEventSideboardDragV1",
+        "OpaqueMtgoPendingCompetitiveEventSideboardDragV1",
+        "OpaqueMtgoConfirmedCompetitiveEventSideboardDragV1",
+        "prepare_fresh_competitive_event_sideboard_transfer_drag_v1",
+        "execute_fresh_competitive_event_sideboard_drag_v1",
+        "confirm_pending_competitive_event_sideboard_drag_v1",
+        "send_exactly_one_sideboard_drag_v1",
+        "prepare_ready_competitive_event_sideboard_submit_v1",
         "sideboard_to_mainboard_first_one_card_per_step_visible_confirmation_required_no_input",
         "official_mtgo_drag_between_visible_zones_preparation_only_no_input",
         "exactly_one_newer_visible_sideboard_transfer_no_causality_no_input",
         "all_model_selected_sideboard_transfers_visibly_confirmed_no_submit_no_input",
+        "official_mtgo_drag_between_visible_zones_one_card_per_input",
+        "strictly_newer_exact_inventory_confirmation_after_each_drag",
+        "changed_sideboard_submit_only_after_exact_target_ready",
+        "no_double_click_no_keyboard_no_hidden_channels_no_event_entry_no_spending",
+        "halt_before_input_attempt_v3",
+        "set_pending_v3",
+        "release_confirmed_pending_v3",
     ] {
         assert!(
             coordinator.contains(required),
             "event sideboard coordinator is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "RATIFIED_COMPETITIVE_SIDEBOARD_AUTOMATION_COMMITMENT_V1: Option<&str> = Some",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !coordinator.contains(forbidden),
+            "event sideboard coordinator exposes a forbidden authority or channel: {forbidden}"
         );
     }
 }

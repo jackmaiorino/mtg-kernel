@@ -1,6 +1,6 @@
 use crate::{
-    validate_authorization_for_mode_v1, MtgoAuthorizationScopeV1, MtgoContractErrorV1,
-    MtgoRectPxV1, MtgoRuntimeModeV1,
+    validate_authorization_for_mode_v1, CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
+    MtgoAuthorizationScopeV1, MtgoContractErrorV1, MtgoRectPxV1, MtgoRuntimeModeV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -338,6 +338,43 @@ pub fn make_offline_competitive_lifecycle_intent_v1(
     })
 }
 
+/// Builds the only changed-sideboard Submit Sideboard intent. Unlike the
+/// generic lifecycle path, this requires the exact newer visible target
+/// configuration proof produced after all declared transfers were confirmed.
+/// It remains coordinate-free and grants no input authority.
+pub fn make_offline_confirmed_sideboard_submit_intent_v1(
+    source: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    ready: &CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
+    mode_authorization: &MtgoAuthorizationScopeV1,
+) -> Result<MtgoOfflineCompetitiveLifecycleIntentV1, MtgoContractErrorV1> {
+    validate_authorization_for_mode_v1(mode_authorization, runtime_mode(source.event_kind()))?;
+    validate_action_source_phase(
+        source.phase(),
+        MtgoCompetitiveLifecycleActionV1::SubmitSideboard,
+    )?;
+    if source.event_kind() != ready.event_kind()
+        || source.event_identity_sha256_v1() != Some(ready.event_identity_sha256())
+        || source.match_identity_sha256_v1() != Some(ready.match_identity_sha256())
+        || source.game_number_v1() != Some(ready.game_number())
+        || source.frame_id_v1() != ready.after_frame_id()
+        || source.frame_sequence() != ready.after_frame_sequence()
+        || source.frame_sha256_v1() != ready.after_frame_sha256()
+        || source.snapshot_commitment_sha256() != ready.after_lifecycle_snapshot_commitment_sha256()
+    {
+        return Err(error(
+            "changed_sideboard_submit_source",
+            "changed-sideboard submission requires the exact final visible lifecycle frame",
+        ));
+    }
+    Ok(MtgoOfflineCompetitiveLifecycleIntentV1 {
+        schema_version: MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+        source_snapshot_commitment_sha256: source.snapshot_commitment_sha256.clone(),
+        event_kind: source.event_kind(),
+        action: MtgoCompetitiveLifecycleActionV1::SubmitSideboard,
+        entry_authorization_sha256: None,
+    })
+}
+
 pub fn validate_competitive_lifecycle_action_transition_v1(
     source: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     intent: &MtgoOfflineCompetitiveLifecycleIntentV1,
@@ -409,6 +446,39 @@ pub fn validate_checked_competitive_lifecycle_action_transition_v1(
         ));
     }
     validate_identity_continuity(source, next, intent.action)?;
+    Ok(transition(source, next))
+}
+
+/// Validates the exact postcondition of the proof-specific changed-sideboard
+/// submission path. The generic validator intentionally continues to reject
+/// this source unless it visibly declares no changes.
+pub fn validate_checked_confirmed_sideboard_submit_transition_v1(
+    source: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    ready: &CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
+    intent: &MtgoOfflineCompetitiveLifecycleIntentV1,
+    mode_authorization: &MtgoAuthorizationScopeV1,
+    next: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+) -> Result<CheckedUntrustedMtgoCompetitiveLifecycleTransitionV1, MtgoContractErrorV1> {
+    let expected_intent =
+        make_offline_confirmed_sideboard_submit_intent_v1(source, ready, mode_authorization)?;
+    if intent != &expected_intent {
+        return Err(error(
+            "changed_sideboard_submit_intent_binding",
+            "changed-sideboard intent must bind the exact confirmed target and source",
+        ));
+    }
+    validate_common_transition(source, next)?;
+    if next.phase() != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress {
+        return Err(error(
+            "changed_sideboard_submit_transition",
+            "changed-sideboard submission must visibly advance into the next game",
+        ));
+    }
+    validate_identity_continuity(
+        source,
+        next,
+        MtgoCompetitiveLifecycleActionV1::SubmitSideboard,
+    )?;
     Ok(transition(source, next))
 }
 
@@ -731,6 +801,25 @@ fn validate_identity_continuity(
         return Err(error(
             "lifecycle_match_continuity",
             "the match identity changed across one match action",
+        ));
+    }
+    let game_continuity_valid = match action {
+        MtgoCompetitiveLifecycleActionV1::AcceptPairing => next.game_number_v1() == Some(1),
+        MtgoCompetitiveLifecycleActionV1::SubmitSideboard => {
+            source
+                .game_number_v1()
+                .and_then(|value| value.checked_add(1))
+                == next.game_number_v1()
+        }
+        MtgoCompetitiveLifecycleActionV1::ResumeMatch => {
+            source.game_number_v1() == next.game_number_v1()
+        }
+        _ => true,
+    };
+    if !game_continuity_valid {
+        return Err(error(
+            "lifecycle_game_continuity",
+            "the visible game number is not the exact postcondition of the match action",
         ));
     }
     Ok(())

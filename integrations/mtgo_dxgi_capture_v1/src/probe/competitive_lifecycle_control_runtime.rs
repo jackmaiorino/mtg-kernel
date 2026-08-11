@@ -4,9 +4,12 @@ use super::{
 };
 use mtgo_blackbox_v1::{
     make_offline_competitive_lifecycle_intent_v1,
+    make_offline_confirmed_sideboard_submit_intent_v1,
     validate_checked_competitive_lifecycle_action_transition_v1,
+    validate_checked_confirmed_sideboard_submit_transition_v1,
     visible_frame_region_content_sha256_v1, CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
-    CheckedUntrustedMtgoCompetitiveLifecycleTransitionV1, MtgoAuthorizationScopeV1,
+    CheckedUntrustedMtgoCompetitiveLifecycleTransitionV1,
+    CheckedUntrustedMtgoCompetitiveSideboardReadyV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1,
     MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1, MtgoRectPxV1, MtgoSizePxV1,
 };
@@ -34,6 +37,7 @@ pub struct MtgoOpaqueCompetitiveLifecycleControlCommitmentsV1 {
     pub frame_sequence: u64,
     pub control_region_sha256: String,
     pub control_confidence_bps: u16,
+    pub changed_sideboard_ready_commitment_sha256: Option<String>,
     pub control_binding_commitment_sha256: String,
 }
 
@@ -62,6 +66,7 @@ pub struct MtgoOpaqueCompetitiveLifecycleControlCommitmentsV1 {
 pub struct OpaqueMtgoCompetitiveLifecycleControlV1 {
     pub(crate) _source: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     pub(crate) _control_rect_client_px: MtgoRectPxV1,
+    pub(crate) _changed_sideboard_ready: Option<CheckedUntrustedMtgoCompetitiveSideboardReadyV1>,
     pub(crate) commitments: MtgoOpaqueCompetitiveLifecycleControlCommitmentsV1,
 }
 
@@ -133,7 +138,43 @@ pub fn bind_classified_navigation_frame_to_lifecycle_control_v1(
     source: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     action: MtgoCompetitiveLifecycleActionV1,
 ) -> Result<OpaqueMtgoCompetitiveLifecycleControlV1, String> {
-    let fact = select_lifecycle_control_fact_v1(&source._lifecycle, action)?;
+    bind_classified_navigation_frame_to_lifecycle_control_inner_v1(source, action, None)
+}
+
+/// Binds Submit Deck only after the exact model-selected changed configuration
+/// is already visible on this same retained frame. This cannot be invoked with
+/// a generic boolean or with the no-change lifecycle path.
+pub fn bind_classified_navigation_frame_to_confirmed_sideboard_submit_control_v1(
+    source: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    ready: CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
+    authorization: &MtgoAuthorizationScopeV1,
+) -> Result<OpaqueMtgoCompetitiveLifecycleControlV1, String> {
+    make_offline_confirmed_sideboard_submit_intent_v1(&source._lifecycle, &ready, authorization)
+        .map_err(|error| format!("bind confirmed changed-sideboard submit source: {error}"))?;
+    bind_classified_navigation_frame_to_lifecycle_control_inner_v1(
+        source,
+        MtgoCompetitiveLifecycleActionV1::SubmitSideboard,
+        Some(ready),
+    )
+}
+
+fn bind_classified_navigation_frame_to_lifecycle_control_inner_v1(
+    source: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    action: MtgoCompetitiveLifecycleActionV1,
+    changed_sideboard_ready: Option<CheckedUntrustedMtgoCompetitiveSideboardReadyV1>,
+) -> Result<OpaqueMtgoCompetitiveLifecycleControlV1, String> {
+    let fact = if changed_sideboard_ready.is_some() {
+        source
+            ._lifecycle
+            .visible_facts_v1()
+            .iter()
+            .find(|fact| fact.kind == MtgoLifecycleVisibleFactKindV1::SideboardSubmitControlEnabled)
+            .ok_or(
+                "confirmed changed-sideboard source is missing the enabled Submit Deck control",
+            )?
+    } else {
+        select_lifecycle_control_fact_v1(&source._lifecycle, action)?
+    };
     let fact_kind = fact.kind;
     let control_rect_client_px = fact.rect_client_px.clone();
     let control_region_sha256 = fact.content_sha256.clone();
@@ -166,6 +207,9 @@ pub fn bind_classified_navigation_frame_to_lifecycle_control_v1(
     }
 
     let source_frame = source._source_frame.commitments_v1();
+    let changed_sideboard_ready_commitment_sha256 = changed_sideboard_ready
+        .as_ref()
+        .map(|ready| ready.ready_commitment_sha256().to_owned());
     let control_binding_commitment_sha256 = commitment_v1(&[
         source_frame.frame_profile_binding_sha256.as_bytes(),
         classified.runtime_identity_commitment_sha256.as_bytes(),
@@ -190,7 +234,16 @@ pub fn bind_classified_navigation_frame_to_lifecycle_control_v1(
         control_rect_client_px.height.to_be_bytes().as_slice(),
         control_region_sha256.as_bytes(),
         control_confidence_bps.to_be_bytes().as_slice(),
-        b"exact_enabled_control_detection_only_no_coordinates_no_input",
+        changed_sideboard_ready_commitment_sha256
+            .as_deref()
+            .unwrap_or("")
+            .as_bytes(),
+        if changed_sideboard_ready_commitment_sha256.is_some() {
+            b"exact_changed_sideboard_ready_enabled_control_detection_no_coordinates_no_input"
+                .as_slice()
+        } else {
+            b"exact_enabled_control_detection_only_no_coordinates_no_input".as_slice()
+        },
     ]);
     let commitments = MtgoOpaqueCompetitiveLifecycleControlCommitmentsV1 {
         source_frame,
@@ -208,11 +261,13 @@ pub fn bind_classified_navigation_frame_to_lifecycle_control_v1(
         frame_sequence: classified.frame_sequence,
         control_region_sha256,
         control_confidence_bps,
+        changed_sideboard_ready_commitment_sha256,
         control_binding_commitment_sha256,
     };
     Ok(OpaqueMtgoCompetitiveLifecycleControlV1 {
         _source: source,
         _control_rect_client_px: control_rect_client_px,
+        _changed_sideboard_ready: changed_sideboard_ready,
         commitments,
     })
 }
@@ -266,21 +321,52 @@ pub(crate) fn confirm_opaque_competitive_lifecycle_control_postcondition_v1(
                 .to_owned(),
         );
     }
-    let intent = make_offline_competitive_lifecycle_intent_v1(
-        &before._source._lifecycle,
-        before_commitments.action,
-        authorization,
-        None,
-    )
-    .map_err(|error| format!("build lifecycle control intent: {error}"))?;
-    let transition = validate_checked_competitive_lifecycle_action_transition_v1(
-        &before._source._lifecycle,
-        &intent,
-        authorization,
-        None,
-        &after._lifecycle,
-    )
-    .map_err(|error| format!("validate lifecycle control postcondition: {error}"))?;
+    let transition = if let Some(ready) = before._changed_sideboard_ready.as_ref() {
+        if before_commitments.action != MtgoCompetitiveLifecycleActionV1::SubmitSideboard
+            || before_commitments
+                .changed_sideboard_ready_commitment_sha256
+                .as_deref()
+                != Some(ready.ready_commitment_sha256())
+        {
+            return Err("changed-sideboard control lost its exact ready proof".to_owned());
+        }
+        let intent = make_offline_confirmed_sideboard_submit_intent_v1(
+            &before._source._lifecycle,
+            ready,
+            authorization,
+        )
+        .map_err(|error| format!("build confirmed changed-sideboard intent: {error}"))?;
+        validate_checked_confirmed_sideboard_submit_transition_v1(
+            &before._source._lifecycle,
+            ready,
+            &intent,
+            authorization,
+            &after._lifecycle,
+        )
+        .map_err(|error| format!("validate changed-sideboard submit postcondition: {error}"))?
+    } else {
+        if before_commitments
+            .changed_sideboard_ready_commitment_sha256
+            .is_some()
+        {
+            return Err("generic lifecycle control contains a changed-sideboard proof".to_owned());
+        }
+        let intent = make_offline_competitive_lifecycle_intent_v1(
+            &before._source._lifecycle,
+            before_commitments.action,
+            authorization,
+            None,
+        )
+        .map_err(|error| format!("build lifecycle control intent: {error}"))?;
+        validate_checked_competitive_lifecycle_action_transition_v1(
+            &before._source._lifecycle,
+            &intent,
+            authorization,
+            None,
+            &after._lifecycle,
+        )
+        .map_err(|error| format!("validate lifecycle control postcondition: {error}"))?
+    };
     let after_capture_commitment_sha256 = after_commitments
         .source_frame
         .source_capture

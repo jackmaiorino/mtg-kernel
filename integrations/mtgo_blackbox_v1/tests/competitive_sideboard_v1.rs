@@ -210,6 +210,45 @@ fn selection(
     }
 }
 
+fn league_authorization() -> MtgoAuthorizationScopeV1 {
+    MtgoAuthorizationScopeV1 {
+        schema_version: MTGO_AUTHORIZATION_SCHEMA_V1,
+        account_alias_sha256: digest('a'),
+        written_permission_sha256: digest('b'),
+        visible_channels_only: true,
+        league_input: true,
+        challenge_input: false,
+        ..MtgoAuthorizationScopeV1::default()
+    }
+}
+
+fn match_in_progress_raw(sequence: u64) -> MtgoVisibleCompetitiveLifecycleSnapshotV1 {
+    let mut next = lifecycle_raw(sequence);
+    next.snapshot_id = format!("match-lifecycle-{sequence}");
+    next.phase = MtgoCompetitiveLifecyclePhaseV1::MatchInProgress;
+    next.game_number = Some(2);
+    next.facts = [
+        MtgoLifecycleVisibleFactKindV1::MatchSurfaceVisible,
+        MtgoLifecycleVisibleFactKindV1::LocalClockVisible,
+        MtgoLifecycleVisibleFactKindV1::OpponentClockVisible,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, kind)| MtgoLifecycleVisibleFactV1 {
+        kind,
+        rect_client_px: MtgoRectPxV1 {
+            x: 10 + (index as u32 * 25),
+            y: 10,
+            width: 20,
+            height: 20,
+        },
+        content_sha256: digest('2'),
+        confidence_bps: 10_000,
+    })
+    .collect();
+    next
+}
+
 #[test]
 fn manifest_is_canonical_exact_and_non_authorizing() {
     let manifest = validate_competitive_deck_manifest_v1(manifest_raw()).unwrap();
@@ -430,6 +469,12 @@ fn ready_confirmation_requires_exact_target_on_changed_newer_frame() {
     assert_eq!(ready.after_frame_id(), 11);
     assert_eq!(ready.after_frame_sequence(), 11);
     assert_eq!(ready.after_frame_sha256(), format!("{:064x}", 11));
+    assert_eq!(
+        ready.after_lifecycle_snapshot_commitment_sha256(),
+        validate_visible_competitive_lifecycle_snapshot_v1(lifecycle_raw(11))
+            .unwrap()
+            .snapshot_commitment_sha256()
+    );
     assert_eq!(ready.ready_commitment_sha256().len(), 64);
     assert!(!ready.safe_for_live_input_v1());
     assert!(!ready.permits_sideboard_submission_v1());
@@ -445,4 +490,80 @@ fn ready_confirmation_requires_exact_target_on_changed_newer_frame() {
     let plan = validate_competitive_sideboard_selection_v1(source, request).unwrap();
     let stale = checked_snapshot(&manifest, &swapped_configuration(), 10);
     assert!(confirm_competitive_sideboard_target_visible_v1(plan, stale).is_err());
+}
+
+#[test]
+fn changed_sideboard_submit_requires_exact_ready_source_and_new_game_postcondition() {
+    let manifest = validate_competitive_deck_manifest_v1(manifest_raw()).unwrap();
+    let source = checked_snapshot(&manifest, &starting_configuration(), 10);
+    let request = selection(&source, swapped_configuration());
+    let plan = validate_competitive_sideboard_selection_v1(source, request).unwrap();
+    let confirmed = checked_snapshot(&manifest, &swapped_configuration(), 11);
+    let ready = confirm_competitive_sideboard_target_visible_v1(plan, confirmed).unwrap();
+    let final_lifecycle =
+        validate_visible_competitive_lifecycle_snapshot_v1(lifecycle_raw(11)).unwrap();
+    let authorization = league_authorization();
+
+    assert!(make_offline_competitive_lifecycle_intent_v1(
+        &final_lifecycle,
+        MtgoCompetitiveLifecycleActionV1::SubmitSideboard,
+        &authorization,
+        None,
+    )
+    .is_err());
+    let intent =
+        make_offline_confirmed_sideboard_submit_intent_v1(&final_lifecycle, &ready, &authorization)
+            .unwrap();
+    let next =
+        validate_visible_competitive_lifecycle_snapshot_v1(match_in_progress_raw(12)).unwrap();
+    let transition = validate_checked_confirmed_sideboard_submit_transition_v1(
+        &final_lifecycle,
+        &ready,
+        &intent,
+        &authorization,
+        &next,
+    )
+    .unwrap();
+    assert_eq!(
+        transition.source_snapshot_commitment_sha256(),
+        final_lifecycle.snapshot_commitment_sha256()
+    );
+    assert_eq!(
+        transition.next_snapshot_commitment_sha256(),
+        next.snapshot_commitment_sha256()
+    );
+
+    let same_game = validate_visible_competitive_lifecycle_snapshot_v1({
+        let mut value = match_in_progress_raw(12);
+        value.game_number = Some(1);
+        value
+    })
+    .unwrap();
+    assert!(validate_checked_confirmed_sideboard_submit_transition_v1(
+        &final_lifecycle,
+        &ready,
+        &intent,
+        &authorization,
+        &same_game,
+    )
+    .is_err());
+
+    let wrong_source =
+        validate_visible_competitive_lifecycle_snapshot_v1(lifecycle_raw(12)).unwrap();
+    assert!(make_offline_confirmed_sideboard_submit_intent_v1(
+        &wrong_source,
+        &ready,
+        &authorization,
+    )
+    .is_err());
+
+    let stale_next = validate_visible_competitive_lifecycle_snapshot_v1(lifecycle_raw(12)).unwrap();
+    assert!(validate_checked_confirmed_sideboard_submit_transition_v1(
+        &final_lifecycle,
+        &ready,
+        &intent,
+        &authorization,
+        &stale_next,
+    )
+    .is_err());
 }
