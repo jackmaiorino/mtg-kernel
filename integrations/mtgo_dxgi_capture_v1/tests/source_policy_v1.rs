@@ -464,8 +464,10 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "ratify_competitive_duel_pass_authorization_from_correspondence_v2",
         "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
         "ratify_competitive_match_launch_v1",
-        "ratify_competitive_match_launch_attended_v2",
-        "MtgoAttendedCompetitiveMatchLaunchRequestV2",
+        "ratify_competitive_match_launch_attended_v3",
+        "MtgoAttendedCompetitiveMatchLaunchRequestV3",
+        "event_display_label",
+        "opponent_display_name",
         "stdin.is_terminal()",
         "stdout.is_terminal()",
         "BCryptGenRandom",
@@ -493,6 +495,7 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         );
     }
     for forbidden in [
+        "ratify_competitive_match_launch_attended_v2",
         "INPUT_KEYBOARD",
         "KEYBDINPUT",
         "keybd_event",

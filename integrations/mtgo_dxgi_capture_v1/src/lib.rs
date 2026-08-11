@@ -17,10 +17,10 @@ pub use actuator::{
     mtgo_input_gate_status_v3, pregame_input_gate_status_v3,
     ratify_competitive_duel_pass_authorization_v1,
     ratify_competitive_duel_pass_authorization_from_correspondence_v2,
-    ratify_competitive_match_launch_attended_v2, ratify_competitive_match_launch_v1,
+    ratify_competitive_match_launch_attended_v3, ratify_competitive_match_launch_v1,
     ratify_private_match_authorization_v3,
     MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
-    MtgoAttendedCompetitiveMatchLaunchRequestV2,
+    MtgoAttendedCompetitiveMatchLaunchRequestV3,
     MtgoConfirmedCompetitiveDuelPassCommitmentsV1, MtgoInputGateStatusV3,
     MtgoPregameInputGateStatusV3,
     OpaqueMtgoAuthorizationBoundCompetitiveDuelPassV1,
@@ -28,7 +28,7 @@ pub use actuator::{
     OpaqueMtgoPendingCompetitiveDuelPassV1, OpaqueMtgoPendingPregameInputV3,
     RatifiedMtgoCompetitiveDuelPassAuthorizationV1, RatifiedMtgoCompetitiveMatchLaunchV1,
     RatifiedMtgoPrivateMatchAuthorizationV3,
-    MTGO_ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_SCHEMA_V2,
+    MTGO_ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_SCHEMA_V3,
 };
 
 #[cfg(target_os = "windows")]
