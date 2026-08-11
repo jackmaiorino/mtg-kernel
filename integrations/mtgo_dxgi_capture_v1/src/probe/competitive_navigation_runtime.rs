@@ -717,7 +717,7 @@ fn verify_runtime_artifact_v1(
     Ok(canonical)
 }
 
-fn verify_runtime_identity_now_v1(
+pub(super) fn verify_runtime_identity_now_v1(
     runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
 ) -> Result<(), String> {
     for (path, expected, label) in [
@@ -795,8 +795,52 @@ fn invoke_verified_navigation_classifier_process_v1(
     canonical_bgra8: &[u8],
     timeout: Duration,
 ) -> Result<Vec<u8>, String> {
+    invoke_verified_classifier_process_v1(
+        runtime,
+        "--mtgo-visible-competitive-navigation-v1",
+        NAVIGATION_CLASSIFIER_PROTOCOL_MAGIC_V1,
+        header_json,
+        classifier_assets_manifest,
+        canonical_bgra8,
+        timeout,
+    )
+}
+
+pub(super) fn invoke_verified_competitive_event_record_classifier_process_v1(
+    runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    header_json: &[u8],
+    classifier_assets_manifest: &[u8],
+    canonical_bgra8: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
+    invoke_verified_classifier_process_v1(
+        runtime,
+        "--mtgo-visible-competitive-event-record-v1",
+        b"MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1\0",
+        header_json,
+        classifier_assets_manifest,
+        canonical_bgra8,
+        timeout,
+    )
+}
+
+pub(super) fn competitive_navigation_classifier_assets_manifest_bytes_v1(
+    runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+) -> &[u8] {
+    &runtime.classifier_assets_manifest_bytes
+}
+
+fn invoke_verified_classifier_process_v1(
+    runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    mode_argument: &str,
+    protocol_magic: &[u8],
+    header_json: &[u8],
+    classifier_assets_manifest: &[u8],
+    canonical_bgra8: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
     let mut child = Command::new(&runtime.executable_path)
-        .arg("--mtgo-visible-competitive-navigation-v1")
+        .arg(mode_argument)
         .current_dir(
             runtime
                 .executable_path
@@ -838,7 +882,7 @@ fn invoke_verified_navigation_classifier_process_v1(
         thread::scope(|scope| {
             let writer = scope.spawn(|| -> Result<(), String> {
                 stdin
-                    .write_all(NAVIGATION_CLASSIFIER_PROTOCOL_MAGIC_V1)
+                    .write_all(protocol_magic)
                     .and_then(|_| {
                         stdin.write_all(
                             &u64::try_from(header_json.len())

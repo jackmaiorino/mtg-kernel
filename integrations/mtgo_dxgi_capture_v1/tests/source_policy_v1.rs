@@ -248,6 +248,61 @@ fn competitive_event_record_is_same_frame_pixel_bound_and_non_actionable() {
 }
 
 #[test]
+fn competitive_event_record_parser_is_exact_frame_bounded_and_unratified() {
+    let source = include_str!("../src/probe/competitive_event_record_runtime.rs");
+    let process_source = include_str!("../src/probe/competitive_navigation_runtime.rs");
+    let combined = format!("{source}\n{process_source}");
+    let runtime_start = source
+        .find("pub fn classify_checked_untrusted_competitive_event_record_v1")
+        .expect("event-record parser runtime must exist");
+    let runtime_end = source[runtime_start..]
+        .find("\nfn parse_event_record_classifier_response_v1")
+        .map(|offset| runtime_start + offset)
+        .expect("event-record parser runtime must have a bounded source section");
+    let runtime = &source[runtime_start..runtime_end];
+
+    for required in [
+        "OpaqueMtgoAdmittedCompetitiveNavigationFrameV1",
+        "MtgoCompetitiveEventRecordClassifierProcessResponseV1",
+        "league_and_challenge_eight_slice_event_record_checked_untrusted_v1",
+        "--mtgo-visible-competitive-event-record-v1",
+        "MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1",
+        "validate_visible_competitive_lifecycle_snapshot_v1",
+        "rehash_lifecycle_visible_facts_for_event_record_v1",
+        "validate_visible_competitive_event_record_v1",
+        "validate_event_record_visible_fact_pixels_v1",
+        "checked_untrusted_event_record_parser_no_ratification_no_entry_no_spending_no_gameplay_no_input",
+    ] {
+        assert!(
+            combined.contains(required),
+            "bounded competitive event-record parser is missing: {required}"
+        );
+    }
+    assert!(
+        !runtime.contains("OpaqueMtgoClassifiedCompetitiveNavigationFrameV1"),
+        "the eight-slice parser must start from the admitted main-client frame, not the six-slice entry classifier"
+    );
+    for forbidden in [
+        "pub fn canonical_bgra8",
+        "pub fn visible_fact_rectangles",
+        "pub fn input_command",
+        "safe_for_live_classification_v1(&self) -> bool {\n        true",
+        "permits_event_entry_v1(&self) -> bool {\n        true",
+        "permits_spending_v1(&self) -> bool {\n        true",
+        "safe_for_input_v1(&self) -> bool {\n        true",
+        "event_record_evaluation_ratification",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !combined.contains(forbidden),
+            "bounded competitive event-record parser exposes forbidden authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn opaque_duel_perception_runtime_retains_pixels_through_scoring_without_input_authority() {
     let source = include_str!("../src/probe/duel_perception_runtime.rs");
     for required in [
