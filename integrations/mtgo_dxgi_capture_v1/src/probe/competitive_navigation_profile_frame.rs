@@ -13,7 +13,7 @@ const COMPETITIVE_NAVIGATION_FRAME_PROFILE_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-admitted-competitive-navigation-frame-profile-binding-v1";
 
 /// Copyable commitments for one in-process main-client navigation capture
-/// bound to one separately admitted four-slice profile. This telemetry does
+/// bound to one separately admitted six-slice profile. This telemetry does
 /// not prove capture and grants no downstream authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoAdmittedCompetitiveNavigationFrameCommitmentsV1 {
@@ -95,7 +95,7 @@ impl OpaqueMtgoAdmittedCompetitiveNavigationFrameV1 {
 }
 
 /// Captures the foreground main MTGO client through Desktop Duplication and
-/// binds the opaque result to one separately admitted four-slice navigation
+/// binds the opaque result to one separately admitted six-slice navigation
 /// profile. The profile's production ratification root is currently empty, so
 /// application callers cannot reach capture through this function.
 pub fn capture_admitted_mtgo_competitive_navigation_frame_v1(
@@ -103,10 +103,10 @@ pub fn capture_admitted_mtgo_competitive_navigation_frame_v1(
     timeout_ms: u32,
 ) -> Result<OpaqueMtgoAdmittedCompetitiveNavigationFrameV1, String> {
     if profile.scope()
-        != MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeBrowserAndEntryReviewClassification
+        != MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeEntryTransitionClassification
     {
         return Err(
-            "navigation profile does not cover League and Challenge browser and entry review"
+            "navigation profile does not cover League and Challenge browser, entry review, and entered-waiting postcondition"
                 .to_owned(),
         );
     }

@@ -26,15 +26,19 @@ const RATIFIED_COMPETITIVE_NAVIGATION_EVALUATION_COMMITMENT_V1: Option<&str> = N
 pub enum MtgoCompetitiveNavigationSliceV1 {
     LeagueEventBrowser,
     LeagueEntryReview,
+    LeagueEnteredWaitingForPairing,
     ChallengeEventBrowser,
     ChallengeEntryReview,
+    ChallengeEnteredWaitingForPairing,
 }
 
-const REQUIRED_NAVIGATION_SLICES_V1: [MtgoCompetitiveNavigationSliceV1; 4] = [
+const REQUIRED_NAVIGATION_SLICES_V1: [MtgoCompetitiveNavigationSliceV1; 6] = [
     MtgoCompetitiveNavigationSliceV1::LeagueEventBrowser,
     MtgoCompetitiveNavigationSliceV1::LeagueEntryReview,
+    MtgoCompetitiveNavigationSliceV1::LeagueEnteredWaitingForPairing,
     MtgoCompetitiveNavigationSliceV1::ChallengeEventBrowser,
     MtgoCompetitiveNavigationSliceV1::ChallengeEntryReview,
+    MtgoCompetitiveNavigationSliceV1::ChallengeEnteredWaitingForPairing,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -414,12 +418,12 @@ impl CheckedUntrustedMtgoCompetitiveNavigationEvaluationV1 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoCompetitiveNavigationProfileScopeV1 {
-    LeagueAndChallengeBrowserAndEntryReviewClassification,
+    LeagueAndChallengeEntryTransitionClassification,
 }
 
 /// A separately ratified profile identity for classifying League and Challenge
-/// browser and entry-review frames. It remains insufficient for event entry,
-/// resource spending, coordinates, or input.
+/// browser, entry-review, and entered-waiting frames. It remains insufficient
+/// for event entry, resource spending, coordinates, or input.
 ///
 /// Production currently has no ratified evaluation commitment, so callers
 /// cannot construct this value.
@@ -440,7 +444,7 @@ pub struct AdmittedMtgoCompetitiveNavigationProfileV1 {
 
 impl AdmittedMtgoCompetitiveNavigationProfileV1 {
     pub fn scope(&self) -> MtgoCompetitiveNavigationProfileScopeV1 {
-        MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeBrowserAndEntryReviewClassification
+        MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeEntryTransitionClassification
     }
 
     pub fn profile_commitment_sha256(&self) -> &str {
@@ -940,7 +944,7 @@ pub fn evaluate_untrusted_competitive_navigation_profile_v1(
     })
 }
 
-/// Admits only the exact four-slice evaluation pinned in the private production
+/// Admits only the exact six-slice evaluation pinned in the private production
 /// trust root. The root remains empty until a real reviewed navigation corpus
 /// and classifier run exist.
 pub fn admit_ratified_competitive_navigation_profile_v1(
@@ -989,7 +993,7 @@ fn admit_competitive_navigation_profile_against_ratification_v1(
         &[
             evaluation.profile_commitment_sha256.as_bytes(),
             evaluation.evaluation_commitment_sha256.as_bytes(),
-            b"league_and_challenge_browser_and_entry_review_classification_only",
+            b"league_and_challenge_six_slice_entry_transition_classification_only",
             b"no_event_entry_no_spending_no_coordinates_no_input",
         ],
     );
@@ -1042,7 +1046,7 @@ fn validate_required_slices_v1(
     if slices != REQUIRED_NAVIGATION_SLICES_V1 {
         return Err(error_v1(
             "competitive_navigation_required_slices",
-            "profile and evaluation must cover League and Challenge browser and entry review in canonical order",
+            "profile and evaluation must cover League and Challenge browser, entry review, and entered-waiting postcondition in canonical order",
         ));
     }
     Ok(())
@@ -1128,15 +1132,23 @@ fn navigation_slice_v1(
         (MtgoCompetitiveEventKindV1::League, MtgoCompetitiveLifecyclePhaseV1::EntryReview) => {
             Ok(MtgoCompetitiveNavigationSliceV1::LeagueEntryReview)
         }
+        (
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
+        ) => Ok(MtgoCompetitiveNavigationSliceV1::LeagueEnteredWaitingForPairing),
         (MtgoCompetitiveEventKindV1::Challenge, MtgoCompetitiveLifecyclePhaseV1::EventBrowser) => {
             Ok(MtgoCompetitiveNavigationSliceV1::ChallengeEventBrowser)
         }
         (MtgoCompetitiveEventKindV1::Challenge, MtgoCompetitiveLifecyclePhaseV1::EntryReview) => {
             Ok(MtgoCompetitiveNavigationSliceV1::ChallengeEntryReview)
         }
+        (
+            MtgoCompetitiveEventKindV1::Challenge,
+            MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
+        ) => Ok(MtgoCompetitiveNavigationSliceV1::ChallengeEnteredWaitingForPairing),
         _ => Err(error_v1(
             "competitive_navigation_slice",
-            "navigation evaluation accepts only League and Challenge browser and entry-review phases",
+            "navigation evaluation accepts only League and Challenge browser, entry-review, and entered-waiting phases",
         )),
     }
 }
@@ -1298,9 +1310,12 @@ mod tests {
         frame_sha256: String,
     ) -> MtgoVisibleCompetitiveLifecycleSnapshotV1 {
         let entry_review = phase == MtgoCompetitiveLifecyclePhaseV1::EntryReview;
+        let entered_waiting = phase == MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing;
         let mut facts = vec![MtgoLifecycleVisibleFactV1 {
             kind: if entry_review {
                 MtgoLifecycleVisibleFactKindV1::EntryReviewVisible
+            } else if entered_waiting {
+                MtgoLifecycleVisibleFactKindV1::EnteredEventVisible
             } else {
                 MtgoLifecycleVisibleFactKindV1::EventBrowserVisible
             },
@@ -1340,7 +1355,7 @@ mod tests {
                 width: 1_550,
                 height: 925,
             },
-            event_identity_sha256: entry_review.then(|| "f".repeat(64)),
+            event_identity_sha256: (entry_review || entered_waiting).then(|| "f".repeat(64)),
             match_identity_sha256: None,
             game_number: None,
             entry_terms: entry_review.then(|| MtgoCompetitiveEntryTermsV1 {
@@ -1435,9 +1450,9 @@ mod tests {
     }
 
     #[test]
-    fn four_slice_exact_evaluation_passes_but_production_admission_is_empty() {
+    fn six_slice_exact_evaluation_passes_but_production_admission_is_empty() {
         let profile = profile_v1();
-        let sources = (1_u8..=4)
+        let sources = (1_u8..=6)
             .map(|discriminator| source_v1(&profile, discriminator))
             .collect::<Vec<_>>();
         let kinds = [
@@ -1450,12 +1465,20 @@ mod tests {
                 MtgoCompetitiveLifecyclePhaseV1::EntryReview,
             ),
             (
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
+            ),
+            (
                 MtgoCompetitiveEventKindV1::Challenge,
                 MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
             ),
             (
                 MtgoCompetitiveEventKindV1::Challenge,
                 MtgoCompetitiveLifecyclePhaseV1::EntryReview,
+            ),
+            (
+                MtgoCompetitiveEventKindV1::Challenge,
+                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
             ),
         ];
         let expected = sources
@@ -1495,8 +1518,8 @@ mod tests {
             .collect::<Vec<_>>();
         let evaluation = evaluate_v1(&profile, spec_v1(&profile), cases).unwrap();
         assert!(evaluation.passes_declared_gate());
-        assert_eq!(evaluation.unique_case_count(), 4);
-        assert_eq!(evaluation.exact_prediction_count(), 4);
+        assert_eq!(evaluation.unique_case_count(), 6);
+        assert_eq!(evaluation.exact_prediction_count(), 6);
         assert_eq!(evaluation.minimum_observed_cases_per_slice(), 1);
         assert_eq!(
             evaluation.minimum_prediction_coverage_bps_per_slice(),
@@ -1516,7 +1539,7 @@ mod tests {
     #[test]
     fn private_exact_ratification_grants_profile_identity_only() {
         let profile = profile_v1();
-        let sources = (1_u8..=4)
+        let sources = (1_u8..=6)
             .map(|discriminator| source_v1(&profile, discriminator))
             .collect::<Vec<_>>();
         let kinds = [
@@ -1529,12 +1552,20 @@ mod tests {
                 MtgoCompetitiveLifecyclePhaseV1::EntryReview,
             ),
             (
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
+            ),
+            (
                 MtgoCompetitiveEventKindV1::Challenge,
                 MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
             ),
             (
                 MtgoCompetitiveEventKindV1::Challenge,
                 MtgoCompetitiveLifecyclePhaseV1::EntryReview,
+            ),
+            (
+                MtgoCompetitiveEventKindV1::Challenge,
+                MtgoCompetitiveLifecyclePhaseV1::EnteredWaitingForPairing,
             ),
         ];
         let expected = sources
@@ -1582,7 +1613,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             admitted.scope(),
-            MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeBrowserAndEntryReviewClassification
+            MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeEntryTransitionClassification
         );
         assert_eq!(admitted.evaluation_commitment_sha256(), ratification);
         assert_eq!(admitted.admission_commitment_sha256().len(), 64);
@@ -1615,7 +1646,7 @@ mod tests {
         .unwrap();
         assert!(!evaluation.passes_declared_gate());
         assert_eq!(evaluation.prediction_coverage_bps(), 0);
-        assert_eq!(evaluation.missing_slices().len(), 3);
+        assert_eq!(evaluation.missing_slices().len(), 5);
     }
 
     #[test]
@@ -1935,7 +1966,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_requires_all_four_slices_in_canonical_order() {
+    fn profile_requires_all_six_slices_in_canonical_order() {
         let mut payload = profile_payload_v1();
         payload.supported_slices.pop();
         assert!(check_untrusted_competitive_navigation_runtime_profile_v1(payload).is_err());

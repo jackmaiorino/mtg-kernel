@@ -269,17 +269,12 @@ pub fn bind_classifier_backed_competitive_entry_control_dry_run_v1(
         &source_identity._source_frame.preview_png,
     )?;
     if recomputed_capture_commitment != source_commitments.source_capture_commitment_sha256
-        || recomputed_capture_commitment
-            != source_identity._source_frame.capture_commitment_sha256
+        || recomputed_capture_commitment != source_identity._source_frame.capture_commitment_sha256
     {
         return Err("competitive entry control source capture changed".to_owned());
     }
     let source_size = MtgoSizePxV1 {
-        width: source_identity
-            ._source_frame
-            .manifest
-            .frame
-            .canonical_width,
+        width: source_identity._source_frame.manifest.frame.canonical_width,
         height: source_identity
             ._source_frame
             .manifest
@@ -359,15 +354,11 @@ fn bind_competitive_entry_control_dry_run_parts_v1(
     if rects_intersect_v1(event_label_rect_client_px, control_rect_client_px)? {
         return Err("competitive entry control overlaps the reviewed event label".to_owned());
     }
-    let visible_control_region_sha256 = visible_frame_region_content_sha256_v1(
-        source_pixels,
-        source_size,
-        control_rect_client_px,
-    )
-    .map_err(|error| format!("hash competitive entry control pixels: {error}"))?;
+    let visible_control_region_sha256 =
+        visible_frame_region_content_sha256_v1(source_pixels, source_size, control_rect_client_px)
+            .map_err(|error| format!("hash competitive entry control pixels: {error}"))?;
     let visible_control_label_sha256 = sha256_hex_v1(visible_control_label.as_bytes());
-    let control_rect_json =
-        canonical_json_v1(control_rect_client_px, "entry control region")?;
+    let control_rect_json = canonical_json_v1(control_rect_client_px, "entry control region")?;
     let event_kind = canonical_json_v1(&source.event_kind, "entry control mode")?;
     let resource = canonical_json_v1(&source.resource, "entry control resource")?;
     let dry_run_commitment_sha256 = commitment_v1(
@@ -517,21 +508,20 @@ fn bind_competitive_entry_review_source_parts_v1(
             b"opaque_composed_navigation_pixels_owner_review_only_no_entry_no_spending_no_input",
         ],
     );
-    let source_identity_commitment_sha256 =
-        if let Some(classification_commitment) =
-            navigation_classification_result_commitment_sha256
-        {
-            commitment_v1(
-                OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2,
-                &[
-                    manual_source_identity_commitment_sha256.as_bytes(),
-                    classification_commitment.as_bytes(),
-                    b"exact_navigation_classifier_lineage_no_entry_no_spending_no_input",
-                ],
-            )
-        } else {
-            manual_source_identity_commitment_sha256
-        };
+    let source_identity_commitment_sha256 = if let Some(classification_commitment) =
+        navigation_classification_result_commitment_sha256
+    {
+        commitment_v1(
+            OPAQUE_COMPETITIVE_CLASSIFIER_BOUND_ENTRY_REVIEW_IDENTITY_DOMAIN_V2,
+            &[
+                manual_source_identity_commitment_sha256.as_bytes(),
+                classification_commitment.as_bytes(),
+                b"exact_navigation_classifier_lineage_no_entry_no_spending_no_input",
+            ],
+        )
+    } else {
+        manual_source_identity_commitment_sha256
+    };
     Ok(MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
         source_capture_commitment_sha256: source_capture_commitment_sha256.to_owned(),
         source_lifecycle_snapshot_commitment_sha256: lifecycle

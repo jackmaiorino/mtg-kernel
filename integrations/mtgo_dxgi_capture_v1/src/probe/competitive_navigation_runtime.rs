@@ -124,7 +124,7 @@ pub struct MtgoVerifiedCompetitiveNavigationClassifierRuntimeCommitmentsV1 {
     pub runtime_identity_commitment_sha256: String,
 }
 
-/// Exact on-disk classifier artifacts matched to one admitted four-slice
+/// Exact on-disk classifier artifacts matched to one admitted six-slice
 /// navigation profile. Paths and process-launch details remain private.
 ///
 /// ```compile_fail
@@ -182,7 +182,7 @@ pub struct MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1 {
 }
 
 /// One admitted approved-account navigation frame retained through the exact
-/// reviewed four-slice classifier and visible-region rehashing.
+/// reviewed six-slice classifier and visible-region rehashing.
 ///
 /// The type is move-only. It exposes commitments and lifecycle labels only.
 /// It has no pixel, rectangle, process, Join, spending, or input accessor.
@@ -403,16 +403,16 @@ pub fn check_untrusted_competitive_navigation_classifier_request_v1(
 }
 
 /// Verifies the exact classifier executable and asset manifest selected by one
-/// separately admitted four-slice profile.
+/// separately admitted six-slice profile.
 pub fn verify_competitive_navigation_classifier_runtime_v1(
     profile: &AdmittedMtgoCompetitiveNavigationProfileV1,
     classifier_binary_path: &Path,
     classifier_assets_manifest_path: &Path,
 ) -> Result<OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1, String> {
     if profile.scope()
-        != MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeBrowserAndEntryReviewClassification
+        != MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeEntryTransitionClassification
     {
-        return Err("navigation profile does not cover the canonical four slices".to_owned());
+        return Err("navigation profile does not cover the canonical six slices".to_owned());
     }
     let checked = profile.checked_runtime_profile();
     let executable_path = verify_runtime_artifact_v1(
@@ -451,7 +451,7 @@ pub fn verify_competitive_navigation_classifier_runtime_v1(
             checked.approved_account_alias_sha256().as_bytes(),
             checked.classifier_binary_sha256().as_bytes(),
             checked.classifier_assets_manifest_sha256().as_bytes(),
-            b"four_slice_visible_classification_only_no_entry_no_spending_no_input",
+            b"six_slice_entry_transition_classification_only_no_entry_no_spending_no_input",
         ],
     );
     Ok(OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1 {
@@ -490,9 +490,9 @@ pub fn classify_admitted_mtgo_competitive_navigation_frame_v1(
         return Err("navigation classifier timeout must be between 100 and 60000 ms".to_owned());
     }
     if profile.scope()
-        != MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeBrowserAndEntryReviewClassification
+        != MtgoCompetitiveNavigationProfileScopeV1::LeagueAndChallengeEntryTransitionClassification
     {
-        return Err("navigation profile does not cover the canonical four slices".to_owned());
+        return Err("navigation profile does not cover the canonical six slices".to_owned());
     }
     let frame_commitments = source_frame.commitments_v1();
     let checked_profile = profile.checked_runtime_profile();
@@ -625,7 +625,7 @@ pub fn classify_admitted_mtgo_competitive_navigation_frame_v1(
             classifier_response_sha256.as_bytes(),
             lifecycle_snapshot_commitment_sha256.as_bytes(),
             prediction_commitment_sha256.as_bytes(),
-            b"opaque_four_slice_classification_no_entry_no_spending_no_input",
+            b"opaque_six_slice_entry_transition_classification_no_entry_no_spending_no_input",
         ],
     );
     let commitments = MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1 {

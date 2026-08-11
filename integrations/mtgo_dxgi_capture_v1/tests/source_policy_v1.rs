@@ -167,6 +167,7 @@ fn competitive_navigation_classifier_is_exact_bounded_and_non_actionable() {
         "OpaqueMtgoAdmittedCompetitiveNavigationFrameV1",
         "OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1",
         "OpaqueMtgoClassifiedCompetitiveNavigationFrameV1",
+        "LeagueAndChallengeEntryTransitionClassification",
         "classifier_assets_manifest_bytes",
         "MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1",
         "env_clear()",
@@ -175,7 +176,7 @@ fn competitive_navigation_classifier_is_exact_bounded_and_non_actionable() {
         "MAX_CLASSIFIER_RESPONSE_BYTES_V1",
         "check_untrusted_competitive_navigation_prediction_v1",
         "rehash_lifecycle_visible_facts_v1",
-        "opaque_four_slice_classification_no_entry_no_spending_no_input",
+        "opaque_six_slice_entry_transition_classification_no_entry_no_spending_no_input",
         "safe_for_lifecycle_classification_v1(&self) -> bool {\n        false",
     ] {
         assert!(

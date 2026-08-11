@@ -24,9 +24,8 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoProfileBoundResolvedActionControlV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1,
     MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDuelActionFamilyV1, MtgoDxgiCaptureRoleV2,
-    MtgoEvidenceSourceV1, MtgoLifecycleVisibleFactKindV1,
-    MtgoExpectedModelDeploymentV1, MtgoExternalObservationScorerV1,
-    MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
+    MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1, MtgoExternalObservationScorerV1,
+    MtgoLifecycleVisibleFactKindV1, MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
     MtgoProfileBoundPostconditionAfterFrameMetadataV1,
     MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoProfileBoundPostconditionCalibrationV1,
     MtgoProfileBoundPostconditionCandidateStatusV1, MtgoProfileBoundPostconditionRegionSetV1,
@@ -389,11 +388,7 @@ pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
         }
     }
 
-    validate_competitive_launch_display_label_v1(
-        &event_display_label,
-        160,
-        "event display label",
-    )?;
+    validate_competitive_launch_display_label_v1(&event_display_label, 160, "event display label")?;
     let required_mode_word = match lifecycle.event_kind() {
         MtgoCompetitiveEventKindV1::League => "league",
         MtgoCompetitiveEventKindV1::Challenge => "challenge",
@@ -402,7 +397,9 @@ pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
         .to_ascii_lowercase()
         .contains(required_mode_word)
     {
-        return Err("event display label does not identify the selected competitive mode".to_owned());
+        return Err(
+            "event display label does not identify the selected competitive mode".to_owned(),
+        );
     }
     if event_label_rect_client_px.width < 8 || event_label_rect_client_px.height < 8 {
         return Err("event display label region is too small for human review".to_owned());
@@ -486,14 +483,10 @@ pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
     );
     Ok(OpaqueMtgoCompetitiveLaunchIdentityV1 {
         commitments: MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1 {
-            source_capture_commitment_sha256: source_capture
-                .capture_commitment_sha256
-                .clone(),
+            source_capture_commitment_sha256: source_capture.capture_commitment_sha256.clone(),
             perception_result_commitment_sha256: perception_commitments
                 .perception_result_commitment_sha256,
-            lifecycle_snapshot_commitment_sha256: lifecycle
-                .snapshot_commitment_sha256()
-                .to_owned(),
+            lifecycle_snapshot_commitment_sha256: lifecycle.snapshot_commitment_sha256().to_owned(),
             window_title_sha256,
             event_label_region_sha256,
             launch_identity_commitment_sha256,

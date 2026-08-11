@@ -2987,19 +2987,16 @@ fn parse_cli() -> ProbeResult<CliV1> {
             "--expected-exe-sha256" => expected_executable_sha256 = Some(value),
             "--expected-signer-thumbprint" => expected_signer_thumbprint = Some(value),
             "--expected-signer-subject-sha256" => expected_signer_subject_sha256 = Some(value),
-            "--window-mode" => {
-                window_mode =
-                    match value.as_str() {
-                        "main_client" => CaptureWindowModeV2::MainClient,
-                        "solitaire_game" => CaptureWindowModeV2::SolitaireGame,
-                        "duel_game" => CaptureWindowModeV2::DuelGame,
-                        "spectator_game" => CaptureWindowModeV2::SpectatorGame,
-                        _ => return Err(
-                            "window mode must be main_client, solitaire_game, duel_game, or spectator_game"
-                                .to_owned(),
-                        ),
-                    }
-            }
+            "--window-mode" => window_mode = match value.as_str() {
+                "main_client" => CaptureWindowModeV2::MainClient,
+                "solitaire_game" => CaptureWindowModeV2::SolitaireGame,
+                "duel_game" => CaptureWindowModeV2::DuelGame,
+                "spectator_game" => CaptureWindowModeV2::SpectatorGame,
+                _ => return Err(
+                    "window mode must be main_client, solitaire_game, duel_game, or spectator_game"
+                        .to_owned(),
+                ),
+            },
             "--expected-game-format" => expected_game_format = Some(value),
             "--expected-title-contains" => expected_title_contains = Some(value),
             "--timeout-ms" => {

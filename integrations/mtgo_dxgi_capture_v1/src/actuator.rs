@@ -2,18 +2,18 @@ use crate::probe::{
     confirm_opaque_competitive_duel_pass_postcondition_v1,
     confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
-    prepare_pregame_actuation_v3, MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
+    prepare_pregame_actuation_v3, MtgoCompetitiveEntryControlDryRunPartsV1,
+    MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
     MtgoOpaqueCompetitiveDuelPassPreparationCommitmentsV1,
-    MtgoCompetitiveEntryControlDryRunPartsV1,
     MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1,
     MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1, MtgoPlannedPregamePostconditionV3,
-    OpaqueMtgoCompetitiveEntryReviewIdentityV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
-    OpaqueMtgoConfirmedCompetitiveDuelPassV1, OpaqueMtgoConfirmedKeepToBottomSixTransitionV3,
-    OpaqueMtgoConfirmedKeepToFirstMainTransitionV3, OpaqueMtgoConfirmedMulliganTransitionV3,
-    OpaqueMtgoDxgiBottomSixInitialMeasurementV3, OpaqueMtgoDxgiFirstMainMeasurementV3,
-    OpaqueMtgoDxgiMulliganMeasurementV3, OpaqueMtgoPregameActionPlanV3,
-    OpaqueMtgoCompetitiveEntryControlDryRunV1,
-    OpaqueMtgoPreparedCompetitiveDuelPassV1, PreparedPregameActuationV3,
+    OpaqueMtgoCompetitiveEntryControlDryRunV1, OpaqueMtgoCompetitiveEntryReviewIdentityV1,
+    OpaqueMtgoCompetitiveLaunchIdentityV1, OpaqueMtgoConfirmedCompetitiveDuelPassV1,
+    OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, OpaqueMtgoConfirmedKeepToFirstMainTransitionV3,
+    OpaqueMtgoConfirmedMulliganTransitionV3, OpaqueMtgoDxgiBottomSixInitialMeasurementV3,
+    OpaqueMtgoDxgiFirstMainMeasurementV3, OpaqueMtgoDxgiMulliganMeasurementV3,
+    OpaqueMtgoPregameActionPlanV3, OpaqueMtgoPreparedCompetitiveDuelPassV1,
+    PreparedPregameActuationV3,
 };
 use mtgo_blackbox_v1::{
     competitive_match_gameplay_authorization_commitment_v1,
@@ -951,16 +951,12 @@ pub fn review_competitive_duel_pass_ratification_candidate_from_correspondence_v
     visible_account_alias: &str,
     event_kind: MtgoCompetitiveEventKindV1,
 ) -> Result<MtgoReviewedCompetitivePassRatificationCandidateV2, String> {
-    let permission_review_commitment_sha256 =
-        correspondence.review_commitment_sha256().to_owned();
+    let permission_review_commitment_sha256 = correspondence.review_commitment_sha256().to_owned();
     let scope = correspondence
         .checked_untrusted_scope_for_mode_v1(event_kind)
         .map_err(|error| format!("derive reviewed competitive mode scope: {error}"))?;
-    let mode_authorization_commitment_sha256 = validate_competitive_duel_pass_authorization_v1(
-        &scope,
-        visible_account_alias,
-        event_kind,
-    )?;
+    let mode_authorization_commitment_sha256 =
+        validate_competitive_duel_pass_authorization_v1(&scope, visible_account_alias, event_kind)?;
     let ratification_commitment_sha256 =
         competitive_duel_pass_authorization_from_review_commitment_v2(
             &scope,
@@ -1170,13 +1166,12 @@ pub fn review_competitive_entry_attended_v4(
     let source_description = format!(
         "exact profile-pinned classifier plus human-reviewed visibly enabled control {visible_control_label:?} over opaque composed-desktop navigation pixels"
     );
-    let classifier_bound_review =
-        review_competitive_entry_attended_v3_with_source_description(
-            correspondence,
-            source_identity,
-            visible_account_alias,
-            &source_description,
-        )?;
+    let classifier_bound_review = review_competitive_entry_attended_v3_with_source_description(
+        correspondence,
+        source_identity,
+        visible_account_alias,
+        &source_description,
+    )?;
     let classifier_bound_commitments = classifier_bound_review.commitments_v3();
     let control_bound_review_commitment_sha256 =
         bind_control_bound_competitive_entry_review_commitment_v4(
@@ -1288,11 +1283,14 @@ fn bind_control_bound_competitive_entry_review_commitment_v4(
         || source_bound
             .source_navigation_classification_result_commitment_sha256
             .as_deref()
-            != Some(dry_run.source_navigation_classification_result_commitment_sha256.as_str())
+            != Some(
+                dry_run
+                    .source_navigation_classification_result_commitment_sha256
+                    .as_str(),
+            )
         || source_bound.source_identity_commitment_sha256
             != dry_run.source_identity_commitment_sha256
-        || source_bound.source_capture_commitment_sha256
-            != dry_run.source_capture_commitment_sha256
+        || source_bound.source_capture_commitment_sha256 != dry_run.source_capture_commitment_sha256
         || attended.source_lifecycle_snapshot_commitment_sha256
             != dry_run.source_lifecycle_snapshot_commitment_sha256
         || attended.event_kind != dry_run.event_kind
@@ -1407,9 +1405,7 @@ fn prompt_attended_competitive_entry_review_v1(
     Ok((
         challenge_nonce,
         issued_at_unix_millis,
-        supplied_phrase
-            .trim_end_matches(['\r', '\n'])
-            .to_owned(),
+        supplied_phrase.trim_end_matches(['\r', '\n']).to_owned(),
     ))
 }
 
@@ -1447,15 +1443,11 @@ pub fn ratify_competitive_match_launch_attended_v4(
         event_identity_sha256: visible_identity.event_identity_sha256_v1().to_owned(),
         match_identity_sha256: visible_identity.match_identity_sha256_v1().to_owned(),
         game_number: source.game_number,
-        entry_authorization_sha256: visible_identity
-            .entry_authorization_sha256_v1()
-            .to_owned(),
+        entry_authorization_sha256: visible_identity.entry_authorization_sha256_v1().to_owned(),
         observed_frame_sequence: source.frame_sequence,
         source_capture_commitment_sha256: source.source_capture_commitment_sha256,
-        source_perception_result_commitment_sha256: source
-            .perception_result_commitment_sha256,
-        source_lifecycle_snapshot_commitment_sha256: source
-            .lifecycle_snapshot_commitment_sha256,
+        source_perception_result_commitment_sha256: source.perception_result_commitment_sha256,
+        source_lifecycle_snapshot_commitment_sha256: source.lifecycle_snapshot_commitment_sha256,
         source_window_title_sha256: source.window_title_sha256,
         source_event_label_region_sha256: source.event_label_region_sha256,
         source_launch_identity_commitment_sha256: source.launch_identity_commitment_sha256,
@@ -1712,12 +1704,11 @@ fn ratify_competitive_duel_pass_authorization_from_correspondence_with_commitmen
     event_kind: MtgoCompetitiveEventKindV1,
     ratified_commitment_sha256: Option<&str>,
 ) -> Result<RatifiedMtgoCompetitiveDuelPassAuthorizationV1, String> {
-    let candidate =
-        review_competitive_duel_pass_ratification_candidate_from_correspondence_v2(
-            &correspondence,
-            &visible_account_alias,
-            event_kind,
-        )?;
+    let candidate = review_competitive_duel_pass_ratification_candidate_from_correspondence_v2(
+        &correspondence,
+        &visible_account_alias,
+        event_kind,
+    )?;
     if ratified_commitment_sha256 != Some(candidate.ratification_commitment_sha256.as_str()) {
         return Err(
             "the exact reviewed competitive Pass permission is not ratified in this build"
@@ -2113,11 +2104,11 @@ fn validate_attended_competitive_match_launch_request_v4(
         (request.visible_match_id.as_str(), "visible match ID"),
         (request.visible_game_id.as_str(), "visible game ID"),
     ] {
-        if value.is_empty()
-            || value.len() > 32
-            || !value.bytes().all(|byte| byte.is_ascii_digit())
+        if value.is_empty() || value.len() > 32 || !value.bytes().all(|byte| byte.is_ascii_digit())
         {
-            return Err(format!("attended {field} must be a bounded decimal integer"));
+            return Err(format!(
+                "attended {field} must be a bounded decimal integer"
+            ));
         }
     }
     let mode_authorization_commitment_sha256 = validate_competitive_duel_pass_authorization_v1(
@@ -3490,8 +3481,7 @@ mod tests {
                 &classifier_commitment_sha256,
             );
         MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3 {
-            source_navigation_classification_result_commitment_sha256:
-                classifier_commitment_sha256,
+            source_navigation_classification_result_commitment_sha256: classifier_commitment_sha256,
             classifier_bound_review_commitment_sha256,
             source_bound_review: source_bound,
         }
@@ -3504,8 +3494,7 @@ mod tests {
             source_identity_commitment_sha256: "5".repeat(64),
             source_capture_commitment_sha256: "1".repeat(64),
             source_lifecycle_snapshot_commitment_sha256: "2".repeat(64),
-            source_navigation_classification_result_commitment_sha256:
-                classifier_commitment_sha256,
+            source_navigation_classification_result_commitment_sha256: classifier_commitment_sha256,
             visible_control_label_sha256: "c".repeat(64),
             visible_control_region_sha256: "d".repeat(64),
             visibly_enabled_confirmed: true,
@@ -3898,14 +3887,11 @@ mod tests {
     #[test]
     fn control_bound_attended_review_requires_the_exact_enabled_dry_run() {
         let classifier = "b".repeat(64);
-        let classifier_bound =
-            classifier_bound_entry_review_commitments_v4(classifier.clone());
+        let classifier_bound = classifier_bound_entry_review_commitments_v4(classifier.clone());
         let dry_run = entry_control_dry_run_commitments_v4(classifier);
-        let baseline = bind_control_bound_competitive_entry_review_commitment_v4(
-            &classifier_bound,
-            &dry_run,
-        )
-        .unwrap();
+        let baseline =
+            bind_control_bound_competitive_entry_review_commitment_v4(&classifier_bound, &dry_run)
+                .unwrap();
         assert_eq!(baseline.len(), 64);
 
         let mut disabled = dry_run.clone();
@@ -3925,8 +3911,7 @@ mod tests {
         .is_err());
 
         let mut wrong_classifier = dry_run.clone();
-        wrong_classifier.source_navigation_classification_result_commitment_sha256 =
-            "f".repeat(64);
+        wrong_classifier.source_navigation_classification_result_commitment_sha256 = "f".repeat(64);
         assert!(bind_control_bound_competitive_entry_review_commitment_v4(
             &classifier_bound,
             &wrong_classifier,
