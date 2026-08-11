@@ -382,6 +382,32 @@ fn admit_competitive_pregame_profile_against_ratification_v1(
     })
 }
 
+#[cfg(test)]
+pub(crate) fn competitive_pregame_profile_admitted_for_test_v1(
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+) -> AdmittedMtgoCompetitivePregameProfileV1 {
+    let evaluation_commitment_sha256 = "c".repeat(64);
+    let admission_commitment_sha256 = commitment_v1(
+        COMPETITIVE_PREGAME_ADMISSION_DOMAIN_V1,
+        &[
+            profile.perception_profile_commitment_sha256().as_bytes(),
+            profile.admission_commitment_sha256().as_bytes(),
+            evaluation_commitment_sha256.as_bytes(),
+            b"complete_acting_player_duel_pregame_semantics_no_mode_inference_no_input",
+        ],
+    );
+    AdmittedMtgoCompetitivePregameProfileV1 {
+        duel_perception_profile_commitment_sha256: profile
+            .perception_profile_commitment_sha256()
+            .to_owned(),
+        duel_perception_profile_admission_commitment_sha256: profile
+            .admission_commitment_sha256()
+            .to_owned(),
+        evaluation_commitment_sha256,
+        admission_commitment_sha256,
+    }
+}
+
 pub fn canonical_competitive_pregame_states_v1() -> Vec<MtgoCompetitivePregameStageLabelV1> {
     canonical_pregame_states_v1()
 }
