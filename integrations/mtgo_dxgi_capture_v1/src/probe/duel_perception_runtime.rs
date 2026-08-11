@@ -72,6 +72,8 @@ const DUEL_OPAQUE_COMPETITIVE_GESTURE_SOURCE_PREPARATION_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-gesture-source-preparation-v1";
 const DUEL_OPAQUE_COMPETITIVE_GESTURE_CONFIRMATION_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-gesture-confirmation-v1";
+const DUEL_OPAQUE_PINNED_COMPETITIVE_GESTURE_CONTINUATION_DOMAIN_V1: &[u8] =
+    b"mtgo-opaque-pinned-competitive-duel-gesture-continuation-v1";
 const DUEL_OPAQUE_COMPETITIVE_PASS_PREPARATION_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-pass-preparation-v1";
 const DUEL_OPAQUE_COMPETITIVE_PASS_CONFIRMATION_DOMAIN_V1: &[u8] =
@@ -1023,6 +1025,57 @@ impl OpaqueMtgoCompetitiveDuelGestureSequenceV1 {
     }
 
     pub fn proves_action_causality_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoOpaquePinnedCompetitiveDuelGestureContinuationCommitmentsV1 {
+    pub prior_sequence_commitment_sha256: String,
+    pub advanced_sequence_commitment_sha256: String,
+    pub visible_transition_commitment_sha256: String,
+    pub gesture_target_runtime_identity_commitment_sha256: String,
+    pub gesture_target_request_commitment_sha256: String,
+    pub continuation_commitment_sha256: String,
+    pub selected_action_family: MtgoDuelActionFamilyV1,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub game_number: u8,
+    pub stage_index: u16,
+    pub gesture_stage_count: u16,
+    pub frame_id: u64,
+    pub frame_sequence: u64,
+    pub target_count: u16,
+}
+
+/// One strictly newer continuation stage whose target set came from the exact
+/// profile-pinned runtime and whose visible transition was rehashed from both
+/// retained frames. It grants no input or action-causality authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1;
+/// let _forged = OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1 {};
+/// ```
+pub struct OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1 {
+    _sequence: OpaqueMtgoCompetitiveDuelGestureSequenceV1,
+    commitments: MtgoOpaquePinnedCompetitiveDuelGestureContinuationCommitmentsV1,
+}
+
+impl OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1 {
+    pub fn commitments_v1(
+        &self,
+    ) -> MtgoOpaquePinnedCompetitiveDuelGestureContinuationCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn proves_action_causality_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
         false
     }
 }
@@ -2514,6 +2567,413 @@ pub fn advance_opaque_competitive_duel_gesture_sequence_v1(
             current_frame_sequence: next.frame_sequence,
         },
     })
+}
+
+/// Advances exactly one intermediate gesture stage using targets from the
+/// exact profile-pinned runtime. The transition probe is derived internally
+/// from changed same-rectangle evidence tied to the adjacent stages, so the
+/// caller cannot choose either target coordinates or transition evidence.
+/// This remains observation-only and grants no input authority.
+pub fn advance_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1(
+    sequence: OpaqueMtgoCompetitiveDuelGestureSequenceV1,
+    current_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1, String> {
+    let prior = sequence.commitments_v1();
+    let next_stage_index = prior
+        .current_stage_index
+        .checked_add(1)
+        .ok_or("gesture continuation stage index overflow")?;
+    if next_stage_index >= prior.gesture_stage_count {
+        return Err("gesture continuation requires a declared later stage".to_owned());
+    }
+    let before_perception = sequence
+        .current_stage
+        ._continuation_frame
+        .as_deref()
+        .unwrap_or(&sequence.current_stage._plan.control.selection.perception);
+    validate_same_duel_window_incarnation_v1(
+        &before_perception.source_frame.source_frame.manifest,
+        &current_perception.source_frame.source_frame.manifest,
+    )?;
+    let before_capture = before_perception.commitments_v1();
+    let after_capture = current_perception.commitments_v1();
+    if after_capture.frame_sequence <= prior.current_frame_sequence
+        || after_capture.frame_id == prior.current_frame_id
+        || after_capture.frame_sequence > prior.gameplay_authorization_valid_through_frame_sequence
+        || after_capture
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis
+            <= before_capture
+                .source_frame
+                .source_capture
+                .captured_at_unix_millis
+        || after_capture
+            .source_frame
+            .source_capture
+            .capture_commitment_sha256
+            == before_capture
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+        || current_perception.runtime_identity_commitment_sha256
+            != before_perception.runtime_identity_commitment_sha256
+        || current_perception
+            .source_frame
+            .perception_profile_admission_commitment_sha256
+            != before_perception
+                .source_frame
+                .perception_profile_admission_commitment_sha256
+        || current_perception.decision_record.payload
+            != sequence
+                .current_stage
+                ._plan
+                .control
+                .selection
+                .perception
+                .decision_record
+                .payload
+    {
+        return Err(
+            "pinned gesture continuation is not an exact newer authorized decision frame"
+                .to_owned(),
+        );
+    }
+    let (target_set, target_runtime) = invoke_pinned_gesture_target_runtime_for_stage_v1(
+        &sequence,
+        &current_perception,
+        profile,
+        runtime,
+        next_stage_index,
+        timeout_ms,
+    )?;
+    let transition_probe = derive_opaque_gesture_visible_transition_probe_v1(
+        &sequence,
+        &current_perception,
+        &target_set,
+    )?;
+    let advanced = advance_opaque_competitive_duel_gesture_sequence_v1(
+        sequence,
+        current_perception,
+        target_set,
+        transition_probe,
+    )?;
+    let next = advanced.commitments_v1();
+    let visible_transition_commitment_sha256 = next
+        .last_visible_transition_commitment_sha256
+        .clone()
+        .ok_or("pinned gesture continuation lost its visible transition")?;
+    if next.current_stage_index != next_stage_index
+        || next.observed_stage_count != next_stage_index.saturating_add(1)
+        || next.current_frame_sequence <= prior.current_frame_sequence
+    {
+        return Err("pinned gesture continuation did not advance exactly one stage".to_owned());
+    }
+    let family_json = serde_json::to_vec(&next.selected_action_family)
+        .map_err(|error| format!("serialize pinned continuation family: {error}"))?;
+    let event_kind_json = serde_json::to_vec(&next.event_kind)
+        .map_err(|error| format!("serialize pinned continuation event kind: {error}"))?;
+    let continuation_commitment_sha256 = commitment_v1(
+        DUEL_OPAQUE_PINNED_COMPETITIVE_GESTURE_CONTINUATION_DOMAIN_V1,
+        &[
+            prior.sequence_commitment_sha256.as_bytes(),
+            next.sequence_commitment_sha256.as_bytes(),
+            visible_transition_commitment_sha256.as_bytes(),
+            target_runtime.runtime_identity_commitment_sha256.as_bytes(),
+            target_runtime.request_commitment_sha256.as_bytes(),
+            &family_json,
+            &event_kind_json,
+            &[next.game_number],
+            &next.current_stage_index.to_be_bytes(),
+            &next.gesture_stage_count.to_be_bytes(),
+            &next.current_frame_id.to_be_bytes(),
+            &next.current_frame_sequence.to_be_bytes(),
+            &advanced
+                .current_stage
+                .commitments
+                .target_count
+                .to_be_bytes(),
+            b"one_runtime_pinned_adjacent_visible_stage_no_input_or_action_causality",
+        ],
+    );
+    let commitments = MtgoOpaquePinnedCompetitiveDuelGestureContinuationCommitmentsV1 {
+        prior_sequence_commitment_sha256: prior.sequence_commitment_sha256,
+        advanced_sequence_commitment_sha256: next.sequence_commitment_sha256,
+        visible_transition_commitment_sha256,
+        gesture_target_runtime_identity_commitment_sha256: target_runtime
+            .runtime_identity_commitment_sha256,
+        gesture_target_request_commitment_sha256: target_runtime.request_commitment_sha256,
+        continuation_commitment_sha256,
+        selected_action_family: next.selected_action_family,
+        event_kind: next.event_kind,
+        game_number: next.game_number,
+        stage_index: next.current_stage_index,
+        gesture_stage_count: next.gesture_stage_count,
+        frame_id: next.current_frame_id,
+        frame_sequence: next.current_frame_sequence,
+        target_count: advanced.current_stage.commitments.target_count,
+    };
+    Ok(OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1 {
+        _sequence: advanced,
+        commitments,
+    })
+}
+
+fn invoke_pinned_gesture_target_runtime_for_stage_v1(
+    sequence: &OpaqueMtgoCompetitiveDuelGestureSequenceV1,
+    perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    stage_index: u16,
+    timeout_ms: u32,
+) -> Result<
+    (
+        MtgoVisibleDuelGestureTargetSetV1,
+        VerifiedDuelGestureTargetRuntimeBindingV1,
+    ),
+    String,
+> {
+    if !(100..=60_000).contains(&timeout_ms) {
+        return Err("duel gesture-target timeout must be between 100 and 60000 ms".to_owned());
+    }
+    let sequence_commitments = sequence.commitments_v1();
+    let stage = sequence
+        .current_stage
+        ._plan
+        .gesture
+        .stages_v1()
+        .get(usize::from(stage_index))
+        .ok_or("gesture-target runtime stage is absent from the exact plan")?;
+    if stage.stage_index != stage_index
+        || stage_index >= sequence_commitments.gesture_stage_count
+        || profile.supported_action_families() != canonical_duel_gesture_action_families_v1()
+        || !profile
+            .supported_action_families()
+            .contains(&sequence_commitments.selected_action_family)
+        || runtime.commitments.gesture_evaluation_commitment_sha256
+            != profile.evaluation_commitment_sha256()
+        || runtime
+            .commitments
+            .gesture_profile_admission_commitment_sha256
+            != profile.admission_commitment_sha256()
+        || runtime
+            .commitments
+            .perception_profile_admission_commitment_sha256
+            != profile.perception_profile_admission_commitment_sha256()
+        || perception
+            .source_frame
+            .perception_profile_admission_commitment_sha256
+            != profile.perception_profile_admission_commitment_sha256()
+    {
+        return Err("gesture stage, runtime, and admitted all-family profile differ".to_owned());
+    }
+    verify_gesture_target_runtime_identity_now_v1(runtime)?;
+
+    let perception_commitments = perception.commitments_v1();
+    let source = &perception.source_frame.source_frame;
+    let width = source.manifest.frame.canonical_width;
+    let height = source.manifest.frame.canonical_height;
+    let stride = width
+        .checked_mul(4)
+        .ok_or("duel gesture-target canonical stride overflow")?;
+    let header = MtgoDuelGestureTargetRequestHeaderV1 {
+        schema_version: 1,
+        protocol: "mtgo_visible_duel_gesture_target_v1".to_owned(),
+        frame_id: perception_commitments.frame_id,
+        frame_sequence: perception_commitments.frame_sequence,
+        canonical_width: width,
+        canonical_height: height,
+        canonical_stride: stride,
+        canonical_byte_length: source.canonical_bgra8.len(),
+        canonical_bgra8_sha256: source.manifest.frame.canonical_bgra8_sha256.clone(),
+        source_capture_commitment_sha256: perception_commitments
+            .source_frame
+            .source_capture
+            .capture_commitment_sha256,
+        perception_result_commitment_sha256: perception_commitments
+            .perception_result_commitment_sha256,
+        decision_commitment_sha256: perception_commitments.decision_commitment_sha256,
+        gesture_plan_commitment_sha256: sequence_commitments.gesture_plan_commitment_sha256,
+        selected_action_family: sequence_commitments.selected_action_family,
+        stage_index,
+        primitive: stage.primitive.clone(),
+        gesture_evaluation_commitment_sha256: profile.evaluation_commitment_sha256().to_owned(),
+        gesture_profile_admission_commitment_sha256: profile
+            .admission_commitment_sha256()
+            .to_owned(),
+        runtime_identity_commitment_sha256: runtime
+            .commitments
+            .runtime_identity_commitment_sha256
+            .clone(),
+        gesture_target_runtime_binary_sha256: profile
+            .gesture_target_runtime_binary_sha256()
+            .to_owned(),
+        gesture_target_assets_manifest_sha256: profile
+            .gesture_target_assets_manifest_sha256()
+            .to_owned(),
+    };
+    let header_json = serde_json::to_vec(&header)
+        .map_err(|error| format!("serialize duel gesture-target request: {error}"))?;
+    let checked_request =
+        check_untrusted_duel_gesture_target_request_v1(&header_json, &source.canonical_bgra8)?;
+    let request_commitment_sha256 = checked_request.request_commitment_sha256_v1().to_owned();
+    let response = invoke_verified_gesture_target_process_v1(
+        runtime,
+        &header_json,
+        &source.canonical_bgra8,
+        Duration::from_millis(u64::from(timeout_ms)),
+    )?;
+    verify_gesture_target_runtime_identity_now_v1(runtime)?;
+    let response: MtgoDuelGestureTargetProcessResponseV1 = serde_json::from_slice(&response)
+        .map_err(|error| {
+            format!("gesture-target response is not one strict protocol JSON value: {error}")
+        })?;
+    if response.schema_version != 1
+        || response.request_commitment_sha256 != request_commitment_sha256
+        || response.target_set.stage_index != stage_index
+    {
+        return Err("gesture-target response does not bind the exact stage request".to_owned());
+    }
+    Ok((
+        response.target_set,
+        VerifiedDuelGestureTargetRuntimeBindingV1 {
+            runtime_identity_commitment_sha256: runtime
+                .commitments
+                .runtime_identity_commitment_sha256
+                .clone(),
+            request_commitment_sha256,
+        },
+    ))
+}
+
+fn derive_opaque_gesture_visible_transition_probe_v1(
+    sequence: &OpaqueMtgoCompetitiveDuelGestureSequenceV1,
+    current_perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    target_set: &MtgoVisibleDuelGestureTargetSetV1,
+) -> Result<MtgoCompetitiveDuelGestureVisibleTransitionProbeV1, String> {
+    let prior = sequence.commitments_v1();
+    let expected_stage_index = prior
+        .current_stage_index
+        .checked_add(1)
+        .ok_or("gesture transition stage index overflow")?;
+    if target_set.stage_index != expected_stage_index
+        || target_set.frame_id != current_perception.commitments_v1().frame_id
+        || target_set.frame_sequence != current_perception.commitments_v1().frame_sequence
+    {
+        return Err("gesture transition target set does not bind the exact next frame".to_owned());
+    }
+    let before_perception = sequence
+        .current_stage
+        ._continuation_frame
+        .as_deref()
+        .unwrap_or(&sequence.current_stage._plan.control.selection.perception);
+    let before_size = MtgoSizePxV1 {
+        width: before_perception
+            .source_frame
+            .source_frame
+            .manifest
+            .frame
+            .canonical_width,
+        height: before_perception
+            .source_frame
+            .source_frame
+            .manifest
+            .frame
+            .canonical_height,
+    };
+    let after_size = MtgoSizePxV1 {
+        width: current_perception
+            .source_frame
+            .source_frame
+            .manifest
+            .frame
+            .canonical_width,
+        height: current_perception
+            .source_frame
+            .source_frame
+            .manifest
+            .frame
+            .canonical_height,
+    };
+    if before_size != after_size {
+        return Err("gesture transition frames changed client size".to_owned());
+    }
+
+    let mut candidate_pairs = Vec::new();
+    for prior_target in &sequence.current_stage.target_regions {
+        for evidence in &current_perception.decision_record.evidence {
+            if let MtgoEvidenceSourceV1::FrameRegion { frame_id, rect, .. } = &evidence.source {
+                if *frame_id == target_set.frame_id && rect == &prior_target.rect_client_px {
+                    candidate_pairs
+                        .push((prior_target.frame_region_evidence_id, evidence.evidence_id));
+                }
+            }
+        }
+    }
+    for next_target in &target_set.targets {
+        let (next_rect, _) = frame_region_for_evidence_v1(
+            &current_perception.decision_record,
+            next_target.frame_region_evidence_id,
+        )?;
+        for evidence in &before_perception.decision_record.evidence {
+            if let MtgoEvidenceSourceV1::FrameRegion { frame_id, rect, .. } = &evidence.source {
+                if *frame_id == prior.current_frame_id && rect == next_rect {
+                    candidate_pairs
+                        .push((evidence.evidence_id, next_target.frame_region_evidence_id));
+                }
+            }
+        }
+    }
+    candidate_pairs.sort_unstable();
+    candidate_pairs.dedup();
+
+    for (before_evidence_id, after_evidence_id) in candidate_pairs {
+        let (before_rect, before_recorded_sha256) =
+            frame_region_for_evidence_v1(&before_perception.decision_record, before_evidence_id)?;
+        let (after_rect, after_recorded_sha256) =
+            frame_region_for_evidence_v1(&current_perception.decision_record, after_evidence_id)?;
+        if before_rect != after_rect {
+            continue;
+        }
+        let before_actual_sha256 = visible_frame_region_content_sha256_v1(
+            &before_perception.source_frame.source_frame.canonical_bgra8,
+            &before_size,
+            before_rect,
+        )
+        .map_err(|error| format!("rehash derived gesture transition before region: {error}"))?;
+        let after_actual_sha256 = visible_frame_region_content_sha256_v1(
+            &current_perception.source_frame.source_frame.canonical_bgra8,
+            &after_size,
+            after_rect,
+        )
+        .map_err(|error| format!("rehash derived gesture transition after region: {error}"))?;
+        if before_actual_sha256 != before_recorded_sha256
+            || after_actual_sha256 != after_recorded_sha256
+        {
+            return Err(
+                "derived gesture transition evidence differs from retained pixels".to_owned(),
+            );
+        }
+        if before_actual_sha256 != after_actual_sha256 {
+            return Ok(MtgoCompetitiveDuelGestureVisibleTransitionProbeV1 {
+                schema_version: 1,
+                gesture_plan_commitment_sha256: prior.gesture_plan_commitment_sha256,
+                from_stage_binding_commitment_sha256: prior.current_stage_binding_commitment_sha256,
+                from_stage_index: prior.current_stage_index,
+                to_stage_index: expected_stage_index,
+                before_frame_id: prior.current_frame_id,
+                before_frame_sequence: prior.current_frame_sequence,
+                after_frame_id: target_set.frame_id,
+                after_frame_sequence: target_set.frame_sequence,
+                before_frame_region_evidence_id: before_evidence_id,
+                after_frame_region_evidence_id: after_evidence_id,
+            });
+        }
+    }
+    Err("no changed same-rectangle evidence ties the adjacent gesture stages".to_owned())
 }
 
 fn bind_opaque_competitive_duel_gesture_stage_inner_v1(

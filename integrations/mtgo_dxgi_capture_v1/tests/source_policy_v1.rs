@@ -933,6 +933,14 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "confirm_opaque_competitive_duel_gesture_postcondition_v1",
         "DUEL_OPAQUE_COMPETITIVE_GESTURE_CONFIRMATION_DOMAIN_V1",
         "competitive gesture postcondition capture predates its input receipt",
+        "advance_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1",
+        "OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1",
+        "MtgoOpaquePinnedCompetitiveDuelGestureContinuationCommitmentsV1",
+        "DUEL_OPAQUE_PINNED_COMPETITIVE_GESTURE_CONTINUATION_DOMAIN_V1",
+        "invoke_pinned_gesture_target_runtime_for_stage_v1",
+        "derive_opaque_gesture_visible_transition_probe_v1",
+        "no changed same-rectangle evidence ties the adjacent gesture stages",
+        "one_runtime_pinned_adjacent_visible_stage_no_input_or_action_causality",
     ] {
         assert!(
             duel_runtime.contains(required),
