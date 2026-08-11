@@ -81,7 +81,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             end_to_end_operator_loop_present: false,
             selected_listing_classifier_protocol_present: true,
             navigation_lifecycle_classifier_protocol_present: true,
-            event_record_classifier_protocol_present: false,
+            event_record_classifier_protocol_present: true,
             sideboard_classifier_protocol_present: false,
             duel_perception_classifier_protocol_present: false,
             native_checkpoint_duel_action_interface_present: true,
@@ -152,7 +152,7 @@ mod tests {
                 .navigation_lifecycle_classifier_protocol_present
         );
         assert!(
-            !report
+            report
                 .known_wiring_gaps
                 .event_record_classifier_protocol_present
         );

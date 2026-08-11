@@ -1608,6 +1608,12 @@ fn competitive_classifier_modes_are_bounded_exact_and_non_actuating() {
         "expected exactly one reviewed navigation profile match",
         "accepted_reference_sha256s",
         "navigation fact changed after profile selection",
+        "--mtgo-visible-competitive-event-record-v1",
+        "MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1\\0",
+        "league_and_challenge_eight_slice_event_record_checked_untrusted_v1",
+        "validate_visible_competitive_event_record_v1",
+        "expected exactly one reviewed event-record profile match",
+        "event-record fact changed after profile selection",
     ] {
         assert!(
             source.contains(required),

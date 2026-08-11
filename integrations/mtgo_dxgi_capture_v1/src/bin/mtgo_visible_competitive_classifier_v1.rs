@@ -1,19 +1,27 @@
 #[cfg(not(target_os = "windows"))]
 compile_error!("mtgo_visible_competitive_classifier_v1 is Windows-only");
 
+#[cfg(all(target_os = "windows", test))]
+use mtgo_blackbox_v1::MtgoCompetitiveMatchRecordV1;
 #[cfg(target_os = "windows")]
 use mtgo_blackbox_v1::{
+    validate_visible_competitive_event_record_v1,
     validate_visible_competitive_lifecycle_snapshot_v1, visible_frame_region_content_sha256_v1,
-    MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveEventListingTargetV1,
-    MtgoCompetitiveLifecyclePhaseV1, MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1,
-    MtgoRectPxV1, MtgoSizePxV1, MtgoVisibleCompetitiveEventListingSelectionV1,
+    MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventCompletionV1, MtgoCompetitiveEventKindV1,
+    MtgoCompetitiveEventListingTargetV1, MtgoCompetitiveEventProgressV1,
+    MtgoCompetitiveEventRecordVisibleFactKindV1, MtgoCompetitiveEventRecordVisibleFactV1,
+    MtgoCompetitiveEventVisibleStatusV1, MtgoCompetitiveLifecyclePhaseV1,
+    MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1, MtgoRectPxV1, MtgoSizePxV1,
+    MtgoVisibleCompetitiveEventListingSelectionV1, MtgoVisibleCompetitiveEventRecordV1,
     MtgoVisibleCompetitiveLifecycleSnapshotV1, MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
-    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+    MTGO_COMPETITIVE_EVENT_RECORD_SCHEMA_V1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
 };
 #[cfg(target_os = "windows")]
 use mtgo_dxgi_capture_v1::{
     MtgoCompetitiveEventListingClassifierProcessResponseV1,
     MtgoCompetitiveEventListingClassifierRequestHeaderV1,
+    MtgoCompetitiveEventRecordClassifierProcessResponseV1,
+    MtgoCompetitiveEventRecordClassifierRequestHeaderV1,
     MtgoCompetitiveNavigationClassifierProcessResponseV1,
     MtgoCompetitiveNavigationClassifierRequestHeaderV1,
 };
@@ -42,13 +50,22 @@ const EVENT_LISTING_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-event-l
 #[cfg(target_os = "windows")]
 const NAVIGATION_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-navigation-v1";
 #[cfg(target_os = "windows")]
+const EVENT_RECORD_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-event-record-v1";
+#[cfg(target_os = "windows")]
 const EVENT_LISTING_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1\0";
 #[cfg(target_os = "windows")]
 const NAVIGATION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1\0";
 #[cfg(target_os = "windows")]
+const EVENT_RECORD_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1\0";
+#[cfg(target_os = "windows")]
 const EVENT_LISTING_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_event_listing_v1";
 #[cfg(target_os = "windows")]
 const NAVIGATION_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_navigation_v1";
+#[cfg(target_os = "windows")]
+const EVENT_RECORD_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_event_record_v1";
+#[cfg(target_os = "windows")]
+const EVENT_RECORD_REQUEST_SCOPE_V1: &str =
+    "league_and_challenge_eight_slice_event_record_checked_untrusted_v1";
 #[cfg(target_os = "windows")]
 const REQUEST_SCOPE_V1: &str =
     "league_and_challenge_selected_listing_exact_semantics_checked_untrusted_v1";
@@ -64,6 +81,9 @@ const REQUEST_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-competitive-event-listing-cla
 #[cfg(target_os = "windows")]
 const NAVIGATION_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-navigation-classifier-request-v1";
+#[cfg(target_os = "windows")]
+const EVENT_RECORD_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-event-record-classifier-request-v1";
 #[cfg(target_os = "windows")]
 const TARGET_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-competitive-event-listing-target-v1";
 #[cfg(target_os = "windows")]
@@ -91,6 +111,8 @@ struct MtgoCompetitiveEventListingClassifierAssetsV1 {
     profiles: Vec<MtgoCompetitiveEventListingOcrProfileV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     navigation_profiles: Vec<MtgoCompetitiveNavigationRegionProfileV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    event_record_profiles: Vec<MtgoCompetitiveEventRecordRegionProfileV1>,
 }
 
 #[cfg(target_os = "windows")]
@@ -113,6 +135,31 @@ struct MtgoCompetitiveNavigationRegionProfileV1 {
 #[serde(deny_unknown_fields)]
 struct MtgoCompetitiveNavigationFactProfileV1 {
     kind: MtgoLifecycleVisibleFactKindV1,
+    rect_client_px: MtgoRectPxV1,
+    accepted_reference_sha256s: Vec<String>,
+    confidence_bps: u16,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoCompetitiveEventRecordRegionProfileV1 {
+    profile_id: String,
+    navigation_profile_id: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    lifecycle_phase: MtgoCompetitiveLifecyclePhaseV1,
+    event_identity_sha256: String,
+    status: MtgoCompetitiveEventVisibleStatusV1,
+    progress: MtgoCompetitiveEventProgressV1,
+    completion: Option<MtgoCompetitiveEventCompletionV1>,
+    facts: Vec<MtgoCompetitiveEventRecordFactProfileV1>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoCompetitiveEventRecordFactProfileV1 {
+    kind: MtgoCompetitiveEventRecordVisibleFactKindV1,
     rect_client_px: MtgoRectPxV1,
     accepted_reference_sha256s: Vec<String>,
     confidence_bps: u16,
@@ -193,6 +240,7 @@ fn run_v1() -> Result<Vec<u8>, String> {
     match args[1].as_str() {
         EVENT_LISTING_MODE_ARGUMENT_V1 => run_event_listing_v1(&actual_classifier_sha256),
         NAVIGATION_MODE_ARGUMENT_V1 => run_navigation_v1(&actual_classifier_sha256),
+        EVENT_RECORD_MODE_ARGUMENT_V1 => run_event_record_v1(&actual_classifier_sha256),
         _ => Err("unsupported bounded classifier mode".to_owned()),
     }
 }
@@ -317,12 +365,201 @@ fn run_navigation_v1(actual_classifier_sha256: &str) -> Result<Vec<u8>, String> 
 }
 
 #[cfg(target_os = "windows")]
+fn run_event_record_v1(actual_classifier_sha256: &str) -> Result<Vec<u8>, String> {
+    let mut stdin = io::stdin().lock();
+    let mut magic = vec![0_u8; EVENT_RECORD_PROTOCOL_MAGIC_V1.len()];
+    stdin
+        .read_exact(&mut magic)
+        .map_err(|error| format!("read event-record protocol magic: {error}"))?;
+    if magic != EVENT_RECORD_PROTOCOL_MAGIC_V1 {
+        return Err("event-record protocol magic differs".to_owned());
+    }
+    let header_length = read_u64_be_v1(&mut stdin, "event-record header length")?;
+    let assets_length = read_u64_be_v1(&mut stdin, "event-record assets length")?;
+    let header_length =
+        bounded_usize_v1(header_length, MAX_HEADER_BYTES_V1, "event-record header")?;
+    let assets_length =
+        bounded_usize_v1(assets_length, MAX_ASSETS_BYTES_V1, "event-record assets")?;
+    let header_json = read_exact_vec_v1(&mut stdin, header_length, "event-record header")?;
+    let assets_json = read_exact_vec_v1(&mut stdin, assets_length, "event-record assets")?;
+    let header = parse_canonical_json_v1::<MtgoCompetitiveEventRecordClassifierRequestHeaderV1>(
+        &header_json,
+        "event-record request header",
+    )?;
+    validate_event_record_header_identity_v1(&header, &assets_json, actual_classifier_sha256)?;
+    let pixel_length = bounded_usize_v1(
+        header.canonical_byte_length,
+        usize::try_from(MAX_CANONICAL_BYTES_V1)
+            .map_err(|_| "classifier byte bound does not fit this process".to_owned())?,
+        "event-record canonical pixels",
+    )?;
+    let canonical_bgra8 =
+        read_exact_vec_v1(&mut stdin, pixel_length, "event-record canonical pixels")?;
+    let mut trailing = [0_u8; 1];
+    if stdin
+        .read(&mut trailing)
+        .map_err(|error| format!("check event-record request end: {error}"))?
+        != 0
+    {
+        return Err("event-record request has trailing bytes".to_owned());
+    }
+    validate_event_record_pixels_v1(&header, &canonical_bgra8)?;
+    let assets = parse_canonical_json_v1::<MtgoCompetitiveEventListingClassifierAssetsV1>(
+        &assets_json,
+        "combined classifier assets",
+    )?;
+    let navigation_profile = validate_navigation_assets_and_match_profile_for_frame_v1(
+        &assets,
+        header.canonical_width,
+        header.canonical_height,
+        &canonical_bgra8,
+    )?;
+    let event_record_profile = validate_event_record_assets_and_match_profile_v1(
+        &assets,
+        navigation_profile,
+        &header.approved_account_alias_sha256,
+        &canonical_bgra8,
+    )?;
+    let request_commitment_sha256 = commitment_v1(
+        EVENT_RECORD_REQUEST_COMMITMENT_DOMAIN_V1,
+        &[&header_json, &assets_json, &canonical_bgra8],
+    );
+    let response = classify_event_record_profile_v1(
+        &header,
+        navigation_profile,
+        event_record_profile,
+        &canonical_bgra8,
+        request_commitment_sha256,
+    )?;
+    serde_json::to_vec(&response)
+        .map_err(|error| format!("serialize event-record response: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn classify_event_record_profile_v1(
+    header: &MtgoCompetitiveEventRecordClassifierRequestHeaderV1,
+    navigation_profile: &MtgoCompetitiveNavigationRegionProfileV1,
+    event_record_profile: &MtgoCompetitiveEventRecordRegionProfileV1,
+    canonical_bgra8: &[u8],
+    request_commitment_sha256: String,
+) -> Result<MtgoCompetitiveEventRecordClassifierProcessResponseV1, String> {
+    let lifecycle = build_navigation_lifecycle_from_frame_v1(
+        header.frame_id,
+        header.frame_sequence,
+        header.canonical_width,
+        header.canonical_height,
+        &header.canonical_bgra8_sha256,
+        navigation_profile,
+        canonical_bgra8,
+        &request_commitment_sha256,
+    )?;
+    let checked_lifecycle =
+        validate_visible_competitive_lifecycle_snapshot_v1(lifecycle.clone())
+            .map_err(|error| format!("validate event-record source lifecycle: {error}"))?;
+    let size = navigation_profile.client_size_px.clone();
+    let facts = event_record_profile
+        .facts
+        .iter()
+        .map(|fact| {
+            let content_sha256 = visible_frame_region_content_sha256_v1(
+                canonical_bgra8,
+                &size,
+                &fact.rect_client_px,
+            )
+            .map_err(|error| format!("hash event-record fact pixels: {error}"))?;
+            if fact
+                .accepted_reference_sha256s
+                .binary_search(&content_sha256)
+                .is_err()
+            {
+                return Err("event-record fact changed after profile selection".to_owned());
+            }
+            Ok(MtgoCompetitiveEventRecordVisibleFactV1 {
+                kind: fact.kind,
+                rect_client_px: fact.rect_client_px.clone(),
+                content_sha256,
+                confidence_bps: fact.confidence_bps,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let record = MtgoVisibleCompetitiveEventRecordV1 {
+        schema_version: MTGO_COMPETITIVE_EVENT_RECORD_SCHEMA_V1,
+        record_id: format!(
+            "visible-region-event-record-v1-{}",
+            &request_commitment_sha256[..24]
+        ),
+        source_lifecycle_snapshot_commitment_sha256: checked_lifecycle
+            .snapshot_commitment_sha256()
+            .to_owned(),
+        approved_account_alias_sha256: header.approved_account_alias_sha256.clone(),
+        event_kind: event_record_profile.event_kind,
+        lifecycle_phase: event_record_profile.lifecycle_phase,
+        frame_id: header.frame_id,
+        frame_sequence: header.frame_sequence,
+        frame_sha256: header.canonical_bgra8_sha256.clone(),
+        client_bounds: MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: header.canonical_width,
+            height: header.canonical_height,
+        },
+        event_identity_sha256: event_record_profile.event_identity_sha256.clone(),
+        status: event_record_profile.status,
+        progress: event_record_profile.progress.clone(),
+        completion: event_record_profile.completion,
+        visible_record_complete: true,
+        facts,
+    };
+    validate_visible_competitive_event_record_v1(
+        &checked_lifecycle,
+        &header.approved_account_alias_sha256,
+        record.clone(),
+    )
+    .map_err(|error| format!("validate classified event record: {error}"))?;
+    Ok(MtgoCompetitiveEventRecordClassifierProcessResponseV1 {
+        schema_version: 1,
+        request_commitment_sha256,
+        lifecycle,
+        record,
+    })
+}
+
+#[cfg(target_os = "windows")]
 fn classify_navigation_profile_v1(
     header: &MtgoCompetitiveNavigationClassifierRequestHeaderV1,
     profile: &MtgoCompetitiveNavigationRegionProfileV1,
     canonical_bgra8: &[u8],
     request_commitment_sha256: String,
 ) -> Result<MtgoCompetitiveNavigationClassifierProcessResponseV1, String> {
+    let lifecycle = build_navigation_lifecycle_from_frame_v1(
+        header.frame_id,
+        header.frame_sequence,
+        header.canonical_width,
+        header.canonical_height,
+        &header.canonical_bgra8_sha256,
+        profile,
+        canonical_bgra8,
+        &request_commitment_sha256,
+    )?;
+    Ok(MtgoCompetitiveNavigationClassifierProcessResponseV1 {
+        schema_version: 1,
+        request_commitment_sha256,
+        lifecycle,
+    })
+}
+
+#[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
+fn build_navigation_lifecycle_from_frame_v1(
+    frame_id: u64,
+    frame_sequence: u64,
+    width: u32,
+    height: u32,
+    frame_sha256: &str,
+    profile: &MtgoCompetitiveNavigationRegionProfileV1,
+    canonical_bgra8: &[u8],
+    request_commitment_sha256: &str,
+) -> Result<MtgoVisibleCompetitiveLifecycleSnapshotV1, String> {
     let size = profile.client_size_px.clone();
     let facts = profile
         .facts
@@ -357,14 +594,14 @@ fn classify_navigation_profile_v1(
         ),
         event_kind: profile.event_kind,
         phase: profile.phase,
-        frame_id: header.frame_id,
-        frame_sequence: header.frame_sequence,
-        frame_sha256: header.canonical_bgra8_sha256.clone(),
+        frame_id,
+        frame_sequence,
+        frame_sha256: frame_sha256.to_owned(),
         client_bounds: MtgoRectPxV1 {
             x: 0,
             y: 0,
-            width: header.canonical_width,
-            height: header.canonical_height,
+            width,
+            height,
         },
         event_identity_sha256: profile.event_identity_sha256.clone(),
         match_identity_sha256: profile.match_identity_sha256.clone(),
@@ -375,11 +612,7 @@ fn classify_navigation_profile_v1(
     };
     validate_visible_competitive_lifecycle_snapshot_v1(lifecycle.clone())
         .map_err(|error| format!("validate classified navigation lifecycle: {error}"))?;
-    Ok(MtgoCompetitiveNavigationClassifierProcessResponseV1 {
-        schema_version: 1,
-        request_commitment_sha256,
-        lifecycle,
-    })
+    Ok(lifecycle)
 }
 
 #[cfg(target_os = "windows")]
@@ -579,6 +812,60 @@ fn validate_navigation_pixels_v1(
 }
 
 #[cfg(target_os = "windows")]
+fn validate_event_record_header_identity_v1(
+    header: &MtgoCompetitiveEventRecordClassifierRequestHeaderV1,
+    assets_json: &[u8],
+    actual_classifier_sha256: &str,
+) -> Result<(), String> {
+    if header.schema_version != 1
+        || header.protocol != EVENT_RECORD_REQUEST_PROTOCOL_V1
+        || header.parser_scope != EVENT_RECORD_REQUEST_SCOPE_V1
+        || header.frame_id == 0
+        || header.frame_sequence == 0
+        || header.captured_at_unix_millis == 0
+        || header.canonical_width == 0
+        || header.canonical_height == 0
+        || header.canonical_width > 16_384
+        || header.canonical_height > 16_384
+    {
+        return Err("event-record request identity is invalid".to_owned());
+    }
+    let expected_stride = header
+        .canonical_width
+        .checked_mul(4)
+        .ok_or("event-record stride overflow")?;
+    let expected_length = u64::from(expected_stride)
+        .checked_mul(u64::from(header.canonical_height))
+        .ok_or("event-record pixel length overflow")?;
+    if header.canonical_stride != expected_stride
+        || header.canonical_byte_length != expected_length
+        || expected_length == 0
+        || expected_length > MAX_CANONICAL_BYTES_V1
+        || header.classifier_assets_manifest_sha256 != sha256_hex_v1(assets_json)
+        || header.classifier_binary_sha256 != actual_classifier_sha256
+    {
+        return Err("event-record runtime, geometry, or assets differ".to_owned());
+    }
+    for digest in event_record_header_digests_v1(header) {
+        validate_sha256_v1(digest, "event-record request commitment")?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_event_record_pixels_v1(
+    header: &MtgoCompetitiveEventRecordClassifierRequestHeaderV1,
+    canonical_bgra8: &[u8],
+) -> Result<(), String> {
+    if u64::try_from(canonical_bgra8.len()).ok() != Some(header.canonical_byte_length)
+        || sha256_hex_v1(canonical_bgra8) != header.canonical_bgra8_sha256
+    {
+        return Err("event-record pixels differ from the request header".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 fn validate_assets_and_select_profile_v1<'a>(
     assets: &'a MtgoCompetitiveEventListingClassifierAssetsV1,
     header: &MtgoCompetitiveEventListingClassifierRequestHeaderV1,
@@ -666,6 +953,21 @@ fn validate_navigation_assets_and_match_profile_v1<'a>(
     header: &MtgoCompetitiveNavigationClassifierRequestHeaderV1,
     canonical_bgra8: &[u8],
 ) -> Result<&'a MtgoCompetitiveNavigationRegionProfileV1, String> {
+    validate_navigation_assets_and_match_profile_for_frame_v1(
+        assets,
+        header.canonical_width,
+        header.canonical_height,
+        canonical_bgra8,
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn validate_navigation_assets_and_match_profile_for_frame_v1<'a>(
+    assets: &'a MtgoCompetitiveEventListingClassifierAssetsV1,
+    canonical_width: u32,
+    canonical_height: u32,
+    canonical_bgra8: &[u8],
+) -> Result<&'a MtgoCompetitiveNavigationRegionProfileV1, String> {
     if assets.schema_version != 1
         || assets.scope != COMBINED_ASSET_SCOPE_V1
         || assets.canonical_pixel_format != PIXEL_FORMAT_V1
@@ -677,12 +979,12 @@ fn validate_navigation_assets_and_match_profile_v1<'a>(
     let client_bounds = MtgoRectPxV1 {
         x: 0,
         y: 0,
-        width: header.canonical_width,
-        height: header.canonical_height,
+        width: canonical_width,
+        height: canonical_height,
     };
     let size = MtgoSizePxV1 {
-        width: header.canonical_width,
-        height: header.canonical_height,
+        width: canonical_width,
+        height: canonical_height,
     };
     let mut profile_ids = HashSet::new();
     let mut previous_profile_id: Option<&str> = None;
@@ -812,6 +1114,214 @@ fn lifecycle_fact_rank_v1(kind: MtgoLifecycleVisibleFactKindV1) -> u8 {
         EventCloseControlEnabled => 17,
         ReconnectVisible => 18,
         ReconnectResumeControlEnabled => 19,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn validate_event_record_assets_and_match_profile_v1<'a>(
+    assets: &'a MtgoCompetitiveEventListingClassifierAssetsV1,
+    selected_navigation_profile: &MtgoCompetitiveNavigationRegionProfileV1,
+    approved_account_alias_sha256: &str,
+    canonical_bgra8: &[u8],
+) -> Result<&'a MtgoCompetitiveEventRecordRegionProfileV1, String> {
+    if assets.schema_version != 1
+        || assets.scope != COMBINED_ASSET_SCOPE_V1
+        || assets.canonical_pixel_format != PIXEL_FORMAT_V1
+        || assets.event_record_profiles.is_empty()
+        || assets.event_record_profiles.len() > MAX_PROFILES_V1
+    {
+        return Err("event-record assets identity or profile count is invalid".to_owned());
+    }
+    validate_sha256_v1(approved_account_alias_sha256, "approved account alias")?;
+    let mut profile_ids = HashSet::new();
+    let mut previous_profile_id: Option<&str> = None;
+    let mut matching_profiles = Vec::new();
+    for profile in &assets.event_record_profiles {
+        validate_identifier_v1(&profile.profile_id, "event-record profile id")?;
+        validate_identifier_v1(
+            &profile.navigation_profile_id,
+            "event-record navigation profile id",
+        )?;
+        validate_sha256_v1(
+            &profile.event_identity_sha256,
+            "event-record event identity",
+        )?;
+        if !profile_ids.insert(profile.profile_id.as_str())
+            || previous_profile_id.is_some_and(|previous| previous >= profile.profile_id.as_str())
+            || profile.facts.len() < 2
+            || profile.facts.len() > 4
+        {
+            return Err(
+                "event-record profile identity, fact count, or order is invalid".to_owned(),
+            );
+        }
+        previous_profile_id = Some(profile.profile_id.as_str());
+        let navigation_matches = assets
+            .navigation_profiles
+            .iter()
+            .filter(|candidate| candidate.profile_id == profile.navigation_profile_id)
+            .collect::<Vec<_>>();
+        if navigation_matches.len() != 1 {
+            return Err(
+                "event-record profile does not reference one navigation profile".to_owned(),
+            );
+        }
+        let navigation_profile = navigation_matches[0];
+        let client_bounds = MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: navigation_profile.client_size_px.width,
+            height: navigation_profile.client_size_px.height,
+        };
+        let mut fact_kinds = HashSet::new();
+        let mut previous_fact_rank = None;
+        let mut profile_matches =
+            profile.navigation_profile_id == selected_navigation_profile.profile_id;
+        for fact in &profile.facts {
+            let fact_rank = event_record_fact_rank_v1(fact.kind);
+            if !fact_kinds.insert(fact.kind)
+                || previous_fact_rank.is_some_and(|previous| previous >= fact_rank)
+                || !rect_inside_v1(&fact.rect_client_px, &client_bounds)
+                || fact.accepted_reference_sha256s.is_empty()
+                || fact.accepted_reference_sha256s.len() > MAX_CONTROL_REFERENCES_V1
+                || !(9_500..=10_000).contains(&fact.confidence_bps)
+            {
+                return Err("event-record fact profile is invalid or unordered".to_owned());
+            }
+            previous_fact_rank = Some(fact_rank);
+            let mut previous_reference: Option<&str> = None;
+            for reference in &fact.accepted_reference_sha256s {
+                validate_sha256_v1(reference, "event-record fact reference")?;
+                if previous_reference.is_some_and(|previous| previous >= reference.as_str()) {
+                    return Err("event-record fact references must be unique and sorted".to_owned());
+                }
+                previous_reference = Some(reference.as_str());
+            }
+            let observed = visible_frame_region_content_sha256_v1(
+                canonical_bgra8,
+                &navigation_profile.client_size_px,
+                &fact.rect_client_px,
+            )
+            .map_err(|error| format!("hash event-record profile region: {error}"))?;
+            if fact
+                .accepted_reference_sha256s
+                .binary_search(&observed)
+                .is_err()
+            {
+                profile_matches = false;
+            }
+        }
+        validate_event_record_profile_contract_v1(
+            profile,
+            navigation_profile,
+            approved_account_alias_sha256,
+        )?;
+        if profile_matches {
+            matching_profiles.push(profile);
+        }
+    }
+    if matching_profiles.len() != 1 {
+        return Err(format!(
+            "expected exactly one reviewed event-record profile match, found {}",
+            matching_profiles.len()
+        ));
+    }
+    Ok(matching_profiles[0])
+}
+
+#[cfg(target_os = "windows")]
+fn validate_event_record_profile_contract_v1(
+    profile: &MtgoCompetitiveEventRecordRegionProfileV1,
+    navigation_profile: &MtgoCompetitiveNavigationRegionProfileV1,
+    approved_account_alias_sha256: &str,
+) -> Result<(), String> {
+    if profile.event_kind != navigation_profile.event_kind
+        || profile.lifecycle_phase != navigation_profile.phase
+        || navigation_profile.event_identity_sha256.as_deref()
+            != Some(profile.event_identity_sha256.as_str())
+    {
+        return Err("event-record profile and navigation lifecycle differ".to_owned());
+    }
+    let lifecycle = MtgoVisibleCompetitiveLifecycleSnapshotV1 {
+        schema_version: MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+        snapshot_id: "event-record-profile-source-v1".to_owned(),
+        event_kind: navigation_profile.event_kind,
+        phase: navigation_profile.phase,
+        frame_id: 1,
+        frame_sequence: 1,
+        frame_sha256: "0".repeat(64),
+        client_bounds: MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: navigation_profile.client_size_px.width,
+            height: navigation_profile.client_size_px.height,
+        },
+        event_identity_sha256: navigation_profile.event_identity_sha256.clone(),
+        match_identity_sha256: navigation_profile.match_identity_sha256.clone(),
+        game_number: navigation_profile.game_number,
+        entry_terms: navigation_profile.entry_terms.clone(),
+        visible_state_complete: true,
+        facts: navigation_profile
+            .facts
+            .iter()
+            .map(|fact| MtgoLifecycleVisibleFactV1 {
+                kind: fact.kind,
+                rect_client_px: fact.rect_client_px.clone(),
+                content_sha256: fact.accepted_reference_sha256s[0].clone(),
+                confidence_bps: fact.confidence_bps,
+            })
+            .collect(),
+    };
+    let checked_lifecycle = validate_visible_competitive_lifecycle_snapshot_v1(lifecycle.clone())
+        .map_err(|error| {
+        format!("event-record profile source lifecycle is invalid: {error}")
+    })?;
+    let record = MtgoVisibleCompetitiveEventRecordV1 {
+        schema_version: MTGO_COMPETITIVE_EVENT_RECORD_SCHEMA_V1,
+        record_id: "event-record-profile-contract-v1".to_owned(),
+        source_lifecycle_snapshot_commitment_sha256: checked_lifecycle
+            .snapshot_commitment_sha256()
+            .to_owned(),
+        approved_account_alias_sha256: approved_account_alias_sha256.to_owned(),
+        event_kind: profile.event_kind,
+        lifecycle_phase: profile.lifecycle_phase,
+        frame_id: lifecycle.frame_id,
+        frame_sequence: lifecycle.frame_sequence,
+        frame_sha256: lifecycle.frame_sha256,
+        client_bounds: lifecycle.client_bounds,
+        event_identity_sha256: profile.event_identity_sha256.clone(),
+        status: profile.status,
+        progress: profile.progress.clone(),
+        completion: profile.completion,
+        visible_record_complete: true,
+        facts: profile
+            .facts
+            .iter()
+            .map(|fact| MtgoCompetitiveEventRecordVisibleFactV1 {
+                kind: fact.kind,
+                rect_client_px: fact.rect_client_px.clone(),
+                content_sha256: fact.accepted_reference_sha256s[0].clone(),
+                confidence_bps: fact.confidence_bps,
+            })
+            .collect(),
+    };
+    validate_visible_competitive_event_record_v1(
+        &checked_lifecycle,
+        approved_account_alias_sha256,
+        record,
+    )
+    .map(|_| ())
+    .map_err(|error| format!("event-record profile contract is invalid: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn event_record_fact_rank_v1(kind: MtgoCompetitiveEventRecordVisibleFactKindV1) -> u8 {
+    use MtgoCompetitiveEventRecordVisibleFactKindV1::*;
+    match kind {
+        EventStatusVisible => 0,
+        EventProgressVisible => 1,
+        EventStandingVisible => 2,
+        EventResultVisible => 3,
     }
 }
 
@@ -1099,6 +1609,23 @@ fn navigation_header_digests_v1(
 }
 
 #[cfg(target_os = "windows")]
+fn event_record_header_digests_v1(
+    header: &MtgoCompetitiveEventRecordClassifierRequestHeaderV1,
+) -> [&str; 9] {
+    [
+        &header.canonical_bgra8_sha256,
+        &header.source_capture_commitment_sha256,
+        &header.source_frame_profile_binding_sha256,
+        &header.navigation_profile_commitment_sha256,
+        &header.navigation_profile_admission_commitment_sha256,
+        &header.approved_account_alias_sha256,
+        &header.runtime_identity_commitment_sha256,
+        &header.classifier_binary_sha256,
+        &header.classifier_assets_manifest_sha256,
+    ]
+}
+
+#[cfg(target_os = "windows")]
 fn parse_canonical_json_v1<T>(bytes: &[u8], label: &str) -> Result<T, String>
 where
     T: for<'de> Deserialize<'de> + Serialize,
@@ -1358,6 +1885,33 @@ mod tests {
         }
     }
 
+    fn event_record_header_v1(
+        pixels: &[u8],
+        assets_sha256: String,
+    ) -> MtgoCompetitiveEventRecordClassifierRequestHeaderV1 {
+        MtgoCompetitiveEventRecordClassifierRequestHeaderV1 {
+            schema_version: 1,
+            protocol: EVENT_RECORD_REQUEST_PROTOCOL_V1.to_owned(),
+            frame_id: 29,
+            frame_sequence: 31,
+            captured_at_unix_millis: 37,
+            canonical_width: 32,
+            canonical_height: 16,
+            canonical_stride: 128,
+            canonical_byte_length: pixels.len() as u64,
+            canonical_bgra8_sha256: sha256_hex_v1(pixels),
+            source_capture_commitment_sha256: digest('1'),
+            source_frame_profile_binding_sha256: digest('2'),
+            parser_scope: EVENT_RECORD_REQUEST_SCOPE_V1.to_owned(),
+            navigation_profile_commitment_sha256: digest('3'),
+            navigation_profile_admission_commitment_sha256: digest('4'),
+            approved_account_alias_sha256: digest('5'),
+            runtime_identity_commitment_sha256: digest('6'),
+            classifier_binary_sha256: digest('7'),
+            classifier_assets_manifest_sha256: assets_sha256,
+        }
+    }
+
     fn navigation_profile_v1(pixels: &[u8]) -> MtgoCompetitiveNavigationRegionProfileV1 {
         let size = MtgoSizePxV1 {
             width: 32,
@@ -1407,6 +1961,67 @@ mod tests {
         }
     }
 
+    fn event_record_profile_v1(pixels: &[u8]) -> MtgoCompetitiveEventRecordRegionProfileV1 {
+        let size = MtgoSizePxV1 {
+            width: 32,
+            height: 16,
+        };
+        let status = MtgoRectPxV1 {
+            x: 1,
+            y: 10,
+            width: 12,
+            height: 3,
+        };
+        let progress = MtgoRectPxV1 {
+            x: 16,
+            y: 10,
+            width: 12,
+            height: 3,
+        };
+        MtgoCompetitiveEventRecordRegionProfileV1 {
+            profile_id: "challenge-pairing-record-32x16-v1".to_owned(),
+            navigation_profile_id: "challenge-pairing-ready-32x16-v1".to_owned(),
+            event_kind: MtgoCompetitiveEventKindV1::Challenge,
+            lifecycle_phase: MtgoCompetitiveLifecyclePhaseV1::PairingReady,
+            event_identity_sha256: digest('a'),
+            status: MtgoCompetitiveEventVisibleStatusV1::PairingReady,
+            progress: MtgoCompetitiveEventProgressV1::Challenge {
+                match_record: MtgoCompetitiveMatchRecordV1 {
+                    wins: 0,
+                    losses: 0,
+                    draws: 0,
+                    matches_completed: 0,
+                },
+                rounds_completed: 0,
+                rounds_total: 8,
+                match_points: 0,
+                standing_rank: None,
+                field_size: None,
+            },
+            completion: None,
+            facts: vec![
+                MtgoCompetitiveEventRecordFactProfileV1 {
+                    kind: MtgoCompetitiveEventRecordVisibleFactKindV1::EventStatusVisible,
+                    rect_client_px: status.clone(),
+                    accepted_reference_sha256s: vec![visible_frame_region_content_sha256_v1(
+                        pixels, &size, &status,
+                    )
+                    .unwrap()],
+                    confidence_bps: 9_500,
+                },
+                MtgoCompetitiveEventRecordFactProfileV1 {
+                    kind: MtgoCompetitiveEventRecordVisibleFactKindV1::EventProgressVisible,
+                    rect_client_px: progress.clone(),
+                    accepted_reference_sha256s: vec![visible_frame_region_content_sha256_v1(
+                        pixels, &size, &progress,
+                    )
+                    .unwrap()],
+                    confidence_bps: 9_500,
+                },
+            ],
+        }
+    }
+
     fn combined_assets_v1(pixels: &[u8]) -> MtgoCompetitiveEventListingClassifierAssetsV1 {
         MtgoCompetitiveEventListingClassifierAssetsV1 {
             schema_version: 1,
@@ -1414,6 +2029,7 @@ mod tests {
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: Vec::new(),
             navigation_profiles: vec![navigation_profile_v1(pixels)],
+            event_record_profiles: vec![event_record_profile_v1(pixels)],
         }
     }
 
@@ -1464,6 +2080,7 @@ mod tests {
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: vec![profile_v1(&pixels, label)],
             navigation_profiles: Vec::new(),
+            event_record_profiles: Vec::new(),
         };
         let assets_bytes = serde_json::to_vec(&assets).unwrap();
         let header = header_v1(&pixels, sha256_hex_v1(&assets_bytes), label);
@@ -1488,6 +2105,7 @@ mod tests {
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: vec![profile_v1(&pixels, label)],
             navigation_profiles: Vec::new(),
+            event_record_profiles: Vec::new(),
         };
         let assets_bytes = serde_json::to_vec(&assets).unwrap();
         let header = header_v1(&pixels, sha256_hex_v1(&assets_bytes), label);
@@ -1571,5 +2189,87 @@ mod tests {
         profile = navigation_profile_v1(&pixels);
         profile.facts.pop();
         assert!(validate_navigation_profile_contract_v1(&profile).is_err());
+    }
+
+    #[test]
+    fn exact_event_record_regions_produce_one_source_bound_record() {
+        let pixels = (0..32 * 16 * 4)
+            .map(|index| ((index * 23 + 17) % 251) as u8)
+            .collect::<Vec<_>>();
+        let assets = combined_assets_v1(&pixels);
+        let assets_bytes = serde_json::to_vec(&assets).unwrap();
+        let header = event_record_header_v1(&pixels, sha256_hex_v1(&assets_bytes));
+        assert!(validate_event_record_header_identity_v1(
+            &header,
+            &assets_bytes,
+            &header.classifier_binary_sha256
+        )
+        .is_ok());
+        assert!(validate_event_record_pixels_v1(&header, &pixels).is_ok());
+        let navigation = validate_navigation_assets_and_match_profile_for_frame_v1(
+            &assets,
+            header.canonical_width,
+            header.canonical_height,
+            &pixels,
+        )
+        .unwrap();
+        let event_record = validate_event_record_assets_and_match_profile_v1(
+            &assets,
+            navigation,
+            &header.approved_account_alias_sha256,
+            &pixels,
+        )
+        .unwrap();
+        let response = classify_event_record_profile_v1(
+            &header,
+            navigation,
+            event_record,
+            &pixels,
+            digest('d'),
+        )
+        .unwrap();
+        assert_eq!(
+            response.record.status,
+            MtgoCompetitiveEventVisibleStatusV1::PairingReady
+        );
+        assert_eq!(response.record.event_identity_sha256, digest('a'));
+        assert_eq!(response.record.frame_id, header.frame_id);
+        assert_eq!(response.record.facts.len(), 2);
+        assert_eq!(
+            response.record.source_lifecycle_snapshot_commitment_sha256,
+            validate_visible_competitive_lifecycle_snapshot_v1(response.lifecycle)
+                .unwrap()
+                .snapshot_commitment_sha256()
+        );
+    }
+
+    #[test]
+    fn event_record_profile_drift_ambiguity_and_semantic_mismatch_fail_closed() {
+        let pixels = vec![59_u8; 32 * 16 * 4];
+        let mut assets = combined_assets_v1(&pixels);
+        let navigation = &assets.navigation_profiles[0];
+        let account = digest('5');
+
+        let mut changed_pixels = pixels.clone();
+        changed_pixels[(10 * 32 + 1) * 4] ^= 1;
+        assert!(validate_event_record_assets_and_match_profile_v1(
+            &assets,
+            navigation,
+            &account,
+            &changed_pixels
+        )
+        .is_err());
+
+        let mut duplicate = assets.event_record_profiles[0].clone();
+        duplicate.profile_id = "challenge-pairing-record-32x16-v2".to_owned();
+        assets.event_record_profiles.push(duplicate);
+        assert!(validate_event_record_assets_and_match_profile_v1(
+            &assets, navigation, &account, &pixels
+        )
+        .is_err());
+
+        let mut invalid = event_record_profile_v1(&pixels);
+        invalid.status = MtgoCompetitiveEventVisibleStatusV1::WaitingForPairing;
+        assert!(validate_event_record_profile_contract_v1(&invalid, navigation, &account).is_err());
     }
 }
