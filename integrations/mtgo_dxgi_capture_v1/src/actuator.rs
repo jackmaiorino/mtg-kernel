@@ -13,10 +13,14 @@ use crate::probe::{
 };
 use mtgo_blackbox_v1::{
     competitive_match_gameplay_authorization_commitment_v1,
-    competitive_mode_authorization_commitment_v1, validate_authorization_for_mode_v1,
-    AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
-    MtgoAuthorizationScopeV1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
+    competitive_mode_authorization_commitment_v1, make_offline_competitive_lifecycle_intent_v1,
+    validate_authorization_for_mode_v1, AdmittedMtgoDuelPerceptionProfileV1,
+    CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoAuthorizationScopeV1,
+    MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
+    MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
+    MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
+    MtgoPregameActionSemanticV1, MtgoRuntimeModeV1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
     MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
@@ -70,9 +74,14 @@ const ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_DOMAIN_V4: &[u8] =
     b"mtgo-attended-competitive-match-launch-request-v4";
 const ATTENDED_COMPETITIVE_MATCH_LAUNCH_RECEIPT_DOMAIN_V4: &[u8] =
     b"mtgo-attended-competitive-match-launch-receipt-v4";
+const ATTENDED_COMPETITIVE_ENTRY_REVIEW_REQUEST_DOMAIN_V1: &[u8] =
+    b"mtgo-attended-competitive-entry-review-request-v1";
+const ATTENDED_COMPETITIVE_ENTRY_REVIEW_RECEIPT_DOMAIN_V1: &[u8] =
+    b"mtgo-attended-competitive-entry-review-receipt-v1";
 const ATTENDED_COMPETITIVE_MATCH_MAX_FRAME_ADVANCE_V4: u64 = 512;
 
 const MTGO_ATTENDED_COMPETITIVE_MATCH_LAUNCH_REQUEST_SCHEMA_V4: u32 = 4;
+const MTGO_ATTENDED_COMPETITIVE_ENTRY_REVIEW_SCHEMA_V1: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MtgoPregameInputGateStatusV3 {
@@ -199,6 +208,87 @@ impl MtgoReviewedCompetitivePassRatificationCandidateV2 {
     }
 
     pub fn permits_spending_v2(&self) -> bool {
+        false
+    }
+}
+
+/// The exact coordinate-free facts shown to the account owner before they
+/// review one visible League or Challenge entry. This request cannot enter the
+/// event or spend the declared resources.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoAttendedCompetitiveEntryReviewRequestV1 {
+    schema_version: u32,
+    event_kind: MtgoCompetitiveEventKindV1,
+    event_display_label: String,
+    source_lifecycle_snapshot_commitment_sha256: String,
+    frame_id: u64,
+    frame_sequence: u64,
+    event_identity_sha256: String,
+    entry_terms: MtgoCompetitiveEntryTermsV1,
+    account_alias_sha256: String,
+    correspondence_sha256: String,
+    permission_review_commitment_sha256: String,
+    mode_authorization_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoAttendedCompetitiveEntryReviewCommitmentsV1 {
+    pub source_lifecycle_snapshot_commitment_sha256: String,
+    pub permission_review_commitment_sha256: String,
+    pub mode_authorization_commitment_sha256: String,
+    pub request_commitment_sha256: String,
+    pub entry_authorization_sha256: String,
+    pub owner_review_receipt_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub frame_id: u64,
+    pub frame_sequence: u64,
+    pub resource: MtgoCompetitiveEntryResourceV1,
+    pub amount: u32,
+}
+
+/// One owner-attended review of the exact event and entry terms reported by a
+/// checked visible lifecycle snapshot. The snapshot remains checked-untrusted,
+/// so this value deliberately grants no event-entry, spending, or input
+/// authority. A future live entry seam must additionally bind an opaque,
+/// admitted navigation capture to these same facts.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1;
+/// let _forged = CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1>();
+/// ```
+pub struct CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1 {
+    _source: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    entry_authorization: MtgoCompetitiveEntryAuthorizationV1,
+    commitments: MtgoAttendedCompetitiveEntryReviewCommitmentsV1,
+}
+
+impl CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1 {
+    pub fn commitments_v1(&self) -> MtgoAttendedCompetitiveEntryReviewCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    /// Returns coordinate-free data for validating a future offline lifecycle
+    /// intent. The record alone is not authority to enter an event.
+    pub fn entry_authorization_record_v1(&self) -> MtgoCompetitiveEntryAuthorizationV1 {
+        self.entry_authorization.clone()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
         false
     }
 }
@@ -718,6 +808,87 @@ pub fn review_competitive_duel_pass_ratification_candidate_from_correspondence_v
     })
 }
 
+/// Performs a terminal-attended review of one exact visible League or
+/// Challenge entry and its exact existing-account resource terms. This is a
+/// non-authorizing review boundary. It neither enters the event nor enables a
+/// later input path.
+pub fn review_competitive_entry_attended_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    source: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    visible_account_alias: &str,
+    event_display_label: String,
+) -> Result<CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1, String> {
+    let request = build_attended_competitive_entry_review_request_v1(
+        correspondence,
+        &source,
+        visible_account_alias,
+        &event_display_label,
+    )?;
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    if !stdin.is_terminal() || !stdout.is_terminal() {
+        return Err(
+            "attended competitive entry review requires an interactive terminal".to_owned(),
+        );
+    }
+    let mut challenge_nonce = [0_u8; 8];
+    unsafe {
+        BCryptGenRandom(None, &mut challenge_nonce, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+            .ok()
+            .map_err(|error| format!("generate attended entry review challenge: {error}"))?;
+    }
+    let issued_at_unix_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before epoch: {error}"))?
+        .as_millis();
+    let expected_phrase = attended_competitive_entry_review_confirmation_phrase_v1(
+        request.event_kind,
+        request.entry_terms.resource,
+        request.entry_terms.amount,
+        &challenge_nonce,
+    );
+    let event_prefix = &request.event_identity_sha256[..12];
+    let terms_prefix = &request.entry_terms.terms_sha256[..12];
+    writeln!(stdout, "MTGO attended competitive entry review")
+        .map_err(|error| format!("write attended entry review prompt: {error}"))?;
+    writeln!(stdout, "Account: {visible_account_alias}")
+        .map_err(|error| format!("write attended entry review account: {error}"))?;
+    writeln!(
+        stdout,
+        "Mode: {}; event: {}; resource: {}; exact amount: {}; event id: {event_prefix}; terms id: {terms_prefix}",
+        competitive_event_kind_label_v4(request.event_kind),
+        request.event_display_label,
+        competitive_entry_resource_label_v1(request.entry_terms.resource),
+        request.entry_terms.amount,
+    )
+    .map_err(|error| format!("write attended entry review terms: {error}"))?;
+    writeln!(
+        stdout,
+        "This records your review only. It does not enter the event, spend resources, or enable input."
+    )
+    .map_err(|error| format!("write attended entry review scope: {error}"))?;
+    writeln!(stdout, "Type exactly: {expected_phrase}")
+        .map_err(|error| format!("write attended entry review challenge: {error}"))?;
+    stdout
+        .flush()
+        .map_err(|error| format!("flush attended entry review prompt: {error}"))?;
+
+    let mut supplied_phrase = String::new();
+    stdin
+        .read_line(&mut supplied_phrase)
+        .map_err(|error| format!("read attended entry review confirmation: {error}"))?;
+    let supplied_phrase = supplied_phrase.trim_end_matches(['\r', '\n']);
+    review_competitive_entry_from_attended_confirmation_v1(
+        correspondence,
+        source,
+        visible_account_alias,
+        event_display_label,
+        challenge_nonce,
+        issued_at_unix_millis,
+        supplied_phrase,
+    )
+}
+
 pub fn ratify_competitive_match_launch_v1(
     scope: &MtgoAuthorizationScopeV1,
     visible_account_alias: &str,
@@ -1041,6 +1212,245 @@ fn ratify_competitive_duel_pass_authorization_from_correspondence_with_commitmen
         authorization_commitment_sha256: candidate.ratification_commitment_sha256,
         permission_review_commitment_sha256: Some(candidate.permission_review_commitment_sha256),
     })
+}
+
+fn build_attended_competitive_entry_review_request_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    source: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    visible_account_alias: &str,
+    event_display_label: &str,
+) -> Result<MtgoAttendedCompetitiveEntryReviewRequestV1, String> {
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(source.event_kind())
+        .map_err(|error| format!("derive reviewed competitive entry scope: {error}"))?;
+    let mode_authorization_commitment_sha256 = validate_competitive_duel_pass_authorization_v1(
+        &scope,
+        visible_account_alias,
+        source.event_kind(),
+    )?;
+    let request = MtgoAttendedCompetitiveEntryReviewRequestV1 {
+        schema_version: MTGO_ATTENDED_COMPETITIVE_ENTRY_REVIEW_SCHEMA_V1,
+        event_kind: source.event_kind(),
+        event_display_label: event_display_label.to_owned(),
+        source_lifecycle_snapshot_commitment_sha256: source.snapshot_commitment_sha256().to_owned(),
+        frame_id: source.frame_id_v1(),
+        frame_sequence: source.frame_sequence(),
+        event_identity_sha256: source
+            .event_identity_sha256_v1()
+            .ok_or("entry-review snapshot has no exact event identity")?
+            .to_owned(),
+        entry_terms: source
+            .entry_terms_v1()
+            .ok_or("entry-review snapshot has no exact visible entry terms")?
+            .clone(),
+        account_alias_sha256: scope.account_alias_sha256.clone(),
+        correspondence_sha256: scope.written_permission_sha256.clone(),
+        permission_review_commitment_sha256: correspondence.review_commitment_sha256().to_owned(),
+        mode_authorization_commitment_sha256,
+    };
+    validate_attended_competitive_entry_review_request_v1(
+        correspondence,
+        source,
+        visible_account_alias,
+        &request,
+    )?;
+    Ok(request)
+}
+
+fn review_competitive_entry_from_attended_confirmation_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    source: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    visible_account_alias: &str,
+    event_display_label: String,
+    challenge_nonce: [u8; 8],
+    issued_at_unix_millis: u128,
+    supplied_phrase: &str,
+) -> Result<CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1, String> {
+    let request = build_attended_competitive_entry_review_request_v1(
+        correspondence,
+        &source,
+        visible_account_alias,
+        &event_display_label,
+    )?;
+    if issued_at_unix_millis == 0 || challenge_nonce.iter().all(|value| *value == 0) {
+        return Err("attended competitive entry review challenge is invalid".to_owned());
+    }
+    let expected_phrase = attended_competitive_entry_review_confirmation_phrase_v1(
+        request.event_kind,
+        request.entry_terms.resource,
+        request.entry_terms.amount,
+        &challenge_nonce,
+    );
+    if supplied_phrase != expected_phrase {
+        return Err("attended competitive entry review challenge did not match".to_owned());
+    }
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(request.event_kind)
+        .map_err(|error| format!("derive reviewed competitive entry scope: {error}"))?;
+    let entry_authorization = MtgoCompetitiveEntryAuthorizationV1 {
+        schema_version: MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+        account_alias_sha256: request.account_alias_sha256.clone(),
+        written_permission_sha256: request.correspondence_sha256.clone(),
+        event_kind: request.event_kind,
+        event_identity_sha256: request.event_identity_sha256.clone(),
+        entry_terms: request.entry_terms.clone(),
+        exact_entry_authorized: true,
+        existing_account_resources_only: true,
+    };
+    let intent = make_offline_competitive_lifecycle_intent_v1(
+        &source,
+        MtgoCompetitiveLifecycleActionV1::ConfirmEntry,
+        &scope,
+        Some(&entry_authorization),
+    )
+    .map_err(|error| format!("validate exact offline competitive entry review: {error}"))?;
+    let entry_authorization_sha256 = intent
+        .entry_authorization_sha256
+        .ok_or("validated competitive entry intent omitted its authorization commitment")?;
+    let request_json = serde_json::to_vec(&request)
+        .map_err(|error| format!("serialize attended competitive entry review: {error}"))?;
+    let request_commitment_sha256 = hash_parts_v2(
+        ATTENDED_COMPETITIVE_ENTRY_REVIEW_REQUEST_DOMAIN_V1,
+        &[
+            request_json.as_slice(),
+            visible_account_alias.as_bytes(),
+            b"owner_readable_label_checked_visible_terms_review_only",
+        ],
+    );
+    let owner_review_receipt_sha256 = hash_parts_v2(
+        ATTENDED_COMPETITIVE_ENTRY_REVIEW_RECEIPT_DOMAIN_V1,
+        &[
+            request_commitment_sha256.as_bytes(),
+            entry_authorization_sha256.as_bytes(),
+            challenge_nonce.as_slice(),
+            issued_at_unix_millis.to_be_bytes().as_slice(),
+            supplied_phrase.as_bytes(),
+            b"interactive_terminal_owner_review_no_entry_no_spending_no_input",
+        ],
+    );
+    let commitments = MtgoAttendedCompetitiveEntryReviewCommitmentsV1 {
+        source_lifecycle_snapshot_commitment_sha256: request
+            .source_lifecycle_snapshot_commitment_sha256,
+        permission_review_commitment_sha256: request.permission_review_commitment_sha256,
+        mode_authorization_commitment_sha256: request.mode_authorization_commitment_sha256,
+        request_commitment_sha256,
+        entry_authorization_sha256,
+        owner_review_receipt_sha256,
+        event_kind: request.event_kind,
+        frame_id: request.frame_id,
+        frame_sequence: request.frame_sequence,
+        resource: request.entry_terms.resource,
+        amount: request.entry_terms.amount,
+    };
+    Ok(CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1 {
+        _source: source,
+        entry_authorization,
+        commitments,
+    })
+}
+
+fn validate_attended_competitive_entry_review_request_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    source: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    visible_account_alias: &str,
+    request: &MtgoAttendedCompetitiveEntryReviewRequestV1,
+) -> Result<(), String> {
+    if request.schema_version != MTGO_ATTENDED_COMPETITIVE_ENTRY_REVIEW_SCHEMA_V1
+        || source.phase() != MtgoCompetitiveLifecyclePhaseV1::EntryReview
+    {
+        return Err(
+            "attended competitive entry review requires the exact entry-review phase".to_owned(),
+        );
+    }
+    validate_attended_launch_display_label_v4(
+        &request.event_display_label,
+        160,
+        "entry event display label",
+    )?;
+    let expected_mode_word = match request.event_kind {
+        MtgoCompetitiveEventKindV1::League => "league",
+        MtgoCompetitiveEventKindV1::Challenge => "challenge",
+    };
+    if !request
+        .event_display_label
+        .to_ascii_lowercase()
+        .contains(expected_mode_word)
+    {
+        return Err("attended entry event label does not identify the selected mode".to_owned());
+    }
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(request.event_kind)
+        .map_err(|error| format!("derive reviewed competitive entry scope: {error}"))?;
+    let expected_mode_commitment = validate_competitive_duel_pass_authorization_v1(
+        &scope,
+        visible_account_alias,
+        request.event_kind,
+    )?;
+    let source_event_identity = source
+        .event_identity_sha256_v1()
+        .ok_or("entry-review snapshot has no exact event identity")?;
+    let source_entry_terms = source
+        .entry_terms_v1()
+        .ok_or("entry-review snapshot has no exact visible entry terms")?;
+    if request.event_kind != source.event_kind()
+        || request.source_lifecycle_snapshot_commitment_sha256
+            != source.snapshot_commitment_sha256()
+        || request.frame_id != source.frame_id_v1()
+        || request.frame_sequence != source.frame_sequence()
+        || request.event_identity_sha256 != source_event_identity
+        || &request.entry_terms != source_entry_terms
+        || request.account_alias_sha256 != scope.account_alias_sha256
+        || request.correspondence_sha256 != correspondence.correspondence_sha256()
+        || request.permission_review_commitment_sha256 != correspondence.review_commitment_sha256()
+        || request.mode_authorization_commitment_sha256 != expected_mode_commitment
+    {
+        return Err(
+            "attended competitive entry review does not match the exact permission, mode, frame, event, and visible terms"
+                .to_owned(),
+        );
+    }
+    for value in [
+        request.source_lifecycle_snapshot_commitment_sha256.as_str(),
+        request.event_identity_sha256.as_str(),
+        request.entry_terms.terms_sha256.as_str(),
+        request.account_alias_sha256.as_str(),
+        request.correspondence_sha256.as_str(),
+        request.permission_review_commitment_sha256.as_str(),
+        request.mode_authorization_commitment_sha256.as_str(),
+    ] {
+        if !is_sha256_v2(value) {
+            return Err(
+                "attended competitive entry review contains an invalid commitment".to_owned(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn attended_competitive_entry_review_confirmation_phrase_v1(
+    event_kind: MtgoCompetitiveEventKindV1,
+    resource: MtgoCompetitiveEntryResourceV1,
+    amount: u32,
+    challenge_nonce: &[u8; 8],
+) -> String {
+    let nonce = challenge_nonce
+        .iter()
+        .map(|value| format!("{value:02X}"))
+        .collect::<String>();
+    format!(
+        "AUTHORIZE MTGO {} ENTRY USING {amount} {} {nonce}",
+        competitive_event_kind_label_v4(event_kind).to_ascii_uppercase(),
+        competitive_entry_resource_label_v1(resource).to_ascii_uppercase(),
+    )
+}
+
+fn competitive_entry_resource_label_v1(resource: MtgoCompetitiveEntryResourceV1) -> &'static str {
+    match resource {
+        MtgoCompetitiveEntryResourceV1::NoCost => "no cost",
+        MtgoCompetitiveEntryResourceV1::ExistingEventToken => "existing event token",
+        MtgoCompetitiveEntryResourceV1::ExistingPlayPoints => "existing play points",
+        MtgoCompetitiveEntryResourceV1::ExistingEventTickets => "existing event tickets",
+    }
 }
 
 fn ratify_competitive_match_launch_from_attended_confirmation_v4(
@@ -2356,7 +2766,10 @@ fn update_hash_part_v3(hasher: &mut Sha256, part: &[u8]) {
 mod tests {
     use super::*;
     use mtgo_blackbox_v1::{
-        check_untrusted_authorization_correspondence_v1, MtgoAuthorizationCorrespondenceReviewV1,
+        check_untrusted_authorization_correspondence_v1,
+        validate_visible_competitive_lifecycle_snapshot_v1,
+        MtgoAuthorizationCorrespondenceReviewV1, MtgoLifecycleVisibleFactKindV1,
+        MtgoLifecycleVisibleFactV1, MtgoRectPxV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
         MTGO_AUTHORIZATION_CORRESPONDENCE_REVIEW_SCHEMA_V1,
     };
 
@@ -2413,6 +2826,64 @@ mod tests {
             },
             BYTES,
             account_alias,
+        )
+        .unwrap()
+    }
+
+    fn checked_competitive_entry_review_snapshot_v1(
+        event_kind: MtgoCompetitiveEventKindV1,
+        resource: MtgoCompetitiveEntryResourceV1,
+        amount: u32,
+    ) -> CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1 {
+        validate_visible_competitive_lifecycle_snapshot_v1(
+            MtgoVisibleCompetitiveLifecycleSnapshotV1 {
+                schema_version: MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
+                snapshot_id: "attended-entry-review-test-v1".to_owned(),
+                event_kind,
+                phase: MtgoCompetitiveLifecyclePhaseV1::EntryReview,
+                frame_id: 17,
+                frame_sequence: 41,
+                frame_sha256: "1".repeat(64),
+                client_bounds: MtgoRectPxV1 {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 100,
+                },
+                event_identity_sha256: Some("2".repeat(64)),
+                match_identity_sha256: None,
+                game_number: None,
+                entry_terms: Some(MtgoCompetitiveEntryTermsV1 {
+                    terms_sha256: "3".repeat(64),
+                    resource,
+                    amount,
+                }),
+                visible_state_complete: true,
+                facts: vec![
+                    MtgoLifecycleVisibleFactV1 {
+                        kind: MtgoLifecycleVisibleFactKindV1::EntryReviewVisible,
+                        rect_client_px: MtgoRectPxV1 {
+                            x: 10,
+                            y: 10,
+                            width: 30,
+                            height: 20,
+                        },
+                        content_sha256: "4".repeat(64),
+                        confidence_bps: 10_000,
+                    },
+                    MtgoLifecycleVisibleFactV1 {
+                        kind: MtgoLifecycleVisibleFactKindV1::EntryTermsVisible,
+                        rect_client_px: MtgoRectPxV1 {
+                            x: 10,
+                            y: 40,
+                            width: 40,
+                            height: 20,
+                        },
+                        content_sha256: "5".repeat(64),
+                        confidence_bps: 10_000,
+                    },
+                ],
+            },
         )
         .unwrap()
     }
@@ -2681,6 +3152,221 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn attended_entry_review_binds_both_approved_modes_and_exact_visible_terms() {
+        for (event_kind, label, resource, amount) in [
+            (
+                MtgoCompetitiveEventKindV1::League,
+                "Modern League",
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+            ),
+            (
+                MtgoCompetitiveEventKindV1::Challenge,
+                "Modern Challenge",
+                MtgoCompetitiveEntryResourceV1::ExistingEventTickets,
+                25,
+            ),
+        ] {
+            let correspondence = checked_competitive_correspondence_v2();
+            let source = checked_competitive_entry_review_snapshot_v1(event_kind, resource, amount);
+            let nonce = [0x5au8; 8];
+            let phrase = attended_competitive_entry_review_confirmation_phrase_v1(
+                event_kind, resource, amount, &nonce,
+            );
+            let reviewed = review_competitive_entry_from_attended_confirmation_v1(
+                &correspondence,
+                source,
+                "UnbuckledPie",
+                label.to_owned(),
+                nonce,
+                2_000,
+                &phrase,
+            )
+            .unwrap();
+            let commitments = reviewed.commitments_v1();
+            let entry = reviewed.entry_authorization_record_v1();
+            assert_eq!(commitments.event_kind, event_kind);
+            assert_eq!(commitments.resource, resource);
+            assert_eq!(commitments.amount, amount);
+            assert_eq!(commitments.frame_id, 17);
+            assert_eq!(commitments.frame_sequence, 41);
+            assert_eq!(entry.event_kind, event_kind);
+            assert_eq!(entry.entry_terms.resource, resource);
+            assert_eq!(entry.entry_terms.amount, amount);
+            assert!(entry.exact_entry_authorized);
+            assert!(entry.existing_account_resources_only);
+
+            let expected_source =
+                checked_competitive_entry_review_snapshot_v1(event_kind, resource, amount);
+            let scope = correspondence
+                .checked_untrusted_scope_for_mode_v1(event_kind)
+                .unwrap();
+            let expected_intent = make_offline_competitive_lifecycle_intent_v1(
+                &expected_source,
+                MtgoCompetitiveLifecycleActionV1::ConfirmEntry,
+                &scope,
+                Some(&entry),
+            )
+            .unwrap();
+            assert_eq!(
+                expected_intent.entry_authorization_sha256.as_deref(),
+                Some(commitments.entry_authorization_sha256.as_str())
+            );
+            assert_eq!(
+                commitments.permission_review_commitment_sha256,
+                correspondence.review_commitment_sha256()
+            );
+            assert!(!reviewed.safe_for_live_input_v1());
+            assert!(!reviewed.permits_event_entry_v1());
+            assert!(!reviewed.permits_spending_v1());
+        }
+    }
+
+    #[test]
+    fn attended_entry_review_receipt_changes_with_exact_resource_amount_and_label() {
+        fn receipt(resource: MtgoCompetitiveEntryResourceV1, amount: u32, label: &str) -> String {
+            let correspondence = checked_competitive_correspondence_v2();
+            let source = checked_competitive_entry_review_snapshot_v1(
+                MtgoCompetitiveEventKindV1::League,
+                resource,
+                amount,
+            );
+            let nonce = [0x41u8; 8];
+            let phrase = attended_competitive_entry_review_confirmation_phrase_v1(
+                MtgoCompetitiveEventKindV1::League,
+                resource,
+                amount,
+                &nonce,
+            );
+            review_competitive_entry_from_attended_confirmation_v1(
+                &correspondence,
+                source,
+                "UnbuckledPie",
+                label.to_owned(),
+                nonce,
+                2_001,
+                &phrase,
+            )
+            .unwrap()
+            .commitments_v1()
+            .owner_review_receipt_sha256
+        }
+
+        let baseline = receipt(
+            MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+            100,
+            "Modern League",
+        );
+        assert_ne!(
+            baseline,
+            receipt(
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                120,
+                "Modern League"
+            )
+        );
+        assert_ne!(
+            baseline,
+            receipt(
+                MtgoCompetitiveEntryResourceV1::ExistingEventTickets,
+                10,
+                "Modern League"
+            )
+        );
+        assert_ne!(
+            baseline,
+            receipt(
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+                "Vintage League"
+            )
+        );
+    }
+
+    #[test]
+    fn attended_entry_review_rejects_alias_mode_source_or_challenge_drift() {
+        let correspondence = checked_competitive_correspondence_v2();
+        let source = checked_competitive_entry_review_snapshot_v1(
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+            100,
+        );
+        assert!(build_attended_competitive_entry_review_request_v1(
+            &correspondence,
+            &source,
+            "DifferentAccount",
+            "Modern League",
+        )
+        .is_err());
+        assert!(build_attended_competitive_entry_review_request_v1(
+            &correspondence,
+            &source,
+            "UnbuckledPie",
+            "Modern Challenge",
+        )
+        .is_err());
+        assert!(build_attended_competitive_entry_review_request_v1(
+            &correspondence,
+            &source,
+            "UnbuckledPie",
+            "Modern\nLeague",
+        )
+        .is_err());
+
+        let mut request = build_attended_competitive_entry_review_request_v1(
+            &correspondence,
+            &source,
+            "UnbuckledPie",
+            "Modern League",
+        )
+        .unwrap();
+        request.entry_terms.amount = 120;
+        assert!(validate_attended_competitive_entry_review_request_v1(
+            &correspondence,
+            &source,
+            "UnbuckledPie",
+            &request,
+        )
+        .is_err());
+
+        let nonce = [0x22u8; 8];
+        assert!(review_competitive_entry_from_attended_confirmation_v1(
+            &correspondence,
+            checked_competitive_entry_review_snapshot_v1(
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+            ),
+            "UnbuckledPie",
+            "Modern League".to_owned(),
+            nonce,
+            2_002,
+            "AUTHORIZE SOMETHING ELSE",
+        )
+        .is_err());
+        let phrase = attended_competitive_entry_review_confirmation_phrase_v1(
+            MtgoCompetitiveEventKindV1::League,
+            MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+            100,
+            &nonce,
+        );
+        assert!(review_competitive_entry_from_attended_confirmation_v1(
+            &correspondence,
+            checked_competitive_entry_review_snapshot_v1(
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+            ),
+            "UnbuckledPie",
+            "Modern League".to_owned(),
+            [0; 8],
+            2_002,
+            &phrase,
+        )
+        .is_err());
     }
 
     #[test]

@@ -20,6 +20,8 @@ pub use actuator::{
     ratify_competitive_match_launch_attended_v4, ratify_competitive_match_launch_v1,
     ratify_private_match_authorization_v3,
     review_competitive_duel_pass_ratification_candidate_from_correspondence_v2,
+    review_competitive_entry_attended_v1, CheckedUntrustedMtgoAttendedCompetitiveEntryReviewV1,
+    MtgoAttendedCompetitiveEntryReviewCommitmentsV1,
     MtgoAuthorizationBoundCompetitiveDuelPassCommitmentsV1,
     MtgoCompetitiveGameSessionCommitmentsV1, MtgoConfirmedCompetitiveDuelPassCommitmentsV2,
     MtgoInputGateStatusV3, MtgoPregameInputGateStatusV3,

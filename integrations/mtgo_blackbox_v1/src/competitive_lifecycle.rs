@@ -143,6 +143,13 @@ impl CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1 {
         self.snapshot.game_number
     }
 
+    /// Returns the exact visible entry terms only while the checked snapshot
+    /// is in the entry-review phase. The terms remain coordinate-free,
+    /// non-authorizing data.
+    pub fn entry_terms_v1(&self) -> Option<&MtgoCompetitiveEntryTermsV1> {
+        self.snapshot.entry_terms.as_ref()
+    }
+
     /// Returns the visible regions and their content commitments so an opaque
     /// capture owner can recompute them against the retained source pixels.
     /// The checked snapshot itself remains non-authorizing.
