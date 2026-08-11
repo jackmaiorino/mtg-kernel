@@ -28,6 +28,7 @@ const COMPETITIVE_ENTRY_FRAME_TRANSITION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-frame-transition-v1";
 const COMPETITIVE_ENTRY_WINDOW_CONTINUITY_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-window-continuity-v1";
+const MTGO_PROCESS_CONTINUITY_DOMAIN_V1: &[u8] = b"mtgo-process-continuity-v1";
 const COMPETITIVE_ENTRY_IMMEDIATE_RECAPTURE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-entry-immediate-recapture-v1";
 const COMPETITIVE_ENTRY_VISIBLE_CONFIRMATION_DOMAIN_V1: &[u8] =
@@ -1378,6 +1379,24 @@ pub(crate) fn competitive_entry_window_continuity_commitment_for_frame_v1(
             b"same_process_window_geometry_and_output_no_entry_no_spending_no_input",
         ],
     ))
+}
+
+pub(crate) fn mtgo_process_continuity_commitment_for_frame_v1(
+    frame: &OpaqueMtgoDxgiFrameCandidateV3,
+) -> String {
+    let pre = &frame.manifest.pre;
+    commitment_v1(
+        MTGO_PROCESS_CONTINUITY_DOMAIN_V1,
+        &[
+            pre.process_id.to_be_bytes().as_slice(),
+            pre.process_start_filetime_100ns.to_be_bytes().as_slice(),
+            pre.process_image.as_bytes(),
+            pre.executable_sha256.as_bytes(),
+            pre.signer_thumbprint.as_bytes(),
+            pre.signer_subject_sha256.as_bytes(),
+            b"same_mtgo_process_incarnation_across_main_client_and_duel_windows",
+        ],
+    )
 }
 
 fn bind_competitive_entry_frame_transition_views_v1(

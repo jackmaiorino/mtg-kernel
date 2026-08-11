@@ -1,7 +1,8 @@
 use super::{
     capture_admitted_mtgo_duel_visible_frame_v1, choose_cursor_park_point_v3,
-    serialize_manifest_v2, sha256_hex_v1, MtgoAdmittedDuelVisibleFrameCommitmentsV1,
-    OpaqueMtgoAdmittedDuelVisibleFrameV1, SignedRectV1,
+    competitive_entry_window_continuity_commitment_for_frame_v1,
+    mtgo_process_continuity_commitment_for_frame_v1, serialize_manifest_v2, sha256_hex_v1,
+    MtgoAdmittedDuelVisibleFrameCommitmentsV1, OpaqueMtgoAdmittedDuelVisibleFrameV1, SignedRectV1,
 };
 use mtgo_blackbox_v1::{
     bind_profile_bound_action_plan_to_competitive_match_v1, bind_visible_duel_gesture_stage_v1,
@@ -382,6 +383,8 @@ pub struct MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1 {
     pub source_capture_commitment_sha256: String,
     pub perception_result_commitment_sha256: String,
     pub lifecycle_snapshot_commitment_sha256: String,
+    pub process_continuity_commitment_sha256: String,
+    pub window_continuity_commitment_sha256: String,
     pub window_title_sha256: String,
     pub event_label_region_sha256: String,
     pub launch_identity_commitment_sha256: String,
@@ -389,6 +392,7 @@ pub struct MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1 {
     pub game_number: u8,
     pub frame_id: u64,
     pub frame_sequence: u64,
+    pub captured_at_unix_millis: u128,
 }
 
 /// Exact visible match identity for an attended competitive launch. Only the
@@ -464,7 +468,7 @@ impl OpaqueMtgoCompetitiveLaunchIdentityV1 {
 /// exact classifier result, and same-frame competitive lifecycle snapshot.
 /// Every lifecycle fact region is rehashed against the retained pixels. This
 /// performs no OCR and grants no input or event-entry authority.
-pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
+pub(crate) fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
     perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
     lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     event_display_label: String,
@@ -579,6 +583,10 @@ pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
     let event_kind_json = serde_json::to_vec(&lifecycle.event_kind())
         .map_err(|error| format!("serialize competitive launch mode: {error}"))?;
     let window_title_sha256 = sha256_hex_v1(manifest.pre.title.as_bytes());
+    let process_continuity_commitment_sha256 =
+        mtgo_process_continuity_commitment_for_frame_v1(source);
+    let window_continuity_commitment_sha256 =
+        competitive_entry_window_continuity_commitment_for_frame_v1(source)?;
     let launch_identity_commitment_sha256 = commitment_v1(
         DUEL_OPAQUE_COMPETITIVE_LAUNCH_IDENTITY_DOMAIN_V1,
         &[
@@ -587,6 +595,8 @@ pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
                 .perception_result_commitment_sha256
                 .as_bytes(),
             lifecycle.snapshot_commitment_sha256().as_bytes(),
+            process_continuity_commitment_sha256.as_bytes(),
+            window_continuity_commitment_sha256.as_bytes(),
             window_title_sha256.as_bytes(),
             event_display_label.as_bytes(),
             &rect_json,
@@ -598,6 +608,10 @@ pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
             event_identity_sha256.as_bytes(),
             match_identity_sha256.as_bytes(),
             &[game_number],
+            source_capture
+                .captured_at_unix_millis
+                .to_be_bytes()
+                .as_slice(),
             entry_authorization_sha256.as_bytes(),
             b"source_bound_owner_review_only_no_input_or_event_entry_authority",
         ],
@@ -608,6 +622,8 @@ pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
             perception_result_commitment_sha256: perception_commitments
                 .perception_result_commitment_sha256,
             lifecycle_snapshot_commitment_sha256: lifecycle.snapshot_commitment_sha256().to_owned(),
+            process_continuity_commitment_sha256,
+            window_continuity_commitment_sha256,
             window_title_sha256,
             event_label_region_sha256,
             launch_identity_commitment_sha256,
@@ -615,6 +631,7 @@ pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1(
             game_number,
             frame_id: perception_commitments.frame_id,
             frame_sequence: perception_commitments.frame_sequence,
+            captured_at_unix_millis: source_capture.captured_at_unix_millis,
         },
         event_display_label,
         opponent_display_name,

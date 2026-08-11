@@ -534,6 +534,11 @@ fn competitive_event_runtime_is_move_only_identity_bound_and_terminal_record_gat
         "confirm_pending_competitive_event_lifecycle_control_v1",
         "attach_competitive_event_monitor_to_runtime_v1",
         "advance_competitive_event_monitor_in_runtime_v1",
+        "bind_competitive_event_runtime_to_match_launch_identity_v1",
+        "OpaqueMtgoCompetitiveEventMatchLaunchBindingV1",
+        "COMPETITIVE_EVENT_MATCH_LAUNCH_BINDING_DOMAIN_V1",
+        "paid_main_client_event_runtime_bound_to_newer_same_process_duel_launch_no_input_no_spending",
+        "process_continuity_commitment_sha256_v1",
         "checkout_competitive_event_gameplay_session_v1",
         "return_competitive_event_gameplay_session_v1",
         "COMPETITIVE_GESTURE_GAME_SESSION_EVENT_DECK_BIND_DOMAIN_V1",
@@ -1112,8 +1117,7 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         "pub fn permits_spending_v4(&self) -> bool {\n        false",
         "safe_for_live_input_v4(&self) -> bool {\n        false",
         "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
-        "ratify_competitive_match_launch_v1",
-        "ratify_competitive_match_launch_attended_v4",
+        "ratify_competitive_event_match_launch_attended_v5",
         "ratify_competitive_gesture_match_launch_attended_v1",
         "RatifiedMtgoCompetitiveGestureMatchLaunchV1",
         "ATTENDED_COMPETITIVE_GESTURE_MATCH_LAUNCH_UPGRADE_DOMAIN_V1",
@@ -1186,6 +1190,10 @@ fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
         );
     }
     assert!(!source.contains("pub fn ratify_competitive_entry_authorization_v1("));
+    assert!(!source.contains("pub fn ratify_competitive_match_launch_v1("));
+    assert!(!source.contains("pub fn ratify_competitive_match_launch_attended_v4("));
+    assert!(!duel_runtime
+        .contains("pub fn bind_opaque_duel_perception_to_competitive_launch_identity_v1("));
     for required in [
         "bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1",
         "bind_classifier_backed_competitive_entry_control_and_deck_dry_run_v2",
