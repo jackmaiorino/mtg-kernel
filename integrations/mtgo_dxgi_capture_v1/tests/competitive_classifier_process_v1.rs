@@ -1,16 +1,21 @@
 #![cfg(target_os = "windows")]
 
 use mtgo_blackbox_v1::{
-    visible_frame_region_content_sha256_v1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitiveEventProgressV1, MtgoCompetitiveEventRecordVisibleFactKindV1,
-    MtgoCompetitiveEventVisibleStatusV1, MtgoCompetitiveLifecyclePhaseV1,
-    MtgoCompetitiveMatchRecordV1, MtgoLifecycleVisibleFactKindV1, MtgoRectPxV1, MtgoSizePxV1,
+    validate_competitive_deck_manifest_v1, validate_visible_competitive_lifecycle_snapshot_v1,
+    visible_frame_region_content_sha256_v1, MtgoCompetitiveDeckCardCountV1,
+    MtgoCompetitiveDeckConfigurationV1, MtgoCompetitiveDeckManifestV1,
+    MtgoCompetitiveDeckPartitionV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveEventProgressV1,
+    MtgoCompetitiveEventRecordVisibleFactKindV1, MtgoCompetitiveEventVisibleStatusV1,
+    MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchRecordV1, MtgoLifecycleVisibleFactKindV1,
+    MtgoRectPxV1, MtgoSizePxV1, MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
 };
 use mtgo_dxgi_capture_v1::{
     MtgoCompetitiveEventRecordClassifierProcessResponseV1,
     MtgoCompetitiveEventRecordClassifierRequestHeaderV1,
     MtgoCompetitiveNavigationClassifierProcessResponseV1,
     MtgoCompetitiveNavigationClassifierRequestHeaderV1,
+    MtgoCompetitiveSideboardClassifierProcessResponseV1,
+    MtgoCompetitiveSideboardClassifierRequestHeaderV1,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -19,6 +24,7 @@ use std::process::{Command, Stdio};
 
 const MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1\0";
 const EVENT_RECORD_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1\0";
+const SIDEBOARD_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_SIDEBOARD_V1\0";
 
 #[derive(Serialize)]
 struct AssetsV1 {
@@ -29,6 +35,8 @@ struct AssetsV1 {
     navigation_profiles: Vec<NavigationProfileV1>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     event_record_profiles: Vec<EventRecordProfileV1>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    sideboard_profiles: Vec<SideboardProfileV1>,
 }
 
 #[derive(Serialize)]
@@ -68,6 +76,36 @@ struct EventRecordProfileV1 {
 #[derive(Serialize)]
 struct EventRecordFactV1 {
     kind: MtgoCompetitiveEventRecordVisibleFactKindV1,
+    rect_client_px: MtgoRectPxV1,
+    accepted_reference_sha256s: Vec<String>,
+    confidence_bps: u16,
+}
+
+#[derive(Serialize)]
+struct SideboardProfileV1 {
+    profile_id: String,
+    navigation_profile_id: String,
+    deck_manifest: MtgoCompetitiveDeckManifestV1,
+    mainboard_zone: SideboardZoneProfileV1,
+    sideboard_zone: SideboardZoneProfileV1,
+    cards: Vec<SideboardCardProfileV1>,
+}
+
+#[derive(Serialize)]
+struct SideboardZoneProfileV1 {
+    rect_client_px: MtgoRectPxV1,
+    accepted_reference_sha256s: Vec<String>,
+    empty_drop_rect_client_px: MtgoRectPxV1,
+    accepted_empty_drop_reference_sha256s: Vec<String>,
+    confidence_bps: u16,
+}
+
+#[derive(Serialize)]
+struct SideboardCardProfileV1 {
+    partition: MtgoCompetitiveDeckPartitionV1,
+    card_db_id: u16,
+    card_name: String,
+    count: u16,
     rect_client_px: MtgoRectPxV1,
     accepted_reference_sha256s: Vec<String>,
     confidence_bps: u16,
@@ -133,6 +171,7 @@ fn navigation_mode_completes_the_exact_framed_child_process_exchange() {
             ],
         }],
         event_record_profiles: Vec::new(),
+        sideboard_profiles: Vec::new(),
     };
     let assets_json = serde_json::to_vec(&assets).unwrap();
     let executable = env!("CARGO_BIN_EXE_mtgo_visible_competitive_classifier_v1");
@@ -321,6 +360,7 @@ fn event_record_mode_completes_the_exact_framed_child_process_exchange() {
                 },
             ],
         }],
+        sideboard_profiles: Vec::new(),
     };
     let assets_json = serde_json::to_vec(&assets).unwrap();
     let executable = env!("CARGO_BIN_EXE_mtgo_visible_competitive_classifier_v1");
@@ -419,6 +459,13 @@ fn event_record_mode_completes_the_exact_framed_child_process_exchange() {
         serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response.schema_version, 1);
     assert_eq!(
+        response.request_commitment_sha256,
+        commitment_hex(
+            b"mtgo-competitive-event-record-classifier-request-v1",
+            &[&header_json, &assets_json, &pixels],
+        )
+    );
+    assert_eq!(
         response.lifecycle.phase,
         MtgoCompetitiveLifecyclePhaseV1::PairingReady
     );
@@ -430,6 +477,300 @@ fn event_record_mode_completes_the_exact_framed_child_process_exchange() {
     );
     assert_eq!(response.lifecycle, navigation_response.lifecycle);
     assert_eq!(response.record.facts.len(), 2);
+}
+
+#[test]
+fn sideboard_mode_completes_the_exact_framed_child_process_exchange() {
+    let width = 64;
+    let height = 48;
+    let size = MtgoSizePxV1 { width, height };
+    let pixels = (0..width * height * 4)
+        .map(|index| ((index * 31 + 37) % 251) as u8)
+        .collect::<Vec<_>>();
+    let lifecycle_specs = [
+        (
+            MtgoLifecycleVisibleFactKindV1::SideboardSurfaceVisible,
+            MtgoRectPxV1 {
+                x: 1,
+                y: 1,
+                width: 10,
+                height: 6,
+            },
+        ),
+        (
+            MtgoLifecycleVisibleFactKindV1::SideboardTimerVisible,
+            MtgoRectPxV1 {
+                x: 13,
+                y: 1,
+                width: 10,
+                height: 6,
+            },
+        ),
+        (
+            MtgoLifecycleVisibleFactKindV1::SideboardConfigurationVisible,
+            MtgoRectPxV1 {
+                x: 25,
+                y: 1,
+                width: 10,
+                height: 6,
+            },
+        ),
+        (
+            MtgoLifecycleVisibleFactKindV1::SideboardSubmitControlEnabled,
+            MtgoRectPxV1 {
+                x: 37,
+                y: 1,
+                width: 10,
+                height: 6,
+            },
+        ),
+    ];
+    let mainboard_zone_rect = MtgoRectPxV1 {
+        x: 0,
+        y: 12,
+        width: 64,
+        height: 15,
+    };
+    let mainboard_empty_rect = MtgoRectPxV1 {
+        x: 50,
+        y: 14,
+        width: 8,
+        height: 8,
+    };
+    let sideboard_zone_rect = MtgoRectPxV1 {
+        x: 0,
+        y: 30,
+        width: 64,
+        height: 15,
+    };
+    let sideboard_empty_rect = MtgoRectPxV1 {
+        x: 50,
+        y: 32,
+        width: 8,
+        height: 8,
+    };
+    let mainboard_card_rect = MtgoRectPxV1 {
+        x: 2,
+        y: 14,
+        width: 8,
+        height: 8,
+    };
+    let sideboard_card_rect = MtgoRectPxV1 {
+        x: 2,
+        y: 32,
+        width: 8,
+        height: 8,
+    };
+    let region_hash =
+        |rect: &MtgoRectPxV1| visible_frame_region_content_sha256_v1(&pixels, &size, rect).unwrap();
+    let deck_manifest = MtgoCompetitiveDeckManifestV1 {
+        schema_version: MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
+        deck_list_sha256: digest('1'),
+        format_sha256: digest('2'),
+        starting_mainboard_count: 1,
+        starting_sideboard_count: 1,
+        configuration: MtgoCompetitiveDeckConfigurationV1 {
+            mainboard: vec![MtgoCompetitiveDeckCardCountV1 {
+                card_db_id: 66,
+                card_name: "Lightning Bolt".to_owned(),
+                count: 1,
+            }],
+            sideboard: vec![MtgoCompetitiveDeckCardCountV1 {
+                card_db_id: 101,
+                card_name: "Searing Blaze".to_owned(),
+                count: 1,
+            }],
+        },
+    };
+    let assets = AssetsV1 {
+        schema_version: 1,
+        scope: "league_and_challenge_navigation_and_listing_exact_visible_regions_v1".to_owned(),
+        canonical_pixel_format: "bgra8_unorm_top_down_tightly_packed_v1".to_owned(),
+        profiles: Vec::new(),
+        navigation_profiles: vec![NavigationProfileV1 {
+            profile_id: "league-sideboard-64x48-process-v1".to_owned(),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            phase: MtgoCompetitiveLifecyclePhaseV1::Sideboarding,
+            client_size_px: size.clone(),
+            event_identity_sha256: Some(digest('a')),
+            match_identity_sha256: Some(digest('b')),
+            game_number: Some(1),
+            entry_terms: None,
+            facts: lifecycle_specs
+                .iter()
+                .map(|(kind, rect)| NavigationFactV1 {
+                    kind: *kind,
+                    rect_client_px: rect.clone(),
+                    accepted_reference_sha256s: vec![region_hash(rect)],
+                    confidence_bps: 9_500,
+                })
+                .collect(),
+        }],
+        event_record_profiles: Vec::new(),
+        sideboard_profiles: vec![SideboardProfileV1 {
+            profile_id: "league-sideboard-deck-64x48-process-v1".to_owned(),
+            navigation_profile_id: "league-sideboard-64x48-process-v1".to_owned(),
+            deck_manifest: deck_manifest.clone(),
+            mainboard_zone: SideboardZoneProfileV1 {
+                rect_client_px: mainboard_zone_rect.clone(),
+                accepted_reference_sha256s: vec![region_hash(&mainboard_zone_rect)],
+                empty_drop_rect_client_px: mainboard_empty_rect.clone(),
+                accepted_empty_drop_reference_sha256s: vec![region_hash(&mainboard_empty_rect)],
+                confidence_bps: 9_500,
+            },
+            sideboard_zone: SideboardZoneProfileV1 {
+                rect_client_px: sideboard_zone_rect.clone(),
+                accepted_reference_sha256s: vec![region_hash(&sideboard_zone_rect)],
+                empty_drop_rect_client_px: sideboard_empty_rect.clone(),
+                accepted_empty_drop_reference_sha256s: vec![region_hash(&sideboard_empty_rect)],
+                confidence_bps: 9_500,
+            },
+            cards: vec![
+                SideboardCardProfileV1 {
+                    partition: MtgoCompetitiveDeckPartitionV1::Mainboard,
+                    card_db_id: 66,
+                    card_name: "Lightning Bolt".to_owned(),
+                    count: 1,
+                    rect_client_px: mainboard_card_rect.clone(),
+                    accepted_reference_sha256s: vec![region_hash(&mainboard_card_rect)],
+                    confidence_bps: 9_500,
+                },
+                SideboardCardProfileV1 {
+                    partition: MtgoCompetitiveDeckPartitionV1::Sideboard,
+                    card_db_id: 101,
+                    card_name: "Searing Blaze".to_owned(),
+                    count: 1,
+                    rect_client_px: sideboard_card_rect.clone(),
+                    accepted_reference_sha256s: vec![region_hash(&sideboard_card_rect)],
+                    confidence_bps: 9_500,
+                },
+            ],
+        }],
+    };
+    let assets_json = serde_json::to_vec(&assets).unwrap();
+    let executable = env!("CARGO_BIN_EXE_mtgo_visible_competitive_classifier_v1");
+    let executable_bytes = std::fs::read(executable).unwrap();
+    let navigation_header = MtgoCompetitiveNavigationClassifierRequestHeaderV1 {
+        schema_version: 1,
+        protocol: "mtgo_visible_competitive_navigation_v1".to_owned(),
+        frame_id: 307,
+        frame_sequence: 311,
+        captured_at_unix_millis: 313,
+        canonical_width: width,
+        canonical_height: height,
+        canonical_stride: width * 4,
+        canonical_byte_length: pixels.len() as u64,
+        canonical_bgra8_sha256: sha256_hex(&pixels),
+        source_manifest_sha256: digest('3'),
+        source_capture_commitment_sha256: digest('4'),
+        source_profile_binding_sha256: digest('5'),
+        source_frame_profile_binding_sha256: digest('6'),
+        navigation_profile_commitment_sha256: digest('7'),
+        navigation_profile_admission_commitment_sha256: digest('8'),
+        approved_account_alias_sha256: digest('9'),
+        runtime_identity_commitment_sha256: digest('c'),
+        classifier_binary_sha256: sha256_hex(&executable_bytes),
+        classifier_assets_manifest_sha256: sha256_hex(&assets_json),
+    };
+    let navigation_header_json = serde_json::to_vec(&navigation_header).unwrap();
+    let navigation_output = invoke_classifier_v1(
+        executable,
+        "--mtgo-visible-competitive-navigation-v1",
+        MAGIC_V1,
+        &navigation_header_json,
+        &assets_json,
+        &pixels,
+    );
+    assert!(
+        navigation_output.status.success(),
+        "navigation classifier stderr: {}",
+        String::from_utf8_lossy(&navigation_output.stderr)
+    );
+    let navigation_response: MtgoCompetitiveNavigationClassifierProcessResponseV1 =
+        serde_json::from_slice(&navigation_output.stdout).unwrap();
+    let lifecycle =
+        validate_visible_competitive_lifecycle_snapshot_v1(navigation_response.lifecycle.clone())
+            .unwrap();
+    let manifest = validate_competitive_deck_manifest_v1(deck_manifest).unwrap();
+    let sideboard_header = MtgoCompetitiveSideboardClassifierRequestHeaderV1 {
+        schema_version: 1,
+        protocol: "mtgo_visible_competitive_sideboard_v1".to_owned(),
+        parser_scope:
+            "league_or_challenge_exact_deck_policy_between_game_sideboard_checked_untrusted_v1"
+                .to_owned(),
+        frame_id: navigation_header.frame_id,
+        frame_sequence: navigation_header.frame_sequence,
+        captured_at_unix_millis: navigation_header.captured_at_unix_millis,
+        canonical_width: width,
+        canonical_height: height,
+        canonical_stride: width * 4,
+        canonical_byte_length: pixels.len() as u64,
+        canonical_bgra8_sha256: navigation_header.canonical_bgra8_sha256.clone(),
+        source_capture_commitment_sha256: navigation_header
+            .source_capture_commitment_sha256
+            .clone(),
+        source_frame_profile_binding_sha256: navigation_header
+            .source_frame_profile_binding_sha256
+            .clone(),
+        source_navigation_classification_result_commitment_sha256: digest('d'),
+        source_lifecycle_snapshot_commitment_sha256: lifecycle
+            .snapshot_commitment_sha256()
+            .to_owned(),
+        navigation_profile_commitment_sha256: navigation_header
+            .navigation_profile_commitment_sha256
+            .clone(),
+        navigation_profile_admission_commitment_sha256: navigation_header
+            .navigation_profile_admission_commitment_sha256
+            .clone(),
+        approved_account_alias_sha256: navigation_header.approved_account_alias_sha256.clone(),
+        runtime_identity_commitment_sha256: navigation_header
+            .runtime_identity_commitment_sha256
+            .clone(),
+        classifier_binary_sha256: navigation_header.classifier_binary_sha256.clone(),
+        classifier_assets_manifest_sha256: navigation_header
+            .classifier_assets_manifest_sha256
+            .clone(),
+        deck_list_sha256: manifest.deck_list_sha256().to_owned(),
+        deck_manifest_commitment_sha256: manifest.manifest_commitment_sha256().to_owned(),
+        deck_format_sha256: manifest.format_sha256().to_owned(),
+        policy_deployment_commitment_sha256: digest('f'),
+    };
+    let sideboard_header_json = serde_json::to_vec(&sideboard_header).unwrap();
+    let sideboard_output = invoke_classifier_v1(
+        executable,
+        "--mtgo-visible-competitive-sideboard-v1",
+        SIDEBOARD_MAGIC_V1,
+        &sideboard_header_json,
+        &assets_json,
+        &pixels,
+    );
+    assert!(
+        sideboard_output.status.success(),
+        "sideboard classifier stderr: {}",
+        String::from_utf8_lossy(&sideboard_output.stderr)
+    );
+    let response: MtgoCompetitiveSideboardClassifierProcessResponseV1 =
+        serde_json::from_slice(&sideboard_output.stdout).unwrap();
+    assert_eq!(response.schema_version, 1);
+    assert_eq!(
+        response.request_commitment_sha256,
+        commitment_hex(
+            b"mtgo-competitive-sideboard-classifier-request-v1",
+            &[
+                &sideboard_header_json,
+                &assets_json,
+                &pixels,
+                b"checked_untrusted_sideboard_request_no_live_classification_no_input",
+            ],
+        )
+    );
+    assert_eq!(response.lifecycle, navigation_response.lifecycle);
+    assert_eq!(
+        response.sideboard.event_kind,
+        MtgoCompetitiveEventKindV1::League
+    );
+    assert_eq!(response.sideboard.game_number, 1);
+    assert_eq!(response.sideboard.cards.len(), 2);
 }
 
 fn invoke_classifier_v1(
@@ -470,4 +811,14 @@ fn digest(byte: char) -> String {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn commitment_hex(domain: &[u8], parts: &[&[u8]]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    for part in parts {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    format!("{:x}", hasher.finalize())
 }
