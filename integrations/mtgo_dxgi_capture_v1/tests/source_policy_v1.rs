@@ -108,6 +108,49 @@ fn admitted_duel_frame_requires_an_opaque_profile_and_retains_no_downstream_auth
 }
 
 #[test]
+fn competitive_pregame_classifier_retains_exact_opaque_source_without_input_authority() {
+    let source = include_str!("../src/probe/competitive_pregame_runtime.rs");
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    for required in [
+        "classify_admitted_mtgo_competitive_pregame_frame_v1",
+        "OpaqueMtgoAdmittedDuelVisibleFrameV1",
+        "AdmittedMtgoDuelPerceptionProfileV1",
+        "AdmittedMtgoCompetitivePregameProfileV1",
+        "OpaqueMtgoVerifiedDuelPerceptionRuntimeV1",
+        "check_untrusted_competitive_pregame_classifier_request_v1",
+        "check_untrusted_competitive_pregame_classifier_response_v1",
+        "verify_duel_perception_runtime_identity_now_v1(runtime)?",
+        "--mtgo-visible-competitive-pregame-v1",
+        "MTGO_VISIBLE_COMPETITIVE_PREGAME_V1\\0",
+        "_source_frame: source_frame",
+        "_checked_classification: checked_classification",
+        "_response: response_record",
+        "safe_for_live_classification_v1(&self) -> bool {\n        false",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required) || runtime.contains(required),
+            "competitive pregame classifier runtime is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn pixels",
+        "pub fn control_rect",
+        "pub fn input_point",
+        "SendInput",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "UIAutomation",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "competitive pregame classifier exposes forbidden surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn competitive_navigation_frame_requires_admitted_profile_and_exact_account_title() {
     let source = include_str!("../src/probe/competitive_navigation_profile_frame.rs");
     for required in [

@@ -82,6 +82,7 @@ const DUEL_OPAQUE_COMPETITIVE_PASS_PREPARATION_DOMAIN_V1: &[u8] =
 const DUEL_OPAQUE_COMPETITIVE_PASS_CONFIRMATION_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-duel-pass-confirmation-v1";
 const DUEL_PERCEPTION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_PERCEPTION_V1\0";
+const COMPETITIVE_PREGAME_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_PREGAME_V1\0";
 const DUEL_GESTURE_TARGET_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_GESTURE_TARGET_V1\0";
 const MAX_RUNTIME_ARTIFACT_BYTES_V1: u64 = 512 * 1024 * 1024;
 const MAX_PERCEPTION_RESPONSE_BYTES_V1: usize = 16 * 1024 * 1024;
@@ -1653,7 +1654,7 @@ pub fn perceive_admitted_duel_frame_v1(
     {
         return Err("source frame, runtime, and admitted perception profile differ".to_owned());
     }
-    verify_runtime_identity_now_v1(runtime)?;
+    verify_duel_perception_runtime_identity_now_v1(runtime)?;
 
     let source = &source_frame.source_frame;
     let width = source.manifest.frame.canonical_width;
@@ -1704,7 +1705,7 @@ pub fn perceive_admitted_duel_frame_v1(
         &source.canonical_bgra8,
         Duration::from_millis(u64::from(timeout_ms)),
     )?;
-    verify_runtime_identity_now_v1(runtime)?;
+    verify_duel_perception_runtime_identity_now_v1(runtime)?;
     let response: MtgoDuelPerceptionProcessResponseV1 =
         serde_json::from_slice(&response).map_err(|error| {
             format!("perception response is not one strict protocol JSON value: {error}")
@@ -4813,7 +4814,7 @@ fn verify_runtime_artifact_v1(
     Ok(canonical)
 }
 
-fn verify_runtime_identity_now_v1(
+pub(super) fn verify_duel_perception_runtime_identity_now_v1(
     runtime: &OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
 ) -> Result<(), String> {
     for (path, expected, label) in [
@@ -4903,8 +4904,45 @@ fn invoke_verified_perception_process_v1(
     canonical_bgra8: &[u8],
     timeout: Duration,
 ) -> Result<Vec<u8>, String> {
+    invoke_verified_classifier_process_v1(
+        runtime,
+        "--mtgo-visible-duel-perception-v1",
+        DUEL_PERCEPTION_PROTOCOL_MAGIC_V1,
+        "duel perception",
+        header_json,
+        canonical_bgra8,
+        timeout,
+    )
+}
+
+pub(super) fn invoke_verified_competitive_pregame_process_v1(
+    runtime: &OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
+    header_json: &[u8],
+    canonical_bgra8: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
+    invoke_verified_classifier_process_v1(
+        runtime,
+        "--mtgo-visible-competitive-pregame-v1",
+        COMPETITIVE_PREGAME_PROTOCOL_MAGIC_V1,
+        "competitive pregame",
+        header_json,
+        canonical_bgra8,
+        timeout,
+    )
+}
+
+fn invoke_verified_classifier_process_v1(
+    runtime: &OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
+    mode_argument: &str,
+    protocol_magic: &[u8],
+    protocol_label: &str,
+    header_json: &[u8],
+    canonical_bgra8: &[u8],
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
     let mut child = Command::new(&runtime.executable_path)
-        .arg("--mtgo-visible-duel-perception-v1")
+        .arg(mode_argument)
         .arg("--classifier-assets-manifest")
         .arg(&runtime.classifier_assets_manifest_path)
         .arg("--card-database-profile")
@@ -4920,32 +4958,32 @@ fn invoke_verified_perception_process_v1(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("start verified duel perception runtime: {error}"))?;
+        .map_err(|error| format!("start verified {protocol_label} runtime: {error}"))?;
     let mut stdin = child
         .stdin
         .take()
-        .ok_or("verified duel perception runtime has no stdin")?;
+        .ok_or_else(|| format!("verified {protocol_label} runtime has no stdin"))?;
     let mut stdout = child
         .stdout
         .take()
-        .ok_or("verified duel perception runtime has no stdout")?;
+        .ok_or_else(|| format!("verified {protocol_label} runtime has no stdout"))?;
     let mut stderr = child
         .stderr
         .take()
-        .ok_or("verified duel perception runtime has no stderr")?;
+        .ok_or_else(|| format!("verified {protocol_label} runtime has no stderr"))?;
     let started = Instant::now();
     let (status, output, output_truncated, stderr_digest, stderr_truncated) =
         thread::scope(|scope| {
             let writer = scope.spawn(|| -> Result<(), String> {
                 stdin
-                    .write_all(DUEL_PERCEPTION_PROTOCOL_MAGIC_V1)
+                    .write_all(protocol_magic)
                     .and_then(|_| {
                         stdin.write_all(
                             &u64::try_from(header_json.len())
                                 .map_err(|_| {
                                     std::io::Error::new(
                                         std::io::ErrorKind::InvalidInput,
-                                        "duel perception header is too large",
+                                        format!("{protocol_label} header is too large"),
                                     )
                                 })?
                                 .to_be_bytes(),
@@ -4953,7 +4991,7 @@ fn invoke_verified_perception_process_v1(
                     })
                     .and_then(|_| stdin.write_all(header_json))
                     .and_then(|_| stdin.write_all(canonical_bgra8))
-                    .map_err(|error| format!("write duel perception request: {error}"))?;
+                    .map_err(|error| format!("write {protocol_label} request: {error}"))?;
                 drop(stdin);
                 Ok(())
             });
@@ -4964,26 +5002,26 @@ fn invoke_verified_perception_process_v1(
             let status = loop {
                 if let Some(status) = child
                     .try_wait()
-                    .map_err(|error| format!("poll duel perception runtime: {error}"))?
+                    .map_err(|error| format!("poll {protocol_label} runtime: {error}"))?
                 {
                     break status;
                 }
                 if started.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err("verified duel perception runtime timed out".to_owned());
+                    return Err(format!("verified {protocol_label} runtime timed out"));
                 }
                 thread::sleep(Duration::from_millis(5));
             };
             writer
                 .join()
-                .map_err(|_| "duel perception request writer panicked".to_owned())??;
+                .map_err(|_| format!("{protocol_label} request writer panicked"))??;
             let (output, output_truncated) = stdout_reader
                 .join()
-                .map_err(|_| "duel perception stdout reader panicked".to_owned())??;
+                .map_err(|_| format!("{protocol_label} stdout reader panicked"))??;
             let (stderr_bytes, stderr_truncated) = stderr_reader
                 .join()
-                .map_err(|_| "duel perception stderr reader panicked".to_owned())??;
+                .map_err(|_| format!("{protocol_label} stderr reader panicked"))??;
             Ok::<_, String>((
                 status,
                 output,

@@ -70,6 +70,31 @@ pub struct MtgoCompetitivePregameClassifierResponseV1 {
     pub visible_facts: Vec<MtgoCompetitivePregameVisibleFactV1>,
 }
 
+/// Canonical request metadata checked against the exact admitted profiles and
+/// following BGRA8 bytes. It retains no pixels.
+pub struct CheckedUntrustedMtgoCompetitivePregameClassifierRequestV1 {
+    header: MtgoCompetitivePregameClassifierRequestHeaderV1,
+    request_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoCompetitivePregameClassifierRequestV1 {
+    pub fn request_commitment_sha256(&self) -> &str {
+        &self.request_commitment_sha256
+    }
+
+    pub fn frame_id(&self) -> u64 {
+        self.header.frame_id
+    }
+
+    pub fn frame_sequence(&self) -> u64 {
+        self.header.frame_sequence
+    }
+
+    pub fn safe_for_live_classification_v1(&self) -> bool {
+        false
+    }
+}
+
 /// Structurally and pixel checked pregame classification. It retains no
 /// pixels, rectangles, event identity, action target, or input method.
 ///
@@ -154,6 +179,26 @@ pub fn check_untrusted_competitive_pregame_classifier_exchange_v1(
     canonical_bgra8: &[u8],
     canonical_response_json: &[u8],
 ) -> Result<CheckedUntrustedMtgoCompetitivePregameClassificationV1, MtgoContractErrorV1> {
+    let request = check_untrusted_competitive_pregame_classifier_request_v1(
+        duel_profile,
+        pregame_profile,
+        canonical_request_header_json,
+        canonical_bgra8,
+    )?;
+    check_untrusted_competitive_pregame_classifier_response_v1(
+        pregame_profile,
+        &request,
+        canonical_bgra8,
+        canonical_response_json,
+    )
+}
+
+pub fn check_untrusted_competitive_pregame_classifier_request_v1(
+    duel_profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    pregame_profile: &AdmittedMtgoCompetitivePregameProfileV1,
+    canonical_request_header_json: &[u8],
+    canonical_bgra8: &[u8],
+) -> Result<CheckedUntrustedMtgoCompetitivePregameClassifierRequestV1, MtgoContractErrorV1> {
     let header: MtgoCompetitivePregameClassifierRequestHeaderV1 =
         parse_canonical_json_v1(canonical_request_header_json, "request")?;
     validate_header_v1(&header, canonical_bgra8, duel_profile, pregame_profile)?;
@@ -161,11 +206,34 @@ pub fn check_untrusted_competitive_pregame_classifier_exchange_v1(
         COMPETITIVE_PREGAME_CLASSIFIER_REQUEST_DOMAIN_V1,
         &[canonical_request_header_json, canonical_bgra8],
     );
+    Ok(CheckedUntrustedMtgoCompetitivePregameClassifierRequestV1 {
+        header,
+        request_commitment_sha256,
+    })
+}
 
+pub fn check_untrusted_competitive_pregame_classifier_response_v1(
+    pregame_profile: &AdmittedMtgoCompetitivePregameProfileV1,
+    request: &CheckedUntrustedMtgoCompetitivePregameClassifierRequestV1,
+    canonical_bgra8: &[u8],
+    canonical_response_json: &[u8],
+) -> Result<CheckedUntrustedMtgoCompetitivePregameClassificationV1, MtgoContractErrorV1> {
+    if request.header.canonical_byte_length != canonical_bgra8.len()
+        || request.header.canonical_bgra8_sha256 != sha256_hex_v1(canonical_bgra8)
+        || request.header.pregame_evaluation_commitment_sha256
+            != pregame_profile.evaluation_commitment_sha256()
+        || request.header.pregame_profile_admission_commitment_sha256
+            != pregame_profile.admission_commitment_sha256()
+    {
+        return Err(error_v1(
+            "competitive_pregame_classifier_response_source_mismatch",
+            "response validation source differs from the checked request or pregame profile",
+        ));
+    }
     let response: MtgoCompetitivePregameClassifierResponseV1 =
         parse_canonical_json_v1(canonical_response_json, "response")?;
     if response.schema_version != MTGO_COMPETITIVE_PREGAME_CLASSIFIER_SCHEMA_V1
-        || response.request_commitment_sha256 != request_commitment_sha256
+        || response.request_commitment_sha256 != request.request_commitment_sha256
         || !canonical_competitive_pregame_states_v1().contains(&response.stage)
     {
         return Err(error_v1(
@@ -178,15 +246,15 @@ pub fn check_untrusted_competitive_pregame_classifier_exchange_v1(
         &response.visible_facts,
         canonical_bgra8,
         &MtgoSizePxV1 {
-            width: header.canonical_width,
-            height: header.canonical_height,
+            width: request.header.canonical_width,
+            height: request.header.canonical_height,
         },
     )?;
 
     let classification_commitment_sha256 = commitment_v1(
         COMPETITIVE_PREGAME_CLASSIFICATION_DOMAIN_V1,
         &[
-            request_commitment_sha256.as_bytes(),
+            request.request_commitment_sha256.as_bytes(),
             canonical_response_json,
             pregame_profile.evaluation_commitment_sha256().as_bytes(),
             pregame_profile.admission_commitment_sha256().as_bytes(),
@@ -194,17 +262,27 @@ pub fn check_untrusted_competitive_pregame_classifier_exchange_v1(
         ],
     );
     Ok(CheckedUntrustedMtgoCompetitivePregameClassificationV1 {
-        source_capture_commitment_sha256: header.source_capture_commitment_sha256,
-        source_frame_profile_binding_sha256: header.source_frame_profile_binding_sha256,
-        classifier_runtime_identity_commitment_sha256: header
-            .classifier_runtime_identity_commitment_sha256,
-        pregame_evaluation_commitment_sha256: header.pregame_evaluation_commitment_sha256,
-        pregame_profile_admission_commitment_sha256: header
-            .pregame_profile_admission_commitment_sha256,
-        request_commitment_sha256,
+        source_capture_commitment_sha256: request.header.source_capture_commitment_sha256.clone(),
+        source_frame_profile_binding_sha256: request
+            .header
+            .source_frame_profile_binding_sha256
+            .clone(),
+        classifier_runtime_identity_commitment_sha256: request
+            .header
+            .classifier_runtime_identity_commitment_sha256
+            .clone(),
+        pregame_evaluation_commitment_sha256: request
+            .header
+            .pregame_evaluation_commitment_sha256
+            .clone(),
+        pregame_profile_admission_commitment_sha256: request
+            .header
+            .pregame_profile_admission_commitment_sha256
+            .clone(),
+        request_commitment_sha256: request.request_commitment_sha256.clone(),
         classification_commitment_sha256,
-        frame_id: header.frame_id,
-        frame_sequence: header.frame_sequence,
+        frame_id: request.header.frame_id,
+        frame_sequence: request.header.frame_sequence,
         stage: response.stage,
     })
 }
