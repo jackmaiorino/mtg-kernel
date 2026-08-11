@@ -381,6 +381,7 @@ fn competitive_event_record_parser_is_exact_frame_bounded_and_unratified() {
         "OpaqueMtgoAdmittedCompetitiveNavigationFrameV1",
         "MtgoCompetitiveEventRecordClassifierProcessResponseV1",
         "league_and_challenge_eight_slice_event_record_checked_untrusted_v1",
+        "mtgo-visible-competitive-navigation-snapshot-id-v1",
         "--mtgo-visible-competitive-event-record-v1",
         "MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1",
         "validate_visible_competitive_lifecycle_snapshot_v1",

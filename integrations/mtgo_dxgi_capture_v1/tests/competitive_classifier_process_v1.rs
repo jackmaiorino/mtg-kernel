@@ -348,6 +348,46 @@ fn event_record_mode_completes_the_exact_framed_child_process_exchange() {
         classifier_assets_manifest_sha256: sha256_hex(&assets_json),
     };
     let header_json = serde_json::to_vec(&header).unwrap();
+    let navigation_header = MtgoCompetitiveNavigationClassifierRequestHeaderV1 {
+        schema_version: 1,
+        protocol: "mtgo_visible_competitive_navigation_v1".to_owned(),
+        frame_id: header.frame_id,
+        frame_sequence: header.frame_sequence,
+        captured_at_unix_millis: header.captured_at_unix_millis,
+        canonical_width: width,
+        canonical_height: height,
+        canonical_stride: width * 4,
+        canonical_byte_length: pixels.len() as u64,
+        canonical_bgra8_sha256: header.canonical_bgra8_sha256.clone(),
+        source_manifest_sha256: digest('0'),
+        source_capture_commitment_sha256: header.source_capture_commitment_sha256.clone(),
+        source_profile_binding_sha256: digest('9'),
+        source_frame_profile_binding_sha256: header.source_frame_profile_binding_sha256.clone(),
+        navigation_profile_commitment_sha256: header.navigation_profile_commitment_sha256.clone(),
+        navigation_profile_admission_commitment_sha256: header
+            .navigation_profile_admission_commitment_sha256
+            .clone(),
+        approved_account_alias_sha256: header.approved_account_alias_sha256.clone(),
+        runtime_identity_commitment_sha256: header.runtime_identity_commitment_sha256.clone(),
+        classifier_binary_sha256: header.classifier_binary_sha256.clone(),
+        classifier_assets_manifest_sha256: header.classifier_assets_manifest_sha256.clone(),
+    };
+    let navigation_header_json = serde_json::to_vec(&navigation_header).unwrap();
+    let navigation_output = invoke_classifier_v1(
+        executable,
+        "--mtgo-visible-competitive-navigation-v1",
+        MAGIC_V1,
+        &navigation_header_json,
+        &assets_json,
+        &pixels,
+    );
+    assert!(
+        navigation_output.status.success(),
+        "navigation classifier stderr: {}",
+        String::from_utf8_lossy(&navigation_output.stderr)
+    );
+    let navigation_response: MtgoCompetitiveNavigationClassifierProcessResponseV1 =
+        serde_json::from_slice(&navigation_output.stdout).unwrap();
     let mut child = Command::new(executable)
         .arg("--mtgo-visible-competitive-event-record-v1")
         .stdin(Stdio::piped())
@@ -388,7 +428,40 @@ fn event_record_mode_completes_the_exact_framed_child_process_exchange() {
         response.record.status,
         MtgoCompetitiveEventVisibleStatusV1::PairingReady
     );
+    assert_eq!(response.lifecycle, navigation_response.lifecycle);
     assert_eq!(response.record.facts.len(), 2);
+}
+
+fn invoke_classifier_v1(
+    executable: &str,
+    mode: &str,
+    magic: &[u8],
+    header_json: &[u8],
+    assets_json: &[u8],
+    pixels: &[u8],
+) -> std::process::Output {
+    let mut child = Command::new(executable)
+        .arg(mode)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        stdin.write_all(magic).unwrap();
+        stdin
+            .write_all(&(header_json.len() as u64).to_be_bytes())
+            .unwrap();
+        stdin
+            .write_all(&(assets_json.len() as u64).to_be_bytes())
+            .unwrap();
+        stdin.write_all(header_json).unwrap();
+        stdin.write_all(assets_json).unwrap();
+        stdin.write_all(pixels).unwrap();
+    }
+    drop(child.stdin.take());
+    child.wait_with_output().unwrap()
 }
 
 fn digest(byte: char) -> String {

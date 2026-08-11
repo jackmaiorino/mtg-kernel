@@ -85,6 +85,9 @@ const NAVIGATION_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
 const EVENT_RECORD_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-record-classifier-request-v1";
 #[cfg(target_os = "windows")]
+const NAVIGATION_SNAPSHOT_ID_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-competitive-navigation-snapshot-id-v1";
+#[cfg(target_os = "windows")]
 const TARGET_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-competitive-event-listing-target-v1";
 #[cfg(target_os = "windows")]
 const MAX_HEADER_BYTES_V1: usize = 1024 * 1024;
@@ -451,7 +454,6 @@ fn classify_event_record_profile_v1(
         &header.canonical_bgra8_sha256,
         navigation_profile,
         canonical_bgra8,
-        &request_commitment_sha256,
     )?;
     let checked_lifecycle =
         validate_visible_competitive_lifecycle_snapshot_v1(lifecycle.clone())
@@ -539,7 +541,6 @@ fn classify_navigation_profile_v1(
         &header.canonical_bgra8_sha256,
         profile,
         canonical_bgra8,
-        &request_commitment_sha256,
     )?;
     Ok(MtgoCompetitiveNavigationClassifierProcessResponseV1 {
         schema_version: 1,
@@ -558,7 +559,6 @@ fn build_navigation_lifecycle_from_frame_v1(
     frame_sha256: &str,
     profile: &MtgoCompetitiveNavigationRegionProfileV1,
     canonical_bgra8: &[u8],
-    request_commitment_sha256: &str,
 ) -> Result<MtgoVisibleCompetitiveLifecycleSnapshotV1, String> {
     let size = profile.client_size_px.clone();
     let facts = profile
@@ -586,11 +586,26 @@ fn build_navigation_lifecycle_from_frame_v1(
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let frame_id_bytes = frame_id.to_be_bytes();
+    let frame_sequence_bytes = frame_sequence.to_be_bytes();
+    let width_bytes = width.to_be_bytes();
+    let height_bytes = height.to_be_bytes();
+    let snapshot_id_binding = commitment_v1(
+        NAVIGATION_SNAPSHOT_ID_DOMAIN_V1,
+        &[
+            &frame_id_bytes,
+            &frame_sequence_bytes,
+            &width_bytes,
+            &height_bytes,
+            frame_sha256.as_bytes(),
+            profile.profile_id.as_bytes(),
+        ],
+    );
     let lifecycle = MtgoVisibleCompetitiveLifecycleSnapshotV1 {
         schema_version: MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
         snapshot_id: format!(
             "visible-region-navigation-v1-{}",
-            &request_commitment_sha256[..24]
+            &snapshot_id_binding[..24]
         ),
         event_kind: profile.event_kind,
         phase: profile.phase,
@@ -2220,6 +2235,12 @@ mod tests {
             &pixels,
         )
         .unwrap();
+        let mut navigation_header = navigation_header_v1(&pixels, sha256_hex_v1(&assets_bytes));
+        navigation_header.frame_id = header.frame_id;
+        navigation_header.frame_sequence = header.frame_sequence;
+        let navigation_response =
+            classify_navigation_profile_v1(&navigation_header, navigation, &pixels, digest('c'))
+                .unwrap();
         let response = classify_event_record_profile_v1(
             &header,
             navigation,
@@ -2235,6 +2256,16 @@ mod tests {
         assert_eq!(response.record.event_identity_sha256, digest('a'));
         assert_eq!(response.record.frame_id, header.frame_id);
         assert_eq!(response.record.facts.len(), 2);
+        assert_eq!(
+            validate_visible_competitive_lifecycle_snapshot_v1(
+                navigation_response.lifecycle.clone()
+            )
+            .unwrap()
+            .snapshot_commitment_sha256(),
+            validate_visible_competitive_lifecycle_snapshot_v1(response.lifecycle.clone())
+                .unwrap()
+                .snapshot_commitment_sha256()
+        );
         assert_eq!(
             response.record.source_lifecycle_snapshot_commitment_sha256,
             validate_visible_competitive_lifecycle_snapshot_v1(response.lifecycle)
