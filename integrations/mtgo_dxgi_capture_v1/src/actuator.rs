@@ -68,6 +68,9 @@ const COMPETITIVE_DUEL_PASS_AUTHORIZATION_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-priority-pass-authorization-binding-v1";
 const RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
 const RATIFIED_COMPETITIVE_DUEL_PASS_AUTHORIZATION_FROM_REVIEW_COMMITMENT_V2: Option<&str> = None;
+const COMPETITIVE_ENTRY_AUTHORIZATION_RATIFICATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-entry-authorization-ratification-v1";
+const RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
 const COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-match-launch-authorization-v1";
 const RATIFIED_COMPETITIVE_MATCH_LAUNCH_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None;
@@ -219,6 +222,105 @@ impl MtgoReviewedCompetitivePassRatificationCandidateV2 {
     }
 
     pub fn permits_spending_v2(&self) -> bool {
+        false
+    }
+}
+
+/// Copyable review telemetry for one exact League or Challenge entry and its
+/// exact existing-account resource terms. This is a proposed compile-time
+/// ratification value only. It cannot enter the event, spend resources, or
+/// send input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoReviewedCompetitiveEntryRatificationCandidateV1 {
+    pub permission_review_commitment_sha256: String,
+    pub account_alias_sha256: String,
+    pub correspondence_sha256: String,
+    pub mode_authorization_commitment_sha256: String,
+    pub control_bound_review_commitment_sha256: String,
+    pub owner_review_receipt_sha256: String,
+    pub entry_authorization_sha256: String,
+    pub source_identity_commitment_sha256: String,
+    pub source_capture_commitment_sha256: String,
+    pub source_navigation_classification_result_commitment_sha256: String,
+    pub visible_control_region_sha256: String,
+    pub event_identity_sha256: String,
+    pub entry_terms_sha256: String,
+    pub ratification_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub resource: MtgoCompetitiveEntryResourceV1,
+    pub amount: u32,
+}
+
+impl MtgoReviewedCompetitiveEntryRatificationCandidateV1 {
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Separately compile-ratified authority for one exact owner-reviewed entry.
+/// It owns the checked correspondence and the complete control-bound review,
+/// but it exposes no coordinates or input method. A future actuator must also
+/// require an immediate recapture and the exact visible postcondition gate.
+///
+/// The production ratification root is empty.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::RatifiedMtgoCompetitiveEntryAuthorizationV1;
+/// let _forged = RatifiedMtgoCompetitiveEntryAuthorizationV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::RatifiedMtgoCompetitiveEntryAuthorizationV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<RatifiedMtgoCompetitiveEntryAuthorizationV1>();
+/// ```
+pub struct RatifiedMtgoCompetitiveEntryAuthorizationV1 {
+    _permission_correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    _review: CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4,
+    _scope: MtgoAuthorizationScopeV1,
+    #[allow(dead_code)]
+    visible_account_alias: String,
+    commitments: MtgoReviewedCompetitiveEntryRatificationCandidateV1,
+}
+
+impl RatifiedMtgoCompetitiveEntryAuthorizationV1 {
+    pub fn commitments_v1(&self) -> MtgoReviewedCompetitiveEntryRatificationCandidateV1 {
+        self.commitments.clone()
+    }
+
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.commitments.event_kind
+    }
+
+    pub fn resource_v1(&self) -> MtgoCompetitiveEntryResourceV1 {
+        self.commitments.resource
+    }
+
+    pub fn amount_v1(&self) -> u32 {
+        self.commitments.amount
+    }
+
+    pub fn authorizes_exact_reviewed_entry_v1(&self) -> bool {
+        true
+    }
+
+    pub fn authorizes_exact_reviewed_resource_terms_v1(&self) -> bool {
+        true
+    }
+
+    pub fn permits_exact_reviewed_spending_v1(&self) -> bool {
+        self.commitments.resource != MtgoCompetitiveEntryResourceV1::NoCost
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
         false
     }
 }
@@ -1034,6 +1136,46 @@ pub fn review_competitive_duel_pass_ratification_candidate_from_correspondence_v
         ratification_commitment_sha256,
         event_kind,
     })
+}
+
+/// Computes the exact production ratification candidate for one attended,
+/// classifier-backed, visibly enabled League or Challenge entry review. The
+/// output is non-authorizing telemetry. The private correspondence and the
+/// opaque coordinate-bearing review remain retained by their callers.
+pub fn review_competitive_entry_ratification_candidate_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    review: &CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4,
+    visible_account_alias: &str,
+) -> Result<MtgoReviewedCompetitiveEntryRatificationCandidateV1, String> {
+    let source_identity = &review
+        ._classifier_bound_review
+        ._source_bound_review
+        ._source_identity;
+    competitive_entry_ratification_candidate_from_parts_v1(
+        correspondence,
+        visible_account_alias,
+        source_identity.lifecycle_v1(),
+        &source_identity.commitments_v1(),
+        &review.entry_authorization,
+        &review.commitments,
+    )
+}
+
+/// Production path for separately ratifying one exact owner-reviewed League
+/// or Challenge entry. The root is deliberately empty, so current builds
+/// always reject. Even a future ratified value exposes no coordinate or input
+/// method and must still pass immediate-recapture and postcondition gates.
+pub fn ratify_competitive_entry_authorization_v1(
+    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    review: CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4,
+    visible_account_alias: String,
+) -> Result<RatifiedMtgoCompetitiveEntryAuthorizationV1, String> {
+    ratify_competitive_entry_authorization_with_commitment_v1(
+        correspondence,
+        review,
+        visible_account_alias,
+        RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1,
+    )
 }
 
 /// Performs a terminal-attended review of one exact visible League or
@@ -2380,6 +2522,231 @@ fn is_sha256_v2(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn competitive_entry_ratification_candidate_from_parts_v1(
+    correspondence: &CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    visible_account_alias: &str,
+    lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    source_identity: &MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
+    entry_authorization: &MtgoCompetitiveEntryAuthorizationV1,
+    review: &MtgoControlBoundCompetitiveEntryReviewCommitmentsV4,
+) -> Result<MtgoReviewedCompetitiveEntryRatificationCandidateV1, String> {
+    let classifier = &review.classifier_bound_review;
+    let source_bound = &classifier.source_bound_review;
+    let attended = &source_bound.attended_review;
+    let dry_run = &review.entry_control_dry_run;
+    let retained_classifier_commitment =
+        require_classifier_bound_competitive_entry_source_v3(source_identity)?;
+    if classifier.source_navigation_classification_result_commitment_sha256
+        != retained_classifier_commitment
+        || source_bound.source_identity_commitment_sha256
+            != source_identity.source_identity_commitment_sha256
+        || source_bound.source_capture_commitment_sha256
+            != source_identity.source_capture_commitment_sha256
+        || source_bound
+            .source_navigation_classification_result_commitment_sha256
+            .as_deref()
+            != Some(retained_classifier_commitment)
+        || source_bound
+            .attended_review
+            .source_lifecycle_snapshot_commitment_sha256
+            != source_identity.source_lifecycle_snapshot_commitment_sha256
+        || source_identity.source_lifecycle_snapshot_commitment_sha256
+            != lifecycle.snapshot_commitment_sha256()
+        || source_identity.event_kind != lifecycle.event_kind()
+        || source_identity.frame_id != lifecycle.frame_id_v1()
+        || source_identity.frame_sequence != lifecycle.frame_sequence()
+    {
+        return Err("competitive entry ratification changed the exact source lineage".to_owned());
+    }
+    let expected_classifier_bound = classifier_bound_competitive_entry_review_commitment_v3(
+        source_bound,
+        retained_classifier_commitment,
+    );
+    if classifier.classifier_bound_review_commitment_sha256 != expected_classifier_bound {
+        return Err(
+            "competitive entry ratification changed the classifier-bound review".to_owned(),
+        );
+    }
+    let expected_control_bound =
+        bind_control_bound_competitive_entry_review_commitment_v4(classifier, dry_run)?;
+    if review.control_bound_review_commitment_sha256 != expected_control_bound {
+        return Err("competitive entry ratification changed the control-bound review".to_owned());
+    }
+
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(attended.event_kind)
+        .map_err(|error| format!("derive reviewed competitive entry mode scope: {error}"))?;
+    let mode_authorization_commitment_sha256 = validate_competitive_duel_pass_authorization_v1(
+        &scope,
+        visible_account_alias,
+        attended.event_kind,
+    )?;
+    if attended.permission_review_commitment_sha256 != correspondence.review_commitment_sha256()
+        || attended.mode_authorization_commitment_sha256 != mode_authorization_commitment_sha256
+        || attended.event_kind != lifecycle.event_kind()
+        || attended.frame_id != lifecycle.frame_id_v1()
+        || attended.frame_sequence != lifecycle.frame_sequence()
+    {
+        return Err(
+            "competitive entry ratification changed the correspondence, account, mode, or frame"
+                .to_owned(),
+        );
+    }
+    let lifecycle_intent = make_offline_competitive_lifecycle_intent_v1(
+        lifecycle,
+        MtgoCompetitiveLifecycleActionV1::ConfirmEntry,
+        &scope,
+        Some(entry_authorization),
+    )
+    .map_err(|error| format!("validate reviewed competitive entry authorization: {error}"))?;
+    let entry_authorization_sha256 = lifecycle_intent
+        .entry_authorization_sha256
+        .ok_or("competitive entry ratification has no exact entry authorization")?;
+    let event_identity_sha256 = lifecycle
+        .event_identity_sha256_v1()
+        .ok_or("competitive entry ratification has no exact event identity")?
+        .to_owned();
+    let entry_terms = lifecycle
+        .entry_terms_v1()
+        .ok_or("competitive entry ratification has no exact visible entry terms")?;
+    if attended.entry_authorization_sha256 != entry_authorization_sha256
+        || attended.resource != entry_terms.resource
+        || attended.amount != entry_terms.amount
+        || source_identity.resource != entry_terms.resource
+        || source_identity.amount != entry_terms.amount
+        || dry_run.event_kind != attended.event_kind
+        || dry_run.frame_id != attended.frame_id
+        || dry_run.frame_sequence != attended.frame_sequence
+        || dry_run.resource != entry_terms.resource
+        || dry_run.amount != entry_terms.amount
+        || !dry_run.visibly_enabled_confirmed
+    {
+        return Err(
+            "competitive entry ratification changed the visible event, terms, or enabled control"
+                .to_owned(),
+        );
+    }
+    for digest in [
+        correspondence.review_commitment_sha256(),
+        scope.account_alias_sha256.as_str(),
+        scope.written_permission_sha256.as_str(),
+        mode_authorization_commitment_sha256.as_str(),
+        review.control_bound_review_commitment_sha256.as_str(),
+        classifier
+            .classifier_bound_review_commitment_sha256
+            .as_str(),
+        attended.owner_review_receipt_sha256.as_str(),
+        entry_authorization_sha256.as_str(),
+        source_identity.source_identity_commitment_sha256.as_str(),
+        source_identity.source_capture_commitment_sha256.as_str(),
+        retained_classifier_commitment,
+        source_identity
+            .source_lifecycle_snapshot_commitment_sha256
+            .as_str(),
+        dry_run.dry_run_commitment_sha256.as_str(),
+        dry_run.visible_control_label_sha256.as_str(),
+        dry_run.visible_control_region_sha256.as_str(),
+        event_identity_sha256.as_str(),
+        entry_terms.terms_sha256.as_str(),
+    ] {
+        if !is_sha256_v2(digest) {
+            return Err("competitive entry ratification contains an invalid commitment".to_owned());
+        }
+    }
+    let event_kind: &[u8] = match attended.event_kind {
+        MtgoCompetitiveEventKindV1::League => b"league",
+        MtgoCompetitiveEventKindV1::Challenge => b"challenge",
+    };
+    let resource: &[u8] = match entry_terms.resource {
+        MtgoCompetitiveEntryResourceV1::NoCost => b"no_cost",
+        MtgoCompetitiveEntryResourceV1::ExistingEventToken => b"existing_event_token",
+        MtgoCompetitiveEntryResourceV1::ExistingPlayPoints => b"existing_play_points",
+        MtgoCompetitiveEntryResourceV1::ExistingEventTickets => b"existing_event_tickets",
+    };
+    let ratification_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_ENTRY_AUTHORIZATION_RATIFICATION_DOMAIN_V1,
+        &[
+            correspondence.review_commitment_sha256().as_bytes(),
+            scope.account_alias_sha256.as_bytes(),
+            scope.written_permission_sha256.as_bytes(),
+            mode_authorization_commitment_sha256.as_bytes(),
+            review.control_bound_review_commitment_sha256.as_bytes(),
+            classifier
+                .classifier_bound_review_commitment_sha256
+                .as_bytes(),
+            attended.owner_review_receipt_sha256.as_bytes(),
+            entry_authorization_sha256.as_bytes(),
+            source_identity.source_identity_commitment_sha256.as_bytes(),
+            source_identity.source_capture_commitment_sha256.as_bytes(),
+            retained_classifier_commitment.as_bytes(),
+            source_identity
+                .source_lifecycle_snapshot_commitment_sha256
+                .as_bytes(),
+            dry_run.dry_run_commitment_sha256.as_bytes(),
+            dry_run.visible_control_label_sha256.as_bytes(),
+            dry_run.visible_control_region_sha256.as_bytes(),
+            event_kind,
+            event_identity_sha256.as_bytes(),
+            entry_terms.terms_sha256.as_bytes(),
+            resource,
+            entry_terms.amount.to_be_bytes().as_slice(),
+            b"exact_owner_reviewed_existing_account_resource_entry_requires_fresh_recapture_and_visible_postcondition",
+        ],
+    );
+    Ok(MtgoReviewedCompetitiveEntryRatificationCandidateV1 {
+        permission_review_commitment_sha256: correspondence.review_commitment_sha256().to_owned(),
+        account_alias_sha256: scope.account_alias_sha256,
+        correspondence_sha256: scope.written_permission_sha256,
+        mode_authorization_commitment_sha256,
+        control_bound_review_commitment_sha256: review
+            .control_bound_review_commitment_sha256
+            .clone(),
+        owner_review_receipt_sha256: attended.owner_review_receipt_sha256.clone(),
+        entry_authorization_sha256,
+        source_identity_commitment_sha256: source_identity
+            .source_identity_commitment_sha256
+            .clone(),
+        source_capture_commitment_sha256: source_identity.source_capture_commitment_sha256.clone(),
+        source_navigation_classification_result_commitment_sha256: retained_classifier_commitment
+            .to_owned(),
+        visible_control_region_sha256: dry_run.visible_control_region_sha256.clone(),
+        event_identity_sha256,
+        entry_terms_sha256: entry_terms.terms_sha256.clone(),
+        ratification_commitment_sha256,
+        event_kind: attended.event_kind,
+        resource: entry_terms.resource,
+        amount: entry_terms.amount,
+    })
+}
+
+fn ratify_competitive_entry_authorization_with_commitment_v1(
+    correspondence: CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+    review: CheckedUntrustedMtgoControlBoundCompetitiveEntryReviewV4,
+    visible_account_alias: String,
+    ratified_commitment_sha256: Option<&str>,
+) -> Result<RatifiedMtgoCompetitiveEntryAuthorizationV1, String> {
+    let candidate = review_competitive_entry_ratification_candidate_v1(
+        &correspondence,
+        &review,
+        &visible_account_alias,
+    )?;
+    if ratified_commitment_sha256 != Some(candidate.ratification_commitment_sha256.as_str()) {
+        return Err(
+            "the exact owner-reviewed competitive entry is not ratified in this build".to_owned(),
+        );
+    }
+    let scope = correspondence
+        .checked_untrusted_scope_for_mode_v1(candidate.event_kind)
+        .map_err(|error| format!("derive ratified competitive entry scope: {error}"))?;
+    Ok(RatifiedMtgoCompetitiveEntryAuthorizationV1 {
+        _permission_correspondence: correspondence,
+        _review: review,
+        _scope: scope,
+        visible_account_alias,
+        commitments: candidate,
+    })
+}
+
 fn ratify_competitive_match_launch_with_commitment_v1(
     scope: &MtgoAuthorizationScopeV1,
     visible_account_alias: &str,
@@ -3683,6 +4050,118 @@ mod tests {
         }
     }
 
+    fn competitive_entry_ratification_parts_v1(
+        event_kind: MtgoCompetitiveEventKindV1,
+        resource: MtgoCompetitiveEntryResourceV1,
+        amount: u32,
+    ) -> (
+        CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
+        CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+        MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
+        MtgoCompetitiveEntryAuthorizationV1,
+        MtgoControlBoundCompetitiveEntryReviewCommitmentsV4,
+    ) {
+        let correspondence = checked_competitive_correspondence_v2();
+        let source = checked_competitive_entry_review_snapshot_v1(event_kind, resource, amount);
+        let reviewed_source =
+            checked_competitive_entry_review_snapshot_v1(event_kind, resource, amount);
+        let nonce = [0x31u8; 8];
+        let phrase = attended_competitive_entry_review_confirmation_phrase_v1(
+            event_kind, resource, amount, &nonce,
+        );
+        let reviewed = review_competitive_entry_from_attended_confirmation_v1(
+            &correspondence,
+            reviewed_source,
+            "UnbuckledPie",
+            match event_kind {
+                MtgoCompetitiveEventKindV1::League => "Modern League".to_owned(),
+                MtgoCompetitiveEventKindV1::Challenge => "Modern Challenge".to_owned(),
+            },
+            nonce,
+            2_100,
+            &phrase,
+        )
+        .unwrap();
+        let attended = reviewed.commitments_v1();
+        let entry_authorization = reviewed.entry_authorization_record_v1();
+        let classifier_commitment = "b".repeat(64);
+        let source_identity = MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1 {
+            source_capture_commitment_sha256: "1".repeat(64),
+            source_lifecycle_snapshot_commitment_sha256: source
+                .snapshot_commitment_sha256()
+                .to_owned(),
+            source_window_title_sha256: "3".repeat(64),
+            event_label_region_sha256: "4".repeat(64),
+            source_identity_commitment_sha256: "5".repeat(64),
+            source_navigation_classification_result_commitment_sha256: Some(
+                classifier_commitment.clone(),
+            ),
+            event_kind,
+            frame_id: source.frame_id_v1(),
+            frame_sequence: source.frame_sequence(),
+            resource,
+            amount,
+        };
+        let source_bound = MtgoSourceBoundCompetitiveEntryReviewCommitmentsV2 {
+            source_identity_commitment_sha256: source_identity
+                .source_identity_commitment_sha256
+                .clone(),
+            source_capture_commitment_sha256: source_identity
+                .source_capture_commitment_sha256
+                .clone(),
+            source_navigation_classification_result_commitment_sha256: Some(
+                classifier_commitment.clone(),
+            ),
+            attended_review: attended,
+        };
+        let classifier_bound = MtgoClassifierBoundCompetitiveEntryReviewCommitmentsV3 {
+            source_navigation_classification_result_commitment_sha256: classifier_commitment
+                .clone(),
+            classifier_bound_review_commitment_sha256:
+                classifier_bound_competitive_entry_review_commitment_v3(
+                    &source_bound,
+                    &classifier_commitment,
+                ),
+            source_bound_review: source_bound,
+        };
+        let dry_run = MtgoOpaqueCompetitiveEntryControlDryRunCommitmentsV1 {
+            source_identity_commitment_sha256: source_identity
+                .source_identity_commitment_sha256
+                .clone(),
+            source_capture_commitment_sha256: source_identity
+                .source_capture_commitment_sha256
+                .clone(),
+            source_lifecycle_snapshot_commitment_sha256: source_identity
+                .source_lifecycle_snapshot_commitment_sha256
+                .clone(),
+            source_navigation_classification_result_commitment_sha256: classifier_commitment,
+            visible_control_label_sha256: "c".repeat(64),
+            visible_control_region_sha256: "d".repeat(64),
+            visibly_enabled_confirmed: true,
+            dry_run_commitment_sha256: "e".repeat(64),
+            event_kind,
+            frame_id: source.frame_id_v1(),
+            frame_sequence: source.frame_sequence(),
+            resource,
+            amount,
+        };
+        let control_bound_review_commitment_sha256 =
+            bind_control_bound_competitive_entry_review_commitment_v4(&classifier_bound, &dry_run)
+                .unwrap();
+        let control_bound = MtgoControlBoundCompetitiveEntryReviewCommitmentsV4 {
+            control_bound_review_commitment_sha256,
+            classifier_bound_review: classifier_bound,
+            entry_control_dry_run: dry_run,
+        };
+        (
+            correspondence,
+            source,
+            source_identity,
+            entry_authorization,
+            control_bound,
+        )
+    }
+
     fn ratified_competitive_pass_v1(
         event_kind: MtgoCompetitiveEventKindV1,
     ) -> RatifiedMtgoCompetitiveDuelPassAuthorizationV1 {
@@ -4102,6 +4581,101 @@ mod tests {
         )
         .unwrap();
         assert_ne!(baseline, changed);
+    }
+
+    #[test]
+    fn competitive_entry_ratification_candidate_binds_exact_mode_terms_and_review() {
+        let mut commitments = Vec::new();
+        for (event_kind, resource, amount) in [
+            (
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+            ),
+            (
+                MtgoCompetitiveEventKindV1::Challenge,
+                MtgoCompetitiveEntryResourceV1::ExistingEventTickets,
+                25,
+            ),
+        ] {
+            let (correspondence, source, source_identity, entry_authorization, review) =
+                competitive_entry_ratification_parts_v1(event_kind, resource, amount);
+            let candidate = competitive_entry_ratification_candidate_from_parts_v1(
+                &correspondence,
+                "UnbuckledPie",
+                &source,
+                &source_identity,
+                &entry_authorization,
+                &review,
+            )
+            .unwrap();
+            assert_eq!(candidate.event_kind, event_kind);
+            assert_eq!(candidate.resource, resource);
+            assert_eq!(candidate.amount, amount);
+            assert_eq!(candidate.ratification_commitment_sha256.len(), 64);
+            assert_eq!(
+                candidate.permission_review_commitment_sha256,
+                correspondence.review_commitment_sha256()
+            );
+            assert!(!candidate.safe_for_live_input_v1());
+            assert!(!candidate.permits_event_entry_v1());
+            assert!(!candidate.permits_spending_v1());
+            commitments.push(candidate.ratification_commitment_sha256);
+        }
+        assert_ne!(commitments[0], commitments[1]);
+        assert!(RATIFIED_COMPETITIVE_ENTRY_AUTHORIZATION_COMMITMENT_V1.is_none());
+    }
+
+    #[test]
+    fn competitive_entry_ratification_rejects_lineage_terms_and_control_drift() {
+        let (correspondence, source, source_identity, entry_authorization, review) =
+            competitive_entry_ratification_parts_v1(
+                MtgoCompetitiveEventKindV1::League,
+                MtgoCompetitiveEntryResourceV1::ExistingPlayPoints,
+                100,
+            );
+        let check =
+            |identity: &MtgoOpaqueCompetitiveEntryReviewIdentityCommitmentsV1,
+             authorization: &MtgoCompetitiveEntryAuthorizationV1,
+             candidate_review: &MtgoControlBoundCompetitiveEntryReviewCommitmentsV4| {
+                competitive_entry_ratification_candidate_from_parts_v1(
+                    &correspondence,
+                    "UnbuckledPie",
+                    &source,
+                    identity,
+                    authorization,
+                    candidate_review,
+                )
+            };
+
+        let mut wrong_account = entry_authorization.clone();
+        wrong_account.account_alias_sha256 = "0".repeat(64);
+        assert!(check(&source_identity, &wrong_account, &review).is_err());
+
+        let mut wrong_terms = entry_authorization.clone();
+        wrong_terms.entry_terms.amount = 120;
+        assert!(check(&source_identity, &wrong_terms, &review).is_err());
+
+        let mut wrong_control = review.clone();
+        wrong_control
+            .entry_control_dry_run
+            .visible_control_region_sha256 = "0".repeat(64);
+        assert!(check(&source_identity, &entry_authorization, &wrong_control).is_err());
+
+        let mut wrong_classifier = source_identity.clone();
+        wrong_classifier.source_navigation_classification_result_commitment_sha256 =
+            Some("0".repeat(64));
+        assert!(check(&wrong_classifier, &entry_authorization, &review).is_err());
+
+        assert!(competitive_entry_ratification_candidate_from_parts_v1(
+            &correspondence,
+            "DifferentAccount",
+            &source,
+            &source_identity,
+            &entry_authorization,
+            &review,
+        )
+        .is_err());
     }
 
     #[test]
