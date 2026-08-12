@@ -72,6 +72,16 @@ const DUEL_GESTURE_TARGET_RUNTIME_IDENTITY_DOMAIN_V1: &[u8] =
 const DUEL_GESTURE_TARGET_REQUEST_DOMAIN_V1: &[u8] = b"mtgo-duel-gesture-target-request-v1";
 const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_REQUEST_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-duel-gesture-target-request-v1";
+const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_REQUEST_SCHEMA_DOMAIN_V1: &[u8] =
+    b"mtgo-player-visible-duel-gesture-target-request-schema-v1";
+const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RESPONSE_SCHEMA_DOMAIN_V1: &[u8] =
+    b"mtgo-player-visible-duel-gesture-target-response-schema-v1";
+const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RUNTIME_SOURCE_V1: &[u8] =
+    include_bytes!("duel_perception_runtime.rs");
+const PLAYER_VISIBLE_DUEL_INPUT_SOURCE_V1: &[u8] =
+    include_bytes!("../../../mtgo_blackbox_v1/src/player_visible_duel_input.rs");
+const PLAYER_VISIBLE_DUEL_GESTURE_SOURCE_V1: &[u8] =
+    include_bytes!("../../../mtgo_blackbox_v1/src/player_visible_duel_gesture.rs");
 const DUEL_PERCEPTION_RESULT_DOMAIN_V1: &[u8] = b"mtgo-duel-perception-result-v1";
 #[allow(dead_code)]
 const DUEL_OPAQUE_MODEL_SELECTION_DOMAIN_V1: &[u8] = b"mtgo-opaque-duel-model-selection-v1";
@@ -423,6 +433,8 @@ pub struct AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1 {
     runtime_identity_commitment_sha256: String,
     gesture_target_runtime_binary_sha256: String,
     gesture_target_assets_manifest_sha256: String,
+    request_schema_sha256: String,
+    response_schema_sha256: String,
 }
 
 impl AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1 {
@@ -474,6 +486,14 @@ pub(crate) fn admit_ratified_player_visible_duel_gesture_target_protocol_v1(
             return Err("player-visible gesture-target protocol review hash is invalid".to_owned());
         }
     }
+    if review.request_schema_sha256 != player_visible_duel_gesture_target_request_schema_sha256_v1()
+        || review.response_schema_sha256
+            != player_visible_duel_gesture_target_response_schema_sha256_v1()
+    {
+        return Err(
+            "player-visible gesture-target protocol schema review differs from code".to_owned(),
+        );
+    }
     if review.gesture_evaluation_commitment_sha256 != profile.evaluation_commitment_sha256()
         || review.gesture_profile_admission_commitment_sha256
             != profile.admission_commitment_sha256()
@@ -507,7 +527,30 @@ pub(crate) fn admit_ratified_player_visible_duel_gesture_target_protocol_v1(
         runtime_identity_commitment_sha256: review.runtime_identity_commitment_sha256,
         gesture_target_runtime_binary_sha256: review.gesture_target_runtime_binary_sha256,
         gesture_target_assets_manifest_sha256: review.gesture_target_assets_manifest_sha256,
+        request_schema_sha256: review.request_schema_sha256,
+        response_schema_sha256: review.response_schema_sha256,
     })
+}
+
+fn player_visible_duel_gesture_target_request_schema_sha256_v1() -> String {
+    commitment_v1(
+        PLAYER_VISIBLE_DUEL_GESTURE_TARGET_REQUEST_SCHEMA_DOMAIN_V1,
+        &[
+            PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RUNTIME_SOURCE_V1,
+            PLAYER_VISIBLE_DUEL_INPUT_SOURCE_V1,
+            PLAYER_VISIBLE_DUEL_GESTURE_SOURCE_V1,
+        ],
+    )
+}
+
+fn player_visible_duel_gesture_target_response_schema_sha256_v1() -> String {
+    commitment_v1(
+        PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RESPONSE_SCHEMA_DOMAIN_V1,
+        &[
+            PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RUNTIME_SOURCE_V1,
+            PLAYER_VISIBLE_DUEL_GESTURE_SOURCE_V1,
+        ],
+    )
 }
 
 impl OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1 {
@@ -1033,6 +1076,10 @@ fn invoke_player_visible_duel_gesture_target_runtime_v1(
             != runtime.commitments.gesture_target_runtime_binary_sha256
         || protocol.gesture_target_assets_manifest_sha256
             != runtime.commitments.gesture_target_assets_manifest_sha256
+        || protocol.request_schema_sha256
+            != player_visible_duel_gesture_target_request_schema_sha256_v1()
+        || protocol.response_schema_sha256
+            != player_visible_duel_gesture_target_response_schema_sha256_v1()
         || perception_commitments
             .source_frame
             .perception_profile_admission_commitment_sha256
@@ -7231,6 +7278,22 @@ mod tests {
                 &pixels,
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn player_visible_gesture_target_protocol_schema_hashes_are_code_derived_and_distinct() {
+        let request = player_visible_duel_gesture_target_request_schema_sha256_v1();
+        let response = player_visible_duel_gesture_target_response_schema_sha256_v1();
+        assert!(looks_like_lower_sha256_v1(&request));
+        assert!(looks_like_lower_sha256_v1(&response));
+        assert_ne!(request, response);
+        assert_ne!(
+            request,
+            commitment_v1(
+                PLAYER_VISIBLE_DUEL_GESTURE_TARGET_REQUEST_SCHEMA_DOMAIN_V1,
+                &[PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RUNTIME_SOURCE_V1],
+            )
         );
     }
 
