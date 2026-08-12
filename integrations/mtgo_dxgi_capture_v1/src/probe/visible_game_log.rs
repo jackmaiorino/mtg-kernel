@@ -7,7 +7,8 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoVisibleGameLogProjectionV1,
     CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveLifecyclePhaseV1, MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogPlayerRoleV1,
-    MtgoVisibleGameLogSemanticEventViewV1, MtgoVisibleGameLogTextViewV1,
+    MtgoVisibleGameLogSemanticEventViewV1, MtgoVisibleGameLogSemanticSequenceV1,
+    MtgoVisibleGameLogTextViewV1,
 };
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, fs::Metadata, os::windows::ffi::OsStrExt};
@@ -237,6 +238,28 @@ impl OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
 
     pub fn safe_for_input_v1(&self) -> bool {
         false
+    }
+}
+
+impl MtgoVisibleGameLogSemanticSequenceV1 for OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
+    fn visible_source_record_count_v1(&self) -> usize {
+        self.semantics
+            .classified_source_record_count_v1()
+            .checked_add(self.semantics.unclassified_source_record_count_v1())
+            .expect("validated visible Game Log record counts must fit usize")
+    }
+
+    fn visible_source_record_prefix_commitment_v1(&self, record_count: usize) -> Option<String> {
+        self.semantics
+            .visible_source_record_prefix_commitment_v1(record_count)
+    }
+
+    fn visible_event_count_v1(&self) -> usize {
+        self.event_count_v1()
+    }
+
+    fn visible_event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+        self.event_v1(index)
     }
 }
 

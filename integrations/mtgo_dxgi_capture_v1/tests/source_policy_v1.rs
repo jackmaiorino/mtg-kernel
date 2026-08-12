@@ -244,6 +244,41 @@ fn visible_game_log_diagnostics_do_not_emit_transport_or_identity_derivatives() 
 }
 
 #[test]
+fn visible_game_log_action_corroboration_is_public_fact_only_and_non_actuating() {
+    let source =
+        include_str!("../../mtgo_blackbox_v1/src/visible_game_log_action_corroboration.rs");
+    for required in [
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "safe_for_additional_input_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+        "permits_spending_v1(&self) -> bool {\n        false",
+        "after_events.starts_with(&baseline.prior_events)",
+        "MtgoVisibleGameLogPlayerRoleV1::ActingPlayer",
+    ] {
+        assert!(
+            source.contains(required),
+            "Game Log action corroboration lacks required boundary: {required}"
+        );
+    }
+    for forbidden in [
+        "source_projection_commitment_sha256_v1()",
+        "projection_commitment_sha256_v1()",
+        "acting_player_alias_sha256_v1()",
+        "opponent_alias_sha256_v1()",
+        "visible_text_v1()",
+        "source_visible_text_sha256_v1()",
+        "candidate_path",
+        "ReadProcessMemory",
+        "SendInput",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "Game Log action corroboration reached a forbidden channel: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn native_sideboard_payload_module_is_visible_only_and_isolated_from_live_binder() {
     let source = include_str!("../src/competitive_native_sideboard.rs");
     for required in [

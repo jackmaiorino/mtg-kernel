@@ -6,6 +6,8 @@ pub const MTGO_VISIBLE_GAME_LOG_SEMANTIC_PROJECTION_SCHEMA_V1: u32 = 1;
 
 const VISIBLE_GAME_LOG_SEMANTIC_PROJECTION_DOMAIN_V1: &[u8] =
     b"mtgo-visible-game-log-semantic-projection-v1";
+const VISIBLE_GAME_LOG_RENDERED_PREFIX_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-game-log-rendered-prefix-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -110,6 +112,7 @@ impl<'a> MtgoVisibleGameLogSemanticEventViewV1<'a> {
 /// complete current observation or legal-action set.
 pub struct CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1 {
     events: Vec<MtgoVisibleGameLogSemanticEventRecordV1>,
+    source_visible_text_sha256s: Vec<String>,
     source_projection_commitment_sha256: String,
     acting_player_alias_sha256: String,
     opponent_alias_sha256: Option<String>,
@@ -131,6 +134,25 @@ impl CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1 {
 
     pub fn source_projection_commitment_sha256_v1(&self) -> &str {
         &self.source_projection_commitment_sha256
+    }
+
+    /// Commitment over the exact rendered-text prefix, including records
+    /// whose wording is not recognized by the conservative semantic grammar.
+    /// It contains no raw text, transport identifier, timestamp, or link
+    /// metadata.
+    pub fn visible_source_record_prefix_commitment_v1(
+        &self,
+        record_count: usize,
+    ) -> Option<String> {
+        let prefix = self.source_visible_text_sha256s.get(..record_count)?;
+        let mut hasher = Sha256::new();
+        hasher.update(VISIBLE_GAME_LOG_RENDERED_PREFIX_DOMAIN_V1);
+        hasher.update((record_count as u64).to_be_bytes());
+        for digest in prefix {
+            hasher.update((digest.len() as u64).to_be_bytes());
+            hasher.update(digest.as_bytes());
+        }
+        Some(format!("{:x}", hasher.finalize()))
     }
 
     pub fn acting_player_alias_sha256_v1(&self) -> &str {
@@ -172,6 +194,7 @@ pub fn classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(
 ) -> Result<CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, MtgoContractErrorV1> {
     validate_player_alias_v1(acting_player_alias)?;
     let mut events = Vec::new();
+    let mut source_visible_text_sha256s = Vec::with_capacity(source.record_count_v1());
     let mut opponent_alias = None;
     for index in 0..source.record_count_v1() {
         let record = source.record_v1(index).ok_or_else(|| {
@@ -180,6 +203,7 @@ pub fn classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(
                 "source record disappeared during semantic projection",
             )
         })?;
+        source_visible_text_sha256s.push(record.visible_text_sha256_v1().to_owned());
         if let Some(event) = classify_record_v1(&record, acting_player_alias, &mut opponent_alias)?
         {
             events.push(event);
@@ -215,6 +239,7 @@ pub fn classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(
     );
     Ok(CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1 {
         events,
+        source_visible_text_sha256s,
         source_projection_commitment_sha256: source.projection_commitment_sha256_v1().to_owned(),
         acting_player_alias_sha256,
         opponent_alias_sha256,
@@ -711,5 +736,9 @@ mod tests {
                 )
             };
         assert_eq!(visible_facts(&first), visible_facts(&second));
+        assert_eq!(
+            first.visible_source_record_prefix_commitment_v1(1),
+            second.visible_source_record_prefix_commitment_v1(1)
+        );
     }
 }
