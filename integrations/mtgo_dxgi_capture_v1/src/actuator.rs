@@ -62,6 +62,8 @@ use crate::probe::{
     OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1, PreparedPregameActuationV3,
 };
 use mtgo_blackbox_v1::{
+    append_checked_untrusted_competitive_player_visible_game_history_v1,
+    begin_checked_untrusted_competitive_player_visible_game_history_v1,
     canonical_duel_gesture_action_families_v1,
     competitive_match_gameplay_authorization_commitment_v1,
     competitive_mode_authorization_commitment_v1, confirm_competitive_sideboard_target_visible_v1,
@@ -72,6 +74,7 @@ use mtgo_blackbox_v1::{
     AdmittedMtgoDuelGestureProfileV1, AdmittedMtgoDuelPerceptionProfileV1,
     CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
     CheckedUntrustedMtgoCompetitiveSideboardReadyV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveDeckConfigurationV1, MtgoCompetitiveDeckPartitionV1,
     MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
@@ -3499,7 +3502,7 @@ pub struct MtgoConfirmedCompetitiveDuelGesturePrimitiveCommitmentsV1 {
 /// require_clone::<OpaqueMtgoConfirmedCompetitiveDuelGesturePrimitiveV1>();
 /// ```
 pub struct OpaqueMtgoConfirmedCompetitiveDuelGesturePrimitiveV1 {
-    _confirmation: OpaqueMtgoConfirmedCompetitiveDuelGestureV1,
+    confirmation: OpaqueMtgoConfirmedCompetitiveDuelGestureV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
     commitments: MtgoConfirmedCompetitiveDuelGesturePrimitiveCommitmentsV1,
 }
@@ -3511,6 +3514,47 @@ impl OpaqueMtgoConfirmedCompetitiveDuelGesturePrimitiveV1 {
 
     pub fn into_game_session_v1(self) -> OpaqueMtgoCompetitiveGestureGameSessionV1 {
         self.session
+    }
+
+    /// Starts the semantic decision-history ledger from this first exact
+    /// input and confirmed visible postcondition while returning the advanced
+    /// exact-game session. Public Game Log events are joined separately.
+    pub fn into_initial_player_visible_history_v1(
+        self,
+        history_id: &str,
+    ) -> Result<
+        (
+            OpaqueMtgoCompetitiveGestureGameSessionV1,
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+        ),
+        String,
+    > {
+        let history = begin_checked_untrusted_competitive_player_visible_game_history_v1(
+            history_id,
+            self.confirmation.into_checked_postcondition_v1(),
+        )
+        .map_err(|error| format!("begin competitive player-visible history: {error}"))?;
+        Ok((self.session, history))
+    }
+
+    /// Appends this exact confirmed action to the existing semantic history
+    /// ledger and returns the advanced exact-game session.
+    pub fn into_appended_player_visible_history_v1(
+        self,
+        history: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    ) -> Result<
+        (
+            OpaqueMtgoCompetitiveGestureGameSessionV1,
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+        ),
+        String,
+    > {
+        let history = append_checked_untrusted_competitive_player_visible_game_history_v1(
+            history,
+            self.confirmation.into_checked_postcondition_v1(),
+        )
+        .map_err(|error| format!("append competitive player-visible history: {error}"))?;
+        Ok((self.session, history))
     }
 
     pub fn safe_for_next_input_v1(&self) -> bool {
@@ -3744,7 +3788,7 @@ pub struct MtgoConfirmedCompetitiveDuelPassCommitmentsV2 {
 /// let _forged = OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2 {};
 /// ```
 pub struct OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2 {
-    _confirmation: OpaqueMtgoConfirmedCompetitiveDuelPassV1,
+    confirmation: OpaqueMtgoConfirmedCompetitiveDuelPassV1,
     session: OpaqueMtgoCompetitiveGameSessionV1,
     commitments: MtgoConfirmedCompetitiveDuelPassCommitmentsV2,
 }
@@ -3756,6 +3800,42 @@ impl OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2 {
 
     pub fn into_game_session_v1(self) -> OpaqueMtgoCompetitiveGameSessionV1 {
         self.session
+    }
+
+    pub fn into_initial_player_visible_history_v1(
+        self,
+        history_id: &str,
+    ) -> Result<
+        (
+            OpaqueMtgoCompetitiveGameSessionV1,
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+        ),
+        String,
+    > {
+        let history = begin_checked_untrusted_competitive_player_visible_game_history_v1(
+            history_id,
+            self.confirmation.into_checked_postcondition_v1(),
+        )
+        .map_err(|error| format!("begin competitive player-visible history: {error}"))?;
+        Ok((self.session, history))
+    }
+
+    pub fn into_appended_player_visible_history_v1(
+        self,
+        history: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    ) -> Result<
+        (
+            OpaqueMtgoCompetitiveGameSessionV1,
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+        ),
+        String,
+    > {
+        let history = append_checked_untrusted_competitive_player_visible_game_history_v1(
+            history,
+            self.confirmation.into_checked_postcondition_v1(),
+        )
+        .map_err(|error| format!("append competitive player-visible history: {error}"))?;
+        Ok((self.session, history))
     }
 
     pub fn safe_for_next_input_v1(&self) -> bool {
@@ -9499,7 +9579,7 @@ pub fn confirm_pending_competitive_duel_gesture_primitive_v1(
     let advanced = session.commitments_v1();
     release_confirmed_pending_v3(&pending_commitments.input_receipt_sha256)?;
     Ok(OpaqueMtgoConfirmedCompetitiveDuelGesturePrimitiveV1 {
-        _confirmation: confirmation,
+        confirmation,
         session,
         commitments: MtgoConfirmedCompetitiveDuelGesturePrimitiveCommitmentsV1 {
             input_receipt_sha256: pending_commitments.input_receipt_sha256,
@@ -9627,7 +9707,7 @@ pub fn confirm_pending_competitive_duel_pass_v2(
     let advanced = session.commitments_v1();
     release_confirmed_pending_v3(&input_receipt_sha256)?;
     Ok(OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2 {
-        _confirmation: confirmation,
+        confirmation,
         session,
         commitments: MtgoConfirmedCompetitiveDuelPassCommitmentsV2 {
             input_receipt_sha256,

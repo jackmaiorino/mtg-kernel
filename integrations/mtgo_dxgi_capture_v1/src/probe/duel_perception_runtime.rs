@@ -1311,7 +1311,7 @@ pub(crate) struct MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1 {
 
 pub(crate) struct OpaqueMtgoConfirmedCompetitiveDuelPassV1 {
     _before_input_postcondition: CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
-    _checked_postcondition: CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
+    checked_postcondition: CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
     _after_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1,
     commitments: MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
 }
@@ -1319,6 +1319,12 @@ pub(crate) struct OpaqueMtgoConfirmedCompetitiveDuelPassV1 {
 impl OpaqueMtgoConfirmedCompetitiveDuelPassV1 {
     pub(crate) fn commitments_v1(&self) -> MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1 {
         self.commitments.clone()
+    }
+
+    pub(crate) fn into_checked_postcondition_v1(
+        self,
+    ) -> CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
+        self.checked_postcondition
     }
 }
 
@@ -1338,7 +1344,7 @@ pub(crate) struct MtgoOpaqueCompetitiveDuelGestureConfirmationCommitmentsV1 {
 
 pub(crate) struct OpaqueMtgoConfirmedCompetitiveDuelGestureV1 {
     _before_input_postcondition: CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
-    _checked_postcondition: CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
+    checked_postcondition: CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
     _after_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1,
     commitments: MtgoOpaqueCompetitiveDuelGestureConfirmationCommitmentsV1,
 }
@@ -1348,6 +1354,12 @@ impl OpaqueMtgoConfirmedCompetitiveDuelGestureV1 {
         &self,
     ) -> MtgoOpaqueCompetitiveDuelGestureConfirmationCommitmentsV1 {
         self.commitments.clone()
+    }
+
+    pub(crate) fn into_checked_postcondition_v1(
+        self,
+    ) -> CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
+        self.checked_postcondition
     }
 }
 
@@ -4118,7 +4130,7 @@ pub(crate) fn confirm_opaque_competitive_duel_pass_postcondition_v1(
     );
     Ok(OpaqueMtgoConfirmedCompetitiveDuelPassV1 {
         _before_input_postcondition: before_input_postcondition,
-        _checked_postcondition: checked_postcondition,
+        checked_postcondition,
         _after_frame: after_frame,
         commitments: MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1 {
             before_input_verification_commitment_sha256: prepared_commitments
@@ -4354,7 +4366,7 @@ pub(crate) fn confirm_opaque_competitive_duel_gesture_postcondition_v1(
     );
     Ok(OpaqueMtgoConfirmedCompetitiveDuelGestureV1 {
         _before_input_postcondition: before_input_postcondition,
-        _checked_postcondition: checked_postcondition,
+        checked_postcondition,
         _after_frame: after_frame,
         commitments: MtgoOpaqueCompetitiveDuelGestureConfirmationCommitmentsV1 {
             before_input_verification_commitment_sha256: prepared_commitments
