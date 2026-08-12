@@ -29,6 +29,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub post_entry_operator_attended_match_game_log_lease_present: bool,
     pub post_entry_operator_attended_match_log_refresh_identity_retained: bool,
     pub post_entry_operator_match_scoped_visible_game_log_refresh_present: bool,
+    pub player_visible_game_log_action_corroboration_present: bool,
+    pub player_visible_game_log_exact_rendered_prefix_binding_present: bool,
+    pub player_visible_game_log_action_corroboration_grants_additional_input: bool,
     pub external_public_history_import_contract_present: bool,
     pub external_public_history_cross_source_ordering_policy_present: bool,
     pub external_public_history_model_facts_only_present: bool,
@@ -135,6 +138,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             post_entry_operator_attended_match_game_log_lease_present: true,
             post_entry_operator_attended_match_log_refresh_identity_retained: true,
             post_entry_operator_match_scoped_visible_game_log_refresh_present: true,
+            player_visible_game_log_action_corroboration_present: true,
+            player_visible_game_log_exact_rendered_prefix_binding_present: true,
+            player_visible_game_log_action_corroboration_grants_additional_input: false,
             external_public_history_import_contract_present: true,
             external_public_history_cross_source_ordering_policy_present: true,
             external_public_history_model_facts_only_present: true,
@@ -277,6 +283,21 @@ mod tests {
             report
                 .known_wiring_gaps
                 .post_entry_operator_match_scoped_visible_game_log_refresh_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .player_visible_game_log_action_corroboration_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .player_visible_game_log_exact_rendered_prefix_binding_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .player_visible_game_log_action_corroboration_grants_additional_input
         );
         assert!(
             report

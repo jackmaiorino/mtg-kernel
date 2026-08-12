@@ -39,6 +39,10 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub best_of_three_game_log_chaining_present: bool,
     pub best_of_three_live_game_log_source_behavior_calibrated: bool,
     pub public_game_log_semantic_projection_present: bool,
+    pub player_visible_game_log_action_corroboration_present: bool,
+    pub exact_rendered_prefix_binding_includes_unrecognized_records: bool,
+    pub action_corroboration_supports_only_exactly_stated_action_families: bool,
+    pub action_corroboration_grants_additional_input: bool,
     pub confirmed_model_decision_history_present: bool,
     pub dual_source_exact_game_memory_present: bool,
     pub explicit_kernel_consumer_contract_present: bool,
@@ -91,6 +95,10 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         best_of_three_game_log_chaining_present: true,
         best_of_three_live_game_log_source_behavior_calibrated: false,
         public_game_log_semantic_projection_present: true,
+        player_visible_game_log_action_corroboration_present: true,
+        exact_rendered_prefix_binding_includes_unrecognized_records: true,
+        action_corroboration_supports_only_exactly_stated_action_families: true,
+        action_corroboration_grants_additional_input: false,
         confirmed_model_decision_history_present: true,
         dual_source_exact_game_memory_present: true,
         explicit_kernel_consumer_contract_present: true,
@@ -147,6 +155,10 @@ mod tests {
         assert!(report.best_of_three_game_log_chaining_present);
         assert!(!report.best_of_three_live_game_log_source_behavior_calibrated);
         assert!(report.public_game_log_semantic_projection_present);
+        assert!(report.player_visible_game_log_action_corroboration_present);
+        assert!(report.exact_rendered_prefix_binding_includes_unrecognized_records);
+        assert!(report.action_corroboration_supports_only_exactly_stated_action_families);
+        assert!(!report.action_corroboration_grants_additional_input);
         assert!(report.confirmed_model_decision_history_present);
         assert!(report.dual_source_exact_game_memory_present);
         assert!(report.explicit_kernel_consumer_contract_present);
