@@ -3,9 +3,11 @@ use crate::{
     OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1,
 };
 use mtgo_blackbox_v1::{
-    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitivePlayerVisibleDecisionViewV1, MtgoVisibleGameLogEventKindV1,
-    MtgoVisibleGameLogPlayerRoleV1, MtgoVisibleGameLogSemanticEventViewV1,
+    ActionSemanticV1, CardPrivateV1, CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    KnownLibraryCardV4, MtgoCompetitiveEventKindV1, MtgoCompetitivePlayerVisibleDecisionViewV1,
+    MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogPlayerRoleV1,
+    MtgoVisibleGameLogSemanticEventViewV1, ObservationV5, PlayerSeatV1,
+    PublicObservationProjectionV5,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -40,25 +42,141 @@ pub enum MtgoCompetitivePlayerRelativeGameWinnerV1 {
 
 /// Player-visible lineage and bounds supplied before either history stream.
 ///
-/// This header contains commitments and counts only. It has no path, source
-/// UUID, raw markup, pixel, coordinate, process, input, entry, or spending
-/// capability. `game_log_is_complete_current_state` is permanently false:
-/// public log events supplement, but cannot replace, the exact current visible
+/// This header contains game facts and counts only. Event and match identity,
+/// deployment and source commitments, paths, source UUIDs, raw markup, pixels,
+/// coordinates, process data, and authority stay outside the model-facing
+/// callback. `game_log_is_complete_current_state` is permanently false: public
+/// log events supplement, but cannot replace, the exact current visible
 /// observation reconstructed from the admitted client frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MtgoCompetitiveExternalPublicHistoryHeaderV1<'a> {
+pub struct MtgoCompetitiveExternalPublicHistoryHeaderV1 {
     pub schema_version: u32,
     pub event_kind: MtgoCompetitiveEventKindV1,
-    pub event_identity_sha256: &'a str,
-    pub match_identity_sha256: &'a str,
     pub game_number: u8,
-    pub policy_deployment_commitment_sha256: &'a str,
-    pub source_memory_commitment_sha256: &'a str,
     pub confirmed_decision_count: usize,
     pub public_event_count: usize,
     pub ordering: MtgoCompetitiveExternalPublicHistoryOrderingV1,
     pub player_visible_information_only: bool,
     pub game_log_is_complete_current_state: bool,
+}
+
+/// Narrow model-facing view of one confirmed visible decision. Adapter frame
+/// numbers and provenance commitments remain private. The observation is the
+/// same validated player-visible gameplay input already scored by the kernel;
+/// its local contract metadata must not be tensorized as game information.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::MtgoCompetitiveExternalConfirmedDecisionV1;
+/// fn cannot_read_adapter_provenance(value: &MtgoCompetitiveExternalConfirmedDecisionV1<'_>) {
+///     let _ = value.source_frame_sequence_v1();
+///     let _ = value.decision_commitment_sha256_v1();
+/// }
+/// ```
+pub struct MtgoCompetitiveExternalConfirmedDecisionV1<'a> {
+    decision: MtgoCompetitivePlayerVisibleDecisionViewV1<'a>,
+}
+
+/// Model-facing subset of one validated gameplay observation. Contract
+/// versions, card-database hash, adapter step and substep IDs, projection hash,
+/// and other local metadata have no getter and cannot become history features.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::MtgoCompetitiveExternalVisibleObservationV1;
+/// fn cannot_read_local_contract_metadata(value: &MtgoCompetitiveExternalVisibleObservationV1<'_>) {
+///     let _ = value.schema_version;
+///     let _ = value.card_db_hash;
+///     let _ = value.step_index;
+///     let _ = value.visible_projection_hash;
+/// }
+/// ```
+pub struct MtgoCompetitiveExternalVisibleObservationV1<'a> {
+    observation: &'a ObservationV5,
+}
+
+impl MtgoCompetitiveExternalVisibleObservationV1<'_> {
+    pub fn acting_player_v1(&self) -> PlayerSeatV1 {
+        self.observation.acting_player
+    }
+
+    pub fn public_projection_v1(&self) -> &PublicObservationProjectionV5 {
+        &self.observation.projection
+    }
+
+    pub fn own_hand_v1(&self) -> &[CardPrivateV1] {
+        &self.observation.own_hand
+    }
+
+    pub fn known_library_cards_v1(&self) -> &[Vec<KnownLibraryCardV4>; 2] {
+        &self.observation.known_library_cards
+    }
+
+    pub fn known_hand_cards_v1(&self) -> &[Vec<CardPrivateV1>; 2] {
+        &self.observation.known_hand_cards
+    }
+}
+
+impl MtgoCompetitiveExternalConfirmedDecisionV1<'_> {
+    pub fn within_source_position_v1(&self) -> u64 {
+        self.decision.sequence_v1()
+    }
+
+    pub fn visible_observation_v1(&self) -> MtgoCompetitiveExternalVisibleObservationV1<'_> {
+        MtgoCompetitiveExternalVisibleObservationV1 {
+            observation: self.decision.observation_v1(),
+        }
+    }
+
+    pub fn selected_semantic_v1(&self) -> &ActionSemanticV1 {
+        self.decision.selected_semantic_v1()
+    }
+}
+
+/// Narrow model-facing view of one fact rendered by MTGO's Game Log. Raw text
+/// hashes and all transport provenance remain private to the adapter.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::MtgoCompetitiveExternalPublicGameLogEventV1;
+/// fn cannot_read_transport_provenance(value: &MtgoCompetitiveExternalPublicGameLogEventV1<'_>) {
+///     let _ = value.source_visible_text_sha256_v1();
+///     let _ = value.source_record_commitment_sha256_v1();
+/// }
+/// ```
+pub struct MtgoCompetitiveExternalPublicGameLogEventV1<'a> {
+    event: MtgoVisibleGameLogSemanticEventViewV1<'a>,
+}
+
+impl MtgoCompetitiveExternalPublicGameLogEventV1<'_> {
+    pub fn within_source_position_v1(&self) -> u32 {
+        self.event.source_sequence_v1()
+    }
+
+    pub fn kind_v1(&self) -> MtgoVisibleGameLogEventKindV1 {
+        self.event.kind_v1()
+    }
+
+    pub fn actor_role_v1(&self) -> Option<MtgoVisibleGameLogPlayerRoleV1> {
+        self.event.actor_role_v1()
+    }
+
+    pub fn turn_number_v1(&self) -> Option<u32> {
+        self.event.turn_number_v1()
+    }
+
+    pub fn primary_count_v1(&self) -> Option<u8> {
+        self.event.primary_count_v1()
+    }
+
+    pub fn secondary_count_v1(&self) -> Option<u8> {
+        self.event.secondary_count_v1()
+    }
+
+    pub fn visible_card_name_count_v1(&self) -> usize {
+        self.event.visible_card_name_count_v1()
+    }
+
+    pub fn visible_card_name_v1(&self, index: usize) -> Option<&str> {
+        self.event.visible_card_name_v1(index)
+    }
 }
 
 /// Kernel-owned consumer boundary for one exact game's player-visible public
@@ -74,19 +192,19 @@ pub trait MtgoCompetitiveExternalPublicHistoryConsumerV1 {
 
     fn begin_public_history_v1(
         &mut self,
-        header: MtgoCompetitiveExternalPublicHistoryHeaderV1<'_>,
+        header: MtgoCompetitiveExternalPublicHistoryHeaderV1,
     ) -> Result<(), String>;
 
     fn consume_confirmed_decision_v1(
         &mut self,
-        decision: MtgoCompetitivePlayerVisibleDecisionViewV1<'_>,
+        decision: MtgoCompetitiveExternalConfirmedDecisionV1<'_>,
     ) -> Result<(), String>;
 
     fn finish_confirmed_decision_stream_v1(&mut self) -> Result<(), String>;
 
     fn consume_public_game_log_event_v1(
         &mut self,
-        event: MtgoVisibleGameLogSemanticEventViewV1<'_>,
+        event: MtgoCompetitiveExternalPublicGameLogEventV1<'_>,
     ) -> Result<(), String>;
 
     fn finish_public_game_log_stream_v1(&mut self) -> Result<(), String>;
@@ -365,13 +483,7 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
         consumer.begin_public_history_v1(MtgoCompetitiveExternalPublicHistoryHeaderV1 {
             schema_version: MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
             event_kind: lineage.event_kind,
-            event_identity_sha256: lineage.event_identity_sha256,
-            match_identity_sha256: lineage.match_identity_sha256,
             game_number: lineage.game_number,
-            policy_deployment_commitment_sha256: self
-                .confirmed_decisions
-                .policy_deployment_commitment_sha256_v1(),
-            source_memory_commitment_sha256: &self.memory_commitment_sha256,
             confirmed_decision_count: self.confirmed_decision_count_v1(),
             public_event_count: self.public_event_count_v1(),
             ordering: MtgoCompetitiveExternalPublicHistoryOrderingV1::SeparateOrderedStreamsNoCrossSourceTotalOrder,
@@ -383,7 +495,9 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
             let decision = self.confirmed_decision_v1(index).ok_or_else(|| {
                 "confirmed decision stream changed while it was being visited".to_owned()
             })?;
-            consumer.consume_confirmed_decision_v1(decision)?;
+            consumer.consume_confirmed_decision_v1(MtgoCompetitiveExternalConfirmedDecisionV1 {
+                decision,
+            })?;
         }
         consumer.finish_confirmed_decision_stream_v1()?;
 
@@ -391,7 +505,9 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
             let event = self.public_event_v1(index).ok_or_else(|| {
                 "public Game Log stream changed while it was being visited".to_owned()
             })?;
-            consumer.consume_public_game_log_event_v1(event)?;
+            consumer.consume_public_game_log_event_v1(
+                MtgoCompetitiveExternalPublicGameLogEventV1 { event },
+            )?;
         }
         consumer.finish_public_game_log_stream_v1()?;
         consumer.finish_public_history_v1()
