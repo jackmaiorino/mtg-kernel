@@ -18,6 +18,8 @@ mod competitive_operator_loop;
 mod competitive_pre_entry_operator;
 #[cfg(target_os = "windows")]
 mod competitive_pregame_policy;
+#[cfg(target_os = "windows")]
+mod competitive_visible_match_memory;
 
 #[cfg(target_os = "windows")]
 mod probe;
@@ -200,6 +202,7 @@ pub use competitive_operator_bootstrap::{
     bind_competitive_operator_resources_v1, MtgoCompetitiveOperatorResourceCommitmentsV1,
     MtgoCompetitiveOperatorResourcesPartsV1, OpaqueMtgoCompetitiveOperatorResourcesV1,
 };
+
 #[cfg(target_os = "windows")]
 pub use competitive_operator_loop::{
     advance_competitive_post_entry_operator_observed_v1, begin_competitive_post_entry_operator_v1,
@@ -245,6 +248,10 @@ pub use competitive_pregame_policy::{
     MtgoReviewedCompetitivePregameHeuristicCandidateV1,
     OpaqueMtgoCompetitiveOperatorPregameResourcesV1,
     MTGO_COMPETITIVE_PREGAME_HEURISTIC_REVIEW_SCHEMA_V1,
+};
+#[cfg(target_os = "windows")]
+pub use competitive_visible_match_memory::{
+    bind_competitive_player_visible_game_memory_v1, OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1,
 };
 
 #[cfg(target_os = "windows")]
