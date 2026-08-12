@@ -29,11 +29,10 @@ fn main() {
     });
     let summary = serde_json::json!({
         "schema_version": mtgo_blackbox_v1::MTGO_VISIBLE_GAME_LOG_FILE_PROJECTION_SCHEMA_V1,
-        "source_file_sha256": projection.source_file_sha256_v1(),
-        "source_match_id_commitment_sha256": projection.source_match_id_commitment_sha256_v1(),
-        "projection_commitment_sha256": projection.projection_commitment_sha256_v1(),
         "record_count": projection.record_count_v1(),
         "nonrendered_source_metadata_discarded": projection.nonrendered_source_metadata_discarded_v1(),
+        "transport_commitments_emitted": false,
+        "source_identifiers_emitted": false,
         "safe_for_current_game_semantic_evidence": projection.safe_for_current_game_semantic_evidence_v1(),
         "safe_for_model_scoring": projection.safe_for_model_scoring_v1(),
         "safe_for_input": projection.safe_for_input_v1(),

@@ -14,14 +14,14 @@ use std::{env, process::ExitCode};
 #[derive(Serialize)]
 struct VisibleGameLogProbeSummaryV1 {
     schema_version: u32,
-    binding_commitment_sha256: String,
-    semantic_projection_commitment_sha256: String,
-    acting_player_alias_sha256: String,
     record_count: usize,
     event_count: usize,
     classified_source_record_count: usize,
     unclassified_source_record_count: usize,
     source_bound_to_stable_game_window_and_process_epoch: bool,
+    transport_commitments_emitted: bool,
+    player_aliases_emitted: bool,
+    source_identifiers_emitted: bool,
     complete_for_current_state_reconstruction: bool,
     safe_for_model_scoring: bool,
     safe_for_input: bool,
@@ -71,21 +71,18 @@ fn run_v1() -> Result<VisibleGameLogProbeSummaryV1, String> {
         timeout_ms: 1_000,
     })?;
     let record_count = source.record_count_v1();
-    let binding_commitment_sha256 = source.binding_commitment_sha256_v1().to_owned();
     let semantics = source.into_visible_semantics_v1(&args[2])?;
     let summary = VisibleGameLogProbeSummaryV1 {
         schema_version: 1,
-        binding_commitment_sha256,
-        semantic_projection_commitment_sha256: semantics
-            .semantic_projection_commitment_sha256_v1()
-            .to_owned(),
-        acting_player_alias_sha256: semantics.acting_player_alias_sha256_v1().to_owned(),
         record_count,
         event_count: semantics.event_count_v1(),
         classified_source_record_count: semantics.classified_source_record_count_v1(),
         unclassified_source_record_count: semantics.unclassified_source_record_count_v1(),
         source_bound_to_stable_game_window_and_process_epoch: semantics
             .source_bound_to_stable_game_window_and_process_epoch_v1(),
+        transport_commitments_emitted: false,
+        player_aliases_emitted: false,
+        source_identifiers_emitted: false,
         complete_for_current_state_reconstruction: semantics
             .complete_for_current_state_reconstruction_v1(),
         safe_for_model_scoring: semantics.safe_for_model_scoring_v1(),
