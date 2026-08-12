@@ -59,6 +59,62 @@ pub struct MtgoClassifiedCompetitivePregameModelContextCommitmentsV1 {
     pub opponent_games_won: u8,
 }
 
+#[cfg(test)]
+pub(crate) fn competitive_pregame_model_context_commitments_for_tests_v1(
+    stage: MtgoCompetitivePregameStageLabelV1,
+    visible_interaction_commitment_sha256: String,
+    game_number: u8,
+    play_draw: MtgoCompetitivePregamePlayDrawV1,
+    acting_player_games_won: u8,
+    opponent_games_won: u8,
+) -> MtgoClassifiedCompetitivePregameModelContextCommitmentsV1 {
+    use super::{MtgoDxgiFrameCommitmentsV3, SignedRectV1};
+
+    MtgoClassifiedCompetitivePregameModelContextCommitmentsV1 {
+        source: MtgoClassifiedCompetitivePregameFrameCommitmentsV1 {
+            source_frame: MtgoAdmittedDuelVisibleFrameCommitmentsV1 {
+                perception_profile_commitment_sha256: "1".repeat(64),
+                perception_profile_admission_commitment_sha256: "2".repeat(64),
+                frame_profile_binding_sha256: "3".repeat(64),
+                source_capture: MtgoDxgiFrameCommitmentsV3 {
+                    capture_commitment_sha256: "4".repeat(64),
+                    canonical_bgra8_sha256: "5".repeat(64),
+                    preview_png_sha256: "6".repeat(64),
+                    canonical_width: 1_550,
+                    canonical_height: 925,
+                    client_rect_desktop_px: SignedRectV1 {
+                        left: 0,
+                        top: 0,
+                        right: 1_550,
+                        bottom: 925,
+                    },
+                    captured_at_unix_millis: 1_000,
+                },
+            },
+            classifier_runtime_identity_commitment_sha256: "7".repeat(64),
+            pregame_evaluation_commitment_sha256: "8".repeat(64),
+            pregame_profile_admission_commitment_sha256: "9".repeat(64),
+            request_commitment_sha256: "a".repeat(64),
+            classification_commitment_sha256: "b".repeat(64),
+            visible_interaction_commitment_sha256,
+            frame_id: 10,
+            frame_sequence: 20,
+            captured_at_unix_millis: 1_000,
+            stage,
+        },
+        public_context_evaluation_commitment_sha256: "c".repeat(64),
+        public_context_profile_admission_commitment_sha256: "d".repeat(64),
+        public_context_request_commitment_sha256: "e".repeat(64),
+        public_context_result_commitment_sha256: "f".repeat(64),
+        public_context_commitment_sha256: "0".repeat(64),
+        model_context_binding_commitment_sha256: "1".repeat(64),
+        game_number,
+        play_draw,
+        acting_player_games_won,
+        opponent_games_won,
+    }
+}
+
 /// One in-process DXGI frame retained through the exact profile-pinned
 /// classifier and pixel-backed pregame protocol. It is move-only and exposes
 /// no pixels, rectangles, path, process handle, event entry, or input method.
@@ -140,6 +196,48 @@ impl OpaqueMtgoClassifiedCompetitivePregameModelContextV1 {
 
     pub fn permits_event_entry_v1(&self) -> bool {
         false
+    }
+
+    pub(crate) fn response_v1(&self) -> &MtgoCompetitivePregameClassifierResponseV1 {
+        &self._pregame_response
+    }
+
+    pub(crate) fn process_continuity_commitment_sha256_v1(&self) -> String {
+        mtgo_process_continuity_commitment_for_frame_v1(&self._source_frame.source_frame)
+    }
+
+    pub(crate) fn window_continuity_commitment_sha256_v1(&self) -> Result<String, String> {
+        competitive_entry_window_continuity_commitment_for_frame_v1(
+            &self._source_frame.source_frame,
+        )
+    }
+
+    pub(crate) fn require_immediate_successor_v1(
+        &self,
+        prior_frame_id: u64,
+        prior_frame_sequence: u64,
+        prior_source_capture_commitment_sha256: &str,
+        prior_captured_at_unix_millis: u128,
+    ) -> Result<(), String> {
+        validate_immediate_successor_identity_v1(
+            ImmediateFrameIdentityViewV1 {
+                source_capture_commitment_sha256: &self
+                    .commitments
+                    .source
+                    .source_frame
+                    .source_capture
+                    .capture_commitment_sha256,
+                captured_at_unix_millis: self.commitments.source.captured_at_unix_millis,
+                frame_id: self.commitments.source.frame_id,
+                frame_sequence: self.commitments.source.frame_sequence,
+            },
+            ImmediateFrameIdentityViewV1 {
+                source_capture_commitment_sha256: prior_source_capture_commitment_sha256,
+                captured_at_unix_millis: prior_captured_at_unix_millis,
+                frame_id: prior_frame_id,
+                frame_sequence: prior_frame_sequence,
+            },
+        )
     }
 }
 

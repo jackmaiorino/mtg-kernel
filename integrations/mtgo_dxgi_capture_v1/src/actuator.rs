@@ -42,12 +42,13 @@ use crate::probe::{
     MtgoOpaquePinnedCompetitiveDuelGestureContinuationCommitmentsV1,
     MtgoPlannedCompetitiveSideboardCommitmentsV1, MtgoPlannedPregamePostconditionV3,
     OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
-    OpaqueMtgoClassifiedCompetitivePregameFrameV1, OpaqueMtgoClassifiedCompetitiveSideboardV1,
-    OpaqueMtgoCompetitiveDuelGestureSequenceV1, OpaqueMtgoCompetitiveEntryControlDryRunV1,
-    OpaqueMtgoCompetitiveEntryReviewIdentityV1, OpaqueMtgoCompetitiveEventMonitorV1,
-    OpaqueMtgoCompetitiveLaunchIdentityV1, OpaqueMtgoCompetitiveLifecycleControlV1,
-    OpaqueMtgoConfirmedCompetitiveDuelGestureV1, OpaqueMtgoConfirmedCompetitiveDuelPassV1,
-    OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1,
+    OpaqueMtgoClassifiedCompetitivePregameFrameV1,
+    OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+    OpaqueMtgoClassifiedCompetitiveSideboardV1, OpaqueMtgoCompetitiveDuelGestureSequenceV1,
+    OpaqueMtgoCompetitiveEntryControlDryRunV1, OpaqueMtgoCompetitiveEntryReviewIdentityV1,
+    OpaqueMtgoCompetitiveEventMonitorV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
+    OpaqueMtgoCompetitiveLifecycleControlV1, OpaqueMtgoConfirmedCompetitiveDuelGestureV1,
+    OpaqueMtgoConfirmedCompetitiveDuelPassV1, OpaqueMtgoConfirmedCompetitiveEntryPostconditionV1,
     OpaqueMtgoConfirmedCompetitiveEventListingOpenV1,
     OpaqueMtgoConfirmedCompetitiveLifecycleControlPostconditionV1,
     OpaqueMtgoConfirmedKeepToBottomSixTransitionV3, OpaqueMtgoConfirmedKeepToFirstMainTransitionV3,
@@ -229,6 +230,10 @@ const COMPETITIVE_EVENT_PREGAME_ADVANCE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-pregame-advance-v1";
 const COMPETITIVE_EVENT_PREGAME_ACTION_PLAN_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-pregame-action-plan-v1";
+const COMPETITIVE_NATIVE_PREGAME_MODEL_INPUT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-native-pregame-model-input-v1";
+const COMPETITIVE_NATIVE_PREGAME_REQUEST_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-native-pregame-request-binding-v1";
 const COMPETITIVE_EVENT_PREGAME_FRESH_PREPARATION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-pregame-fresh-preparation-v1";
 const COMPETITIVE_EVENT_PREGAME_POSTCONDITION_DRY_RUN_DOMAIN_V1: &[u8] =
@@ -2005,8 +2010,22 @@ pub struct MtgoCompetitivePregameObservationCommitmentsV1 {
 /// require_clone::<OpaqueMtgoCompetitivePregameObservationV1>();
 /// ```
 pub struct OpaqueMtgoCompetitivePregameObservationV1 {
-    _classified_frame: Option<OpaqueMtgoClassifiedCompetitivePregameFrameV1>,
+    _classified_source: Option<OpaqueMtgoCompetitivePregameClassifiedSourceV1>,
     commitments: MtgoCompetitivePregameObservationCommitmentsV1,
+}
+
+enum OpaqueMtgoCompetitivePregameClassifiedSourceV1 {
+    Frame(Box<OpaqueMtgoClassifiedCompetitivePregameFrameV1>),
+    ModelContext(Box<OpaqueMtgoClassifiedCompetitivePregameModelContextV1>),
+}
+
+impl OpaqueMtgoCompetitivePregameClassifiedSourceV1 {
+    fn response_v1(&self) -> &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1 {
+        match self {
+            Self::Frame(value) => value.response_v1(),
+            Self::ModelContext(value) => value.response_v1(),
+        }
+    }
 }
 
 impl OpaqueMtgoCompetitivePregameObservationV1 {
@@ -2155,6 +2174,87 @@ pub struct MtgoCompetitivePregameActionPlanCommitmentsV1 {
     pub frame_sequence: u64,
     pub selected_action: MtgoCompetitivePregameSelectedActionV1,
     pub expected_postcondition: MtgoCompetitivePregameExpectedPostconditionV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCompetitiveNativePregameCardV1 {
+    pub card_slot: u8,
+    pub visible_card_name: String,
+    pub selected_for_bottom: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MtgoCompetitiveNativePregameActionV1 {
+    KeepOpeningHand,
+    Mulligan { next_hand_size: u8 },
+    SelectForBottom { card_slot: u8 },
+    SubmitBottoming,
+}
+
+/// Exact checkpoint-facing game information for one visible competitive
+/// pregame decision. Every field is information available to the seated
+/// player through the client. Event, authorization, capture, classifier, and
+/// checkpoint-lineage commitments remain in the opaque adapter envelope and
+/// are deliberately absent here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoCompetitiveNativePregameModelInputV1 {
+    pub game_number: u8,
+    pub play_draw: mtgo_blackbox_v1::MtgoCompetitivePregamePlayDrawV1,
+    pub acting_player_games_won: u8,
+    pub opponent_games_won: u8,
+    pub stage: MtgoCompetitivePregameStageV1,
+    pub prospective_keep_size: Option<u8>,
+    pub required_bottom_count: u8,
+    pub selected_bottom_count: u8,
+    pub ordered_visible_cards: Vec<MtgoCompetitiveNativePregameCardV1>,
+    pub ordered_confirmed_bottom_slots: Vec<u8>,
+    pub ordered_actions: Vec<MtgoCompetitiveNativePregameActionV1>,
+}
+
+/// Move-only source-bound request for a future native pregame scorer. It owns
+/// the paid-event pregame session and same-frame public model context. The
+/// request can be inspected for scorer integration, but only a future opaque
+/// checkpoint response may recover the session for a live action plan.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveNativePregameRequestV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveNativePregameRequestV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveNativePregameRequestV1 {
+    _session: OpaqueMtgoCompetitiveEventPregameSessionV1,
+    model_input: MtgoCompetitiveNativePregameModelInputV1,
+    model_input_commitment_sha256: String,
+    _request_binding_commitment_sha256: String,
+}
+
+impl OpaqueMtgoCompetitiveNativePregameRequestV1 {
+    pub fn model_input_v1(&self) -> &MtgoCompetitiveNativePregameModelInputV1 {
+        &self.model_input
+    }
+
+    pub fn model_input_commitment_sha256_v1(&self) -> &str {
+        &self.model_input_commitment_sha256
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
 }
 
 /// One deck-specific deterministic pregame selection over the exact retained
@@ -6824,10 +6924,426 @@ pub fn checkout_competitive_event_pregame_session_from_classified_frame_v2(
         ),
     )?;
     let observation = OpaqueMtgoCompetitivePregameObservationV1 {
-        _classified_frame: Some(classified_frame),
+        _classified_source: Some(OpaqueMtgoCompetitivePregameClassifiedSourceV1::Frame(
+            Box::new(classified_frame),
+        )),
         commitments: observation_commitments,
     };
     checkout_competitive_event_pregame_session_v1(runtime, match_launch, observation)
+}
+
+/// Converts the same-frame visible hand, controls, play-or-draw fact, and
+/// public match score into one exact checkpoint-facing request while retaining
+/// the paid-event session. This is the adapter half of the native pregame
+/// bridge. It cannot score, select, prepare input, enter an event, or spend.
+pub fn bind_competitive_event_pregame_native_request_v1(
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    context: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+) -> Result<OpaqueMtgoCompetitiveNativePregameRequestV1, String> {
+    let runtime_frame = runtime.current_frame.commitments_v1();
+    if runtime.commitments.current_frame_id != runtime_frame.frame_id
+        || runtime.commitments.current_frame_sequence != runtime_frame.frame_sequence
+        || runtime.commitments.current_phase != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+    {
+        return Err(
+            "native pregame request requires the exact current match-in-progress frame".to_owned(),
+        );
+    }
+    let context_commitments = context.commitments_v1();
+    context.require_immediate_successor_v1(
+        runtime_frame.frame_id,
+        runtime_frame.frame_sequence,
+        &runtime_frame
+            .source_frame
+            .source_capture
+            .capture_commitment_sha256,
+        runtime_frame
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis,
+    )?;
+    let process_continuity_commitment_sha256 = context.process_continuity_commitment_sha256_v1();
+    let window_continuity_commitment_sha256 = context.window_continuity_commitment_sha256_v1()?;
+    if process_continuity_commitment_sha256
+        != runtime
+            .current_frame
+            .process_continuity_commitment_sha256_v1()
+        || window_continuity_commitment_sha256
+            != runtime
+                .current_frame
+                .window_continuity_commitment_sha256_v1()?
+        || context_commitments.game_number != runtime.commitments.current_game_number.unwrap_or(0)
+    {
+        return Err(
+            "native pregame context changed the exact event process, window, or game".to_owned(),
+        );
+    }
+
+    let observation_commitments = competitive_pregame_observation_from_classified_view_v2(
+        &runtime.commitments,
+        CompetitivePregameClassifiedViewV2::from_commitments_v2(
+            &context_commitments.source,
+            &process_continuity_commitment_sha256,
+            &window_continuity_commitment_sha256,
+        ),
+    )?;
+    let response = context.response_v1();
+    let model_input = competitive_native_pregame_model_input_from_parts_v1(
+        &runtime.commitments,
+        &context_commitments,
+        response,
+    )?;
+    let observation = OpaqueMtgoCompetitivePregameObservationV1 {
+        _classified_source: Some(
+            OpaqueMtgoCompetitivePregameClassifiedSourceV1::ModelContext(Box::new(context)),
+        ),
+        commitments: observation_commitments,
+    };
+    let session =
+        checkout_competitive_event_pregame_session_v1(runtime, match_launch, observation)?;
+    if session.commitments.game_number != model_input.game_number
+        || session.commitments.game_number != context_commitments.game_number
+    {
+        return Err("native pregame request changed the exact event-session lineage".to_owned());
+    }
+    let model_input_commitment_sha256 =
+        competitive_native_pregame_model_input_commitment_v1(&model_input)?;
+    let request_binding_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_NATIVE_PREGAME_REQUEST_BINDING_DOMAIN_V1,
+        &[
+            model_input_commitment_sha256.as_bytes(),
+            session.commitments.session_commitment_sha256.as_bytes(),
+            session
+                .commitments
+                .event_runtime_commitment_sha256
+                .as_bytes(),
+            session.commitments.deck_manifest_sha256.as_bytes(),
+            session
+                .commitments
+                .policy_deployment_commitment_sha256
+                .as_bytes(),
+            context_commitments
+                .source
+                .classification_commitment_sha256
+                .as_bytes(),
+            context_commitments
+                .public_context_commitment_sha256
+                .as_bytes(),
+            context_commitments
+                .model_context_binding_commitment_sha256
+                .as_bytes(),
+            b"opaque_adapter_lineage_not_model_game_information_no_selection_no_input",
+        ],
+    );
+    Ok(OpaqueMtgoCompetitiveNativePregameRequestV1 {
+        _session: session,
+        model_input,
+        model_input_commitment_sha256,
+        _request_binding_commitment_sha256: request_binding_commitment_sha256,
+    })
+}
+
+fn competitive_native_pregame_model_input_from_parts_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    context: &crate::probe::MtgoClassifiedCompetitivePregameModelContextCommitmentsV1,
+    response: &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1,
+) -> Result<MtgoCompetitiveNativePregameModelInputV1, String> {
+    runtime
+        .current_match_identity_sha256
+        .as_deref()
+        .ok_or("native pregame request requires one exact current match")?;
+    let game_number = runtime
+        .current_game_number
+        .ok_or("native pregame request requires one exact current game")?;
+    if game_number != 1 {
+        return Err(
+            "native pregame request for game two or three requires a retained exact post-sideboard configuration"
+                .to_owned(),
+        );
+    }
+    if context.game_number != game_number
+        || context.source.stage != response.stage
+        || context.source.visible_interaction_commitment_sha256
+            != response.visible_interaction_commitment_sha256
+        || response.visible_cards.len() != 7
+        || matches!(
+            response.stage,
+            MtgoCompetitivePregameStageLabelV1::GameplayReady
+        )
+    {
+        return Err(
+            "native pregame request context, interaction, stage, or hand is incomplete".to_owned(),
+        );
+    }
+
+    let mut selected_slots = [false; 7];
+    for control in &response.visible_controls {
+        if let MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+            card_slot,
+            selected,
+        } = &control.semantic
+        {
+            let slot = usize::from(*card_slot);
+            if slot >= selected_slots.len() {
+                return Err("native pregame selected card slot is out of range".to_owned());
+            }
+            selected_slots[slot] = *selected;
+        }
+    }
+    if !is_sha256_v2(&context.source.classification_commitment_sha256)
+        || !is_sha256_v2(&context.public_context_commitment_sha256)
+        || !is_sha256_v2(&context.model_context_binding_commitment_sha256)
+        || !is_sha256_v2(&runtime.runtime_commitment_sha256)
+    {
+        return Err("native pregame source commitments are malformed".to_owned());
+    }
+    let ordered_visible_cards = response
+        .visible_cards
+        .iter()
+        .enumerate()
+        .map(|(index, card)| {
+            if usize::from(card.card_slot) != index {
+                return Err("native pregame visible card order changed".to_owned());
+            }
+            Ok(MtgoCompetitiveNativePregameCardV1 {
+                card_slot: card.card_slot,
+                visible_card_name: card.visible_card_name.clone(),
+                selected_for_bottom: selected_slots[index],
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let ordered_actions = response
+        .visible_controls
+        .iter()
+        .filter_map(|control| match &control.semantic {
+            MtgoCompetitivePregameVisibleControlSemanticV1::KeepOpeningHand => {
+                Some(Ok(MtgoCompetitiveNativePregameActionV1::KeepOpeningHand))
+            }
+            MtgoCompetitivePregameVisibleControlSemanticV1::Mulligan { next_hand_size } => {
+                Some(Ok(MtgoCompetitiveNativePregameActionV1::Mulligan {
+                    next_hand_size: *next_hand_size,
+                }))
+            }
+            MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                card_slot,
+                selected: false,
+            } => Some(
+                ordered_visible_cards
+                    .get(usize::from(*card_slot))
+                    .filter(|card| card.card_slot == *card_slot)
+                    .map(|_| MtgoCompetitiveNativePregameActionV1::SelectForBottom {
+                        card_slot: *card_slot,
+                    })
+                    .ok_or_else(|| {
+                        "native pregame legal bottom action does not resolve to the visible hand"
+                            .to_owned()
+                    }),
+            ),
+            MtgoCompetitivePregameVisibleControlSemanticV1::SelectForBottom {
+                selected: true,
+                ..
+            } => None,
+            MtgoCompetitivePregameVisibleControlSemanticV1::SubmitBottoming => {
+                Some(Ok(MtgoCompetitiveNativePregameActionV1::SubmitBottoming))
+            }
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if ordered_actions.is_empty() {
+        return Err("native pregame request has no legal action".to_owned());
+    }
+
+    let (stage, prospective_keep_size, required_bottom_count, selected_bottom_count) =
+        match response.stage {
+            MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size,
+            } => (
+                MtgoCompetitivePregameStageV1::MulliganChoice {
+                    prospective_keep_size,
+                },
+                Some(prospective_keep_size),
+                0,
+                0,
+            ),
+            MtgoCompetitivePregameStageLabelV1::LondonBottoming {
+                required_bottom_count,
+                selected_bottom_count,
+            } => (
+                MtgoCompetitivePregameStageV1::LondonBottoming {
+                    required_bottom_count,
+                    selected_bottom_count,
+                },
+                None,
+                required_bottom_count,
+                selected_bottom_count,
+            ),
+            MtgoCompetitivePregameStageLabelV1::GameplayReady => unreachable!(),
+        };
+    if selected_bottom_count != 0 {
+        return Err(
+            "native pregame request after a London selection requires retained ordered confirmed bottom history"
+                .to_owned(),
+        );
+    }
+    let model_input = MtgoCompetitiveNativePregameModelInputV1 {
+        game_number,
+        play_draw: context.play_draw,
+        acting_player_games_won: context.acting_player_games_won,
+        opponent_games_won: context.opponent_games_won,
+        stage,
+        prospective_keep_size,
+        required_bottom_count,
+        selected_bottom_count,
+        ordered_visible_cards,
+        ordered_confirmed_bottom_slots: Vec::new(),
+        ordered_actions,
+    };
+    validate_competitive_native_pregame_model_input_v1(&model_input)?;
+    Ok(model_input)
+}
+
+#[cfg(test)]
+fn competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    context: &crate::probe::MtgoClassifiedCompetitivePregameModelContextCommitmentsV1,
+    response: &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1,
+) -> Result<MtgoCompetitiveNativePregameModelInputV1, String> {
+    competitive_native_pregame_model_input_from_parts_v1(runtime, context, response)
+}
+
+pub fn competitive_native_pregame_model_input_commitment_v1(
+    model_input: &MtgoCompetitiveNativePregameModelInputV1,
+) -> Result<String, String> {
+    let canonical = serde_json::to_vec(model_input)
+        .map_err(|error| format!("serialize native pregame model input: {error}"))?;
+    Ok(hash_parts_v2(
+        COMPETITIVE_NATIVE_PREGAME_MODEL_INPUT_DOMAIN_V1,
+        &[
+            &canonical,
+            b"player_visible_game_information_only_no_model_selection_no_input",
+        ],
+    ))
+}
+
+/// Rechecks the complete coordinate-free model request. This validates only
+/// structural integrity. It does not admit a
+/// classifier, score a checkpoint, select an action, or authorize input.
+pub fn validate_competitive_native_pregame_model_input_v1(
+    model_input: &MtgoCompetitiveNativePregameModelInputV1,
+) -> Result<(), String> {
+    if model_input.game_number != 1
+        || model_input.acting_player_games_won != 0
+        || model_input.opponent_games_won != 0
+    {
+        return Err("native pregame request scope or completeness is invalid".to_owned());
+    }
+    if model_input.ordered_visible_cards.len() != 7
+        || model_input.ordered_actions.is_empty()
+        || model_input.ordered_confirmed_bottom_slots.len()
+            != usize::from(model_input.selected_bottom_count)
+    {
+        return Err(
+            "native pregame request hand, action, or bottom history is incomplete".to_owned(),
+        );
+    }
+    let mut confirmed_bottom_slots = std::collections::HashSet::new();
+    for card_slot in &model_input.ordered_confirmed_bottom_slots {
+        if usize::from(*card_slot) >= model_input.ordered_visible_cards.len()
+            || !confirmed_bottom_slots.insert(*card_slot)
+        {
+            return Err("native pregame request bottom history is invalid".to_owned());
+        }
+    }
+    for (index, card) in model_input.ordered_visible_cards.iter().enumerate() {
+        if usize::from(card.card_slot) != index
+            || card.visible_card_name.trim().is_empty()
+            || card.visible_card_name.len() > 256
+            || card.visible_card_name.chars().any(char::is_control)
+            || card.selected_for_bottom
+                != model_input
+                    .ordered_confirmed_bottom_slots
+                    .contains(&card.card_slot)
+        {
+            return Err("native pregame request visible-card identity is invalid".to_owned());
+        }
+    }
+    let mut action_slots = std::collections::HashSet::new();
+    for action in &model_input.ordered_actions {
+        if let MtgoCompetitiveNativePregameActionV1::SelectForBottom { card_slot } = action {
+            if !action_slots.insert(*card_slot)
+                || !model_input
+                    .ordered_visible_cards
+                    .get(usize::from(*card_slot))
+                    .is_some_and(|card| card.card_slot == *card_slot && !card.selected_for_bottom)
+            {
+                return Err("native pregame request bottom action is invalid".to_owned());
+            }
+        }
+    }
+    match model_input.stage {
+        MtgoCompetitivePregameStageV1::MulliganChoice {
+            prospective_keep_size,
+        } => {
+            if model_input.prospective_keep_size != Some(prospective_keep_size)
+                || prospective_keep_size > 7
+                || model_input.required_bottom_count != 0
+                || model_input.selected_bottom_count != 0
+                || !model_input.ordered_confirmed_bottom_slots.is_empty()
+                || model_input.ordered_actions.first()
+                    != Some(&MtgoCompetitiveNativePregameActionV1::KeepOpeningHand)
+            {
+                return Err("native pregame mulligan request is inconsistent".to_owned());
+            }
+            let expected_len = if prospective_keep_size == 0 { 1 } else { 2 };
+            if model_input.ordered_actions.len() != expected_len
+                || prospective_keep_size > 0
+                    && model_input.ordered_actions.get(1)
+                        != Some(&MtgoCompetitiveNativePregameActionV1::Mulligan {
+                            next_hand_size: prospective_keep_size - 1,
+                        })
+            {
+                return Err("native pregame mulligan action set is incomplete".to_owned());
+            }
+        }
+        MtgoCompetitivePregameStageV1::LondonBottoming {
+            required_bottom_count,
+            selected_bottom_count,
+        } => {
+            if model_input.prospective_keep_size.is_some()
+                || required_bottom_count != model_input.required_bottom_count
+                || selected_bottom_count != model_input.selected_bottom_count
+                || !(1..=7).contains(&required_bottom_count)
+                || selected_bottom_count > required_bottom_count
+            {
+                return Err("native pregame London request is inconsistent".to_owned());
+            }
+            let expected_select_count = usize::from(7 - selected_bottom_count);
+            let submit_required = selected_bottom_count == required_bottom_count;
+            let mut expected_actions = model_input
+                .ordered_visible_cards
+                .iter()
+                .filter(|card| !card.selected_for_bottom)
+                .map(
+                    |card| MtgoCompetitiveNativePregameActionV1::SelectForBottom {
+                        card_slot: card.card_slot,
+                    },
+                )
+                .collect::<Vec<_>>();
+            if submit_required {
+                expected_actions.push(MtgoCompetitiveNativePregameActionV1::SubmitBottoming);
+            }
+            if action_slots.len() != expected_select_count
+                || model_input.ordered_actions != expected_actions
+            {
+                return Err("native pregame London action set is incomplete".to_owned());
+            }
+        }
+        MtgoCompetitivePregameStageV1::GameplayReady => {
+            return Err("GameplayReady is not a pregame model decision".to_owned())
+        }
+    }
+    Ok(())
 }
 
 /// Selects one Keep, Mulligan, London card, or Submit action from the exact
@@ -6854,7 +7370,7 @@ pub fn plan_competitive_event_pregame_action_v1(
     let current = session.current_observation.commitments_v1();
     let classified = session
         .current_observation
-        ._classified_frame
+        ._classified_source
         .as_ref()
         .ok_or("competitive pregame action planning requires a retained classified frame")?;
     let response = classified.response_v1();
@@ -7060,7 +7576,7 @@ pub fn prepare_fresh_competitive_event_pregame_action_v1(
     let prior_response = plan
         ._session
         .current_observation
-        ._classified_frame
+        ._classified_source
         .as_ref()
         .ok_or("competitive pregame action plan lost its classified source")?
         .response_v1();
@@ -7429,7 +7945,9 @@ pub fn confirm_pending_competitive_pregame_action_v1(
         }
     };
     let next = OpaqueMtgoCompetitivePregameObservationV1 {
-        _classified_frame: Some(after),
+        _classified_source: Some(OpaqueMtgoCompetitivePregameClassifiedSourceV1::Frame(
+            Box::new(after),
+        )),
         commitments: next_commitments,
     };
     let session = match advance_competitive_event_pregame_observed_v1(session, next) {
@@ -7711,7 +8229,7 @@ pub fn advance_competitive_event_pregame_from_classified_frame_v2(
     classified_frame: OpaqueMtgoClassifiedCompetitivePregameFrameV1,
 ) -> Result<OpaqueMtgoCompetitiveEventPregameSessionV1, String> {
     validate_competitive_event_pregame_session_integrity_v1(&session)?;
-    if session.current_observation._classified_frame.is_none() {
+    if session.current_observation._classified_source.is_none() {
         return Err(
             "competitive pregame session did not originate from a retained classified frame"
                 .to_owned(),
@@ -7747,7 +8265,9 @@ pub fn advance_competitive_event_pregame_from_classified_frame_v2(
         ),
     )?;
     let next = OpaqueMtgoCompetitivePregameObservationV1 {
-        _classified_frame: Some(classified_frame),
+        _classified_source: Some(OpaqueMtgoCompetitivePregameClassifiedSourceV1::Frame(
+            Box::new(classified_frame),
+        )),
         commitments: next_commitments,
     };
     advance_competitive_event_pregame_observed_v1(session, next)
@@ -19701,6 +20221,213 @@ mod tests {
             visible_controls,
             visible_interaction_commitment_sha256: "d".repeat(64),
         }
+    }
+
+    fn competitive_native_pregame_mulligan_response_v1(
+        prospective_keep_size: u8,
+    ) -> mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1 {
+        let mut visible_controls = vec![MtgoCompetitivePregameVisibleControlV1 {
+            control_id: "keep_opening_hand".to_owned(),
+            semantic: MtgoCompetitivePregameVisibleControlSemanticV1::KeepOpeningHand,
+            rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1 {
+                x: 10,
+                y: 30,
+                width: 8,
+                height: 8,
+            },
+            visible_content_sha256: "a".repeat(64),
+            confidence_bps: 10_000,
+            visibly_enabled: true,
+        }];
+        if prospective_keep_size > 0 {
+            visible_controls.push(MtgoCompetitivePregameVisibleControlV1 {
+                control_id: "mulligan".to_owned(),
+                semantic: MtgoCompetitivePregameVisibleControlSemanticV1::Mulligan {
+                    next_hand_size: prospective_keep_size - 1,
+                },
+                rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1 {
+                    x: 20,
+                    y: 30,
+                    width: 8,
+                    height: 8,
+                },
+                visible_content_sha256: "b".repeat(64),
+                confidence_bps: 10_000,
+                visibly_enabled: true,
+            });
+        }
+        mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1 {
+            schema_version: 1,
+            request_commitment_sha256: "c".repeat(64),
+            stage: MtgoCompetitivePregameStageLabelV1::MulliganChoice {
+                prospective_keep_size,
+            },
+            visible_facts: Vec::new(),
+            visible_cards: competitive_pregame_test_cards_v1(),
+            visible_controls,
+            visible_interaction_commitment_sha256: "d".repeat(64),
+        }
+    }
+
+    fn competitive_native_pregame_context_fixture_v1(
+        response: &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1,
+        game_number: u8,
+        acting_player_games_won: u8,
+        opponent_games_won: u8,
+    ) -> crate::probe::MtgoClassifiedCompetitivePregameModelContextCommitmentsV1 {
+        crate::probe::competitive_pregame_model_context_commitments_for_tests_v1(
+            response.stage,
+            response.visible_interaction_commitment_sha256.clone(),
+            game_number,
+            mtgo_blackbox_v1::MtgoCompetitivePregamePlayDrawV1::OnPlay,
+            acting_player_games_won,
+            opponent_games_won,
+        )
+    }
+
+    #[test]
+    fn native_pregame_request_is_exact_visible_game_one_candidate_only() {
+        let runtime = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+        );
+        let response = competitive_native_pregame_mulligan_response_v1(7);
+        let context = competitive_native_pregame_context_fixture_v1(&response, 1, 0, 0);
+        let model_input = competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
+            &runtime, &context, &response,
+        )
+        .unwrap();
+
+        validate_competitive_native_pregame_model_input_v1(&model_input).unwrap();
+        assert_eq!(model_input.game_number, 1);
+        assert_eq!(model_input.ordered_visible_cards.len(), 7);
+        assert_eq!(
+            model_input.ordered_actions,
+            vec![
+                MtgoCompetitiveNativePregameActionV1::KeepOpeningHand,
+                MtgoCompetitiveNativePregameActionV1::Mulligan { next_hand_size: 6 }
+            ]
+        );
+        assert!(model_input.ordered_confirmed_bottom_slots.is_empty());
+        assert!(is_sha256_v2(
+            &competitive_native_pregame_model_input_commitment_v1(&model_input).unwrap()
+        ));
+        let serialized = serde_json::to_string(&model_input).unwrap();
+        for forbidden in [
+            "sha256",
+            "schema_version",
+            "complete",
+            "event_kind",
+            "event_identity",
+            "match_identity",
+            "authorization",
+            "capture",
+            "classifier",
+            "deck_manifest",
+            "policy_deployment",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn native_pregame_request_rejects_later_game_and_unretained_bottom_history() {
+        let mut runtime = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+        );
+        runtime.current_game_number = Some(2);
+        let game_two_response = competitive_native_pregame_mulligan_response_v1(7);
+        let game_two_context =
+            competitive_native_pregame_context_fixture_v1(&game_two_response, 2, 1, 0);
+        assert!(
+            competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
+                &runtime,
+                &game_two_context,
+                &game_two_response,
+            )
+            .unwrap_err()
+            .contains("post-sideboard configuration")
+        );
+
+        runtime.current_game_number = Some(1);
+        let bottoming_response = competitive_pregame_bottoming_response_v1(2, &[3]);
+        let bottoming_context =
+            competitive_native_pregame_context_fixture_v1(&bottoming_response, 1, 0, 0);
+        assert!(
+            competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
+                &runtime,
+                &bottoming_context,
+                &bottoming_response,
+            )
+            .unwrap_err()
+            .contains("ordered confirmed bottom history")
+        );
+    }
+
+    #[test]
+    fn native_pregame_request_detects_semantic_mutation() {
+        let runtime = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+        );
+        let response = competitive_native_pregame_mulligan_response_v1(7);
+        let context = competitive_native_pregame_context_fixture_v1(&response, 1, 0, 0);
+        let model_input = competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
+            &runtime, &context, &response,
+        )
+        .unwrap();
+
+        let original_commitment =
+            competitive_native_pregame_model_input_commitment_v1(&model_input).unwrap();
+        let mut changed_card = model_input.clone();
+        changed_card.ordered_visible_cards[0].visible_card_name = "Different".to_owned();
+        assert_ne!(
+            competitive_native_pregame_model_input_commitment_v1(&changed_card).unwrap(),
+            original_commitment
+        );
+
+        let mut changed_action = model_input;
+        changed_action.ordered_actions.swap(0, 1);
+        assert!(validate_competitive_native_pregame_model_input_v1(&changed_action).is_err());
+    }
+
+    #[test]
+    fn native_pregame_request_rejects_reordered_london_actions_and_bad_history() {
+        let runtime = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+        );
+        let response = competitive_pregame_bottoming_response_v1(2, &[]);
+        let context = competitive_native_pregame_context_fixture_v1(&response, 1, 0, 0);
+        let model_input = competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
+            &runtime, &context, &response,
+        )
+        .unwrap();
+        validate_competitive_native_pregame_model_input_v1(&model_input).unwrap();
+
+        let mut reordered = model_input.clone();
+        reordered.ordered_actions.swap(0, 1);
+        assert!(validate_competitive_native_pregame_model_input_v1(&reordered).is_err());
+
+        let mut duplicate_history = model_input;
+        duplicate_history.stage = MtgoCompetitivePregameStageV1::LondonBottoming {
+            required_bottom_count: 2,
+            selected_bottom_count: 2,
+        };
+        duplicate_history.selected_bottom_count = 2;
+        duplicate_history.ordered_confirmed_bottom_slots = vec![0, 0];
+        duplicate_history.ordered_visible_cards[0].selected_for_bottom = true;
+        duplicate_history.ordered_actions = duplicate_history
+            .ordered_visible_cards
+            .iter()
+            .filter(|card| !card.selected_for_bottom)
+            .map(
+                |card| MtgoCompetitiveNativePregameActionV1::SelectForBottom {
+                    card_slot: card.card_slot,
+                },
+            )
+            .chain(std::iter::once(
+                MtgoCompetitiveNativePregameActionV1::SubmitBottoming,
+            ))
+            .collect();
+        assert!(validate_competitive_native_pregame_model_input_v1(&duplicate_history).is_err());
     }
 
     #[test]
