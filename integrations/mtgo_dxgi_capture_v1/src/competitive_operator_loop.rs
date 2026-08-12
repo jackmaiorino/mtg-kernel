@@ -22,6 +22,12 @@ use crate::actuator::{
     OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1,
     OpaqueMtgoSessionBoundCompetitiveDuelGestureV1, RatifiedMtgoCompetitiveMatchLaunchV1,
 };
+use crate::competitive_auxiliary_action_resolution::{
+    resolve_checked_untrusted_competitive_native_pregame_selection_v1,
+    resolve_checked_untrusted_competitive_native_sideboard_selection_v1,
+    CheckedUntrustedMtgoCompetitivePregameSemanticResolutionV1,
+    CheckedUntrustedMtgoCompetitiveSideboardSemanticResolutionV1,
+};
 use crate::competitive_auxiliary_model_scoring::{
     score_checked_untrusted_competitive_native_pregame_request_v1,
     score_checked_untrusted_competitive_native_sideboard_request_v1,
@@ -59,6 +65,10 @@ use sha2::{Digest, Sha256};
 const COMPETITIVE_POST_ENTRY_OPERATOR_DOMAIN_V1: &[u8] = b"mtgo-competitive-post-entry-operator-v1";
 const COMPETITIVE_POST_ENTRY_OPERATOR_ADVANCE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-post-entry-operator-advance-v1";
+const COMPETITIVE_OPERATOR_PREGAME_RESOLUTION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-operator-pregame-resolution-v1";
+const COMPETITIVE_OPERATOR_SIDEBOARD_RESOLUTION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-operator-sideboard-resolution-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -317,9 +327,37 @@ impl OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
 /// }
 /// ```
 pub struct OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
+    resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    scored_request: OpaqueMtgoScoredCompetitiveNativePregameRequestV1,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+/// Move-only proof that the full post-entry ownership chain survived one
+/// checked-untrusted pregame score and exact visible semantic resolution.
+/// It still cannot recover the event session or reach live input. A future
+/// kernel-owned opaque response must replace the checked scorer result before
+/// an operator resume path can exist.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1;
+/// fn cannot_resume(value: OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1) {
+///     let _ = value.into_operator();
+///     let _ = value.input_command();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1>();
+/// ```
+pub struct OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1 {
     _resources: MtgoCompetitiveOperatorResourcesPartsV1,
     _resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
-    scored_request: OpaqueMtgoScoredCompetitiveNativePregameRequestV1,
+    _scored_request: OpaqueMtgoScoredCompetitiveNativePregameRequestV1,
+    resolution: CheckedUntrustedMtgoCompetitivePregameSemanticResolutionV1,
+    operator_resolution_commitment_sha256: String,
     _prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 }
 
@@ -379,10 +417,118 @@ impl OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1 {
 /// }
 /// ```
 pub struct OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
+    resources: MtgoCompetitiveOperatorResourcesDuringSideboardV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    scored_request: OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+/// Move-only proof that the full post-entry ownership chain survived one
+/// checked-untrusted sideboard score and exact manifest-backed semantic
+/// resolution. Adapter-local card IDs remain private and no drag, Submit Deck,
+/// event-session recovery, or input path is exposed.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1;
+/// fn cannot_resume(value: OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1) {
+///     let _ = value.into_operator();
+///     let _ = value.submit_sideboard();
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1>();
+/// ```
+pub struct OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1 {
     _resources: MtgoCompetitiveOperatorResourcesDuringSideboardV1,
     _resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
-    scored_request: OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
+    _scored_request: OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
+    resolution: CheckedUntrustedMtgoCompetitiveSideboardSemanticResolutionV1,
+    operator_resolution_commitment_sha256: String,
     _prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+impl OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1 {
+    pub fn selected_action_v1(&self) -> &crate::MtgoCompetitivePregameSelectedActionV1 {
+        self.resolution.selected_action_v1()
+    }
+
+    pub fn expected_postcondition_v1(
+        &self,
+    ) -> &crate::MtgoCompetitivePregameExpectedPostconditionV1 {
+        self.resolution.expected_postcondition_v1()
+    }
+
+    pub fn semantic_resolution_commitment_sha256_v1(&self) -> &str {
+        self.resolution.semantic_resolution_commitment_sha256_v1()
+    }
+
+    pub fn operator_resolution_commitment_sha256_v1(&self) -> &str {
+        &self.operator_resolution_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+impl OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1 {
+    pub fn visible_target_configuration_v1(
+        &self,
+    ) -> &crate::MtgoCompetitiveNativeSideboardConfigurationV1 {
+        self.resolution.visible_target_configuration_v1()
+    }
+
+    pub fn no_changes_selected_v1(&self) -> bool {
+        self.resolution.no_changes_selected_v1()
+    }
+
+    pub fn adapter_target_configuration_commitment_sha256_v1(&self) -> &str {
+        self.resolution
+            .adapter_target_configuration_commitment_sha256_v1()
+    }
+
+    pub fn semantic_resolution_commitment_sha256_v1(&self) -> &str {
+        self.resolution.semantic_resolution_commitment_sha256_v1()
+    }
+
+    pub fn operator_resolution_commitment_sha256_v1(&self) -> &str {
+        &self.operator_resolution_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
 }
 
 impl OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
@@ -604,9 +750,52 @@ pub fn score_checked_untrusted_competitive_operator_native_pregame_v1<
         scorer,
     )?;
     Ok(OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
+        resources,
+        resource_commitments,
+        scored_request,
+        prior_operator,
+    })
+}
+
+/// Carries every retained post-entry resource through exact coordinate-free
+/// pregame semantic resolution. This is an offline ownership proof only.
+pub fn resolve_checked_untrusted_competitive_operator_native_pregame_v1(
+    value: OpaqueMtgoScoredCompetitiveOperatorNativePregameV1,
+) -> Result<OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1, String> {
+    let OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
+        resources,
+        resource_commitments,
+        scored_request,
+        prior_operator,
+    } = value;
+    let resolution = resolve_checked_untrusted_competitive_native_pregame_selection_v1(
+        scored_request.source_request_v1().model_input_v1(),
+        scored_request.checked_selection_v1(),
+    )?;
+    if resolution.model_input_commitment_sha256_v1()
+        != scored_request
+            .source_request_v1()
+            .model_input_commitment_sha256_v1()
+        || resource_commitments.resource_bundle_commitment_sha256
+            != prior_operator.resource_bundle_commitment_sha256
+    {
+        return Err(
+            "competitive operator pregame semantic resolution lost exact lineage".to_owned(),
+        );
+    }
+    let operator_resolution_commitment_sha256 = operator_auxiliary_resolution_commitment_v1(
+        COMPETITIVE_OPERATOR_PREGAME_RESOLUTION_DOMAIN_V1,
+        &resource_commitments.resource_bundle_commitment_sha256,
+        &prior_operator.operator_commitment_sha256,
+        resolution.semantic_resolution_commitment_sha256_v1(),
+        b"checked_untrusted_pregame_resolution_no_session_recovery_no_input",
+    )?;
+    Ok(OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1 {
         _resources: resources,
         _resource_commitments: resource_commitments,
-        scored_request,
+        _scored_request: scored_request,
+        resolution,
+        operator_resolution_commitment_sha256,
         _prior_operator: prior_operator,
     })
 }
@@ -743,9 +932,55 @@ pub fn score_checked_untrusted_competitive_operator_native_sideboard_v1<
         scorer,
     )?;
     Ok(OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
+        resources,
+        resource_commitments,
+        scored_request,
+        prior_operator,
+    })
+}
+
+/// Carries every retained post-entry resource through exact manifest-backed
+/// sideboard semantic resolution. This remains unable to recover the event
+/// session, move a card, or submit the deck.
+pub fn resolve_checked_untrusted_competitive_operator_native_sideboard_v1(
+    value: OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1,
+) -> Result<OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1, String> {
+    let OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
+        resources,
+        resource_commitments,
+        scored_request,
+        prior_operator,
+    } = value;
+    let source_request = scored_request.source_request_v1();
+    let resolution = resolve_checked_untrusted_competitive_native_sideboard_selection_v1(
+        source_request.model_input_v1(),
+        scored_request.checked_selection_v1(),
+        source_request.source_manifest_v1(),
+        source_request.source_snapshot_commitment_sha256_v1(),
+        &prior_operator.policy_deployment_commitment_sha256,
+    )?;
+    if resolution.model_input_commitment_sha256_v1()
+        != source_request.model_input_commitment_sha256_v1()
+        || resource_commitments.resource_bundle_commitment_sha256
+            != prior_operator.resource_bundle_commitment_sha256
+    {
+        return Err(
+            "competitive operator sideboard semantic resolution lost exact lineage".to_owned(),
+        );
+    }
+    let operator_resolution_commitment_sha256 = operator_auxiliary_resolution_commitment_v1(
+        COMPETITIVE_OPERATOR_SIDEBOARD_RESOLUTION_DOMAIN_V1,
+        &resource_commitments.resource_bundle_commitment_sha256,
+        &prior_operator.operator_commitment_sha256,
+        resolution.semantic_resolution_commitment_sha256_v1(),
+        b"checked_untrusted_sideboard_resolution_no_session_recovery_no_drag_no_submit",
+    )?;
+    Ok(OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1 {
         _resources: resources,
         _resource_commitments: resource_commitments,
-        scored_request,
+        _scored_request: scored_request,
+        resolution,
+        operator_resolution_commitment_sha256,
         _prior_operator: prior_operator,
     })
 }
@@ -1652,6 +1887,40 @@ fn hash_parts_v1(domain: &[u8], parts: &[&[u8]]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn operator_auxiliary_resolution_commitment_v1(
+    domain: &[u8],
+    resource_bundle_commitment_sha256: &str,
+    prior_operator_commitment_sha256: &str,
+    semantic_resolution_commitment_sha256: &str,
+    scope: &[u8],
+) -> Result<String, String> {
+    for (value, label) in [
+        (
+            resource_bundle_commitment_sha256,
+            "auxiliary resolution resource bundle",
+        ),
+        (
+            prior_operator_commitment_sha256,
+            "auxiliary resolution prior operator",
+        ),
+        (
+            semantic_resolution_commitment_sha256,
+            "auxiliary semantic resolution",
+        ),
+    ] {
+        require_sha256_v1(value, label)?;
+    }
+    Ok(hash_parts_v1(
+        domain,
+        &[
+            resource_bundle_commitment_sha256.as_bytes(),
+            prior_operator_commitment_sha256.as_bytes(),
+            semantic_resolution_commitment_sha256.as_bytes(),
+            scope,
+        ],
+    ))
+}
+
 fn competitive_event_kind_tag_v1(value: MtgoCompetitiveEventKindV1) -> &'static [u8] {
     match value {
         MtgoCompetitiveEventKindV1::League => b"league",
@@ -1917,6 +2186,62 @@ mod tests {
             request_deployment_commitment_sha256: digest('2'),
             loaded_checkpoint_deployment_commitment_sha256: digest('2'),
         }
+    }
+
+    #[test]
+    fn auxiliary_operator_resolution_commitment_binds_resource_operator_and_semantic_lineage() {
+        let baseline = operator_auxiliary_resolution_commitment_v1(
+            COMPETITIVE_OPERATOR_PREGAME_RESOLUTION_DOMAIN_V1,
+            &digest('1'),
+            &digest('2'),
+            &digest('3'),
+            b"pregame",
+        )
+        .unwrap();
+        for changed in [
+            operator_auxiliary_resolution_commitment_v1(
+                COMPETITIVE_OPERATOR_PREGAME_RESOLUTION_DOMAIN_V1,
+                &digest('4'),
+                &digest('2'),
+                &digest('3'),
+                b"pregame",
+            )
+            .unwrap(),
+            operator_auxiliary_resolution_commitment_v1(
+                COMPETITIVE_OPERATOR_PREGAME_RESOLUTION_DOMAIN_V1,
+                &digest('1'),
+                &digest('4'),
+                &digest('3'),
+                b"pregame",
+            )
+            .unwrap(),
+            operator_auxiliary_resolution_commitment_v1(
+                COMPETITIVE_OPERATOR_PREGAME_RESOLUTION_DOMAIN_V1,
+                &digest('1'),
+                &digest('2'),
+                &digest('4'),
+                b"pregame",
+            )
+            .unwrap(),
+            operator_auxiliary_resolution_commitment_v1(
+                COMPETITIVE_OPERATOR_SIDEBOARD_RESOLUTION_DOMAIN_V1,
+                &digest('1'),
+                &digest('2'),
+                &digest('3'),
+                b"sideboard",
+            )
+            .unwrap(),
+        ] {
+            assert_ne!(baseline, changed);
+        }
+        assert!(operator_auxiliary_resolution_commitment_v1(
+            COMPETITIVE_OPERATOR_PREGAME_RESOLUTION_DOMAIN_V1,
+            "not-a-digest",
+            &digest('2'),
+            &digest('3'),
+            b"pregame",
+        )
+        .is_err());
     }
 
     #[test]

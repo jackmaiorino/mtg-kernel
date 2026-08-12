@@ -1702,6 +1702,14 @@ impl OpaqueMtgoCompetitiveNativeSideboardRequestV1 {
         &self.model_input_commitment_sha256
     }
 
+    pub(crate) fn source_manifest_v1(&self) -> &ValidatedMtgoCompetitiveDeckManifestV1 {
+        &self._measurement._manifest
+    }
+
+    pub(crate) fn source_snapshot_commitment_sha256_v1(&self) -> &str {
+        self._measurement.source_snapshot_commitment_sha256_v1()
+    }
+
     pub fn safe_for_model_scoring_v1(&self) -> bool {
         false
     }

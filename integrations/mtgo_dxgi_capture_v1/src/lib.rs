@@ -268,6 +268,8 @@ pub use competitive_operator_loop::{
     next_competitive_post_entry_operator_directive_v1,
     observe_competitive_post_entry_operator_event_record_v1,
     prepare_competitive_post_entry_operator_lifecycle_v1,
+    resolve_checked_untrusted_competitive_operator_native_pregame_v1,
+    resolve_checked_untrusted_competitive_operator_native_sideboard_v1,
     return_competitive_post_entry_operator_gameplay_v1,
     score_checked_untrusted_competitive_operator_native_pregame_v1,
     score_checked_untrusted_competitive_operator_native_sideboard_v1,
@@ -279,6 +281,8 @@ pub use competitive_operator_loop::{
     OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1,
     OpaqueMtgoCompetitivePostEntryOperatorV1, OpaqueMtgoPendingCompetitiveOperatorLifecycleV1,
     OpaqueMtgoPreparedCompetitiveOperatorLifecycleV1,
+    OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1,
+    OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1,
     OpaqueMtgoScoredCompetitiveOperatorNativePregameV1,
     OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1,
 };

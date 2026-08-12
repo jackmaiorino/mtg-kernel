@@ -202,6 +202,16 @@ pub struct OpaqueMtgoScoredCompetitiveNativePregameRequestV1 {
 }
 
 impl OpaqueMtgoScoredCompetitiveNativePregameRequestV1 {
+    pub(crate) fn source_request_v1(&self) -> &OpaqueMtgoCompetitiveNativePregameRequestV1 {
+        &self._request
+    }
+
+    pub(crate) fn checked_selection_v1(
+        &self,
+    ) -> &CheckedUntrustedMtgoCompetitiveNativePregameModelSelectionV1 {
+        &self.selection
+    }
+
     pub fn selected_index_v1(&self) -> usize {
         self.selection.selected_index_v1()
     }
@@ -417,6 +427,16 @@ pub struct OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1 {
 }
 
 impl OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1 {
+    pub(crate) fn source_request_v1(&self) -> &OpaqueMtgoCompetitiveNativeSideboardRequestV1 {
+        &self._request
+    }
+
+    pub(crate) fn checked_selection_v1(
+        &self,
+    ) -> &CheckedUntrustedMtgoCompetitiveNativeSideboardModelSelectionV1 {
+        &self.selection
+    }
+
     pub fn selection_v1(&self) -> &MtgoCompetitiveNativeSideboardModelSelectionV1 {
         self.selection.selection_v1()
     }
