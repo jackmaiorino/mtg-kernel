@@ -64,6 +64,7 @@ use crate::probe::{
     OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1, PreparedPregameActuationV3,
 };
 use crate::{
+    competitive_native_sideboard_configuration_commitment_v1,
     competitive_native_sideboard_model_input_commitment_v1,
     validate_competitive_native_sideboard_model_input_v1,
     visible_native_sideboard_configuration_v1, MtgoCompetitiveNativeSideboardModelInputV1,
@@ -1207,6 +1208,7 @@ pub struct MtgoCompetitiveEventRuntimeCommitmentsV1 {
     pub deck_list_sha256: String,
     pub deck_manifest_sha256: String,
     pub deck_format_sha256: String,
+    pub player_known_current_deck_configuration_commitment_sha256: String,
     pub selected_deck_label_sha256: String,
     pub selected_deck_region_sha256: String,
     pub policy_deployment_commitment_sha256: String,
@@ -1234,6 +1236,38 @@ pub struct MtgoCompetitiveEventRuntimeCommitmentsV1 {
     pub event_monitor_observation_count: u64,
     pub terminal_event_record_confirmed: bool,
     pub closed_to_event_browser: bool,
+}
+
+struct MtgoCompetitivePlayerKnownDeckStateV1 {
+    submitted: crate::MtgoCompetitiveNativeSideboardConfigurationV1,
+    current: crate::MtgoCompetitiveNativeSideboardConfigurationV1,
+}
+
+impl MtgoCompetitivePlayerKnownDeckStateV1 {
+    fn from_manifest_v1(manifest: &ValidatedMtgoCompetitiveDeckManifestV1) -> Result<Self, String> {
+        let submitted = visible_native_sideboard_configuration_v1(manifest.configuration_v1())?;
+        Ok(Self {
+            current: submitted.clone(),
+            submitted,
+        })
+    }
+
+    fn current_commitment_v1(&self) -> Result<String, String> {
+        competitive_native_sideboard_configuration_commitment_v1(&self.current)
+    }
+
+    fn replace_current_v1(
+        &mut self,
+        current: crate::MtgoCompetitiveNativeSideboardConfigurationV1,
+    ) -> Result<(), String> {
+        crate::competitive_native_sideboard::validate_native_sideboard_configuration_v1(&current)?;
+        self.current = current;
+        Ok(())
+    }
+
+    fn reset_for_next_match_v1(&mut self) {
+        self.current = self.submitted.clone();
+    }
 }
 
 /// The next coordinator operation implied by one exact classified event
@@ -1350,6 +1384,7 @@ pub struct OpaqueMtgoCompetitiveEventRuntimeV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
     current_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    player_known_deck_state: MtgoCompetitivePlayerKnownDeckStateV1,
     event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
     commitments: MtgoCompetitiveEventRuntimeCommitmentsV1,
 }
@@ -1401,6 +1436,10 @@ impl OpaqueMtgoCompetitiveEventRuntimeV1 {
 pub fn next_competitive_event_driver_directive_v1(
     runtime: &OpaqueMtgoCompetitiveEventRuntimeV1,
 ) -> Result<MtgoCompetitiveEventDriverDirectiveV1, String> {
+    validate_player_known_deck_state_against_runtime_v1(
+        &runtime.commitments,
+        &runtime.player_known_deck_state,
+    )?;
     competitive_event_driver_directive_from_state_v1(&runtime.commitments)
 }
 
@@ -1601,6 +1640,7 @@ pub struct OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
     _lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
     _sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
     classified: OpaqueMtgoClassifiedCompetitiveSideboardV1,
+    _player_known_deck_state: MtgoCompetitivePlayerKnownDeckStateV1,
     _manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     _event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
     _prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
@@ -1694,6 +1734,7 @@ pub struct OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
     lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
     sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
     planned: OpaqueMtgoPlannedCompetitiveSideboardV1,
+    player_known_deck_state: MtgoCompetitivePlayerKnownDeckStateV1,
     manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
     prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
@@ -1754,6 +1795,7 @@ pub struct OpaqueMtgoCompetitiveEventSideboardSequenceV1 {
     current_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     plan: mtgo_blackbox_v1::CheckedUntrustedMtgoCompetitiveSideboardPlanV1,
+    player_known_deck_state: MtgoCompetitivePlayerKnownDeckStateV1,
     current_configuration: MtgoCompetitiveDeckConfigurationV1,
     current_visible_cards: Vec<MtgoVisibleCompetitiveSideboardCardV1>,
     current_mainboard_zone: MtgoVisibleCompetitiveSideboardZoneV1,
@@ -1932,6 +1974,7 @@ pub struct OpaqueMtgoReadyCompetitiveEventSideboardV1 {
     current_frame: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     manifest: ValidatedMtgoCompetitiveDeckManifestV1,
     _ready: CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
+    player_known_deck_state: MtgoCompetitivePlayerKnownDeckStateV1,
     event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
     effective_prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
     commitments: MtgoReadyCompetitiveEventSideboardCommitmentsV1,
@@ -1968,6 +2011,7 @@ pub struct MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1 {
 pub struct OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     prepared: OpaqueMtgoPreparedCompetitiveLifecycleControlV1,
+    player_known_deck_state: MtgoCompetitivePlayerKnownDeckStateV1,
     event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
     prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
     commitments: MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1,
@@ -1995,6 +2039,7 @@ pub struct MtgoPendingCompetitiveEventLifecycleControlCommitmentsV1 {
 pub struct OpaqueMtgoPendingCompetitiveEventLifecycleControlV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     pending: OpaqueMtgoPendingCompetitiveLifecycleControlV1,
+    player_known_deck_state: MtgoCompetitivePlayerKnownDeckStateV1,
     event_monitor: Option<OpaqueMtgoCompetitiveEventMonitorV1>,
     prior: MtgoCompetitiveEventRuntimeCommitmentsV1,
     commitments: MtgoPendingCompetitiveEventLifecycleControlCommitmentsV1,
@@ -5385,6 +5430,7 @@ pub fn confirm_pending_competitive_lifecycle_control_v1(
 pub fn begin_competitive_event_runtime_after_entry_v1(
     confirmed_entry: OpaqueMtgoConfirmedCompetitiveEntryV1,
     lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
+    deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
 ) -> Result<OpaqueMtgoCompetitiveEventRuntimeV1, String> {
     let OpaqueMtgoConfirmedCompetitiveEntryV1 {
         _authorization: spent_entry_authorization,
@@ -5419,6 +5465,9 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         || entry.entry_ratification_commitment_sha256
             != entry_ratification.ratification_commitment_sha256
         || entry_ratification.deck_manifest_sha256 != entry_deck_manifest_commitment_sha256
+        || entry_ratification.deck_manifest_sha256 != deck_manifest.manifest_commitment_sha256()
+        || entry_deck_list_sha256 != deck_manifest.deck_list_sha256()
+        || entry_ratification.deck_format_sha256 != deck_manifest.format_sha256()
         || visible
             .frame_transition
             .after_lifecycle_snapshot_commitment_sha256
@@ -5441,6 +5490,10 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
                 .to_owned(),
         );
     }
+    let player_known_deck_state =
+        MtgoCompetitivePlayerKnownDeckStateV1::from_manifest_v1(deck_manifest)?;
+    let player_known_current_deck_configuration_commitment_sha256 =
+        player_known_deck_state.current_commitment_v1()?;
     let mut commitments = MtgoCompetitiveEventRuntimeCommitmentsV1 {
         runtime_commitment_sha256: String::new(),
         entry_confirmation_receipt_sha256: entry.confirmation_receipt_sha256,
@@ -5451,6 +5504,7 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         deck_list_sha256: entry_deck_list_sha256,
         deck_manifest_sha256: entry_ratification.deck_manifest_sha256,
         deck_format_sha256: entry_ratification.deck_format_sha256,
+        player_known_current_deck_configuration_commitment_sha256,
         selected_deck_label_sha256: entry_ratification.selected_deck_label_sha256,
         selected_deck_region_sha256: entry_ratification.selected_deck_region_sha256,
         policy_deployment_commitment_sha256: entry_ratification.policy_deployment_commitment_sha256,
@@ -5493,6 +5547,7 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
         _spent_entry_authorization: spent_entry_authorization,
         lifecycle_authorization,
         current_frame,
+        player_known_deck_state,
         event_monitor: None,
         commitments,
     })
@@ -5522,6 +5577,7 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
         _spent_entry_authorization,
         lifecycle_authorization,
         current_frame,
+        player_known_deck_state,
         event_monitor,
         commitments: prior,
     } = runtime;
@@ -5588,6 +5644,15 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
     {
         return Err("sideboard measurement changed the exact event runtime lineage".to_owned());
     }
+    if visible_native_sideboard_configuration_v1(classified.configuration_v1())?
+        != player_known_deck_state.current
+        || player_known_deck_state.current_commitment_v1()?
+            != prior.player_known_current_deck_configuration_commitment_sha256
+    {
+        return Err(
+            "sideboard measurement changed the retained player-known current deck".to_owned(),
+        );
+    }
     let measurement_binding_commitment_sha256 = hash_parts_v2(
         COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1,
         &[
@@ -5617,6 +5682,7 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
         _lifecycle_authorization: lifecycle_authorization,
         _sideboard_authorization: sideboard_authorization,
         classified,
+        _player_known_deck_state: player_known_deck_state,
         _manifest: manifest,
         _event_monitor: event_monitor,
         _prior: prior,
@@ -5720,6 +5786,7 @@ pub fn begin_competitive_event_sideboard_transfer_sequence_v1(
         lifecycle_authorization,
         sideboard_authorization,
         planned,
+        player_known_deck_state,
         manifest,
         event_monitor,
         prior,
@@ -5795,6 +5862,7 @@ pub fn begin_competitive_event_sideboard_transfer_sequence_v1(
         current_frame: source_frame,
         manifest,
         plan,
+        player_known_deck_state,
         current_configuration,
         current_visible_cards: visible_cards,
         current_mainboard_zone: mainboard_zone,
@@ -6399,6 +6467,12 @@ pub fn confirm_competitive_event_sideboard_transfer_visible_v1(
     {
         return Err("sideboard sequence reached an invalid terminal transfer count".to_owned());
     }
+    let visible_target_configuration =
+        visible_native_sideboard_configuration_v1(&expected_configuration)?;
+    sequence
+        .player_known_deck_state
+        .replace_current_v1(visible_target_configuration)?;
+    effective_current_deck_commitment_v1(&mut sequence.prior, &sequence.player_known_deck_state)?;
     let ready = confirm_competitive_sideboard_target_visible_v1(sequence.plan, sideboard)
         .map_err(|error| format!("confirm final visible sideboard target: {error}"))?;
     if ready.after_frame_id() != next.frame_id
@@ -6463,6 +6537,7 @@ pub fn confirm_competitive_event_sideboard_transfer_visible_v1(
                 current_frame: source_frame,
                 manifest: sequence.manifest,
                 _ready: ready,
+                player_known_deck_state: sequence.player_known_deck_state,
                 event_monitor: sequence.event_monitor,
                 effective_prior,
                 commitments,
@@ -6583,6 +6658,7 @@ pub fn prepare_ready_competitive_event_sideboard_submit_v1(
         current_frame,
         manifest,
         _ready,
+        player_known_deck_state,
         event_monitor,
         effective_prior: prior,
         commitments: ready_commitments,
@@ -6666,6 +6742,7 @@ pub fn prepare_ready_competitive_event_sideboard_submit_v1(
     Ok(OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1 {
         _spent_entry_authorization,
         prepared,
+        player_known_deck_state,
         event_monitor,
         prior,
         commitments,
@@ -6702,6 +6779,7 @@ pub fn prepare_competitive_event_runtime_lifecycle_control_v1(
         _spent_entry_authorization,
         lifecycle_authorization,
         current_frame,
+        player_known_deck_state,
         event_monitor,
         commitments: prior,
     } = runtime;
@@ -6731,6 +6809,7 @@ pub fn prepare_competitive_event_runtime_lifecycle_control_v1(
     Ok(OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1 {
         _spent_entry_authorization,
         prepared,
+        player_known_deck_state,
         event_monitor,
         prior,
         commitments,
@@ -6743,6 +6822,7 @@ pub fn execute_prepared_competitive_event_lifecycle_control_v1(
     let OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1 {
         _spent_entry_authorization,
         prepared,
+        player_known_deck_state,
         event_monitor,
         prior,
         commitments: prepared_commitments,
@@ -6770,6 +6850,7 @@ pub fn execute_prepared_competitive_event_lifecycle_control_v1(
     Ok(OpaqueMtgoPendingCompetitiveEventLifecycleControlV1 {
         _spent_entry_authorization,
         pending,
+        player_known_deck_state,
         event_monitor,
         prior,
         commitments,
@@ -6783,8 +6864,9 @@ pub fn confirm_pending_competitive_event_lifecycle_control_v1(
     let OpaqueMtgoPendingCompetitiveEventLifecycleControlV1 {
         _spent_entry_authorization,
         pending,
+        mut player_known_deck_state,
         event_monitor,
-        prior,
+        mut prior,
         commitments: event_input,
     } = pending;
     let confirmed = confirm_pending_competitive_lifecycle_control_v1(pending, after)?;
@@ -6812,6 +6894,10 @@ pub fn confirm_pending_competitive_event_lifecycle_control_v1(
                 .to_owned(),
         );
     }
+    if confirmed.action == MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch {
+        player_known_deck_state.reset_for_next_match_v1();
+        effective_current_deck_commitment_v1(&mut prior, &player_known_deck_state)?;
+    }
     let commitments = advance_competitive_event_runtime_commitments_v1(
         &prior,
         &current_frame,
@@ -6826,6 +6912,7 @@ pub fn confirm_pending_competitive_event_lifecycle_control_v1(
         _spent_entry_authorization,
         lifecycle_authorization,
         current_frame,
+        player_known_deck_state,
         event_monitor,
         commitments,
     })
@@ -6885,6 +6972,7 @@ pub fn advance_competitive_event_runtime_observed_v1(
         _spent_entry_authorization: runtime._spent_entry_authorization,
         lifecycle_authorization: runtime.lifecycle_authorization,
         current_frame: next,
+        player_known_deck_state: runtime.player_known_deck_state,
         event_monitor: runtime.event_monitor,
         commitments,
     })
@@ -7087,10 +7175,17 @@ pub fn bind_competitive_event_pregame_native_request_v1(
     context: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
     deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
 ) -> Result<OpaqueMtgoCompetitiveNativePregameRequestV1, String> {
+    validate_player_known_deck_state_against_runtime_v1(
+        &runtime.commitments,
+        &runtime.player_known_deck_state,
+    )?;
     let runtime_frame = runtime.current_frame.commitments_v1();
     if runtime.commitments.current_frame_id != runtime_frame.frame_id
         || runtime.commitments.current_frame_sequence != runtime_frame.frame_sequence
         || runtime.commitments.current_phase != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+        || deck_manifest.manifest_commitment_sha256() != runtime.commitments.deck_manifest_sha256
+        || deck_manifest.deck_list_sha256() != runtime.commitments.deck_list_sha256
+        || deck_manifest.format_sha256() != runtime.commitments.deck_format_sha256
     {
         return Err(
             "native pregame request requires the exact current match-in-progress frame".to_owned(),
@@ -7139,7 +7234,7 @@ pub fn bind_competitive_event_pregame_native_request_v1(
         &runtime.commitments,
         &context_commitments,
         response,
-        deck_manifest,
+        &runtime.player_known_deck_state.current,
     )?;
     let observation = OpaqueMtgoCompetitivePregameObservationV1 {
         _classified_source: Some(
@@ -7195,7 +7290,7 @@ fn competitive_native_pregame_model_input_from_parts_v1(
     runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
     context: &crate::probe::MtgoClassifiedCompetitivePregameModelContextCommitmentsV1,
     response: &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1,
-    deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
+    player_known_deck_configuration: &crate::MtgoCompetitiveNativeSideboardConfigurationV1,
 ) -> Result<MtgoCompetitiveNativePregameModelInputV1, String> {
     runtime
         .current_match_identity_sha256
@@ -7204,18 +7299,12 @@ fn competitive_native_pregame_model_input_from_parts_v1(
     let game_number = runtime
         .current_game_number
         .ok_or("native pregame request requires one exact current game")?;
-    if game_number != 1 {
-        return Err(
-            "native pregame request for game two or three requires a retained exact post-sideboard configuration"
-                .to_owned(),
-        );
-    }
-    if deck_manifest.manifest_commitment_sha256() != runtime.deck_manifest_sha256
-        || deck_manifest.deck_list_sha256() != runtime.deck_list_sha256
-        || deck_manifest.format_sha256() != runtime.deck_format_sha256
+    if competitive_native_sideboard_configuration_commitment_v1(player_known_deck_configuration)?
+        != runtime.player_known_current_deck_configuration_commitment_sha256
     {
         return Err(
-            "native pregame request changed the exact submitted deck configuration".to_owned(),
+            "native pregame request changed the exact player-known current deck configuration"
+                .to_owned(),
         );
     }
     if context.game_number != game_number
@@ -7347,9 +7436,7 @@ fn competitive_native_pregame_model_input_from_parts_v1(
         play_draw: context.play_draw,
         acting_player_games_won: context.acting_player_games_won,
         opponent_games_won: context.opponent_games_won,
-        player_known_deck_configuration: visible_native_sideboard_configuration_v1(
-            deck_manifest.configuration_v1(),
-        )?,
+        player_known_deck_configuration: player_known_deck_configuration.clone(),
         stage,
         prospective_keep_size,
         required_bottom_count,
@@ -7369,7 +7456,14 @@ fn competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
     response: &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1,
     deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
 ) -> Result<MtgoCompetitiveNativePregameModelInputV1, String> {
-    competitive_native_pregame_model_input_from_parts_v1(runtime, context, response, deck_manifest)
+    let player_known_deck_configuration =
+        visible_native_sideboard_configuration_v1(deck_manifest.configuration_v1())?;
+    competitive_native_pregame_model_input_from_parts_v1(
+        runtime,
+        context,
+        response,
+        &player_known_deck_configuration,
+    )
 }
 
 pub fn competitive_native_pregame_model_input_commitment_v1(
@@ -7392,10 +7486,20 @@ pub fn competitive_native_pregame_model_input_commitment_v1(
 pub fn validate_competitive_native_pregame_model_input_v1(
     model_input: &MtgoCompetitiveNativePregameModelInputV1,
 ) -> Result<(), String> {
-    if model_input.game_number != 1
-        || model_input.acting_player_games_won != 0
-        || model_input.opponent_games_won != 0
-    {
+    let score_valid = match model_input.game_number {
+        1 => model_input.acting_player_games_won == 0 && model_input.opponent_games_won == 0,
+        2 => {
+            model_input
+                .acting_player_games_won
+                .checked_add(model_input.opponent_games_won)
+                == Some(1)
+                && model_input.acting_player_games_won <= 1
+                && model_input.opponent_games_won <= 1
+        }
+        3 => model_input.acting_player_games_won == 1 && model_input.opponent_games_won == 1,
+        _ => false,
+    };
+    if !score_valid {
         return Err("native pregame request scope or completeness is invalid".to_owned());
     }
     crate::competitive_native_sideboard::validate_native_sideboard_configuration_v1(
@@ -12378,6 +12482,29 @@ fn require_same_competitive_navigation_lineage_v1(
     Ok(())
 }
 
+fn effective_current_deck_commitment_v1(
+    runtime: &mut MtgoCompetitiveEventRuntimeCommitmentsV1,
+    state: &MtgoCompetitivePlayerKnownDeckStateV1,
+) -> Result<(), String> {
+    runtime.player_known_current_deck_configuration_commitment_sha256 =
+        state.current_commitment_v1()?;
+    Ok(())
+}
+
+fn validate_player_known_deck_state_against_runtime_v1(
+    runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
+    state: &MtgoCompetitivePlayerKnownDeckStateV1,
+) -> Result<(), String> {
+    if state.current_commitment_v1()?
+        != runtime.player_known_current_deck_configuration_commitment_sha256
+    {
+        return Err(
+            "competitive event runtime changed its player-known current deck state".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn advance_competitive_event_runtime_commitments_v1(
     prior: &MtgoCompetitiveEventRuntimeCommitmentsV1,
     current_frame: &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
@@ -13359,6 +13486,9 @@ fn competitive_event_runtime_commitment_v1(
             value.deck_list_sha256.as_bytes(),
             value.deck_manifest_sha256.as_bytes(),
             value.deck_format_sha256.as_bytes(),
+            value
+                .player_known_current_deck_configuration_commitment_sha256
+                .as_bytes(),
             value.selected_deck_label_sha256.as_bytes(),
             value.selected_deck_region_sha256.as_bytes(),
             value.policy_deployment_commitment_sha256.as_bytes(),
@@ -16323,6 +16453,7 @@ mod tests {
             deck_list_sha256: "a".repeat(64),
             deck_manifest_sha256: "0".repeat(64),
             deck_format_sha256: "1".repeat(64),
+            player_known_current_deck_configuration_commitment_sha256: "b".repeat(64),
             selected_deck_label_sha256: "2".repeat(64),
             selected_deck_region_sha256: "3".repeat(64),
             policy_deployment_commitment_sha256: "4".repeat(64),
@@ -16394,6 +16525,12 @@ mod tests {
             MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
         );
         runtime.deck_manifest_sha256 = deck_manifest.manifest_commitment_sha256().to_owned();
+        runtime.player_known_current_deck_configuration_commitment_sha256 =
+            competitive_native_sideboard_configuration_commitment_v1(
+                &visible_native_sideboard_configuration_v1(deck_manifest.configuration_v1())
+                    .unwrap(),
+            )
+            .unwrap();
         (runtime, deck_manifest)
     }
 
@@ -19513,6 +19650,7 @@ mod tests {
             deck_list_sha256: "a".repeat(64),
             deck_manifest_sha256: "0".repeat(64),
             deck_format_sha256: "1".repeat(64),
+            player_known_current_deck_configuration_commitment_sha256: "b".repeat(64),
             selected_deck_label_sha256: "2".repeat(64),
             selected_deck_region_sha256: "3".repeat(64),
             policy_deployment_commitment_sha256: "4".repeat(64),
@@ -19603,6 +19741,17 @@ mod tests {
             )
         );
         state.deck_manifest_sha256 = "0".repeat(64);
+        state.player_known_current_deck_configuration_commitment_sha256 = "c".repeat(64);
+        assert_ne!(
+            baseline,
+            competitive_event_runtime_commitment_v1(
+                COMPETITIVE_EVENT_RUNTIME_ADVANCE_DOMAIN_V1,
+                Some(&prior),
+                &state,
+                b"transition",
+            )
+        );
+        state.player_known_current_deck_configuration_commitment_sha256 = "b".repeat(64);
         state.pregame_session_count = 1;
         state.last_completed_pregame = Some(MtgoCompletedCompetitivePregameCommitmentsV1 {
             completion_receipt_sha256: "5".repeat(64),
@@ -19862,6 +20011,7 @@ mod tests {
                 deck_list_sha256: "0".repeat(64),
                 deck_manifest_sha256: "6".repeat(64),
                 deck_format_sha256: "7".repeat(64),
+                player_known_current_deck_configuration_commitment_sha256: "3".repeat(64),
                 selected_deck_label_sha256: "8".repeat(64),
                 selected_deck_region_sha256: "9".repeat(64),
                 policy_deployment_commitment_sha256: "a".repeat(64),
@@ -20025,6 +20175,7 @@ mod tests {
             deck_list_sha256: "3".repeat(64),
             deck_manifest_sha256: "e".repeat(64),
             deck_format_sha256: "f".repeat(64),
+            player_known_current_deck_configuration_commitment_sha256: "4".repeat(64),
             selected_deck_label_sha256: "0".repeat(64),
             selected_deck_region_sha256: "1".repeat(64),
             policy_deployment_commitment_sha256: "2".repeat(64),
@@ -20254,6 +20405,7 @@ mod tests {
             deck_list_sha256: "1".repeat(64),
             deck_manifest_sha256: "d".repeat(64),
             deck_format_sha256: "e".repeat(64),
+            player_known_current_deck_configuration_commitment_sha256: "5".repeat(64),
             selected_deck_label_sha256: "f".repeat(64),
             selected_deck_region_sha256: "0".repeat(64),
             policy_deployment_commitment_sha256: "6".repeat(64),
@@ -20548,9 +20700,9 @@ mod tests {
     }
 
     #[test]
-    fn native_pregame_request_rejects_a_different_submitted_deck() {
+    fn native_pregame_request_rejects_a_different_player_known_current_deck() {
         let (mut runtime, deck_manifest) = competitive_native_pregame_runtime_and_deck_v1();
-        runtime.deck_list_sha256 = "f".repeat(64);
+        runtime.player_known_current_deck_configuration_commitment_sha256 = "f".repeat(64);
         let response = competitive_native_pregame_mulligan_response_v1(7);
         let context = competitive_native_pregame_context_fixture_v1(&response, 1, 0, 0);
 
@@ -20562,29 +20714,93 @@ mod tests {
                 &deck_manifest,
             )
             .unwrap_err()
-            .contains("exact submitted deck configuration")
+            .contains("exact player-known current deck configuration")
         );
     }
 
     #[test]
-    fn native_pregame_request_rejects_later_game_and_unretained_bottom_history() {
+    fn native_pregame_request_accepts_later_game_player_known_deck_and_rejects_unretained_bottom_history(
+    ) {
         let (mut runtime, deck_manifest) = competitive_native_pregame_runtime_and_deck_v1();
+        let mut changed =
+            visible_native_sideboard_configuration_v1(deck_manifest.configuration_v1()).unwrap();
+        let bolt = changed
+            .mainboard
+            .iter_mut()
+            .find(|card| card.visible_card_name == "Lightning Bolt")
+            .unwrap();
+        bolt.count -= 1;
+        let blaze = changed
+            .sideboard
+            .iter_mut()
+            .find(|card| card.visible_card_name == "Searing Blaze")
+            .unwrap();
+        blaze.count -= 1;
+        changed
+            .mainboard
+            .push(crate::MtgoCompetitiveNativeSideboardCardCountV1 {
+                visible_card_name: "Searing Blaze".to_owned(),
+                count: 1,
+            });
+        changed
+            .sideboard
+            .push(crate::MtgoCompetitiveNativeSideboardCardCountV1 {
+                visible_card_name: "Lightning Bolt".to_owned(),
+                count: 1,
+            });
+        changed
+            .mainboard
+            .sort_by(|left, right| left.visible_card_name.cmp(&right.visible_card_name));
+        changed
+            .sideboard
+            .sort_by(|left, right| left.visible_card_name.cmp(&right.visible_card_name));
+        runtime.player_known_current_deck_configuration_commitment_sha256 =
+            competitive_native_sideboard_configuration_commitment_v1(&changed).unwrap();
         runtime.current_game_number = Some(2);
         let game_two_response = competitive_native_pregame_mulligan_response_v1(7);
         let game_two_context =
             competitive_native_pregame_context_fixture_v1(&game_two_response, 2, 1, 0);
-        assert!(
-            competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
-                &runtime,
-                &game_two_context,
-                &game_two_response,
-                &deck_manifest,
-            )
-            .unwrap_err()
-            .contains("post-sideboard configuration")
-        );
+        let game_two = competitive_native_pregame_model_input_from_parts_v1(
+            &runtime,
+            &game_two_context,
+            &game_two_response,
+            &changed,
+        )
+        .unwrap();
+        assert_eq!(game_two.game_number, 2);
+        assert_eq!(game_two.player_known_deck_configuration, changed);
+
+        runtime.current_game_number = Some(3);
+        let game_three_response = competitive_native_pregame_mulligan_response_v1(7);
+        let game_three_context =
+            competitive_native_pregame_context_fixture_v1(&game_three_response, 3, 1, 1);
+        let game_three = competitive_native_pregame_model_input_from_parts_v1(
+            &runtime,
+            &game_three_context,
+            &game_three_response,
+            &changed,
+        )
+        .unwrap();
+        assert_eq!(game_three.game_number, 3);
+        assert_eq!(game_three.player_known_deck_configuration, changed);
+
+        let invalid_game_three_context =
+            competitive_native_pregame_context_fixture_v1(&game_three_response, 3, 2, 0);
+        assert!(competitive_native_pregame_model_input_from_parts_v1(
+            &runtime,
+            &invalid_game_three_context,
+            &game_three_response,
+            &changed,
+        )
+        .is_err());
 
         runtime.current_game_number = Some(1);
+        runtime.player_known_current_deck_configuration_commitment_sha256 =
+            competitive_native_sideboard_configuration_commitment_v1(
+                &visible_native_sideboard_configuration_v1(deck_manifest.configuration_v1())
+                    .unwrap(),
+            )
+            .unwrap();
         let bottoming_response = competitive_pregame_bottoming_response_v1(2, &[3]);
         let bottoming_context =
             competitive_native_pregame_context_fixture_v1(&bottoming_response, 1, 0, 0);
@@ -20598,6 +20814,42 @@ mod tests {
             .unwrap_err()
             .contains("ordered confirmed bottom history")
         );
+    }
+
+    #[test]
+    fn player_known_deck_state_updates_from_confirmed_target_and_resets_after_match() {
+        let deck_manifest = competitive_native_pregame_deck_manifest_v1();
+        let mut state =
+            MtgoCompetitivePlayerKnownDeckStateV1::from_manifest_v1(&deck_manifest).unwrap();
+        let submitted = state.current.clone();
+        let mut changed = submitted.clone();
+        changed.mainboard[0].count -= 1;
+        changed.sideboard[0].count -= 1;
+        changed
+            .mainboard
+            .push(crate::MtgoCompetitiveNativeSideboardCardCountV1 {
+                visible_card_name: changed.sideboard[0].visible_card_name.clone(),
+                count: 1,
+            });
+        changed
+            .sideboard
+            .push(crate::MtgoCompetitiveNativeSideboardCardCountV1 {
+                visible_card_name: changed.mainboard[0].visible_card_name.clone(),
+                count: 1,
+            });
+        changed
+            .mainboard
+            .sort_by(|left, right| left.visible_card_name.cmp(&right.visible_card_name));
+        changed
+            .sideboard
+            .sort_by(|left, right| left.visible_card_name.cmp(&right.visible_card_name));
+
+        state.replace_current_v1(changed.clone()).unwrap();
+        assert_eq!(state.current, changed);
+        assert_ne!(state.current, submitted);
+
+        state.reset_for_next_match_v1();
+        assert_eq!(state.current, submitted);
     }
 
     #[test]

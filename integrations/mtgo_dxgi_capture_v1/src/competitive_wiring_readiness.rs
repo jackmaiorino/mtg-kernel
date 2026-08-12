@@ -99,7 +99,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             native_checkpoint_pregame_interface_present: false,
             competitive_player_visible_pregame_request_contract_present: true,
             competitive_pregame_player_known_submitted_deck_configuration_present: true,
-            competitive_pregame_player_known_deck_configuration_present: false,
+            competitive_pregame_player_known_deck_configuration_present: true,
             competitive_pregame_public_context_contract_present: true,
             competitive_pregame_play_draw_context_present: true,
             competitive_pregame_match_score_context_present: true,
@@ -205,7 +205,7 @@ mod tests {
                 .competitive_player_visible_pregame_request_contract_present
         );
         assert!(
-            !report
+            report
                 .known_wiring_gaps
                 .competitive_pregame_player_known_deck_configuration_present
         );

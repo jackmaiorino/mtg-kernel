@@ -5,6 +5,8 @@ use std::collections::{BTreeMap, HashSet};
 
 const NATIVE_SIDEBOARD_MODEL_INPUT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-native-sideboard-model-input-v1";
+const NATIVE_SIDEBOARD_CONFIGURATION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-native-sideboard-configuration-v1";
 const NATIVE_SIDEBOARD_MODEL_SELECTION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-native-sideboard-model-selection-v1";
 const MAX_CARD_KINDS_V1: usize = 256;
@@ -97,6 +99,13 @@ pub fn validate_competitive_native_sideboard_model_input_v1(
     }
     validate_native_sideboard_configuration_v1(&input.current_configuration)?;
     Ok(())
+}
+
+pub fn competitive_native_sideboard_configuration_commitment_v1(
+    configuration: &MtgoCompetitiveNativeSideboardConfigurationV1,
+) -> Result<String, String> {
+    validate_native_sideboard_configuration_v1(configuration)?;
+    canonical_commitment_v1(NATIVE_SIDEBOARD_CONFIGURATION_DOMAIN_V1, configuration)
 }
 
 pub fn competitive_native_sideboard_model_input_commitment_v1(

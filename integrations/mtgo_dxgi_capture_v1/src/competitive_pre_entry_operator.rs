@@ -377,8 +377,11 @@ pub fn begin_competitive_post_entry_operator_from_confirmed_entry_v1(
     value: OpaqueMtgoConfirmedCompetitiveOperatorEntryV1,
     lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
 ) -> Result<OpaqueMtgoCompetitivePostEntryOperatorV1, String> {
-    let runtime =
-        begin_competitive_event_runtime_after_entry_v1(value.confirmed, lifecycle_authorization)?;
+    let runtime = begin_competitive_event_runtime_after_entry_v1(
+        value.confirmed,
+        lifecycle_authorization,
+        value.resources.deck_manifest_v1(),
+    )?;
     begin_competitive_post_entry_operator_v1(value.resources, runtime)
 }
 

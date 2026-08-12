@@ -109,6 +109,10 @@ impl OpaqueMtgoCompetitiveOperatorResourcesV1 {
         &self.parts.navigation_runtime
     }
 
+    pub fn deck_manifest_v1(&self) -> &ValidatedMtgoCompetitiveDeckManifestV1 {
+        &self.parts.deck_manifest
+    }
+
     /// Returns the same already-opaque resources for the eventual operator.
     /// Every downstream authority boundary still performs its own exact join.
     pub fn into_parts_v1(self) -> MtgoCompetitiveOperatorResourcesPartsV1 {

@@ -240,17 +240,36 @@ fn native_pregame_payload_includes_only_player_known_deck_semantics() {
         .expect("native pregame binder must end before its commitment helper");
     let binder = &source[binder_start..binder_end];
     for required in [
-        "deck_manifest.manifest_commitment_sha256() != runtime.deck_manifest_sha256",
-        "deck_manifest.deck_list_sha256() != runtime.deck_list_sha256",
-        "deck_manifest.format_sha256() != runtime.deck_format_sha256",
-        "visible_native_sideboard_configuration_v1",
-        "deck_manifest.configuration_v1()",
+        "deck_manifest.manifest_commitment_sha256() != runtime.commitments.deck_manifest_sha256",
+        "deck_manifest.deck_list_sha256() != runtime.commitments.deck_list_sha256",
+        "deck_manifest.format_sha256() != runtime.commitments.deck_format_sha256",
+        "&runtime.player_known_deck_state.current",
+        "runtime.player_known_current_deck_configuration_commitment_sha256",
     ] {
         assert!(
             binder.contains(required),
-            "native pregame binder does not retain the exact submitted deck: {required}"
+            "native pregame binder does not retain the exact player-known current deck: {required}"
         );
     }
+}
+
+#[test]
+fn player_known_deck_state_is_private_confirmed_and_match_scoped() {
+    let source = include_str!("../src/actuator.rs");
+    for required in [
+        "struct MtgoCompetitivePlayerKnownDeckStateV1",
+        "from_manifest_v1",
+        "replace_current_v1(visible_target_configuration)",
+        "player_known_current_deck_configuration_commitment_sha256",
+        "reset_for_next_match_v1",
+        "confirmed.action == MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch",
+    ] {
+        assert!(
+            source.contains(required),
+            "player-known cross-game deck retention is missing: {required}"
+        );
+    }
+    assert!(!source.contains("pub struct MtgoCompetitivePlayerKnownDeckStateV1"));
 }
 
 #[test]
@@ -1740,7 +1759,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "native_checkpoint_pregame_interface_present: false",
         "competitive_player_visible_pregame_request_contract_present: true",
         "competitive_pregame_player_known_submitted_deck_configuration_present: true",
-        "competitive_pregame_player_known_deck_configuration_present: false",
+        "competitive_pregame_player_known_deck_configuration_present: true",
         "competitive_pregame_play_draw_context_present: true",
         "competitive_pregame_match_score_context_present: true",
         "competitive_pregame_heuristic_deployment_ratification_present:",
@@ -1792,7 +1811,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "native_checkpoint_pregame_interface_present: false",
         "public_player_visible_pregame_request_contract_present: true",
         "public_player_known_submitted_pregame_deck_configuration_present: true",
-        "public_player_known_pregame_deck_configuration_present: false",
+        "public_player_known_pregame_deck_configuration_present: true",
         "public_model_owned_pregame_action_path_present: false",
         "native_checkpoint_sideboard_interface_present: false",
         "public_player_visible_sideboard_payload_contract_present: true",
