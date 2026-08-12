@@ -264,6 +264,33 @@ pub fn validate_competitive_player_visible_game_history_for_scoring_v1(
     Ok(())
 }
 
+/// Joins the private confirmed-decision ledger to the exact-game actuator
+/// session before public history is replayed into a scorer. The frame values
+/// are checked but never exposed through the player-visible consumer API.
+#[doc(hidden)]
+pub fn validate_competitive_player_visible_game_history_for_session_v1(
+    history: &CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    deployment_commitment_sha256: &str,
+    expected_confirmed_action_count: u64,
+    expected_last_confirmed_frame_sequence: u64,
+    current_frame_sequence: u64,
+) -> Result<(), MtgoContractErrorV1> {
+    validate_competitive_player_visible_game_history_for_scoring_v1(
+        history,
+        deployment_commitment_sha256,
+        current_frame_sequence,
+    )?;
+    if u64::try_from(history.record.decisions.len()).ok() != Some(expected_confirmed_action_count)
+        || history.last_after_frame_sequence_v1() != expected_last_confirmed_frame_sequence
+    {
+        return Err(error_v1(
+            "competitive_player_visible_history_session",
+            "confirmed decision history does not exactly match the actuator session",
+        ));
+    }
+    Ok(())
+}
+
 fn decision_record_v1(
     sequence: u64,
     confirmed: &CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
@@ -561,5 +588,40 @@ mod tests {
             .code(),
             "competitive_player_visible_history_scoring_frame"
         );
+    }
+
+    #[test]
+    fn actuator_session_requires_exact_confirmed_count_and_terminal_frame() {
+        let confirmed = competitive_gameplay_postcondition_for_match_memory_test_v1();
+        let deployment = confirmed.deployment_commitment_sha256_v1().to_owned();
+        let after_frame_sequence = confirmed.after_frame_sequence();
+        let history = begin_checked_untrusted_competitive_player_visible_game_history_v1(
+            "league-match-game-one-visible-history-v1",
+            confirmed,
+        )
+        .unwrap();
+
+        validate_competitive_player_visible_game_history_for_session_v1(
+            &history,
+            &deployment,
+            1,
+            after_frame_sequence,
+            after_frame_sequence + 1,
+        )
+        .unwrap();
+        for (count, terminal) in [(0, after_frame_sequence), (1, after_frame_sequence + 1)] {
+            assert_eq!(
+                validate_competitive_player_visible_game_history_for_session_v1(
+                    &history,
+                    &deployment,
+                    count,
+                    terminal,
+                    after_frame_sequence + 2,
+                )
+                .unwrap_err()
+                .code(),
+                "competitive_player_visible_history_session"
+            );
+        }
     }
 }

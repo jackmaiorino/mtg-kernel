@@ -2053,6 +2053,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_source_gesture_target_pixels_rehashed: true",
         "player_visible_duel_gesture_target_protocol_ratified: false",
         "player_visible_duel_gesture_continuation_target_binding_present: true",
+        "post_entry_operator_player_visible_gameplay_selection_present: true",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "native_checkpoint_pregame_interface_present: false",
@@ -2117,6 +2118,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_source_gesture_target_pixels_rehashed: true",
         "player_visible_duel_gesture_target_protocol_ratified: false",
         "player_visible_duel_gesture_continuation_target_binding_present: true",
+        "post_entry_operator_player_visible_gameplay_selection_present: true",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "public_model_owned_duel_action_path_present: false",
@@ -2587,6 +2589,12 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "confirm_pending_competitive_post_entry_operator_lifecycle_v1",
         "observe_competitive_post_entry_operator_event_record_v1",
         "checkout_competitive_post_entry_operator_gameplay_v1",
+        "select_competitive_post_entry_operator_player_visible_gameplay_action_v1",
+        "score_select_and_resolve_opaque_player_visible_duel_perception_with_ongoing_history_v1",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1",
+        "validate_competitive_player_visible_game_history_for_session_v1",
+        "session_commitments.confirmed_action_count",
+        "session_commitments.last_confirmed_frame_sequence",
         "select_competitive_post_entry_operator_gameplay_action_v1",
         "bind_competitive_post_entry_operator_gameplay_action_v1",
         "return_competitive_post_entry_operator_gameplay_v1",
@@ -2699,6 +2707,15 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         assert!(
             source.contains(required_private),
             "legacy gameplay route is not explicitly crate-private: {required_private}"
+        );
+    }
+    for required_player_visible_export in [
+        "select_competitive_post_entry_operator_player_visible_gameplay_action_v1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1,",
+    ] {
+        assert!(
+            public_api.contains(required_player_visible_export),
+            "public operator API omits the non-actuating player-visible route: {required_player_visible_export}"
         );
     }
 }

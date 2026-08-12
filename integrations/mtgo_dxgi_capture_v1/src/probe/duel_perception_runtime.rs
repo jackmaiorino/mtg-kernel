@@ -2860,6 +2860,9 @@ pub fn score_and_select_opaque_player_visible_duel_perception_v1<
     {
         return Err("opaque perception and admitted profile differ at visible scoring".to_owned());
     }
+    let visible_input = perception
+        .player_visible_duel_decision_input_v1()
+        .map_err(|error| format!("project player-visible duel decision before scoring: {error}"))?;
     let source_candidate = perception
         .source_candidate
         .take()
@@ -2873,6 +2876,13 @@ pub fn score_and_select_opaque_player_visible_duel_perception_v1<
         )
         .map_err(|error| format!("player-visible duel model scoring failed: {error}"))?;
     let selected_action = selection.selected_action_v1().clone();
+    let selected_input_action = visible_input
+        .ordered_legal_actions
+        .get(selection.selected_index_v1())
+        .ok_or("player-visible scorer selected outside its exact input action vector")?;
+    if selected_input_action != &selected_action {
+        return Err("player-visible scorer selection changed its exact visible action".to_owned());
+    }
     let result = MtgoPlayerVisibleDuelModelSelectionResultV1 {
         selected_index: selection.selected_index_v1(),
         selected_logit_f32_bits: selection.selected_logit_f32_bits_v1(),
