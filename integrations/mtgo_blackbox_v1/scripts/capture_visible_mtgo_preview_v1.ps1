@@ -27,7 +27,7 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$ExpectedWindowTitle = 'Magic: The Gathering Online',
 
-    [ValidateSet('MainClient', 'ForegroundOwnedDialog', 'ForegroundSpectatorGame', 'ForegroundSolitaireGame')]
+    [ValidateSet('MainClient', 'ForegroundOwnedDialog', 'ForegroundSpectatorGame', 'ForegroundDuelGame', 'ForegroundSolitaireGame')]
     [string]$TargetWindowMode = 'MainClient',
 
     [ValidateSet('Standard', 'Pioneer', 'Modern', 'Legacy', 'Vintage', 'Pauper', 'Freeform')]
@@ -592,7 +592,12 @@ function Get-MtgoPreviewSnapshot {
         if ($TargetWindowMode -ceq 'ForegroundSpectatorGame') {
             $captureRole = 'spectator'
             $baseGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^,#\r\n]+$' -f $escapedGameFormat)
-            $identifiedGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^\r\n]+?\s+Match #\s*\d+\s*-\s*Game #\s*\d+$' -f $escapedGameFormat)
+            $identifiedGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^,#\r\n]+?\s+Match #\s*\d+\s*-\s*Game #\s*\d+$' -f $escapedGameFormat)
+        }
+        elseif ($TargetWindowMode -ceq 'ForegroundDuelGame') {
+            $captureRole = 'acting_player_duel'
+            $baseGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,#\r\n]+$' -f $escapedGameFormat)
+            $identifiedGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,#\r\n]+?\s+Match #\s*\d+\s*-\s*Game #\s*\d+$' -f $escapedGameFormat)
         }
         else {
             $captureRole = 'acting_player_solitaire'
@@ -813,6 +818,7 @@ try {
     $artifactKind = switch ($TargetWindowMode) {
         'ForegroundOwnedDialog' { 'mtgo_visible_navigation_dialog_inspection_preview_v1' }
         'ForegroundSpectatorGame' { 'mtgo_visible_spectator_gameplay_calibration_preview_v1' }
+        'ForegroundDuelGame' { 'mtgo_visible_acting_player_duel_gameplay_calibration_preview_v1' }
         'ForegroundSolitaireGame' { 'mtgo_visible_solitaire_gameplay_calibration_preview_v1' }
         default { 'mtgo_visible_desktop_calibration_preview_v1' }
     }

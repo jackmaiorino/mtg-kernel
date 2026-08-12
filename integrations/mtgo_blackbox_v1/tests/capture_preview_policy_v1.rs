@@ -118,6 +118,21 @@ fn solitaire_preview_has_a_distinct_acting_player_scope() {
 }
 
 #[test]
+fn acting_player_duel_preview_has_a_distinct_single_opponent_scope() {
+    for required in [
+        "ForegroundDuelGame",
+        "acting_player_duel",
+        "^\\(1-on-1\\): {0}: Vs\\. [^,#\\r\\n]+$",
+        "mtgo_visible_acting_player_duel_gameplay_calibration_preview_v1",
+    ] {
+        assert!(
+            PREVIEW_SCRIPT.contains(required),
+            "missing acting-player duel preview guard: {required}"
+        );
+    }
+}
+
+#[test]
 fn dialog_preview_is_navigation_only_and_mtgo_owned() {
     for required in [
         "ForegroundOwnedDialog",

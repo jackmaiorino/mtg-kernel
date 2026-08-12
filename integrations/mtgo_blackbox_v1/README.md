@@ -22,7 +22,7 @@ Those before-and-after checks cannot prove that a very brief cursor, notificatio
 
 Every output is marked `pending_visual_review` and explicitly unsafe for semantic evidence, OCR, policy scoring, and input. The destination must be a new absolute directory outside this repository. The first reviewed image should establish a client-version, DPI, physical-size, and image-anchor calibration profile. A production evidence backend should use DXGI Desktop Duplication and must remain a separate later tranche.
 
-The default `MainClient` mode retains the original single-window requirement. `ForegroundSpectatorGame` mode is only for a manually selected spectated 1-on-1 game. `ForegroundSolitaireGame` is only for a one-player game created through Custom Match. Both gameplay modes require the main client to remain visible, select only the foreground top-level window owned by the same verified MTGO process, pin the expected format, validate the mode-specific title structure, commit the complete visible MTGO top-level window set, and repeat those checks after capture. MTGO sometimes visibly renders numeric match and game IDs in its title bar without including them in `GetWindowText`; that case is recorded as a less specific title identity rather than pretending the IDs were independently verified. Other MTGO panes may remain visible behind the game, but any window intersecting the game above it still rejects the capture.
+The default `MainClient` mode retains the original single-window requirement. `ForegroundSpectatorGame` mode is only for a manually selected spectated 1-on-1 game. `ForegroundDuelGame` is only for the approved account acting in a 1-on-1 game. `ForegroundSolitaireGame` is only for a one-player game created through Custom Match. All gameplay modes require the main client to remain visible, select only the foreground top-level window owned by the same verified MTGO process, pin the expected format, validate the mode-specific title structure, commit the complete visible MTGO top-level window set, and repeat those checks after capture. MTGO sometimes visibly renders numeric match and game IDs in its title bar without including them in `GetWindowText`; that case is recorded as a less specific title identity rather than pretending the IDs were independently verified. Other MTGO panes may remain visible behind the game, but any window intersecting the game above it still rejects the capture.
 
 `ForegroundOwnedDialog` is a separate navigation-only inspection mode for visible MTGO-owned dialogs such as deck selection and Custom Match. It requires the verified main client plus a distinct foreground root window owned by the same process. It records the exact visible window set and repeats every identity, geometry, focus, cursor, and occlusion check. Its output remains an unsafe inspection preview and cannot be consumed as game evidence.
 
@@ -53,6 +53,22 @@ Example for an already-open spectated Standard game:
 ```
 
 Spectator-game output uses artifact kind `mtgo_visible_spectator_gameplay_calibration_preview_v1` and records `capture_role = spectator`. It is still only a local calibration preview. It is not accepted by the reviewed desktop-preview contract and grants no OCR, evidence, scoring, or input authority. A spectator frame may inform duel-window identity and coarse battlefield layout, but it must not calibrate player hand, prompt, priority, legal-action, target-selection, or input regions.
+
+Example for an already-open acting-player duel, including a League or Challenge match only after a separately approved non-spending launch:
+
+```powershell
+.\scripts\capture_visible_mtgo_preview_v1.ps1 `
+  -OutputDirectory (Join-Path $env:TEMP 'mtgo-duel-preview-YYYYMMDD-HHMMSS') `
+  -ExpectedProductVersion '<exact-product-version>' `
+  -ExpectedExecutableSha256 '<exact-executable-sha256>' `
+  -ExpectedSignerThumbprint '<exact-leaf-certificate-thumbprint>' `
+  -ExpectedSignerSubject '<exact-leaf-certificate-subject>' `
+  -ExpectedDpi 120 `
+  -TargetWindowMode ForegroundDuelGame `
+  -ExpectedGameFormat Modern
+```
+
+Acting-player duel output uses artifact kind `mtgo_visible_acting_player_duel_gameplay_calibration_preview_v1` and records `capture_role = acting_player_duel`. It remains pending manual review and unsafe for OCR, evidence, scoring, or input. The mode only gives the later calibration review the correct 1-on-1 window identity; it does not launch a match or grant control authority.
 
 The retained spectator reconstruction audit makes that separation executable:
 it can close visible duel participants and map the turn/phase layout, but it
