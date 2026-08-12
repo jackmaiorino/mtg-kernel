@@ -27,10 +27,11 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoDuelGestureStageBindingV1,
     CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
     CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
-    CheckedUntrustedMtgoProfileBoundResolvedActionControlV1, MtgoAuthorizationScopeV1,
-    MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1,
-    MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDuelActionFamilyV1, MtgoDuelGesturePlanV1,
-    MtgoDuelGesturePrimitiveV1, MtgoDuelGestureTargetRoleV1, MtgoDxgiCaptureRoleV2,
+    CheckedUntrustedMtgoProfileBoundResolvedActionControlV1,
+    LoadedMtgoNativeCheckpointDeploymentV1, MtgoAuthorizationScopeV1, MtgoCompetitiveEventKindV1,
+    MtgoCompetitiveLifecyclePhaseV1, MtgoCompetitiveMatchGameplayAuthorizationV1,
+    MtgoDuelActionFamilyV1, MtgoDuelGesturePlanV1, MtgoDuelGesturePrimitiveV1,
+    MtgoDuelGestureStageV1, MtgoDuelGestureTargetRoleV1, MtgoDxgiCaptureRoleV2,
     MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1, MtgoLifecycleVisibleFactKindV1,
     MtgoNativeCheckpointObservationScorerV1, MtgoObservationReconstructionAuditV1,
     MtgoObservedDecisionV1, MtgoProfileBoundPostconditionAfterFrameMetadataV1,
@@ -39,7 +40,7 @@ use mtgo_blackbox_v1::{
     MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
     MtgoVisibleCompetitiveLifecycleSnapshotV1, MtgoVisibleDuelGestureTargetSetV1,
     ValidatedMtgoObservedDecisionV1, MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1,
-    MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
+    MTGO_DUEL_GESTURE_PLAN_SCHEMA_V1, MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
     MTGO_PROFILE_BOUND_POSTCONDITION_BEFORE_INPUT_FRAME_SCHEMA_V1,
     MTGO_VISIBLE_ACTION_CONTROL_SET_SCHEMA_V1,
 };
@@ -884,6 +885,34 @@ impl OpaqueMtgoProfileBoundDuelResolvedControlV1 {
 
     pub fn permits_event_entry_v1(&self) -> bool {
         false
+    }
+
+    pub(crate) fn selected_semantic_for_operator_v1(&self) -> &mtgo_blackbox_v1::ActionSemanticV1 {
+        self.selection
+            .selection
+            .as_ref()
+            .expect("resolved opaque control retains its selected action")
+            .selected_semantic()
+    }
+
+    pub(crate) fn gesture_plan_for_operator_v1(
+        &self,
+        stages: Vec<MtgoDuelGestureStageV1>,
+    ) -> MtgoDuelGesturePlanV1 {
+        MtgoDuelGesturePlanV1 {
+            schema_version: MTGO_DUEL_GESTURE_PLAN_SCHEMA_V1,
+            profile_bound_resolution_commitment_sha256: self
+                .commitments
+                .profile_bound_resolution_commitment_sha256
+                .clone(),
+            decision_commitment_sha256: self.commitments.decision_commitment_sha256.clone(),
+            selection_commitment_sha256: self.commitments.selection_commitment_sha256.clone(),
+            frame_id: self.commitments.frame_id,
+            frame_sequence: self.commitments.frame_sequence,
+            selected_action_family: self.selected_action_family,
+            stage_set_complete: true,
+            stages,
+        }
     }
 }
 
@@ -1853,6 +1882,39 @@ pub fn score_and_select_opaque_admitted_duel_perception_v1(
         scorer,
     )
     .map_err(|error| format!("profile-bound duel model scoring failed: {error}"))?;
+    finish_opaque_duel_model_selection_v1(perception, selection)
+}
+
+/// Scores one retained visible duel perception through the exact loaded
+/// checkpoint deployment. The deployment record remains private inside the
+/// loaded value, preventing a crossed caller-supplied identity at the live
+/// composition boundary.
+pub fn score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1(
+    mut perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    deployment: &LoadedMtgoNativeCheckpointDeploymentV1,
+) -> Result<OpaqueMtgoProfileBoundDuelModelSelectionV1, String> {
+    let source = perception.source_frame.commitments_v1();
+    if source.perception_profile_commitment_sha256 != profile.perception_profile_commitment_sha256()
+        || source.perception_profile_admission_commitment_sha256
+            != profile.admission_commitment_sha256()
+    {
+        return Err("opaque perception and admitted profile differ at scoring".to_owned());
+    }
+    let source_candidate = perception
+        .source_candidate
+        .take()
+        .ok_or("opaque duel source candidate was already consumed")?;
+    let selection = deployment
+        .score_profile_bound_duel_candidate_v1(source_candidate, profile)
+        .map_err(|error| format!("profile-bound duel model scoring failed: {error}"))?;
+    finish_opaque_duel_model_selection_v1(perception, selection)
+}
+
+fn finish_opaque_duel_model_selection_v1(
+    perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    selection: CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
+) -> Result<OpaqueMtgoProfileBoundDuelModelSelectionV1, String> {
     let deployment_commitment_sha256 = selection.deployment_commitment_sha256().to_owned();
     if selection.decision_commitment_sha256()
         != perception.validated_decision.decision_commitment_sha256()
@@ -2143,6 +2205,28 @@ pub fn begin_opaque_competitive_duel_gesture_sequence_v1(
         current_stage: source_stage,
         commitments,
     })
+}
+
+/// Resolves stage zero with the exact profile-pinned visible-target runtime,
+/// then begins the ordinary opaque gesture sequence. This is the production
+/// composition seam for callers that already own the complete competitive
+/// action plan. It performs no input and returns no coordinates.
+pub(crate) fn begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1(
+    plan: OpaqueMtgoCompetitiveDuelActionPlanV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoCompetitiveDuelGestureSequenceV1, String> {
+    let (target_set, _runtime_binding) = invoke_pinned_gesture_target_runtime_for_plan_stage_v1(
+        &plan,
+        &plan.control.selection.perception,
+        profile,
+        runtime,
+        0,
+        timeout_ms,
+    )?;
+    let source_stage = bind_opaque_competitive_duel_source_gesture_stage_v1(plan, target_set)?;
+    begin_opaque_competitive_duel_gesture_sequence_v1(source_stage)
 }
 
 /// Runs the exact profile-pinned gesture-target runtime over one retained fresh
@@ -3109,23 +3193,45 @@ fn invoke_pinned_gesture_target_runtime_for_stage_v1(
     ),
     String,
 > {
+    invoke_pinned_gesture_target_runtime_for_plan_stage_v1(
+        &sequence.current_stage._plan,
+        perception,
+        profile,
+        runtime,
+        stage_index,
+        timeout_ms,
+    )
+}
+
+fn invoke_pinned_gesture_target_runtime_for_plan_stage_v1(
+    plan: &OpaqueMtgoCompetitiveDuelActionPlanV1,
+    perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    stage_index: u16,
+    timeout_ms: u32,
+) -> Result<
+    (
+        MtgoVisibleDuelGestureTargetSetV1,
+        VerifiedDuelGestureTargetRuntimeBindingV1,
+    ),
+    String,
+> {
     if !(100..=60_000).contains(&timeout_ms) {
         return Err("duel gesture-target timeout must be between 100 and 60000 ms".to_owned());
     }
-    let sequence_commitments = sequence.commitments_v1();
-    let stage = sequence
-        .current_stage
-        ._plan
+    let plan_commitments = plan.commitments_v1();
+    let stage = plan
         .gesture
         .stages_v1()
         .get(usize::from(stage_index))
         .ok_or("gesture-target runtime stage is absent from the exact plan")?;
     if stage.stage_index != stage_index
-        || stage_index >= sequence_commitments.gesture_stage_count
+        || stage_index >= plan_commitments.gesture_stage_count
         || profile.supported_action_families() != canonical_duel_gesture_action_families_v1()
         || !profile
             .supported_action_families()
-            .contains(&sequence_commitments.selected_action_family)
+            .contains(&plan.control.selected_action_family)
         || runtime.commitments.gesture_evaluation_commitment_sha256
             != profile.evaluation_commitment_sha256()
         || runtime
@@ -3169,8 +3275,8 @@ fn invoke_pinned_gesture_target_runtime_for_stage_v1(
         perception_result_commitment_sha256: perception_commitments
             .perception_result_commitment_sha256,
         decision_commitment_sha256: perception_commitments.decision_commitment_sha256,
-        gesture_plan_commitment_sha256: sequence_commitments.gesture_plan_commitment_sha256,
-        selected_action_family: sequence_commitments.selected_action_family,
+        gesture_plan_commitment_sha256: plan_commitments.gesture_plan_commitment_sha256,
+        selected_action_family: plan.control.selected_action_family,
         stage_index,
         primitive: stage.primitive.clone(),
         gesture_evaluation_commitment_sha256: profile.evaluation_commitment_sha256().to_owned(),

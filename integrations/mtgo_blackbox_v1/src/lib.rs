@@ -5,6 +5,8 @@
 
 #![forbid(unsafe_code)]
 
+pub use mtg_kernel::rl::ActionSemanticV1;
+
 mod action_resolution;
 mod authorization_correspondence;
 mod calibration_trace;

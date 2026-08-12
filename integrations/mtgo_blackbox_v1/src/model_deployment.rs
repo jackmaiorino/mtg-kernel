@@ -1,7 +1,10 @@
 use crate::{
     model_deployment_commitment_v1, score_and_select_external_model_v1,
-    CheckedUntrustedMtgoModelSelectionV1, MtgoContractErrorV1, MtgoExpectedModelDeploymentV1,
-    MtgoNativeCheckpointObservationScorerV1, ValidatedMtgoObservedDecisionV1,
+    score_and_select_profile_bound_duel_candidate_v1, AdmittedMtgoDuelPerceptionProfileV1,
+    CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1, CheckedUntrustedMtgoModelSelectionV1,
+    CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1, MtgoContractErrorV1,
+    MtgoExpectedModelDeploymentV1, MtgoNativeCheckpointObservationScorerV1,
+    ValidatedMtgoObservedDecisionV1,
 };
 use mtg_kernel::native_checkpoint_inference_v1::{
     load_native_checkpoint_inference_v1, NativeCheckpointInferenceV1,
@@ -135,6 +138,24 @@ impl LoadedMtgoNativeCheckpointDeploymentV1 {
     ) -> Result<CheckedUntrustedMtgoModelSelectionV1, MtgoContractErrorV1> {
         let mut scorer = self.scorer_v1()?;
         score_and_select_external_model_v1(decision, &self.expected, &mut scorer)
+    }
+
+    /// Scores one exact profile-bound visible duel candidate through this
+    /// loaded deployment. The independently supplied deployment identity never
+    /// leaves the opaque loaded value, so callers cannot accidentally score a
+    /// live candidate against a reconstructed or crossed deployment record.
+    pub fn score_profile_bound_duel_candidate_v1(
+        &self,
+        candidate: CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
+        profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    ) -> Result<CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1, MtgoContractErrorV1> {
+        let mut scorer = self.scorer_v1()?;
+        score_and_select_profile_bound_duel_candidate_v1(
+            candidate,
+            profile,
+            &self.expected,
+            &mut scorer,
+        )
     }
 
     pub fn safe_for_live_input(&self) -> bool {

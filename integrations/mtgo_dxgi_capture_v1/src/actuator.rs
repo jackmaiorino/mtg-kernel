@@ -3480,6 +3480,18 @@ impl OpaqueMtgoCompetitiveGestureGameSessionV1 {
     }
 }
 
+pub(crate) fn competitive_gesture_game_session_action_authorities_v1(
+    session: &OpaqueMtgoCompetitiveGestureGameSessionV1,
+) -> (
+    MtgoAuthorizationScopeV1,
+    MtgoCompetitiveMatchGameplayAuthorizationV1,
+) {
+    (
+        session.launch.gesture_authorization.scope.clone(),
+        session.launch.pass_match_launch.authorization.clone(),
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoSessionBoundCompetitiveDuelGestureCommitmentsV1 {
     pub binding_commitment_sha256: String,

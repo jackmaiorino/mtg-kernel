@@ -1,9 +1,11 @@
 use crate::actuator::{
     advance_competitive_event_monitor_in_runtime_v1, advance_competitive_event_runtime_observed_v1,
     attach_competitive_event_monitor_to_runtime_v1,
+    bind_competitive_duel_gesture_sequence_session_v1,
     bind_competitive_event_native_sideboard_request_v1,
     bind_competitive_event_pregame_native_request_v1,
     checkout_competitive_event_gameplay_session_v1,
+    competitive_gesture_game_session_action_authorities_v1,
     confirm_pending_competitive_event_lifecycle_control_v1,
     execute_prepared_competitive_event_lifecycle_control_v1,
     measure_competitive_event_runtime_sideboard_v1, next_competitive_event_driver_directive_v1,
@@ -17,7 +19,8 @@ use crate::actuator::{
     OpaqueMtgoCompetitiveGestureGameSessionV1, OpaqueMtgoCompetitiveNativePregameRequestV1,
     OpaqueMtgoCompetitiveNativeSideboardRequestV1,
     OpaqueMtgoPendingCompetitiveEventLifecycleControlV1,
-    OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1, RatifiedMtgoCompetitiveMatchLaunchV1,
+    OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1,
+    OpaqueMtgoSessionBoundCompetitiveDuelGestureV1, RatifiedMtgoCompetitiveMatchLaunchV1,
 };
 use crate::competitive_auxiliary_model_scoring::{
     score_checked_untrusted_competitive_native_pregame_request_v1,
@@ -34,14 +37,21 @@ use crate::competitive_operator_bootstrap::{
 };
 use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveVisibleGameOutcomeV1;
 use crate::probe::{
-    begin_evaluated_competitive_event_monitor_v1, OpaqueMtgoClassifiedCompetitiveEventRecordV1,
+    begin_evaluated_competitive_event_monitor_v1,
+    begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
+    prepare_opaque_competitive_duel_action_plan_v1, resolve_opaque_profile_bound_duel_control_v1,
+    score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
+    OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoClassifiedCompetitiveEventRecordV1,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+    OpaqueMtgoProfileBoundDuelResolvedControlV1,
 };
 use mtgo_blackbox_v1::{
-    validate_native_checkpoint_competitive_capabilities_v1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1,
-    MtgoNativeCheckpointCompetitiveCapabilitiesV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
+    validate_native_checkpoint_competitive_capabilities_v1, ActionSemanticV1,
+    MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1,
+    MtgoDuelGestureStageV1, MtgoNativeCheckpointCompetitiveCapabilitiesV1,
+    MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoProfileBoundPostconditionCalibrationV1,
+    MtgoProfileBoundPostconditionRegionSetV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -223,6 +233,34 @@ pub struct OpaqueMtgoCompetitiveOperatorGameplayLeaseV1 {
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     lease: OpaqueMtgoCompetitiveEventGameplayLeaseV1,
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+/// Move-only ownership of the gameplay lease and attended game session after
+/// the exact loaded checkpoint selected one current player-visible legal
+/// action. Only that semantic is exposed so the reviewed UI adapter can build
+/// its coordinate-free gesture stages.
+pub struct OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
+    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    control: OpaqueMtgoProfileBoundDuelResolvedControlV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
+    pub fn selected_semantic_v1(&self) -> &ActionSemanticV1 {
+        self.control.selected_semantic_for_operator_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
 }
 
 /// Move-only ownership of the complete post-entry operator while one exact
@@ -870,6 +908,96 @@ pub fn return_competitive_post_entry_operator_gameplay_v1(
     )
 }
 
+/// Scores one current player-visible duel decision through the exact loaded
+/// checkpoint and resolves its selected legal semantic to the exact visible
+/// control. The returned move-only selection retains the gameplay lease and
+/// attended game session and exposes only the selected semantic.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorGameplaySelectionV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorGameplaySelectionV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorGameplaySelectionV1;
+/// fn cannot_act(value: OpaqueMtgoCompetitiveOperatorGameplaySelectionV1) {
+///     let _ = value.input_command();
+/// }
+/// ```
+pub fn select_competitive_post_entry_operator_gameplay_action_v1(
+    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorGameplaySelectionV1, String> {
+    let lease_commitments = lease.lease.commitments_v1();
+    let session_commitments = session.commitments_v1();
+    validate_operator_gameplay_action_source_v1(
+        &lease.resource_commitments,
+        &lease_commitments,
+        &session_commitments,
+        &perception.commitments_v1(),
+        lease
+            .resources
+            .checkpoint_deployment
+            .deployment_commitment_sha256(),
+    )?;
+    let selection = score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1(
+        perception,
+        &lease.resources.duel_perception_profile,
+        &lease.resources.checkpoint_deployment,
+    )?;
+    let control = resolve_opaque_profile_bound_duel_control_v1(selection)?;
+    Ok(OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
+        lease,
+        session,
+        control,
+    })
+}
+
+/// Binds the reviewed UI gesture for an already model-selected action to the
+/// exact League or Challenge session and profile-pinned source target runtime.
+/// The returned ordinary session-bound action still requires one distinct
+/// fresh visible perception before any primitive can be prepared.
+pub fn bind_competitive_post_entry_operator_gameplay_action_v1(
+    selected: OpaqueMtgoCompetitiveOperatorGameplaySelectionV1,
+    gesture_stages: Vec<MtgoDuelGestureStageV1>,
+    postcondition_calibration: MtgoProfileBoundPostconditionCalibrationV1,
+    postcondition_region_set: MtgoProfileBoundPostconditionRegionSetV1,
+    gesture_target_timeout_ms: u32,
+) -> Result<
+    (
+        OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+        OpaqueMtgoSessionBoundCompetitiveDuelGestureV1,
+    ),
+    String,
+> {
+    let OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
+        lease,
+        session,
+        control,
+    } = selected;
+    let (scope, gameplay_authorization) =
+        competitive_gesture_game_session_action_authorities_v1(&session);
+    let gesture_plan = control.gesture_plan_for_operator_v1(gesture_stages);
+    let plan = prepare_opaque_competitive_duel_action_plan_v1(
+        control,
+        gesture_plan,
+        postcondition_calibration,
+        postcondition_region_set,
+        &scope,
+        &gameplay_authorization,
+    )?;
+    let sequence = begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1(
+        plan,
+        &lease.resources.duel_gesture_profile,
+        &lease.resources.duel_gesture_runtime,
+        gesture_target_timeout_ms,
+    )?;
+    let bound = bind_competitive_duel_gesture_sequence_session_v1(sequence, session)?;
+    Ok((lease, bound))
+}
+
 fn advance_operator_v1(
     resources: MtgoCompetitiveOperatorResourcesPartsV1,
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
@@ -1463,6 +1591,46 @@ fn validate_operator_gameplay_session_resources_v1(
     Ok(())
 }
 
+fn validate_operator_gameplay_action_source_v1(
+    resources: &MtgoCompetitiveOperatorResourceCommitmentsV1,
+    lease: &MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
+    session: &MtgoCompetitiveGestureGameSessionCommitmentsV1,
+    perception: &crate::MtgoAdmittedDuelPerceptionCommitmentsV1,
+    loaded_deployment_commitment_sha256: &str,
+) -> Result<(), String> {
+    let session_policy = session
+        .policy_deployment_commitment_sha256
+        .as_deref()
+        .ok_or("gameplay action requires a session bound to the selected policy deployment")?;
+    if resources.policy_deployment_commitment_sha256 != loaded_deployment_commitment_sha256
+        || lease.policy_deployment_commitment_sha256
+            != resources.policy_deployment_commitment_sha256
+        || session_policy != resources.policy_deployment_commitment_sha256
+        || perception
+            .source_frame
+            .perception_profile_admission_commitment_sha256
+            != resources.duel_perception_profile_admission_commitment_sha256
+        || session.gesture_evaluation_commitment_sha256
+            != resources.duel_gesture_evaluation_commitment_sha256
+        || session.gesture_profile_admission_commitment_sha256
+            != resources.duel_gesture_profile_admission_commitment_sha256
+        || lease.event_kind != session.event_kind
+        || lease.game_number != session.game_number
+        || perception
+            .competitive_lifecycle_snapshot_commitment_sha256
+            .is_none()
+        || perception.frame_sequence < session.valid_from_frame_sequence
+        || perception.frame_sequence <= session.last_confirmed_frame_sequence
+        || perception.frame_sequence > session.valid_through_frame_sequence
+    {
+        return Err(
+            "gameplay action changed the operator deployment, visible perception, gesture profile, event, game, or frame lifetime"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn require_sha256_v1(value: &str, label: &str) -> Result<(), String> {
     if value.len() != 64
         || !value
@@ -1655,6 +1823,51 @@ mod tests {
             last_confirmed_frame_sequence: 9,
             confirmed_action_count: 0,
         }
+    }
+
+    fn gameplay_action_perception_v1() -> crate::MtgoAdmittedDuelPerceptionCommitmentsV1 {
+        crate::MtgoAdmittedDuelPerceptionCommitmentsV1 {
+            source_frame: crate::MtgoAdmittedDuelVisibleFrameCommitmentsV1 {
+                perception_profile_commitment_sha256: digest('c'),
+                perception_profile_admission_commitment_sha256: digest('d'),
+                frame_profile_binding_sha256: digest('e'),
+                source_capture: crate::MtgoDxgiFrameCommitmentsV3 {
+                    capture_commitment_sha256: digest('f'),
+                    canonical_bgra8_sha256: digest('0'),
+                    preview_png_sha256: digest('1'),
+                    canonical_width: 1_550,
+                    canonical_height: 925,
+                    client_rect_desktop_px: crate::SignedRectV1 {
+                        left: 0,
+                        top: 0,
+                        right: 1_550,
+                        bottom: 925,
+                    },
+                    captured_at_unix_millis: 1,
+                },
+            },
+            runtime_identity_commitment_sha256: digest('2'),
+            request_commitment_sha256: digest('3'),
+            decision_commitment_sha256: digest('4'),
+            competitive_lifecycle_snapshot_commitment_sha256: Some(digest('5')),
+            perception_result_commitment_sha256: digest('6'),
+            frame_id: 11,
+            frame_sequence: 11,
+        }
+    }
+
+    fn gameplay_action_parts_v1() -> (
+        MtgoCompetitiveOperatorResourceCommitmentsV1,
+        MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
+        MtgoCompetitiveGestureGameSessionCommitmentsV1,
+        crate::MtgoAdmittedDuelPerceptionCommitmentsV1,
+    ) {
+        let mut resources = resource_commitments_v1();
+        resources.policy_deployment_commitment_sha256 = digest('8');
+        let lease = gameplay_lease_v1();
+        let mut session = gameplay_session_v1();
+        session.policy_deployment_commitment_sha256 = Some(digest('8'));
+        (resources, lease, session, gameplay_action_perception_v1())
     }
 
     fn native_pregame_checkout_identity_v1() -> OperatorNativePregameCheckoutIdentityV1 {
@@ -2017,5 +2230,64 @@ mod tests {
         assert!(
             validate_operator_gameplay_session_resources_v1(&resources, &wrong_admission).is_err()
         );
+    }
+
+    #[test]
+    fn gameplay_action_composition_rejects_crossed_deployment_profile_and_frame_lifetime() {
+        let (resources, lease, session, perception) = gameplay_action_parts_v1();
+        validate_operator_gameplay_action_source_v1(
+            &resources,
+            &lease,
+            &session,
+            &perception,
+            &digest('8'),
+        )
+        .unwrap();
+
+        let mut crossed_deployment = session.clone();
+        crossed_deployment.policy_deployment_commitment_sha256 = Some(digest('9'));
+        assert!(validate_operator_gameplay_action_source_v1(
+            &resources,
+            &lease,
+            &crossed_deployment,
+            &perception,
+            &digest('8'),
+        )
+        .is_err());
+
+        let mut crossed_profile = perception.clone();
+        crossed_profile
+            .source_frame
+            .perception_profile_admission_commitment_sha256 = digest('9');
+        assert!(validate_operator_gameplay_action_source_v1(
+            &resources,
+            &lease,
+            &session,
+            &crossed_profile,
+            &digest('8'),
+        )
+        .is_err());
+
+        let mut stale = perception.clone();
+        stale.frame_sequence = session.last_confirmed_frame_sequence;
+        assert!(validate_operator_gameplay_action_source_v1(
+            &resources,
+            &lease,
+            &session,
+            &stale,
+            &digest('8'),
+        )
+        .is_err());
+
+        let mut missing_lifecycle = perception;
+        missing_lifecycle.competitive_lifecycle_snapshot_commitment_sha256 = None;
+        assert!(validate_operator_gameplay_action_source_v1(
+            &resources,
+            &lease,
+            &session,
+            &missing_lifecycle,
+            &digest('8'),
+        )
+        .is_err());
     }
 }
