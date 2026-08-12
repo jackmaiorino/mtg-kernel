@@ -69,6 +69,10 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
         "bind_match_scoped_competitive_player_visible_game_memory_v1",
         "into_match_log_lease_and_confirmed_decisions_v1",
         "ready_for_kernel_history_import_v1(&self) -> bool",
+        "MtgoCompetitiveExternalPublicHistoryConsumerV1",
+        "visit_external_public_history_v1",
+        "SeparateOrderedStreamsNoCrossSourceTotalOrder",
+        "game_log_is_complete_current_state: false",
     ] {
         assert!(
             memory.contains(required),

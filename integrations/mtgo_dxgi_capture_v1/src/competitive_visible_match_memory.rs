@@ -3,13 +3,82 @@ use crate::{
     OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1,
 };
 use mtgo_blackbox_v1::{
-    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitivePlayerVisibleDecisionViewV1, MtgoVisibleGameLogSemanticEventViewV1,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const COMBINED_COMPETITIVE_VISIBLE_GAME_MEMORY_DOMAIN_V1: &[u8] =
     b"mtgo-combined-competitive-player-visible-game-memory-v1";
+
+pub const MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1: u32 = 1;
+
+/// Ordering contract for the kernel-facing public-history seam.
+///
+/// MTGO Game Log sequence numbers and admitted capture-frame sequence numbers
+/// are independent clocks. V1 therefore preserves exact order within each
+/// source and makes no claim about the relative order of an event in one
+/// stream and a decision in the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MtgoCompetitiveExternalPublicHistoryOrderingV1 {
+    SeparateOrderedStreamsNoCrossSourceTotalOrder,
+}
+
+/// Player-visible lineage and bounds supplied before either history stream.
+///
+/// This header contains commitments and counts only. It has no path, source
+/// UUID, raw markup, pixel, coordinate, process, input, entry, or spending
+/// capability. `game_log_is_complete_current_state` is permanently false:
+/// public log events supplement, but cannot replace, the exact current visible
+/// observation reconstructed from the admitted client frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MtgoCompetitiveExternalPublicHistoryHeaderV1<'a> {
+    pub schema_version: u32,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: &'a str,
+    pub match_identity_sha256: &'a str,
+    pub game_number: u8,
+    pub policy_deployment_commitment_sha256: &'a str,
+    pub source_memory_commitment_sha256: &'a str,
+    pub confirmed_decision_count: usize,
+    pub public_event_count: usize,
+    pub ordering: MtgoCompetitiveExternalPublicHistoryOrderingV1,
+    pub player_visible_information_only: bool,
+    pub game_log_is_complete_current_state: bool,
+}
+
+/// Kernel-owned consumer boundary for one exact game's player-visible public
+/// history. Implementations receive two separate ordered streams. The adapter
+/// deliberately provides no callback that claims a cross-source ordering.
+///
+/// A consumer result is ordinary data, not adapter authority. Implementing
+/// this trait cannot send MTGO input, enter an event, or spend resources.
+pub trait MtgoCompetitiveExternalPublicHistoryConsumerV1 {
+    type Output;
+
+    fn begin_public_history_v1(
+        &mut self,
+        header: MtgoCompetitiveExternalPublicHistoryHeaderV1<'_>,
+    ) -> Result<(), String>;
+
+    fn consume_confirmed_decision_v1(
+        &mut self,
+        decision: MtgoCompetitivePlayerVisibleDecisionViewV1<'_>,
+    ) -> Result<(), String>;
+
+    fn finish_confirmed_decision_stream_v1(&mut self) -> Result<(), String>;
+
+    fn consume_public_game_log_event_v1(
+        &mut self,
+        event: MtgoVisibleGameLogSemanticEventViewV1<'_>,
+    ) -> Result<(), String>;
+
+    fn finish_public_game_log_stream_v1(&mut self) -> Result<(), String>;
+
+    fn finish_public_history_v1(&mut self) -> Result<Self::Output, String>;
+}
 
 #[derive(Clone, Copy)]
 struct VisibleGameLineageRefV1<'a> {
@@ -150,6 +219,50 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
 
     pub fn permits_spending_v1(&self) -> bool {
         false
+    }
+
+    /// Visits the two exact public-history streams without inventing a shared
+    /// clock. The confirmed-decision stream is completed before the Game Log
+    /// stream begins, but that callback order is serialization order only and
+    /// carries no gameplay-time ordering claim between the sources.
+    pub fn visit_external_public_history_v1<C>(&self, consumer: &mut C) -> Result<C::Output, String>
+    where
+        C: MtgoCompetitiveExternalPublicHistoryConsumerV1,
+    {
+        let lineage = self.game_log.lineage_v1();
+        consumer.begin_public_history_v1(MtgoCompetitiveExternalPublicHistoryHeaderV1 {
+            schema_version: MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
+            event_kind: lineage.event_kind,
+            event_identity_sha256: lineage.event_identity_sha256,
+            match_identity_sha256: lineage.match_identity_sha256,
+            game_number: lineage.game_number,
+            policy_deployment_commitment_sha256: self
+                .confirmed_decisions
+                .policy_deployment_commitment_sha256_v1(),
+            source_memory_commitment_sha256: &self.memory_commitment_sha256,
+            confirmed_decision_count: self.confirmed_decision_count_v1(),
+            public_event_count: self.public_event_count_v1(),
+            ordering: MtgoCompetitiveExternalPublicHistoryOrderingV1::SeparateOrderedStreamsNoCrossSourceTotalOrder,
+            player_visible_information_only: true,
+            game_log_is_complete_current_state: false,
+        })?;
+
+        for index in 0..self.confirmed_decision_count_v1() {
+            let decision = self.confirmed_decision_v1(index).ok_or_else(|| {
+                "confirmed decision stream changed while it was being visited".to_owned()
+            })?;
+            consumer.consume_confirmed_decision_v1(decision)?;
+        }
+        consumer.finish_confirmed_decision_stream_v1()?;
+
+        for index in 0..self.public_event_count_v1() {
+            let event = self.public_event_v1(index).ok_or_else(|| {
+                "public Game Log stream changed while it was being visited".to_owned()
+            })?;
+            consumer.consume_public_game_log_event_v1(event)?;
+        }
+        consumer.finish_public_game_log_stream_v1()?;
+        consumer.finish_public_history_v1()
     }
 
     /// Consumes a match-scoped game memory after its immutable public views
@@ -327,5 +440,17 @@ mod tests {
         let right = commitment_v1(&[b"a", b"bc"]);
         assert_eq!(left.len(), 64);
         assert_ne!(left, right);
+    }
+
+    #[test]
+    fn external_history_ordering_declares_two_independent_clocks() {
+        assert_eq!(MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1, 1);
+        assert_eq!(
+            serde_json::to_string(
+                &MtgoCompetitiveExternalPublicHistoryOrderingV1::SeparateOrderedStreamsNoCrossSourceTotalOrder
+            )
+            .unwrap(),
+            "\"separate_ordered_streams_no_cross_source_total_order\""
+        );
     }
 }

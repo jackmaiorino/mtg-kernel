@@ -37,6 +37,7 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub public_game_log_semantic_projection_present: bool,
     pub confirmed_model_decision_history_present: bool,
     pub dual_source_exact_game_memory_present: bool,
+    pub explicit_kernel_consumer_contract_present: bool,
     pub explicit_cross_source_total_order_defined: bool,
     pub native_checkpoint_external_public_history_import_present: bool,
     pub checkpoint_consumes_external_public_history: bool,
@@ -75,6 +76,7 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         public_game_log_semantic_projection_present: true,
         confirmed_model_decision_history_present: true,
         dual_source_exact_game_memory_present: true,
+        explicit_kernel_consumer_contract_present: true,
         explicit_cross_source_total_order_defined: false,
         native_checkpoint_external_public_history_import_present: false,
         checkpoint_consumes_external_public_history: false,
@@ -117,6 +119,7 @@ mod tests {
         assert!(report.public_game_log_semantic_projection_present);
         assert!(report.confirmed_model_decision_history_present);
         assert!(report.dual_source_exact_game_memory_present);
+        assert!(report.explicit_kernel_consumer_contract_present);
         assert!(!report.explicit_cross_source_total_order_defined);
         assert!(!report.native_checkpoint_external_public_history_import_present);
         assert!(!report.checkpoint_consumes_external_public_history);
