@@ -19,21 +19,21 @@ use mtgo_blackbox_v1::CheckedUntrustedMtgoOfflineVisibleCardTemplateProfileV1;
 use serde::Serialize;
 
 const PINNED_SOLITAIRE_PROFILE_ID_V1: &str =
-    "mtgo-freeform-solitaire-visible-capture-identity-layout-20260810-v1";
+    "mtgo-freeform-solitaire-visible-capture-identity-layout-20260811-v2";
 const PINNED_SOLITAIRE_PROFILE_DOMAIN_V1: &[u8] =
     b"mtgo-pinned-solitaire-visible-capture-profile-v1";
 const PINNED_SOLITAIRE_PROFILE_COMMITMENT_V1: &str =
-    "45f73bf432bbed42e1896c4f02e0670115bb891b69fdc7037c89dc780ac91fac";
+    "91acc6100d325a412951222eb5283de256c0a906fb910dbf43b251459c3a8427";
 
 const PINNED_EXECUTABLE_SHA256_V1: &str =
-    "a672755dad7fe8cd08c7986216d0d0fb2c4dbafe669ad3d2aff2bfa2c21b9c69";
+    "bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92";
 const PINNED_SIGNER_THUMBPRINT_V1: &str = "e9d9e2b989f90555b04c506fddf889c7aba7ac30";
 const PINNED_SIGNER_SUBJECT_V1: &str =
     "CN=Daybreak Game Company LLC, O=Daybreak Game Company LLC, L=San Diego, S=California, C=US";
 const PINNED_SIGNER_SUBJECT_SHA256_V1: &str =
     "89e095d976048cdd8da11e2ff312231867f79e521fa3b5aa6415d2aa59b79cfc";
 const PINNED_VISIBLE_TITLE_V1: &str = "(Solitaire): Freeform: Vs. UnbuckledPie";
-const PINNED_OUTPUT_DEVICE_V1: &str = r"\\.\DISPLAY2";
+const PINNED_OUTPUT_DEVICE_V1: &str = r"\\.\DISPLAY1";
 
 /// Copyable telemetry for one profile-bound visible frame. Possessing a copy
 /// does not prove capture. Downstream trusted code must accept the opaque frame.
@@ -587,6 +587,18 @@ pub fn capture_pinned_current_solitaire_visible_frame_v1(
     bind_pinned_current_solitaire_visible_frame_v1(source_frame)
 }
 
+/// Replays one previously persisted current-profile Solitaire frame through
+/// the same opaque boundary as a live capture. The loader performs no capture,
+/// focus change, or input and exists only for deterministic local rehearsal.
+pub fn load_pinned_current_solitaire_visible_frame_from_artifact_v1(
+    artifact_directory: &std::path::Path,
+) -> Result<OpaqueMtgoPinnedSolitaireVisibleFrameV1, String> {
+    let source_frame = super::load_checked_untrusted_mtgo_dxgi_frame_candidate_from_artifact_v1(
+        artifact_directory,
+    )?;
+    bind_pinned_current_solitaire_visible_frame_v1(source_frame)
+}
+
 fn pinned_capture_request_v1(timeout_ms: u32) -> MtgoDxgiCaptureRequestV3 {
     MtgoDxgiCaptureRequestV3 {
         expected_executable_sha256: PINNED_EXECUTABLE_SHA256_V1.to_owned(),
@@ -688,7 +700,7 @@ fn pinned_profile_facts_v1() -> PinnedSolitaireProfileFactsV1 {
         client_height: 925,
         adapter_index: 0,
         output_index: 0,
-        adapter_luid_low: 59_989,
+        adapter_luid_low: 60_569,
         adapter_luid_high: 0,
         output_device_name: PINNED_OUTPUT_DEVICE_V1.to_owned(),
         output_bounds_desktop_px: SignedRectV1 {
@@ -846,7 +858,7 @@ mod tests {
         value.client_width += 1;
         drifts.push(value);
         let mut value = expected.clone();
-        value.output_device_name = r"\\.\DISPLAY1".to_owned();
+        value.output_device_name = r"\\.\DISPLAY2".to_owned();
         drifts.push(value);
         let mut value = expected.clone();
         value.output_bounds_desktop_px.right += 1;

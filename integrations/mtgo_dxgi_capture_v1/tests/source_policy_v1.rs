@@ -1184,6 +1184,43 @@ fn pregame_action_plan_keeps_coordinates_private_and_confirmation_capture_bound(
 }
 
 #[test]
+fn persisted_solitaire_rehearsal_has_no_capture_or_input_authority() {
+    let probe = include_str!("../src/probe.rs");
+    let live_frame = include_str!("../src/probe/live_frame.rs");
+    let rehearsal = include_str!("../src/bin/rehearse_mtgo_solitaire_pregame_v1.rs");
+    assert!(
+        probe.contains("pub fn load_checked_untrusted_mtgo_dxgi_frame_candidate_from_artifact_v1(")
+    );
+    assert!(
+        live_frame.contains("pub fn load_pinned_current_solitaire_visible_frame_from_artifact_v1(")
+    );
+    for forbidden in [
+        "capture_mtgo_dxgi_frame_candidate_v3(",
+        "capture_pinned_current_solitaire_visible_frame_v1(",
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "SetForegroundWindow",
+        "MoveWindow",
+        "SetWindowPos",
+    ] {
+        assert!(
+            !rehearsal.contains(forbidden),
+            "offline rehearsal contains forbidden live operation: {forbidden}"
+        );
+    }
+    for required in [
+        "input_sent\": false",
+        "client_focused_or_moved\": false",
+        "safe_for_live_input",
+        "safe_for_purchase",
+        "safe_for_queue_entry",
+    ] {
+        assert!(rehearsal.contains(required));
+    }
+}
+
+#[test]
 fn live_actuator_is_isolated_authorization_bound_and_postcondition_locked() {
     let source = include_str!("../src/actuator.rs");
     let duel_runtime = include_str!("../src/probe/duel_perception_runtime.rs");

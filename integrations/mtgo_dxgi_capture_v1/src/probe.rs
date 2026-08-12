@@ -173,7 +173,8 @@ pub struct MtgoDxgiFrameCommitmentsV3 {
     pub captured_at_unix_millis: u128,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WindowSnapshotV1 {
     hwnd: u64,
     process_id: u32,
@@ -205,7 +206,8 @@ struct WindowSnapshotV1 {
     z_order_sha256: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OutputIdentityV1 {
     adapter_index: u32,
     output_index: u32,
@@ -217,7 +219,8 @@ struct OutputIdentityV1 {
     color_space: i32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FrameMetadataV1 {
     last_present_time_qpc: i64,
     last_mouse_update_time_qpc: i64,
@@ -237,16 +240,17 @@ struct FrameMetadataV1 {
     preview_png_sha256: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct CaptureManifestV2 {
-    schema: &'static str,
-    artifact_kind: &'static str,
-    status: &'static str,
-    capture_backend: &'static str,
-    window_mode: &'static str,
-    capture_role: &'static str,
+    schema: String,
+    artifact_kind: String,
+    status: String,
+    capture_backend: String,
+    window_mode: String,
+    capture_role: String,
     expected_game_format: String,
-    title_rule_version: &'static str,
+    title_rule_version: String,
     captured_at_unix_millis: u128,
     safety: SafetyFlagsV1,
     pre: WindowSnapshotV1,
@@ -256,7 +260,8 @@ struct CaptureManifestV2 {
     files: FilesV1,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SafetyFlagsV1 {
     safe_for_semantic_evidence: bool,
     safe_for_ocr: bool,
@@ -265,11 +270,12 @@ struct SafetyFlagsV1 {
     authenticode_verified_in_probe: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FilesV1 {
-    canonical_pixels: &'static str,
-    preview_png: &'static str,
-    manifest: &'static str,
+    canonical_pixels: String,
+    preview_png: String,
+    manifest: String,
 }
 
 struct CapturedFrameV1 {
@@ -2791,12 +2797,12 @@ fn pregame_transition_identity_commitment_v3(
     canonical_json_commitment_v3(
         b"mtgo-pregame-transition-identity-v3",
         &TransitionIdentityV3 {
-            schema: manifest.schema,
-            capture_backend: manifest.capture_backend,
-            window_mode: manifest.window_mode,
-            capture_role: manifest.capture_role,
+            schema: &manifest.schema,
+            capture_backend: &manifest.capture_backend,
+            window_mode: &manifest.window_mode,
+            capture_role: &manifest.capture_role,
             expected_game_format: &manifest.expected_game_format,
-            title_rule_version: manifest.title_rule_version,
+            title_rule_version: &manifest.title_rule_version,
             hwnd: manifest.pre.hwnd,
             process_id: manifest.pre.process_id,
             process_start_filetime_100ns: manifest.pre.process_start_filetime_100ns,
@@ -2943,14 +2949,14 @@ pub fn capture_mtgo_dxgi_frame_candidate_v3(
     }
 
     let manifest = CaptureManifestV2 {
-        schema: "mtgo-dxgi-visible-frame-candidate/v2",
-        artifact_kind: "mtgo_untrusted_dxgi_visible_frame_candidate_v2",
-        status: "checked_untrusted_not_admitted",
-        capture_backend: "dxgi_desktop_duplication_v1",
-        window_mode: request.window_mode.manifest_name(),
-        capture_role: request.window_mode.capture_role(),
+        schema: "mtgo-dxgi-visible-frame-candidate/v2".to_owned(),
+        artifact_kind: "mtgo_untrusted_dxgi_visible_frame_candidate_v2".to_owned(),
+        status: "checked_untrusted_not_admitted".to_owned(),
+        capture_backend: "dxgi_desktop_duplication_v1".to_owned(),
+        window_mode: request.window_mode.manifest_name().to_owned(),
+        capture_role: request.window_mode.capture_role().to_owned(),
         expected_game_format: request.expected_game_format.clone().unwrap_or_default(),
-        title_rule_version: "mtgo_visible_title_rule_v2",
+        title_rule_version: "mtgo_visible_title_rule_v2".to_owned(),
         captured_at_unix_millis: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| format!("system clock is before epoch: {error}"))?
@@ -2967,9 +2973,9 @@ pub fn capture_mtgo_dxgi_frame_candidate_v3(
         output: captured.output,
         frame: captured.metadata,
         files: FilesV1 {
-            canonical_pixels: "frame.bgra",
-            preview_png: "frame.png",
-            manifest: "manifest.json",
+            canonical_pixels: "frame.bgra".to_owned(),
+            preview_png: "frame.png".to_owned(),
+            manifest: "manifest.json".to_owned(),
         },
     };
     let capture_commitment_sha256 =
@@ -2978,6 +2984,38 @@ pub fn capture_mtgo_dxgi_frame_candidate_v3(
         capture_commitment_sha256,
         canonical_bgra8: captured.pixels,
         preview_png: captured.preview_png,
+        manifest,
+    })
+}
+
+/// Loads one already persisted DXGI capture into the same opaque in-process
+/// frame type used by the live probe. This exists only for deterministic,
+/// no-input rehearsal. It byte-checks the manifest, canonical BGRA frame, and
+/// PNG before constructing the opaque value and never focuses or controls MTGO.
+pub fn load_checked_untrusted_mtgo_dxgi_frame_candidate_from_artifact_v1(
+    artifact_directory: &Path,
+) -> Result<OpaqueMtgoDxgiFrameCandidateV3, String> {
+    if !artifact_directory.is_absolute() || !artifact_directory.is_dir() {
+        return Err(
+            "the DXGI rehearsal artifact must be an existing absolute directory".to_owned(),
+        );
+    }
+    let manifest_bytes = fs::read(artifact_directory.join("manifest.json"))
+        .map_err(|error| format!("read rehearsal manifest.json: {error}"))?;
+    let canonical_bgra8 = fs::read(artifact_directory.join("frame.bgra"))
+        .map_err(|error| format!("read rehearsal frame.bgra: {error}"))?;
+    let preview_png = fs::read(artifact_directory.join("frame.png"))
+        .map_err(|error| format!("read rehearsal frame.png: {error}"))?;
+    check_untrusted_dxgi_capture_artifact_v1(&manifest_bytes, &canonical_bgra8, &preview_png)
+        .map_err(|error| format!("check rehearsal DXGI artifact: {error}"))?;
+    let manifest: CaptureManifestV2 = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| format!("parse rehearsal DXGI manifest: {error}"))?;
+    let capture_commitment_sha256 =
+        capture_commitment_from_parts_v3(&manifest_bytes, &canonical_bgra8, &preview_png)?;
+    Ok(OpaqueMtgoDxgiFrameCandidateV3 {
+        capture_commitment_sha256,
+        canonical_bgra8,
+        preview_png,
         manifest,
     })
 }

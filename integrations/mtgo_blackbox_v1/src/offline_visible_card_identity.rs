@@ -3,11 +3,13 @@ use crate::{
     classify_untrusted_offline_bottom_six_state_candidate_v2,
     classify_untrusted_offline_bottom_six_state_candidate_v3,
     classify_untrusted_offline_mulligan_ladder_candidate_v2,
-    offline_bottom_six_reflow::card_art_regions_v1, CheckedUntrustedMtgoDxgiCaptureArtifactV1,
-    CheckedUntrustedMtgoOfflineFirstMainCandidateV2, MtgoContractErrorV1,
-    MtgoOfflineBottomSixStateClassificationV1, MtgoOfflineBottomSixStateClassificationV2,
-    MtgoOfflineBottomSixStateClassificationV3, MtgoOfflineFirstMainClassificationV1,
-    MtgoOfflineMulliganLadderClassificationV1, MtgoRectPxV1, MtgoSizePxV1,
+    offline_bottom_six_reflow::card_art_regions_v1,
+    offline_mulligan_ladder::reviewed_mulligan_output_identity_v1,
+    CheckedUntrustedMtgoDxgiCaptureArtifactV1, CheckedUntrustedMtgoOfflineFirstMainCandidateV2,
+    MtgoContractErrorV1, MtgoOfflineBottomSixStateClassificationV1,
+    MtgoOfflineBottomSixStateClassificationV2, MtgoOfflineBottomSixStateClassificationV3,
+    MtgoOfflineFirstMainClassificationV1, MtgoOfflineMulliganLadderClassificationV1, MtgoRectPxV1,
+    MtgoSizePxV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -554,7 +556,8 @@ pub fn classify_untrusted_offline_mulligan_visible_card_identities_v1(
 ) -> Result<CheckedUntrustedMtgoOfflineMulliganVisibleCardIdentityCandidateV1, MtgoContractErrorV1>
 {
     if checked.client_size_px() != &profile.profile.client_size_px
-        || checked.output_identity_sha256() != profile.profile.output_identity_sha256
+        || !reviewed_mulligan_output_identity_v1(checked.output_identity_sha256())
+        || !reviewed_mulligan_output_identity_v1(&profile.profile.output_identity_sha256)
     {
         return Err(error_v1(
             "offline_visible_card_profile_layout",

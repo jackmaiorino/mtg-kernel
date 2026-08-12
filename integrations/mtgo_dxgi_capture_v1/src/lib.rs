@@ -305,6 +305,8 @@ pub use probe::{
     confirm_card_aware_bottoming_cancel_plan_v5, confirm_card_aware_bottoming_selection_plan_v5,
     confirm_card_aware_bottoming_submit_plan_v5, confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
+    load_checked_untrusted_mtgo_dxgi_frame_candidate_from_artifact_v1,
+    load_pinned_current_solitaire_visible_frame_from_artifact_v1,
     measure_mtgo_dxgi_bottom_six_initial_candidate_v3,
     measure_mtgo_dxgi_bottom_six_reflow_candidate_v3,
     measure_mtgo_dxgi_bottom_six_state_candidate_v3,

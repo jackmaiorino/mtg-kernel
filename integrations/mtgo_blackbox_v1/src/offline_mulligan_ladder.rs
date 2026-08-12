@@ -12,8 +12,10 @@ const OFFLINE_MULLIGAN_LADDER_CANDIDATE_DOMAIN_V1: &[u8] =
     b"mtgo-offline-mulligan-ladder-candidate-v2";
 const OFFLINE_MULLIGAN_PROMPT_INK_MASK_DOMAIN_V1: &[u8] =
     b"mtgo-offline-mulligan-prompt-ink-mask-v1";
-const OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_V1: &str =
+const OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_DISPLAY2_V1: &str =
     "89c86876d12827c79ef4d746b9cd88c8decaf3e4fae33b41f6ab57c94bf222a6";
+const OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_DISPLAY1_V1: &str =
+    "106b81a86435b30a1a2422254333bc7e290b6215fc64ed9b197931838db65b73";
 const OFFLINE_MULLIGAN_LADDER_WIDTH_V1: u32 = 1550;
 const OFFLINE_MULLIGAN_LADDER_HEIGHT_V1: u32 = 925;
 const OFFLINE_MULLIGAN_PROMPT_INK_SUM_THRESHOLD_V1: u16 = 3 * 128;
@@ -220,7 +222,7 @@ fn production_profile_set_v1() -> OfflineMulliganLadderProfileSetV1 {
             width: OFFLINE_MULLIGAN_LADDER_WIDTH_V1,
             height: OFFLINE_MULLIGAN_LADDER_HEIGHT_V1,
         },
-        output_identity_sha256: OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_V1.to_owned(),
+        output_identity_sha256: OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_DISPLAY2_V1.to_owned(),
         profiles: prompt_hashes
             .into_iter()
             .map(|(prospective_keep_size, expected_binary_ink_sha256)| {
@@ -281,7 +283,7 @@ fn production_profile_set_v2() -> OfflineMulliganLadderProfileSetV1 {
             width: OFFLINE_MULLIGAN_LADDER_WIDTH_V1,
             height: OFFLINE_MULLIGAN_LADDER_HEIGHT_V1,
         },
-        output_identity_sha256: OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_V1.to_owned(),
+        output_identity_sha256: OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_DISPLAY2_V1.to_owned(),
         profiles: prompt_hashes
             .into_iter()
             .map(|(prospective_keep_size, expected_binary_ink_sha256)| {
@@ -310,7 +312,7 @@ fn classify_with_profile_set_v1(
         ));
     }
     if checked.client_size_px() != &profile_set.client_size_px
-        || checked.output_identity_sha256() != profile_set.output_identity_sha256
+        || !reviewed_mulligan_output_identity_v1(checked.output_identity_sha256())
     {
         return Err(error_v1(
             "offline_mulligan_ladder_candidate_layout",
@@ -379,6 +381,14 @@ fn classify_with_profile_set_v1(
         ordered_actions,
         candidate_commitment_sha256: format!("{:x}", hasher.finalize()),
     })
+}
+
+pub(crate) fn reviewed_mulligan_output_identity_v1(observed: &str) -> bool {
+    matches!(
+        observed,
+        OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_DISPLAY1_V1
+            | OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_DISPLAY2_V1
+    )
 }
 
 fn classify_matched_profiles_v1(
@@ -722,6 +732,17 @@ mod tests {
             validate_and_commit_profile_set_v1(&predecessor, true).unwrap(),
             validate_and_commit_profile_set_v1(&revised, true).unwrap()
         );
+    }
+
+    #[test]
+    fn reviewed_client_local_prompt_profile_accepts_only_the_two_reviewed_outputs() {
+        assert!(reviewed_mulligan_output_identity_v1(
+            OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_DISPLAY1_V1
+        ));
+        assert!(reviewed_mulligan_output_identity_v1(
+            OFFLINE_MULLIGAN_LADDER_OUTPUT_IDENTITY_DISPLAY2_V1
+        ));
+        assert!(!reviewed_mulligan_output_identity_v1(&"0".repeat(64)));
     }
 
     #[test]
