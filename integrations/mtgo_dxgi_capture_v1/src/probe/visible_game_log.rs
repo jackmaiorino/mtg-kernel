@@ -1,10 +1,12 @@
+use super::duel_perception_runtime::parse_competitive_duel_window_title_v1;
 use super::*;
 use mtgo_blackbox_v1::{
     classify_checked_untrusted_mtgo_visible_game_log_semantics_v1,
     mtgo_visible_game_log_source_id_commitment_v1,
     parse_checked_untrusted_mtgo_visible_game_log_v1,
     CheckedUntrustedMtgoVisibleGameLogProjectionV1,
-    CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, MtgoVisibleGameLogSemanticEventViewV1,
+    CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, MtgoCompetitiveEventKindV1,
+    MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogSemanticEventViewV1,
     MtgoVisibleGameLogTextViewV1,
 };
 use sha2::{Digest, Sha256};
@@ -14,6 +16,10 @@ const MAX_VISIBLE_GAME_LOG_BIND_BRACKET_MILLIS_V1: u128 = 5_000;
 const MAX_VISIBLE_GAME_LOG_TREE_ENTRIES_V1: usize = 100_000;
 const MAX_VISIBLE_GAME_LOG_TREE_DEPTH_V1: usize = 12;
 const VISIBLE_GAME_LOG_BINDING_DOMAIN_V1: &[u8] = b"mtgo-visible-game-log-binding-v1";
+const VISIBLE_GAME_LOG_DUEL_TITLE_IDENTITY_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-game-log-duel-title-identity-v1";
+const COMPETITIVE_VISIBLE_GAME_LOG_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-visible-game-log-binding-v1";
 const WINDOWS_TO_UNIX_EPOCH_100NS_V1: u64 = 116_444_736_000_000_000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -21,6 +27,13 @@ struct StableFileIdentityV1 {
     length: u64,
     creation_unix_millis: u128,
     modification_unix_millis: u128,
+}
+
+struct BoundVisibleGameLogDuelTitleIdentityV1 {
+    opponent_alias_sha256: String,
+    visible_match_id_sha256: String,
+    visible_game_id_sha256: String,
+    identity_commitment_sha256: String,
 }
 
 /// One exact persisted Game Log projection bound to the sole file created by
@@ -56,6 +69,8 @@ pub struct OpaqueMtgoProcessEpochVisibleGameLogV1 {
     _before_frame: OpaqueMtgoDxgiFrameCandidateV3,
     _after_frame: OpaqueMtgoDxgiFrameCandidateV3,
     projection: CheckedUntrustedMtgoVisibleGameLogProjectionV1,
+    process_continuity_commitment_sha256: String,
+    duel_title_identity: Option<BoundVisibleGameLogDuelTitleIdentityV1>,
     binding_commitment_sha256: String,
 }
 
@@ -65,6 +80,92 @@ pub struct OpaqueMtgoProcessEpochVisibleGameLogV1 {
 pub struct OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1 {
     _source: OpaqueMtgoProcessEpochVisibleGameLogV1,
     semantics: CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1,
+}
+
+/// Exact player-visible Game Log events bound to the opaque competitive
+/// launch identity that supplied the current event, match, and game lineage.
+/// Raw visible IDs and player aliases remain private; only their commitments
+/// and player-relative public events cross this boundary.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1;
+/// let _forged = OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1 {
+    source: OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1,
+    event_kind: MtgoCompetitiveEventKindV1,
+    event_identity_sha256: String,
+    match_identity_sha256: String,
+    game_number: u8,
+    competitive_launch_identity_commitment_sha256: String,
+    current_game_event_start_index: usize,
+    current_game_event_count: usize,
+    binding_commitment_sha256: String,
+}
+
+impl OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1 {
+    pub fn event_count_v1(&self) -> usize {
+        self.current_game_event_count
+    }
+
+    pub fn event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+        if index >= self.current_game_event_count {
+            return None;
+        }
+        self.current_game_event_start_index
+            .checked_add(index)
+            .and_then(|source_index| self.source.event_v1(source_index))
+    }
+
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.event_kind
+    }
+
+    pub fn event_identity_sha256_v1(&self) -> &str {
+        &self.event_identity_sha256
+    }
+
+    pub fn match_identity_sha256_v1(&self) -> &str {
+        &self.match_identity_sha256
+    }
+
+    pub fn game_number_v1(&self) -> u8 {
+        self.game_number
+    }
+
+    pub fn acting_player_alias_sha256_v1(&self) -> &str {
+        self.source.acting_player_alias_sha256_v1()
+    }
+
+    pub fn semantic_projection_commitment_sha256_v1(&self) -> &str {
+        self.source.semantic_projection_commitment_sha256_v1()
+    }
+
+    pub fn competitive_launch_identity_commitment_sha256_v1(&self) -> &str {
+        &self.competitive_launch_identity_commitment_sha256
+    }
+
+    pub fn binding_commitment_sha256_v1(&self) -> &str {
+        &self.binding_commitment_sha256
+    }
+
+    pub fn complete_for_current_state_reconstruction_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
 }
 
 impl OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1 {
@@ -86,6 +187,39 @@ impl OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1 {
 
     pub fn semantic_projection_commitment_sha256_v1(&self) -> &str {
         self.semantics.projection_commitment_sha256_v1()
+    }
+
+    pub fn acting_player_alias_sha256_v1(&self) -> &str {
+        self.semantics.acting_player_alias_sha256_v1()
+    }
+
+    pub fn opponent_alias_sha256_v1(&self) -> Option<&str> {
+        self.semantics.opponent_alias_sha256_v1()
+    }
+
+    pub fn process_continuity_commitment_sha256_v1(&self) -> &str {
+        &self._source.process_continuity_commitment_sha256
+    }
+
+    pub fn competitive_duel_title_identity_commitment_sha256_v1(&self) -> Option<&str> {
+        self._source
+            .duel_title_identity
+            .as_ref()
+            .map(|identity| identity.identity_commitment_sha256.as_str())
+    }
+
+    pub fn visible_match_id_sha256_v1(&self) -> Option<&str> {
+        self._source
+            .duel_title_identity
+            .as_ref()
+            .map(|identity| identity.visible_match_id_sha256.as_str())
+    }
+
+    pub fn visible_game_id_sha256_v1(&self) -> Option<&str> {
+        self._source
+            .duel_title_identity
+            .as_ref()
+            .map(|identity| identity.visible_game_id_sha256.as_str())
     }
 
     pub fn source_bound_to_stable_game_window_and_process_epoch_v1(&self) -> bool {
@@ -151,11 +285,161 @@ impl OpaqueMtgoProcessEpochVisibleGameLogV1 {
         {
             return Err("visible Game Log semantic projection lost its bound source".to_owned());
         }
+        if let Some(identity) = self.duel_title_identity.as_ref() {
+            if semantics
+                .opponent_alias_sha256_v1()
+                .is_some_and(|observed| observed != identity.opponent_alias_sha256)
+            {
+                return Err(
+                    "visible Game Log player roles do not match the exact duel window opponent"
+                        .to_owned(),
+                );
+            }
+        }
         Ok(OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1 {
             _source: self,
             semantics,
         })
     }
+}
+
+/// Joins the public Game Log history to the exact opaque League or Challenge
+/// launch visible on the same signed MTGO process. This compares the hashed
+/// opponent plus visible match and game IDs parsed independently from the
+/// stable duel title. It grants neither scoring nor input authority.
+pub fn bind_process_epoch_visible_game_log_semantics_to_competitive_launch_identity_v1(
+    source: OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1,
+    launch: &OpaqueMtgoCompetitiveLaunchIdentityV1,
+) -> Result<OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1, String> {
+    let title = source
+        ._source
+        .duel_title_identity
+        .as_ref()
+        .ok_or("competitive Game Log binding requires a duel-window title identity")?;
+    let launch_commitments = launch.commitments_v1();
+    let launch_opponent_alias_sha256 = sha256_hex_v1(launch.opponent_display_name_v1().as_bytes());
+    let launch_visible_match_id_sha256 = sha256_hex_v1(launch.visible_match_id_v1().as_bytes());
+    let launch_visible_game_id_sha256 = sha256_hex_v1(launch.visible_game_id_v1().as_bytes());
+    validate_competitive_visible_game_log_lineage_v1(
+        &source._source.process_continuity_commitment_sha256,
+        source.semantics.opponent_alias_sha256_v1(),
+        title,
+        &launch_commitments.process_continuity_commitment_sha256,
+        &launch_opponent_alias_sha256,
+        &launch_visible_match_id_sha256,
+        &launch_visible_game_id_sha256,
+    )?;
+    let (current_game_event_start_index, current_game_event_count) =
+        current_game_event_range_from_kinds_v1(
+            (0..source.event_count_v1()).map(|index| {
+                source
+                    .event_v1(index)
+                    .expect("semantic event count and lookup are consistent")
+                    .kind_v1()
+            }),
+            launch_commitments.game_number,
+        )?;
+    let binding_commitment_sha256 = commitment_v1(
+        COMPETITIVE_VISIBLE_GAME_LOG_BINDING_DOMAIN_V1,
+        &[
+            source._source.binding_commitment_sha256.as_bytes(),
+            source
+                .semantics
+                .projection_commitment_sha256_v1()
+                .as_bytes(),
+            title.identity_commitment_sha256.as_bytes(),
+            launch_commitments
+                .launch_identity_commitment_sha256
+                .as_bytes(),
+            launch.event_identity_sha256_v1().as_bytes(),
+            launch.match_identity_sha256_v1().as_bytes(),
+            &[launch_commitments.game_number],
+            &(current_game_event_start_index as u64).to_be_bytes(),
+            &(current_game_event_count as u64).to_be_bytes(),
+            b"same_visible_duel_process_opponent_match_and_game_no_scoring_no_input",
+        ],
+    );
+    Ok(OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1 {
+        source,
+        event_kind: launch_commitments.event_kind,
+        event_identity_sha256: launch.event_identity_sha256_v1().to_owned(),
+        match_identity_sha256: launch.match_identity_sha256_v1().to_owned(),
+        game_number: launch_commitments.game_number,
+        competitive_launch_identity_commitment_sha256: launch_commitments
+            .launch_identity_commitment_sha256,
+        current_game_event_start_index,
+        current_game_event_count,
+        binding_commitment_sha256,
+    })
+}
+
+fn current_game_event_range_from_kinds_v1(
+    kinds: impl IntoIterator<Item = MtgoVisibleGameLogEventKindV1>,
+    current_game_number: u8,
+) -> Result<(usize, usize), String> {
+    if !(1..=3).contains(&current_game_number) {
+        return Err("competitive Game Log current game number is invalid".to_owned());
+    }
+    let mut total = 0_usize;
+    let mut current_start = 0_usize;
+    let mut completed_games = 0_u8;
+    for kind in kinds {
+        if matches!(
+            kind,
+            MtgoVisibleGameLogEventKindV1::WonMatch | MtgoVisibleGameLogEventKindV1::ForcedComplete
+        ) {
+            return Err(
+                "competitive in-progress Game Log already contains a terminal match event"
+                    .to_owned(),
+            );
+        }
+        total = total
+            .checked_add(1)
+            .ok_or("competitive Game Log event count overflow")?;
+        if kind == MtgoVisibleGameLogEventKindV1::WonGame {
+            completed_games = completed_games
+                .checked_add(1)
+                .ok_or("competitive Game Log completed-game count overflow")?;
+            current_start = total;
+        }
+    }
+    let derived_game_number = completed_games
+        .checked_add(1)
+        .ok_or("competitive Game Log game number overflow")?;
+    if derived_game_number != current_game_number {
+        return Err(
+            "competitive Game Log completed-game boundaries do not match the visible game number"
+                .to_owned(),
+        );
+    }
+    let current_count = total
+        .checked_sub(current_start)
+        .ok_or("competitive Game Log current-game range underflow")?;
+    Ok((current_start, current_count))
+}
+
+fn validate_competitive_visible_game_log_lineage_v1(
+    source_process_continuity_commitment_sha256: &str,
+    source_semantic_opponent_alias_sha256: Option<&str>,
+    source_title: &BoundVisibleGameLogDuelTitleIdentityV1,
+    launch_process_continuity_commitment_sha256: &str,
+    launch_opponent_alias_sha256: &str,
+    launch_visible_match_id_sha256: &str,
+    launch_visible_game_id_sha256: &str,
+) -> Result<(), String> {
+    if source_process_continuity_commitment_sha256 != launch_process_continuity_commitment_sha256
+        || source_semantic_opponent_alias_sha256
+            .is_some_and(|observed| observed != launch_opponent_alias_sha256)
+        || source_title.opponent_alias_sha256 != launch_opponent_alias_sha256
+        || source_title.visible_match_id_sha256 != launch_visible_match_id_sha256
+        || source_title.visible_game_id_sha256 != launch_visible_game_id_sha256
+    {
+        return Err(
+            "visible Game Log does not match the exact competitive process, opponent, match, or game"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 /// Captures the admitted foreground game window, reads the sole canonical
@@ -246,6 +530,17 @@ pub fn probe_mtgo_process_epoch_visible_game_log_v1(
         return Err("persisted Game Log changed after the binding capture bracket".to_owned());
     }
 
+    let process_continuity_commitment_sha256 =
+        mtgo_process_continuity_commitment_for_frame_v1(&before_frame);
+    let duel_title_identity = if before.window_mode == "duel_game" {
+        Some(bind_visible_game_log_duel_title_identity_v1(
+            &before.pre.title,
+            &before.expected_game_format,
+            &process_continuity_commitment_sha256,
+        )?)
+    } else {
+        None
+    };
     let binding_commitment_sha256 = commitment_v1(
         VISIBLE_GAME_LOG_BINDING_DOMAIN_V1,
         &[
@@ -255,13 +550,50 @@ pub fn probe_mtgo_process_epoch_visible_game_log_v1(
             filename_source_commitment.as_bytes(),
             &process_start_unix_millis.to_be_bytes(),
             &last_write_unix_millis.to_be_bytes(),
+            process_continuity_commitment_sha256.as_bytes(),
+            duel_title_identity
+                .as_ref()
+                .map(|identity| identity.identity_commitment_sha256.as_str())
+                .unwrap_or("")
+                .as_bytes(),
         ],
     );
     Ok(OpaqueMtgoProcessEpochVisibleGameLogV1 {
         _before_frame: before_frame,
         _after_frame: after_frame,
         projection,
+        process_continuity_commitment_sha256,
+        duel_title_identity,
         binding_commitment_sha256,
+    })
+}
+
+fn bind_visible_game_log_duel_title_identity_v1(
+    title: &str,
+    expected_game_format: &str,
+    process_continuity_commitment_sha256: &str,
+) -> Result<BoundVisibleGameLogDuelTitleIdentityV1, String> {
+    let (opponent, visible_match_id, visible_game_id) =
+        parse_competitive_duel_window_title_v1(title, expected_game_format)?;
+    let opponent_alias_sha256 = sha256_hex_v1(opponent.as_bytes());
+    let visible_match_id_sha256 = sha256_hex_v1(visible_match_id.as_bytes());
+    let visible_game_id_sha256 = sha256_hex_v1(visible_game_id.as_bytes());
+    let identity_commitment_sha256 = commitment_v1(
+        VISIBLE_GAME_LOG_DUEL_TITLE_IDENTITY_DOMAIN_V1,
+        &[
+            process_continuity_commitment_sha256.as_bytes(),
+            expected_game_format.as_bytes(),
+            opponent_alias_sha256.as_bytes(),
+            visible_match_id_sha256.as_bytes(),
+            visible_game_id_sha256.as_bytes(),
+            b"exact_stable_player_visible_duel_title_identity_no_hidden_client_state",
+        ],
+    );
+    Ok(BoundVisibleGameLogDuelTitleIdentityV1 {
+        opponent_alias_sha256,
+        visible_match_id_sha256,
+        visible_game_id_sha256,
+        identity_commitment_sha256,
     })
 }
 
@@ -568,5 +900,151 @@ mod tests {
             1_234
         );
         assert!(filetime_100ns_to_unix_millis_v1(1).is_err());
+    }
+
+    #[test]
+    fn duel_title_identity_binds_only_visible_hashed_fields_and_process() {
+        let process = "1".repeat(64);
+        let title = "(1-on-1): Modern: Vs. VisibleOpponent Match #289088121 - Game #958808276";
+        let identity =
+            bind_visible_game_log_duel_title_identity_v1(title, "Modern", &process).unwrap();
+        assert_eq!(
+            identity.opponent_alias_sha256,
+            sha256_hex_v1(b"VisibleOpponent")
+        );
+        assert_eq!(
+            identity.visible_match_id_sha256,
+            sha256_hex_v1(b"289088121")
+        );
+        assert_eq!(identity.visible_game_id_sha256, sha256_hex_v1(b"958808276"));
+        assert_ne!(identity.identity_commitment_sha256, process);
+
+        let another_process =
+            bind_visible_game_log_duel_title_identity_v1(title, "Modern", &"2".repeat(64)).unwrap();
+        assert_ne!(
+            identity.identity_commitment_sha256,
+            another_process.identity_commitment_sha256
+        );
+        assert!(bind_visible_game_log_duel_title_identity_v1(
+            "(Solitaire): Freeform: Vs. VisibleOpponent",
+            "Modern",
+            &process
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn competitive_log_lineage_rejects_every_cross_match_substitution() {
+        let process = "1".repeat(64);
+        let opponent = sha256_hex_v1(b"VisibleOpponent");
+        let match_id = sha256_hex_v1(b"289088121");
+        let game_id = sha256_hex_v1(b"958808276");
+        let source = bind_visible_game_log_duel_title_identity_v1(
+            "(1-on-1): Modern: Vs. VisibleOpponent Match #289088121 - Game #958808276",
+            "Modern",
+            &process,
+        )
+        .unwrap();
+        let validate = |source_process: &str,
+                        semantic_opponent: Option<&str>,
+                        launch_process: &str,
+                        launch_opponent: &str,
+                        launch_match: &str,
+                        launch_game: &str| {
+            validate_competitive_visible_game_log_lineage_v1(
+                source_process,
+                semantic_opponent,
+                &source,
+                launch_process,
+                launch_opponent,
+                launch_match,
+                launch_game,
+            )
+        };
+        validate(
+            &process,
+            Some(&opponent),
+            &process,
+            &opponent,
+            &match_id,
+            &game_id,
+        )
+        .unwrap();
+        validate(&process, None, &process, &opponent, &match_id, &game_id).unwrap();
+        for substitution in 0..5 {
+            let other = "2".repeat(64);
+            let result = match substitution {
+                0 => validate(
+                    &other,
+                    Some(&opponent),
+                    &process,
+                    &opponent,
+                    &match_id,
+                    &game_id,
+                ),
+                1 => validate(
+                    &process,
+                    Some(&other),
+                    &process,
+                    &opponent,
+                    &match_id,
+                    &game_id,
+                ),
+                2 => validate(
+                    &process,
+                    Some(&opponent),
+                    &process,
+                    &other,
+                    &match_id,
+                    &game_id,
+                ),
+                3 => validate(
+                    &process,
+                    Some(&opponent),
+                    &process,
+                    &opponent,
+                    &other,
+                    &game_id,
+                ),
+                _ => validate(
+                    &process,
+                    Some(&opponent),
+                    &process,
+                    &opponent,
+                    &match_id,
+                    &other,
+                ),
+            };
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn current_game_range_segments_match_log_and_rejects_terminal_or_wrong_game() {
+        use MtgoVisibleGameLogEventKindV1::{
+            CastSpell, OpeningHand, PlayedCard, WonGame, WonMatch,
+        };
+        assert_eq!(
+            current_game_event_range_from_kinds_v1([OpeningHand, PlayedCard], 1).unwrap(),
+            (0, 2)
+        );
+        assert_eq!(
+            current_game_event_range_from_kinds_v1(
+                [OpeningHand, PlayedCard, WonGame, OpeningHand, CastSpell],
+                2,
+            )
+            .unwrap(),
+            (3, 2)
+        );
+        assert!(current_game_event_range_from_kinds_v1(
+            [OpeningHand, PlayedCard, WonGame, OpeningHand],
+            1,
+        )
+        .is_err());
+        assert!(current_game_event_range_from_kinds_v1(
+            [OpeningHand, WonGame, OpeningHand, WonGame, WonMatch],
+            3,
+        )
+        .is_err());
     }
 }

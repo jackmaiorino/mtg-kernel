@@ -708,7 +708,7 @@ fn validate_competitive_lifecycle_against_duel_pixels_v1(
     Ok(())
 }
 
-fn parse_competitive_duel_window_title_v1(
+pub(super) fn parse_competitive_duel_window_title_v1(
     title: &str,
     expected_game_format: &str,
 ) -> Result<(String, String, String), String> {
