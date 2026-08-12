@@ -135,6 +135,62 @@ pub struct MtgoCompetitiveOperatorResourcesPartsV1 {
     pub changed_sideboard_evaluation: Option<AdmittedMtgoCompetitiveSideboardEvaluationV1>,
 }
 
+/// Every exact operator resource except the non-cloneable deck manifest while
+/// that manifest is owned by a move-only sideboard request.
+pub(crate) struct MtgoCompetitiveOperatorResourcesDuringSideboardV1 {
+    pub(crate) _navigation_profile: AdmittedMtgoCompetitiveNavigationProfileV1,
+    pub(crate) navigation_runtime: OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
+    pub(crate) _event_listing_evaluation: AdmittedMtgoCompetitiveEventListingEvaluationV1,
+    pub(crate) _event_record_evaluation: AdmittedMtgoCompetitiveEventRecordEvaluationV1,
+    pub(crate) _duel_perception_profile: AdmittedMtgoDuelPerceptionProfileV1,
+    pub(crate) _duel_perception_runtime: OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
+    pub(crate) _duel_lifecycle_profile: AdmittedMtgoCompetitiveDuelLifecycleProfileV1,
+    pub(crate) _duel_gesture_profile: AdmittedMtgoDuelGestureProfileV1,
+    pub(crate) _duel_gesture_runtime: OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    pub(crate) checkpoint_deployment: LoadedMtgoNativeCheckpointDeploymentV1,
+    pub(crate) _changed_sideboard_evaluation: Option<AdmittedMtgoCompetitiveSideboardEvaluationV1>,
+}
+
+impl MtgoCompetitiveOperatorResourcesPartsV1 {
+    pub(crate) fn into_sideboard_parts_v1(
+        self,
+    ) -> (
+        ValidatedMtgoCompetitiveDeckManifestV1,
+        MtgoCompetitiveOperatorResourcesDuringSideboardV1,
+    ) {
+        let Self {
+            navigation_profile,
+            navigation_runtime,
+            event_listing_evaluation,
+            event_record_evaluation,
+            deck_manifest,
+            duel_perception_profile,
+            duel_perception_runtime,
+            duel_lifecycle_profile,
+            duel_gesture_profile,
+            duel_gesture_runtime,
+            checkpoint_deployment,
+            changed_sideboard_evaluation,
+        } = self;
+        (
+            deck_manifest,
+            MtgoCompetitiveOperatorResourcesDuringSideboardV1 {
+                _navigation_profile: navigation_profile,
+                navigation_runtime,
+                _event_listing_evaluation: event_listing_evaluation,
+                _event_record_evaluation: event_record_evaluation,
+                _duel_perception_profile: duel_perception_profile,
+                _duel_perception_runtime: duel_perception_runtime,
+                _duel_lifecycle_profile: duel_lifecycle_profile,
+                _duel_gesture_profile: duel_gesture_profile,
+                _duel_gesture_runtime: duel_gesture_runtime,
+                checkpoint_deployment,
+                _changed_sideboard_evaluation: changed_sideboard_evaluation,
+            },
+        )
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn bind_competitive_operator_resources_v1(
     navigation_profile: AdmittedMtgoCompetitiveNavigationProfileV1,

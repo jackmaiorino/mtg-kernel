@@ -1,11 +1,12 @@
 use crate::actuator::{
     advance_competitive_event_monitor_in_runtime_v1, advance_competitive_event_runtime_observed_v1,
     attach_competitive_event_monitor_to_runtime_v1,
+    bind_competitive_event_native_sideboard_request_v1,
     bind_competitive_event_pregame_native_request_v1,
     checkout_competitive_event_gameplay_session_v1,
     confirm_pending_competitive_event_lifecycle_control_v1,
     execute_prepared_competitive_event_lifecycle_control_v1,
-    next_competitive_event_driver_directive_v1,
+    measure_competitive_event_runtime_sideboard_v1, next_competitive_event_driver_directive_v1,
     prepare_competitive_event_runtime_lifecycle_control_v1,
     return_competitive_event_gameplay_session_v1, MtgoCompetitiveEventDriverDirectiveV1,
     MtgoCompetitiveEventDriverStepV1, MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
@@ -14,18 +15,25 @@ use crate::actuator::{
     MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1,
     OpaqueMtgoCompetitiveEventGameplayLeaseV1, OpaqueMtgoCompetitiveEventRuntimeV1,
     OpaqueMtgoCompetitiveGestureGameSessionV1, OpaqueMtgoCompetitiveNativePregameRequestV1,
+    OpaqueMtgoCompetitiveNativeSideboardRequestV1,
     OpaqueMtgoPendingCompetitiveEventLifecycleControlV1,
     OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1, RatifiedMtgoCompetitiveMatchLaunchV1,
+    RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
 };
 use crate::competitive_auxiliary_model_scoring::{
     score_checked_untrusted_competitive_native_pregame_request_v1,
-    MtgoCompetitiveNativePregameScorerV1, OpaqueMtgoScoredCompetitiveNativePregameRequestV1,
+    score_checked_untrusted_competitive_native_sideboard_request_v1,
+    MtgoCompetitiveNativePregameScorerV1, MtgoCompetitiveNativeSideboardScorerV1,
+    OpaqueMtgoScoredCompetitiveNativePregameRequestV1,
+    OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
 };
 use crate::competitive_model_decision_readiness::check_competitive_model_decision_readiness_v1;
 use crate::competitive_operator_bootstrap::{
-    MtgoCompetitiveOperatorResourceCommitmentsV1, MtgoCompetitiveOperatorResourcesPartsV1,
+    MtgoCompetitiveOperatorResourceCommitmentsV1,
+    MtgoCompetitiveOperatorResourcesDuringSideboardV1, MtgoCompetitiveOperatorResourcesPartsV1,
     OpaqueMtgoCompetitiveOperatorResourcesV1,
 };
+use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveVisibleGameOutcomeV1;
 use crate::probe::{
     begin_evaluated_competitive_event_monitor_v1, OpaqueMtgoClassifiedCompetitiveEventRecordV1,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
@@ -278,6 +286,90 @@ pub struct OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
     _prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 }
 
+/// Move-only ownership of every post-entry resource while the non-cloneable
+/// deck manifest and event runtime are held inside one exact visible-only
+/// sideboard request.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1;
+/// fn cannot_act(value: OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1) {
+///     let _ = value.into_event_runtime();
+///     let _ = value.submit_sideboard();
+/// }
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1 {
+    resources: MtgoCompetitiveOperatorResourcesDuringSideboardV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    request: OpaqueMtgoCompetitiveNativeSideboardRequestV1,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1 {
+    pub fn model_input_v1(&self) -> &crate::MtgoCompetitiveNativeSideboardModelInputV1 {
+        self.request.model_input_v1()
+    }
+
+    pub fn model_input_commitment_sha256_v1(&self) -> &str {
+        self.request.model_input_commitment_sha256_v1()
+    }
+
+    pub fn deployment_commitment_sha256_v1(&self) -> &str {
+        &self.prior_operator.policy_deployment_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Offline checked sideboard result retaining the exact request and every
+/// other operator resource. No event, drag, submission, or operator recovery
+/// path is exposed.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1;
+/// fn cannot_resume(value: OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1) {
+///     let _ = value.into_operator();
+///     let _ = value.submit_sideboard();
+/// }
+/// ```
+pub struct OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
+    _resources: MtgoCompetitiveOperatorResourcesDuringSideboardV1,
+    _resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    scored_request: OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
+    _prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+impl OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
+    pub fn selection_v1(&self) -> &crate::MtgoCompetitiveNativeSideboardModelSelectionV1 {
+        self.scored_request.selection_v1()
+    }
+
+    pub fn checked_selection_commitment_sha256_v1(&self) -> &str {
+        self.scored_request.checked_selection_commitment_sha256_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+}
+
 impl OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
     pub fn selected_index_v1(&self) -> usize {
         self.scored_request.selected_index_v1()
@@ -475,6 +567,157 @@ pub fn score_checked_untrusted_competitive_operator_native_pregame_v1<
         scorer,
     )?;
     Ok(OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
+        _resources: resources,
+        _resource_commitments: resource_commitments,
+        scored_request,
+        _prior_operator: prior_operator,
+    })
+}
+
+/// Consumes the exact Sideboarding operator state into one player-visible
+/// native sideboard request. The manifest moves into the request because it is
+/// intentionally non-cloneable; all other original resources remain in the
+/// returned opaque holder. This parses retained visible pixels but performs no
+/// capture, scoring, drag, submission, or other input.
+pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
+    operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
+    sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
+    outcome: OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+    classifier_timeout_ms: u32,
+) -> Result<OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1, String> {
+    let directive = next_competitive_post_entry_operator_directive_v1(&operator)?;
+    let (route_match_identity_sha256, route_game_number, changed_resources_present) =
+        match directive.route {
+            MtgoCompetitivePostEntryOperatorRouteV1::ResolveSideboardWithNativeModel {
+                match_identity_sha256,
+                game_number,
+                changed_sideboard_resources_present,
+                ..
+            } => (
+                match_identity_sha256,
+                game_number,
+                changed_sideboard_resources_present,
+            ),
+            _ => {
+                return Err(
+                    "competitive post-entry operator is not at a native sideboard request"
+                        .to_owned(),
+                )
+            }
+        };
+    let outcome_lineage = outcome.lineage_v1();
+    let authorization = sideboard_authorization.commitments_v1();
+    validate_operator_native_sideboard_checkout_v1(&OperatorNativeSideboardCheckoutIdentityV1 {
+        route_match_identity_sha256,
+        route_game_number,
+        route_changed_resources_present: changed_resources_present,
+        outcome_match_identity_sha256: outcome_lineage.match_identity_sha256.to_owned(),
+        outcome_game_number: outcome_lineage.game_number,
+        outcome_event_kind: outcome_lineage.event_kind,
+        authorization_event_kind: authorization.event_kind,
+        operator_event_kind: operator.commitments.event_kind,
+        resource_bundle_commitment_sha256: operator
+            .resource_commitments
+            .resource_bundle_commitment_sha256
+            .clone(),
+        operator_resource_bundle_commitment_sha256: operator
+            .commitments
+            .resource_bundle_commitment_sha256
+            .clone(),
+        resource_sideboard_evaluation_ratification_commitment_sha256: operator
+            .resource_commitments
+            .changed_sideboard_evaluation_ratification_commitment_sha256
+            .clone(),
+        authorization_sideboard_evaluation_ratification_commitment_sha256: authorization
+            .sideboard_evaluation_ratification_commitment_sha256
+            .clone(),
+        resource_sideboard_evaluation_admission_commitment_sha256: operator
+            .resource_commitments
+            .changed_sideboard_evaluation_admission_commitment_sha256
+            .clone(),
+        authorization_sideboard_evaluation_admission_commitment_sha256: authorization
+            .sideboard_evaluation_admission_commitment_sha256
+            .clone(),
+        authorization_deck_manifest_commitment_sha256: authorization
+            .deck_manifest_commitment_sha256
+            .clone(),
+        operator_deck_manifest_commitment_sha256: operator
+            .commitments
+            .deck_manifest_commitment_sha256
+            .clone(),
+        authorization_policy_deployment_commitment_sha256: authorization
+            .policy_deployment_commitment_sha256
+            .clone(),
+        operator_policy_deployment_commitment_sha256: operator
+            .commitments
+            .policy_deployment_commitment_sha256
+            .clone(),
+    })?;
+    let OpaqueMtgoCompetitivePostEntryOperatorV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        commitments,
+    } = operator;
+    let (deck_manifest, resources) = resources.into_sideboard_parts_v1();
+    let measurement = measure_competitive_event_runtime_sideboard_v1(
+        runtime,
+        deck_manifest,
+        sideboard_authorization,
+        &resources.navigation_runtime,
+        classifier_timeout_ms,
+    )?;
+    let request = bind_competitive_event_native_sideboard_request_v1(measurement, outcome)?;
+    require_sha256_v1(
+        request.model_input_commitment_sha256_v1(),
+        "competitive operator sideboard request",
+    )?;
+    Ok(OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1 {
+        resources,
+        resource_commitments,
+        request,
+        prior_operator: commitments,
+    })
+}
+
+/// Runs the exact post-entry sideboard ownership path through a
+/// checked-untrusted offline scorer. The result remains unable to recover the
+/// event runtime or submit either a changed or unchanged deck.
+pub fn score_checked_untrusted_competitive_operator_native_sideboard_v1<
+    S: MtgoCompetitiveNativeSideboardScorerV1,
+>(
+    value: OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1, String> {
+    validate_operator_native_sideboard_scoring_v1(&OperatorNativeSideboardScoringIdentityV1 {
+        resource_bundle_commitment_sha256: value
+            .resource_commitments
+            .resource_bundle_commitment_sha256
+            .clone(),
+        prior_resource_bundle_commitment_sha256: value
+            .prior_operator
+            .resource_bundle_commitment_sha256
+            .clone(),
+        request_deployment_commitment_sha256: value.deployment_commitment_sha256_v1().to_owned(),
+        loaded_checkpoint_deployment_commitment_sha256: value
+            .resources
+            .checkpoint_deployment
+            .deployment_commitment_sha256()
+            .to_owned(),
+    })?;
+    let deployment_commitment_sha256 = value.deployment_commitment_sha256_v1().to_owned();
+    let OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1 {
+        resources,
+        resource_commitments,
+        request,
+        prior_operator,
+    } = value;
+    let scored_request = score_checked_untrusted_competitive_native_sideboard_request_v1(
+        request,
+        &deployment_commitment_sha256,
+        scorer,
+    )?;
+    Ok(OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
         _resources: resources,
         _resource_commitments: resource_commitments,
         scored_request,
@@ -778,6 +1021,154 @@ fn validate_operator_native_pregame_scoring_v1(
     {
         return Err(
             "competitive operator pregame scoring changed resources or deployment".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct OperatorNativeSideboardCheckoutIdentityV1 {
+    route_match_identity_sha256: String,
+    route_game_number: u8,
+    route_changed_resources_present: bool,
+    outcome_match_identity_sha256: String,
+    outcome_game_number: u8,
+    outcome_event_kind: MtgoCompetitiveEventKindV1,
+    authorization_event_kind: MtgoCompetitiveEventKindV1,
+    operator_event_kind: MtgoCompetitiveEventKindV1,
+    resource_bundle_commitment_sha256: String,
+    operator_resource_bundle_commitment_sha256: String,
+    resource_sideboard_evaluation_ratification_commitment_sha256: Option<String>,
+    authorization_sideboard_evaluation_ratification_commitment_sha256: String,
+    resource_sideboard_evaluation_admission_commitment_sha256: Option<String>,
+    authorization_sideboard_evaluation_admission_commitment_sha256: String,
+    authorization_deck_manifest_commitment_sha256: String,
+    operator_deck_manifest_commitment_sha256: String,
+    authorization_policy_deployment_commitment_sha256: String,
+    operator_policy_deployment_commitment_sha256: String,
+}
+
+fn validate_operator_native_sideboard_checkout_v1(
+    value: &OperatorNativeSideboardCheckoutIdentityV1,
+) -> Result<(), String> {
+    for (digest, label) in [
+        (&value.route_match_identity_sha256, "sideboard route match"),
+        (
+            &value.outcome_match_identity_sha256,
+            "sideboard outcome match",
+        ),
+        (
+            &value.resource_bundle_commitment_sha256,
+            "sideboard resource bundle",
+        ),
+        (
+            &value.operator_resource_bundle_commitment_sha256,
+            "sideboard operator resource bundle",
+        ),
+        (
+            &value.authorization_sideboard_evaluation_ratification_commitment_sha256,
+            "sideboard authorization evaluation",
+        ),
+        (
+            &value.authorization_sideboard_evaluation_admission_commitment_sha256,
+            "sideboard authorization evaluation admission",
+        ),
+        (
+            &value.authorization_deck_manifest_commitment_sha256,
+            "sideboard authorization deck manifest",
+        ),
+        (
+            &value.operator_deck_manifest_commitment_sha256,
+            "sideboard operator deck manifest",
+        ),
+        (
+            &value.authorization_policy_deployment_commitment_sha256,
+            "sideboard authorization policy",
+        ),
+        (
+            &value.operator_policy_deployment_commitment_sha256,
+            "sideboard operator policy",
+        ),
+    ] {
+        require_sha256_v1(digest, label)?;
+    }
+    let resource_evaluation = value
+        .resource_sideboard_evaluation_ratification_commitment_sha256
+        .as_deref()
+        .ok_or("competitive operator sideboard checkout requires retained sideboard evaluation")?;
+    let resource_admission = value
+        .resource_sideboard_evaluation_admission_commitment_sha256
+        .as_deref()
+        .ok_or("competitive operator sideboard checkout requires retained sideboard admission")?;
+    require_sha256_v1(resource_evaluation, "sideboard resource evaluation")?;
+    require_sha256_v1(
+        resource_admission,
+        "sideboard resource evaluation admission",
+    )?;
+    if value.route_game_number == 0 || value.outcome_game_number == 0 {
+        return Err("competitive operator sideboard checkout requires a nonzero game".to_owned());
+    }
+    if !value.route_changed_resources_present
+        || value.route_match_identity_sha256 != value.outcome_match_identity_sha256
+        || value.route_game_number != value.outcome_game_number
+        || value.outcome_event_kind != value.authorization_event_kind
+        || value.outcome_event_kind != value.operator_event_kind
+        || value.resource_bundle_commitment_sha256
+            != value.operator_resource_bundle_commitment_sha256
+        || resource_evaluation
+            != value.authorization_sideboard_evaluation_ratification_commitment_sha256
+        || resource_admission
+            != value.authorization_sideboard_evaluation_admission_commitment_sha256
+        || value.authorization_deck_manifest_commitment_sha256
+            != value.operator_deck_manifest_commitment_sha256
+        || value.authorization_policy_deployment_commitment_sha256
+            != value.operator_policy_deployment_commitment_sha256
+    {
+        return Err(
+            "competitive operator sideboard checkout changed the exact event, outcome, resources, deck, or deployment"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct OperatorNativeSideboardScoringIdentityV1 {
+    resource_bundle_commitment_sha256: String,
+    prior_resource_bundle_commitment_sha256: String,
+    request_deployment_commitment_sha256: String,
+    loaded_checkpoint_deployment_commitment_sha256: String,
+}
+
+fn validate_operator_native_sideboard_scoring_v1(
+    value: &OperatorNativeSideboardScoringIdentityV1,
+) -> Result<(), String> {
+    for (digest, label) in [
+        (
+            &value.resource_bundle_commitment_sha256,
+            "sideboard scoring resource bundle",
+        ),
+        (
+            &value.prior_resource_bundle_commitment_sha256,
+            "sideboard scoring prior resource bundle",
+        ),
+        (
+            &value.request_deployment_commitment_sha256,
+            "sideboard scoring request deployment",
+        ),
+        (
+            &value.loaded_checkpoint_deployment_commitment_sha256,
+            "sideboard scoring loaded checkpoint deployment",
+        ),
+    ] {
+        require_sha256_v1(digest, label)?;
+    }
+    if value.resource_bundle_commitment_sha256 != value.prior_resource_bundle_commitment_sha256
+        || value.request_deployment_commitment_sha256
+            != value.loaded_checkpoint_deployment_commitment_sha256
+    {
+        return Err(
+            "competitive operator sideboard scoring changed resources or deployment".to_owned(),
         );
     }
     Ok(())
@@ -1331,6 +1722,38 @@ mod tests {
         }
     }
 
+    fn native_sideboard_checkout_identity_v1() -> OperatorNativeSideboardCheckoutIdentityV1 {
+        OperatorNativeSideboardCheckoutIdentityV1 {
+            route_match_identity_sha256: digest('1'),
+            route_game_number: 1,
+            route_changed_resources_present: true,
+            outcome_match_identity_sha256: digest('1'),
+            outcome_game_number: 1,
+            outcome_event_kind: MtgoCompetitiveEventKindV1::League,
+            authorization_event_kind: MtgoCompetitiveEventKindV1::League,
+            operator_event_kind: MtgoCompetitiveEventKindV1::League,
+            resource_bundle_commitment_sha256: digest('2'),
+            operator_resource_bundle_commitment_sha256: digest('2'),
+            resource_sideboard_evaluation_ratification_commitment_sha256: Some(digest('3')),
+            authorization_sideboard_evaluation_ratification_commitment_sha256: digest('3'),
+            resource_sideboard_evaluation_admission_commitment_sha256: Some(digest('4')),
+            authorization_sideboard_evaluation_admission_commitment_sha256: digest('4'),
+            authorization_deck_manifest_commitment_sha256: digest('5'),
+            operator_deck_manifest_commitment_sha256: digest('5'),
+            authorization_policy_deployment_commitment_sha256: digest('6'),
+            operator_policy_deployment_commitment_sha256: digest('6'),
+        }
+    }
+
+    fn native_sideboard_scoring_identity_v1() -> OperatorNativeSideboardScoringIdentityV1 {
+        OperatorNativeSideboardScoringIdentityV1 {
+            resource_bundle_commitment_sha256: digest('1'),
+            prior_resource_bundle_commitment_sha256: digest('1'),
+            request_deployment_commitment_sha256: digest('2'),
+            loaded_checkpoint_deployment_commitment_sha256: digest('2'),
+        }
+    }
+
     #[test]
     fn exact_post_entry_join_accepts_both_modes_and_rejects_crossed_resources() {
         let mut league = join_v1();
@@ -1409,6 +1832,62 @@ mod tests {
         let mut malformed = native_pregame_scoring_identity_v1();
         malformed.request_deployment_commitment_sha256 = "not-a-digest".to_owned();
         assert!(validate_operator_native_pregame_scoring_v1(&malformed).is_err());
+    }
+
+    #[test]
+    fn native_sideboard_checkout_accepts_both_modes_and_rejects_crossed_lineage() {
+        let mut exact = native_sideboard_checkout_identity_v1();
+        validate_operator_native_sideboard_checkout_v1(&exact).unwrap();
+        exact.outcome_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        exact.authorization_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        exact.operator_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        validate_operator_native_sideboard_checkout_v1(&exact).unwrap();
+
+        for mutate in [
+            |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
+                value.route_changed_resources_present = false
+            },
+            |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
+                value.outcome_match_identity_sha256 = digest('7')
+            },
+            |value: &mut OperatorNativeSideboardCheckoutIdentityV1| value.outcome_game_number = 2,
+            |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
+                value.authorization_event_kind = MtgoCompetitiveEventKindV1::Challenge
+            },
+            |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
+                value.operator_resource_bundle_commitment_sha256 = digest('7')
+            },
+            |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
+                value.resource_sideboard_evaluation_ratification_commitment_sha256 = None
+            },
+            |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
+                value.resource_sideboard_evaluation_admission_commitment_sha256 = None
+            },
+            |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
+                value.authorization_deck_manifest_commitment_sha256 = digest('7')
+            },
+            |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
+                value.authorization_policy_deployment_commitment_sha256 = digest('7')
+            },
+        ] {
+            let mut crossed = native_sideboard_checkout_identity_v1();
+            mutate(&mut crossed);
+            assert!(validate_operator_native_sideboard_checkout_v1(&crossed).is_err());
+        }
+    }
+
+    #[test]
+    fn native_sideboard_scoring_requires_exact_resources_and_loaded_deployment() {
+        validate_operator_native_sideboard_scoring_v1(&native_sideboard_scoring_identity_v1())
+            .unwrap();
+
+        let mut crossed_resources = native_sideboard_scoring_identity_v1();
+        crossed_resources.prior_resource_bundle_commitment_sha256 = digest('3');
+        assert!(validate_operator_native_sideboard_scoring_v1(&crossed_resources).is_err());
+
+        let mut crossed_deployment = native_sideboard_scoring_identity_v1();
+        crossed_deployment.loaded_checkpoint_deployment_commitment_sha256 = digest('3');
+        assert!(validate_operator_native_sideboard_scoring_v1(&crossed_deployment).is_err());
     }
 
     #[test]
