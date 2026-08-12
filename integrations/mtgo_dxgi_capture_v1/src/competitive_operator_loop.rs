@@ -404,6 +404,7 @@ pub struct OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
 /// ```
 pub struct OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
     request: OpaqueMtgoCompetitiveOperatorNativePregameRequestV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
     visible_game_log_lease: OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
 }
 
@@ -422,6 +423,12 @@ impl OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
 
     pub fn visible_game_log_lease_commitment_sha256_v1(&self) -> &str {
         self.visible_game_log_lease.lease_commitment_sha256_v1()
+    }
+
+    pub fn visible_launch_identity_commitment_sha256_v1(&self) -> String {
+        self.visible_identity
+            .commitments_v1()
+            .launch_identity_commitment_sha256
     }
 
     pub fn safe_for_live_input_v1(&self) -> bool {
@@ -1013,6 +1020,7 @@ pub fn checkout_competitive_post_entry_operator_attended_native_pregame_v1(
     Ok(
         OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
             request,
+            visible_identity,
             visible_game_log_lease,
         },
     )
