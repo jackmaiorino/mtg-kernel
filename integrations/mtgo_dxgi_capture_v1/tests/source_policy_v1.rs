@@ -1917,6 +1917,8 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "end_to_end_operator_loop_present: false",
         "native_checkpoint_duel_action_interface_present: true",
         "player_visible_duel_decision_input_contract_present: true",
+        "player_visible_duel_scorer_transport_contract_present: true",
+        "player_visible_duel_selection_to_visible_control_bridge_present: true",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "native_checkpoint_pregame_interface_present: false",
@@ -1971,6 +1973,8 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "check_competitive_model_decision_readiness_v1",
         "native_checkpoint_duel_action_interface_present: true",
         "player_visible_duel_decision_input_contract_present: true",
+        "player_visible_duel_scorer_transport_contract_present: true",
+        "player_visible_duel_selection_to_visible_control_bridge_present: true",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "public_model_owned_duel_action_path_present: false",
@@ -2589,6 +2593,91 @@ fn auxiliary_model_resolution_maps_visible_semantics_without_live_authority() {
         assert!(
             !source.contains(forbidden),
             "auxiliary model resolution exposes a forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn player_visible_duel_scorer_and_control_bridge_withhold_non_ui_information() {
+    let scoring = include_str!("../../mtgo_blackbox_v1/src/player_visible_duel_scoring.rs");
+    let resolution = include_str!("../../mtgo_blackbox_v1/src/action_resolution.rs");
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "pub trait MtgoPlayerVisibleDuelScorerV1",
+        "model_input: &MtgoPlayerVisibleDuelDecisionInputV1",
+        "score_and_select_player_visible_profile_bound_duel_candidate_v1",
+        "resolve_player_visible_profile_bound_selected_visible_control_v1",
+        "pub struct CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1",
+        "pub fn score_select_and_resolve_opaque_player_visible_duel_perception_v1",
+        "pub struct OpaqueMtgoPlayerVisibleDuelResolvedControlV1",
+        "pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1",
+        "pub fn safe_for_live_input_v1(&self) -> bool",
+        "pub fn permits_event_session_recovery_v1(&self) -> bool",
+        "pub fn permits_event_entry_v1(&self) -> bool",
+        "pub fn permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            scoring.contains(required)
+                || resolution.contains(required)
+                || runtime.contains(required),
+            "player-visible duel seam is missing: {required}"
+        );
+    }
+
+    let trait_start = scoring
+        .find("pub trait MtgoPlayerVisibleDuelScorerV1")
+        .expect("player-visible scorer trait");
+    let trait_end = scoring[trait_start..]
+        .find("\n}\n")
+        .map(|offset| trait_start + offset + 3)
+        .expect("player-visible scorer trait end");
+    let trait_source = &scoring[trait_start..trait_end];
+    for forbidden in [
+        "ObservationV5",
+        "ActionSemanticV1",
+        "deployment_commitment",
+        "frame_",
+        "source_",
+        "rect_",
+        "control_id",
+        "pixel",
+        "authority",
+    ] {
+        assert!(
+            !trait_source.contains(forbidden),
+            "model callback receives non-player-visible metadata: {forbidden}"
+        );
+    }
+
+    for forbidden_public in [
+        "pub fn model_input_commitment_sha256_v1",
+        "pub fn selection_commitment_sha256_v1",
+        "pub fn deployment_commitment_sha256_v1",
+        "pub fn source_candidate_commitment_sha256_v1",
+        "pub fn private_source_binding_commitment_sha256_v1",
+        "pub fn control_id_v1",
+        "pub fn frame_id_v1",
+        "pub fn frame_sequence_v1",
+        "pub fn private_profile_bound_resolution_commitment_sha256_v1",
+    ] {
+        assert!(
+            !scoring.contains(forbidden_public) && !resolution.contains(forbidden_public),
+            "player-visible result publicly exposes adapter metadata: {forbidden_public}"
+        );
+    }
+
+    for required_export in [
+        "score_and_select_opaque_player_visible_duel_perception_v1,",
+        "score_select_and_resolve_opaque_player_visible_duel_perception_v1,",
+        "OpaqueMtgoPlayerVisibleDuelModelSelectionV1,",
+        "OpaqueMtgoPlayerVisibleDuelResolvedControlV1,",
+        "MtgoPlayerVisibleDuelModelSelectionResultV1,",
+    ] {
+        assert!(
+            public_api.contains(required_export),
+            "public API omits the non-authorizing player-visible route: {required_export}"
         );
     }
 }

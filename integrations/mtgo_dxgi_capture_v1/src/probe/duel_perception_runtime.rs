@@ -26,6 +26,8 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, CheckedUntrustedMtgoDuelGesturePlanV1,
     CheckedUntrustedMtgoDuelGestureStageBindingV1,
     CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
+    CheckedUntrustedMtgoPlayerVisibleProfileBoundDuelModelSelectionV1,
+    CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1,
     CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
     CheckedUntrustedMtgoProfileBoundResolvedActionControlV1,
     LoadedMtgoNativeCheckpointDeploymentV1, MtgoAuthorizationScopeV1, MtgoCompetitiveEventKindV1,
@@ -34,7 +36,8 @@ use mtgo_blackbox_v1::{
     MtgoDuelGestureStageV1, MtgoDuelGestureTargetRoleV1, MtgoDxgiCaptureRoleV2,
     MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1, MtgoLifecycleVisibleFactKindV1,
     MtgoNativeCheckpointObservationScorerV1, MtgoObservationReconstructionAuditV1,
-    MtgoObservedDecisionV1, MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    MtgoObservedDecisionV1, MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelScorerV1,
+    MtgoProfileBoundPostconditionAfterFrameMetadataV1,
     MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoProfileBoundPostconditionCalibrationV1,
     MtgoProfileBoundPostconditionCandidateStatusV1, MtgoProfileBoundPostconditionRegionSetV1,
     MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
@@ -410,6 +413,114 @@ impl OpaqueMtgoAdmittedDuelPerceptionV1 {
         &self,
     ) -> Option<&CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1> {
         self.competitive_lifecycle.as_ref()
+    }
+}
+
+/// Public result from one exact player-visible-only gameplay selection.
+/// Capture, deployment, frame, and adapter-lineage commitments remain private
+/// inside the move-only selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPlayerVisibleDuelModelSelectionResultV1 {
+    pub selected_index: usize,
+    pub selected_logit_f32_bits: u32,
+    pub value_f32_bits: u32,
+}
+
+/// Move-only result of running the player-visible-only scorer over one opaque
+/// admitted MTGO perception. It exposes the selected visible action and finite
+/// model outputs, but no source observation, integrity commitments, pixels,
+/// coordinates, control resolver, event session, or input path.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPlayerVisibleDuelModelSelectionV1;
+/// fn cannot_act(value: OpaqueMtgoPlayerVisibleDuelModelSelectionV1) {
+///     let _ = value.observation();
+///     let _ = value.selected_semantic();
+///     let _ = value.input_command();
+///     let _ = value.event_session();
+/// }
+/// ```
+pub struct OpaqueMtgoPlayerVisibleDuelModelSelectionV1 {
+    #[allow(dead_code)]
+    perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    #[allow(dead_code)]
+    selection: Option<CheckedUntrustedMtgoPlayerVisibleProfileBoundDuelModelSelectionV1>,
+    selected_action: MtgoPlayerVisibleDuelActionV1,
+    result: MtgoPlayerVisibleDuelModelSelectionResultV1,
+}
+
+impl OpaqueMtgoPlayerVisibleDuelModelSelectionV1 {
+    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        &self.selected_action
+    }
+
+    pub fn result_v1(&self) -> MtgoPlayerVisibleDuelModelSelectionResultV1 {
+        self.result.clone()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Move-only result of scoring one opaque perception and resolving the chosen
+/// visible action to exactly one enabled control on that same frame. The
+/// control identity, coordinates, frame facts, and all integrity commitments
+/// remain private. No input or event authority is exposed.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPlayerVisibleDuelResolvedControlV1;
+/// fn cannot_read_control(value: OpaqueMtgoPlayerVisibleDuelResolvedControlV1) {
+///     let _ = value.control_id();
+///     let _ = value.frame_sequence();
+///     let _ = value.rect_client_px();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct OpaqueMtgoPlayerVisibleDuelResolvedControlV1 {
+    #[allow(dead_code)]
+    selection: OpaqueMtgoPlayerVisibleDuelModelSelectionV1,
+    #[allow(dead_code)]
+    resolved: CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1,
+    selected_action: MtgoPlayerVisibleDuelActionV1,
+    result: MtgoPlayerVisibleDuelModelSelectionResultV1,
+}
+
+impl OpaqueMtgoPlayerVisibleDuelResolvedControlV1 {
+    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        &self.selected_action
+    }
+
+    pub fn result_v1(&self) -> MtgoPlayerVisibleDuelModelSelectionResultV1 {
+        self.result.clone()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
     }
 }
 
@@ -1894,6 +2005,92 @@ pub(crate) fn score_and_select_opaque_admitted_duel_perception_v1(
     )
     .map_err(|error| format!("profile-bound duel model scoring failed: {error}"))?;
     finish_opaque_duel_model_selection_v1(perception, selection)
+}
+
+/// Runs one opaque admitted perception through the transport-independent
+/// player-visible-only scorer seam. The scorer sees only the owned visible
+/// state and ordered visible actions. The source candidate remains private in
+/// the returned move-only value, which grants no event-session or input
+/// authority.
+pub fn score_and_select_opaque_player_visible_duel_perception_v1<
+    S: MtgoPlayerVisibleDuelScorerV1,
+>(
+    mut perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    deployment_commitment_sha256: &str,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoPlayerVisibleDuelModelSelectionV1, String> {
+    let source = perception.source_frame.commitments_v1();
+    if source.perception_profile_commitment_sha256 != profile.perception_profile_commitment_sha256()
+        || source.perception_profile_admission_commitment_sha256
+            != profile.admission_commitment_sha256()
+    {
+        return Err("opaque perception and admitted profile differ at visible scoring".to_owned());
+    }
+    let source_candidate = perception
+        .source_candidate
+        .take()
+        .ok_or("opaque duel source candidate was already consumed")?;
+    let selection =
+        mtgo_blackbox_v1::score_and_select_player_visible_profile_bound_duel_candidate_v1(
+            source_candidate,
+            profile,
+            deployment_commitment_sha256,
+            scorer,
+        )
+        .map_err(|error| format!("player-visible duel model scoring failed: {error}"))?;
+    let selected_action = selection.selected_action_v1().clone();
+    let result = MtgoPlayerVisibleDuelModelSelectionResultV1 {
+        selected_index: selection.selected_index_v1(),
+        selected_logit_f32_bits: selection.selected_logit_f32_bits_v1(),
+        value_f32_bits: selection.value_f32_bits_v1(),
+    };
+    Ok(OpaqueMtgoPlayerVisibleDuelModelSelectionV1 {
+        perception,
+        selection: Some(selection),
+        selected_action,
+        result,
+    })
+}
+
+/// Scores one opaque player-visible perception and privately resolves the
+/// selected index against the exact complete visible-control set emitted by
+/// the same classifier invocation.
+pub fn score_select_and_resolve_opaque_player_visible_duel_perception_v1<
+    S: MtgoPlayerVisibleDuelScorerV1,
+>(
+    perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    deployment_commitment_sha256: &str,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoPlayerVisibleDuelResolvedControlV1, String> {
+    let mut selection = score_and_select_opaque_player_visible_duel_perception_v1(
+        perception,
+        profile,
+        deployment_commitment_sha256,
+        scorer,
+    )?;
+    let checked_selection = selection
+        .selection
+        .take()
+        .ok_or("opaque player-visible duel selection was already consumed")?;
+    let resolved =
+        mtgo_blackbox_v1::resolve_player_visible_profile_bound_selected_visible_control_v1(
+            checked_selection,
+            selection.perception.visible_controls.clone(),
+        )
+        .map_err(|error| format!("player-visible duel control resolution failed: {error}"))?;
+    if resolved.selected_action_v1() != &selection.selected_action {
+        return Err("resolved player-visible duel control changed the selected action".to_owned());
+    }
+    let selected_action = selection.selected_action.clone();
+    let result = selection.result.clone();
+    Ok(OpaqueMtgoPlayerVisibleDuelResolvedControlV1 {
+        selection,
+        resolved,
+        selected_action,
+        result,
+    })
 }
 
 /// Scores one retained visible duel perception through the exact loaded

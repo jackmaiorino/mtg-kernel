@@ -2383,6 +2383,7 @@ fn directive_from_driver_v1(
         driver.allowed_observed_advances_v1(),
         checkpoint.pregame_head_ready_v1() && model.public_model_owned_pregame_action_path_present,
         checkpoint.native_duel_action_interface_present
+            && checkpoint.native_player_visible_duel_action_interface_present
             && model.native_checkpoint_player_visible_only_duel_action_interface_present
             && model.current_duel_scorer_kernel_bookkeeping_withheld
             && model.public_model_owned_duel_action_path_present,
@@ -2788,6 +2789,7 @@ mod tests {
                 mtgo_blackbox_v1::MTGO_NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_SCHEMA_V1,
             deployment_commitment_sha256: digest('8'),
             native_duel_action_interface_present,
+            native_player_visible_duel_action_interface_present: false,
             native_pregame_interface_present: false,
             terminal_outcome_trained_pregame_head_present: false,
             native_sideboard_interface_present: false,

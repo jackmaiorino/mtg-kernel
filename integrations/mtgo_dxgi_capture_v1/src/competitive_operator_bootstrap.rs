@@ -580,6 +580,7 @@ mod tests {
                 mtgo_blackbox_v1::MTGO_NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_SCHEMA_V1,
             deployment_commitment_sha256: policy.clone(),
             native_duel_action_interface_present: true,
+            native_player_visible_duel_action_interface_present: false,
             native_pregame_interface_present: false,
             terminal_outcome_trained_pregame_head_present: false,
             native_sideboard_interface_present: false,

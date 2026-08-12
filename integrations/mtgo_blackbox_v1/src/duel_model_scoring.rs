@@ -109,10 +109,6 @@ impl CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1 {
         self.candidate.validated_decision_v1()
     }
 
-    pub(crate) fn base_selection_v1(&self) -> &CheckedUntrustedMtgoModelSelectionV1 {
-        &self.selection
-    }
-
     pub(crate) fn source_manifest_sha256_v1(&self) -> &str {
         self.candidate.source_manifest_sha256()
     }

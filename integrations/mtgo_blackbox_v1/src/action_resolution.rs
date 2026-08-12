@@ -1,6 +1,8 @@
 use crate::{
-    CheckedUntrustedMtgoModelSelectionV1, CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
-    MtgoContractErrorV1, MtgoEvidenceSourceV1, MtgoRectPxV1, ValidatedMtgoObservedDecisionV1,
+    CheckedUntrustedMtgoModelSelectionV1,
+    CheckedUntrustedMtgoPlayerVisibleProfileBoundDuelModelSelectionV1,
+    CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1, MtgoContractErrorV1,
+    MtgoEvidenceSourceV1, MtgoRectPxV1, ValidatedMtgoObservedDecisionV1,
     MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1,
 };
 use mtg_kernel::rl::ActionSemanticV1;
@@ -227,9 +229,86 @@ impl CheckedUntrustedMtgoProfileBoundResolvedActionControlV1 {
     }
 }
 
+/// One current-frame control resolved from a player-visible-only model
+/// selection. The control ID, coordinates, frame metadata, source lineage,
+/// kernel semantic, and private binding commitments remain sealed. Public
+/// callers can observe only the selected player-visible action and the fact
+/// that this checked-untrusted value grants no authority.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1;
+/// fn cannot_read_adapter_lineage(value: &CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1) {
+///     let _ = value.control_id();
+///     let _ = value.frame_sequence();
+///     let _ = value.rect_client_px();
+///     let _ = value.source_manifest_sha256();
+///     let _ = value.input_command();
+/// }
+/// ```
+#[allow(dead_code)]
+pub struct CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1 {
+    selection: CheckedUntrustedMtgoPlayerVisibleProfileBoundDuelModelSelectionV1,
+    resolved: CheckedUntrustedMtgoResolvedActionControlV1,
+    private_profile_bound_resolution_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1 {
+    pub fn selected_action_v1(&self) -> &crate::MtgoPlayerVisibleDuelActionV1 {
+        self.selection.selected_action_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_match_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    #[cfg(test)]
+    pub(crate) fn control_id_v1(&self) -> &str {
+        self.resolved.control_id()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn frame_id_v1(&self) -> u64 {
+        self.resolved.frame_id()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn frame_sequence_v1(&self) -> u64 {
+        self.resolved.frame_sequence()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn private_profile_bound_resolution_commitment_sha256_v1(&self) -> &str {
+        &self.private_profile_bound_resolution_commitment_sha256
+    }
+}
+
 pub fn resolve_selected_visible_control_v1(
     decision: &ValidatedMtgoObservedDecisionV1,
     selection: &CheckedUntrustedMtgoModelSelectionV1,
+    control_set: MtgoVisibleActionControlSetV1,
+) -> Result<CheckedUntrustedMtgoResolvedActionControlV1, MtgoContractErrorV1> {
+    resolve_selected_visible_control_parts_v1(
+        decision,
+        selection.decision_commitment_sha256(),
+        selection.selected_semantic(),
+        selection.selection_commitment_sha256(),
+        control_set,
+    )
+}
+
+fn resolve_selected_visible_control_parts_v1(
+    decision: &ValidatedMtgoObservedDecisionV1,
+    selected_decision_commitment_sha256: &str,
+    selected_semantic: &ActionSemanticV1,
+    selection_commitment_sha256: &str,
     control_set: MtgoVisibleActionControlSetV1,
 ) -> Result<CheckedUntrustedMtgoResolvedActionControlV1, MtgoContractErrorV1> {
     if control_set.schema_version != MTGO_VISIBLE_ACTION_CONTROL_SET_SCHEMA_V1 {
@@ -243,7 +322,7 @@ pub fn resolve_selected_visible_control_v1(
         "visible_control_set_decision_hash_invalid",
     )?;
     if control_set.decision_commitment_sha256 != decision.decision_commitment_sha256()
-        || selection.decision_commitment_sha256() != decision.decision_commitment_sha256()
+        || selected_decision_commitment_sha256 != decision.decision_commitment_sha256()
     {
         return Err(MtgoContractErrorV1::new(
             "visible_control_set_decision_mismatch",
@@ -324,7 +403,7 @@ pub fn resolve_selected_visible_control_v1(
                 &control.control_id,
             ));
         }
-        if &control.semantic == selection.selected_semantic() {
+        if &control.semantic == selected_semantic {
             selected_matches.push((control, rect));
         }
     }
@@ -345,7 +424,7 @@ pub fn resolve_selected_visible_control_v1(
     }
     let encoded = serde_json::to_vec(&ResolutionCommitmentRecordV1 {
         control_set: &control_set,
-        selection_commitment_sha256: selection.selection_commitment_sha256(),
+        selection_commitment_sha256,
         selected_control_id: &selected.control_id,
         selected_rect_client_px: rect_client_px,
     })
@@ -363,7 +442,7 @@ pub fn resolve_selected_visible_control_v1(
 
     Ok(CheckedUntrustedMtgoResolvedActionControlV1 {
         decision_commitment_sha256: decision.decision_commitment_sha256().to_owned(),
-        selection_commitment_sha256: selection.selection_commitment_sha256().to_owned(),
+        selection_commitment_sha256: selection_commitment_sha256.to_owned(),
         control_id: selected.control_id.clone(),
         frame_id: control_set.frame_id,
         frame_sequence: control_set.frame_sequence,
@@ -377,9 +456,11 @@ pub fn resolve_profile_bound_selected_visible_control_v1(
     selection: CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
     control_set: MtgoVisibleActionControlSetV1,
 ) -> Result<CheckedUntrustedMtgoProfileBoundResolvedActionControlV1, MtgoContractErrorV1> {
-    let resolved = resolve_selected_visible_control_v1(
+    let resolved = resolve_selected_visible_control_parts_v1(
         selection.validated_decision_v1(),
-        selection.base_selection_v1(),
+        selection.decision_commitment_sha256(),
+        selection.selected_semantic(),
+        selection.selection_commitment_sha256(),
         control_set,
     )?;
     let mut hasher = Sha256::new();
@@ -403,6 +484,46 @@ pub fn resolve_profile_bound_selected_visible_control_v1(
         selection,
         resolved,
         profile_bound_resolution_commitment_sha256: format!("{:x}", hasher.finalize()),
+    })
+}
+
+/// Grounds a checked player-visible-only model selection to one unique visible
+/// control on the exact source frame. The private kernel semantic is used only
+/// for this equality join and never crosses the public scorer interface.
+pub fn resolve_player_visible_profile_bound_selected_visible_control_v1(
+    selection: CheckedUntrustedMtgoPlayerVisibleProfileBoundDuelModelSelectionV1,
+    control_set: MtgoVisibleActionControlSetV1,
+) -> Result<CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1, MtgoContractErrorV1> {
+    let resolved = resolve_selected_visible_control_parts_v1(
+        selection.validated_decision_v1(),
+        selection
+            .validated_decision_v1()
+            .decision_commitment_sha256(),
+        selection.selected_semantic_v1(),
+        selection.selection_commitment_sha256_v1(),
+        control_set,
+    )?;
+    let mut hasher = Sha256::new();
+    hasher.update(PROFILE_BOUND_RESOLUTION_COMMITMENT_DOMAIN_V1);
+    for part in [
+        selection
+            .private_source_binding_commitment_sha256_v1()
+            .as_bytes(),
+        resolved.resolution_commitment_sha256().as_bytes(),
+        selection.source_candidate_commitment_sha256_v1().as_bytes(),
+        selection
+            .perception_profile_admission_commitment_sha256_v1()
+            .as_bytes(),
+        selection.deployment_commitment_sha256_v1().as_bytes(),
+        b"player_visible_only_checked_untrusted_private_control_no_input_or_event_entry",
+    ] {
+        hasher.update((part.len() as u64).to_le_bytes());
+        hasher.update(part);
+    }
+    Ok(CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1 {
+        selection,
+        resolved,
+        private_profile_bound_resolution_commitment_sha256: format!("{:x}", hasher.finalize()),
     })
 }
 

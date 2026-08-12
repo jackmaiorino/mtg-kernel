@@ -36,6 +36,7 @@ pub struct MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
     pub schema_version: u32,
     pub deployment_commitment_sha256: String,
     pub native_duel_action_interface_present: bool,
+    pub native_player_visible_duel_action_interface_present: bool,
     pub native_pregame_interface_present: bool,
     pub terminal_outcome_trained_pregame_head_present: bool,
     pub native_sideboard_interface_present: bool,
@@ -267,6 +268,14 @@ pub fn validate_native_checkpoint_competitive_capabilities_v1(
             "a trained pregame head cannot be present without its native interface",
         ));
     }
+    if value.native_player_visible_duel_action_interface_present
+        && !value.native_duel_action_interface_present
+    {
+        return Err(error_v1(
+            "mtgo_checkpoint_duel_capabilities_inconsistent",
+            "the player-visible duel interface requires the native duel action interface",
+        ));
+    }
     if !value.native_sideboard_interface_present
         && (value.terminal_outcome_trained_sideboard_head_present
             || value.native_changed_sideboard_action_present
@@ -300,6 +309,7 @@ fn current_native_checkpoint_competitive_capabilities_v1(
         schema_version: MTGO_NATIVE_CHECKPOINT_COMPETITIVE_CAPABILITIES_SCHEMA_V1,
         deployment_commitment_sha256: deployment_commitment_sha256.to_owned(),
         native_duel_action_interface_present: true,
+        native_player_visible_duel_action_interface_present: false,
         native_pregame_interface_present: false,
         terminal_outcome_trained_pregame_head_present: false,
         native_sideboard_interface_present: false,
@@ -509,9 +519,22 @@ mod tests {
             deployment_commitment
         );
         assert!(capabilities.native_duel_action_interface_present);
+        assert!(!capabilities.native_player_visible_duel_action_interface_present);
         assert!(!capabilities.pregame_head_ready_v1());
         assert!(!capabilities.sideboard_head_ready_v1());
         validate_native_checkpoint_competitive_capabilities_v1(&capabilities).unwrap();
+
+        let mut impossible_duel = capabilities.clone();
+        impossible_duel.native_duel_action_interface_present = false;
+        impossible_duel.native_player_visible_duel_action_interface_present = true;
+        impossible_duel.capabilities_commitment_sha256 =
+            native_checkpoint_competitive_capabilities_commitment_v1(&impossible_duel).unwrap();
+        assert_eq!(
+            validate_native_checkpoint_competitive_capabilities_v1(&impossible_duel)
+                .unwrap_err()
+                .code(),
+            "mtgo_checkpoint_duel_capabilities_inconsistent"
+        );
 
         let mut crossed = capabilities.clone();
         crossed.deployment_commitment_sha256 = fixture_digest_v1('b');
