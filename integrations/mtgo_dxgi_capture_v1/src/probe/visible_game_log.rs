@@ -1,14 +1,18 @@
 use super::duel_perception_runtime::parse_competitive_duel_window_title_v1;
 use super::*;
 use mtgo_blackbox_v1::{
+    begin_checked_untrusted_player_visible_game_log_action_baseline_v1,
     classify_checked_untrusted_mtgo_visible_game_log_semantics_v1,
+    corroborate_checked_untrusted_player_visible_game_log_action_v1,
     mtgo_visible_game_log_source_id_commitment_v1,
     parse_checked_untrusted_mtgo_visible_game_log_v1,
+    CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1,
+    CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1,
     CheckedUntrustedMtgoVisibleGameLogProjectionV1,
     CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitiveLifecyclePhaseV1, MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogPlayerRoleV1,
-    MtgoVisibleGameLogSemanticEventViewV1, MtgoVisibleGameLogSemanticSequenceV1,
-    MtgoVisibleGameLogTextViewV1,
+    MtgoCompetitiveLifecyclePhaseV1, MtgoPlayerVisibleConfirmedDuelDecisionV1,
+    MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogPlayerRoleV1,
+    MtgoVisibleGameLogSemanticEventViewV1, MtgoVisibleGameLogTextViewV1,
 };
 use sha2::{Digest, Sha256};
 use std::{collections::HashSet, fs::Metadata, os::windows::ffi::OsStrExt};
@@ -241,26 +245,20 @@ impl OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
     }
 }
 
-impl MtgoVisibleGameLogSemanticSequenceV1 for OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
-    fn visible_source_record_count_v1(&self) -> usize {
-        self.semantics
-            .classified_source_record_count_v1()
-            .checked_add(self.semantics.unclassified_source_record_count_v1())
-            .expect("validated visible Game Log record counts must fit usize")
-    }
+pub fn begin_competitive_match_visible_game_log_action_baseline_v1(
+    before: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    decision: &MtgoPlayerVisibleConfirmedDuelDecisionV1,
+) -> Result<CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1, String> {
+    begin_checked_untrusted_player_visible_game_log_action_baseline_v1(&before.semantics, decision)
+        .map_err(|error| format!("{}: {}", error.code(), error.detail()))
+}
 
-    fn visible_source_record_prefix_commitment_v1(&self, record_count: usize) -> Option<String> {
-        self.semantics
-            .visible_source_record_prefix_commitment_v1(record_count)
-    }
-
-    fn visible_event_count_v1(&self) -> usize {
-        self.event_count_v1()
-    }
-
-    fn visible_event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
-        self.event_v1(index)
-    }
+pub fn corroborate_competitive_match_visible_game_log_action_v1(
+    baseline: CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1,
+    after: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+) -> Result<CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1, String> {
+    corroborate_checked_untrusted_player_visible_game_log_action_v1(baseline, &after.semantics)
+        .map_err(|error| format!("{}: {}", error.code(), error.detail()))
 }
 
 /// Records the private set of visible Game Logs that already exist at the

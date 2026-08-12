@@ -140,7 +140,7 @@ impl CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1 {
     /// whose wording is not recognized by the conservative semantic grammar.
     /// It contains no raw text, transport identifier, timestamp, or link
     /// metadata.
-    pub fn visible_source_record_prefix_commitment_v1(
+    pub(crate) fn visible_source_record_prefix_commitment_v1(
         &self,
         record_count: usize,
     ) -> Option<String> {
@@ -153,6 +153,10 @@ impl CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1 {
             hasher.update(digest.as_bytes());
         }
         Some(format!("{:x}", hasher.finalize()))
+    }
+
+    pub(crate) fn source_record_count_v1(&self) -> usize {
+        self.source_visible_text_sha256s.len()
     }
 
     pub fn acting_player_alias_sha256_v1(&self) -> &str {

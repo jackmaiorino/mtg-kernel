@@ -247,6 +247,8 @@ fn visible_game_log_diagnostics_do_not_emit_transport_or_identity_derivatives() 
 fn visible_game_log_action_corroboration_is_public_fact_only_and_non_actuating() {
     let source =
         include_str!("../../mtgo_blackbox_v1/src/visible_game_log_action_corroboration.rs");
+    let semantics = include_str!("../../mtgo_blackbox_v1/src/visible_game_log_semantics.rs");
+    let windows_binder = include_str!("../src/probe/visible_game_log.rs");
     for required in [
         "safe_for_input_v1(&self) -> bool {\n        false",
         "safe_for_additional_input_v1(&self) -> bool {\n        false",
@@ -261,6 +263,7 @@ fn visible_game_log_action_corroboration_is_public_fact_only_and_non_actuating()
         );
     }
     for forbidden in [
+        "pub trait MtgoVisibleGameLogSemanticSequenceV1",
         "source_projection_commitment_sha256_v1()",
         "projection_commitment_sha256_v1()",
         "acting_player_alias_sha256_v1()",
@@ -274,6 +277,24 @@ fn visible_game_log_action_corroboration_is_public_fact_only_and_non_actuating()
         assert!(
             !source.contains(forbidden),
             "Game Log action corroboration reached a forbidden channel: {forbidden}"
+        );
+    }
+    assert!(
+        semantics.contains("pub(crate) fn visible_source_record_prefix_commitment_v1"),
+        "the exact rendered-prefix commitment must remain private to the black-box adapter"
+    );
+    assert!(
+        !semantics.contains("pub fn visible_source_record_prefix_commitment_v1"),
+        "the exact rendered-prefix commitment must not become a public model-facing getter"
+    );
+    for required in [
+        "begin_competitive_match_visible_game_log_action_baseline_v1",
+        "corroborate_competitive_match_visible_game_log_action_v1",
+        "&OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1",
+    ] {
+        assert!(
+            windows_binder.contains(required),
+            "the Windows Game Log wrapper lacks its opaque source binding: {required}"
         );
     }
 }

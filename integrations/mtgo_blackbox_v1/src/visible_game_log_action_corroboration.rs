@@ -3,7 +3,6 @@ use crate::{
     MtgoPlayerRelativeRoleV1, MtgoPlayerVisibleConfirmedDuelDecisionV1,
     MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelStateV1, MtgoPlayerVisibleObjectRefV1,
     MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogPlayerRoleV1,
-    MtgoVisibleGameLogSemanticEventViewV1,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -12,44 +11,6 @@ use std::collections::{BTreeSet, HashSet};
 const ACTION_BASELINE_DOMAIN_V1: &[u8] = b"mtgo-player-visible-game-log-action-baseline-v1";
 const ACTION_CORROBORATION_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-game-log-action-corroboration-v1";
-
-/// Read-only access to the typed facts that the MTGO Game Log renders for the
-/// seated player. Implementations must not add transport or client-private
-/// metadata to these views.
-pub trait MtgoVisibleGameLogSemanticSequenceV1 {
-    fn visible_source_record_count_v1(&self) -> usize;
-
-    fn visible_source_record_prefix_commitment_v1(&self, record_count: usize) -> Option<String>;
-
-    fn visible_event_count_v1(&self) -> usize;
-
-    fn visible_event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>>;
-}
-
-impl MtgoVisibleGameLogSemanticSequenceV1
-    for CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1
-{
-    fn visible_source_record_count_v1(&self) -> usize {
-        self.classified_source_record_count_v1()
-            .checked_add(self.unclassified_source_record_count_v1())
-            .expect("validated visible Game Log record counts must fit usize")
-    }
-
-    fn visible_source_record_prefix_commitment_v1(&self, record_count: usize) -> Option<String> {
-        CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1::visible_source_record_prefix_commitment_v1(
-            self,
-            record_count,
-        )
-    }
-
-    fn visible_event_count_v1(&self) -> usize {
-        self.event_count_v1()
-    }
-
-    fn visible_event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
-        self.event_v1(index)
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -175,10 +136,8 @@ impl CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1 {
     }
 }
 
-pub fn begin_checked_untrusted_player_visible_game_log_action_baseline_v1<
-    S: MtgoVisibleGameLogSemanticSequenceV1,
->(
-    before: &S,
+pub fn begin_checked_untrusted_player_visible_game_log_action_baseline_v1(
+    before: &CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1,
     decision: &MtgoPlayerVisibleConfirmedDuelDecisionV1,
 ) -> Result<CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1, MtgoContractErrorV1> {
     if decision.current_state.acting_player != MtgoPlayerRelativeRoleV1::SeatedPlayer
@@ -191,7 +150,7 @@ pub fn begin_checked_untrusted_player_visible_game_log_action_baseline_v1<
     }
     let (kind, expected) = expected_visible_event_v1(decision)?;
     let prior_events = public_events_v1(before)?;
-    let prior_source_record_count = before.visible_source_record_count_v1();
+    let prior_source_record_count = before.source_record_count_v1();
     if prior_source_record_count < prior_events.len() {
         return Err(error_v1(
             "visible_game_log_action_source_count",
@@ -230,11 +189,9 @@ pub fn begin_checked_untrusted_player_visible_game_log_action_baseline_v1<
     })
 }
 
-pub fn corroborate_checked_untrusted_player_visible_game_log_action_v1<
-    S: MtgoVisibleGameLogSemanticSequenceV1,
->(
+pub fn corroborate_checked_untrusted_player_visible_game_log_action_v1(
     baseline: CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1,
-    after: &S,
+    after: &CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1,
 ) -> Result<CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1, MtgoContractErrorV1> {
     let after_events = public_events_v1(after)?;
     if after_events.len() <= baseline.prior_events.len()
@@ -246,7 +203,7 @@ pub fn corroborate_checked_untrusted_player_visible_game_log_action_v1<
         ));
     }
     let appended = &after_events[baseline.prior_events.len()..];
-    let after_source_record_count = after.visible_source_record_count_v1();
+    let after_source_record_count = after.source_record_count_v1();
     let retained_prefix_commitment = after
         .visible_source_record_prefix_commitment_v1(baseline.prior_source_record_count)
         .ok_or_else(|| {
@@ -341,13 +298,13 @@ pub fn corroborate_checked_untrusted_player_visible_game_log_action_v1<
     )
 }
 
-fn public_events_v1<S: MtgoVisibleGameLogSemanticSequenceV1>(
-    source: &S,
+fn public_events_v1(
+    source: &CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1,
 ) -> Result<Vec<PublicEventV1>, MtgoContractErrorV1> {
-    let mut result = Vec::with_capacity(source.visible_event_count_v1());
+    let mut result = Vec::with_capacity(source.event_count_v1());
     let mut previous_sequence = None;
-    for index in 0..source.visible_event_count_v1() {
-        let event = source.visible_event_v1(index).ok_or_else(|| {
+    for index in 0..source.event_count_v1() {
+        let event = source.event_v1(index).ok_or_else(|| {
             error_v1(
                 "visible_game_log_action_event_missing",
                 "a visible semantic event disappeared during corroboration",
