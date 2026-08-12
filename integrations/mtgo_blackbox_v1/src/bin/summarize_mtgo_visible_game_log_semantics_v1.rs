@@ -65,8 +65,8 @@ fn run_v1() -> Result<VisibleGameLogSemanticSummaryV1, String> {
     let mut event_kind_counts = BTreeMap::new();
     for path in paths {
         let path = PathBuf::from(path);
-        let bytes =
-            std::fs::read(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("read one visible Game Log candidate: {error}"))?;
         let source = parse_checked_untrusted_mtgo_visible_game_log_v1(&bytes)
             .map_err(|error| format!("{}: {}", error.code(), error.detail()))?;
         source_record_count = source_record_count

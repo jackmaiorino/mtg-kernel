@@ -190,6 +190,9 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
 #[test]
 fn visible_game_log_diagnostics_do_not_emit_transport_or_identity_derivatives() {
     let offline = include_str!("../../mtgo_blackbox_v1/src/bin/check_mtgo_visible_game_log_v1.rs");
+    let corpus = include_str!(
+        "../../mtgo_blackbox_v1/src/bin/summarize_mtgo_visible_game_log_semantics_v1.rs"
+    );
     let live = include_str!("../src/bin/probe_mtgo_visible_game_log_v1.rs");
     for forbidden in [
         "\"source_file_sha256\"",
@@ -199,6 +202,23 @@ fn visible_game_log_diagnostics_do_not_emit_transport_or_identity_derivatives() 
         assert!(
             !offline.contains(forbidden),
             "offline Game Log diagnostic emits forbidden transport derivative: {forbidden}"
+        );
+    }
+    for forbidden in ["path.display()", "path.to_string_lossy()"] {
+        assert!(
+            !corpus.contains(forbidden),
+            "Game Log corpus diagnostic error path emits a source path: {forbidden}"
+        );
+    }
+    for required in [
+        "raw_visible_text_emitted: false",
+        "player_aliases_emitted: false",
+        "source_identifiers_emitted: false",
+        "card_names_emitted: false",
+    ] {
+        assert!(
+            corpus.contains(required),
+            "Game Log corpus diagnostic lacks explicit non-emission field: {required}"
         );
     }
     for forbidden in [
