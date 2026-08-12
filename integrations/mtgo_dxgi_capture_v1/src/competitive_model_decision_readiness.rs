@@ -17,6 +17,7 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub public_player_visible_pregame_request_contract_present: bool,
     pub public_player_known_submitted_pregame_deck_configuration_present: bool,
     pub public_player_known_pregame_deck_configuration_present: bool,
+    pub public_pregame_ordered_confirmed_bottom_history_present: bool,
     pub terminal_outcome_trained_pregame_head_present: bool,
     pub public_model_owned_pregame_action_path_present: bool,
     pub native_checkpoint_sideboard_interface_present: bool,
@@ -36,6 +37,7 @@ impl MtgoCompetitiveModelDecisionReadinessV1 {
             && self.native_checkpoint_pregame_interface_present
             && self.public_player_known_submitted_pregame_deck_configuration_present
             && self.public_player_known_pregame_deck_configuration_present
+            && self.public_pregame_ordered_confirmed_bottom_history_present
             && self.terminal_outcome_trained_pregame_head_present
             && self.public_model_owned_pregame_action_path_present
             && self.native_checkpoint_sideboard_interface_present
@@ -63,6 +65,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         public_player_visible_pregame_request_contract_present: true,
         public_player_known_submitted_pregame_deck_configuration_present: true,
         public_player_known_pregame_deck_configuration_present: true,
+        public_pregame_ordered_confirmed_bottom_history_present: true,
         terminal_outcome_trained_pregame_head_present: false,
         public_model_owned_pregame_action_path_present: false,
         native_checkpoint_sideboard_interface_present: false,
@@ -99,6 +102,7 @@ mod tests {
         assert!(report.public_player_visible_pregame_request_contract_present);
         assert!(report.public_player_known_submitted_pregame_deck_configuration_present);
         assert!(report.public_player_known_pregame_deck_configuration_present);
+        assert!(report.public_pregame_ordered_confirmed_bottom_history_present);
         assert!(!report.public_model_owned_pregame_action_path_present);
         assert!(!report.native_checkpoint_sideboard_interface_present);
         assert!(report.public_player_visible_sideboard_payload_contract_present);

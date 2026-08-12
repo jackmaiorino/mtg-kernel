@@ -273,6 +273,37 @@ fn player_known_deck_state_is_private_confirmed_and_match_scoped() {
 }
 
 #[test]
+fn competitive_pregame_bottom_history_is_private_visible_and_postcondition_bound() {
+    let source = include_str!("../src/actuator.rs");
+    let exports = include_str!("../src/lib.rs");
+    for required in [
+        "ordered_confirmed_bottom_slots: Vec<u8>",
+        "competitive_pregame_confirmed_bottom_history_commitment_v1",
+        "advance_competitive_event_pregame_observed_with_confirmed_bottom_v1",
+        "competitive pregame observed bottom selection lacks confirmed action history",
+        "bind_competitive_event_pregame_native_request_from_session_v1",
+        "&session.ordered_confirmed_bottom_slots",
+        "current_model_context_binding_commitment_sha256",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive pregame bottom history seam is missing: {required}"
+        );
+    }
+    assert!(exports.contains("bind_competitive_event_pregame_native_request_from_session_v1"));
+    let session_start = source
+        .find("pub struct OpaqueMtgoCompetitiveEventPregameSessionV1")
+        .unwrap();
+    let session_end = source[session_start..]
+        .find("\n}\n\nimpl OpaqueMtgoCompetitiveEventPregameSessionV1")
+        .map(|offset| session_start + offset)
+        .unwrap();
+    assert!(
+        !source[session_start..session_end].contains("pub ordered_confirmed_bottom_slots: Vec<u8>")
+    );
+}
+
+#[test]
 fn acting_player_duel_mode_is_role_explicit_and_still_non_actionable() {
     let library = include_str!("../src/lib.rs");
     let probe = include_str!("../src/probe.rs");

@@ -39,6 +39,7 @@ pub use actuator::{
     begin_competitive_gesture_game_session_v1, bind_competitive_duel_gesture_sequence_session_v1,
     bind_competitive_entry_postcondition_dry_run_v1,
     bind_competitive_event_native_sideboard_request_v1,
+    bind_competitive_event_pregame_native_request_from_session_v1,
     bind_competitive_event_pregame_native_request_v1,
     bind_competitive_event_runtime_to_match_launch_identity_v1,
     bind_confirmed_competitive_open_entry_review_to_entry_review_v1,

@@ -138,6 +138,15 @@ impl CheckedUntrustedMtgoCompetitivePregameModelContextV1 {
     pub fn safe_for_input_v1(&self) -> bool {
         false
     }
+
+    pub fn into_checked_parts_v1(
+        self,
+    ) -> (
+        CheckedUntrustedMtgoCompetitivePregameClassificationV1,
+        CheckedUntrustedMtgoCompetitivePregamePublicContextV1,
+    ) {
+        (self._classification, self._public_context)
+    }
 }
 
 pub fn competitive_pregame_public_context_commitment_v1(

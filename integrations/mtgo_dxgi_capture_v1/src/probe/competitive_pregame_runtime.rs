@@ -16,6 +16,7 @@ use mtgo_blackbox_v1::{
     AdmittedMtgoCompetitivePregameProfileV1, AdmittedMtgoCompetitivePregamePublicContextProfileV1,
     AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoCompetitivePregameClassificationV1,
     CheckedUntrustedMtgoCompetitivePregameModelContextV1,
+    CheckedUntrustedMtgoCompetitivePregamePublicContextV1,
     MtgoCompetitivePregameClassifierRequestHeaderV1, MtgoCompetitivePregameClassifierResponseV1,
     MtgoCompetitivePregamePlayDrawV1, MtgoCompetitivePregamePublicContextClassifierRequestHeaderV1,
     MtgoCompetitivePregamePublicContextClassifierResponseV1, MtgoCompetitivePregameStageLabelV1,
@@ -166,6 +167,20 @@ pub struct OpaqueMtgoClassifiedCompetitivePregameModelContextV1 {
     commitments: MtgoClassifiedCompetitivePregameModelContextCommitmentsV1,
 }
 
+pub(crate) struct OpaqueMtgoCompetitivePregamePublicContextWitnessV1 {
+    _checked_public_context: CheckedUntrustedMtgoCompetitivePregamePublicContextV1,
+    _response: MtgoCompetitivePregamePublicContextClassifierResponseV1,
+    commitments: MtgoClassifiedCompetitivePregameModelContextCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitivePregamePublicContextWitnessV1 {
+    pub(crate) fn commitments_v1(
+        &self,
+    ) -> &MtgoClassifiedCompetitivePregameModelContextCommitmentsV1 {
+        &self.commitments
+    }
+}
+
 impl OpaqueMtgoClassifiedCompetitivePregameModelContextV1 {
     pub fn commitments_v1(&self) -> MtgoClassifiedCompetitivePregameModelContextCommitmentsV1 {
         self.commitments.clone()
@@ -200,6 +215,35 @@ impl OpaqueMtgoClassifiedCompetitivePregameModelContextV1 {
 
     pub(crate) fn response_v1(&self) -> &MtgoCompetitivePregameClassifierResponseV1 {
         &self._pregame_response
+    }
+
+    pub(crate) fn into_classified_frame_and_public_context_witness_v1(
+        self,
+    ) -> (
+        OpaqueMtgoClassifiedCompetitivePregameFrameV1,
+        OpaqueMtgoCompetitivePregamePublicContextWitnessV1,
+    ) {
+        let OpaqueMtgoClassifiedCompetitivePregameModelContextV1 {
+            _source_frame,
+            _pregame_response,
+            _public_context_response,
+            _model_context,
+            commitments,
+        } = self;
+        let (_checked_classification, _checked_public_context) =
+            _model_context.into_checked_parts_v1();
+        let frame = OpaqueMtgoClassifiedCompetitivePregameFrameV1 {
+            _source_frame,
+            _checked_classification,
+            _response: _pregame_response,
+            commitments: commitments.source.clone(),
+        };
+        let witness = OpaqueMtgoCompetitivePregamePublicContextWitnessV1 {
+            _checked_public_context,
+            _response: _public_context_response,
+            commitments,
+        };
+        (frame, witness)
     }
 
     pub(crate) fn process_continuity_commitment_sha256_v1(&self) -> String {
