@@ -159,6 +159,36 @@ fn other_player(player: PlayerSeatV1) -> PlayerSeatV1 {
     }
 }
 
+fn swap_kernel_seat_strings(value: &mut Value) {
+    match value {
+        Value::String(text) if text == "P0" => *text = "P1".to_owned(),
+        Value::String(text) if text == "P1" => *text = "P0".to_owned(),
+        Value::String(text) if text == "p0" => *text = "p1".to_owned(),
+        Value::String(text) if text == "p1" => *text = "p0".to_owned(),
+        Value::Array(values) => values.iter_mut().for_each(swap_kernel_seat_strings),
+        Value::Object(fields) => fields.values_mut().for_each(swap_kernel_seat_strings),
+        _ => {}
+    }
+}
+
+fn swap_kernel_seats(record: MtgoObservedDecisionV1) -> MtgoObservedDecisionV1 {
+    let mut value = serde_json::to_value(record).unwrap();
+    swap_kernel_seat_strings(&mut value);
+    let mut swapped: MtgoObservedDecisionV1 = serde_json::from_value(value).unwrap();
+    let surface = &mut swapped.payload.observation.projection.surface;
+    surface.life_totals.swap(0, 1);
+    surface.mana_pools.swap(0, 1);
+    surface.hand_counts.swap(0, 1);
+    surface.library_counts.swap(0, 1);
+    surface.player_status.swap(0, 1);
+    surface.battlefield.swap(0, 1);
+    surface.graveyards.swap(0, 1);
+    swapped.payload.observation.known_library_cards.swap(0, 1);
+    swapped.payload.observation.known_hand_cards.swap(0, 1);
+    refresh_record_commitments(&mut swapped);
+    swapped
+}
+
 fn plotted_exile_card(
     owner: PlayerSeatV1,
     arena_id: u32,
@@ -239,7 +269,7 @@ fn validated_decision_projects_to_owned_visible_state_and_ordered_actions() {
 
     assert_eq!(
         input.current_state.acting_player,
-        decision.observation().acting_player
+        MtgoPlayerRelativeRoleV1::SeatedPlayer
     );
     assert_eq!(
         input.current_state.turn,
@@ -284,7 +314,12 @@ fn kernel_bookkeeping_and_transport_metadata_do_not_change_visible_input() {
     let mut battlefield_card = plotted_exile_card(actor, 9_003, 603, "Visible Card");
     battlefield_card.stable.zone = Zone::Battlefield;
     battlefield_card.plotted_turn = None;
-    original_record.payload.observation.projection.surface.battlefield[actor_index]
+    original_record
+        .payload
+        .observation
+        .projection
+        .surface
+        .battlefield[actor_index]
         .push(battlefield_card);
     refresh_record_commitments(&mut original_record);
     let original = validate_observed_decision_v1(original_record.clone()).unwrap();
@@ -317,6 +352,34 @@ fn kernel_bookkeeping_and_transport_metadata_do_not_change_visible_input() {
         changed_input.commitment_sha256_v1().unwrap(),
         original_input.commitment_sha256_v1().unwrap()
     );
+}
+
+#[test]
+fn kernel_seat_assignment_does_not_cross_the_player_visible_boundary() {
+    let original_record = valid_record();
+    let swapped_record = swap_kernel_seats(original_record.clone());
+    assert_ne!(
+        original_record.payload.observation.acting_player,
+        swapped_record.payload.observation.acting_player
+    );
+
+    let original = build_player_visible_duel_decision_input_v1(
+        &validate_observed_decision_v1(original_record).unwrap(),
+    )
+    .unwrap();
+    let swapped = build_player_visible_duel_decision_input_v1(
+        &validate_observed_decision_v1(swapped_record).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(original, swapped);
+    assert_eq!(
+        original.current_state.acting_player,
+        MtgoPlayerRelativeRoleV1::SeatedPlayer
+    );
+    let serialized = serde_json::to_string(&original).unwrap();
+    assert!(!serialized.contains("P0"));
+    assert!(!serialized.contains("P1"));
 }
 
 #[test]

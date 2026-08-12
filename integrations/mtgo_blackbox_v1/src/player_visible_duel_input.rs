@@ -12,6 +12,16 @@ use std::collections::HashMap;
 const PLAYER_VISIBLE_DUEL_DECISION_INPUT_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-duel-decision-input-v1";
 
+/// Player identity relative to the person seated at the approved MTGO
+/// account. Kernel seat labels are adapter bookkeeping and never enter the
+/// competitive model payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MtgoPlayerRelativeRoleV1 {
+    SeatedPlayer,
+    Opponent,
+}
+
 /// Adapter-local ordinal used only to link visible objects within one input.
 /// It is assigned from visible traversal and action order. No MTGO or kernel
 /// object, card-database, owner, controller, zone, or incarnation identifier is
@@ -26,7 +36,7 @@ pub struct MtgoPlayerVisibleObjectRefV1 {
 #[serde(tag = "target_kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MtgoPlayerVisibleTargetRefV1 {
     Player {
-        player: PlayerSeatV1,
+        player: MtgoPlayerRelativeRoleV1,
     },
     Object {
         object: MtgoPlayerVisibleObjectRefV1,
@@ -90,7 +100,7 @@ pub struct MtgoPlayerVisibleStackItemV1 {
     /// reconstructed visible stack label. Leave this absent rather than infer
     /// a name from the private card-database identifier in `source`.
     pub visible_source_name: Option<String>,
-    pub controller: PlayerSeatV1,
+    pub controller: MtgoPlayerRelativeRoleV1,
     pub visible_targets: Vec<MtgoPlayerVisibleTargetRefV1>,
     pub item_kind: StackItemKindV2,
 }
@@ -130,65 +140,65 @@ pub struct MtgoPlayerVisibleCombatStateV1 {
 #[serde(tag = "action_kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MtgoPlayerVisibleDuelActionV1 {
     Pass {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
     },
     PlayLand {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
     },
     CastSpell {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
     },
     ActivateManaAbility {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         mana_choice: Option<ManaColor>,
     },
     ActivateAbility {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         visible_choice_ordinal: u32,
     },
     PlotSpell {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
     },
     ChooseTarget {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         remaining: u8,
         target: MtgoPlayerVisibleTargetRefV1,
     },
     ChooseCostTarget {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         cost_kind: CostKind,
         remaining: u8,
         candidate: MtgoPlayerVisibleObjectRefV1,
     },
     ChooseCastMode {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         mode: CastMode,
     },
     ChooseKicker {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         pay: bool,
     },
     ChooseSpellMode {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         visible_choice_ordinal: u32,
     },
     ChooseEffectOption {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         visible_choice_ordinal: u32,
     },
     ChooseEffectTarget {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         target: MtgoPlayerVisibleTargetRefV1,
         selected_count: u16,
@@ -196,81 +206,81 @@ pub enum MtgoPlayerVisibleDuelActionV1 {
         max_targets: u16,
     },
     FinishEffectSelection {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         selected_count: u16,
     },
     ChooseEffectColor {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         color: ManaColor,
     },
     ChooseEffectNumber {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         number: i32,
         minimum: i32,
         maximum: i32,
     },
     ChooseEffectBoolean {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         value: bool,
     },
     FinishTargetSelection {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         selected_count: u16,
     },
     ChooseOptionalCostUse {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         use_cost: bool,
     },
     ChooseOptionalCostWhich {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         choice: OptionalCostChoice,
     },
     ChooseSpellCopyPayment {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         pay: bool,
     },
     ChooseSpellCopyRetarget {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         source: MtgoPlayerVisibleObjectRefV1,
         change_target: bool,
     },
     ChooseMadnessCast {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         card: MtgoPlayerVisibleObjectRefV1,
         cast_it: bool,
     },
     Discard {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         cards: Vec<MtgoPlayerVisibleObjectRefV1>,
     },
     DeclareAttackers {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         attackers: Vec<MtgoPlayerVisibleObjectRefV1>,
     },
     DeclareBlockersForAttacker {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         attacker: MtgoPlayerVisibleObjectRefV1,
         blockers: Vec<MtgoPlayerVisibleObjectRefV1>,
     },
     ChooseAttackerInclusion {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         attacker: MtgoPlayerVisibleObjectRefV1,
         include: bool,
     },
     ChooseBlockerInclusion {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         attacker: MtgoPlayerVisibleObjectRefV1,
         blocker: MtgoPlayerVisibleObjectRefV1,
         include: bool,
     },
     OrderTriggers {
-        actor: PlayerSeatV1,
+        actor: MtgoPlayerRelativeRoleV1,
         pending_sources: Vec<MtgoPlayerVisibleObjectRefV1>,
         ordered_sources: Vec<MtgoPlayerVisibleObjectRefV1>,
     },
@@ -293,12 +303,12 @@ pub enum MtgoPlayerVisibleDuelActionV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoPlayerVisibleDuelStateV1 {
-    pub acting_player: PlayerSeatV1,
+    pub acting_player: MtgoPlayerRelativeRoleV1,
     pub turn: u32,
     pub phase: ZoneIndependentStepV1,
-    pub active_player: PlayerSeatV1,
-    pub priority_player: PlayerSeatV1,
-    pub initiative: Option<PlayerSeatV1>,
+    pub active_player: MtgoPlayerRelativeRoleV1,
+    pub priority_player: MtgoPlayerRelativeRoleV1,
+    pub initiative: Option<MtgoPlayerRelativeRoleV1>,
     pub life_totals: [i32; 2],
     pub mana_pools: [[u8; 6]; 2],
     pub hand_counts: [usize; 2],
@@ -363,13 +373,15 @@ pub(crate) fn build_player_visible_duel_decision_input_from_parts_v1(
     ordered_actions: &[ActionSemanticV1],
 ) -> Result<MtgoPlayerVisibleDuelDecisionInputV1, MtgoContractErrorV1> {
     let surface = &observation.projection.surface;
+    let seated_player = observation.acting_player;
+    let opponent = other_player_v1(seated_player);
+    let seated_index = player_seat_index_v1(seated_player);
+    let opponent_index = player_seat_index_v1(opponent);
     let mut refs = VisibleObjectRefsV1::default();
-    for cards in &surface.battlefield {
-        refs.register_public_cards_v1(cards)?;
-    }
-    for cards in &surface.graveyards {
-        refs.register_public_cards_v1(cards)?;
-    }
+    refs.register_public_cards_v1(&surface.battlefield[seated_index])?;
+    refs.register_public_cards_v1(&surface.battlefield[opponent_index])?;
+    refs.register_public_cards_v1(&surface.graveyards[seated_index])?;
+    refs.register_public_cards_v1(&surface.graveyards[opponent_index])?;
     refs.register_public_cards_v1(&surface.exile)?;
     for item in &surface.stack {
         refs.register_v1(&item.source)?;
@@ -378,14 +390,14 @@ pub(crate) fn build_player_visible_duel_decision_input_from_parts_v1(
         }
     }
     refs.register_private_cards_v1(&observation.own_hand)?;
-    for cards in &observation.known_library_cards {
-        for card in cards {
-            refs.register_v1(&card.card.stable)?;
-        }
+    for card in &observation.known_library_cards[seated_index] {
+        refs.register_v1(&card.card.stable)?;
     }
-    for cards in &observation.known_hand_cards {
-        refs.register_private_cards_v1(cards)?;
+    for card in &observation.known_library_cards[opponent_index] {
+        refs.register_v1(&card.card.stable)?;
     }
+    refs.register_private_cards_v1(&observation.known_hand_cards[seated_index])?;
+    refs.register_private_cards_v1(&observation.known_hand_cards[opponent_index])?;
     for attacker in &surface.combat.ordered_attackers {
         refs.register_v1(attacker)?;
     }
@@ -416,37 +428,51 @@ pub(crate) fn build_player_visible_duel_decision_input_from_parts_v1(
 
     Ok(MtgoPlayerVisibleDuelDecisionInputV1 {
         current_state: MtgoPlayerVisibleDuelStateV1 {
-            acting_player: observation.acting_player,
+            acting_player: MtgoPlayerRelativeRoleV1::SeatedPlayer,
             turn: surface.turn,
             phase: surface.phase,
-            active_player: surface.active_player,
-            priority_player: surface.priority_player,
-            initiative: surface.initiative,
-            life_totals: surface.life_totals,
-            mana_pools: surface.mana_pools,
-            hand_counts: surface.hand_counts,
-            library_counts: surface.library_counts,
+            active_player: relative_player_v1(surface.active_player, seated_player),
+            priority_player: relative_player_v1(surface.priority_player, seated_player),
+            initiative: surface
+                .initiative
+                .map(|player| relative_player_v1(player, seated_player)),
+            life_totals: [
+                surface.life_totals[seated_index],
+                surface.life_totals[opponent_index],
+            ],
+            mana_pools: [
+                surface.mana_pools[seated_index],
+                surface.mana_pools[opponent_index],
+            ],
+            hand_counts: [
+                surface.hand_counts[seated_index],
+                surface.hand_counts[opponent_index],
+            ],
+            library_counts: [
+                surface.library_counts[seated_index],
+                surface.library_counts[opponent_index],
+            ],
             battlefield: [
-                map_results_v1(surface.battlefield[0].iter(), |card| {
+                map_results_v1(surface.battlefield[seated_index].iter(), |card| {
                     visible_battlefield_card_v1(card, &refs)
                 })?,
-                map_results_v1(surface.battlefield[1].iter(), |card| {
+                map_results_v1(surface.battlefield[opponent_index].iter(), |card| {
                     visible_battlefield_card_v1(card, &refs)
                 })?,
             ],
             graveyards: [
-                map_results_v1(surface.graveyards[0].iter(), |card| {
+                map_results_v1(surface.graveyards[seated_index].iter(), |card| {
                     visible_named_card_v1(&card.stable, &card.card_name, &refs)
                 })?,
-                map_results_v1(surface.graveyards[1].iter(), |card| {
+                map_results_v1(surface.graveyards[opponent_index].iter(), |card| {
                     visible_named_card_v1(&card.stable, &card.card_name, &refs)
                 })?,
             ],
             exile: map_results_v1(surface.exile.iter(), |card| {
-                visible_exile_card_v1(card, observation.acting_player, &refs)
+                visible_exile_card_v1(card, seated_player, &refs)
             })?,
             stack: map_results_v1(surface.stack.iter(), |item| {
-                visible_stack_item_v1(item, &refs)
+                visible_stack_item_v1(item, seated_player, &refs)
             })?,
             combat: visible_combat_state_v1(surface, &refs)?,
             visible_object_relations: map_results_v1(
@@ -457,20 +483,23 @@ pub(crate) fn build_player_visible_duel_decision_input_from_parts_v1(
                 visible_named_card_v1(&card.stable, &card.card_name, &refs)
             })?,
             known_library_cards: [
-                map_results_v1(observation.known_library_cards[0].iter(), |known| {
-                    visible_known_library_card_v1(known, &refs)
-                })?,
-                map_results_v1(observation.known_library_cards[1].iter(), |known| {
-                    visible_known_library_card_v1(known, &refs)
-                })?,
+                map_results_v1(
+                    observation.known_library_cards[seated_index].iter(),
+                    |known| visible_known_library_card_v1(known, &refs),
+                )?,
+                map_results_v1(
+                    observation.known_library_cards[opponent_index].iter(),
+                    |known| visible_known_library_card_v1(known, &refs),
+                )?,
             ],
             known_hand_cards: [
-                map_results_v1(observation.known_hand_cards[0].iter(), |card| {
+                map_results_v1(observation.known_hand_cards[seated_index].iter(), |card| {
                     visible_named_card_v1(&card.stable, &card.card_name, &refs)
                 })?,
-                map_results_v1(observation.known_hand_cards[1].iter(), |card| {
-                    visible_named_card_v1(&card.stable, &card.card_name, &refs)
-                })?,
+                map_results_v1(
+                    observation.known_hand_cards[opponent_index].iter(),
+                    |card| visible_named_card_v1(&card.stable, &card.card_name, &refs),
+                )?,
             ],
         },
         ordered_legal_actions: ordered_actions
@@ -484,7 +513,7 @@ pub(crate) fn build_player_visible_duel_decision_input_from_parts_v1(
                             "visible legal-action count exceeds the supported ordinal range",
                         )
                     })?;
-                visible_action_v1(action, visible_choice_ordinal, &refs)
+                visible_action_v1(action, visible_choice_ordinal, seated_player, &refs)
             })
             .collect::<Result<Vec<_>, _>>()?,
     })
@@ -729,15 +758,16 @@ fn visible_battlefield_card_v1(
 
 fn visible_stack_item_v1(
     item: &StackItemPublicV2,
+    seated_player: PlayerSeatV1,
     refs: &VisibleObjectRefsV1,
 ) -> Result<MtgoPlayerVisibleStackItemV1, MtgoContractErrorV1> {
     Ok(MtgoPlayerVisibleStackItemV1 {
         visible_stack_position: item.stack_index,
         source_object_ref: refs.get_v1(&item.source)?,
         visible_source_name: None,
-        controller: item.controller,
+        controller: relative_player_v1(item.controller, seated_player),
         visible_targets: map_results_v1(item.targets.iter(), |target| {
-            visible_target_v1(target, refs)
+            visible_target_v1(target, seated_player, refs)
         })?,
         item_kind: item.stack_item_kind,
     })
@@ -745,12 +775,13 @@ fn visible_stack_item_v1(
 
 fn visible_target_v1(
     target: &TargetRefV1,
+    seated_player: PlayerSeatV1,
     refs: &VisibleObjectRefsV1,
 ) -> Result<MtgoPlayerVisibleTargetRefV1, MtgoContractErrorV1> {
     match target {
-        TargetRefV1::Player { player } => {
-            Ok(MtgoPlayerVisibleTargetRefV1::Player { player: *player })
-        }
+        TargetRefV1::Player { player } => Ok(MtgoPlayerVisibleTargetRefV1::Player {
+            player: relative_player_v1(*player, seated_player),
+        }),
         TargetRefV1::Object { object } => Ok(MtgoPlayerVisibleTargetRefV1::Object {
             object: refs.get_v1(object)?,
         }),
@@ -805,18 +836,21 @@ fn visible_object_relation_v1(
 fn visible_action_v1(
     action: &ActionSemanticV1,
     visible_choice_ordinal: u32,
+    seated_player: PlayerSeatV1,
     refs: &VisibleObjectRefsV1,
 ) -> Result<MtgoPlayerVisibleDuelActionV1, MtgoContractErrorV1> {
     use ActionSemanticV1 as A;
     use MtgoPlayerVisibleDuelActionV1 as V;
     Ok(match action {
-        A::Pass { actor } => V::Pass { actor: *actor },
+        A::Pass { actor } => V::Pass {
+            actor: relative_player_v1(*actor, seated_player),
+        },
         A::PlayLand { actor, source } => V::PlayLand {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
         },
         A::CastSpell { actor, source } => V::CastSpell {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
         },
         A::ActivateManaAbility {
@@ -824,7 +858,7 @@ fn visible_action_v1(
             source,
             mana_choice,
         } => V::ActivateManaAbility {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             mana_choice: *mana_choice,
         },
@@ -833,12 +867,12 @@ fn visible_action_v1(
             source,
             ability_index: _,
         } => V::ActivateAbility {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             visible_choice_ordinal,
         },
         A::PlotSpell { actor, source } => V::PlotSpell {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
         },
         A::ChooseTarget {
@@ -847,10 +881,10 @@ fn visible_action_v1(
             remaining,
             target,
         } => V::ChooseTarget {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             remaining: *remaining,
-            target: visible_target_v1(target, refs)?,
+            target: visible_target_v1(target, seated_player, refs)?,
         },
         A::ChooseCostTarget {
             actor,
@@ -859,7 +893,7 @@ fn visible_action_v1(
             remaining,
             candidate,
         } => V::ChooseCostTarget {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             cost_kind: *cost_kind,
             remaining: *remaining,
@@ -870,12 +904,12 @@ fn visible_action_v1(
             source,
             mode,
         } => V::ChooseCastMode {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             mode: *mode,
         },
         A::ChooseKicker { actor, source, pay } => V::ChooseKicker {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             pay: *pay,
         },
@@ -885,7 +919,7 @@ fn visible_action_v1(
             mode_index: _,
             mode_count: _,
         } => V::ChooseSpellMode {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             visible_choice_ordinal,
         },
@@ -895,7 +929,7 @@ fn visible_action_v1(
             option_index: _,
             option_count: _,
         } => V::ChooseEffectOption {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             visible_choice_ordinal,
         },
@@ -907,9 +941,9 @@ fn visible_action_v1(
             min_targets,
             max_targets,
         } => V::ChooseEffectTarget {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
-            target: visible_target_v1(target, refs)?,
+            target: visible_target_v1(target, seated_player, refs)?,
             selected_count: *selected_count,
             min_targets: *min_targets,
             max_targets: *max_targets,
@@ -919,7 +953,7 @@ fn visible_action_v1(
             source,
             selected_count,
         } => V::FinishEffectSelection {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             selected_count: *selected_count,
         },
@@ -928,7 +962,7 @@ fn visible_action_v1(
             source,
             color,
         } => V::ChooseEffectColor {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             color: *color,
         },
@@ -939,7 +973,7 @@ fn visible_action_v1(
             minimum,
             maximum,
         } => V::ChooseEffectNumber {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             number: *number,
             minimum: *minimum,
@@ -950,7 +984,7 @@ fn visible_action_v1(
             source,
             value,
         } => V::ChooseEffectBoolean {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             value: *value,
         },
@@ -959,20 +993,20 @@ fn visible_action_v1(
             source,
             selected_count,
         } => V::FinishTargetSelection {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             selected_count: *selected_count,
         },
         A::ChooseOptionalCostUse { actor, use_cost } => V::ChooseOptionalCostUse {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             use_cost: *use_cost,
         },
         A::ChooseOptionalCostWhich { actor, choice } => V::ChooseOptionalCostWhich {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             choice: *choice,
         },
         A::ChooseSpellCopyPayment { actor, source, pay } => V::ChooseSpellCopyPayment {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             pay: *pay,
         },
@@ -981,7 +1015,7 @@ fn visible_action_v1(
             source,
             change_target,
         } => V::ChooseSpellCopyRetarget {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             source: refs.get_v1(source)?,
             change_target: *change_target,
         },
@@ -990,16 +1024,16 @@ fn visible_action_v1(
             card,
             cast_it,
         } => V::ChooseMadnessCast {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             card: refs.get_v1(card)?,
             cast_it: *cast_it,
         },
         A::Discard { actor, cards } => V::Discard {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             cards: map_results_v1(cards.iter(), |card| refs.get_v1(card))?,
         },
         A::DeclareAttackers { actor, attackers } => V::DeclareAttackers {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             attackers: map_results_v1(attackers.iter(), |attacker| refs.get_v1(attacker))?,
         },
         A::DeclareBlockersForAttacker {
@@ -1007,7 +1041,7 @@ fn visible_action_v1(
             attacker,
             blockers,
         } => V::DeclareBlockersForAttacker {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             attacker: refs.get_v1(attacker)?,
             blockers: map_results_v1(blockers.iter(), |blocker| refs.get_v1(blocker))?,
         },
@@ -1016,7 +1050,7 @@ fn visible_action_v1(
             attacker,
             include,
         } => V::ChooseAttackerInclusion {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             attacker: refs.get_v1(attacker)?,
             include: *include,
         },
@@ -1026,7 +1060,7 @@ fn visible_action_v1(
             blocker,
             include,
         } => V::ChooseBlockerInclusion {
-            actor: *actor,
+            actor: relative_player_v1(*actor, seated_player),
             attacker: refs.get_v1(attacker)?,
             blocker: refs.get_v1(blocker)?,
             include: *include,
@@ -1050,7 +1084,7 @@ fn visible_action_v1(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             V::OrderTriggers {
-                actor: *actor,
+                actor: relative_player_v1(*actor, seated_player),
                 pending_sources: visible_pending_sources,
                 ordered_sources,
             }
@@ -1070,6 +1104,31 @@ where
     F: FnMut(&'a T) -> Result<U, MtgoContractErrorV1>,
 {
     values.into_iter().map(&mut map).collect()
+}
+
+fn relative_player_v1(
+    player: PlayerSeatV1,
+    seated_player: PlayerSeatV1,
+) -> MtgoPlayerRelativeRoleV1 {
+    if player == seated_player {
+        MtgoPlayerRelativeRoleV1::SeatedPlayer
+    } else {
+        MtgoPlayerRelativeRoleV1::Opponent
+    }
+}
+
+fn other_player_v1(player: PlayerSeatV1) -> PlayerSeatV1 {
+    match player {
+        PlayerSeatV1::P0 => PlayerSeatV1::P1,
+        PlayerSeatV1::P1 => PlayerSeatV1::P0,
+    }
+}
+
+fn player_seat_index_v1(player: PlayerSeatV1) -> usize {
+    match player {
+        PlayerSeatV1::P0 => 0,
+        PlayerSeatV1::P1 => 1,
+    }
 }
 
 fn error_v1(code: &'static str, detail: &'static str) -> MtgoContractErrorV1 {

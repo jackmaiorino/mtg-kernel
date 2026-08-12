@@ -350,7 +350,7 @@ fn finish_v1(
 
 fn player_visible_action_actor_v1(
     action: &MtgoPlayerVisibleDuelActionV1,
-) -> mtg_kernel::rl::PlayerSeatV1 {
+) -> crate::MtgoPlayerRelativeRoleV1 {
     match action {
         MtgoPlayerVisibleDuelActionV1::Pass { actor }
         | MtgoPlayerVisibleDuelActionV1::PlayLand { actor, .. }
@@ -439,7 +439,7 @@ mod tests {
         ));
         assert_eq!(
             visible_input.current_state.acting_player,
-            crate::PlayerSeatV1::P0
+            crate::MtgoPlayerRelativeRoleV1::SeatedPlayer
         );
         let json = serde_json::to_value(visible_input).unwrap();
         fn reject_forbidden_keys(value: &serde_json::Value) {
