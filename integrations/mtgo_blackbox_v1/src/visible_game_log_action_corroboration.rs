@@ -11,6 +11,7 @@ use std::collections::{BTreeSet, HashSet};
 const ACTION_BASELINE_DOMAIN_V1: &[u8] = b"mtgo-player-visible-game-log-action-baseline-v1";
 const ACTION_CORROBORATION_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-game-log-action-corroboration-v1";
+const ACTION_DECISION_DOMAIN_V1: &[u8] = b"mtgo-player-visible-game-log-action-decision-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +62,7 @@ pub struct CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1 {
     prior_visible_source_prefix_commitment_sha256: String,
     expected: PrivateExpectedVisibleEventV1,
     kind: MtgoVisibleGameLogActionCorroborationKindV1,
+    player_visible_decision_commitment_sha256: String,
     baseline_commitment_sha256: String,
 }
 
@@ -107,6 +109,14 @@ pub struct CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1 {
 }
 
 impl CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1 {
+    pub(crate) fn baseline_commitment_sha256_v1(&self) -> &str {
+        self._baseline.baseline_commitment_sha256_v1()
+    }
+
+    pub(crate) fn player_visible_decision_commitment_sha256_v1(&self) -> &str {
+        &self._baseline.player_visible_decision_commitment_sha256
+    }
+
     pub fn kind_v1(&self) -> MtgoVisibleGameLogActionCorroborationKindV1 {
         self.kind
     }
@@ -167,12 +177,15 @@ pub fn begin_checked_untrusted_player_visible_game_log_action_baseline_v1(
         })?;
     let decision_bytes = serde_json::to_vec(decision)
         .map_err(|error| error_v1("visible_game_log_action_serialization", error.to_string()))?;
+    let player_visible_decision_commitment_sha256 =
+        commitment_v1(ACTION_DECISION_DOMAIN_V1, &[&decision_bytes]);
     let prior_bytes = serde_json::to_vec(&prior_events)
         .map_err(|error| error_v1("visible_game_log_action_serialization", error.to_string()))?;
     let baseline_commitment_sha256 = commitment_v1(
         ACTION_BASELINE_DOMAIN_V1,
         &[
             &decision_bytes,
+            player_visible_decision_commitment_sha256.as_bytes(),
             &prior_bytes,
             &(prior_source_record_count as u64).to_be_bytes(),
             prior_visible_source_prefix_commitment_sha256.as_bytes(),
@@ -185,8 +198,17 @@ pub fn begin_checked_untrusted_player_visible_game_log_action_baseline_v1(
         prior_visible_source_prefix_commitment_sha256,
         expected,
         kind,
+        player_visible_decision_commitment_sha256,
         baseline_commitment_sha256,
     })
+}
+
+pub(crate) fn player_visible_game_log_action_decision_commitment_v1(
+    decision: &MtgoPlayerVisibleConfirmedDuelDecisionV1,
+) -> Result<String, MtgoContractErrorV1> {
+    let bytes = serde_json::to_vec(decision)
+        .map_err(|error| error_v1("visible_game_log_action_serialization", error.to_string()))?;
+    Ok(commitment_v1(ACTION_DECISION_DOMAIN_V1, &[&bytes]))
 }
 
 pub fn corroborate_checked_untrusted_player_visible_game_log_action_v1(
