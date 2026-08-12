@@ -68,7 +68,7 @@ pub fn visible_native_sideboard_configuration_v1(
         mainboard: convert(&configuration.mainboard),
         sideboard: convert(&configuration.sideboard),
     };
-    validate_configuration_v1(&visible)?;
+    validate_native_sideboard_configuration_v1(&visible)?;
     Ok(visible)
 }
 
@@ -95,7 +95,7 @@ pub fn validate_competitive_native_sideboard_model_input_v1(
     {
         return Err("native sideboard player-visible deck size rules are invalid".to_owned());
     }
-    validate_configuration_v1(&input.current_configuration)?;
+    validate_native_sideboard_configuration_v1(&input.current_configuration)?;
     Ok(())
 }
 
@@ -111,7 +111,7 @@ pub fn validate_competitive_native_sideboard_model_selection_v1(
     selection: &MtgoCompetitiveNativeSideboardModelSelectionV1,
 ) -> Result<(), String> {
     validate_competitive_native_sideboard_model_input_v1(input)?;
-    validate_configuration_v1(&selection.target_configuration)?;
+    validate_native_sideboard_configuration_v1(&selection.target_configuration)?;
     if partition_total_v1(&selection.target_configuration.mainboard)? < MIN_MAINBOARD_CARDS_V1
         || partition_total_v1(&selection.target_configuration.sideboard)? > MAX_SIDEBOARD_CARDS_V1
     {
@@ -145,7 +145,7 @@ pub fn competitive_native_sideboard_model_selection_commitment_v1(
     ))
 }
 
-fn validate_configuration_v1(
+pub(crate) fn validate_native_sideboard_configuration_v1(
     configuration: &MtgoCompetitiveNativeSideboardConfigurationV1,
 ) -> Result<(), String> {
     if configuration.mainboard.is_empty()
@@ -156,10 +156,12 @@ fn validate_configuration_v1(
     }
     let mainboard_total = validate_partition_v1(&configuration.mainboard, "mainboard")?;
     let sideboard_total = validate_partition_v1(&configuration.sideboard, "sideboard")?;
-    if mainboard_total
-        .checked_add(sideboard_total)
-        .filter(|total| *total <= MAX_TOTAL_CARDS_V1)
-        .is_none()
+    if mainboard_total < MIN_MAINBOARD_CARDS_V1
+        || sideboard_total > MAX_SIDEBOARD_CARDS_V1
+        || mainboard_total
+            .checked_add(sideboard_total)
+            .filter(|total| *total <= MAX_TOTAL_CARDS_V1)
+            .is_none()
     {
         return Err("native sideboard configuration total is invalid".to_owned());
     }

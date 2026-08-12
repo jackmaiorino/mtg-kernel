@@ -33,6 +33,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub native_checkpoint_duel_action_interface_present: bool,
     pub native_checkpoint_pregame_interface_present: bool,
     pub competitive_player_visible_pregame_request_contract_present: bool,
+    pub competitive_pregame_player_known_submitted_deck_configuration_present: bool,
     pub competitive_pregame_player_known_deck_configuration_present: bool,
     pub competitive_pregame_public_context_contract_present: bool,
     pub competitive_pregame_play_draw_context_present: bool,
@@ -97,6 +98,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             native_checkpoint_duel_action_interface_present: true,
             native_checkpoint_pregame_interface_present: false,
             competitive_player_visible_pregame_request_contract_present: true,
+            competitive_pregame_player_known_submitted_deck_configuration_present: true,
             competitive_pregame_player_known_deck_configuration_present: false,
             competitive_pregame_public_context_contract_present: true,
             competitive_pregame_play_draw_context_present: true,
@@ -206,6 +208,11 @@ mod tests {
             !report
                 .known_wiring_gaps
                 .competitive_pregame_player_known_deck_configuration_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .competitive_pregame_player_known_submitted_deck_configuration_present
         );
         assert!(
             report

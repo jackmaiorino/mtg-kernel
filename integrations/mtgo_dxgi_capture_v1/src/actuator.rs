@@ -2262,6 +2262,7 @@ pub struct MtgoCompetitiveNativePregameModelInputV1 {
     pub play_draw: mtgo_blackbox_v1::MtgoCompetitivePregamePlayDrawV1,
     pub acting_player_games_won: u8,
     pub opponent_games_won: u8,
+    pub player_known_deck_configuration: crate::MtgoCompetitiveNativeSideboardConfigurationV1,
     pub stage: MtgoCompetitivePregameStageV1,
     pub prospective_keep_size: Option<u8>,
     pub required_bottom_count: u8,
@@ -7084,6 +7085,7 @@ pub fn bind_competitive_event_pregame_native_request_v1(
     runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
     match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
     context: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+    deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
 ) -> Result<OpaqueMtgoCompetitiveNativePregameRequestV1, String> {
     let runtime_frame = runtime.current_frame.commitments_v1();
     if runtime.commitments.current_frame_id != runtime_frame.frame_id
@@ -7137,6 +7139,7 @@ pub fn bind_competitive_event_pregame_native_request_v1(
         &runtime.commitments,
         &context_commitments,
         response,
+        deck_manifest,
     )?;
     let observation = OpaqueMtgoCompetitivePregameObservationV1 {
         _classified_source: Some(
@@ -7192,6 +7195,7 @@ fn competitive_native_pregame_model_input_from_parts_v1(
     runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
     context: &crate::probe::MtgoClassifiedCompetitivePregameModelContextCommitmentsV1,
     response: &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1,
+    deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
 ) -> Result<MtgoCompetitiveNativePregameModelInputV1, String> {
     runtime
         .current_match_identity_sha256
@@ -7204,6 +7208,14 @@ fn competitive_native_pregame_model_input_from_parts_v1(
         return Err(
             "native pregame request for game two or three requires a retained exact post-sideboard configuration"
                 .to_owned(),
+        );
+    }
+    if deck_manifest.manifest_commitment_sha256() != runtime.deck_manifest_sha256
+        || deck_manifest.deck_list_sha256() != runtime.deck_list_sha256
+        || deck_manifest.format_sha256() != runtime.deck_format_sha256
+    {
+        return Err(
+            "native pregame request changed the exact submitted deck configuration".to_owned(),
         );
     }
     if context.game_number != game_number
@@ -7335,6 +7347,9 @@ fn competitive_native_pregame_model_input_from_parts_v1(
         play_draw: context.play_draw,
         acting_player_games_won: context.acting_player_games_won,
         opponent_games_won: context.opponent_games_won,
+        player_known_deck_configuration: visible_native_sideboard_configuration_v1(
+            deck_manifest.configuration_v1(),
+        )?,
         stage,
         prospective_keep_size,
         required_bottom_count,
@@ -7352,8 +7367,9 @@ fn competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
     runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
     context: &crate::probe::MtgoClassifiedCompetitivePregameModelContextCommitmentsV1,
     response: &mtgo_blackbox_v1::MtgoCompetitivePregameClassifierResponseV1,
+    deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
 ) -> Result<MtgoCompetitiveNativePregameModelInputV1, String> {
-    competitive_native_pregame_model_input_from_parts_v1(runtime, context, response)
+    competitive_native_pregame_model_input_from_parts_v1(runtime, context, response, deck_manifest)
 }
 
 pub fn competitive_native_pregame_model_input_commitment_v1(
@@ -7382,6 +7398,9 @@ pub fn validate_competitive_native_pregame_model_input_v1(
     {
         return Err("native pregame request scope or completeness is invalid".to_owned());
     }
+    crate::competitive_native_sideboard::validate_native_sideboard_configuration_v1(
+        &model_input.player_known_deck_configuration,
+    )?;
     if model_input.ordered_visible_cards.len() != 7
         || model_input.ordered_actions.is_empty()
         || model_input.ordered_confirmed_bottom_slots.len()
@@ -15903,11 +15922,12 @@ fn update_hash_part_v3(hasher: &mut Sha256, part: &[u8]) {
 mod tests {
     use super::*;
     use mtgo_blackbox_v1::{
-        check_untrusted_authorization_correspondence_v1,
+        check_untrusted_authorization_correspondence_v1, validate_competitive_deck_manifest_v1,
         validate_visible_competitive_lifecycle_snapshot_v1,
-        MtgoAuthorizationCorrespondenceReviewV1, MtgoLifecycleVisibleFactKindV1,
-        MtgoLifecycleVisibleFactV1, MtgoRectPxV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
-        MTGO_AUTHORIZATION_CORRESPONDENCE_REVIEW_SCHEMA_V1,
+        MtgoAuthorizationCorrespondenceReviewV1, MtgoCompetitiveDeckCardCountV1,
+        MtgoCompetitiveDeckManifestV1, MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1,
+        MtgoRectPxV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
+        MTGO_AUTHORIZATION_CORRESPONDENCE_REVIEW_SCHEMA_V1, MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
     };
 
     fn authorized_scope_v3(alias: &str) -> MtgoAuthorizationScopeV1 {
@@ -16331,6 +16351,50 @@ mod tests {
             terminal_event_record_confirmed: false,
             closed_to_event_browser: false,
         }
+    }
+
+    fn competitive_native_pregame_deck_manifest_v1() -> ValidatedMtgoCompetitiveDeckManifestV1 {
+        let mut configuration = MtgoCompetitiveDeckConfigurationV1 {
+            mainboard: vec![
+                MtgoCompetitiveDeckCardCountV1 {
+                    card_db_id: mtg_kernel::card_def::card_id_by_name("Mountain").unwrap(),
+                    card_name: "Mountain".to_owned(),
+                    count: 56,
+                },
+                MtgoCompetitiveDeckCardCountV1 {
+                    card_db_id: mtg_kernel::card_def::card_id_by_name("Lightning Bolt").unwrap(),
+                    card_name: "Lightning Bolt".to_owned(),
+                    count: 4,
+                },
+            ],
+            sideboard: vec![MtgoCompetitiveDeckCardCountV1 {
+                card_db_id: mtg_kernel::card_def::card_id_by_name("Searing Blaze").unwrap(),
+                card_name: "Searing Blaze".to_owned(),
+                count: 15,
+            }],
+        };
+        configuration.mainboard.sort_by_key(|card| card.card_db_id);
+        validate_competitive_deck_manifest_v1(MtgoCompetitiveDeckManifestV1 {
+            schema_version: MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
+            deck_list_sha256: "a".repeat(64),
+            format_sha256: "1".repeat(64),
+            starting_mainboard_count: 60,
+            starting_sideboard_count: 15,
+            configuration,
+        })
+        .unwrap()
+    }
+
+    fn competitive_native_pregame_runtime_and_deck_v1() -> (
+        MtgoCompetitiveEventRuntimeCommitmentsV1,
+        ValidatedMtgoCompetitiveDeckManifestV1,
+    ) {
+        let deck_manifest = competitive_native_pregame_deck_manifest_v1();
+        let mut runtime = competitive_event_runtime_commitments_fixture_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+        );
+        runtime.deck_manifest_sha256 = deck_manifest.manifest_commitment_sha256().to_owned();
+        (runtime, deck_manifest)
     }
 
     fn competitive_pregame_observation_fixture_v1(
@@ -20431,19 +20495,29 @@ mod tests {
 
     #[test]
     fn native_pregame_request_is_exact_visible_game_one_candidate_only() {
-        let runtime = competitive_event_runtime_commitments_fixture_v1(
-            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
-        );
+        let (runtime, deck_manifest) = competitive_native_pregame_runtime_and_deck_v1();
         let response = competitive_native_pregame_mulligan_response_v1(7);
         let context = competitive_native_pregame_context_fixture_v1(&response, 1, 0, 0);
         let model_input = competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
-            &runtime, &context, &response,
+            &runtime,
+            &context,
+            &response,
+            &deck_manifest,
         )
         .unwrap();
 
         validate_competitive_native_pregame_model_input_v1(&model_input).unwrap();
         assert_eq!(model_input.game_number, 1);
         assert_eq!(model_input.ordered_visible_cards.len(), 7);
+        assert_eq!(
+            model_input
+                .player_known_deck_configuration
+                .mainboard
+                .iter()
+                .map(|card| u32::from(card.count))
+                .sum::<u32>(),
+            60
+        );
         assert_eq!(
             model_input.ordered_actions,
             vec![
@@ -20466,7 +20540,7 @@ mod tests {
             "authorization",
             "capture",
             "classifier",
-            "deck_manifest",
+            "card_db_id",
             "policy_deployment",
         ] {
             assert!(!serialized.contains(forbidden));
@@ -20474,10 +20548,27 @@ mod tests {
     }
 
     #[test]
-    fn native_pregame_request_rejects_later_game_and_unretained_bottom_history() {
-        let mut runtime = competitive_event_runtime_commitments_fixture_v1(
-            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+    fn native_pregame_request_rejects_a_different_submitted_deck() {
+        let (mut runtime, deck_manifest) = competitive_native_pregame_runtime_and_deck_v1();
+        runtime.deck_list_sha256 = "f".repeat(64);
+        let response = competitive_native_pregame_mulligan_response_v1(7);
+        let context = competitive_native_pregame_context_fixture_v1(&response, 1, 0, 0);
+
+        assert!(
+            competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
+                &runtime,
+                &context,
+                &response,
+                &deck_manifest,
+            )
+            .unwrap_err()
+            .contains("exact submitted deck configuration")
         );
+    }
+
+    #[test]
+    fn native_pregame_request_rejects_later_game_and_unretained_bottom_history() {
+        let (mut runtime, deck_manifest) = competitive_native_pregame_runtime_and_deck_v1();
         runtime.current_game_number = Some(2);
         let game_two_response = competitive_native_pregame_mulligan_response_v1(7);
         let game_two_context =
@@ -20487,6 +20578,7 @@ mod tests {
                 &runtime,
                 &game_two_context,
                 &game_two_response,
+                &deck_manifest,
             )
             .unwrap_err()
             .contains("post-sideboard configuration")
@@ -20501,6 +20593,7 @@ mod tests {
                 &runtime,
                 &bottoming_context,
                 &bottoming_response,
+                &deck_manifest,
             )
             .unwrap_err()
             .contains("ordered confirmed bottom history")
@@ -20509,13 +20602,14 @@ mod tests {
 
     #[test]
     fn native_pregame_request_detects_semantic_mutation() {
-        let runtime = competitive_event_runtime_commitments_fixture_v1(
-            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
-        );
+        let (runtime, deck_manifest) = competitive_native_pregame_runtime_and_deck_v1();
         let response = competitive_native_pregame_mulligan_response_v1(7);
         let context = competitive_native_pregame_context_fixture_v1(&response, 1, 0, 0);
         let model_input = competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
-            &runtime, &context, &response,
+            &runtime,
+            &context,
+            &response,
+            &deck_manifest,
         )
         .unwrap();
 
@@ -20528,6 +20622,13 @@ mod tests {
             original_commitment
         );
 
+        let mut changed_deck = model_input.clone();
+        changed_deck.player_known_deck_configuration.mainboard[0].count -= 1;
+        assert_ne!(
+            competitive_native_pregame_model_input_commitment_v1(&changed_deck).unwrap(),
+            original_commitment
+        );
+
         let mut changed_action = model_input;
         changed_action.ordered_actions.swap(0, 1);
         assert!(validate_competitive_native_pregame_model_input_v1(&changed_action).is_err());
@@ -20535,13 +20636,14 @@ mod tests {
 
     #[test]
     fn native_pregame_request_rejects_reordered_london_actions_and_bad_history() {
-        let runtime = competitive_event_runtime_commitments_fixture_v1(
-            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
-        );
+        let (runtime, deck_manifest) = competitive_native_pregame_runtime_and_deck_v1();
         let response = competitive_pregame_bottoming_response_v1(2, &[]);
         let context = competitive_native_pregame_context_fixture_v1(&response, 1, 0, 0);
         let model_input = competitive_native_pregame_model_input_from_checked_parts_for_tests_v1(
-            &runtime, &context, &response,
+            &runtime,
+            &context,
+            &response,
+            &deck_manifest,
         )
         .unwrap();
         validate_competitive_native_pregame_model_input_v1(&model_input).unwrap();

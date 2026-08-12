@@ -192,6 +192,68 @@ fn native_sideboard_live_binder_is_visible_outcome_bound_and_non_actuating() {
 }
 
 #[test]
+fn native_pregame_payload_includes_only_player_known_deck_semantics() {
+    let source = include_str!("../src/actuator.rs");
+    let start = source
+        .find("pub struct MtgoCompetitiveNativePregameModelInputV1")
+        .expect("native pregame model input must exist");
+    let end = source[start..]
+        .find("\n}\n\n/// Move-only source-bound request")
+        .map(|offset| start + offset)
+        .expect("native pregame model input must have one exact struct body")
+        + 2;
+    let payload = &source[start..end];
+    for required in [
+        "player_known_deck_configuration",
+        "MtgoCompetitiveNativeSideboardConfigurationV1",
+        "ordered_visible_cards",
+        "ordered_confirmed_bottom_slots",
+        "ordered_actions",
+    ] {
+        assert!(
+            payload.contains(required),
+            "native pregame visible payload is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "card_db_id",
+        "sha256",
+        "event_identity",
+        "match_identity",
+        "authorization",
+        "capture",
+        "classifier",
+        "deck_manifest",
+        "policy_deployment",
+    ] {
+        assert!(
+            !payload.contains(forbidden),
+            "native pregame payload exposes adapter metadata: {forbidden}"
+        );
+    }
+    let binder_start = source
+        .find("pub fn bind_competitive_event_pregame_native_request_v1")
+        .expect("native pregame binder must exist");
+    let binder_end = source[binder_start..]
+        .find("pub fn competitive_native_pregame_model_input_commitment_v1")
+        .map(|offset| binder_start + offset)
+        .expect("native pregame binder must end before its commitment helper");
+    let binder = &source[binder_start..binder_end];
+    for required in [
+        "deck_manifest.manifest_commitment_sha256() != runtime.deck_manifest_sha256",
+        "deck_manifest.deck_list_sha256() != runtime.deck_list_sha256",
+        "deck_manifest.format_sha256() != runtime.deck_format_sha256",
+        "visible_native_sideboard_configuration_v1",
+        "deck_manifest.configuration_v1()",
+    ] {
+        assert!(
+            binder.contains(required),
+            "native pregame binder does not retain the exact submitted deck: {required}"
+        );
+    }
+}
+
+#[test]
 fn acting_player_duel_mode_is_role_explicit_and_still_non_actionable() {
     let library = include_str!("../src/lib.rs");
     let probe = include_str!("../src/probe.rs");
@@ -1677,6 +1739,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "native_checkpoint_duel_action_interface_present: true",
         "native_checkpoint_pregame_interface_present: false",
         "competitive_player_visible_pregame_request_contract_present: true",
+        "competitive_pregame_player_known_submitted_deck_configuration_present: true",
         "competitive_pregame_player_known_deck_configuration_present: false",
         "competitive_pregame_play_draw_context_present: true",
         "competitive_pregame_match_score_context_present: true",
@@ -1728,6 +1791,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "public_model_owned_duel_action_path_present: true",
         "native_checkpoint_pregame_interface_present: false",
         "public_player_visible_pregame_request_contract_present: true",
+        "public_player_known_submitted_pregame_deck_configuration_present: true",
         "public_player_known_pregame_deck_configuration_present: false",
         "public_model_owned_pregame_action_path_present: false",
         "native_checkpoint_sideboard_interface_present: false",
