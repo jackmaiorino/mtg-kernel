@@ -24,6 +24,8 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub player_visible_information_boundary_is_transport_independent: bool,
     pub pixels_only_transport_required: bool,
     pub hidden_client_state_permitted: bool,
+    pub visible_accessibility_requires_pixel_corroboration: bool,
+    pub raw_accessibility_metadata_permitted_as_semantic_input: bool,
     pub persisted_visible_game_log_parser_present: bool,
     pub nonrendered_game_log_metadata_discarded: bool,
     pub process_epoch_game_log_binding_present: bool,
@@ -56,6 +58,8 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         player_visible_information_boundary_is_transport_independent: true,
         pixels_only_transport_required: false,
         hidden_client_state_permitted: false,
+        visible_accessibility_requires_pixel_corroboration: true,
+        raw_accessibility_metadata_permitted_as_semantic_input: false,
         persisted_visible_game_log_parser_present: true,
         nonrendered_game_log_metadata_discarded: true,
         process_epoch_game_log_binding_present: true,
@@ -92,6 +96,8 @@ mod tests {
         assert!(report.player_visible_information_boundary_is_transport_independent);
         assert!(!report.pixels_only_transport_required);
         assert!(!report.hidden_client_state_permitted);
+        assert!(report.visible_accessibility_requires_pixel_corroboration);
+        assert!(!report.raw_accessibility_metadata_permitted_as_semantic_input);
         assert!(report.persisted_visible_game_log_parser_present);
         assert!(report.nonrendered_game_log_metadata_discarded);
         assert!(report.process_epoch_game_log_binding_present);
