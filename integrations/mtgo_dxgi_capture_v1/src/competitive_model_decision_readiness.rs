@@ -19,6 +19,7 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub player_visible_duel_gesture_to_opaque_control_join_present: bool,
     pub player_visible_duel_gesture_kernel_object_references_withheld: bool,
     pub player_visible_duel_source_gesture_target_protocol_present: bool,
+    pub player_visible_duel_gesture_target_classifier_present: bool,
     pub player_visible_duel_source_gesture_target_pixels_rehashed: bool,
     pub player_visible_duel_gesture_target_protocol_ratified: bool,
     pub player_visible_duel_gesture_continuation_target_binding_present: bool,
@@ -57,6 +58,7 @@ impl MtgoCompetitiveModelDecisionReadinessV1 {
             && self.player_visible_duel_gesture_to_opaque_control_join_present
             && self.player_visible_duel_gesture_kernel_object_references_withheld
             && self.player_visible_duel_source_gesture_target_protocol_present
+            && self.player_visible_duel_gesture_target_classifier_present
             && self.player_visible_duel_source_gesture_target_pixels_rehashed
             && self.player_visible_duel_gesture_target_protocol_ratified
             && self.player_visible_duel_gesture_continuation_target_binding_present
@@ -97,6 +99,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         player_visible_duel_gesture_to_opaque_control_join_present: true,
         player_visible_duel_gesture_kernel_object_references_withheld: true,
         player_visible_duel_source_gesture_target_protocol_present: true,
+        player_visible_duel_gesture_target_classifier_present: true,
         player_visible_duel_source_gesture_target_pixels_rehashed: true,
         player_visible_duel_gesture_target_protocol_ratified: false,
         player_visible_duel_gesture_continuation_target_binding_present: true,
@@ -151,6 +154,7 @@ mod tests {
         assert!(report.player_visible_duel_gesture_to_opaque_control_join_present);
         assert!(report.player_visible_duel_gesture_kernel_object_references_withheld);
         assert!(report.player_visible_duel_source_gesture_target_protocol_present);
+        assert!(report.player_visible_duel_gesture_target_classifier_present);
         assert!(report.player_visible_duel_source_gesture_target_pixels_rehashed);
         assert!(!report.player_visible_duel_gesture_target_protocol_ratified);
         assert!(report.player_visible_duel_gesture_continuation_target_binding_present);

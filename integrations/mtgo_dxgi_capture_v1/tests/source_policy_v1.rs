@@ -1928,6 +1928,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_gesture_to_opaque_control_join_present: true",
         "player_visible_duel_gesture_kernel_object_references_withheld: true",
         "player_visible_duel_source_gesture_target_protocol_present: true",
+        "player_visible_duel_gesture_target_classifier_present: true",
         "player_visible_duel_source_gesture_target_pixels_rehashed: true",
         "player_visible_duel_gesture_target_protocol_ratified: false",
         "player_visible_duel_gesture_continuation_target_binding_present: true",
@@ -1991,6 +1992,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_gesture_to_opaque_control_join_present: true",
         "player_visible_duel_gesture_kernel_object_references_withheld: true",
         "player_visible_duel_source_gesture_target_protocol_present: true",
+        "player_visible_duel_gesture_target_classifier_present: true",
         "player_visible_duel_source_gesture_target_pixels_rehashed: true",
         "player_visible_duel_gesture_target_protocol_ratified: false",
         "player_visible_duel_gesture_continuation_target_binding_present: true",
@@ -2795,6 +2797,7 @@ fn player_visible_duel_gesture_contract_and_opaque_join_withhold_internal_identi
 #[test]
 fn player_visible_gesture_target_protocol_withholds_kernel_identity_and_input() {
     let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let classifier = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
     let public_api = include_str!("../src/lib.rs");
 
     for required in [
@@ -2936,6 +2939,39 @@ fn player_visible_gesture_target_protocol_withholds_kernel_identity_and_input() 
         assert!(
             !public_api.contains(private),
             "private target transport was exported: {private}"
+        );
+    }
+
+    for required in [
+        "--mtgo-player-visible-duel-gesture-target-v1",
+        "MTGO_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_V1",
+        "MtgoPlayerVisibleDuelGestureTargetRequestHeaderWireV1",
+        "MtgoPlayerVisibleDuelGestureTargetClassifierAssetsV1",
+        "run_player_visible_duel_gesture_target_v1",
+        "validate_player_visible_duel_gesture_target_assets_and_match_profile_v1",
+        "required_player_visible_duel_gesture_target_roles_v1",
+        "expected exactly one reviewed player-visible gesture-target profile match",
+        "gesture_target_runtime_binary_sha256 != actual_classifier_sha256",
+        "gesture_target_assets_manifest_sha256 != sha256_hex_v1(assets_json)",
+    ] {
+        assert!(
+            classifier.contains(required),
+            "visible target classifier is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "CardStableRefV1",
+        "ActionSemanticV1",
+        "arena_id",
+        "zone_change_count",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "SendInput",
+    ] {
+        assert!(
+            !classifier.contains(forbidden),
+            "visible target classifier exposes a forbidden channel: {forbidden}"
         );
     }
 }
