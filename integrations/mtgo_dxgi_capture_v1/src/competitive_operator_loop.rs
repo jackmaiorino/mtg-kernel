@@ -48,18 +48,21 @@ use crate::competitive_visible_match_memory::MtgoCompetitiveExternalPublicHistor
 use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveVisibleGameOutcomeV1;
 use crate::probe::{
     advance_opaque_player_visible_duel_gesture_target_v1,
+    begin_competitive_match_visible_game_log_action_baseline_v1,
     begin_competitive_visible_game_log_baseline_v1, begin_evaluated_competitive_event_monitor_v1,
     begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
     bind_competitive_match_visible_game_log_lease_v1,
     bind_opaque_player_visible_duel_gesture_intent_v1,
     bind_opaque_player_visible_duel_source_gesture_target_v1,
-    prepare_opaque_competitive_duel_action_plan_v1, refresh_competitive_match_visible_game_log_v1,
-    resolve_opaque_profile_bound_duel_control_v1,
+    capture_admitted_mtgo_duel_visible_frame_v1, perceive_admitted_duel_frame_v1,
+    prepare_opaque_competitive_duel_action_plan_v1,
+    rebind_opaque_player_visible_duel_gesture_target_v1,
+    refresh_competitive_match_visible_game_log_v1, resolve_opaque_profile_bound_duel_control_v1,
     score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
     score_select_and_resolve_opaque_player_visible_duel_perception_with_ongoing_history_v1,
-    AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1, MtgoDxgiCaptureRequestV3,
-    OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoClassifiedCompetitiveEventRecordV1,
-    OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1, MtgoDuelPerceptionFrameIdentityV1,
+    MtgoDxgiCaptureRequestV3, OpaqueMtgoAdmittedDuelPerceptionV1,
+    OpaqueMtgoClassifiedCompetitiveEventRecordV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoClassifiedCompetitivePregameModelContextV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
     OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
     OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
@@ -71,12 +74,13 @@ use mtgo_blackbox_v1::{
     validate_competitive_player_visible_game_history_for_session_v1,
     validate_native_checkpoint_competitive_capabilities_v1,
     CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
-    CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1, MtgoCompetitiveEventKindV1,
+    CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1,
+    CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1, MtgoDuelGestureStageV1,
     MtgoNativeCheckpointCompetitiveCapabilitiesV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
-    MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelGesturePrimitiveV1,
-    MtgoPlayerVisibleDuelScorerV1, MtgoProfileBoundPostconditionCalibrationV1,
-    MtgoProfileBoundPostconditionRegionSetV1,
+    MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoPlayerVisibleDuelActionV1,
+    MtgoPlayerVisibleDuelGesturePrimitiveV1, MtgoPlayerVisibleDuelScorerV1,
+    MtgoProfileBoundPostconditionCalibrationV1, MtgoProfileBoundPostconditionRegionSetV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -382,6 +386,7 @@ pub struct OpaqueMtgoCompetitiveOperatorGameplayLeaseV1 {
 pub struct OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1 {
     _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
     _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
     _control: OpaqueMtgoPlayerVisibleDuelResolvedControlV1,
@@ -436,6 +441,7 @@ impl OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1 {
 pub struct OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1 {
     _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
     _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
     gesture: OpaqueMtgoPlayerVisibleDuelGestureIntentV1,
@@ -493,6 +499,7 @@ impl OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1 {
 pub struct OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1 {
     _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
     _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
     target: OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
@@ -517,6 +524,81 @@ impl OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1 {
             .as_ref()
             .map(CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::decision_count_v1)
             .unwrap_or(0)
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Move-only pre-input holder created only after refreshing the exact bound
+/// visible Game Log, capturing and classifying a newer exact duel frame, and
+/// rebinding the same selected gesture primitive to that frame's pixels. The
+/// optional action baseline is created only for Game Log action families that
+/// the visible parser can corroborate exactly. This type still has no input
+/// conversion.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1;
+/// fn cannot_act(value: OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1) {
+///     let _ = value.input_command();
+///     let _ = value.rect_client_px();
+///     let _ = value.points_desktop_px();
+///     let _ = value.game_log_baseline();
+/// }
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1 {
+    _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    _action_baseline: Option<CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1>,
+    _confirmed_decision: MtgoPlayerVisibleConfirmedDuelDecisionV1,
+    target: OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
+    selected_action: MtgoPlayerVisibleDuelActionV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1 {
+    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        &self.selected_action
+    }
+
+    pub fn primitive_index_v1(&self) -> u16 {
+        self.target.primitive_index_v1()
+    }
+
+    pub fn primitive_v1(&self) -> &MtgoPlayerVisibleDuelGesturePrimitiveV1 {
+        self.target.primitive_v1()
+    }
+
+    pub fn prior_confirmed_action_count_v1(&self) -> usize {
+        self.confirmed_history
+            .as_ref()
+            .map(CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::decision_count_v1)
+            .unwrap_or(0)
+    }
+
+    pub fn visible_game_log_corroboration_available_v1(&self) -> bool {
+        self._action_baseline.is_some()
+    }
+
+    pub fn is_final_primitive_v1(&self) -> bool {
+        self.target.is_final_primitive_v1()
     }
 
     pub fn safe_for_live_input_v1(&self) -> bool {
@@ -1956,6 +2038,7 @@ pub fn checkout_competitive_post_entry_operator_gameplay_v1(
 pub fn select_competitive_post_entry_operator_player_visible_gameplay_action_v1<S>(
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
     visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
     perception: OpaqueMtgoAdmittedDuelPerceptionV1,
@@ -1979,6 +2062,16 @@ where
         &perception_commitments,
         &deployment_commitment_sha256,
     )?;
+    let launch_commitments = visible_identity.commitments_v1();
+    if launch_commitments.event_kind != lease_commitments.event_kind
+        || launch_commitments.game_number != lease_commitments.game_number
+        || visible_identity.event_identity_sha256_v1() != lease_commitments.event_identity_sha256
+        || visible_identity.match_identity_sha256_v1() != lease_commitments.match_identity_sha256
+    {
+        return Err(
+            "player-visible launch identity changed the exact event, match, or game".to_owned(),
+        );
+    }
     if visible_game_log.event_kind_v1() != lease_commitments.event_kind
         || visible_game_log.event_identity_sha256_v1() != lease_commitments.event_identity_sha256
         || visible_game_log.match_identity_sha256_v1() != lease_commitments.match_identity_sha256
@@ -2019,6 +2112,7 @@ where
         OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1 {
             _lease: lease,
             _session: session,
+            _visible_identity: visible_identity,
             _visible_game_log: visible_game_log,
             confirmed_history,
             _control: control,
@@ -2039,6 +2133,7 @@ pub fn bind_competitive_post_entry_operator_player_visible_gameplay_gesture_v1(
     let OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1 {
         _lease: lease,
         _session: session,
+        _visible_identity: visible_identity,
         _visible_game_log: visible_game_log,
         confirmed_history,
         _control: control,
@@ -2049,6 +2144,7 @@ pub fn bind_competitive_post_entry_operator_player_visible_gameplay_gesture_v1(
         OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1 {
             _lease: lease,
             _session: session,
+            _visible_identity: visible_identity,
             _visible_game_log: visible_game_log,
             confirmed_history,
             gesture,
@@ -2068,6 +2164,7 @@ pub fn bind_competitive_post_entry_operator_player_visible_gameplay_source_targe
     let OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1 {
         _lease: lease,
         _session: session,
+        _visible_identity: visible_identity,
         _visible_game_log: visible_game_log,
         confirmed_history,
         gesture,
@@ -2084,6 +2181,7 @@ pub fn bind_competitive_post_entry_operator_player_visible_gameplay_source_targe
     Ok(OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1 {
         _lease: lease,
         _session: session,
+        _visible_identity: visible_identity,
         _visible_game_log: visible_game_log,
         confirmed_history,
         target,
@@ -2102,6 +2200,7 @@ pub fn advance_competitive_post_entry_operator_player_visible_gameplay_target_v1
     let OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1 {
         _lease: lease,
         _session: session,
+        _visible_identity: visible_identity,
         _visible_game_log: visible_game_log,
         confirmed_history,
         target,
@@ -2147,11 +2246,149 @@ pub fn advance_competitive_post_entry_operator_player_visible_gameplay_target_v1
     Ok(OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1 {
         _lease: lease,
         _session: session,
+        _visible_identity: visible_identity,
         _visible_game_log: visible_game_log,
         confirmed_history,
         target,
         selected_action,
     })
+}
+
+/// Refreshes the exact match-scoped visible Game Log, captures and classifies
+/// one newer duel frame, revalidates the event/session/history lineage, and
+/// rebinds the same current primitive to the newer pixels. The order is fixed
+/// so the returned target and optional visible-log action baseline are both
+/// newer than the history snapshot used for scoring. No input occurs.
+#[allow(clippy::too_many_arguments)]
+pub fn refresh_competitive_post_entry_operator_player_visible_gameplay_target_v1(
+    value: OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+    fresh_frame_identity: MtgoDuelPerceptionFrameIdentityV1,
+    capture_timeout_ms: u32,
+    perception_timeout_ms: u32,
+    target_timeout_ms: u32,
+    protocol: &AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1, String> {
+    let OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1 {
+        _lease: lease,
+        _session: session,
+        _visible_identity: visible_identity,
+        _visible_game_log: visible_game_log,
+        confirmed_history,
+        target,
+        selected_action,
+    } = value;
+    let visible_game_log = refresh_competitive_match_visible_game_log_v1(
+        visible_game_log.into_match_lease_v1(),
+        &visible_identity,
+        visible_game_log_capture_request,
+    )?;
+    let fresh_frame = capture_admitted_mtgo_duel_visible_frame_v1(
+        &lease.resources.duel_perception_profile,
+        capture_timeout_ms,
+    )?;
+    let fresh_perception = perceive_admitted_duel_frame_v1(
+        fresh_frame,
+        &lease.resources.duel_perception_profile,
+        &lease.resources.duel_perception_runtime,
+        fresh_frame_identity,
+        perception_timeout_ms,
+    )?;
+    let lease_commitments = lease.lease.commitments_v1();
+    let session_commitments = session.commitments_v1();
+    let fresh_commitments = fresh_perception.commitments_v1();
+    let deployment_commitment_sha256 = lease
+        .resources
+        .checkpoint_deployment
+        .deployment_commitment_sha256();
+    validate_operator_gameplay_action_source_v1(
+        &lease.resource_commitments,
+        &lease_commitments,
+        &session_commitments,
+        &fresh_commitments,
+        deployment_commitment_sha256,
+    )?;
+    if fresh_commitments
+        .source_frame
+        .source_capture
+        .captured_at_unix_millis
+        <= visible_game_log.latest_capture_unix_millis_v1()
+    {
+        return Err(
+            "fresh player-visible gameplay target is not newer than the Game Log refresh"
+                .to_owned(),
+        );
+    }
+    let fresh_lifecycle = fresh_perception
+        .competitive_lifecycle_v1()
+        .ok_or("fresh player-visible gameplay target lacks competitive lifecycle")?;
+    if fresh_lifecycle.event_kind() != lease_commitments.event_kind
+        || fresh_lifecycle.event_identity_sha256_v1()
+            != Some(lease_commitments.event_identity_sha256.as_str())
+        || fresh_lifecycle.match_identity_sha256_v1()
+            != Some(lease_commitments.match_identity_sha256.as_str())
+        || fresh_lifecycle.game_number_v1() != Some(lease_commitments.game_number)
+    {
+        return Err(
+            "fresh player-visible gameplay target changed the exact event, match, or game"
+                .to_owned(),
+        );
+    }
+    match &confirmed_history {
+        Some(history) => validate_competitive_player_visible_game_history_for_session_v1(
+            history,
+            deployment_commitment_sha256,
+            session_commitments.confirmed_action_count,
+            session_commitments.last_confirmed_frame_sequence,
+            fresh_commitments.frame_sequence,
+        )
+        .map_err(|error| {
+            format!("validate fresh exact-game confirmed decision history: {error}")
+        })?,
+        None if session_commitments.confirmed_action_count == 0 => {}
+        None => return Err(
+            "fresh player-visible gameplay session has confirmed actions but no decision history"
+                .to_owned(),
+        ),
+    }
+    let confirmed_decision =
+        fresh_perception.player_visible_confirmed_decision_for_action_v1(&selected_action)?;
+    let action_baseline = if target.is_final_primitive_v1()
+        && matches!(
+            selected_action,
+            MtgoPlayerVisibleDuelActionV1::PlayLand { .. }
+                | MtgoPlayerVisibleDuelActionV1::CastSpell { .. }
+                | MtgoPlayerVisibleDuelActionV1::Discard { .. }
+                | MtgoPlayerVisibleDuelActionV1::DeclareAttackers { .. }
+        ) {
+        Some(begin_competitive_match_visible_game_log_action_baseline_v1(
+            &visible_game_log,
+            &confirmed_decision,
+        )?)
+    } else {
+        None
+    };
+    let target = rebind_opaque_player_visible_duel_gesture_target_v1(
+        target,
+        fresh_perception,
+        &lease.resources.duel_gesture_profile,
+        &lease.resources.duel_gesture_runtime,
+        protocol,
+        target_timeout_ms,
+    )?;
+    Ok(
+        OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1 {
+            _lease: lease,
+            _session: session,
+            _visible_identity: visible_identity,
+            _visible_game_log: visible_game_log,
+            confirmed_history,
+            _action_baseline: action_baseline,
+            _confirmed_decision: confirmed_decision,
+            target,
+            selected_action,
+        },
+    )
 }
 
 pub fn return_competitive_post_entry_operator_gameplay_v1(

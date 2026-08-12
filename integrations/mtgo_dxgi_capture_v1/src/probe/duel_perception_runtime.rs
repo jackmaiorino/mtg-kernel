@@ -673,6 +673,31 @@ impl OpaqueMtgoAdmittedDuelPerceptionV1 {
     ) -> Option<&CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1> {
         self.competitive_lifecycle.as_ref()
     }
+
+    pub(crate) fn player_visible_confirmed_decision_for_action_v1(
+        &self,
+        selected_action: &MtgoPlayerVisibleDuelActionV1,
+    ) -> Result<mtgo_blackbox_v1::MtgoPlayerVisibleConfirmedDuelDecisionV1, String> {
+        let input = self
+            .player_visible_duel_decision_input_v1()
+            .map_err(|error| format!("build confirmed player-visible decision: {error}"))?;
+        if input
+            .ordered_legal_actions
+            .iter()
+            .filter(|action| *action == selected_action)
+            .count()
+            != 1
+        {
+            return Err(
+                "confirmed player-visible action is absent or duplicated in the current decision"
+                    .to_owned(),
+            );
+        }
+        Ok(mtgo_blackbox_v1::MtgoPlayerVisibleConfirmedDuelDecisionV1 {
+            current_state: input.current_state,
+            selected_action: selected_action.clone(),
+        })
+    }
 }
 
 /// Public result from one exact player-visible-only gameplay selection.
@@ -1030,6 +1055,139 @@ pub fn advance_opaque_player_visible_duel_gesture_target_v1(
     )?;
 
     binding.primitive_index = next_primitive_index;
+    binding.targets = targets;
+    binding.continuation_perception = Some(Box::new(current_perception));
+    Ok(binding)
+}
+
+/// Rebinds the current gesture primitive to one exact newer visible frame
+/// without advancing the primitive index. This is the pre-input freshness
+/// operation: the sanitized decision must remain byte-identical, the exact
+/// selected semantic must still resolve to one current enabled control, and
+/// every returned target region is rehashed from the newer retained pixels.
+/// It creates no input command.
+pub(crate) fn rebind_opaque_player_visible_duel_gesture_target_v1(
+    mut binding: OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
+    current_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    protocol: &AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1, String> {
+    let primitive_index = binding.primitive_index;
+    let primitive = binding
+        .intent
+        .primitives_v1()
+        .get(usize::from(primitive_index))
+        .ok_or("player-visible gesture has no current primitive")?;
+    let prior_perception = binding.current_perception_v1();
+    validate_same_duel_window_incarnation_v1(
+        &prior_perception.source_frame.source_frame.manifest,
+        &current_perception.source_frame.source_frame.manifest,
+    )?;
+    let prior_commitments = prior_perception.commitments_v1();
+    let current_commitments = current_perception.commitments_v1();
+    if current_commitments.frame_sequence <= prior_commitments.frame_sequence
+        || current_commitments.frame_id == prior_commitments.frame_id
+        || current_commitments
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis
+            <= prior_commitments
+                .source_frame
+                .source_capture
+                .captured_at_unix_millis
+        || current_commitments
+            .source_frame
+            .source_capture
+            .capture_commitment_sha256
+            == prior_commitments
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+        || current_perception.runtime_identity_commitment_sha256
+            != prior_perception.runtime_identity_commitment_sha256
+        || current_perception
+            .source_frame
+            .perception_profile_commitment_sha256
+            != prior_perception
+                .source_frame
+                .perception_profile_commitment_sha256
+        || current_perception
+            .source_frame
+            .perception_profile_admission_commitment_sha256
+            != prior_perception
+                .source_frame
+                .perception_profile_admission_commitment_sha256
+    {
+        return Err(
+            "player-visible gesture refresh changed or reused its visible frame lineage".to_owned(),
+        );
+    }
+    let source_input = prior_perception
+        .player_visible_duel_decision_input_v1()
+        .map_err(|error| format!("build source player-visible gesture decision: {error}"))?;
+    let current_input = current_perception
+        .player_visible_duel_decision_input_v1()
+        .map_err(|error| format!("build refreshed player-visible gesture decision: {error}"))?;
+    if current_input != source_input {
+        return Err(
+            "player-visible gesture refresh changed the sanitized visible decision".to_owned(),
+        );
+    }
+    let selected_indices = current_input
+        .ordered_legal_actions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, action)| {
+            (action == binding.intent.selected_action_v1()).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    if selected_indices.len() != 1 {
+        return Err(
+            "player-visible gesture refresh lost the unique selected visible action".to_owned(),
+        );
+    }
+    let selected_semantic = current_perception
+        .validated_decision
+        .legal_actions()
+        .get(selected_indices[0])
+        .ok_or("player-visible gesture refresh lost the selected semantic")?;
+    let matching_controls = current_perception
+        .visible_controls
+        .controls
+        .iter()
+        .filter(|candidate| candidate.semantic == *selected_semantic)
+        .collect::<Vec<_>>();
+    if matching_controls.len() != 1 {
+        return Err(
+            "player-visible gesture refresh lost its unique selected visible control".to_owned(),
+        );
+    }
+    let (selected_control_rect, selected_control_content_sha256) = frame_region_for_evidence_v1(
+        &current_perception.decision_record,
+        matching_controls[0].frame_region_evidence_id,
+    )?;
+    let target_set = invoke_player_visible_duel_gesture_target_runtime_v1(
+        &binding.intent,
+        &current_perception,
+        profile,
+        runtime,
+        protocol,
+        primitive_index,
+        timeout_ms,
+    )?;
+    let targets = validate_player_visible_duel_source_gesture_targets_v1(
+        &target_set,
+        primitive,
+        &current_perception,
+        PlayerVisibleGestureTargetExpectationV1 {
+            frame_id: current_commitments.frame_id,
+            frame_sequence: current_commitments.frame_sequence,
+            primitive_index,
+            selected_primary: Some((selected_control_rect, selected_control_content_sha256)),
+        },
+    )?;
     binding.targets = targets;
     binding.continuation_perception = Some(Box::new(current_perception));
     Ok(binding)
@@ -1891,6 +2049,10 @@ impl OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1 {
 
     pub fn primitive_v1(&self) -> &MtgoPlayerVisibleDuelGesturePrimitiveV1 {
         &self.intent.primitives_v1()[usize::from(self.primitive_index)]
+    }
+
+    pub(crate) fn is_final_primitive_v1(&self) -> bool {
+        usize::from(self.primitive_index) + 1 == self.intent.primitives_v1().len()
     }
 
     pub fn safe_for_live_input_v1(&self) -> bool {

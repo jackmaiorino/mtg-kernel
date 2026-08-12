@@ -42,6 +42,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub post_entry_operator_player_visible_gameplay_selection_present: bool,
     pub post_entry_operator_player_visible_gesture_ownership_present: bool,
     pub post_entry_operator_player_visible_target_ownership_present: bool,
+    pub post_entry_operator_player_visible_preinput_refresh_present: bool,
     pub native_checkpoint_external_public_history_import_present: bool,
     pub pre_entry_operator_loop_present: bool,
     pub post_entry_operator_loop_present: bool,
@@ -154,6 +155,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             post_entry_operator_player_visible_gameplay_selection_present: true,
             post_entry_operator_player_visible_gesture_ownership_present: true,
             post_entry_operator_player_visible_target_ownership_present: true,
+            post_entry_operator_player_visible_preinput_refresh_present: true,
             native_checkpoint_external_public_history_import_present: false,
             pre_entry_operator_loop_present: true,
             post_entry_operator_loop_present: true,
@@ -354,6 +356,11 @@ mod tests {
             report
                 .known_wiring_gaps
                 .post_entry_operator_player_visible_target_ownership_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .post_entry_operator_player_visible_preinput_refresh_present
         );
         assert!(
             !report
