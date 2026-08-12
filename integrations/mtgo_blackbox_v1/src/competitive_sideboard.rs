@@ -98,7 +98,6 @@ impl ValidatedMtgoCompetitiveDeckManifestV1 {
 #[serde(deny_unknown_fields)]
 pub struct MtgoVisibleCompetitiveSideboardCardV1 {
     pub partition: MtgoCompetitiveDeckPartitionV1,
-    pub card_db_id: u16,
     pub card_name: String,
     pub count: u16,
     pub rect_client_px: MtgoRectPxV1,
@@ -649,12 +648,12 @@ fn validate_visible_cards_v1(
     }
     let mut prior_key = None;
     for (index, card) in cards.iter().enumerate() {
-        validate_card_identity_v1(card.card_db_id, &card.card_name, card.count)?;
-        let key = (card.partition, card.card_db_id);
+        validate_visible_card_identity_v1(&card.card_name, card.count)?;
+        let key = (card.partition, card.card_name.as_str());
         if prior_key.is_some_and(|prior| key <= prior) {
             return Err(error(
                 "sideboard_visible_cards_order",
-                "visible card rows must be unique and canonical by partition and card id",
+                "visible card rows must be unique and canonical by partition and visible name",
             ));
         }
         prior_key = Some(key);
@@ -788,14 +787,40 @@ fn validate_card_identity_v1(
     Ok(())
 }
 
+fn validate_visible_card_identity_v1(
+    card_name: &str,
+    count: u16,
+) -> Result<(), MtgoContractErrorV1> {
+    if card_name.is_empty()
+        || card_name.len() > 256
+        || card_name.trim() != card_name
+        || card_name.chars().any(char::is_control)
+    {
+        return Err(error(
+            "sideboard_visible_card_name",
+            "every visible card row must carry one bounded exact UI card name",
+        ));
+    }
+    let card_db_id = mtg_kernel::card_def::card_id_by_name(card_name).ok_or_else(|| {
+        error(
+            "sideboard_visible_card_name",
+            "visible card name is absent from the pinned kernel card database",
+        )
+    })?;
+    validate_card_identity_v1(card_db_id, card_name, count)?;
+    Ok(())
+}
+
 fn configuration_from_visible_cards_v1(
     cards: &[MtgoVisibleCompetitiveSideboardCardV1],
 ) -> MtgoCompetitiveDeckConfigurationV1 {
     let mut mainboard = Vec::new();
     let mut sideboard = Vec::new();
     for card in cards {
+        let card_db_id = mtg_kernel::card_def::card_id_by_name(&card.card_name)
+            .expect("validated visible sideboard names resolve exactly");
         let count = MtgoCompetitiveDeckCardCountV1 {
-            card_db_id: card.card_db_id,
+            card_db_id,
             card_name: card.card_name.clone(),
             count: card.count,
         };

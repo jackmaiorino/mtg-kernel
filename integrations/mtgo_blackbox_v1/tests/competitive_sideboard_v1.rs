@@ -108,7 +108,6 @@ fn visible_cards(
         .map(
             |(index, (partition, card))| MtgoVisibleCompetitiveSideboardCardV1 {
                 partition,
-                card_db_id: card.card_db_id,
                 card_name: card.card_name.clone(),
                 count: card.count,
                 rect_client_px: MtgoRectPxV1 {

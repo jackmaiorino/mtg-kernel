@@ -198,6 +198,33 @@ fn native_sideboard_payload_module_is_visible_only_and_isolated_from_live_binder
 }
 
 #[test]
+fn sideboard_classifier_response_has_no_kernel_card_identifier() {
+    let contract = include_str!("../../mtgo_blackbox_v1/src/competitive_sideboard.rs");
+    let start = contract
+        .find("pub struct MtgoVisibleCompetitiveSideboardCardV1")
+        .expect("visible sideboard card response type must exist");
+    let end = contract[start..]
+        .find("\n}\n")
+        .map(|offset| start + offset)
+        .expect("visible sideboard card response type must have one body");
+    let response_type = &contract[start..end];
+    assert!(response_type.contains("pub card_name: String"));
+    assert!(!response_type.contains("card_db_id"));
+
+    let classifier = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
+    let start = classifier
+        .find("struct MtgoCompetitiveSideboardCardProfileV1")
+        .expect("sideboard classifier card profile must exist");
+    let end = classifier[start..]
+        .find("\n}\n")
+        .map(|offset| start + offset)
+        .expect("sideboard classifier card profile must have one body");
+    let profile = &classifier[start..end];
+    assert!(profile.contains("card_name: String"));
+    assert!(!profile.contains("card_db_id"));
+}
+
+#[test]
 fn native_sideboard_live_binder_is_visible_outcome_bound_and_non_actuating() {
     let source = include_str!("../src/actuator.rs");
     let start = source

@@ -117,7 +117,6 @@ struct SideboardZoneProfileV1 {
 #[derive(Serialize)]
 struct SideboardCardProfileV1 {
     partition: MtgoCompetitiveDeckPartitionV1,
-    card_db_id: u16,
     card_name: String,
     count: u16,
     rect_client_px: MtgoRectPxV1,
@@ -662,7 +661,6 @@ fn sideboard_mode_completes_the_exact_framed_child_process_exchange() {
             cards: vec![
                 SideboardCardProfileV1 {
                     partition: MtgoCompetitiveDeckPartitionV1::Mainboard,
-                    card_db_id: 66,
                     card_name: "Lightning Bolt".to_owned(),
                     count: 1,
                     rect_client_px: mainboard_card_rect.clone(),
@@ -671,7 +669,6 @@ fn sideboard_mode_completes_the_exact_framed_child_process_exchange() {
                 },
                 SideboardCardProfileV1 {
                     partition: MtgoCompetitiveDeckPartitionV1::Sideboard,
-                    card_db_id: 101,
                     card_name: "Searing Blaze".to_owned(),
                     count: 1,
                     rect_client_px: sideboard_card_rect.clone(),
@@ -805,6 +802,7 @@ fn sideboard_mode_completes_the_exact_framed_child_process_exchange() {
     );
     assert_eq!(response.sideboard.game_number, 1);
     assert_eq!(response.sideboard.cards.len(), 2);
+    assert!(!String::from_utf8_lossy(&sideboard_output.stdout).contains("card_db_id"));
 }
 
 #[test]

@@ -5949,7 +5949,6 @@ pub fn prepare_competitive_event_sideboard_transfer_drag_v1(
         .iter()
         .find(|card| {
             card.partition == source_partition
-                && card.card_db_id == transfer.card_db_id
                 && card.card_name == transfer.card_name
                 && card.count > 0
         })

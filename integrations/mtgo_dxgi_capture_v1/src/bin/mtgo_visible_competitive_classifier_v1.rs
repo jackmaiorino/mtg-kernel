@@ -235,7 +235,6 @@ struct MtgoCompetitiveSideboardZoneProfileV1 {
 #[serde(deny_unknown_fields)]
 struct MtgoCompetitiveSideboardCardProfileV1 {
     partition: MtgoCompetitiveDeckPartitionV1,
-    card_db_id: u16,
     card_name: String,
     count: u16,
     rect_client_px: MtgoRectPxV1,
@@ -1325,7 +1324,6 @@ fn build_sideboard_card_from_frame_v1(
     }
     Ok(MtgoVisibleCompetitiveSideboardCardV1 {
         partition: profile.partition,
-        card_db_id: profile.card_db_id,
         card_name: profile.card_name.clone(),
         count: profile.count,
         rect_client_px: profile.rect_client_px.clone(),
@@ -2332,7 +2330,7 @@ fn validate_sideboard_assets_and_match_profile_v1<'a>(
         validate_sideboard_zone_profile_v1("sideboard", &profile.sideboard_zone)?;
         let mut prior_card_key = None;
         for card in &profile.cards {
-            let key = (card.partition, card.card_db_id);
+            let key = (card.partition, card.card_name.as_str());
             if prior_card_key.is_some_and(|prior| prior >= key)
                 || card.card_name.is_empty()
                 || card.card_name.len() > MAX_EXPECTED_LABEL_BYTES_V1
@@ -2566,7 +2564,6 @@ fn sideboard_card_from_first_reference_v1(
 ) -> MtgoVisibleCompetitiveSideboardCardV1 {
     MtgoVisibleCompetitiveSideboardCardV1 {
         partition: profile.partition,
-        card_db_id: profile.card_db_id,
         card_name: profile.card_name.clone(),
         count: profile.count,
         rect_client_px: profile.rect_client_px.clone(),
@@ -3483,7 +3480,6 @@ mod tests {
                 cards: vec![
                     MtgoCompetitiveSideboardCardProfileV1 {
                         partition: MtgoCompetitiveDeckPartitionV1::Mainboard,
-                        card_db_id: 66,
                         card_name: "Lightning Bolt".to_owned(),
                         count: 1,
                         rect_client_px: mainboard_card_rect.clone(),
@@ -3492,7 +3488,6 @@ mod tests {
                     },
                     MtgoCompetitiveSideboardCardProfileV1 {
                         partition: MtgoCompetitiveDeckPartitionV1::Sideboard,
-                        card_db_id: 101,
                         card_name: "Searing Blaze".to_owned(),
                         count: 1,
                         rect_client_px: sideboard_card_rect.clone(),
