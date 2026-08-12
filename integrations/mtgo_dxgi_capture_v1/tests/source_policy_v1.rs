@@ -140,6 +140,51 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
             "competitive visible memory exposes private lineage: {forbidden_memory_getter}"
         );
     }
+
+    let public_method_names = |body: &str| {
+        body.lines()
+            .filter_map(|line| {
+                line.trim()
+                    .strip_prefix("pub fn ")
+                    .and_then(|rest| rest.split_once('('))
+                    .map(|(name, _)| name.to_owned())
+            })
+            .collect::<Vec<_>>()
+    };
+    let confirmed_start = memory
+        .find("impl MtgoCompetitiveExternalConfirmedDecisionV1 {")
+        .expect("confirmed-decision model view implementation");
+    let confirmed_end = memory[confirmed_start..]
+        .find("\n}\n\n/// Narrow model-facing view")
+        .map(|offset| confirmed_start + offset + 2)
+        .expect("confirmed-decision model view end");
+    assert_eq!(
+        public_method_names(&memory[confirmed_start..confirmed_end]),
+        ["within_source_position_v1", "player_visible_decision_v1"],
+        "confirmed-decision model view widened beyond player-visible information"
+    );
+
+    let event_start = memory
+        .find("impl MtgoCompetitiveExternalPublicGameLogEventV1<'_> {")
+        .expect("Game Log model view implementation");
+    let event_end = memory[event_start..]
+        .find("\n}\n\n/// Kernel-owned consumer boundary")
+        .map(|offset| event_start + offset + 2)
+        .expect("Game Log model view end");
+    assert_eq!(
+        public_method_names(&memory[event_start..event_end]),
+        [
+            "within_source_position_v1",
+            "kind_v1",
+            "actor_role_v1",
+            "turn_number_v1",
+            "primary_count_v1",
+            "secondary_count_v1",
+            "visible_card_name_count_v1",
+            "visible_card_name_v1",
+        ],
+        "Game Log model view widened beyond player-visible information"
+    );
 }
 
 #[test]

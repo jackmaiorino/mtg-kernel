@@ -523,13 +523,21 @@ mod tests {
     }
 
     fn source_v1(lines: &[&str]) -> CheckedUntrustedMtgoVisibleGameLogProjectionV1 {
+        source_with_hidden_metadata_v1(SOURCE_ID_V1, 638_905_999_999_999_999, lines)
+    }
+
+    fn source_with_hidden_metadata_v1(
+        source_id: &str,
+        first_timestamp: u64,
+        lines: &[&str],
+    ) -> CheckedUntrustedMtgoVisibleGameLogProjectionV1 {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&1_u16.to_le_bytes());
-        write_dotnet_string_v1(&mut bytes, SOURCE_ID_V1);
+        write_dotnet_string_v1(&mut bytes, source_id);
         bytes.extend_from_slice(&4_u16.to_le_bytes());
-        write_dotnet_string_v1(&mut bytes, SOURCE_ID_V1);
+        write_dotnet_string_v1(&mut bytes, source_id);
         for (index, line) in lines.iter().enumerate() {
-            bytes.extend_from_slice(&(638_905_999_999_999_999_u64 + index as u64).to_le_bytes());
+            bytes.extend_from_slice(&(first_timestamp + index as u64).to_le_bytes());
             bytes.push(0);
             write_dotnet_string_v1(&mut bytes, line);
         }
@@ -668,5 +676,40 @@ mod tests {
         let event = projection.event_v1(0).unwrap();
         assert_eq!(event.visible_card_name_v1(0), Some("Island"));
         assert!(!event.visible_card_name_v1(0).unwrap().contains("296710"));
+    }
+
+    #[test]
+    fn hidden_source_metadata_cannot_change_player_visible_semantics() {
+        let first = source_with_hidden_metadata_v1(
+            SOURCE_ID_V1,
+            638_905_999_999_999_999,
+            &["@PUnbuckledPie plays @[Island@:296710,467:@]."],
+        );
+        let second = source_with_hidden_metadata_v1(
+            "11111111-2222-3333-4444-555555555555",
+            638_906_000_000_000_000,
+            &["@PUnbuckledPie plays @[Island@:999999,888:@]."],
+        );
+        let first =
+            classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(&first, "UnbuckledPie")
+                .unwrap();
+        let second =
+            classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(&second, "UnbuckledPie")
+                .unwrap();
+
+        let visible_facts =
+            |projection: &CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1| {
+                let event = projection.event_v1(0).expect("one visible semantic event");
+                (
+                    event.source_sequence_v1(),
+                    event.kind_v1(),
+                    event.actor_role_v1(),
+                    event.turn_number_v1(),
+                    event.primary_count_v1(),
+                    event.secondary_count_v1(),
+                    event.visible_card_name_v1(0).map(str::to_owned),
+                )
+            };
+        assert_eq!(visible_facts(&first), visible_facts(&second));
     }
 }
