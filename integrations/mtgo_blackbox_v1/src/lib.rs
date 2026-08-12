@@ -6,8 +6,9 @@
 #![forbid(unsafe_code)]
 
 pub use mtg_kernel::rl::{
-    ActionSemanticV1, CardPrivateV1, KnownLibraryCardV4, ObservationV5, PlayerSeatV1,
-    ZoneIndependentStepV1,
+    ActionSemanticV1, CardPrivateV1, CardPublicV2, CardStableRefV1, KnownLibraryCardV4,
+    ObjectRelationPublicV4, ObservationV5, PlayerSeatV1, StackItemKindV2, StackItemPublicV2,
+    TargetRefV1, ZoneIndependentStepV1,
 };
 
 mod action_resolution;

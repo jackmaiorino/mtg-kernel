@@ -3,10 +3,12 @@ use crate::{
     OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1,
 };
 use mtgo_blackbox_v1::{
-    ActionSemanticV1, CardPrivateV1, CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
-    KnownLibraryCardV4, MtgoCompetitiveEventKindV1, MtgoCompetitivePlayerVisibleDecisionViewV1,
+    ActionSemanticV1, CardPrivateV1, CardPublicV2, CardStableRefV1,
+    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, KnownLibraryCardV4,
+    MtgoCompetitiveEventKindV1, MtgoCompetitivePlayerVisibleDecisionViewV1,
     MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogPlayerRoleV1,
-    MtgoVisibleGameLogSemanticEventViewV1, ObservationV5, PlayerSeatV1, ZoneIndependentStepV1,
+    MtgoVisibleGameLogSemanticEventViewV1, ObjectRelationPublicV4, ObservationV5, PlayerSeatV1,
+    StackItemKindV2, StackItemPublicV2, TargetRefV1, ZoneIndependentStepV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -93,10 +95,153 @@ pub struct MtgoCompetitiveExternalConfirmedDecisionV1<'a> {
 ///     let _ = value.step_index;
 ///     let _ = value.visible_projection_hash;
 ///     let _ = value.public_projection_v1();
+///     let _ = value.player_status_v1();
+///     let _ = value.continuous_effects_v1();
+///     let _ = value.engine_context_v1();
+///     let _ = value.surface_context_v1();
+///     let _ = value.policy_surface_context_v1();
+///     let _ = value.exile_play_permissions_v1();
 /// }
 /// ```
 pub struct MtgoCompetitiveExternalVisibleObservationV1<'a> {
     observation: &'a ObservationV5,
+}
+
+/// Minimal view of one card whose identity is visibly available in a public
+/// zone. Zone-specific engine state cannot be read through this type.
+pub struct MtgoCompetitiveExternalVisiblePublicZoneCardV1<'a> {
+    card: &'a CardPublicV2,
+}
+
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::MtgoCompetitiveExternalVisiblePublicZoneCardV1;
+/// fn cannot_apply_battlefield_state_to_other_zones(
+///     value: &MtgoCompetitiveExternalVisiblePublicZoneCardV1<'_>,
+/// ) {
+///     let _ = value.tapped_v1();
+///     let _ = value.marked_damage_v1();
+///     let _ = value.plus_one_plus_one_counter_count_v1();
+/// }
+/// ```
+impl MtgoCompetitiveExternalVisiblePublicZoneCardV1<'_> {
+    pub fn object_ref_v1(&self) -> &CardStableRefV1 {
+        &self.card.stable
+    }
+
+    pub fn card_name_v1(&self) -> &str {
+        &self.card.card_name
+    }
+}
+
+/// Field-by-field view of one visible battlefield object. It intentionally
+/// omits engine-maintained timestamps, ability-use bookkeeping, skip-untap
+/// state, goad expiry, and the full characteristic record. The stable
+/// reference is adapter-local identity for linking visible objects and legal
+/// actions, never an MTGO internal object identifier.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::MtgoCompetitiveExternalVisibleBattlefieldCardV1;
+/// fn cannot_read_engine_bookkeeping(value: &MtgoCompetitiveExternalVisibleBattlefieldCardV1<'_>) {
+///     let _ = value.summoning_sick;
+///     let _ = value.entered_battlefield_turn;
+///     let _ = value.ability_uses_this_turn;
+///     let _ = value.goaded_by;
+///     let _ = value.characteristics;
+/// }
+/// ```
+pub struct MtgoCompetitiveExternalVisibleBattlefieldCardV1<'a> {
+    card: &'a CardPublicV2,
+}
+
+impl MtgoCompetitiveExternalVisibleBattlefieldCardV1<'_> {
+    pub fn object_ref_v1(&self) -> &CardStableRefV1 {
+        &self.card.stable
+    }
+
+    pub fn card_name_v1(&self) -> &str {
+        &self.card.card_name
+    }
+
+    pub fn tapped_v1(&self) -> bool {
+        self.card.tapped
+    }
+
+    pub fn marked_damage_v1(&self) -> u16 {
+        self.card.damage
+    }
+
+    pub fn plus_one_plus_one_counter_count_v1(&self) -> i16 {
+        self.card.counters.plus1_plus1
+    }
+
+    pub fn minus_one_minus_one_counter_count_v1(&self) -> i16 {
+        self.card.counters.minus1_minus1
+    }
+
+    pub fn minus_zero_minus_one_counter_count_v1(&self) -> i16 {
+        self.card.counters.minus0_minus1
+    }
+
+    pub fn stun_counter_count_v1(&self) -> i16 {
+        self.card.counters.stun
+    }
+
+    pub fn lore_counter_count_v1(&self) -> i16 {
+        self.card.counters.lore
+    }
+
+    pub fn is_token_v1(&self) -> bool {
+        self.card.is_token
+    }
+
+    pub fn visible_face_index_v1(&self) -> u8 {
+        self.card.face_index
+    }
+
+    pub fn visible_effective_power_v1(&self) -> Option<i32> {
+        self.card.characteristics.effective_power
+    }
+
+    pub fn visible_effective_toughness_v1(&self) -> Option<i32> {
+        self.card.characteristics.effective_toughness
+    }
+}
+
+/// Field-by-field view of one item displayed on MTGO's stack. Paid-cost
+/// internals and engine resume state are not exposed.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::MtgoCompetitiveExternalVisibleStackItemV1;
+/// fn cannot_read_stack_internals(value: &MtgoCompetitiveExternalVisibleStackItemV1<'_>) {
+///     let _ = value.paid_cost_refs;
+///     let _ = value.cast_method;
+///     let _ = value.mode_chosen;
+/// }
+/// ```
+pub struct MtgoCompetitiveExternalVisibleStackItemV1<'a> {
+    item: &'a StackItemPublicV2,
+}
+
+impl MtgoCompetitiveExternalVisibleStackItemV1<'_> {
+    pub fn visible_stack_position_v1(&self) -> u32 {
+        self.item.stack_index
+    }
+
+    pub fn source_object_ref_v1(&self) -> &CardStableRefV1 {
+        &self.item.source
+    }
+
+    pub fn controller_v1(&self) -> PlayerSeatV1 {
+        self.item.controller
+    }
+
+    pub fn visible_targets_v1(&self) -> &[TargetRefV1] {
+        &self.item.targets
+    }
+
+    pub fn item_kind_v1(&self) -> StackItemKindV2 {
+        self.item.stack_item_kind
+    }
 }
 
 impl MtgoCompetitiveExternalVisibleObservationV1<'_> {
@@ -140,6 +285,108 @@ impl MtgoCompetitiveExternalVisibleObservationV1<'_> {
         self.observation.projection.surface.library_counts
     }
 
+    pub fn battlefield_card_count_v1(&self, seat: PlayerSeatV1) -> usize {
+        self.observation.projection.surface.battlefield[seat_index_v1(seat)].len()
+    }
+
+    pub fn battlefield_card_v1(
+        &self,
+        seat: PlayerSeatV1,
+        index: usize,
+    ) -> Option<MtgoCompetitiveExternalVisibleBattlefieldCardV1<'_>> {
+        self.observation.projection.surface.battlefield[seat_index_v1(seat)]
+            .get(index)
+            .map(|card| MtgoCompetitiveExternalVisibleBattlefieldCardV1 { card })
+    }
+
+    pub fn graveyard_card_count_v1(&self, seat: PlayerSeatV1) -> usize {
+        self.observation.projection.surface.graveyards[seat_index_v1(seat)].len()
+    }
+
+    pub fn graveyard_card_v1(
+        &self,
+        seat: PlayerSeatV1,
+        index: usize,
+    ) -> Option<MtgoCompetitiveExternalVisiblePublicZoneCardV1<'_>> {
+        self.observation.projection.surface.graveyards[seat_index_v1(seat)]
+            .get(index)
+            .map(|card| MtgoCompetitiveExternalVisiblePublicZoneCardV1 { card })
+    }
+
+    pub fn exile_card_count_v1(&self) -> usize {
+        self.observation.projection.surface.exile.len()
+    }
+
+    pub fn exile_card_v1(
+        &self,
+        index: usize,
+    ) -> Option<MtgoCompetitiveExternalVisiblePublicZoneCardV1<'_>> {
+        self.observation
+            .projection
+            .surface
+            .exile
+            .get(index)
+            .map(|card| MtgoCompetitiveExternalVisiblePublicZoneCardV1 { card })
+    }
+
+    pub fn stack_item_count_v1(&self) -> usize {
+        self.observation.projection.surface.stack.len()
+    }
+
+    pub fn stack_item_v1(
+        &self,
+        index: usize,
+    ) -> Option<MtgoCompetitiveExternalVisibleStackItemV1<'_>> {
+        self.observation
+            .projection
+            .surface
+            .stack
+            .get(index)
+            .map(|item| MtgoCompetitiveExternalVisibleStackItemV1 { item })
+    }
+
+    pub fn ordered_attackers_v1(&self) -> &[CardStableRefV1] {
+        &self.observation.projection.surface.combat.ordered_attackers
+    }
+
+    pub fn attackers_declared_v1(&self) -> bool {
+        self.observation
+            .projection
+            .surface
+            .combat
+            .attackers_declared
+    }
+
+    pub fn blockers_declared_v1(&self) -> bool {
+        self.observation.projection.surface.combat.blockers_declared
+    }
+
+    pub fn blocker_assignment_count_v1(&self) -> usize {
+        self.observation
+            .projection
+            .surface
+            .combat
+            .attacker_to_ordered_blockers
+            .len()
+    }
+
+    pub fn blocker_assignment_v1(
+        &self,
+        index: usize,
+    ) -> Option<(&CardStableRefV1, &[CardStableRefV1])> {
+        self.observation
+            .projection
+            .surface
+            .combat
+            .attacker_to_ordered_blockers
+            .get(index)
+            .map(|(attacker, blockers)| (attacker, blockers.as_slice()))
+    }
+
+    pub fn visible_object_relations_v1(&self) -> &[ObjectRelationPublicV4] {
+        &self.observation.projection.surface.object_relations
+    }
+
     pub fn own_hand_v1(&self) -> &[CardPrivateV1] {
         &self.observation.own_hand
     }
@@ -150,6 +397,13 @@ impl MtgoCompetitiveExternalVisibleObservationV1<'_> {
 
     pub fn known_hand_cards_v1(&self) -> &[Vec<CardPrivateV1>; 2] {
         &self.observation.known_hand_cards
+    }
+}
+
+fn seat_index_v1(seat: PlayerSeatV1) -> usize {
+    match seat {
+        PlayerSeatV1::P0 => 0,
+        PlayerSeatV1::P1 => 1,
     }
 }
 
@@ -717,7 +971,164 @@ fn commitment_with_domain_v1(domain: &[u8], parts: &[&[u8]]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mtg_kernel::rl::{CardCharacteristicsV2, CardTypeFlagsV2, CountersV1, KeywordFlagsV2};
+    use mtg_kernel::rl_session::{RlEpisodeSessionV1, RlSessionResponseV1};
+    use mtg_kernel::state::Zone;
     use mtgo_blackbox_v1::MtgoCompetitiveEventKindV1::{Challenge, League};
+
+    fn visible_card_v1(zone: Zone) -> CardPublicV2 {
+        CardPublicV2 {
+            stable: CardStableRefV1 {
+                arena_id: 77,
+                card_db_id: 1,
+                owner: PlayerSeatV1::P0,
+                controller: PlayerSeatV1::P0,
+                zone,
+                zone_change_count: 2,
+            },
+            card_name: "Visible test creature".to_owned(),
+            tapped: true,
+            summoning_sick: true,
+            damage: 2,
+            counters: CountersV1 {
+                plus1_plus1: 1,
+                minus1_minus1: 0,
+                minus0_minus1: 0,
+                stun: 0,
+                lore: 0,
+            },
+            attachments: Vec::new(),
+            plotted_turn: None,
+            is_token: false,
+            face_index: 0,
+            chosen_color: None,
+            entered_battlefield_turn: Some(3),
+            ability_uses_this_turn: Vec::new(),
+            skip_next_untap: false,
+            goaded_by: Vec::new(),
+            characteristics: CardCharacteristicsV2 {
+                type_flags: CardTypeFlagsV2 {
+                    land: false,
+                    creature: true,
+                    instant: false,
+                    sorcery: false,
+                    artifact: false,
+                    enchantment: false,
+                },
+                base_power: Some(2),
+                base_toughness: Some(2),
+                effective_power: Some(3),
+                effective_toughness: Some(3),
+                effective_color_mask: 1,
+                effective_subtype_ids: Vec::new(),
+                effective_keywords: KeywordFlagsV2 {
+                    flying: false,
+                    reach: false,
+                    haste: false,
+                    vigilance: false,
+                    trample: false,
+                    first_strike: false,
+                    double_strike: false,
+                    deathtouch: false,
+                    menace: false,
+                    defender: false,
+                    lifelink: false,
+                    hexproof: false,
+                    indestructible: false,
+                    protection_from_monocolored: false,
+                    ward_generic: 0,
+                    minimum_blockers: 1,
+                    landwalk_mask: 0,
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn external_observation_exposes_visible_zones_field_by_field() {
+        let session = RlEpisodeSessionV1::reset_with_limits(7, 1, 128, 16_384);
+        let RlSessionResponseV1::Decision(decision) = session.current_response() else {
+            panic!("opening position must be a decision");
+        };
+        let mut observation = (*decision.observation).clone();
+        let battlefield_card = visible_card_v1(Zone::Battlefield);
+        let battlefield_ref = battlefield_card.stable.clone();
+        let mut graveyard_card = visible_card_v1(Zone::Graveyard);
+        graveyard_card.stable.zone_change_count = 3;
+        graveyard_card.stable.zone = Zone::Graveyard;
+        let mut exile_card = visible_card_v1(Zone::Exile);
+        exile_card.stable.zone_change_count = 4;
+        exile_card.stable.zone = Zone::Exile;
+        observation.projection.surface.battlefield[0] = vec![battlefield_card];
+        observation.projection.surface.graveyards[0] = vec![graveyard_card];
+        observation.projection.surface.exile = vec![exile_card];
+        observation.projection.surface.stack = vec![StackItemPublicV2 {
+            stack_index: 0,
+            source: battlefield_ref.clone(),
+            controller: PlayerSeatV1::P0,
+            targets: vec![TargetRefV1::Player {
+                player: PlayerSeatV1::P1,
+            }],
+            stack_item_kind: StackItemKindV2::ActivatedAbility,
+            is_copy: false,
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            cast_method: None,
+            face_index: 0,
+            x_value: 0,
+            paid_cost_refs: vec![battlefield_ref.clone()],
+        }];
+        observation.projection.surface.combat.ordered_attackers = vec![battlefield_ref.clone()];
+        observation
+            .projection
+            .surface
+            .combat
+            .attacker_to_ordered_blockers = vec![(battlefield_ref.clone(), Vec::new())];
+        observation.projection.surface.object_relations =
+            vec![ObjectRelationPublicV4::AttachedTo {
+                object: battlefield_ref.clone(),
+                attached_to: battlefield_ref,
+            }];
+
+        let view = MtgoCompetitiveExternalVisibleObservationV1 {
+            observation: &observation,
+        };
+        assert_eq!(view.battlefield_card_count_v1(PlayerSeatV1::P0), 1);
+        let battlefield = view
+            .battlefield_card_v1(PlayerSeatV1::P0, 0)
+            .expect("visible battlefield card");
+        assert_eq!(battlefield.card_name_v1(), "Visible test creature");
+        assert!(battlefield.tapped_v1());
+        assert_eq!(battlefield.marked_damage_v1(), 2);
+        assert_eq!(battlefield.plus_one_plus_one_counter_count_v1(), 1);
+        assert_eq!(battlefield.visible_effective_power_v1(), Some(3));
+        assert_eq!(battlefield.visible_effective_toughness_v1(), Some(3));
+
+        assert_eq!(view.graveyard_card_count_v1(PlayerSeatV1::P0), 1);
+        assert_eq!(
+            view.graveyard_card_v1(PlayerSeatV1::P0, 0)
+                .expect("visible graveyard card")
+                .card_name_v1(),
+            "Visible test creature"
+        );
+        assert_eq!(view.exile_card_count_v1(), 1);
+        assert_eq!(
+            view.exile_card_v1(0)
+                .expect("visible exile card")
+                .card_name_v1(),
+            "Visible test creature"
+        );
+        let stack = view.stack_item_v1(0).expect("visible stack item");
+        assert_eq!(stack.visible_stack_position_v1(), 0);
+        assert_eq!(stack.controller_v1(), PlayerSeatV1::P0);
+        assert_eq!(stack.visible_targets_v1().len(), 1);
+        assert_eq!(stack.item_kind_v1(), StackItemKindV2::ActivatedAbility);
+        assert_eq!(view.ordered_attackers_v1().len(), 1);
+        assert_eq!(view.blocker_assignment_count_v1(), 1);
+        assert_eq!(view.visible_object_relations_v1().len(), 1);
+    }
 
     #[test]
     fn combined_memory_requires_one_exact_event_match_and_game() {

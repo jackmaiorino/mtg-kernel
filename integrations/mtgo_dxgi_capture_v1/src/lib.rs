@@ -339,7 +339,9 @@ pub use competitive_visible_match_memory::{
     bind_match_scoped_competitive_player_visible_game_memory_v1,
     MtgoCompetitiveExternalConfirmedDecisionV1, MtgoCompetitiveExternalPublicGameLogEventV1,
     MtgoCompetitiveExternalPublicHistoryConsumerV1, MtgoCompetitiveExternalPublicHistoryHeaderV1,
-    MtgoCompetitiveExternalPublicHistoryOrderingV1, MtgoCompetitiveExternalVisibleObservationV1,
+    MtgoCompetitiveExternalPublicHistoryOrderingV1,
+    MtgoCompetitiveExternalVisibleBattlefieldCardV1, MtgoCompetitiveExternalVisibleObservationV1,
+    MtgoCompetitiveExternalVisiblePublicZoneCardV1, MtgoCompetitiveExternalVisibleStackItemV1,
     MtgoCompetitivePlayerRelativeGameWinnerV1, OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1,
     OpaqueMtgoCompetitiveVisibleGameOutcomeV1, MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
 };

@@ -46,6 +46,7 @@ fn production_source_uses_composed_desktop_and_excludes_hidden_or_input_apis() {
 fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
     let source = include_str!("../src/probe/visible_game_log.rs");
     let memory = include_str!("../src/competitive_visible_match_memory.rs");
+    let readiness = include_str!("../src/competitive_visible_history_readiness.rs");
     for required in [
         "begin_competitive_visible_game_log_baseline_v1",
         "advance_competitive_visible_game_log_baseline_v1",
@@ -72,6 +73,15 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
         "MtgoCompetitiveExternalPublicHistoryConsumerV1",
         "MtgoCompetitiveExternalConfirmedDecisionV1",
         "MtgoCompetitiveExternalVisibleObservationV1",
+        "MtgoCompetitiveExternalVisibleBattlefieldCardV1",
+        "MtgoCompetitiveExternalVisiblePublicZoneCardV1",
+        "MtgoCompetitiveExternalVisibleStackItemV1",
+        "battlefield_card_v1",
+        "graveyard_card_v1",
+        "exile_card_v1",
+        "stack_item_v1",
+        "ordered_attackers_v1",
+        "blocker_assignment_v1",
         "MtgoCompetitiveExternalPublicGameLogEventV1",
         "visit_external_public_history_v1",
         "SeparateOrderedStreamsNoCrossSourceTotalOrder",
@@ -79,9 +89,11 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
         "into_visible_game_outcome_v1",
         "OpaqueMtgoCompetitiveVisibleGameOutcomeV1",
         "derive_visible_game_winner_v1",
+        "kernel_consumer_public_zones_present: true",
+        "kernel_consumer_kernel_bookkeeping_withheld: true",
     ] {
         assert!(
-            memory.contains(required),
+            memory.contains(required) || readiness.contains(required),
             "match-scoped visible memory seam is missing: {required}"
         );
     }

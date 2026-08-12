@@ -44,6 +44,8 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub explicit_kernel_consumer_contract_present: bool,
     pub kernel_consumer_receives_game_facts_only: bool,
     pub kernel_consumer_adapter_metadata_withheld: bool,
+    pub kernel_consumer_public_zones_present: bool,
+    pub kernel_consumer_kernel_bookkeeping_withheld: bool,
     pub explicit_cross_source_ordering_policy_defined: bool,
     pub explicit_cross_source_total_order_defined: bool,
     pub kernel_import_requires_cross_source_total_order: bool,
@@ -91,6 +93,8 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         explicit_kernel_consumer_contract_present: true,
         kernel_consumer_receives_game_facts_only: true,
         kernel_consumer_adapter_metadata_withheld: true,
+        kernel_consumer_public_zones_present: true,
+        kernel_consumer_kernel_bookkeeping_withheld: true,
         explicit_cross_source_ordering_policy_defined: true,
         explicit_cross_source_total_order_defined: false,
         kernel_import_requires_cross_source_total_order: false,
@@ -142,6 +146,8 @@ mod tests {
         assert!(report.explicit_kernel_consumer_contract_present);
         assert!(report.kernel_consumer_receives_game_facts_only);
         assert!(report.kernel_consumer_adapter_metadata_withheld);
+        assert!(report.kernel_consumer_public_zones_present);
+        assert!(report.kernel_consumer_kernel_bookkeeping_withheld);
         assert!(report.explicit_cross_source_ordering_policy_defined);
         assert!(!report.explicit_cross_source_total_order_defined);
         assert!(!report.kernel_import_requires_cross_source_total_order);
