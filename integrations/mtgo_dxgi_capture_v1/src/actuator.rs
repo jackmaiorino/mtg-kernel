@@ -10003,6 +10003,28 @@ pub fn ratify_competitive_event_match_launch_attended_v5(
     ),
     String,
 > {
+    let (runtime, launch, _visible_identity) =
+        ratify_competitive_event_match_launch_with_visible_identity_attended_v1(
+            binding,
+            visible_account_alias,
+        )?;
+    Ok((runtime, launch))
+}
+
+/// Operator-only attended review variant that also returns the exact visible
+/// launch identity. The identity is required to bind the seated-player Game
+/// Log and grants no input, event-entry, or spending authority.
+pub(crate) fn ratify_competitive_event_match_launch_with_visible_identity_attended_v1(
+    binding: OpaqueMtgoCompetitiveEventMatchLaunchBindingV1,
+    visible_account_alias: &str,
+) -> Result<
+    (
+        OpaqueMtgoCompetitiveEventRuntimeV1,
+        RatifiedMtgoCompetitiveMatchLaunchV1,
+        OpaqueMtgoCompetitiveLaunchIdentityV1,
+    ),
+    String,
+> {
     let current_process_continuity_commitment_sha256 = binding
         .runtime
         .current_frame
@@ -10114,7 +10136,7 @@ pub fn ratify_competitive_event_match_launch_attended_v5(
         issued_at_unix_millis,
         supplied_phrase,
     )?;
-    Ok((runtime, launch))
+    Ok((runtime, launch, visible_identity))
 }
 
 /// Extends one separately attended priority-Pass launch to the exact admitted

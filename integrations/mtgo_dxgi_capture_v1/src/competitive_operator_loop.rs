@@ -4,20 +4,23 @@ use crate::actuator::{
     bind_competitive_duel_gesture_sequence_session_v1,
     bind_competitive_event_native_sideboard_request_v1,
     bind_competitive_event_pregame_native_request_v1,
+    bind_competitive_event_runtime_to_match_launch_identity_v1,
     checkout_competitive_event_gameplay_session_v1,
     competitive_gesture_game_session_action_authorities_v1,
     confirm_pending_competitive_event_lifecycle_control_v1,
     execute_prepared_competitive_event_lifecycle_control_v1,
     measure_competitive_event_runtime_sideboard_v1, next_competitive_event_driver_directive_v1,
     prepare_competitive_event_runtime_lifecycle_control_v1,
+    ratify_competitive_event_match_launch_with_visible_identity_attended_v1,
     return_competitive_event_gameplay_session_v1, MtgoCompetitiveEventDriverDirectiveV1,
     MtgoCompetitiveEventDriverStepV1, MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
-    MtgoCompetitiveEventRuntimeCommitmentsV1, MtgoCompetitiveGestureGameSessionCommitmentsV1,
+    MtgoCompetitiveEventMatchLaunchBindingCommitmentsV1, MtgoCompetitiveEventRuntimeCommitmentsV1,
+    MtgoCompetitiveGestureGameSessionCommitmentsV1,
     MtgoPendingCompetitiveEventLifecycleControlCommitmentsV1,
     MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1,
-    OpaqueMtgoCompetitiveEventGameplayLeaseV1, OpaqueMtgoCompetitiveEventRuntimeV1,
-    OpaqueMtgoCompetitiveGestureGameSessionV1, OpaqueMtgoCompetitiveNativePregameRequestV1,
-    OpaqueMtgoCompetitiveNativeSideboardRequestV1,
+    OpaqueMtgoCompetitiveEventGameplayLeaseV1, OpaqueMtgoCompetitiveEventMatchLaunchBindingV1,
+    OpaqueMtgoCompetitiveEventRuntimeV1, OpaqueMtgoCompetitiveGestureGameSessionV1,
+    OpaqueMtgoCompetitiveNativePregameRequestV1, OpaqueMtgoCompetitiveNativeSideboardRequestV1,
     OpaqueMtgoPendingCompetitiveEventLifecycleControlV1,
     OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1,
     OpaqueMtgoSessionBoundCompetitiveDuelGestureV1, RatifiedMtgoCompetitiveMatchLaunchV1,
@@ -43,13 +46,15 @@ use crate::competitive_operator_bootstrap::{
 };
 use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveVisibleGameOutcomeV1;
 use crate::probe::{
-    begin_evaluated_competitive_event_monitor_v1,
+    begin_competitive_visible_game_log_baseline_v1, begin_evaluated_competitive_event_monitor_v1,
     begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
+    bind_competitive_match_visible_game_log_lease_v1,
     prepare_opaque_competitive_duel_action_plan_v1, resolve_opaque_profile_bound_duel_control_v1,
     score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
-    OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoClassifiedCompetitiveEventRecordV1,
-    OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
-    OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+    MtgoDxgiCaptureRequestV3, OpaqueMtgoAdmittedDuelPerceptionV1,
+    OpaqueMtgoClassifiedCompetitiveEventRecordV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    OpaqueMtgoClassifiedCompetitivePregameModelContextV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
+    OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1, OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
     OpaqueMtgoProfileBoundDuelResolvedControlV1,
 };
 use mtgo_blackbox_v1::{
@@ -87,6 +92,7 @@ pub struct MtgoCompetitivePostEntryOperatorCommitmentsV1 {
     pub current_phase: MtgoCompetitiveLifecyclePhaseV1,
     pub current_frame_sequence: u64,
     pub accepted_transition_count: u64,
+    pub visible_game_log_baseline_commitment_sha256: Option<String>,
     pub prior_operator_commitment_sha256: Option<String>,
     pub operator_commitment_sha256: String,
 }
@@ -159,6 +165,7 @@ pub struct OpaqueMtgoCompetitivePostEntryOperatorV1 {
     resources: MtgoCompetitiveOperatorResourcesPartsV1,
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    visible_game_log_baseline: Option<OpaqueMtgoCompetitiveVisibleGameLogBaselineV1>,
     commitments: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 }
 
@@ -211,6 +218,10 @@ impl OpaqueMtgoCompetitivePostEntryOperatorV1 {
         self.resources.changed_sideboard_evaluation.is_some()
     }
 
+    pub fn visible_game_log_baseline_present_v1(&self) -> bool {
+        self.visible_game_log_baseline.is_some()
+    }
+
     pub fn safe_for_live_input_v1(&self) -> bool {
         false
     }
@@ -228,6 +239,7 @@ pub struct OpaqueMtgoPreparedCompetitiveOperatorLifecycleV1 {
     resources: MtgoCompetitiveOperatorResourcesPartsV1,
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     prepared: OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1,
+    visible_game_log_baseline: Option<OpaqueMtgoCompetitiveVisibleGameLogBaselineV1>,
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 }
 
@@ -235,7 +247,91 @@ pub struct OpaqueMtgoPendingCompetitiveOperatorLifecycleV1 {
     resources: MtgoCompetitiveOperatorResourcesPartsV1,
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     pending: OpaqueMtgoPendingCompetitiveEventLifecycleControlV1,
+    visible_game_log_baseline: Option<OpaqueMtgoCompetitiveVisibleGameLogBaselineV1>,
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+/// Move-only bridge retaining the operator and the exact pre-pairing Game Log
+/// baseline while one visible duel identity undergoes attended review.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1;
+/// let _forged = OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1 {
+    resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    binding: OpaqueMtgoCompetitiveEventMatchLaunchBindingV1,
+    visible_game_log_baseline: OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
+    binding_commitments: MtgoCompetitiveEventMatchLaunchBindingCommitmentsV1,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveEventMatchLaunchBindingCommitmentsV1 {
+        self.binding_commitments.clone()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Move-only attended launch result that retains the exact visible identity
+/// and its pre-pairing Game Log baseline for the later direct visible-log
+/// lease binder.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1;
+/// let _forged = OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1 {
+    resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log_baseline: OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1 {
+    pub fn visible_game_log_baseline_commitment_sha256_v1(&self) -> &str {
+        self.visible_game_log_baseline
+            .baseline_commitment_sha256_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
 }
 
 pub struct OpaqueMtgoCompetitiveOperatorGameplayLeaseV1 {
@@ -290,6 +386,51 @@ pub struct OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     request: OpaqueMtgoCompetitiveNativePregameRequestV1,
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+/// Move-only real operator pregame request that additionally retains the
+/// exact visible launch identity and pre-pairing Game Log baseline. It exposes
+/// only the same seated-player-visible model input as the ordinary request.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1;
+/// let _forged = OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
+    request: OpaqueMtgoCompetitiveOperatorNativePregameRequestV1,
+    visible_game_log_lease: OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
+    pub fn model_input_v1(&self) -> &crate::MtgoCompetitiveNativePregameModelInputV1 {
+        self.request.model_input_v1()
+    }
+
+    pub fn model_input_commitment_sha256_v1(&self) -> &str {
+        self.request.model_input_commitment_sha256_v1()
+    }
+
+    pub fn deployment_commitment_sha256_v1(&self) -> &str {
+        self.request.deployment_commitment_sha256_v1()
+    }
+
+    pub fn visible_game_log_lease_commitment_sha256_v1(&self) -> &str {
+        self.visible_game_log_lease.lease_commitment_sha256_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
 }
 
 impl OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
@@ -624,13 +765,132 @@ pub fn begin_competitive_post_entry_operator_v1(
         &runtime_commitments,
         0,
         None,
+        None,
         COMPETITIVE_POST_ENTRY_OPERATOR_DOMAIN_V1,
     )?;
     Ok(OpaqueMtgoCompetitivePostEntryOperatorV1 {
         resources: resources.into_parts_v1(),
         resource_commitments,
         runtime,
+        visible_game_log_baseline: None,
         commitments,
+    })
+}
+
+/// Withholds the operator while binding the exact current visible duel
+/// identity. The pre-pairing Game Log baseline must already have been captured
+/// before Accept Pairing was sent and is consumed into this bridge.
+pub fn bind_competitive_post_entry_operator_match_launch_identity_v1(
+    operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
+    perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    event_display_label: String,
+    event_label_rect_client_px: mtgo_blackbox_v1::MtgoRectPxV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1, String> {
+    let directive = next_competitive_post_entry_operator_directive_v1(&operator)?;
+    let (route_match_identity_sha256, route_game_number) = match directive.route {
+        MtgoCompetitivePostEntryOperatorRouteV1::ResolvePregameWithNativeModel {
+            match_identity_sha256,
+            game_number,
+            ..
+        } => (match_identity_sha256, game_number),
+        _ => {
+            return Err(
+                "competitive post-entry operator is not at a match launch identity".to_owned(),
+            )
+        }
+    };
+    if route_game_number != 1 {
+        return Err(
+            "competitive post-entry operator v1 supports an initial match launch only".to_owned(),
+        );
+    }
+    let OpaqueMtgoCompetitivePostEntryOperatorV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        visible_game_log_baseline,
+        commitments,
+    } = operator;
+    let visible_game_log_baseline = visible_game_log_baseline
+        .ok_or("competitive operator match launch lacks its pre-pairing Game Log baseline")?;
+    if commitments
+        .visible_game_log_baseline_commitment_sha256
+        .as_deref()
+        != Some(visible_game_log_baseline.baseline_commitment_sha256_v1())
+    {
+        return Err(
+            "competitive operator match launch changed its visible Game Log baseline".to_owned(),
+        );
+    }
+    let binding = bind_competitive_event_runtime_to_match_launch_identity_v1(
+        runtime,
+        perception,
+        &resources.duel_lifecycle_profile,
+        event_display_label,
+        event_label_rect_client_px,
+    )?;
+    let binding_commitments = binding.commitments_v1();
+    if binding_commitments.match_identity_sha256 != route_match_identity_sha256
+        || binding_commitments.game_number != route_game_number
+        || binding_commitments.event_kind != commitments.event_kind
+        || binding_commitments.event_runtime_commitment_sha256
+            != commitments.event_runtime_commitment_sha256
+        || resource_commitments.resource_bundle_commitment_sha256
+            != commitments.resource_bundle_commitment_sha256
+    {
+        return Err(
+            "competitive operator match launch changed event, match, game, runtime, or resources"
+                .to_owned(),
+        );
+    }
+    Ok(OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1 {
+        resources,
+        resource_commitments,
+        binding,
+        visible_game_log_baseline,
+        binding_commitments,
+        prior_operator: commitments,
+    })
+}
+
+/// Performs the existing interactive exact-game owner review while retaining
+/// the visible identity and Game Log baseline. This sends no MTGO input.
+pub fn ratify_competitive_post_entry_operator_match_launch_attended_v1(
+    value: OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1,
+    visible_account_alias: &str,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1, String> {
+    let OpaqueMtgoCompetitiveOperatorMatchLaunchBindingV1 {
+        resources,
+        resource_commitments,
+        binding,
+        visible_game_log_baseline,
+        binding_commitments,
+        prior_operator,
+    } = value;
+    let (runtime, match_launch, visible_identity) =
+        ratify_competitive_event_match_launch_with_visible_identity_attended_v1(
+            binding,
+            visible_account_alias,
+        )?;
+    if binding_commitments.event_runtime_commitment_sha256
+        != prior_operator.event_runtime_commitment_sha256
+        || runtime.commitments_v1().runtime_commitment_sha256
+            != prior_operator.event_runtime_commitment_sha256
+        || resource_commitments.resource_bundle_commitment_sha256
+            != prior_operator.resource_bundle_commitment_sha256
+    {
+        return Err(
+            "competitive attended match launch changed operator runtime or resources".to_owned(),
+        );
+    }
+    Ok(OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        match_launch,
+        visible_identity,
+        visible_game_log_baseline,
+        prior_operator,
     })
 }
 
@@ -693,6 +953,7 @@ pub fn checkout_competitive_post_entry_operator_native_pregame_v1(
         resources,
         resource_commitments,
         runtime,
+        visible_game_log_baseline: _,
         commitments,
     } = operator;
     let request = bind_competitive_event_pregame_native_request_v1(
@@ -711,6 +972,50 @@ pub fn checkout_competitive_post_entry_operator_native_pregame_v1(
         request,
         prior_operator: commitments,
     })
+}
+
+/// Consumes one attended launch into the existing exact pregame request while
+/// preserving the visible launch identity and pre-pairing Game Log baseline
+/// inside the returned opaque request.
+pub fn checkout_competitive_post_entry_operator_attended_native_pregame_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1,
+    context: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+    acting_player_alias: &str,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1, String> {
+    let OpaqueMtgoCompetitiveOperatorAttendedMatchLaunchV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        match_launch,
+        visible_identity,
+        visible_game_log_baseline,
+        prior_operator,
+    } = value;
+    let operator = OpaqueMtgoCompetitivePostEntryOperatorV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        visible_game_log_baseline: None,
+        commitments: prior_operator,
+    };
+    let visible_game_log_lease = bind_competitive_match_visible_game_log_lease_v1(
+        visible_game_log_baseline,
+        &visible_identity,
+        acting_player_alias,
+        visible_game_log_capture_request,
+    )?;
+    let request = checkout_competitive_post_entry_operator_native_pregame_v1(
+        operator,
+        match_launch,
+        context,
+    )?;
+    Ok(
+        OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
+            request,
+            visible_game_log_lease,
+        },
+    )
 }
 
 /// Runs the full post-entry ownership path through a checked-untrusted offline
@@ -870,6 +1175,7 @@ pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
         resources,
         resource_commitments,
         runtime,
+        visible_game_log_baseline: _,
         commitments,
     } = operator;
     let (deck_manifest, sideboard_evaluation, resources) =
@@ -1006,6 +1312,7 @@ pub fn advance_competitive_post_entry_operator_observed_v1(
         operator.resources,
         operator.resource_commitments,
         runtime,
+        operator.visible_game_log_baseline,
         operator.commitments,
     )
 }
@@ -1022,6 +1329,19 @@ pub fn prepare_competitive_post_entry_operator_lifecycle_v1(
             )
         }
     };
+    let visible_game_log_baseline = match action {
+        MtgoCompetitiveLifecycleActionV1::AcceptPairing => {
+            if operator.visible_game_log_baseline.is_some() {
+                return Err(
+                    "competitive operator already owns a pre-pairing Game Log baseline".to_owned(),
+                );
+            }
+            Some(begin_competitive_visible_game_log_baseline_v1(
+                &operator.runtime,
+            )?)
+        }
+        _ => operator.visible_game_log_baseline,
+    };
     let prepared =
         prepare_competitive_event_runtime_lifecycle_control_v1(operator.runtime, action)?;
     let prepared_commitments = prepared.commitments_v1();
@@ -1030,6 +1350,7 @@ pub fn prepare_competitive_post_entry_operator_lifecycle_v1(
         resources: operator.resources,
         resource_commitments: operator.resource_commitments,
         prepared,
+        visible_game_log_baseline,
         prior_operator: operator.commitments,
     })
 }
@@ -1044,6 +1365,7 @@ pub fn execute_prepared_competitive_post_entry_operator_lifecycle_v1(
         resources: prepared.resources,
         resource_commitments: prepared.resource_commitments,
         pending,
+        visible_game_log_baseline: prepared.visible_game_log_baseline,
         prior_operator: prepared.prior_operator,
     })
 }
@@ -1057,6 +1379,7 @@ pub fn confirm_pending_competitive_post_entry_operator_lifecycle_v1(
         pending.resources,
         pending.resource_commitments,
         runtime,
+        pending.visible_game_log_baseline,
         pending.prior_operator,
     )
 }
@@ -1085,6 +1408,7 @@ pub fn observe_competitive_post_entry_operator_event_record_v1(
         operator.resources,
         operator.resource_commitments,
         runtime,
+        operator.visible_game_log_baseline,
         operator.commitments,
     )
 }
@@ -1139,6 +1463,7 @@ pub fn return_competitive_post_entry_operator_gameplay_v1(
         lease.resources,
         lease.resource_commitments,
         runtime,
+        None,
         lease.prior_operator,
     )
 }
@@ -1237,6 +1562,7 @@ fn advance_operator_v1(
     resources: MtgoCompetitiveOperatorResourcesPartsV1,
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    visible_game_log_baseline: Option<OpaqueMtgoCompetitiveVisibleGameLogBaselineV1>,
     prior: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 ) -> Result<OpaqueMtgoCompetitivePostEntryOperatorV1, String> {
     if resource_commitments.resource_bundle_commitment_sha256
@@ -1244,6 +1570,14 @@ fn advance_operator_v1(
     {
         return Err("competitive post-entry operator resources changed while advancing".to_owned());
     }
+    let visible_game_log_baseline_commitment_sha256 = visible_game_log_baseline
+        .as_ref()
+        .map(OpaqueMtgoCompetitiveVisibleGameLogBaselineV1::baseline_commitment_sha256_v1);
+    validate_visible_game_log_baseline_transition_v1(
+        prior.current_phase,
+        prior.visible_game_log_baseline_commitment_sha256.as_deref(),
+        visible_game_log_baseline_commitment_sha256,
+    )?;
     let accepted_transition_count = prior
         .accepted_transition_count
         .checked_add(1)
@@ -1253,6 +1587,7 @@ fn advance_operator_v1(
         &resource_commitments,
         &runtime_commitments,
         accepted_transition_count,
+        visible_game_log_baseline_commitment_sha256,
         Some(prior.operator_commitment_sha256.as_str()),
         COMPETITIVE_POST_ENTRY_OPERATOR_ADVANCE_DOMAIN_V1,
     )?;
@@ -1260,8 +1595,63 @@ fn advance_operator_v1(
         resources,
         resource_commitments,
         runtime,
+        visible_game_log_baseline,
         commitments,
     })
+}
+
+fn validate_visible_game_log_baseline_transition_v1(
+    prior_phase: MtgoCompetitiveLifecyclePhaseV1,
+    prior_baseline_commitment_sha256: Option<&str>,
+    next_baseline_commitment_sha256: Option<&str>,
+) -> Result<(), String> {
+    if let Some(commitment) = prior_baseline_commitment_sha256 {
+        require_sha256_v1(commitment, "prior visible Game Log baseline commitment")?;
+    }
+    if let Some(commitment) = next_baseline_commitment_sha256 {
+        require_sha256_v1(commitment, "next visible Game Log baseline commitment")?;
+    }
+    match (
+        prior_baseline_commitment_sha256,
+        next_baseline_commitment_sha256,
+    ) {
+        (None, None) => Ok(()),
+        (None, Some(_)) if prior_phase == MtgoCompetitiveLifecyclePhaseV1::PairingReady => Ok(()),
+        (Some(prior), Some(next)) if prior == next => Ok(()),
+        (None, Some(_)) => {
+            Err("visible Game Log baseline may begin only at the Pairing Ready boundary".to_owned())
+        }
+        (Some(_), None) => {
+            Err("visible Game Log baseline was dropped while advancing the operator".to_owned())
+        }
+        (Some(_), Some(_)) => {
+            Err("visible Game Log baseline changed while advancing the operator".to_owned())
+        }
+    }
+}
+
+#[cfg(test)]
+fn next_visible_game_log_baseline_present_after_lifecycle_action_v1(
+    current_phase: MtgoCompetitiveLifecyclePhaseV1,
+    baseline_present: bool,
+    action: MtgoCompetitiveLifecycleActionV1,
+) -> Result<bool, String> {
+    match action {
+        MtgoCompetitiveLifecycleActionV1::AcceptPairing => {
+            if current_phase != MtgoCompetitiveLifecyclePhaseV1::PairingReady {
+                return Err(
+                    "pre-pairing Game Log baseline requires the Pairing Ready boundary".to_owned(),
+                );
+            }
+            if baseline_present {
+                return Err(
+                    "competitive operator already owns a pre-pairing Game Log baseline".to_owned(),
+                );
+            }
+            Ok(true)
+        }
+        _ => Ok(baseline_present),
+    }
 }
 
 #[derive(Clone)]
@@ -1498,6 +1888,7 @@ fn post_entry_operator_commitments_v1(
     resources: &MtgoCompetitiveOperatorResourceCommitmentsV1,
     runtime: &MtgoCompetitiveEventRuntimeCommitmentsV1,
     accepted_transition_count: u64,
+    visible_game_log_baseline_commitment_sha256: Option<&str>,
     prior_operator_commitment_sha256: Option<&str>,
     domain: &[u8],
 ) -> Result<MtgoCompetitivePostEntryOperatorCommitmentsV1, String> {
@@ -1541,6 +1932,9 @@ fn post_entry_operator_commitments_v1(
     if let Some(prior) = prior_operator_commitment_sha256 {
         require_sha256_v1(prior, "prior operator commitment")?;
     }
+    if let Some(baseline) = visible_game_log_baseline_commitment_sha256 {
+        require_sha256_v1(baseline, "visible Game Log baseline commitment")?;
+    }
     let operator_commitment_sha256 = hash_parts_v1(
         domain,
         &[
@@ -1555,6 +1949,9 @@ fn post_entry_operator_commitments_v1(
             competitive_phase_tag_v1(identity.current_phase),
             identity.current_frame_sequence.to_be_bytes().as_slice(),
             accepted_transition_count.to_be_bytes().as_slice(),
+            visible_game_log_baseline_commitment_sha256
+                .unwrap_or("")
+                .as_bytes(),
             b"exact_resources_and_entered_event_runtime_move_only_no_new_entry_no_spending",
         ],
     );
@@ -1576,6 +1973,8 @@ fn post_entry_operator_commitments_v1(
         current_phase: identity.current_phase,
         current_frame_sequence: identity.current_frame_sequence,
         accepted_transition_count,
+        visible_game_log_baseline_commitment_sha256: visible_game_log_baseline_commitment_sha256
+            .map(str::to_owned),
         prior_operator_commitment_sha256: prior_operator_commitment_sha256.map(str::to_owned),
         operator_commitment_sha256,
     })
@@ -1991,9 +2390,77 @@ mod tests {
             current_phase: MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
             current_frame_sequence: 10,
             accepted_transition_count: 1,
+            visible_game_log_baseline_commitment_sha256: None,
             prior_operator_commitment_sha256: Some(digest('9')),
             operator_commitment_sha256: digest('a'),
         }
+    }
+
+    #[test]
+    fn accept_pairing_is_the_only_initial_visible_game_log_baseline_boundary() {
+        assert!(
+            next_visible_game_log_baseline_present_after_lifecycle_action_v1(
+                MtgoCompetitiveLifecyclePhaseV1::PairingReady,
+                false,
+                MtgoCompetitiveLifecycleActionV1::AcceptPairing,
+            )
+            .unwrap()
+        );
+        assert!(
+            next_visible_game_log_baseline_present_after_lifecycle_action_v1(
+                MtgoCompetitiveLifecyclePhaseV1::PairingReady,
+                true,
+                MtgoCompetitiveLifecycleActionV1::AcceptPairing,
+            )
+            .is_err()
+        );
+        assert!(
+            next_visible_game_log_baseline_present_after_lifecycle_action_v1(
+                MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+                false,
+                MtgoCompetitiveLifecycleActionV1::AcceptPairing,
+            )
+            .is_err()
+        );
+        assert!(
+            next_visible_game_log_baseline_present_after_lifecycle_action_v1(
+                MtgoCompetitiveLifecyclePhaseV1::MatchComplete,
+                true,
+                MtgoCompetitiveLifecycleActionV1::ContinueAfterMatch,
+            )
+            .unwrap()
+        );
+
+        assert!(validate_visible_game_log_baseline_transition_v1(
+            MtgoCompetitiveLifecyclePhaseV1::PairingReady,
+            None,
+            Some(&digest('1')),
+        )
+        .is_ok());
+        assert!(validate_visible_game_log_baseline_transition_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            Some(&digest('1')),
+            Some(&digest('1')),
+        )
+        .is_ok());
+        assert!(validate_visible_game_log_baseline_transition_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            Some(&digest('1')),
+            None,
+        )
+        .is_err());
+        assert!(validate_visible_game_log_baseline_transition_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            Some(&digest('1')),
+            Some(&digest('2')),
+        )
+        .is_err());
+        assert!(validate_visible_game_log_baseline_transition_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            None,
+            Some(&digest('1')),
+        )
+        .is_err());
     }
 
     fn checkpoint_capabilities_v1(
