@@ -82,3 +82,27 @@ This proves that the local backend can acquire and crop a player-visible compose
 The current source now fixes the inspected executable, exact Daybreak signer, local Freeform Solitaire title, 120 DPI, 1550 by 925 client layout, `DISPLAY2` output identity, SDR color space, and canonical BGRA8 geometry in profile commitment `45f73bf432bbed42e1896c4f02e0670115bb891b69fdc7037c89dc780ac91fac`. Only the in-process DXGI candidate can reach the private binder. The returned wrapper cannot be constructed, cloned, formatted, serialized, or used to read pixels, and all semantic, observation, policy, and input accessors remain false.
 
 The opt-in live test was attempted against the running bottom-six Solitaire prompt. A static screen timed out because Desktop Duplication had no fresh desktop presentation. A retry around one reversible card selection reached an MTGO-owned foreground surface whose title did not match the exact acting-player rule. Both attempts returned no wrapper. The calibrated Cancel click restored all seven visible cards at zero selected, and a separate pending-review preview confirmed that state. These are useful fail-closed runtime checks, not a successful live admission claim.
+
+## Current signed-client offline rehearsal, 2026-08-12
+
+The installed MTGO executable changed to SHA-256
+`bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92`
+while retaining a valid Daybreak signature with the same pinned signer
+thumbprint. A strict DXGI Solitaire capture from that build was manually
+inspected and replayed through the offline pregame wiring:
+
+- artifact: `C:\Users\Jack\AppData\Local\Temp\mtgo-solitaire-dxgi-20260811-205435661`;
+- canonical BGRA8 SHA-256: `91faa56cd2c334225d91628674f31bb325b522c160a781b6c7ef298311b35446`;
+- PNG SHA-256: `e2e7817121666b3afb67a01b75cbde8b4cb4ab3be2133e5d39f6a39e71148edf`;
+- manifest SHA-256: `93b159548c532fc64ae4e9402affdd148a87e24b34ad628a741055f6c8d2eda9`;
+- source profile commitment: `91acc6100d325a412951222eb5283de256c0a906fb910dbf43b251459c3a8427`;
+- visible-card template file SHA-256: `0fcd905fa541ebb97dba5a1f8ae7f2bff8d7c05b3017cac5bda605a49207b3a4`.
+
+The replay recognized the visible ordered hand as Island, Forest, Forest,
+Forest, Island, Island, Forest; reconstructed exactly Mulligan to six and
+Keep; and produced a Keep plan with the expected first-main postcondition.
+The scorer was the deterministic non-model wiring heuristic, not MTG-kernel's
+RL policy. The artifact and action plan remained false for live input,
+purchase, and queue entry. This is current-build capture, recognition, and
+semantic-planning compatibility evidence only. It is not competitive model
+scoring, general perception accuracy, or live-input authority.
