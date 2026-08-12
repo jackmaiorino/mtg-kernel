@@ -60,10 +60,10 @@ use crate::probe::{
     OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, OpaqueMtgoProfileBoundDuelResolvedControlV1,
 };
 use mtgo_blackbox_v1::{
-    validate_native_checkpoint_competitive_capabilities_v1, ActionSemanticV1,
-    MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1,
-    MtgoDuelGestureStageV1, MtgoNativeCheckpointCompetitiveCapabilitiesV1,
-    MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoProfileBoundPostconditionCalibrationV1,
+    validate_native_checkpoint_competitive_capabilities_v1, MtgoCompetitiveEventKindV1,
+    MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1, MtgoDuelGestureStageV1,
+    MtgoNativeCheckpointCompetitiveCapabilitiesV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
+    MtgoPlayerVisibleDuelActionV1, MtgoProfileBoundPostconditionCalibrationV1,
     MtgoProfileBoundPostconditionRegionSetV1,
 };
 use serde::{Deserialize, Serialize};
@@ -345,17 +345,18 @@ pub struct OpaqueMtgoCompetitiveOperatorGameplayLeaseV1 {
 
 /// Move-only ownership of the gameplay lease and attended game session after
 /// the exact loaded checkpoint selected one current player-visible legal
-/// action. Only that semantic is exposed so the reviewed UI adapter can build
-/// its coordinate-free gesture stages.
+/// action. Only the sanitized player-visible action is exposed so the reviewed
+/// UI adapter can build its coordinate-free gesture stages.
 pub struct OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
     control: OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    player_visible_selected_action: MtgoPlayerVisibleDuelActionV1,
 }
 
 impl OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
-    pub fn selected_semantic_v1(&self) -> &ActionSemanticV1 {
-        self.control.selected_semantic_for_operator_v1()
+    pub fn player_visible_selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        &self.player_visible_selected_action
     }
 
     pub fn safe_for_live_input_v1(&self) -> bool {
@@ -1768,7 +1769,7 @@ pub fn return_competitive_post_entry_operator_gameplay_v1(
 /// Scores one current player-visible duel decision through the exact loaded
 /// checkpoint and resolves its selected legal semantic to the exact visible
 /// control. The returned move-only selection retains the gameplay lease and
-/// attended game session and exposes only the selected semantic.
+/// attended game session and exposes only the sanitized player-visible action.
 ///
 /// ```compile_fail
 /// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorGameplaySelectionV1;
@@ -1799,16 +1800,26 @@ pub fn select_competitive_post_entry_operator_gameplay_action_v1(
             .checkpoint_deployment
             .deployment_commitment_sha256(),
     )?;
+    let player_visible_input = perception
+        .player_visible_duel_decision_input_v1()
+        .map_err(|error| format!("project player-visible duel decision: {error}"))?;
     let selection = score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1(
         perception,
         &lease.resources.duel_perception_profile,
         &lease.resources.checkpoint_deployment,
     )?;
+    let selected_index = selection.commitments_v1().selected_index;
+    let player_visible_selected_action = player_visible_input
+        .ordered_legal_actions
+        .get(selected_index)
+        .cloned()
+        .ok_or("duel model selected outside the player-visible legal-action vector")?;
     let control = resolve_opaque_profile_bound_duel_control_v1(selection)?;
     Ok(OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
         lease,
         session,
         control,
+        player_visible_selected_action,
     })
 }
 
@@ -1833,6 +1844,7 @@ pub fn bind_competitive_post_entry_operator_gameplay_action_v1(
         lease,
         session,
         control,
+        player_visible_selected_action: _,
     } = selected;
     let (scope, gameplay_authorization) =
         competitive_gesture_game_session_action_authorities_v1(&session);

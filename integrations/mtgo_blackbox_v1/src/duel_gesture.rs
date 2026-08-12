@@ -144,9 +144,6 @@ impl CheckedUntrustedMtgoDuelGesturePlanV1 {
         &self.plan.stages
     }
 
-    pub fn selected_semantic_v1(&self) -> &ActionSemanticV1 {
-        &self.selected_semantic
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

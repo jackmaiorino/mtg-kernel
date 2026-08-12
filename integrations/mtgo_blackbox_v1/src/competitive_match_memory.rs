@@ -1,9 +1,7 @@
 use crate::{
-    build_player_visible_confirmed_duel_decision_v1,
     CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1, MtgoCompetitiveEventKindV1,
-    MtgoContractErrorV1, MtgoPlayerVisibleConfirmedDuelDecisionV1,
+    MtgoContractErrorV1, MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoPlayerVisibleDuelActionV1,
 };
-use mtg_kernel::rl::ActionSemanticV1;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -45,10 +43,10 @@ struct MtgoCompetitivePlayerVisibleGameHistoryRecordV1 {
 }
 
 /// Read-only, coordinate-free view of one model decision whose selected
-/// semantic received its declared newer visible postcondition.
+/// player-visible action received its declared newer visible postcondition.
 ///
-/// The observation is exactly the already validated player-visible
-/// `ObservationV5` supplied to the gameplay checkpoint. The view contains no
+/// The view contains only sanitized player-visible state and action values. It
+/// contains no aggregate kernel observation, stable object identifiers,
 /// pixels, rectangles, process handles, input primitives, or opponent-hidden
 /// state source.
 pub struct MtgoCompetitivePlayerVisibleDecisionViewV1<'a> {
@@ -262,13 +260,13 @@ fn decision_record_v1(
         || confirmed.source_frame_id_v1() == confirmed.after_frame_id()
         || confirmed.source_frame_sequence_v1() == 0
         || confirmed.after_frame_sequence() <= confirmed.source_frame_sequence_v1()
-        || confirmed.source_observation_v1().acting_player
-            != action_actor_v1(confirmed.selected_semantic_v1()).ok_or_else(|| {
-                error_v1(
-                    "competitive_player_visible_history_action",
-                    "confirmed action lacks one exact acting player",
-                )
-            })?
+        || confirmed
+            .player_visible_decision_v1()
+            .current_state
+            .acting_player
+            != player_visible_action_actor_v1(
+                &confirmed.player_visible_decision_v1().selected_action,
+            )
     {
         return Err(error_v1(
             "competitive_player_visible_history_source",
@@ -291,10 +289,7 @@ fn decision_record_v1(
         source_frame_sha256: confirmed.source_frame_sha256_v1().to_owned(),
         after_frame_id: confirmed.after_frame_id(),
         after_frame_sequence: confirmed.after_frame_sequence(),
-        player_visible_decision: build_player_visible_confirmed_duel_decision_v1(
-            confirmed.source_observation_v1(),
-            confirmed.selected_semantic_v1(),
-        )?,
+        player_visible_decision: confirmed.player_visible_decision_v1().clone(),
         decision_commitment_sha256: confirmed.decision_commitment_sha256_v1().to_owned(),
         selection_commitment_sha256: confirmed.selection_commitment_sha256_v1().to_owned(),
         visible_postcondition_commitment_sha256: confirmed
@@ -353,38 +348,39 @@ fn finish_v1(
     })
 }
 
-fn action_actor_v1(action: &ActionSemanticV1) -> Option<mtg_kernel::rl::PlayerSeatV1> {
+fn player_visible_action_actor_v1(
+    action: &MtgoPlayerVisibleDuelActionV1,
+) -> mtg_kernel::rl::PlayerSeatV1 {
     match action {
-        ActionSemanticV1::Pass { actor }
-        | ActionSemanticV1::PlayLand { actor, .. }
-        | ActionSemanticV1::CastSpell { actor, .. }
-        | ActionSemanticV1::ActivateManaAbility { actor, .. }
-        | ActionSemanticV1::ActivateAbility { actor, .. }
-        | ActionSemanticV1::PlotSpell { actor, .. }
-        | ActionSemanticV1::ChooseTarget { actor, .. }
-        | ActionSemanticV1::ChooseCostTarget { actor, .. }
-        | ActionSemanticV1::ChooseCastMode { actor, .. }
-        | ActionSemanticV1::ChooseKicker { actor, .. }
-        | ActionSemanticV1::ChooseSpellMode { actor, .. }
-        | ActionSemanticV1::ChooseEffectOption { actor, .. }
-        | ActionSemanticV1::ChooseEffectTarget { actor, .. }
-        | ActionSemanticV1::FinishEffectSelection { actor, .. }
-        | ActionSemanticV1::ChooseEffectColor { actor, .. }
-        | ActionSemanticV1::ChooseEffectNumber { actor, .. }
-        | ActionSemanticV1::ChooseEffectBoolean { actor, .. }
-        | ActionSemanticV1::FinishTargetSelection { actor, .. }
-        | ActionSemanticV1::ChooseOptionalCostUse { actor, .. }
-        | ActionSemanticV1::ChooseOptionalCostWhich { actor, .. }
-        | ActionSemanticV1::ChooseSpellCopyPayment { actor, .. }
-        | ActionSemanticV1::ChooseSpellCopyRetarget { actor, .. }
-        | ActionSemanticV1::ChooseMadnessCast { actor, .. }
-        | ActionSemanticV1::Discard { actor, .. }
-        | ActionSemanticV1::DeclareAttackers { actor, .. }
-        | ActionSemanticV1::DeclareBlockersForAttacker { actor, .. }
-        | ActionSemanticV1::ChooseAttackerInclusion { actor, .. }
-        | ActionSemanticV1::ChooseBlockerInclusion { actor, .. }
-        | ActionSemanticV1::OrderTriggers { actor, .. } => Some(*actor),
-        ActionSemanticV1::Ambiguous { .. } => None,
+        MtgoPlayerVisibleDuelActionV1::Pass { actor }
+        | MtgoPlayerVisibleDuelActionV1::PlayLand { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::CastSpell { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ActivateManaAbility { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ActivateAbility { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::PlotSpell { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseTarget { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseCostTarget { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseCastMode { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseKicker { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseSpellMode { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectOption { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectTarget { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::FinishEffectSelection { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectColor { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectNumber { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectBoolean { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::FinishTargetSelection { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseOptionalCostUse { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseOptionalCostWhich { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseSpellCopyPayment { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseSpellCopyRetarget { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseMadnessCast { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::Discard { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::DeclareAttackers { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::DeclareBlockersForAttacker { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseAttackerInclusion { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseBlockerInclusion { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::OrderTriggers { actor, .. } => *actor,
     }
 }
 
@@ -424,7 +420,7 @@ mod tests {
     };
 
     #[test]
-    fn confirmed_semantic_and_source_observation_are_retained_without_authority() {
+    fn confirmed_player_visible_decision_is_retained_without_authority() {
         let history = begin_checked_untrusted_competitive_player_visible_game_history_v1(
             "league-match-game-one-visible-history-v1",
             competitive_gameplay_postcondition_for_match_memory_test_v1(),

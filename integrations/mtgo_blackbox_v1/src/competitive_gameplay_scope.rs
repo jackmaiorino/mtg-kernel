@@ -11,7 +11,6 @@ use crate::{
     MtgoProfileBoundPostconditionBeforeInputFrameV1,
     MtgoProfileBoundPostconditionCandidateStatusV1, MtgoRuntimeModeV1,
 };
-use mtg_kernel::rl::{ActionSemanticV1, ObservationV5};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -68,10 +67,6 @@ pub struct CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1 {
 }
 
 impl CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1 {
-    pub fn selected_semantic(&self) -> &ActionSemanticV1 {
-        self.plan.selected_semantic()
-    }
-
     pub fn event_kind(&self) -> MtgoCompetitiveEventKindV1 {
         self.event_kind
     }
@@ -124,8 +119,7 @@ pub struct CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
     event_identity_sha256: String,
     match_identity_sha256: String,
     game_number: u8,
-    selected_semantic: ActionSemanticV1,
-    source_observation: ObservationV5,
+    player_visible_decision: crate::MtgoPlayerVisibleConfirmedDuelDecisionV1,
     decision_commitment_sha256: String,
     selection_commitment_sha256: String,
     deployment_commitment_sha256: String,
@@ -154,12 +148,8 @@ impl CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
         &self.match_identity_sha256
     }
 
-    pub fn selected_semantic_v1(&self) -> &ActionSemanticV1 {
-        &self.selected_semantic
-    }
-
-    pub fn source_observation_v1(&self) -> &ObservationV5 {
-        &self.source_observation
+    pub fn player_visible_decision_v1(&self) -> &crate::MtgoPlayerVisibleConfirmedDuelDecisionV1 {
+        &self.player_visible_decision
     }
 
     pub fn decision_commitment_sha256_v1(&self) -> &str {
@@ -356,8 +346,7 @@ pub fn check_untrusted_competitive_gameplay_postcondition_pixels_v1(
         .expect("validated match phase has a match identity")
         .to_owned();
     let plan_commitments = competitive.plan.commitments_v1();
-    let selected_semantic = competitive.plan.selected_semantic().clone();
-    let source_observation = competitive.plan.source_observation_v1().clone();
+    let player_visible_decision = competitive.plan.player_visible_confirmed_decision_v1()?;
     let mode_authorization_commitment_sha256 =
         competitive.mode_authorization_commitment_sha256.clone();
     let authorization_commitment_sha256 = competitive.authorization_commitment_sha256.clone();
@@ -396,8 +385,7 @@ pub fn check_untrusted_competitive_gameplay_postcondition_pixels_v1(
         event_identity_sha256,
         match_identity_sha256,
         game_number,
-        selected_semantic,
-        source_observation,
+        player_visible_decision,
         decision_commitment_sha256: plan_commitments.decision_commitment_sha256,
         selection_commitment_sha256: plan_commitments.selection_commitment_sha256,
         deployment_commitment_sha256: plan_commitments.deployment_commitment_sha256,
@@ -783,8 +771,12 @@ mod tests {
             assert_eq!(scoped.event_kind(), event_kind);
             assert_eq!(scoped.game_number(), 1);
             assert!(matches!(
-                scoped.selected_semantic(),
-                ActionSemanticV1::PlayLand { .. }
+                scoped
+                    .plan
+                    .player_visible_confirmed_decision_v1()
+                    .unwrap()
+                    .selected_action,
+                crate::MtgoPlayerVisibleDuelActionV1::PlayLand { .. }
             ));
             assert_eq!(scoped.authorization_commitment_sha256().len(), 64);
             assert_eq!(scoped.mode_authorization_commitment_sha256().len(), 64);

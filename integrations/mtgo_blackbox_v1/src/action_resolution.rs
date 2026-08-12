@@ -149,7 +149,7 @@ impl CheckedUntrustedMtgoProfileBoundResolvedActionControlV1 {
         self.selection.deployment_commitment_sha256()
     }
 
-    pub fn selected_semantic(&self) -> &ActionSemanticV1 {
+    pub(crate) fn selected_semantic(&self) -> &ActionSemanticV1 {
         self.selection.selected_semantic()
     }
 
@@ -191,6 +191,15 @@ impl CheckedUntrustedMtgoProfileBoundResolvedActionControlV1 {
 
     pub(crate) fn validated_decision_v1(&self) -> &ValidatedMtgoObservedDecisionV1 {
         self.selection.validated_decision_v1()
+    }
+
+    pub(crate) fn player_visible_confirmed_decision_v1(
+        &self,
+    ) -> Result<crate::MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoContractErrorV1> {
+        crate::build_player_visible_confirmed_duel_decision_v1(
+            self.selection.validated_decision_v1(),
+            self.selection.selected_index(),
+        )
     }
 
     pub(crate) fn decision_commitment_sha256_v1(&self) -> &str {

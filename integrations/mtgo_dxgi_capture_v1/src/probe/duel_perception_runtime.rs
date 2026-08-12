@@ -899,14 +899,6 @@ impl OpaqueMtgoProfileBoundDuelResolvedControlV1 {
         false
     }
 
-    pub(crate) fn selected_semantic_for_operator_v1(&self) -> &mtgo_blackbox_v1::ActionSemanticV1 {
-        self.selection
-            .selection
-            .as_ref()
-            .expect("resolved opaque control retains its selected action")
-            .selected_semantic()
-    }
-
     pub(crate) fn gesture_plan_for_operator_v1(
         &self,
         stages: Vec<MtgoDuelGestureStageV1>,
@@ -1936,9 +1928,6 @@ fn finish_opaque_duel_model_selection_v1(
     }
     let retained_selected_semantic =
         &perception.validated_decision.legal_actions()[selection.selected_index()];
-    if selection.selected_semantic() != retained_selected_semantic {
-        return Err("profile-bound duel selection changed the retained semantic".to_owned());
-    }
     let selected_semantic = serde_json::to_vec(retained_selected_semantic)
         .map_err(|error| format!("serialize selected duel semantic: {error}"))?;
     let opaque_selection_commitment_sha256 = commitment_v1(
@@ -1992,27 +1981,23 @@ pub fn resolve_opaque_profile_bound_duel_control_v1(
         .selection
         .take()
         .ok_or("opaque duel model selection was already consumed")?;
-    let selected_semantic = profile_bound_selection.selected_semantic();
-    if selection
+    let selected_semantic_value = selection
         .perception
         .validated_decision
         .legal_actions()
         .get(profile_bound_selection.selected_index())
-        != Some(selected_semantic)
-    {
-        return Err("selected duel action is outside the retained legal-action vector".to_owned());
-    }
+        .cloned()
+        .ok_or("selected duel action is outside the retained legal-action vector")?;
     let selected_candidate = selection
         .perception
         .visible_controls
         .controls
         .iter()
-        .find(|candidate| &candidate.semantic == selected_semantic)
+        .find(|candidate| candidate.semantic == selected_semantic_value)
         .ok_or("selected duel action has no retained visible control")?;
     let selected_control_id = selected_candidate.control_id.clone();
     let selected_evidence_id = selected_candidate.frame_region_evidence_id;
-    let selected_semantic_value = selected_semantic.clone();
-    let selected_semantic_json = serde_json::to_vec(selected_semantic)
+    let selected_semantic_json = serde_json::to_vec(&selected_semantic_value)
         .map_err(|error| format!("serialize selected duel semantic: {error}"))?;
     let (rect_client_px, region_content_sha256) =
         frame_region_for_evidence_v1(&selection.perception.decision_record, selected_evidence_id)?;
@@ -4516,7 +4501,6 @@ pub(crate) fn bind_opaque_duel_control_to_competitive_action_plan_v1(
     validate_opaque_competitive_action_binding_v1(
         &opaque,
         &postcondition,
-        competitive.selected_semantic(),
     )?;
     if gesture_commitments.profile_bound_resolution_commitment_sha256
         != opaque.profile_bound_resolution_commitment_sha256
@@ -4529,8 +4513,7 @@ pub(crate) fn bind_opaque_duel_control_to_competitive_action_plan_v1(
         return Err("gesture plan does not retain the exact opaque duel control".to_owned());
     }
 
-    let selected_semantic_json = serde_json::to_vec(competitive.selected_semantic())
-        .map_err(|error| format!("serialize competitive duel semantic: {error}"))?;
+    let selected_semantic_json = opaque.selected_semantic_json.clone();
     let opaque_competitive_action_plan_commitment_sha256 = commitment_v1(
         DUEL_OPAQUE_COMPETITIVE_ACTION_PLAN_DOMAIN_V1,
         &[
@@ -4700,13 +4683,10 @@ pub(super) fn frame_id_from_capture_commitment_v1(
     Ok(frame_id)
 }
 
-fn validate_opaque_competitive_action_binding_v1<T: Serialize + ?Sized>(
+fn validate_opaque_competitive_action_binding_v1(
     opaque: &OpaqueDuelActionBindingViewV1,
     postcondition: &mtgo_blackbox_v1::MtgoProfileBoundActionPostconditionPlanCommitmentsV1,
-    competitive_semantic: &T,
 ) -> Result<(), String> {
-    let competitive_semantic_json = serde_json::to_vec(competitive_semantic)
-        .map_err(|error| format!("serialize checked competitive semantic: {error}"))?;
     if opaque.decision_commitment_sha256 != postcondition.decision_commitment_sha256
         || opaque.selection_commitment_sha256 != postcondition.selection_commitment_sha256
         || opaque.control_resolution_commitment_sha256
@@ -4721,7 +4701,8 @@ fn validate_opaque_competitive_action_binding_v1<T: Serialize + ?Sized>(
         || opaque.source_frame_sha256 != postcondition.source_frame_sha256
         || opaque.source_output_identity_sha256 != postcondition.source_output_identity_sha256
         || opaque.source_client_size_px != postcondition.source_client_size_px
-        || opaque.selected_semantic_json != competitive_semantic_json
+        || selected_semantic_sha256_v1(&opaque.selected_semantic_json)
+            != postcondition.selected_semantic_sha256
     {
         return Err(
             "competitive duel plan does not bind the exact opaque source, model selection, and visible control"
@@ -4729,6 +4710,14 @@ fn validate_opaque_competitive_action_binding_v1<T: Serialize + ?Sized>(
         );
     }
     Ok(())
+}
+
+fn selected_semantic_sha256_v1(semantic_json: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"mtgo-selected-duel-semantic-v1");
+    hasher.update((semantic_json.len() as u64).to_be_bytes());
+    hasher.update(semantic_json);
+    format!("{:x}", hasher.finalize())
 }
 
 fn validate_and_bind_perception_record_v1(
@@ -5818,11 +5807,14 @@ mod tests {
             source_frame_sha256: opaque.source_frame_sha256.clone(),
             source_output_identity_sha256: opaque.source_output_identity_sha256.clone(),
             source_client_size_px: opaque.source_client_size_px.clone(),
+            selected_semantic_sha256: selected_semantic_sha256_v1(
+                &opaque.selected_semantic_json,
+            ),
             plan_commitment_sha256: "b".repeat(64),
         };
-        validate_opaque_competitive_action_binding_v1(&opaque, &baseline, &semantic).unwrap();
+        validate_opaque_competitive_action_binding_v1(&opaque, &baseline).unwrap();
 
-        for mutation in 0..12 {
+        for mutation in 0..13 {
             let mut changed = baseline.clone();
             match mutation {
                 0 => changed.decision_commitment_sha256 = "c".repeat(64),
@@ -5837,18 +5829,15 @@ mod tests {
                 9 => changed.source_frame_sha256 = "c".repeat(64),
                 10 => changed.source_output_identity_sha256 = "c".repeat(64),
                 11 => changed.source_client_size_px.width += 1,
+                12 => changed.selected_semantic_sha256 = "c".repeat(64),
                 _ => unreachable!(),
             }
-            assert!(
-                validate_opaque_competitive_action_binding_v1(&opaque, &changed, &semantic)
-                    .is_err()
-            );
+            assert!(validate_opaque_competitive_action_binding_v1(&opaque, &changed).is_err());
         }
-        let other_semantic = serde_json::json!({"kind":"pass","actor":"p1"});
-        assert!(
-            validate_opaque_competitive_action_binding_v1(&opaque, &baseline, &other_semantic)
-                .is_err()
-        );
+        let mut other_semantic = opaque.clone();
+        other_semantic.selected_semantic_json =
+            serde_json::to_vec(&serde_json::json!({"kind":"pass","actor":"p1"})).unwrap();
+        assert!(validate_opaque_competitive_action_binding_v1(&other_semantic, &baseline).is_err());
     }
 
     #[test]

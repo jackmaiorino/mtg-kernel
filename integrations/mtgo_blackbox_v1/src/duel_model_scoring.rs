@@ -93,7 +93,7 @@ impl CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1 {
         self.selection.decision_commitment_sha256()
     }
 
-    pub fn selected_semantic(&self) -> &ActionSemanticV1 {
+    pub(crate) fn selected_semantic(&self) -> &ActionSemanticV1 {
         self.selection.selected_semantic()
     }
 

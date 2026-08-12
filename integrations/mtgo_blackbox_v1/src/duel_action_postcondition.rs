@@ -125,6 +125,7 @@ pub struct MtgoProfileBoundActionPostconditionPlanCommitmentsV1 {
     pub source_frame_sha256: String,
     pub source_output_identity_sha256: String,
     pub source_client_size_px: MtgoSizePxV1,
+    pub selected_semantic_sha256: String,
     pub plan_commitment_sha256: String,
 }
 
@@ -157,6 +158,10 @@ impl CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1 {
             source_frame_sha256: self.source_frame_sha256.clone(),
             source_output_identity_sha256: self.source_output_identity_sha256.clone(),
             source_client_size_px: self.source_client_size_px.clone(),
+            selected_semantic_sha256: selected_semantic_sha256_v1(
+                self.resolution.selected_semantic(),
+            )
+            .expect("a validated selected semantic must serialize"),
             plan_commitment_sha256: self.plan_commitment_sha256.clone(),
         }
     }
@@ -167,10 +172,6 @@ impl CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1 {
 
     pub fn plan_commitment_sha256(&self) -> &str {
         &self.plan_commitment_sha256
-    }
-
-    pub fn selected_semantic(&self) -> &ActionSemanticV1 {
-        self.resolution.selected_semantic()
     }
 
     pub fn required_region_count(&self) -> usize {
@@ -201,8 +202,10 @@ impl CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1 {
         &self.source_client_size_px
     }
 
-    pub(crate) fn source_observation_v1(&self) -> &mtg_kernel::rl::ObservationV5 {
-        self.resolution.validated_decision_v1().observation()
+    pub(crate) fn player_visible_confirmed_decision_v1(
+        &self,
+    ) -> Result<crate::MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoContractErrorV1> {
+        self.resolution.player_visible_confirmed_decision_v1()
     }
 }
 
@@ -1035,6 +1038,22 @@ fn require_sha256_v1(value: &str, code: &'static str) -> Result<(), MtgoContract
 
 fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV1 {
     MtgoContractErrorV1::new(code, detail)
+}
+
+fn selected_semantic_sha256_v1(
+    semantic: &ActionSemanticV1,
+) -> Result<String, MtgoContractErrorV1> {
+    let bytes = serde_json::to_vec(semantic).map_err(|error| {
+        error_v1(
+            "profile_bound_postcondition_semantic_serialization",
+            error.to_string(),
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"mtgo-selected-duel-semantic-v1");
+    hasher.update((bytes.len() as u64).to_be_bytes());
+    hasher.update(bytes);
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 #[cfg(test)]

@@ -2420,6 +2420,7 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "safe_for_live_input_v1(&self) -> bool",
         "permits_event_entry_v1(&self) -> bool",
         "permits_spending_v1(&self) -> bool",
+        "player_visible_selected_action_v1",
         "resources and event runtime are crossed",
         "pregame checkout changed the exact event, match, game, or resources",
         "pregame scoring changed resources or deployment",
@@ -2440,6 +2441,7 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "CheckedUntrustedMtgoAuthorizationCorrespondenceV1",
         "SendInput",
         "SetCursorPos",
+        "pub fn selected_semantic_v1(&self) -> &ActionSemanticV1",
     ] {
         assert!(
             !source.contains(forbidden),

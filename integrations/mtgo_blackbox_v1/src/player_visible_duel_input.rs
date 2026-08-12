@@ -40,6 +40,15 @@ pub struct MtgoPlayerVisibleNamedCardV1 {
     pub card_name: String,
 }
 
+/// One card in the visible exile zone. A face-down plotted card remains a
+/// visible object, but its name is present only for the player who owns it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPlayerVisibleExileCardV1 {
+    pub object_ref: MtgoPlayerVisibleObjectRefV1,
+    pub visible_card_name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoPlayerVisibleKnownLibraryCardV1 {
@@ -78,6 +87,10 @@ pub struct MtgoPlayerVisibleBattlefieldCardV1 {
 pub struct MtgoPlayerVisibleStackItemV1 {
     pub visible_stack_position: u32,
     pub source_object_ref: MtgoPlayerVisibleObjectRefV1,
+    /// The current aggregate kernel observation does not carry a separately
+    /// reconstructed visible stack label. Leave this absent rather than infer
+    /// a name from the private card-database identifier in `source`.
+    pub visible_source_name: Option<String>,
     pub controller: PlayerSeatV1,
     pub visible_targets: Vec<MtgoPlayerVisibleTargetRefV1>,
     pub item_kind: StackItemKindV2,
@@ -136,7 +149,7 @@ pub enum MtgoPlayerVisibleDuelActionV1 {
     ActivateAbility {
         actor: PlayerSeatV1,
         source: MtgoPlayerVisibleObjectRefV1,
-        visible_ability_ordinal: u8,
+        visible_choice_ordinal: u32,
     },
     PlotSpell {
         actor: PlayerSeatV1,
@@ -168,14 +181,12 @@ pub enum MtgoPlayerVisibleDuelActionV1 {
     ChooseSpellMode {
         actor: PlayerSeatV1,
         source: MtgoPlayerVisibleObjectRefV1,
-        visible_mode_ordinal: u8,
-        visible_mode_count: u8,
+        visible_choice_ordinal: u32,
     },
     ChooseEffectOption {
         actor: PlayerSeatV1,
         source: MtgoPlayerVisibleObjectRefV1,
-        visible_option_ordinal: u16,
-        visible_option_count: u16,
+        visible_choice_ordinal: u32,
     },
     ChooseEffectTarget {
         actor: PlayerSeatV1,
@@ -262,7 +273,7 @@ pub enum MtgoPlayerVisibleDuelActionV1 {
     OrderTriggers {
         actor: PlayerSeatV1,
         pending_sources: Vec<MtgoPlayerVisibleObjectRefV1>,
-        order: Vec<usize>,
+        ordered_sources: Vec<MtgoPlayerVisibleObjectRefV1>,
     },
 }
 
@@ -295,7 +306,7 @@ pub struct MtgoPlayerVisibleDuelStateV1 {
     pub library_counts: [usize; 2],
     pub battlefield: [Vec<MtgoPlayerVisibleBattlefieldCardV1>; 2],
     pub graveyards: [Vec<MtgoPlayerVisibleNamedCardV1>; 2],
-    pub exile: Vec<MtgoPlayerVisibleNamedCardV1>,
+    pub exile: Vec<MtgoPlayerVisibleExileCardV1>,
     pub stack: Vec<MtgoPlayerVisibleStackItemV1>,
     pub combat: MtgoPlayerVisibleCombatStateV1,
     pub visible_object_relations: Vec<MtgoPlayerVisibleObjectRelationV1>,
@@ -433,7 +444,7 @@ pub(crate) fn build_player_visible_duel_decision_input_from_parts_v1(
                 })?,
             ],
             exile: map_results_v1(surface.exile.iter(), |card| {
-                visible_named_card_v1(&card.stable, &card.card_name, &refs)
+                visible_exile_card_v1(card, observation.acting_player, &refs)
             })?,
             stack: map_results_v1(surface.stack.iter(), |item| {
                 visible_stack_item_v1(item, &refs)
@@ -463,26 +474,38 @@ pub(crate) fn build_player_visible_duel_decision_input_from_parts_v1(
                 })?,
             ],
         },
-        ordered_legal_actions: map_results_v1(ordered_actions.iter(), |action| {
-            visible_action_v1(action, &refs)
-        })?,
+        ordered_legal_actions: ordered_actions
+            .iter()
+            .enumerate()
+            .map(|(visible_choice_ordinal, action)| {
+                let visible_choice_ordinal =
+                    u32::try_from(visible_choice_ordinal).map_err(|_| {
+                        error_v1(
+                            "player_visible_action_count",
+                            "visible legal-action count exceeds the supported ordinal range",
+                        )
+                    })?;
+                visible_action_v1(action, visible_choice_ordinal, &refs)
+            })
+            .collect::<Result<Vec<_>, _>>()?,
     })
 }
 
 pub(crate) fn build_player_visible_confirmed_duel_decision_v1(
-    observation: &crate::ObservationV5,
-    selected_action: &ActionSemanticV1,
+    decision: &ValidatedMtgoObservedDecisionV1,
+    selected_index: usize,
 ) -> Result<MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoContractErrorV1> {
-    let input = build_player_visible_duel_decision_input_from_parts_v1(
-        observation,
-        std::slice::from_ref(selected_action),
-    )?;
-    let [selected_action] = input.ordered_legal_actions.try_into().map_err(|_| {
-        error_v1(
-            "player_visible_selected_action_shape",
-            "expected one selected action",
-        )
-    })?;
+    let input = build_player_visible_duel_decision_input_v1(decision)?;
+    let selected_action = input
+        .ordered_legal_actions
+        .get(selected_index)
+        .cloned()
+        .ok_or_else(|| {
+            error_v1(
+                "player_visible_selected_action_index",
+                "selected action is outside the visible legal-action vector",
+            )
+        })?;
     Ok(MtgoPlayerVisibleConfirmedDuelDecisionV1 {
         current_state: input.current_state,
         selected_action,
@@ -657,6 +680,22 @@ fn visible_named_card_v1(
     })
 }
 
+fn visible_exile_card_v1(
+    card: &CardPublicV2,
+    acting_player: PlayerSeatV1,
+    refs: &VisibleObjectRefsV1,
+) -> Result<MtgoPlayerVisibleExileCardV1, MtgoContractErrorV1> {
+    let visible_card_name = if card.plotted_turn.is_some() && card.stable.owner != acting_player {
+        None
+    } else {
+        Some(card.card_name.clone())
+    };
+    Ok(MtgoPlayerVisibleExileCardV1 {
+        object_ref: refs.get_v1(&card.stable)?,
+        visible_card_name,
+    })
+}
+
 fn visible_known_library_card_v1(
     known: &KnownLibraryCardV4,
     refs: &VisibleObjectRefsV1,
@@ -697,6 +736,7 @@ fn visible_stack_item_v1(
     Ok(MtgoPlayerVisibleStackItemV1 {
         visible_stack_position: item.stack_index,
         source_object_ref: refs.get_v1(&item.source)?,
+        visible_source_name: None,
         controller: item.controller,
         visible_targets: map_results_v1(item.targets.iter(), |target| {
             visible_target_v1(target, refs)
@@ -766,6 +806,7 @@ fn visible_object_relation_v1(
 
 fn visible_action_v1(
     action: &ActionSemanticV1,
+    visible_choice_ordinal: u32,
     refs: &VisibleObjectRefsV1,
 ) -> Result<MtgoPlayerVisibleDuelActionV1, MtgoContractErrorV1> {
     use ActionSemanticV1 as A;
@@ -792,11 +833,11 @@ fn visible_action_v1(
         A::ActivateAbility {
             actor,
             source,
-            ability_index,
+            ability_index: _,
         } => V::ActivateAbility {
             actor: *actor,
             source: refs.get_v1(source)?,
-            visible_ability_ordinal: *ability_index,
+            visible_choice_ordinal,
         },
         A::PlotSpell { actor, source } => V::PlotSpell {
             actor: *actor,
@@ -843,24 +884,22 @@ fn visible_action_v1(
         A::ChooseSpellMode {
             actor,
             source,
-            mode_index,
-            mode_count,
+            mode_index: _,
+            mode_count: _,
         } => V::ChooseSpellMode {
             actor: *actor,
             source: refs.get_v1(source)?,
-            visible_mode_ordinal: *mode_index,
-            visible_mode_count: *mode_count,
+            visible_choice_ordinal,
         },
         A::ChooseEffectOption {
             actor,
             source,
-            option_index,
-            option_count,
+            option_index: _,
+            option_count: _,
         } => V::ChooseEffectOption {
             actor: *actor,
             source: refs.get_v1(source)?,
-            visible_option_ordinal: *option_index,
-            visible_option_count: *option_count,
+            visible_choice_ordinal,
         },
         A::ChooseEffectTarget {
             actor,
@@ -998,11 +1037,26 @@ fn visible_action_v1(
             actor,
             pending_sources,
             order,
-        } => V::OrderTriggers {
-            actor: *actor,
-            pending_sources: map_results_v1(pending_sources.iter(), |source| refs.get_v1(source))?,
-            order: order.clone(),
-        },
+        } => {
+            let visible_pending_sources =
+                map_results_v1(pending_sources.iter(), |source| refs.get_v1(source))?;
+            let ordered_sources = order
+                .iter()
+                .map(|index| {
+                    visible_pending_sources.get(*index).copied().ok_or_else(|| {
+                        error_v1(
+                            "player_visible_trigger_order",
+                            "trigger order references a source outside the visible pending set",
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            V::OrderTriggers {
+                actor: *actor,
+                pending_sources: visible_pending_sources,
+                ordered_sources,
+            }
+        }
         A::Ambiguous { .. } => {
             return Err(error_v1(
                 "player_visible_duel_action_ambiguous",
