@@ -1,4 +1,5 @@
 use crate::competitive_pregame_policy::AdmittedMtgoCompetitivePregameHeuristicV1;
+use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveVisibleGameOutcomeV1;
 use crate::probe::{
     advance_evaluated_competitive_event_monitor_v1,
     advance_prepared_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
@@ -61,6 +62,12 @@ use crate::probe::{
     OpaqueMtgoPreparedCompetitiveDuelPassV1, OpaqueMtgoPreparedCompetitiveEventListingOpenSourceV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
     OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1, PreparedPregameActuationV3,
+};
+use crate::{
+    competitive_native_sideboard_model_input_commitment_v1,
+    validate_competitive_native_sideboard_model_input_v1,
+    visible_native_sideboard_configuration_v1, MtgoCompetitiveNativeSideboardModelInputV1,
+    MtgoCompetitivePlayerRelativeGameWinnerV1,
 };
 use mtgo_blackbox_v1::{
     append_checked_untrusted_competitive_player_visible_game_history_v1,
@@ -251,6 +258,8 @@ const COMPETITIVE_EVENT_MATCH_LAUNCH_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-match-launch-binding-v1";
 const COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-sideboard-measurement-v1";
+const COMPETITIVE_NATIVE_SIDEBOARD_REQUEST_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-native-sideboard-request-binding-v1";
 const COMPETITIVE_EVENT_SIDEBOARD_SEQUENCE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-event-sideboard-sequence-v1";
 const COMPETITIVE_EVENT_SIDEBOARD_TRANSFER_PREPARATION_DOMAIN_V1: &[u8] =
@@ -1616,6 +1625,54 @@ impl OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
     }
 
     pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Move-only exact sideboard request joining the visible configuration to the
+/// prior game's visible winner. Only the semantic model input is public. The
+/// event, match, source-memory, capture, classifier, authorization, and
+/// deployment bindings stay private.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveNativeSideboardRequestV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveNativeSideboardRequestV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveNativeSideboardRequestV1 {
+    _measurement: OpaqueMtgoMeasuredCompetitiveEventSideboardV1,
+    _outcome: OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+    model_input: MtgoCompetitiveNativeSideboardModelInputV1,
+    model_input_commitment_sha256: String,
+    _request_binding_commitment_sha256: String,
+}
+
+impl OpaqueMtgoCompetitiveNativeSideboardRequestV1 {
+    pub fn model_input_v1(&self) -> &MtgoCompetitiveNativeSideboardModelInputV1 {
+        &self.model_input
+    }
+
+    pub fn model_input_commitment_sha256_v1(&self) -> &str {
+        &self.model_input_commitment_sha256
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
         false
     }
 }
@@ -5564,6 +5621,93 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
         _prior: prior,
         commitments,
     })
+}
+
+/// Joins the exact visible Sideboarding configuration with one exact
+/// prior-game visible outcome. The model-facing payload contains only game
+/// information. This does not call a checkpoint, select a target, move a
+/// card, or submit the sideboard.
+pub fn bind_competitive_event_native_sideboard_request_v1(
+    measurement: OpaqueMtgoMeasuredCompetitiveEventSideboardV1,
+    outcome: OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+) -> Result<OpaqueMtgoCompetitiveNativeSideboardRequestV1, String> {
+    let sideboard = &measurement.commitments.sideboard_classification;
+    let outcome_lineage = outcome.lineage_v1();
+    if sideboard.event_kind != outcome_lineage.event_kind
+        || sideboard.event_identity_sha256 != outcome_lineage.event_identity_sha256
+        || sideboard.match_identity_sha256 != outcome_lineage.match_identity_sha256
+        || sideboard.game_number != outcome_lineage.game_number
+        || measurement._prior.current_phase != MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+        || measurement._prior.current_game_number != Some(outcome_lineage.game_number)
+    {
+        return Err(
+            "native sideboard request changed the exact prior-game event or match lineage"
+                .to_owned(),
+        );
+    }
+    let next_game_number = outcome_lineage
+        .game_number
+        .checked_add(1)
+        .filter(|game| *game <= 3)
+        .ok_or("native sideboard request has no next best-of-three game")?;
+    let (acting_player_games_won, opponent_games_won) = native_sideboard_score_from_prior_game_v1(
+        outcome_lineage.game_number,
+        outcome_lineage.winner,
+    )?;
+    let model_input = MtgoCompetitiveNativeSideboardModelInputV1 {
+        next_game_number,
+        acting_player_games_won,
+        opponent_games_won,
+        current_configuration: visible_native_sideboard_configuration_v1(
+            measurement.configuration_v1(),
+        )?,
+    };
+    validate_competitive_native_sideboard_model_input_v1(&model_input)?;
+    let model_input_commitment_sha256 =
+        competitive_native_sideboard_model_input_commitment_v1(&model_input)?;
+    let request_binding_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_NATIVE_SIDEBOARD_REQUEST_BINDING_DOMAIN_V1,
+        &[
+            model_input_commitment_sha256.as_bytes(),
+            measurement
+                .commitments
+                .measurement_binding_commitment_sha256
+                .as_bytes(),
+            measurement
+                .commitments
+                .prior_event_runtime_commitment_sha256
+                .as_bytes(),
+            measurement
+                .commitments
+                .sideboard_automation_ratification_commitment_sha256
+                .as_bytes(),
+            sideboard.sideboard_snapshot_commitment_sha256.as_bytes(),
+            sideboard.deck_manifest_commitment_sha256.as_bytes(),
+            sideboard.policy_deployment_commitment_sha256.as_bytes(),
+            outcome_lineage.source_memory_commitment_sha256.as_bytes(),
+            outcome_lineage.outcome_commitment_sha256.as_bytes(),
+            b"opaque_adapter_lineage_not_model_game_information_no_selection_no_input_no_submit",
+        ],
+    );
+    Ok(OpaqueMtgoCompetitiveNativeSideboardRequestV1 {
+        _measurement: measurement,
+        _outcome: outcome,
+        model_input,
+        model_input_commitment_sha256,
+        _request_binding_commitment_sha256: request_binding_commitment_sha256,
+    })
+}
+
+fn native_sideboard_score_from_prior_game_v1(
+    prior_game_number: u8,
+    winner: MtgoCompetitivePlayerRelativeGameWinnerV1,
+) -> Result<(u8, u8), String> {
+    match (prior_game_number, winner) {
+        (1, MtgoCompetitivePlayerRelativeGameWinnerV1::ActingPlayer) => Ok((1, 0)),
+        (1, MtgoCompetitivePlayerRelativeGameWinnerV1::Opponent) => Ok((0, 1)),
+        (2, _) => Ok((1, 1)),
+        _ => Err("native sideboard request visible score is invalid".to_owned()),
+    }
 }
 
 pub fn begin_competitive_event_sideboard_transfer_sequence_v1(
@@ -20428,6 +20572,36 @@ mod tests {
             ))
             .collect();
         assert!(validate_competitive_native_pregame_model_input_v1(&duplicate_history).is_err());
+    }
+
+    #[test]
+    fn native_sideboard_score_uses_only_prior_visible_winner_and_game_number() {
+        assert_eq!(
+            native_sideboard_score_from_prior_game_v1(
+                1,
+                MtgoCompetitivePlayerRelativeGameWinnerV1::ActingPlayer,
+            )
+            .unwrap(),
+            (1, 0)
+        );
+        assert_eq!(
+            native_sideboard_score_from_prior_game_v1(
+                1,
+                MtgoCompetitivePlayerRelativeGameWinnerV1::Opponent,
+            )
+            .unwrap(),
+            (0, 1)
+        );
+        for winner in [
+            MtgoCompetitivePlayerRelativeGameWinnerV1::ActingPlayer,
+            MtgoCompetitivePlayerRelativeGameWinnerV1::Opponent,
+        ] {
+            assert_eq!(
+                native_sideboard_score_from_prior_game_v1(2, winner).unwrap(),
+                (1, 1)
+            );
+            assert!(native_sideboard_score_from_prior_game_v1(3, winner).is_err());
+        }
     }
 
     #[test]

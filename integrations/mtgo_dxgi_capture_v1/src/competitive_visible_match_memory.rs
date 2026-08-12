@@ -4,13 +4,16 @@ use crate::{
 };
 use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitivePlayerVisibleDecisionViewV1, MtgoVisibleGameLogSemanticEventViewV1,
+    MtgoCompetitivePlayerVisibleDecisionViewV1, MtgoVisibleGameLogEventKindV1,
+    MtgoVisibleGameLogPlayerRoleV1, MtgoVisibleGameLogSemanticEventViewV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const COMBINED_COMPETITIVE_VISIBLE_GAME_MEMORY_DOMAIN_V1: &[u8] =
     b"mtgo-combined-competitive-player-visible-game-memory-v1";
+const COMPETITIVE_VISIBLE_GAME_OUTCOME_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-player-visible-game-outcome-v1";
 
 pub const MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1: u32 = 1;
 
@@ -24,6 +27,13 @@ pub const MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1: u32 = 1;
 #[serde(rename_all = "snake_case")]
 pub enum MtgoCompetitiveExternalPublicHistoryOrderingV1 {
     SeparateOrderedStreamsNoCrossSourceTotalOrder,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MtgoCompetitivePlayerRelativeGameWinnerV1 {
+    ActingPlayer,
+    Opponent,
 }
 
 /// Player-visible lineage and bounds supplied before either history stream.
@@ -107,6 +117,85 @@ pub struct OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
     game_log: OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1,
     confirmed_decisions: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
     memory_commitment_sha256: String,
+}
+
+/// Move-only proof that one exact prior-game visible history ended with one
+/// player-relative winner. Only the winner is public game information. Match,
+/// log, decision, and adapter provenance remain private for a later exact
+/// sideboard binder.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveVisibleGameOutcomeV1;
+/// let _forged = OpaqueMtgoCompetitiveVisibleGameOutcomeV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveVisibleGameOutcomeV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveVisibleGameOutcomeV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveVisibleGameOutcomeV1 {
+    memory: OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1,
+    winner: MtgoCompetitivePlayerRelativeGameWinnerV1,
+    outcome_commitment_sha256: String,
+}
+
+pub(crate) struct MtgoCompetitiveVisibleGameOutcomeLineageV1<'a> {
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: &'a str,
+    pub match_identity_sha256: &'a str,
+    pub game_number: u8,
+    pub source_memory_commitment_sha256: &'a str,
+    pub outcome_commitment_sha256: &'a str,
+    pub winner: MtgoCompetitivePlayerRelativeGameWinnerV1,
+}
+
+impl OpaqueMtgoCompetitiveVisibleGameOutcomeV1 {
+    pub fn winner_v1(&self) -> MtgoCompetitivePlayerRelativeGameWinnerV1 {
+        self.winner
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub(crate) fn lineage_v1(&self) -> MtgoCompetitiveVisibleGameOutcomeLineageV1<'_> {
+        let lineage = self.memory.game_log.lineage_v1();
+        MtgoCompetitiveVisibleGameOutcomeLineageV1 {
+            event_kind: lineage.event_kind,
+            event_identity_sha256: lineage.event_identity_sha256,
+            match_identity_sha256: lineage.match_identity_sha256,
+            game_number: lineage.game_number,
+            source_memory_commitment_sha256: &self.memory.memory_commitment_sha256,
+            outcome_commitment_sha256: &self.outcome_commitment_sha256,
+            winner: self.winner,
+        }
+    }
+
+    pub fn into_match_log_lease_and_confirmed_decisions_v1(
+        self,
+    ) -> Result<
+        (
+            crate::OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+        ),
+        String,
+    > {
+        self.memory
+            .into_match_log_lease_and_confirmed_decisions_v1()
+    }
 }
 
 enum OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1 {
@@ -219,6 +308,45 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
 
     pub fn permits_spending_v1(&self) -> bool {
         false
+    }
+
+    /// Consumes one exact game memory and requires one terminal public winner.
+    /// Games one and two may feed a later sideboard decision. Game three has
+    /// no subsequent best-of-three sideboard.
+    pub fn into_visible_game_outcome_v1(
+        self,
+    ) -> Result<OpaqueMtgoCompetitiveVisibleGameOutcomeV1, String> {
+        let lineage = self.game_log.lineage_v1();
+        if !(1..=2).contains(&lineage.game_number) {
+            return Err("visible game outcome has no following sideboard game".to_owned());
+        }
+        let winner =
+            derive_visible_game_winner_v1((0..self.public_event_count_v1()).map(|index| {
+                let event = self
+                    .public_event_v1(index)
+                    .expect("public event count and lookup are consistent");
+                (event.kind_v1(), event.actor_role_v1())
+            }))?;
+        let winner_byte = match winner {
+            MtgoCompetitivePlayerRelativeGameWinnerV1::ActingPlayer => 1_u8,
+            MtgoCompetitivePlayerRelativeGameWinnerV1::Opponent => 2_u8,
+        };
+        let outcome_commitment_sha256 = commitment_with_domain_v1(
+            COMPETITIVE_VISIBLE_GAME_OUTCOME_DOMAIN_V1,
+            &[
+                self.memory_commitment_sha256.as_bytes(),
+                lineage.event_identity_sha256.as_bytes(),
+                lineage.match_identity_sha256.as_bytes(),
+                &[lineage.game_number],
+                &[winner_byte],
+                b"one_exact_player_visible_won_game_event_no_model_no_input",
+            ],
+        );
+        Ok(OpaqueMtgoCompetitiveVisibleGameOutcomeV1 {
+            memory: self,
+            winner,
+            outcome_commitment_sha256,
+        })
     }
 
     /// Visits the two exact public-history streams without inventing a shared
@@ -369,14 +497,58 @@ fn validate_combined_visible_game_lineage_v1(
     Ok(())
 }
 
+fn derive_visible_game_winner_v1(
+    events: impl IntoIterator<
+        Item = (
+            MtgoVisibleGameLogEventKindV1,
+            Option<MtgoVisibleGameLogPlayerRoleV1>,
+        ),
+    >,
+) -> Result<MtgoCompetitivePlayerRelativeGameWinnerV1, String> {
+    let mut winner = None;
+    let mut terminal_seen = false;
+    for (kind, actor) in events {
+        if terminal_seen {
+            return Err("visible Game Log has semantic events after the game winner".to_owned());
+        }
+        match kind {
+            MtgoVisibleGameLogEventKindV1::WonGame => {
+                let current = match actor {
+                    Some(MtgoVisibleGameLogPlayerRoleV1::ActingPlayer) => {
+                        MtgoCompetitivePlayerRelativeGameWinnerV1::ActingPlayer
+                    }
+                    Some(MtgoVisibleGameLogPlayerRoleV1::Opponent) => {
+                        MtgoCompetitivePlayerRelativeGameWinnerV1::Opponent
+                    }
+                    None => return Err("visible won-game event has no player role".to_owned()),
+                };
+                if winner.replace(current).is_some() {
+                    return Err("visible Game Log has more than one game winner".to_owned());
+                }
+                terminal_seen = true;
+            }
+            MtgoVisibleGameLogEventKindV1::WonMatch
+            | MtgoVisibleGameLogEventKindV1::ForcedComplete => {
+                return Err("terminal match history cannot start a sideboard decision".to_owned())
+            }
+            _ => {}
+        }
+    }
+    winner.ok_or_else(|| "visible Game Log has no game winner".to_owned())
+}
+
 fn commitment_v1(parts: &[&[u8]]) -> String {
+    commitment_with_domain_v1(COMBINED_COMPETITIVE_VISIBLE_GAME_MEMORY_DOMAIN_V1, parts)
+}
+
+fn commitment_with_domain_v1(domain: &[u8], parts: &[&[u8]]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(
-        u64::try_from(COMBINED_COMPETITIVE_VISIBLE_GAME_MEMORY_DOMAIN_V1.len())
+        u64::try_from(domain.len())
             .expect("static domain length fits u64")
             .to_be_bytes(),
     );
-    hasher.update(COMBINED_COMPETITIVE_VISIBLE_GAME_MEMORY_DOMAIN_V1);
+    hasher.update(domain);
     for part in parts {
         hasher.update(
             u64::try_from(part.len())
@@ -440,6 +612,29 @@ mod tests {
         let right = commitment_v1(&[b"a", b"bc"]);
         assert_eq!(left.len(), 64);
         assert_ne!(left, right);
+    }
+
+    #[test]
+    fn visible_game_outcome_requires_one_final_player_relative_winner() {
+        use MtgoVisibleGameLogEventKindV1::{OpeningHand, WonGame, WonMatch};
+        use MtgoVisibleGameLogPlayerRoleV1::{ActingPlayer, Opponent};
+
+        assert_eq!(
+            derive_visible_game_winner_v1([
+                (OpeningHand, Some(ActingPlayer)),
+                (WonGame, Some(Opponent)),
+            ])
+            .unwrap(),
+            MtgoCompetitivePlayerRelativeGameWinnerV1::Opponent
+        );
+        for events in [
+            vec![(OpeningHand, Some(ActingPlayer))],
+            vec![(WonGame, None)],
+            vec![(WonGame, Some(ActingPlayer)), (OpeningHand, Some(Opponent))],
+            vec![(WonMatch, Some(ActingPlayer))],
+        ] {
+            assert!(derive_visible_game_winner_v1(events).is_err());
+        }
     }
 
     #[test]

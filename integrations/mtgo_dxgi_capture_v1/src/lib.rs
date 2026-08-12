@@ -38,6 +38,7 @@ pub use actuator::{
     begin_competitive_event_sideboard_transfer_sequence_v1, begin_competitive_game_session_v1,
     begin_competitive_gesture_game_session_v1, bind_competitive_duel_gesture_sequence_session_v1,
     bind_competitive_entry_postcondition_dry_run_v1,
+    bind_competitive_event_native_sideboard_request_v1,
     bind_competitive_event_pregame_native_request_v1,
     bind_competitive_event_runtime_to_match_launch_identity_v1,
     bind_confirmed_competitive_open_entry_review_to_entry_review_v1,
@@ -163,8 +164,8 @@ pub use actuator::{
     OpaqueMtgoCompetitiveEventMatchLaunchBindingV1, OpaqueMtgoCompetitiveEventPregameSessionV1,
     OpaqueMtgoCompetitiveEventRuntimeV1, OpaqueMtgoCompetitiveEventSideboardSequenceV1,
     OpaqueMtgoCompetitiveGameSessionV1, OpaqueMtgoCompetitiveGestureGameSessionV1,
-    OpaqueMtgoCompetitiveNativePregameRequestV1, OpaqueMtgoCompetitivePregameActionPlanV1,
-    OpaqueMtgoCompetitivePregameObservationV1,
+    OpaqueMtgoCompetitiveNativePregameRequestV1, OpaqueMtgoCompetitiveNativeSideboardRequestV1,
+    OpaqueMtgoCompetitivePregameActionPlanV1, OpaqueMtgoCompetitivePregameObservationV1,
     OpaqueMtgoConfirmedCompetitiveDuelGestureContinuationV1,
     OpaqueMtgoConfirmedCompetitiveDuelGesturePrimitiveV1,
     OpaqueMtgoConfirmedCompetitiveDuelPassTransitionV2, OpaqueMtgoConfirmedCompetitiveEntryV1,
@@ -280,7 +281,8 @@ pub use competitive_visible_match_memory::{
     bind_competitive_player_visible_game_memory_v1,
     bind_match_scoped_competitive_player_visible_game_memory_v1,
     MtgoCompetitiveExternalPublicHistoryConsumerV1, MtgoCompetitiveExternalPublicHistoryHeaderV1,
-    MtgoCompetitiveExternalPublicHistoryOrderingV1, OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1,
+    MtgoCompetitiveExternalPublicHistoryOrderingV1, MtgoCompetitivePlayerRelativeGameWinnerV1,
+    OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
     MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
 };
 

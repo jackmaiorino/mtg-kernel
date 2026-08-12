@@ -64,7 +64,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         public_model_owned_pregame_action_path_present: false,
         native_checkpoint_sideboard_interface_present: false,
         public_player_visible_sideboard_payload_contract_present: true,
-        public_player_visible_sideboard_score_binding_present: false,
+        public_player_visible_sideboard_score_binding_present: true,
         terminal_outcome_trained_sideboard_head_present: false,
         public_model_owned_changed_sideboard_path_present: false,
         public_model_owned_unchanged_sideboard_path_present: false,
@@ -98,7 +98,7 @@ mod tests {
         assert!(!report.public_model_owned_pregame_action_path_present);
         assert!(!report.native_checkpoint_sideboard_interface_present);
         assert!(report.public_player_visible_sideboard_payload_contract_present);
-        assert!(!report.public_player_visible_sideboard_score_binding_present);
+        assert!(report.public_player_visible_sideboard_score_binding_present);
         assert!(!report.public_model_owned_changed_sideboard_path_present);
         assert!(!report.public_model_owned_unchanged_sideboard_path_present);
         assert_eq!(

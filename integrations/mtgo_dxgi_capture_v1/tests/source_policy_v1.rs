@@ -73,6 +73,9 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
         "visit_external_public_history_v1",
         "SeparateOrderedStreamsNoCrossSourceTotalOrder",
         "game_log_is_complete_current_state: false",
+        "into_visible_game_outcome_v1",
+        "OpaqueMtgoCompetitiveVisibleGameOutcomeV1",
+        "derive_visible_game_winner_v1",
     ] {
         assert!(
             memory.contains(required),
@@ -109,7 +112,7 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
 }
 
 #[test]
-fn native_sideboard_payload_is_visible_only_and_has_no_live_binder() {
+fn native_sideboard_payload_module_is_visible_only_and_isolated_from_live_binder() {
     let source = include_str!("../src/competitive_native_sideboard.rs");
     for required in [
         "MtgoCompetitiveNativeSideboardModelInputV1",
@@ -142,6 +145,48 @@ fn native_sideboard_payload_is_visible_only_and_has_no_live_binder() {
         assert!(
             !source.contains(forbidden),
             "native sideboard payload exposes forbidden metadata or authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn native_sideboard_live_binder_is_visible_outcome_bound_and_non_actuating() {
+    let source = include_str!("../src/actuator.rs");
+    let start = source
+        .find("pub fn bind_competitive_event_native_sideboard_request_v1")
+        .expect("native sideboard binder must exist");
+    let end = source[start..]
+        .find("pub fn begin_competitive_event_sideboard_transfer_sequence_v1")
+        .map(|offset| start + offset)
+        .expect("native sideboard binder must end before the transfer sequence");
+    let binder = &source[start..end];
+    for required in [
+        "OpaqueMtgoCompetitiveVisibleGameOutcomeV1",
+        "outcome.lineage_v1()",
+        "MtgoCompetitiveLifecyclePhaseV1::Sideboarding",
+        "sideboard.event_identity_sha256 != outcome_lineage.event_identity_sha256",
+        "sideboard.match_identity_sha256 != outcome_lineage.match_identity_sha256",
+        "native_sideboard_score_from_prior_game_v1",
+        "visible_native_sideboard_configuration_v1",
+        "validate_competitive_native_sideboard_model_input_v1",
+    ] {
+        assert!(
+            binder.contains(required),
+            "native sideboard binder is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "execute_prepared",
+        "submit_sideboard",
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+    ] {
+        assert!(
+            !binder.contains(forbidden),
+            "native sideboard binder gained input, capture, or hidden-state authority: {forbidden}"
         );
     }
 }
@@ -1648,7 +1693,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "competitive_pregame_capture_and_session_bridge_present: true",
         "native_checkpoint_changed_sideboard_interface_present: false",
         "competitive_player_visible_sideboard_payload_contract_present: true",
-        "competitive_player_visible_sideboard_score_binding_present: false",
+        "competitive_player_visible_sideboard_score_binding_present: true",
         "safe_for_live_capture: false",
         "safe_for_input: false",
         "safe_for_event_entry: false",
@@ -1687,7 +1732,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "public_model_owned_pregame_action_path_present: false",
         "native_checkpoint_sideboard_interface_present: false",
         "public_player_visible_sideboard_payload_contract_present: true",
-        "public_player_visible_sideboard_score_binding_present: false",
+        "public_player_visible_sideboard_score_binding_present: true",
         "public_model_owned_changed_sideboard_path_present: false",
         "public_model_owned_unchanged_sideboard_path_present: false",
         "all_required_model_decision_surfaces_present: false",

@@ -117,7 +117,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             competitive_pregame_capture_and_session_bridge_present: true,
             native_checkpoint_changed_sideboard_interface_present: false,
             competitive_player_visible_sideboard_payload_contract_present: true,
-            competitive_player_visible_sideboard_score_binding_present: false,
+            competitive_player_visible_sideboard_score_binding_present: true,
         },
         status:
             MtgoCompetitiveStaticReadinessStatusV1::BlockedMissingRatificationsAndModelInterfaces,
@@ -294,7 +294,7 @@ mod tests {
                 .competitive_player_visible_sideboard_payload_contract_present
         );
         assert!(
-            !report
+            report
                 .known_wiring_gaps
                 .competitive_player_visible_sideboard_score_binding_present
         );
