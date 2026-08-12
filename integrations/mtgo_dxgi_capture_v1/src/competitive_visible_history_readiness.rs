@@ -35,6 +35,7 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub post_entry_operator_pairing_ready_baseline_owned: bool,
     pub post_entry_operator_attended_launch_lease_owned: bool,
     pub post_entry_operator_visible_launch_identity_retained_for_refresh: bool,
+    pub post_entry_operator_match_scoped_visible_game_log_refresh_present: bool,
     pub best_of_three_game_log_chaining_present: bool,
     pub best_of_three_live_game_log_source_behavior_calibrated: bool,
     pub public_game_log_semantic_projection_present: bool,
@@ -79,6 +80,7 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         post_entry_operator_pairing_ready_baseline_owned: true,
         post_entry_operator_attended_launch_lease_owned: true,
         post_entry_operator_visible_launch_identity_retained_for_refresh: true,
+        post_entry_operator_match_scoped_visible_game_log_refresh_present: true,
         best_of_three_game_log_chaining_present: true,
         best_of_three_live_game_log_source_behavior_calibrated: false,
         public_game_log_semantic_projection_present: true,
@@ -127,6 +129,7 @@ mod tests {
         assert!(report.post_entry_operator_pairing_ready_baseline_owned);
         assert!(report.post_entry_operator_attended_launch_lease_owned);
         assert!(report.post_entry_operator_visible_launch_identity_retained_for_refresh);
+        assert!(report.post_entry_operator_match_scoped_visible_game_log_refresh_present);
         assert!(report.best_of_three_game_log_chaining_present);
         assert!(!report.best_of_three_live_game_log_source_behavior_calibrated);
         assert!(report.public_game_log_semantic_projection_present);

@@ -28,6 +28,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub post_entry_operator_pairing_ready_game_log_baseline_present: bool,
     pub post_entry_operator_attended_match_game_log_lease_present: bool,
     pub post_entry_operator_attended_match_log_refresh_identity_retained: bool,
+    pub post_entry_operator_match_scoped_visible_game_log_refresh_present: bool,
     pub external_public_history_import_contract_present: bool,
     pub external_public_history_cross_source_ordering_policy_present: bool,
     pub native_checkpoint_external_public_history_import_present: bool,
@@ -115,6 +116,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             post_entry_operator_pairing_ready_game_log_baseline_present: true,
             post_entry_operator_attended_match_game_log_lease_present: true,
             post_entry_operator_attended_match_log_refresh_identity_retained: true,
+            post_entry_operator_match_scoped_visible_game_log_refresh_present: true,
             external_public_history_import_contract_present: true,
             external_public_history_cross_source_ordering_policy_present: true,
             native_checkpoint_external_public_history_import_present: false,
@@ -234,6 +236,11 @@ mod tests {
             report
                 .known_wiring_gaps
                 .post_entry_operator_attended_match_log_refresh_identity_retained
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .post_entry_operator_match_scoped_visible_game_log_refresh_present
         );
         assert!(
             report

@@ -49,13 +49,15 @@ use crate::probe::{
     begin_competitive_visible_game_log_baseline_v1, begin_evaluated_competitive_event_monitor_v1,
     begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
     bind_competitive_match_visible_game_log_lease_v1,
-    prepare_opaque_competitive_duel_action_plan_v1, resolve_opaque_profile_bound_duel_control_v1,
+    prepare_opaque_competitive_duel_action_plan_v1, refresh_competitive_match_visible_game_log_v1,
+    resolve_opaque_profile_bound_duel_control_v1,
     score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
     MtgoDxgiCaptureRequestV3, OpaqueMtgoAdmittedDuelPerceptionV1,
     OpaqueMtgoClassifiedCompetitiveEventRecordV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoClassifiedCompetitivePregameModelContextV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
-    OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1, OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
-    OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+    OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, OpaqueMtgoProfileBoundDuelResolvedControlV1,
 };
 use mtgo_blackbox_v1::{
     validate_native_checkpoint_competitive_capabilities_v1, ActionSemanticV1,
@@ -405,7 +407,13 @@ pub struct OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
 pub struct OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
     request: OpaqueMtgoCompetitiveOperatorNativePregameRequestV1,
     visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
-    visible_game_log_lease: OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+    visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1,
+    visible_game_log_lease_commitment_sha256: String,
+}
+
+enum OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1 {
+    Lease(Box<OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1>),
+    Snapshot(Box<OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1>),
 }
 
 impl OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
@@ -422,13 +430,50 @@ impl OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
     }
 
     pub fn visible_game_log_lease_commitment_sha256_v1(&self) -> &str {
-        self.visible_game_log_lease.lease_commitment_sha256_v1()
+        &self.visible_game_log_lease_commitment_sha256
     }
 
     pub fn visible_launch_identity_commitment_sha256_v1(&self) -> String {
         self.visible_identity
             .commitments_v1()
             .launch_identity_commitment_sha256
+    }
+
+    pub fn visible_game_log_snapshot_present_v1(&self) -> bool {
+        matches!(
+            self.visible_game_log,
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(_)
+        )
+    }
+
+    pub fn visible_game_log_snapshot_commitment_sha256_v1(&self) -> Option<&str> {
+        match &self.visible_game_log {
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(_) => None,
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => {
+                Some(snapshot.snapshot_commitment_sha256_v1())
+            }
+        }
+    }
+
+    pub fn visible_game_log_event_count_v1(&self) -> Option<usize> {
+        match &self.visible_game_log {
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(_) => None,
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => {
+                Some(snapshot.event_count_v1())
+            }
+        }
+    }
+
+    pub fn visible_game_log_event_v1(
+        &self,
+        index: usize,
+    ) -> Option<mtgo_blackbox_v1::MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+        match &self.visible_game_log {
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(_) => None,
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => {
+                snapshot.event_v1(index)
+            }
+        }
     }
 
     pub fn safe_for_live_input_v1(&self) -> bool {
@@ -1012,6 +1057,9 @@ pub fn checkout_competitive_post_entry_operator_attended_native_pregame_v1(
         acting_player_alias,
         visible_game_log_capture_request,
     )?;
+    let visible_game_log_lease_commitment_sha256 = visible_game_log_lease
+        .lease_commitment_sha256_v1()
+        .to_owned();
     let request = checkout_competitive_post_entry_operator_native_pregame_v1(
         operator,
         match_launch,
@@ -1021,7 +1069,51 @@ pub fn checkout_competitive_post_entry_operator_attended_native_pregame_v1(
         OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
             request,
             visible_identity,
-            visible_game_log_lease,
+            visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(Box::new(
+                visible_game_log_lease,
+            )),
+            visible_game_log_lease_commitment_sha256,
+        },
+    )
+}
+
+/// Refreshes the exact match-scoped persisted Game Log while retaining the
+/// complete attended pregame request. Only the conservative seated-player
+/// semantic projection is exposed. Raw bytes, paths, markup, source IDs, and
+/// non-rendered client metadata remain private. Repeated calls consume the
+/// prior snapshot and reread the same bound source between exact duel frames.
+pub fn refresh_competitive_post_entry_operator_attended_pregame_visible_game_log_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1,
+    request: MtgoDxgiCaptureRequestV3,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1, String> {
+    let OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
+        request: pregame_request,
+        visible_identity,
+        visible_game_log,
+        visible_game_log_lease_commitment_sha256,
+    } = value;
+    let lease = match visible_game_log {
+        OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(lease) => *lease,
+        OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => {
+            (*snapshot).into_match_lease_v1()
+        }
+    };
+    if lease.lease_commitment_sha256_v1() != visible_game_log_lease_commitment_sha256 {
+        return Err(
+            "competitive operator visible Game Log lease commitment changed before refresh"
+                .to_owned(),
+        );
+    }
+    let snapshot =
+        refresh_competitive_match_visible_game_log_v1(lease, &visible_identity, request)?;
+    Ok(
+        OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
+            request: pregame_request,
+            visible_identity,
+            visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(
+                Box::new(snapshot),
+            ),
+            visible_game_log_lease_commitment_sha256,
         },
     )
 }

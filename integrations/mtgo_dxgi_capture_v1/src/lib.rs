@@ -271,6 +271,7 @@ pub use competitive_operator_loop::{
     observe_competitive_post_entry_operator_event_record_v1,
     prepare_competitive_post_entry_operator_lifecycle_v1,
     ratify_competitive_post_entry_operator_match_launch_attended_v1,
+    refresh_competitive_post_entry_operator_attended_pregame_visible_game_log_v1,
     resolve_checked_untrusted_competitive_operator_native_pregame_v1,
     resolve_checked_untrusted_competitive_operator_native_sideboard_v1,
     return_competitive_post_entry_operator_gameplay_v1,
