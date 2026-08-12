@@ -7,6 +7,7 @@ use crate::probe::{
     capture_admitted_mtgo_competitive_navigation_frame_v1,
     classify_admitted_mtgo_competitive_navigation_frame_v1,
     classify_checked_untrusted_competitive_sideboard_v1,
+    complete_opaque_player_visible_gameplay_after_input_v1,
     confirm_opaque_competitive_duel_gesture_postcondition_v1,
     confirm_opaque_competitive_duel_pass_postcondition_v1,
     confirm_opaque_competitive_entry_postcondition_v1,
@@ -14,6 +15,7 @@ use crate::probe::{
     confirm_opaque_competitive_lifecycle_control_postcondition_v1,
     confirm_pregame_keep_to_bottom_six_transition_v3,
     confirm_pregame_keep_to_first_main_transition_v3, confirm_pregame_mulligan_transition_v3,
+    make_opaque_player_visible_gameplay_input_receipt_v1,
     prepare_opaque_competitive_duel_gesture_continuation_stage_from_pinned_runtime_v1,
     prepare_opaque_competitive_duel_gesture_source_stage_from_pinned_runtime_v1,
     prepare_opaque_competitive_event_listing_open_source_v1, prepare_pregame_actuation_v3,
@@ -58,9 +60,11 @@ use crate::probe::{
     OpaqueMtgoDxgiFirstMainMeasurementV3, OpaqueMtgoDxgiMulliganMeasurementV3,
     OpaqueMtgoEvaluatedCompetitiveEventListingV1,
     OpaqueMtgoPinnedCompetitiveDuelGestureContinuationV1, OpaqueMtgoPlannedCompetitiveSideboardV1,
-    OpaqueMtgoPregameActionPlanV3,
+    OpaqueMtgoPlayerVisibleGameplayAfterInputV1, OpaqueMtgoPregameActionPlanV3,
     OpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1 as ProbeOpaqueMtgoPreparedCompetitiveDuelGestureSourceStageV1,
     OpaqueMtgoPreparedCompetitiveDuelPassV1, OpaqueMtgoPreparedCompetitiveEventListingOpenSourceV1,
+    OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1,
+    OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
     OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1, PreparedPregameActuationV3,
 };
@@ -85,7 +89,8 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoAuthorizationCorrespondenceV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
-    CheckedUntrustedMtgoCompetitiveSideboardReadyV1, MtgoAuthorizationScopeV1,
+    CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
+    CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveDeckConfigurationV1, MtgoCompetitiveDeckPartitionV1,
     MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
     MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecycleActionV1,
@@ -94,10 +99,10 @@ use mtgo_blackbox_v1::{
     MtgoCompetitivePregameVisibleControlSemanticV1, MtgoCompetitivePregameVisibleControlV1,
     MtgoCompetitiveSideboardTransferDirectionV1, MtgoCompetitiveSideboardTransferV1,
     MtgoDuelActionFamilyV1, MtgoDuelGesturePrimitiveV1, MtgoDuelPrimaryActivationV1,
-    MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoPregameActionSemanticV1, MtgoRuntimeModeV1,
-    MtgoVisibleCompetitiveSideboardCardV1, MtgoVisibleCompetitiveSideboardZoneV1,
-    ValidatedMtgoCompetitiveDeckManifestV1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
-    MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
+    MtgoObservedCompetitiveLifecycleAdvanceV1, MtgoPlayerVisibleDuelGesturePrimitiveV1,
+    MtgoPregameActionSemanticV1, MtgoRuntimeModeV1, MtgoVisibleCompetitiveSideboardCardV1,
+    MtgoVisibleCompetitiveSideboardZoneV1, ValidatedMtgoCompetitiveDeckManifestV1,
+    MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1, MTGO_COMPETITIVE_MATCH_GAMEPLAY_AUTHORIZATION_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -132,6 +137,10 @@ const COMPETITIVE_DUEL_PASS_TRANSITION_RECEIPT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-priority-pass-transition-receipt-v1";
 const COMPETITIVE_DUEL_GESTURE_INPUT_RECEIPT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-gesture-input-receipt-v1";
+const COMPETITIVE_PLAYER_VISIBLE_GAMEPLAY_AUTHORITY_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-player-visible-gameplay-authority-binding-v1";
+const COMPETITIVE_PLAYER_VISIBLE_GAMEPLAY_SESSION_ADVANCE_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-player-visible-gameplay-session-advance-v1";
 const COMPETITIVE_DUEL_GESTURE_TRANSITION_RECEIPT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-gesture-transition-receipt-v1";
 const COMPETITIVE_DUEL_GESTURE_CONTINUATION_RECEIPT_DOMAIN_V1: &[u8] =
@@ -3669,6 +3678,41 @@ impl OpaqueMtgoPendingCompetitiveDuelGesturePrimitiveV1 {
 
     pub fn permits_spending_v1(&self) -> bool {
         false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoPendingCompetitivePlayerVisibleGameplayPrimitiveCommitmentsV1 {
+    pub before_input_commitment_sha256: String,
+    pub actuator_authority_binding_sha256: String,
+    pub input_receipt_sha256: String,
+    pub selected_action_family: MtgoDuelActionFamilyV1,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub game_number: u8,
+    pub primitive_index: u16,
+    pub primitive_is_final: bool,
+    pub before_frame_id: u64,
+    pub before_frame_sequence: u64,
+    pub input_sent_at_unix_millis: u128,
+    pub emitted_mouse_record_count: u8,
+    pub cursor_parked_outside_client: bool,
+}
+
+/// Exactly one emitted primitive from the player-visible-only gameplay path.
+/// The process gate remains locked until a newer exact visible postcondition
+/// is confirmed. This value exposes no coordinates, pixels, process identity,
+/// client-native object identity, or input API.
+pub struct OpaqueMtgoPendingCompetitivePlayerVisibleGameplayPrimitiveV1 {
+    before: OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1,
+    input_receipt: crate::probe::OpaqueMtgoPlayerVisibleGameplayInputReceiptV1,
+    commitments: MtgoPendingCompetitivePlayerVisibleGameplayPrimitiveCommitmentsV1,
+}
+
+impl OpaqueMtgoPendingCompetitivePlayerVisibleGameplayPrimitiveV1 {
+    pub fn commitments_v1(
+        &self,
+    ) -> MtgoPendingCompetitivePlayerVisibleGameplayPrimitiveCommitmentsV1 {
+        self.commitments.clone()
     }
 }
 
@@ -10400,6 +10444,121 @@ pub fn execute_prepared_competitive_duel_gesture_primitive_v1(
     })
 }
 
+/// Emits one exact gesture primitive derived only from the player-visible model
+/// boundary. Authority is borrowed from the exact withheld event lease and
+/// attended game session. The process-wide gate remains locked until a newer
+/// visible postcondition is confirmed.
+pub(crate) fn execute_prepared_competitive_player_visible_gameplay_primitive_v1(
+    before: OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1,
+    lease: &OpaqueMtgoCompetitiveEventGameplayLeaseV1,
+    session: &OpaqueMtgoCompetitiveGestureGameSessionV1,
+) -> Result<OpaqueMtgoPendingCompetitivePlayerVisibleGameplayPrimitiveV1, String> {
+    let authority_binding =
+        competitive_player_visible_gameplay_authority_binding_v1(&before, lease, session)?;
+    let pointer = &before.pointer;
+    let before_commitment = before.before_input_commitment_sha256_v1().to_owned();
+    let action_family = before.checked.action_family_v1();
+    let primitive_index = pointer.commitments.primitive_index;
+    let primitive_is_final = pointer.is_final_primitive_v1();
+    let before_frame_id = pointer.commitments.frame_id;
+    let before_frame_sequence = pointer.commitments.frame_sequence;
+    reserve_input_gate_v3()?;
+    let input_attempt_started_at_unix_millis = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis(),
+        Err(error) => {
+            release_unattempted_reservation_v3()?;
+            return Err(format!("system clock is before epoch: {error}"));
+        }
+    };
+    if validate_preinput_capture_freshness_v3(
+        pointer.commitments.captured_at_unix_millis,
+        input_attempt_started_at_unix_millis,
+    )
+    .is_err()
+    {
+        release_unattempted_reservation_v3()?;
+        return Err("the immediate player-visible gameplay capture is stale or future".to_owned());
+    }
+    halt_before_input_attempt_v3()?;
+    let (emitted_mouse_record_count, cursor_parked_outside_client) =
+        send_exactly_one_player_visible_gameplay_primitive_v1(pointer)?;
+    let input_sent_at_unix_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock moved before epoch after gameplay input: {error}"))?
+        .as_millis();
+    if input_sent_at_unix_millis < input_attempt_started_at_unix_millis {
+        return Err("system clock moved backwards during player-visible gameplay input".to_owned());
+    }
+    let input_receipt = make_opaque_player_visible_gameplay_input_receipt_v1(
+        &before,
+        &authority_binding,
+        input_sent_at_unix_millis,
+        emitted_mouse_record_count,
+        cursor_parked_outside_client,
+    )?;
+    let input_receipt_sha256 = input_receipt
+        .input_receipt_commitment_sha256_v1()
+        .to_owned();
+    set_pending_v3(&input_receipt_sha256)?;
+    Ok(
+        OpaqueMtgoPendingCompetitivePlayerVisibleGameplayPrimitiveV1 {
+            before,
+            input_receipt,
+            commitments: MtgoPendingCompetitivePlayerVisibleGameplayPrimitiveCommitmentsV1 {
+                before_input_commitment_sha256: before_commitment,
+                actuator_authority_binding_sha256: authority_binding,
+                input_receipt_sha256,
+                selected_action_family: action_family,
+                event_kind: lease.commitments.event_kind,
+                game_number: lease.commitments.game_number,
+                primitive_index,
+                primitive_is_final,
+                before_frame_id,
+                before_frame_sequence,
+                input_sent_at_unix_millis,
+                emitted_mouse_record_count,
+                cursor_parked_outside_client,
+            },
+        },
+    )
+}
+
+pub(crate) fn confirm_pending_competitive_player_visible_gameplay_primitive_v1(
+    pending: OpaqueMtgoPendingCompetitivePlayerVisibleGameplayPrimitiveV1,
+    after_frame: crate::probe::OpaqueMtgoAdmittedDuelVisibleFrameV1,
+    after_identity: crate::probe::MtgoDuelPerceptionFrameIdentityV1,
+    game_log_corroboration: Option<CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1>,
+) -> Result<OpaqueMtgoPlayerVisibleGameplayAfterInputV1, String> {
+    require_matching_pending_v3(&pending.commitments.input_receipt_sha256)?;
+    let OpaqueMtgoPendingCompetitivePlayerVisibleGameplayPrimitiveV1 {
+        before,
+        input_receipt,
+        commitments: _,
+    } = pending;
+    let after = match complete_opaque_player_visible_gameplay_after_input_v1(
+        before,
+        input_receipt,
+        after_frame,
+        after_identity,
+        game_log_corroboration,
+    ) {
+        Ok(after) => after,
+        Err(error) => {
+            halt_gate_v3()?;
+            return Err(format!(
+                "player-visible gameplay postcondition failed and the input gate is halted: {error}"
+            ));
+        }
+    };
+    Ok(after)
+}
+
+pub(crate) fn release_confirmed_competitive_player_visible_gameplay_primitive_v1(
+    input_receipt_sha256: &str,
+) -> Result<(), String> {
+    release_confirmed_pending_v3(input_receipt_sha256)
+}
+
 /// Confirms one non-final primitive by joining its pending input receipt to a
 /// strictly newer visible stage discovered by the exact pinned target runtime.
 /// The process gate is reopened only after every lineage and time check passes.
@@ -15027,6 +15186,116 @@ fn competitive_duel_gesture_input_receipt_v1(
     ))
 }
 
+fn competitive_player_visible_gameplay_authority_binding_v1(
+    before: &OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1,
+    lease: &OpaqueMtgoCompetitiveEventGameplayLeaseV1,
+    session: &OpaqueMtgoCompetitiveGestureGameSessionV1,
+) -> Result<String, String> {
+    validate_game_session_against_event_runtime_v1(&lease.runtime, session)?;
+    let lease_commitments = lease.commitments_v1();
+    let session_commitments = session.commitments_v1();
+    let (scope, gameplay) = competitive_gesture_game_session_action_authorities_v1(session);
+    let mode_commitment =
+        competitive_mode_authorization_commitment_v1(&scope, lease_commitments.event_kind)
+            .map_err(|error| {
+                format!("player-visible gameplay mode authorization rejected: {error}")
+            })?;
+    let gameplay_commitment = competitive_match_gameplay_authorization_commitment_v1(&gameplay)
+        .map_err(|error| format!("player-visible exact-game authorization rejected: {error}"))?;
+    let context = &before.authority_context;
+    let prior_chain_shape_valid = player_visible_confirmed_primitive_chain_matches_v1(
+        context.confirmed_prior_primitive_count,
+        before.pointer.commitments.primitive_index,
+        context.prior_primitive_confirmation_chain_sha256.as_deref(),
+    );
+    if !prior_chain_shape_valid
+        || !scope.visible_channels_only
+        || !gameplay.exact_match_gameplay_authorized
+        || lease_commitments.event_kind != context.event_kind
+        || lease_commitments.game_number != context.game_number
+        || lease_commitments.event_identity_sha256 != context.event_identity_sha256
+        || lease_commitments.match_identity_sha256 != context.match_identity_sha256
+        || lease_commitments.policy_deployment_commitment_sha256
+            != context.deployment_commitment_sha256
+        || session_commitments.event_kind != context.event_kind
+        || session_commitments.game_number != context.game_number
+        || session_commitments.mode_authorization_commitment_sha256 != mode_commitment
+        || session_commitments.match_gameplay_authorization_commitment_sha256 != gameplay_commitment
+        || gameplay.event_kind != context.event_kind
+        || gameplay.event_identity_sha256 != context.event_identity_sha256
+        || gameplay.match_identity_sha256 != context.match_identity_sha256
+        || gameplay.game_number != context.game_number
+        || before.pointer.commitments.frame_sequence
+            <= session_commitments.last_confirmed_frame_sequence
+        || before.pointer.commitments.frame_sequence < session_commitments.valid_from_frame_sequence
+        || before.pointer.commitments.frame_sequence
+            > session_commitments.valid_through_frame_sequence
+    {
+        return Err(
+            "player-visible gameplay preparation differs from its exact visible-only event authority"
+                .to_owned(),
+        );
+    }
+    let family_json = serde_json::to_vec(&before.checked.action_family_v1())
+        .map_err(|error| format!("serialize player-visible authorized action family: {error}"))?;
+    Ok(hash_parts_v2(
+        COMPETITIVE_PLAYER_VISIBLE_GAMEPLAY_AUTHORITY_BINDING_DOMAIN_V1,
+        &[
+            before.before_input_commitment_sha256_v1().as_bytes(),
+            before
+                .pointer
+                .commitments
+                .preparation_commitment_sha256
+                .as_bytes(),
+            lease_commitments
+                .gameplay_lease_commitment_sha256
+                .as_bytes(),
+            session_commitments.session_commitment_sha256.as_bytes(),
+            mode_commitment.as_bytes(),
+            gameplay_commitment.as_bytes(),
+            context.event_identity_sha256.as_bytes(),
+            context.match_identity_sha256.as_bytes(),
+            context.deployment_commitment_sha256.as_bytes(),
+            context
+                .prior_primitive_confirmation_chain_sha256
+                .as_deref()
+                .unwrap_or("none")
+                .as_bytes(),
+            &family_json,
+            competitive_event_kind_tag_v1(context.event_kind),
+            &[context.game_number],
+            context
+                .confirmed_prior_primitive_count
+                .to_be_bytes()
+                .as_slice(),
+            before.pointer.commitments.frame_id.to_be_bytes().as_slice(),
+            before
+                .pointer
+                .commitments
+                .frame_sequence
+                .to_be_bytes()
+                .as_slice(),
+            b"exact_visible_only_player_visible_action_authority_no_entry_or_spending",
+        ],
+    ))
+}
+
+fn player_visible_confirmed_primitive_chain_matches_v1(
+    confirmed_prior_primitive_count: u16,
+    primitive_index: u16,
+    prior_primitive_confirmation_chain_sha256: Option<&str>,
+) -> bool {
+    confirmed_prior_primitive_count == primitive_index
+        && match (
+            confirmed_prior_primitive_count,
+            prior_primitive_confirmation_chain_sha256,
+        ) {
+            (0, None) => true,
+            (count, Some(commitment)) if count > 0 => is_sha256_v2(commitment),
+            _ => false,
+        }
+}
+
 fn competitive_duel_gesture_transition_receipt_v1(
     pending: &MtgoPendingCompetitiveDuelGesturePrimitiveCommitmentsV1,
     prepared: &MtgoPreparedCompetitiveDuelGestureSourceStageCommitmentsV1,
@@ -15222,6 +15491,62 @@ fn advance_competitive_gesture_game_session_v1(
         ],
     );
     session.last_confirmed_frame_sequence = visible.after_frame_sequence;
+    session.confirmed_action_count = next_count;
+    Ok(session)
+}
+
+pub(crate) fn advance_competitive_player_visible_gameplay_session_v1(
+    mut session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible: &OpaqueMtgoPlayerVisibleGameplayAfterInputV1,
+) -> Result<OpaqueMtgoCompetitiveGestureGameSessionV1, String> {
+    if !visible.is_final_primitive_v1() {
+        return Err(
+            "a non-final player-visible primitive cannot advance the game session".to_owned(),
+        );
+    }
+    let checked = &visible.checked;
+    let context = &visible.authority_context;
+    if checked.event_kind_v1() != session.launch.pass_match_launch.authorization.event_kind
+        || checked.game_number_v1() != session.launch.pass_match_launch.authorization.game_number
+        || checked.event_kind_v1() != context.event_kind
+        || checked.game_number_v1() != context.game_number
+        || checked.after_frame_sequence_v1() <= session.last_confirmed_frame_sequence
+        || checked.after_frame_sequence_v1()
+            > session
+                .launch
+                .pass_match_launch
+                .authorization
+                .valid_through_frame_sequence
+        || !is_sha256_v2(visible.confirmation_commitment_sha256_v1())
+        || !is_sha256_v2(visible.input_receipt_commitment_sha256_v1())
+        || !is_sha256_v2(&visible.actuator_authority_binding_sha256)
+    {
+        return Err(
+            "confirmed player-visible transition is outside the competitive game session lifetime"
+                .to_owned(),
+        );
+    }
+    let next_count = session
+        .confirmed_action_count
+        .checked_add(1)
+        .ok_or("competitive player-visible game session action count overflow")?;
+    let family_json = serde_json::to_vec(&checked.action_family_v1())
+        .map_err(|error| format!("serialize player-visible gameplay family: {error}"))?;
+    session.session_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_PLAYER_VISIBLE_GAMEPLAY_SESSION_ADVANCE_DOMAIN_V1,
+        &[
+            session.session_commitment_sha256.as_bytes(),
+            visible.input_receipt_commitment_sha256_v1().as_bytes(),
+            visible.confirmation_commitment_sha256_v1().as_bytes(),
+            visible.actuator_authority_binding_sha256.as_bytes(),
+            &family_json,
+            checked.after_frame_id_v1().to_be_bytes().as_slice(),
+            checked.after_frame_sequence_v1().to_be_bytes().as_slice(),
+            next_count.to_be_bytes().as_slice(),
+            b"visible_only_session_returned_after_exact_newer_final_postcondition",
+        ],
+    );
+    session.last_confirmed_frame_sequence = checked.after_frame_sequence_v1();
     session.confirmed_action_count = next_count;
     Ok(session)
 }
@@ -15980,6 +16305,50 @@ struct VerifiedGesturePointTargetV1<'a> {
     target_y_desktop_px: i32,
 }
 
+struct VerifiedPlayerVisibleGameplayPointTargetV1<'a> {
+    prepared: &'a OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1,
+    target_x_desktop_px: i32,
+    target_y_desktop_px: i32,
+}
+
+impl VerifiedPointerTargetV3 for VerifiedPlayerVisibleGameplayPointTargetV1<'_> {
+    fn hwnd_v3(&self) -> u64 {
+        self.prepared.hwnd
+    }
+
+    fn process_id_v3(&self) -> u32 {
+        self.prepared.process_id
+    }
+
+    fn process_start_filetime_100ns_v3(&self) -> u64 {
+        self.prepared.process_start_filetime_100ns
+    }
+
+    fn dpi_v3(&self) -> u32 {
+        self.prepared.dpi
+    }
+
+    fn client_rect_desktop_px_v3(&self) -> &crate::SignedRectV1 {
+        &self.prepared.client_rect_desktop_px
+    }
+
+    fn target_x_desktop_px_v3(&self) -> i32 {
+        self.target_x_desktop_px
+    }
+
+    fn target_y_desktop_px_v3(&self) -> i32 {
+        self.target_y_desktop_px
+    }
+
+    fn park_x_desktop_px_v3(&self) -> i32 {
+        self.prepared.park_x_desktop_px
+    }
+
+    fn park_y_desktop_px_v3(&self) -> i32 {
+        self.prepared.park_y_desktop_px
+    }
+}
+
 impl VerifiedPointerTargetV3 for VerifiedGesturePointTargetV1<'_> {
     fn hwnd_v3(&self) -> u64 {
         self.prepared.hwnd
@@ -16094,6 +16463,92 @@ fn send_exactly_one_gesture_primitive_v1(
             if unsafe { SendInput(&up, size_of::<INPUT>() as i32) } != 1 {
                 release_mouse_buttons_v1();
                 return Err("SendInput did not emit the gesture drag release".to_owned());
+            }
+            2
+        }
+    };
+    Ok((emitted, cursor_park_guard.park_now()))
+}
+
+fn send_exactly_one_player_visible_gameplay_primitive_v1(
+    prepared: &OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1,
+) -> Result<(u8, bool), String> {
+    let expected_target_count = match &prepared.primitive {
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::DragPrimaryToCalibratedPlayArea
+        | MtgoPlayerVisibleDuelGesturePrimitiveV1::DragVisibleObjectToOrderSlot { .. } => 2,
+        _ => 1,
+    };
+    if prepared.target_points_desktop_px.len() != expected_target_count {
+        return Err(
+            "player-visible gesture primitive target count changed before input".to_owned(),
+        );
+    }
+    let previous_context =
+        unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+    if previous_context.is_invalid() {
+        return Err("the input thread could not enter Per-Monitor V2 DPI awareness".to_owned());
+    }
+    let _dpi_guard = ActuatorDpiGuardV3(previous_context);
+    if !unsafe {
+        AreDpiAwarenessContextsEqual(
+            GetThreadDpiAwarenessContext(),
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+        )
+    }
+    .as_bool()
+    {
+        return Err("the input thread is not Per-Monitor V2 DPI aware".to_owned());
+    }
+
+    let first = prepared.target_points_desktop_px[0];
+    let first_target = VerifiedPlayerVisibleGameplayPointTargetV1 {
+        prepared,
+        target_x_desktop_px: first.0,
+        target_y_desktop_px: first.1,
+    };
+    verify_live_target_v3(&first_target, false)?;
+    let mut cursor_park_guard = CursorParkGuardV3 {
+        x: prepared.park_x_desktop_px,
+        y: prepared.park_y_desktop_px,
+        parked: false,
+    };
+    unsafe { SetCursorPos(first.0, first.1) }
+        .map_err(|error| format!("move cursor to player-visible gesture source: {error}"))?;
+    verify_live_target_v3(&first_target, true)?;
+
+    let emitted = match &prepared.primitive {
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivatePrimary { activation }
+        | MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivateSemanticMenuChoice { activation } => {
+            send_mouse_activation_v1(*activation)?
+        }
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::SelectVisibleObject { .. }
+        | MtgoPlayerVisibleDuelGesturePrimitiveV1::Submit => {
+            send_mouse_activation_v1(MtgoDuelPrimaryActivationV1::SingleLeftClick)?
+        }
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::DragPrimaryToCalibratedPlayArea
+        | MtgoPlayerVisibleDuelGesturePrimitiveV1::DragVisibleObjectToOrderSlot { .. } => {
+            let down = [mouse_input_record_v1(MOUSEEVENTF_LEFTDOWN)];
+            if unsafe { SendInput(&down, size_of::<INPUT>() as i32) } != 1 {
+                release_mouse_buttons_v1();
+                return Err("SendInput did not emit the player-visible drag press".to_owned());
+            }
+            let second = prepared.target_points_desktop_px[1];
+            let second_target = VerifiedPlayerVisibleGameplayPointTargetV1 {
+                prepared,
+                target_x_desktop_px: second.0,
+                target_y_desktop_px: second.1,
+            };
+            if let Err(error) = unsafe { SetCursorPos(second.0, second.1) }
+                .map_err(|error| format!("move cursor to player-visible drag destination: {error}"))
+                .and_then(|_| verify_live_target_v3(&second_target, true))
+            {
+                release_mouse_buttons_v1();
+                return Err(error);
+            }
+            let up = [mouse_input_record_v1(MOUSEEVENTF_LEFTUP)];
+            if unsafe { SendInput(&up, size_of::<INPUT>() as i32) } != 1 {
+                release_mouse_buttons_v1();
+                return Err("SendInput did not emit the player-visible drag release".to_owned());
             }
             2
         }
@@ -16499,6 +16954,37 @@ mod tests {
             private_match_input: true,
             ..MtgoAuthorizationScopeV1::default()
         }
+    }
+
+    #[test]
+    fn player_visible_compound_gesture_requires_exact_confirmed_prefix_chain() {
+        let digest = "a".repeat(64);
+        assert!(player_visible_confirmed_primitive_chain_matches_v1(
+            0, 0, None
+        ));
+        assert!(!player_visible_confirmed_primitive_chain_matches_v1(
+            0,
+            0,
+            Some(&digest)
+        ));
+        assert!(player_visible_confirmed_primitive_chain_matches_v1(
+            1,
+            1,
+            Some(&digest)
+        ));
+        assert!(!player_visible_confirmed_primitive_chain_matches_v1(
+            1,
+            2,
+            Some(&digest)
+        ));
+        assert!(!player_visible_confirmed_primitive_chain_matches_v1(
+            1,
+            1,
+            Some("not-a-sha256")
+        ));
+        assert!(!player_visible_confirmed_primitive_chain_matches_v1(
+            1, 1, None
+        ));
     }
 
     fn competitive_scope_v1(

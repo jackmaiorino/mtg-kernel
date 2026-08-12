@@ -2385,11 +2385,21 @@ pub(crate) struct OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1 {
     pub(crate) park_y_desktop_px: i32,
 }
 
+impl OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1 {
+    pub(crate) fn is_final_primitive_v1(&self) -> bool {
+        self._binding.is_final_primitive_v1()
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct MtgoPrivatePlayerVisibleGameplayBeforeInputContextV1 {
     pub(crate) event_kind: MtgoCompetitiveEventKindV1,
     pub(crate) event_identity_sha256: String,
     pub(crate) match_identity_sha256: String,
     pub(crate) game_number: u8,
+    pub(crate) deployment_commitment_sha256: String,
+    pub(crate) confirmed_prior_primitive_count: u16,
+    pub(crate) prior_primitive_confirmation_chain_sha256: Option<String>,
     pub(crate) expected_game_log_baseline_commitment_sha256: Option<String>,
 }
 
@@ -2407,7 +2417,11 @@ struct MtgoPrivatePlayerVisibleGameplayFixedRegionV1 {
 pub(crate) struct OpaqueMtgoPlayerVisibleGameplayInputReceiptV1 {
     before_input_commitment_sha256: String,
     pointer_preparation_commitment_sha256: String,
+    actuator_authority_binding_sha256: String,
+    emitted_primitive_sha256: String,
     input_completed_at_unix_millis: u128,
+    emitted_mouse_record_count: u8,
+    cursor_parked_outside_client: bool,
     input_receipt_commitment_sha256: String,
 }
 
@@ -2423,6 +2437,7 @@ pub struct OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1 {
     protocol_review_sha256: String,
     request_commitment_sha256: String,
     response_commitment_sha256: String,
+    pub(crate) authority_context: MtgoPrivatePlayerVisibleGameplayBeforeInputContextV1,
 }
 
 /// One exact newer visible frame paired with the before-input region plan and
@@ -2434,7 +2449,10 @@ pub(crate) struct OpaqueMtgoPlayerVisibleGameplayAfterInputV1 {
     #[allow(dead_code)]
     pub(crate) checked: CheckedUntrustedMtgoPlayerVisibleGameplayPostconditionV1,
     #[allow(dead_code)]
-    pub(crate) after_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    after_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1,
+    pub(crate) binding: OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
+    pub(crate) authority_context: MtgoPrivatePlayerVisibleGameplayBeforeInputContextV1,
+    pub(crate) actuator_authority_binding_sha256: String,
     confirmation_commitment_sha256: String,
     input_receipt_commitment_sha256: String,
 }
@@ -2451,6 +2469,30 @@ impl OpaqueMtgoPlayerVisibleGameplayAfterInputV1 {
 
     pub(crate) fn safe_for_additional_input_v1(&self) -> bool {
         false
+    }
+
+    pub(crate) fn is_final_primitive_v1(&self) -> bool {
+        self.binding.is_final_primitive_v1()
+    }
+
+    pub(crate) fn into_parts_v1(
+        self,
+    ) -> (
+        CheckedUntrustedMtgoPlayerVisibleGameplayPostconditionV1,
+        OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
+        String,
+        String,
+        MtgoPrivatePlayerVisibleGameplayBeforeInputContextV1,
+        String,
+    ) {
+        (
+            self.checked,
+            self.binding,
+            self.confirmation_commitment_sha256,
+            self.input_receipt_commitment_sha256,
+            self.authority_context,
+            self.actuator_authority_binding_sha256,
+        )
     }
 }
 
@@ -2621,13 +2663,18 @@ pub(crate) fn prepare_opaque_player_visible_gameplay_before_input_v1(
         &serialize_manifest_v2(&source.manifest)
             .map_err(|error| format!("serialize before-input source manifest: {error}"))?,
     );
+    if context.deployment_commitment_sha256 != selection.deployment_commitment_sha256 {
+        return Err(
+            "player-visible before-input deployment changed its operator authority".to_owned(),
+        );
+    }
     let before_record = MtgoPlayerVisibleGameplayBeforeInputRecordV1 {
         schema_version: MTGO_PLAYER_VISIBLE_GAMEPLAY_BEFORE_INPUT_SCHEMA_V1,
         event_kind: context.event_kind,
-        event_identity_sha256: context.event_identity_sha256,
-        match_identity_sha256: context.match_identity_sha256,
+        event_identity_sha256: context.event_identity_sha256.clone(),
+        match_identity_sha256: context.match_identity_sha256.clone(),
         game_number: context.game_number,
-        deployment_commitment_sha256: selection.deployment_commitment_sha256.clone(),
+        deployment_commitment_sha256: context.deployment_commitment_sha256.clone(),
         decision_commitment_sha256,
         selection_commitment_sha256: selection.opaque_selection_commitment_sha256.clone(),
         source_frame_id: perception_commitments.frame_id,
@@ -2641,7 +2688,8 @@ pub(crate) fn prepare_opaque_player_visible_gameplay_before_input_v1(
         region_set_complete: response.region_set.candidate_set_complete,
         regions: before_regions,
         expected_game_log_baseline_commitment_sha256: context
-            .expected_game_log_baseline_commitment_sha256,
+            .expected_game_log_baseline_commitment_sha256
+            .clone(),
     };
     let checked = check_untrusted_player_visible_gameplay_before_input_v1(before_record)
         .map_err(|error| format!("check player-visible gameplay before-input plan: {error}"))?;
@@ -2665,6 +2713,7 @@ pub(crate) fn prepare_opaque_player_visible_gameplay_before_input_v1(
         protocol_review_sha256: protocol.review_sha256.clone(),
         request_commitment_sha256,
         response_commitment_sha256,
+        authority_context: context,
     })
 }
 
@@ -2677,7 +2726,8 @@ pub(crate) fn prepare_opaque_player_visible_gameplay_before_input_v1(
 pub(crate) fn complete_opaque_player_visible_gameplay_after_input_v1(
     before: OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1,
     input_receipt: OpaqueMtgoPlayerVisibleGameplayInputReceiptV1,
-    after_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    after_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1,
+    after_identity: MtgoDuelPerceptionFrameIdentityV1,
     game_log_corroboration: Option<CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1>,
 ) -> Result<OpaqueMtgoPlayerVisibleGameplayAfterInputV1, String> {
     let before_commitment = before.before_input_commitment_sha256_v1().to_owned();
@@ -2685,40 +2735,29 @@ pub(crate) fn complete_opaque_player_visible_gameplay_after_input_v1(
         &before_commitment,
         &before.pointer.commitments.preparation_commitment_sha256,
         before.pointer.commitments.captured_at_unix_millis,
+        &before.pointer.primitive,
         &input_receipt,
     )?;
     let prior_perception = before.pointer._binding.current_perception_v1();
     let prior_manifest = &prior_perception.source_frame.source_frame.manifest;
-    let after_manifest = &after_perception.source_frame.source_frame.manifest;
+    let after_manifest = &after_frame.source_frame.manifest;
     validate_same_duel_window_incarnation_v1(prior_manifest, after_manifest)?;
     let prior_commitments = prior_perception.commitments_v1();
-    let after_commitments = after_perception.commitments_v1();
-    if after_commitments.frame_sequence <= prior_commitments.frame_sequence
-        || after_commitments.frame_id == prior_commitments.frame_id
-        || after_commitments
-            .source_frame
-            .source_capture
-            .captured_at_unix_millis
+    let after_commitments = after_frame.commitments_v1();
+    if after_identity.frame_sequence <= prior_commitments.frame_sequence
+        || after_identity.frame_id == prior_commitments.frame_id
+        || after_commitments.source_capture.captured_at_unix_millis
             <= input_receipt.input_completed_at_unix_millis
-        || after_commitments
-            .source_frame
-            .source_capture
-            .capture_commitment_sha256
+        || after_commitments.source_capture.capture_commitment_sha256
             == prior_commitments
                 .source_frame
                 .source_capture
                 .capture_commitment_sha256
-        || after_perception.runtime_identity_commitment_sha256
-            != prior_perception.runtime_identity_commitment_sha256
-        || after_perception
-            .source_frame
-            .perception_profile_commitment_sha256
+        || after_commitments.perception_profile_commitment_sha256
             != prior_perception
                 .source_frame
                 .perception_profile_commitment_sha256
-        || after_perception
-            .source_frame
-            .perception_profile_admission_commitment_sha256
+        || after_commitments.perception_profile_admission_commitment_sha256
             != prior_perception
                 .source_frame
                 .perception_profile_admission_commitment_sha256
@@ -2734,7 +2773,7 @@ pub(crate) fn complete_opaque_player_visible_gameplay_after_input_v1(
     if prior_manifest_sha256 != before.source_manifest_sha256 {
         return Err("retained before-input manifest commitment changed".to_owned());
     }
-    let source = &after_perception.source_frame.source_frame;
+    let source = &after_frame.source_frame;
     let size = MtgoSizePxV1 {
         width: source.manifest.frame.canonical_width,
         height: source.manifest.frame.canonical_height,
@@ -2748,13 +2787,23 @@ pub(crate) fn complete_opaque_player_visible_gameplay_after_input_v1(
         &size,
     )?;
     let after = MtgoPlayerVisibleGameplayAfterFrameV1 {
-        after_frame_id: after_commitments.frame_id,
-        after_frame_sequence: after_commitments.frame_sequence,
+        after_frame_id: after_identity.frame_id,
+        after_frame_sequence: after_identity.frame_sequence,
         after_frame_sha256: source.manifest.frame.canonical_bgra8_sha256.clone(),
         regions: after_regions,
     };
+    let OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1 {
+        pointer,
+        checked,
+        fixed_regions: _,
+        source_manifest_sha256: _,
+        protocol_review_sha256: _,
+        request_commitment_sha256: _,
+        response_commitment_sha256: _,
+        authority_context,
+    } = before;
     let checked = complete_untrusted_player_visible_gameplay_postcondition_v1(
-        before.checked,
+        checked,
         after,
         game_log_corroboration,
     )
@@ -2762,10 +2811,79 @@ pub(crate) fn complete_opaque_player_visible_gameplay_after_input_v1(
     let confirmation_commitment_sha256 = checked.confirmation_commitment_sha256_v1().to_owned();
     Ok(OpaqueMtgoPlayerVisibleGameplayAfterInputV1 {
         checked,
-        after_perception,
+        after_frame,
+        binding: pointer._binding,
+        authority_context,
+        actuator_authority_binding_sha256: input_receipt.actuator_authority_binding_sha256,
         confirmation_commitment_sha256,
         input_receipt_commitment_sha256: input_receipt.input_receipt_commitment_sha256,
     })
+}
+
+pub(crate) fn make_opaque_player_visible_gameplay_input_receipt_v1(
+    before: &OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1,
+    actuator_authority_binding_sha256: &str,
+    input_completed_at_unix_millis: u128,
+    emitted_mouse_record_count: u8,
+    cursor_parked_outside_client: bool,
+) -> Result<OpaqueMtgoPlayerVisibleGameplayInputReceiptV1, String> {
+    if !looks_like_lower_sha256_v1(actuator_authority_binding_sha256) {
+        return Err(
+            "player-visible actuator authority binding is not a lowercase SHA-256".to_owned(),
+        );
+    }
+    let primitive = &before.pointer.primitive;
+    let expected_mouse_record_count = player_visible_primitive_mouse_record_count_v1(primitive);
+    if input_completed_at_unix_millis == 0
+        || input_completed_at_unix_millis < before.pointer.commitments.captured_at_unix_millis
+        || emitted_mouse_record_count != expected_mouse_record_count
+        || !cursor_parked_outside_client
+    {
+        return Err(
+            "player-visible input receipt envelope is incomplete or inconsistent".to_owned(),
+        );
+    }
+    let primitive_json = serde_json::to_vec(primitive)
+        .map_err(|error| format!("serialize emitted player-visible primitive: {error}"))?;
+    let emitted_primitive_sha256 = commitment_v1(
+        b"mtgo-player-visible-gameplay-emitted-primitive-v1",
+        &[&primitive_json],
+    );
+    let before_input_commitment_sha256 = before.before_input_commitment_sha256_v1().to_owned();
+    let pointer_preparation_commitment_sha256 = before
+        .pointer
+        .commitments
+        .preparation_commitment_sha256
+        .clone();
+    let input_receipt_commitment_sha256 = commitment_v1(
+        PLAYER_VISIBLE_GAMEPLAY_INPUT_RECEIPT_DOMAIN_V1,
+        &[
+            before_input_commitment_sha256.as_bytes(),
+            pointer_preparation_commitment_sha256.as_bytes(),
+            actuator_authority_binding_sha256.as_bytes(),
+            emitted_primitive_sha256.as_bytes(),
+            &input_completed_at_unix_millis.to_be_bytes(),
+            &[emitted_mouse_record_count],
+            &[u8::from(cursor_parked_outside_client)],
+            b"one_player_visible_gesture_input_completed_pending_exact_visible_transition",
+        ],
+    );
+    Ok(OpaqueMtgoPlayerVisibleGameplayInputReceiptV1 {
+        before_input_commitment_sha256,
+        pointer_preparation_commitment_sha256,
+        actuator_authority_binding_sha256: actuator_authority_binding_sha256.to_owned(),
+        emitted_primitive_sha256,
+        input_completed_at_unix_millis,
+        emitted_mouse_record_count,
+        cursor_parked_outside_client,
+        input_receipt_commitment_sha256,
+    })
+}
+
+impl OpaqueMtgoPlayerVisibleGameplayInputReceiptV1 {
+    pub(crate) fn input_receipt_commitment_sha256_v1(&self) -> &str {
+        &self.input_receipt_commitment_sha256
+    }
 }
 
 #[allow(dead_code)]
@@ -2773,8 +2891,15 @@ fn validate_player_visible_gameplay_input_receipt_v1(
     expected_before_input_commitment_sha256: &str,
     expected_pointer_preparation_commitment_sha256: &str,
     source_captured_at_unix_millis: u128,
+    expected_primitive: &MtgoPlayerVisibleDuelGesturePrimitiveV1,
     input_receipt: &OpaqueMtgoPlayerVisibleGameplayInputReceiptV1,
 ) -> Result<(), String> {
+    let primitive_json = serde_json::to_vec(expected_primitive)
+        .map_err(|error| format!("serialize expected player-visible primitive: {error}"))?;
+    let expected_emitted_primitive_sha256 = commitment_v1(
+        b"mtgo-player-visible-gameplay-emitted-primitive-v1",
+        &[&primitive_json],
+    );
     let expected_input_receipt_commitment_sha256 = commitment_v1(
         PLAYER_VISIBLE_GAMEPLAY_INPUT_RECEIPT_DOMAIN_V1,
         &[
@@ -2782,14 +2907,23 @@ fn validate_player_visible_gameplay_input_receipt_v1(
             input_receipt
                 .pointer_preparation_commitment_sha256
                 .as_bytes(),
+            input_receipt.actuator_authority_binding_sha256.as_bytes(),
+            input_receipt.emitted_primitive_sha256.as_bytes(),
             &input_receipt.input_completed_at_unix_millis.to_be_bytes(),
-            b"single_player_visible_gesture_input_completed",
+            &[input_receipt.emitted_mouse_record_count],
+            &[u8::from(input_receipt.cursor_parked_outside_client)],
+            b"one_player_visible_gesture_input_completed_pending_exact_visible_transition",
         ],
     );
     if input_receipt.before_input_commitment_sha256 != expected_before_input_commitment_sha256
         || input_receipt.pointer_preparation_commitment_sha256
             != expected_pointer_preparation_commitment_sha256
         || input_receipt.input_completed_at_unix_millis < source_captured_at_unix_millis
+        || !looks_like_lower_sha256_v1(&input_receipt.actuator_authority_binding_sha256)
+        || input_receipt.emitted_primitive_sha256 != expected_emitted_primitive_sha256
+        || input_receipt.emitted_mouse_record_count
+            != player_visible_primitive_mouse_record_count_v1(expected_primitive)
+        || !input_receipt.cursor_parked_outside_client
         || input_receipt.input_receipt_commitment_sha256 != expected_input_receipt_commitment_sha256
     {
         return Err(
@@ -2798,6 +2932,25 @@ fn validate_player_visible_gameplay_input_receipt_v1(
         );
     }
     Ok(())
+}
+
+fn player_visible_primitive_mouse_record_count_v1(
+    primitive: &MtgoPlayerVisibleDuelGesturePrimitiveV1,
+) -> u8 {
+    match primitive {
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivatePrimary { activation }
+        | MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivateSemanticMenuChoice { activation } => {
+            match activation {
+                mtgo_blackbox_v1::MtgoDuelPrimaryActivationV1::DoubleLeftClick => 4,
+                mtgo_blackbox_v1::MtgoDuelPrimaryActivationV1::SingleLeftClick
+                | mtgo_blackbox_v1::MtgoDuelPrimaryActivationV1::RightClick => 2,
+            }
+        }
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::DragPrimaryToCalibratedPlayArea
+        | MtgoPlayerVisibleDuelGesturePrimitiveV1::DragVisibleObjectToOrderSlot { .. }
+        | MtgoPlayerVisibleDuelGesturePrimitiveV1::SelectVisibleObject { .. }
+        | MtgoPlayerVisibleDuelGesturePrimitiveV1::Submit => 2,
+    }
 }
 
 #[allow(dead_code)]
@@ -7310,7 +7463,7 @@ fn validate_same_duel_window_incarnation_v1(
     Ok(())
 }
 
-pub(super) fn frame_id_from_capture_commitment_v1(
+pub(crate) fn frame_id_from_capture_commitment_v1(
     capture_commitment_sha256: &str,
     source_frame_id: u64,
 ) -> Result<u64, String> {
@@ -8230,6 +8383,7 @@ fn looks_like_lower_sha256_v1(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mtgo_blackbox_v1::{MtgoDuelPrimaryActivationV1, MtgoPlayerVisibleObjectRefV1};
     use std::io::Cursor;
 
     #[test]
@@ -8888,26 +9042,43 @@ mod tests {
     fn gameplay_input_receipt_is_exact_commitment_and_time_bound() {
         let before = "1".repeat(64);
         let pointer = "2".repeat(64);
+        let authority = "3".repeat(64);
+        let primitive = MtgoPlayerVisibleDuelGesturePrimitiveV1::Submit;
+        let primitive_json = serde_json::to_vec(&primitive).unwrap();
+        let emitted_primitive_sha256 = commitment_v1(
+            b"mtgo-player-visible-gameplay-emitted-primitive-v1",
+            &[&primitive_json],
+        );
         let completed = 1_100_u128;
         let mut receipt = OpaqueMtgoPlayerVisibleGameplayInputReceiptV1 {
             before_input_commitment_sha256: before.clone(),
             pointer_preparation_commitment_sha256: pointer.clone(),
+            actuator_authority_binding_sha256: authority.clone(),
+            emitted_primitive_sha256: emitted_primitive_sha256.clone(),
             input_completed_at_unix_millis: completed,
+            emitted_mouse_record_count: 2,
+            cursor_parked_outside_client: true,
             input_receipt_commitment_sha256: commitment_v1(
                 PLAYER_VISIBLE_GAMEPLAY_INPUT_RECEIPT_DOMAIN_V1,
                 &[
                     before.as_bytes(),
                     pointer.as_bytes(),
+                    authority.as_bytes(),
+                    emitted_primitive_sha256.as_bytes(),
                     &completed.to_be_bytes(),
-                    b"single_player_visible_gesture_input_completed",
+                    &[2],
+                    &[1],
+                    b"one_player_visible_gesture_input_completed_pending_exact_visible_transition",
                 ],
             ),
         };
-        validate_player_visible_gameplay_input_receipt_v1(&before, &pointer, 1_000, &receipt)
-            .unwrap();
-        receipt.before_input_commitment_sha256 = "3".repeat(64);
+        validate_player_visible_gameplay_input_receipt_v1(
+            &before, &pointer, 1_000, &primitive, &receipt,
+        )
+        .unwrap();
+        receipt.before_input_commitment_sha256 = "4".repeat(64);
         assert!(validate_player_visible_gameplay_input_receipt_v1(
-            &before, &pointer, 1_000, &receipt,
+            &before, &pointer, 1_000, &primitive, &receipt,
         )
         .is_err());
 
@@ -8918,14 +9089,70 @@ mod tests {
             &[
                 before.as_bytes(),
                 pointer.as_bytes(),
+                authority.as_bytes(),
+                emitted_primitive_sha256.as_bytes(),
                 &999_u128.to_be_bytes(),
-                b"single_player_visible_gesture_input_completed",
+                &[2],
+                &[1],
+                b"one_player_visible_gesture_input_completed_pending_exact_visible_transition",
             ],
         );
         assert!(validate_player_visible_gameplay_input_receipt_v1(
-            &before, &pointer, 1_000, &receipt,
+            &before, &pointer, 1_000, &primitive, &receipt,
         )
         .is_err());
+    }
+
+    #[test]
+    fn player_visible_primitive_receipt_counts_match_exact_mouse_emissions() {
+        let object = MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 7 };
+        for (primitive, expected) in [
+            (
+                MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivatePrimary {
+                    activation: MtgoDuelPrimaryActivationV1::SingleLeftClick,
+                },
+                2,
+            ),
+            (
+                MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivatePrimary {
+                    activation: MtgoDuelPrimaryActivationV1::DoubleLeftClick,
+                },
+                4,
+            ),
+            (
+                MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivatePrimary {
+                    activation: MtgoDuelPrimaryActivationV1::RightClick,
+                },
+                2,
+            ),
+            (
+                MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivateSemanticMenuChoice {
+                    activation: MtgoDuelPrimaryActivationV1::SingleLeftClick,
+                },
+                2,
+            ),
+            (
+                MtgoPlayerVisibleDuelGesturePrimitiveV1::DragPrimaryToCalibratedPlayArea,
+                2,
+            ),
+            (
+                MtgoPlayerVisibleDuelGesturePrimitiveV1::SelectVisibleObject { object },
+                2,
+            ),
+            (
+                MtgoPlayerVisibleDuelGesturePrimitiveV1::DragVisibleObjectToOrderSlot {
+                    object,
+                    slot_index: 1,
+                },
+                2,
+            ),
+            (MtgoPlayerVisibleDuelGesturePrimitiveV1::Submit, 2),
+        ] {
+            assert_eq!(
+                player_visible_primitive_mouse_record_count_v1(&primitive),
+                expected
+            );
+        }
     }
 
     #[test]

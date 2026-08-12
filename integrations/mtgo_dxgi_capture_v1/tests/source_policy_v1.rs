@@ -2614,6 +2614,16 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "prepare_competitive_post_entry_operator_player_visible_gameplay_pointer_v1",
         "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1",
         "prepare_opaque_player_visible_duel_gesture_pointer_v1",
+        "prepare_competitive_post_entry_operator_player_visible_gameplay_before_input_v1",
+        "execute_competitive_post_entry_operator_player_visible_gameplay_primitive_v1",
+        "confirm_competitive_post_entry_operator_player_visible_gameplay_primitive_v1",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPendingV1",
+        "MtgoCompetitiveOperatorPlayerVisibleGameplayConfirmationV1",
+        "release_confirmed_competitive_player_visible_gameplay_primitive_v1",
+        "after-input visible Game Log snapshot is not newer than the input receipt",
+        "player-visible continuation frame is not strictly newer than the confirmed postcondition",
+        "player-visible gesture continuation changed the exact event, match, or game",
+        "player-visible gesture continuation skipped a confirmed primitive",
         "validate_competitive_player_visible_game_history_for_session_v1",
         "session_commitments.confirmed_action_count",
         "session_commitments.last_confirmed_frame_sequence",
@@ -2744,10 +2754,61 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1,",
         "prepare_competitive_post_entry_operator_player_visible_gameplay_pointer_v1,",
         "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1,",
+        "prepare_competitive_post_entry_operator_player_visible_gameplay_before_input_v1,",
+        "execute_competitive_post_entry_operator_player_visible_gameplay_primitive_v1,",
+        "confirm_competitive_post_entry_operator_player_visible_gameplay_primitive_v1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPendingV1,",
+        "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayConfirmedV1,",
+        "MtgoCompetitiveOperatorPlayerVisibleGameplayConfirmationV1,",
+        "select_next_competitive_post_entry_operator_player_visible_gameplay_action_v1,",
+        "return_confirmed_competitive_post_entry_operator_player_visible_gameplay_v1,",
     ] {
         assert!(
             public_api.contains(required_player_visible_export),
-            "public operator API omits the non-actuating player-visible route: {required_player_visible_export}"
+            "public operator API omits the player-visible route: {required_player_visible_export}"
+        );
+    }
+}
+
+#[test]
+fn player_visible_operator_actuator_keeps_private_data_sealed_and_gate_receipt_bound() {
+    let operator = include_str!("../src/competitive_operator_loop.rs");
+    let actuator = include_str!("../src/actuator.rs");
+    let perception = include_str!("../src/probe/duel_perception_runtime.rs");
+
+    for required in [
+        "competitive_player_visible_gameplay_authority_binding_v1",
+        "visible_channels_only",
+        "player_visible_confirmed_primitive_chain_matches_v1",
+        "make_opaque_player_visible_gameplay_input_receipt_v1",
+        "emitted_primitive_sha256",
+        "emitted_mouse_record_count",
+        "cursor_parked_outside_client",
+        "require_matching_pending_v3",
+        "release_confirmed_pending_v3",
+        "complete_opaque_player_visible_gameplay_after_input_v1",
+        "validate_same_duel_window_incarnation_v1",
+        "player_visible_gameplay_after_regions_v1",
+        "advance_competitive_player_visible_gameplay_session_v1",
+        "prior_primitive_confirmation_chain_sha256",
+    ] {
+        assert!(
+            actuator.contains(required)
+                || perception.contains(required)
+                || operator.contains(required),
+            "player-visible actuator chain is missing: {required}"
+        );
+    }
+
+    for forbidden in [
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "WinHttp",
+    ] {
+        assert!(
+            !operator.contains(forbidden) && !perception.contains(forbidden),
+            "player-visible operator or perception boundary gained a hidden channel: {forbidden}"
         );
     }
 }

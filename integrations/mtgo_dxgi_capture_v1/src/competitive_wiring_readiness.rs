@@ -44,6 +44,12 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub post_entry_operator_player_visible_target_ownership_present: bool,
     pub post_entry_operator_player_visible_preinput_refresh_present: bool,
     pub post_entry_operator_player_visible_private_pointer_preparation_present: bool,
+    pub post_entry_operator_player_visible_before_input_postcondition_present: bool,
+    pub post_entry_operator_player_visible_live_primitive_actuator_present: bool,
+    pub player_visible_input_receipt_exact_authority_binding_present: bool,
+    pub player_visible_input_gate_held_through_operator_confirmation_present: bool,
+    pub player_visible_compound_gesture_confirmation_chain_present: bool,
+    pub player_visible_final_action_session_and_history_advance_present: bool,
     pub native_checkpoint_external_public_history_import_present: bool,
     pub pre_entry_operator_loop_present: bool,
     pub post_entry_operator_loop_present: bool,
@@ -158,6 +164,12 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             post_entry_operator_player_visible_target_ownership_present: true,
             post_entry_operator_player_visible_preinput_refresh_present: true,
             post_entry_operator_player_visible_private_pointer_preparation_present: true,
+            post_entry_operator_player_visible_before_input_postcondition_present: true,
+            post_entry_operator_player_visible_live_primitive_actuator_present: true,
+            player_visible_input_receipt_exact_authority_binding_present: true,
+            player_visible_input_gate_held_through_operator_confirmation_present: true,
+            player_visible_compound_gesture_confirmation_chain_present: true,
+            player_visible_final_action_session_and_history_advance_present: true,
             native_checkpoint_external_public_history_import_present: false,
             pre_entry_operator_loop_present: true,
             post_entry_operator_loop_present: true,
@@ -368,6 +380,36 @@ mod tests {
             report
                 .known_wiring_gaps
                 .post_entry_operator_player_visible_private_pointer_preparation_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .post_entry_operator_player_visible_before_input_postcondition_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .post_entry_operator_player_visible_live_primitive_actuator_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .player_visible_input_receipt_exact_authority_binding_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .player_visible_input_gate_held_through_operator_confirmation_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .player_visible_compound_gesture_confirmation_chain_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .player_visible_final_action_session_and_history_advance_present
         );
         assert!(
             !report
