@@ -21,8 +21,10 @@ pub const MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1: u32 = 1;
 ///
 /// MTGO Game Log sequence numbers and admitted capture-frame sequence numbers
 /// are independent clocks. V1 therefore preserves exact order within each
-/// source and makes no claim about the relative order of an event in one
-/// stream and a decision in the other.
+/// source and requires the kernel to encode the source role explicitly. It
+/// makes no claim about the relative order of an event in one stream and a
+/// decision in the other. Inventing a cross-source gameplay chronology is not
+/// required for import and would be invalid without a shared visible clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MtgoCompetitiveExternalPublicHistoryOrderingV1 {
@@ -61,7 +63,9 @@ pub struct MtgoCompetitiveExternalPublicHistoryHeaderV1<'a> {
 
 /// Kernel-owned consumer boundary for one exact game's player-visible public
 /// history. Implementations receive two separate ordered streams. The adapter
-/// deliberately provides no callback that claims a cross-source ordering.
+/// deliberately provides no callback that claims a cross-source ordering. A
+/// conforming importer retains separate source-role and within-source sequence
+/// features rather than treating callback order as gameplay chronology.
 ///
 /// A consumer result is ordinary data, not adapter authority. Implementing
 /// this trait cannot send MTGO input, enter an event, or spend resources.

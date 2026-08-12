@@ -38,7 +38,9 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub confirmed_model_decision_history_present: bool,
     pub dual_source_exact_game_memory_present: bool,
     pub explicit_kernel_consumer_contract_present: bool,
+    pub explicit_cross_source_ordering_policy_defined: bool,
     pub explicit_cross_source_total_order_defined: bool,
+    pub kernel_import_requires_cross_source_total_order: bool,
     pub native_checkpoint_external_public_history_import_present: bool,
     pub checkpoint_consumes_external_public_history: bool,
     pub game_log_complete_for_current_state_reconstruction: bool,
@@ -77,7 +79,9 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         confirmed_model_decision_history_present: true,
         dual_source_exact_game_memory_present: true,
         explicit_kernel_consumer_contract_present: true,
+        explicit_cross_source_ordering_policy_defined: true,
         explicit_cross_source_total_order_defined: false,
+        kernel_import_requires_cross_source_total_order: false,
         native_checkpoint_external_public_history_import_present: false,
         checkpoint_consumes_external_public_history: false,
         game_log_complete_for_current_state_reconstruction: false,
@@ -120,7 +124,9 @@ mod tests {
         assert!(report.confirmed_model_decision_history_present);
         assert!(report.dual_source_exact_game_memory_present);
         assert!(report.explicit_kernel_consumer_contract_present);
+        assert!(report.explicit_cross_source_ordering_policy_defined);
         assert!(!report.explicit_cross_source_total_order_defined);
+        assert!(!report.kernel_import_requires_cross_source_total_order);
         assert!(!report.native_checkpoint_external_public_history_import_present);
         assert!(!report.checkpoint_consumes_external_public_history);
         assert!(!report.game_log_complete_for_current_state_reconstruction);
