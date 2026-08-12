@@ -11,6 +11,9 @@ mod competitive_wiring_readiness;
 mod competitive_model_decision_readiness;
 
 #[cfg(target_os = "windows")]
+mod competitive_native_sideboard;
+
+#[cfg(target_os = "windows")]
 mod competitive_operator_bootstrap;
 #[cfg(target_os = "windows")]
 mod competitive_operator_loop;
@@ -202,6 +205,17 @@ pub use competitive_wiring_readiness::{
 pub use competitive_model_decision_readiness::{
     check_competitive_model_decision_readiness_v1, MtgoCompetitiveModelDecisionReadinessV1,
     MTGO_COMPETITIVE_MODEL_DECISION_READINESS_SCHEMA_V1,
+};
+
+#[cfg(target_os = "windows")]
+pub use competitive_native_sideboard::{
+    competitive_native_sideboard_model_input_commitment_v1,
+    competitive_native_sideboard_model_selection_commitment_v1,
+    validate_competitive_native_sideboard_model_input_v1,
+    validate_competitive_native_sideboard_model_selection_v1,
+    visible_native_sideboard_configuration_v1, MtgoCompetitiveNativeSideboardCardCountV1,
+    MtgoCompetitiveNativeSideboardConfigurationV1, MtgoCompetitiveNativeSideboardModelInputV1,
+    MtgoCompetitiveNativeSideboardModelSelectionV1,
 };
 
 #[cfg(target_os = "windows")]

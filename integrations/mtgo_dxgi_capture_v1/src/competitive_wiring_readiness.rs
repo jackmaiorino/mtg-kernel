@@ -51,6 +51,8 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub competitive_pregame_input_actuator_present: bool,
     pub competitive_pregame_capture_and_session_bridge_present: bool,
     pub native_checkpoint_changed_sideboard_interface_present: bool,
+    pub competitive_player_visible_sideboard_payload_contract_present: bool,
+    pub competitive_player_visible_sideboard_score_binding_present: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +116,8 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             competitive_pregame_input_actuator_present: true,
             competitive_pregame_capture_and_session_bridge_present: true,
             native_checkpoint_changed_sideboard_interface_present: false,
+            competitive_player_visible_sideboard_payload_contract_present: true,
+            competitive_player_visible_sideboard_score_binding_present: false,
         },
         status:
             MtgoCompetitiveStaticReadinessStatusV1::BlockedMissingRatificationsAndModelInterfaces,
@@ -283,6 +287,16 @@ mod tests {
             !report
                 .known_wiring_gaps
                 .native_checkpoint_changed_sideboard_interface_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .competitive_player_visible_sideboard_payload_contract_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .competitive_player_visible_sideboard_score_binding_present
         );
         assert!(!report.safe_for_live_capture);
         assert!(!report.safe_for_input);

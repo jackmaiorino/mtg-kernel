@@ -109,6 +109,44 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
 }
 
 #[test]
+fn native_sideboard_payload_is_visible_only_and_has_no_live_binder() {
+    let source = include_str!("../src/competitive_native_sideboard.rs");
+    for required in [
+        "MtgoCompetitiveNativeSideboardModelInputV1",
+        "MtgoCompetitiveNativeSideboardModelSelectionV1",
+        "visible_native_sideboard_configuration_v1",
+        "validate_competitive_native_sideboard_model_input_v1",
+        "validate_competitive_native_sideboard_model_selection_v1",
+        "native sideboard player-visible deck size rules are invalid",
+        "native sideboard selection changed the player-visible card inventory",
+    ] {
+        assert!(
+            source.contains(required),
+            "native sideboard visible payload is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub card_db_id",
+        "bind_competitive_event",
+        "OpaqueMtgoMeasuredCompetitiveEventSideboardV1",
+        "SendInput",
+        "SetCursorPos",
+        "capture_mtgo_dxgi_frame_candidate_v3",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "execute",
+        "submit_sideboard",
+        "permits_spending",
+        "permits_event_entry",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "native sideboard payload exposes forbidden metadata or authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn acting_player_duel_mode_is_role_explicit_and_still_non_actionable() {
     let library = include_str!("../src/lib.rs");
     let probe = include_str!("../src/probe.rs");
@@ -1609,6 +1647,8 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "competitive_pregame_input_actuator_present: true",
         "competitive_pregame_capture_and_session_bridge_present: true",
         "native_checkpoint_changed_sideboard_interface_present: false",
+        "competitive_player_visible_sideboard_payload_contract_present: true",
+        "competitive_player_visible_sideboard_score_binding_present: false",
         "safe_for_live_capture: false",
         "safe_for_input: false",
         "safe_for_event_entry: false",
@@ -1646,6 +1686,8 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "public_player_known_pregame_deck_configuration_present: false",
         "public_model_owned_pregame_action_path_present: false",
         "native_checkpoint_sideboard_interface_present: false",
+        "public_player_visible_sideboard_payload_contract_present: true",
+        "public_player_visible_sideboard_score_binding_present: false",
         "public_model_owned_changed_sideboard_path_present: false",
         "public_model_owned_unchanged_sideboard_path_present: false",
         "all_required_model_decision_surfaces_present: false",
