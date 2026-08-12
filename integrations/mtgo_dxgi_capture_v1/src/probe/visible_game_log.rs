@@ -6,11 +6,11 @@ use mtgo_blackbox_v1::{
     parse_checked_untrusted_mtgo_visible_game_log_v1,
     CheckedUntrustedMtgoVisibleGameLogProjectionV1,
     CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, MtgoCompetitiveEventKindV1,
-    MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogSemanticEventViewV1,
-    MtgoVisibleGameLogTextViewV1,
+    MtgoCompetitiveLifecyclePhaseV1, MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogPlayerRoleV1,
+    MtgoVisibleGameLogSemanticEventViewV1, MtgoVisibleGameLogTextViewV1,
 };
 use sha2::{Digest, Sha256};
-use std::fs::Metadata;
+use std::{collections::HashSet, fs::Metadata, os::windows::ffi::OsStrExt};
 
 const MAX_VISIBLE_GAME_LOG_BIND_BRACKET_MILLIS_V1: u128 = 5_000;
 const MAX_VISIBLE_GAME_LOG_TREE_ENTRIES_V1: usize = 100_000;
@@ -20,6 +20,10 @@ const VISIBLE_GAME_LOG_DUEL_TITLE_IDENTITY_DOMAIN_V1: &[u8] =
     b"mtgo-visible-game-log-duel-title-identity-v1";
 const COMPETITIVE_VISIBLE_GAME_LOG_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-visible-game-log-binding-v1";
+const COMPETITIVE_VISIBLE_GAME_LOG_BASELINE_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-visible-game-log-baseline-v1";
+const COMPETITIVE_VISIBLE_GAME_LOG_LEASE_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-visible-game-log-lease-v1";
 const WINDOWS_TO_UNIX_EPOCH_100NS_V1: u64 = 116_444_736_000_000_000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,6 +40,608 @@ struct BoundVisibleGameLogDuelTitleIdentityV1 {
     identity_commitment_sha256: String,
 }
 
+/// Private inventory of persisted visible Game Logs taken from the exact
+/// boundary before the next game. It contains no file bytes and exposes no
+/// path or source identifier. Its only production consumer is the matching
+/// game launch selector.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveVisibleGameLogBaselineV1;
+/// let _forged = OpaqueMtgoCompetitiveVisibleGameLogBaselineV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveVisibleGameLogBaselineV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveVisibleGameLogBaselineV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveVisibleGameLogBaselineV1 {
+    existing_candidate_paths: HashSet<PathBuf>,
+    data_root: PathBuf,
+    deployment_name: String,
+    process_start_unix_millis: u128,
+    baseline_captured_at_unix_millis: u128,
+    process_continuity_commitment_sha256: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    event_identity_sha256: String,
+    match_identity_sha256: String,
+    next_game_number: u8,
+    source_chain_commitment_sha256: String,
+    expected_acting_player_alias_sha256: Option<String>,
+    expected_opponent_alias_sha256: Option<String>,
+    baseline_commitment_sha256: String,
+}
+
+/// Move-only private handle to the one player-visible Game Log selected at an
+/// exact League or Challenge game launch. The observed local corpus contains
+/// at most one seated-player game-start record per file. This v1 therefore
+/// consumes the lease into a next-game sideboarding baseline and requires one
+/// new file rather than assuming unobserved cross-game append behavior. Paths
+/// and source IDs never leave this type.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1;
+/// let _forged = OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {
+    _selection_before_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    _selection_after_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    candidate_path: PathBuf,
+    process_continuity_commitment_sha256: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    event_identity_sha256: String,
+    match_identity_sha256: String,
+    game_number: u8,
+    opponent_alias_sha256: String,
+    acting_player_alias: String,
+    acting_player_alias_sha256: String,
+    lease_commitment_sha256: String,
+}
+
+/// One stable public-history snapshot from the retained match log, segmented
+/// to the exact currently visible game. It owns the lease so two games or
+/// matches cannot read the same source concurrently through this API.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1;
+/// let _forged = OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
+    lease: OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+    _before_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    _after_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    semantics: CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1,
+    game_number: u8,
+    current_game_event_start_index: usize,
+    current_game_event_count: usize,
+    snapshot_commitment_sha256: String,
+}
+
+impl OpaqueMtgoCompetitiveVisibleGameLogBaselineV1 {
+    pub fn baseline_commitment_sha256_v1(&self) -> &str {
+        &self.baseline_commitment_sha256
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn next_game_number_v1(&self) -> u8 {
+        self.next_game_number
+    }
+}
+
+impl OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {
+    pub fn lease_commitment_sha256_v1(&self) -> &str {
+        &self.lease_commitment_sha256
+    }
+
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.event_kind
+    }
+
+    pub fn match_identity_sha256_v1(&self) -> &str {
+        &self.match_identity_sha256
+    }
+
+    pub fn game_number_v1(&self) -> u8 {
+        self.game_number
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+impl OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
+    pub fn event_count_v1(&self) -> usize {
+        self.current_game_event_count
+    }
+
+    pub fn event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+        if index >= self.current_game_event_count {
+            return None;
+        }
+        self.current_game_event_start_index
+            .checked_add(index)
+            .and_then(|source_index| self.semantics.event_v1(source_index))
+    }
+
+    pub fn game_number_v1(&self) -> u8 {
+        self.game_number
+    }
+
+    pub fn match_identity_sha256_v1(&self) -> &str {
+        &self.lease.match_identity_sha256
+    }
+
+    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+        self.lease.event_kind
+    }
+
+    pub fn event_identity_sha256_v1(&self) -> &str {
+        &self.lease.event_identity_sha256
+    }
+
+    pub fn semantic_projection_commitment_sha256_v1(&self) -> &str {
+        self.semantics.projection_commitment_sha256_v1()
+    }
+
+    pub fn snapshot_commitment_sha256_v1(&self) -> &str {
+        &self.snapshot_commitment_sha256
+    }
+
+    pub fn into_match_lease_v1(self) -> OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {
+        self.lease
+    }
+
+    pub fn complete_for_current_state_reconstruction_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Records the private set of visible Game Logs that already exist at the
+/// exact Pairing Ready frame. This is read-only and does not focus, click,
+/// enter, spend, or inspect process memory.
+pub fn begin_competitive_visible_game_log_baseline_v1(
+    runtime: &crate::OpaqueMtgoCompetitiveEventRuntimeV1,
+) -> Result<OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, String> {
+    let runtime_commitments = runtime.commitments_v1();
+    if runtime_commitments.current_phase != MtgoCompetitiveLifecyclePhaseV1::PairingReady
+        || runtime_commitments.current_game_number.is_some()
+    {
+        return Err("visible Game Log baseline requires Pairing Ready before game one".to_owned());
+    }
+    build_competitive_visible_game_log_baseline_v1(
+        runtime,
+        1,
+        &runtime_commitments.runtime_commitment_sha256,
+        None,
+        None,
+    )
+}
+
+/// Consumes the exact prior-game log lease at Sideboarding and records a new
+/// private inventory for the next game. The observed local corpus provides no
+/// evidence of cross-game file reuse, so this preserves match lineage while
+/// requiring a newly created source for game two or three.
+pub fn advance_competitive_visible_game_log_baseline_v1(
+    lease: OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+    runtime: &crate::OpaqueMtgoCompetitiveEventRuntimeV1,
+) -> Result<OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, String> {
+    let runtime_commitments = runtime.commitments_v1();
+    if runtime_commitments.current_phase != MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+        || runtime_commitments.current_game_number != Some(lease.game_number)
+        || runtime_commitments.event_kind != lease.event_kind
+        || runtime_commitments.bound_event_identity_sha256 != lease.event_identity_sha256
+        || runtime_commitments.current_match_identity_sha256.as_deref()
+            != Some(lease.match_identity_sha256.as_str())
+    {
+        return Err(
+            "visible Game Log lease does not match the exact Sideboarding transition".to_owned(),
+        );
+    }
+    let next_game_number = lease
+        .game_number
+        .checked_add(1)
+        .filter(|value| *value <= 3)
+        .ok_or("visible Game Log match has no further best-of-three game")?;
+    let expected_process_continuity_commitment_sha256 =
+        lease.process_continuity_commitment_sha256.clone();
+    let baseline = build_competitive_visible_game_log_baseline_v1(
+        runtime,
+        next_game_number,
+        &lease.lease_commitment_sha256,
+        Some(lease.acting_player_alias_sha256),
+        Some(lease.opponent_alias_sha256),
+    )?;
+    if baseline.process_continuity_commitment_sha256
+        != expected_process_continuity_commitment_sha256
+    {
+        return Err("visible Game Log process changed at Sideboarding".to_owned());
+    }
+    Ok(baseline)
+}
+
+fn build_competitive_visible_game_log_baseline_v1(
+    runtime: &crate::OpaqueMtgoCompetitiveEventRuntimeV1,
+    next_game_number: u8,
+    source_chain_commitment_sha256: &str,
+    expected_acting_player_alias_sha256: Option<String>,
+    expected_opponent_alias_sha256: Option<String>,
+) -> Result<OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, String> {
+    let runtime_commitments = runtime.commitments_v1();
+    let expected_phase = if next_game_number == 1 {
+        MtgoCompetitiveLifecyclePhaseV1::PairingReady
+    } else {
+        MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+    };
+    let expected_current_game = (next_game_number > 1).then_some(next_game_number - 1);
+    if runtime_commitments.current_phase != expected_phase
+        || runtime_commitments.current_game_number != expected_current_game
+    {
+        return Err("visible Game Log baseline is not at the exact next-game boundary".to_owned());
+    }
+    let match_identity_sha256 = runtime_commitments
+        .current_match_identity_sha256
+        .as_deref()
+        .ok_or("visible Game Log baseline lacks its visible match identity")?;
+    let frame = runtime.current_frame_for_visible_game_log_v1();
+    let frame_commitments = frame.commitments_v1();
+    let lifecycle = frame.lifecycle_snapshot_v1();
+    if frame_commitments.phase != expected_phase
+        || lifecycle.event_identity_sha256_v1()
+            != Some(runtime_commitments.bound_event_identity_sha256.as_str())
+        || lifecycle.match_identity_sha256_v1() != Some(match_identity_sha256)
+        || lifecycle.game_number_v1() != expected_current_game
+        || frame_commitments.frame_id != runtime_commitments.current_frame_id
+        || frame_commitments.frame_sequence != runtime_commitments.current_frame_sequence
+        || frame_commitments.lifecycle_snapshot_commitment_sha256
+            != runtime_commitments.current_lifecycle_snapshot_commitment_sha256
+    {
+        return Err("visible Game Log baseline changed the exact next-game frame".to_owned());
+    }
+    let source = &frame._source_frame.source_frame;
+    let manifest = &source.manifest;
+    if manifest.pre != manifest.post || manifest.window_mode != "main_client" {
+        return Err("visible Game Log baseline requires one stable main-client frame".to_owned());
+    }
+    let process_continuity_commitment_sha256 =
+        mtgo_process_continuity_commitment_for_frame_v1(source);
+    if process_continuity_commitment_sha256 != frame.process_continuity_commitment_sha256_v1() {
+        return Err("visible Game Log baseline lost signed-process continuity".to_owned());
+    }
+    let process_start_unix_millis =
+        filetime_100ns_to_unix_millis_v1(manifest.pre.process_start_filetime_100ns)?;
+    let data_root = clickonce_data_root_v1(Path::new(&manifest.pre.process_image))?;
+    let deployment_name = Path::new(&manifest.pre.process_image)
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .ok_or("MTGO deployment directory is not valid UTF-8")?
+        .to_owned();
+    validate_deployment_name_v1(&deployment_name)?;
+    let existing_candidates = enumerate_process_epoch_game_logs_v1(
+        &data_root,
+        &deployment_name,
+        process_start_unix_millis,
+        manifest.captured_at_unix_millis,
+    )?;
+    let existing_candidate_paths = existing_candidates.into_iter().collect::<HashSet<_>>();
+    let inventory_commitment = private_path_inventory_commitment_v1(&existing_candidate_paths)?;
+    let baseline_commitment_sha256 = commitment_v1(
+        COMPETITIVE_VISIBLE_GAME_LOG_BASELINE_DOMAIN_V1,
+        &[
+            runtime_commitments.runtime_commitment_sha256.as_bytes(),
+            source_chain_commitment_sha256.as_bytes(),
+            process_continuity_commitment_sha256.as_bytes(),
+            runtime_commitments.bound_event_identity_sha256.as_bytes(),
+            match_identity_sha256.as_bytes(),
+            &manifest.captured_at_unix_millis.to_be_bytes(),
+            &[next_game_number],
+            expected_acting_player_alias_sha256
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes(),
+            expected_opponent_alias_sha256
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes(),
+            inventory_commitment.as_bytes(),
+            b"next_game_private_existing_log_inventory_no_model_no_input",
+        ],
+    );
+    Ok(OpaqueMtgoCompetitiveVisibleGameLogBaselineV1 {
+        existing_candidate_paths,
+        data_root,
+        deployment_name,
+        process_start_unix_millis,
+        baseline_captured_at_unix_millis: manifest.captured_at_unix_millis,
+        process_continuity_commitment_sha256,
+        event_kind: runtime_commitments.event_kind,
+        event_identity_sha256: runtime_commitments.bound_event_identity_sha256,
+        match_identity_sha256: match_identity_sha256.to_owned(),
+        next_game_number,
+        source_chain_commitment_sha256: source_chain_commitment_sha256.to_owned(),
+        expected_acting_player_alias_sha256,
+        expected_opponent_alias_sha256,
+        baseline_commitment_sha256,
+    })
+}
+
+/// Consumes the exact next-game baseline at the matching duel launch and
+/// selects the sole newly created seated-player visible Game Log. It never
+/// exposes the path, source UUID, raw bytes, or rendered text.
+pub fn bind_competitive_match_visible_game_log_lease_v1(
+    baseline: OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
+    launch: &OpaqueMtgoCompetitiveLaunchIdentityV1,
+    acting_player_alias: &str,
+    request: MtgoDxgiCaptureRequestV3,
+) -> Result<OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1, String> {
+    validate_capture_request_v3(&request)?;
+    if request.window_mode != CaptureWindowModeV2::DuelGame {
+        return Err("visible Game Log lease acquisition requires the exact duel window".to_owned());
+    }
+    let launch_commitments = launch.commitments_v1();
+    let acting_player_alias_sha256 = sha256_hex_v1(acting_player_alias.as_bytes());
+    let opponent_alias_sha256 = sha256_hex_v1(launch.opponent_display_name_v1().as_bytes());
+    if launch_commitments.game_number != baseline.next_game_number
+        || launch_commitments.event_kind != baseline.event_kind
+        || launch.event_identity_sha256_v1() != baseline.event_identity_sha256
+        || launch.match_identity_sha256_v1() != baseline.match_identity_sha256
+        || launch_commitments.process_continuity_commitment_sha256
+            != baseline.process_continuity_commitment_sha256
+        || launch_commitments.captured_at_unix_millis <= baseline.baseline_captured_at_unix_millis
+        || baseline
+            .expected_acting_player_alias_sha256
+            .as_deref()
+            .is_some_and(|expected| expected != acting_player_alias_sha256)
+        || baseline
+            .expected_opponent_alias_sha256
+            .as_deref()
+            .is_some_and(|expected| expected != opponent_alias_sha256)
+    {
+        return Err(
+            "visible Game Log lease does not span the exact next-game baseline to duel launch"
+                .to_owned(),
+        );
+    }
+    let selection_before_frame = capture_mtgo_dxgi_frame_candidate_v3(request.clone())?;
+    validate_visible_game_log_launch_frame_v1(&selection_before_frame, launch)?;
+    let selection_before = &selection_before_frame.manifest;
+    if selection_before.captured_at_unix_millis < launch_commitments.captured_at_unix_millis {
+        return Err("visible Game Log lease capture predates the exact game launch".to_owned());
+    }
+    let all_candidates = enumerate_process_epoch_game_logs_v1(
+        &baseline.data_root,
+        &baseline.deployment_name,
+        baseline.process_start_unix_millis,
+        selection_before.captured_at_unix_millis,
+    )?;
+    let candidate_path =
+        select_one_new_game_log_v1(&baseline.existing_candidate_paths, all_candidates)?;
+    let before_metadata = fs::metadata(&candidate_path)
+        .map_err(|error| format!("stat selected visible Game Log before read: {error}"))?;
+    let candidate_creation_unix_millis = metadata_created_unix_millis_v1(&before_metadata)?;
+    require_game_log_creation_in_selection_window_v1(
+        candidate_creation_unix_millis,
+        baseline.baseline_captured_at_unix_millis,
+        selection_before.captured_at_unix_millis,
+    )?;
+    let bytes = fs::read(&candidate_path)
+        .map_err(|error| format!("read selected visible Game Log: {error}"))?;
+    let after_metadata = fs::metadata(&candidate_path)
+        .map_err(|error| format!("stat selected visible Game Log after read: {error}"))?;
+    require_stable_file_v1(&before_metadata, &after_metadata, bytes.len())?;
+    let selection_after_frame = capture_mtgo_dxgi_frame_candidate_v3(request)?;
+    validate_visible_game_log_launch_frame_v1(&selection_after_frame, launch)?;
+    require_visible_game_log_capture_bracket_v1(
+        &selection_before_frame,
+        &selection_after_frame,
+        &candidate_path,
+        &after_metadata,
+        &bytes,
+    )?;
+    let projection = parse_checked_untrusted_mtgo_visible_game_log_v1(&bytes)
+        .map_err(|error| format!("{}: {}", error.code(), error.detail()))?;
+    let source_id = source_id_from_game_log_filename_v1(&candidate_path)?;
+    let filename_source_commitment = mtgo_visible_game_log_source_id_commitment_v1(source_id)
+        .map_err(|error| format!("{}: {}", error.code(), error.detail()))?;
+    if projection.source_match_id_commitment_sha256_v1() != filename_source_commitment {
+        return Err("persisted Game Log filename and payload source identifiers differ".to_owned());
+    }
+    let semantics = classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(
+        &projection,
+        acting_player_alias,
+    )
+    .map_err(|error| format!("{}: {}", error.code(), error.detail()))?;
+    let joined = semantics
+        .event_v1(0)
+        .ok_or("new competitive Game Log has no visible game-start event")?;
+    if joined.kind_v1() != MtgoVisibleGameLogEventKindV1::JoinedGame
+        || joined.actor_role_v1() != Some(MtgoVisibleGameLogPlayerRoleV1::ActingPlayer)
+        || semantics
+            .opponent_alias_sha256_v1()
+            .is_some_and(|observed| {
+                observed != sha256_hex_v1(launch.opponent_display_name_v1().as_bytes())
+            })
+    {
+        return Err("new Game Log is not the seated player's exact launched match".to_owned());
+    }
+    require_exactly_one_acting_player_join_v1(&semantics)?;
+    let lease_commitment_sha256 = commitment_v1(
+        COMPETITIVE_VISIBLE_GAME_LOG_LEASE_DOMAIN_V1,
+        &[
+            baseline.baseline_commitment_sha256.as_bytes(),
+            baseline.source_chain_commitment_sha256.as_bytes(),
+            launch_commitments
+                .launch_identity_commitment_sha256
+                .as_bytes(),
+            projection.projection_commitment_sha256_v1().as_bytes(),
+            filename_source_commitment.as_bytes(),
+            acting_player_alias_sha256.as_bytes(),
+            opponent_alias_sha256.as_bytes(),
+            baseline.event_identity_sha256.as_bytes(),
+            baseline.match_identity_sha256.as_bytes(),
+            &[launch_commitments.game_number],
+            b"one_new_seated_player_game_log_chained_across_best_of_three_no_model_no_input",
+        ],
+    );
+    Ok(OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {
+        _selection_before_frame: selection_before_frame,
+        _selection_after_frame: selection_after_frame,
+        candidate_path,
+        process_continuity_commitment_sha256: baseline.process_continuity_commitment_sha256,
+        event_kind: baseline.event_kind,
+        event_identity_sha256: baseline.event_identity_sha256,
+        match_identity_sha256: baseline.match_identity_sha256,
+        game_number: launch_commitments.game_number,
+        opponent_alias_sha256,
+        acting_player_alias: acting_player_alias.to_owned(),
+        acting_player_alias_sha256,
+        lease_commitment_sha256,
+    })
+}
+
+/// Rereads the exact retained match log for game one, two, or three, verifies
+/// the current visible duel identity, and exposes only that game's public
+/// semantic events. The returned snapshot must be consumed to recover the
+/// lease for a later refresh.
+pub fn refresh_competitive_match_visible_game_log_v1(
+    lease: OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+    launch: &OpaqueMtgoCompetitiveLaunchIdentityV1,
+    request: MtgoDxgiCaptureRequestV3,
+) -> Result<OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1, String> {
+    validate_capture_request_v3(&request)?;
+    if request.window_mode != CaptureWindowModeV2::DuelGame {
+        return Err("visible Game Log refresh requires the exact duel window".to_owned());
+    }
+    let launch_commitments = launch.commitments_v1();
+    let launch_opponent_alias_sha256 = sha256_hex_v1(launch.opponent_display_name_v1().as_bytes());
+    if launch_commitments.event_kind != lease.event_kind
+        || launch.event_identity_sha256_v1() != lease.event_identity_sha256
+        || launch.match_identity_sha256_v1() != lease.match_identity_sha256
+        || launch_commitments.process_continuity_commitment_sha256
+            != lease.process_continuity_commitment_sha256
+        || launch_opponent_alias_sha256 != lease.opponent_alias_sha256
+        || launch_commitments.game_number != lease.game_number
+    {
+        return Err(
+            "visible Game Log lease does not match the exact current competitive game".to_owned(),
+        );
+    }
+    let before_frame = capture_mtgo_dxgi_frame_candidate_v3(request.clone())?;
+    validate_visible_game_log_launch_frame_v1(&before_frame, launch)?;
+    let before_metadata = fs::metadata(&lease.candidate_path)
+        .map_err(|error| format!("stat retained visible Game Log before read: {error}"))?;
+    let bytes = fs::read(&lease.candidate_path)
+        .map_err(|error| format!("read retained visible Game Log: {error}"))?;
+    let after_metadata = fs::metadata(&lease.candidate_path)
+        .map_err(|error| format!("stat retained visible Game Log after read: {error}"))?;
+    require_stable_file_v1(&before_metadata, &after_metadata, bytes.len())?;
+    let after_frame = capture_mtgo_dxgi_frame_candidate_v3(request)?;
+    validate_visible_game_log_launch_frame_v1(&after_frame, launch)?;
+    require_visible_game_log_capture_bracket_v1(
+        &before_frame,
+        &after_frame,
+        &lease.candidate_path,
+        &after_metadata,
+        &bytes,
+    )?;
+    let projection = parse_checked_untrusted_mtgo_visible_game_log_v1(&bytes)
+        .map_err(|error| format!("{}: {}", error.code(), error.detail()))?;
+    let source_id = source_id_from_game_log_filename_v1(&lease.candidate_path)?;
+    let filename_source_commitment = mtgo_visible_game_log_source_id_commitment_v1(source_id)
+        .map_err(|error| format!("{}: {}", error.code(), error.detail()))?;
+    if projection.source_match_id_commitment_sha256_v1() != filename_source_commitment {
+        return Err("retained Game Log filename and payload source identifiers differ".to_owned());
+    }
+    let semantics = classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(
+        &projection,
+        &lease.acting_player_alias,
+    )
+    .map_err(|error| format!("{}: {}", error.code(), error.detail()))?;
+    if semantics.acting_player_alias_sha256_v1() != lease.acting_player_alias_sha256
+        || semantics
+            .opponent_alias_sha256_v1()
+            .is_some_and(|observed| observed != lease.opponent_alias_sha256)
+    {
+        return Err("retained Game Log player roles changed".to_owned());
+    }
+    let first = semantics
+        .event_v1(0)
+        .ok_or("retained competitive Game Log has no visible game-start event")?;
+    if first.kind_v1() != MtgoVisibleGameLogEventKindV1::JoinedGame
+        || first.actor_role_v1() != Some(MtgoVisibleGameLogPlayerRoleV1::ActingPlayer)
+    {
+        return Err("retained Game Log lost its seated-player game-start event".to_owned());
+    }
+    require_exactly_one_acting_player_join_v1(&semantics)?;
+    let current_game_event_start_index = 0;
+    let current_game_event_count = semantics.event_count_v1();
+    let snapshot_commitment_sha256 = commitment_v1(
+        COMPETITIVE_VISIBLE_GAME_LOG_BINDING_DOMAIN_V1,
+        &[
+            lease.lease_commitment_sha256.as_bytes(),
+            launch_commitments
+                .launch_identity_commitment_sha256
+                .as_bytes(),
+            projection.projection_commitment_sha256_v1().as_bytes(),
+            semantics.projection_commitment_sha256_v1().as_bytes(),
+            &[launch_commitments.game_number],
+            &(current_game_event_start_index as u64).to_be_bytes(),
+            &(current_game_event_count as u64).to_be_bytes(),
+            b"retained_match_log_exact_current_game_public_semantics_no_model_no_input",
+        ],
+    );
+    Ok(OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
+        lease,
+        _before_frame: before_frame,
+        _after_frame: after_frame,
+        semantics,
+        game_number: launch_commitments.game_number,
+        current_game_event_start_index,
+        current_game_event_count,
+        snapshot_commitment_sha256,
+    })
+}
+
 /// One exact persisted Game Log projection bound to the sole file created by
 /// the admitted MTGO process epoch and bracketed by two stable game-window
 /// captures.
@@ -47,10 +653,11 @@ struct BoundVisibleGameLogDuelTitleIdentityV1 {
 /// player-view information boundary even when an older line is not inside the
 /// current scroll viewport.
 ///
-/// This v1 source admits only the sole Game Log file created since the current
-/// MTGO process started. It therefore rejects after a second match or game log
-/// is created in the same process. A future competitive lifecycle binder must
-/// supply an opaque game-start boundary for multi-game sessions.
+/// This legacy v1 source admits only the sole Game Log file created since the
+/// current MTGO process started. It therefore rejects after a second match log
+/// is created in the same process. The competitive match lease API above uses
+/// an exact Pairing Ready baseline to retain one new log across games one to
+/// three without weakening this legacy cardinality rule.
 ///
 /// ```compile_fail
 /// use mtgo_dxgi_capture_v1::OpaqueMtgoProcessEpochVisibleGameLogV1;
@@ -418,6 +1025,26 @@ fn current_game_event_range_from_kinds_v1(
     Ok((current_start, current_count))
 }
 
+fn require_exactly_one_acting_player_join_v1(
+    semantics: &CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1,
+) -> Result<(), String> {
+    let acting_player_joins = (0..semantics.event_count_v1())
+        .filter(|index| {
+            let event = semantics
+                .event_v1(*index)
+                .expect("semantic event count and lookup are consistent");
+            event.kind_v1() == MtgoVisibleGameLogEventKindV1::JoinedGame
+                && event.actor_role_v1() == Some(MtgoVisibleGameLogPlayerRoleV1::ActingPlayer)
+        })
+        .count();
+    if acting_player_joins != 1 {
+        return Err(format!(
+            "competitive per-game visible Game Log has {acting_player_joins} acting-player joins"
+        ));
+    }
+    Ok(())
+}
+
 fn validate_competitive_visible_game_log_lineage_v1(
     source_process_continuity_commitment_sha256: &str,
     source_semantic_opponent_alias_sha256: Option<&str>,
@@ -438,6 +1065,84 @@ fn validate_competitive_visible_game_log_lineage_v1(
             "visible Game Log does not match the exact competitive process, opponent, match, or game"
                 .to_owned(),
         );
+    }
+    Ok(())
+}
+
+fn validate_visible_game_log_launch_frame_v1(
+    frame: &OpaqueMtgoDxgiFrameCandidateV3,
+    launch: &OpaqueMtgoCompetitiveLaunchIdentityV1,
+) -> Result<(), String> {
+    let manifest = &frame.manifest;
+    let launch_commitments = launch.commitments_v1();
+    if manifest.pre != manifest.post
+        || manifest.window_mode != "duel_game"
+        || manifest.capture_role != "acting_player_duel"
+        || mtgo_process_continuity_commitment_for_frame_v1(frame)
+            != launch_commitments.process_continuity_commitment_sha256
+    {
+        return Err("visible Game Log capture does not retain the exact launched duel".to_owned());
+    }
+    let title_identity = bind_visible_game_log_duel_title_identity_v1(
+        &manifest.pre.title,
+        &manifest.expected_game_format,
+        &launch_commitments.process_continuity_commitment_sha256,
+    )?;
+    validate_competitive_visible_game_log_lineage_v1(
+        &launch_commitments.process_continuity_commitment_sha256,
+        None,
+        &title_identity,
+        &launch_commitments.process_continuity_commitment_sha256,
+        &sha256_hex_v1(launch.opponent_display_name_v1().as_bytes()),
+        &sha256_hex_v1(launch.visible_match_id_v1().as_bytes()),
+        &sha256_hex_v1(launch.visible_game_id_v1().as_bytes()),
+    )
+}
+
+fn require_visible_game_log_capture_bracket_v1(
+    before_frame: &OpaqueMtgoDxgiFrameCandidateV3,
+    after_frame: &OpaqueMtgoDxgiFrameCandidateV3,
+    path: &Path,
+    prior_metadata: &Metadata,
+    prior_bytes: &[u8],
+) -> Result<(), String> {
+    let before = &before_frame.manifest;
+    let after = &after_frame.manifest;
+    if before.pre != before.post
+        || after.pre != after.post
+        || before.pre != after.pre
+        || before.output != after.output
+        || before.window_mode != after.window_mode
+        || before.capture_role != after.capture_role
+        || before.expected_game_format != after.expected_game_format
+        || before.title_rule_version != after.title_rule_version
+        || before.captured_at_unix_millis > after.captured_at_unix_millis
+        || after.captured_at_unix_millis - before.captured_at_unix_millis
+            > MAX_VISIBLE_GAME_LOG_BIND_BRACKET_MILLIS_V1
+    {
+        return Err(
+            "MTGO duel, process, geometry, output, cursor, or title changed during Game Log read"
+                .to_owned(),
+        );
+    }
+    let post_capture_metadata = fs::metadata(path)
+        .map_err(|error| format!("stat visible Game Log after capture bracket: {error}"))?;
+    require_stable_file_v1(prior_metadata, &post_capture_metadata, prior_bytes.len())?;
+    let post_capture_bytes = fs::read(path)
+        .map_err(|error| format!("reread visible Game Log after capture bracket: {error}"))?;
+    let final_metadata =
+        fs::metadata(path).map_err(|error| format!("final stat of visible Game Log: {error}"))?;
+    require_stable_file_v1(
+        &post_capture_metadata,
+        &final_metadata,
+        post_capture_bytes.len(),
+    )?;
+    if prior_bytes != post_capture_bytes {
+        return Err("visible Game Log bytes changed across the duel capture bracket".to_owned());
+    }
+    let last_write_unix_millis = metadata_modified_unix_millis_v1(&final_metadata)?;
+    if last_write_unix_millis > after.captured_at_unix_millis {
+        return Err("visible Game Log changed after the duel capture bracket".to_owned());
     }
     Ok(())
 }
@@ -631,6 +1336,27 @@ fn select_process_epoch_game_log_v1(
     process_start_unix_millis: u128,
     captured_at_unix_millis: u128,
 ) -> Result<PathBuf, String> {
+    let mut candidates = enumerate_process_epoch_game_logs_v1(
+        data_root,
+        deployment_name,
+        process_start_unix_millis,
+        captured_at_unix_millis,
+    )?;
+    if candidates.len() != 1 {
+        return Err(format!(
+            "expected exactly one persisted Game Log created in the MTGO process epoch, found {}",
+            candidates.len()
+        ));
+    }
+    Ok(candidates.pop().expect("one candidate"))
+}
+
+fn enumerate_process_epoch_game_logs_v1(
+    data_root: &Path,
+    deployment_name: &str,
+    process_start_unix_millis: u128,
+    captured_at_unix_millis: u128,
+) -> Result<Vec<PathBuf>, String> {
     if process_start_unix_millis > captured_at_unix_millis {
         return Err("MTGO process starts after the source capture".to_owned());
     }
@@ -691,13 +1417,65 @@ fn select_process_epoch_game_log_v1(
             }
         }
     }
-    if candidates.len() != 1 {
+    candidates.sort();
+    Ok(candidates)
+}
+
+fn select_one_new_game_log_v1(
+    baseline: &HashSet<PathBuf>,
+    current: Vec<PathBuf>,
+) -> Result<PathBuf, String> {
+    let mut new_candidates = current
+        .into_iter()
+        .filter(|path| !baseline.contains(path))
+        .collect::<Vec<_>>();
+    if new_candidates.len() != 1 {
         return Err(format!(
-            "expected exactly one persisted Game Log created in the MTGO process epoch, found {}",
-            candidates.len()
+            "expected exactly one new visible Game Log after Pairing Ready, found {}",
+            new_candidates.len()
         ));
     }
-    Ok(candidates.pop().expect("one candidate"))
+    Ok(new_candidates.pop().expect("one new Game Log"))
+}
+
+fn require_game_log_creation_in_selection_window_v1(
+    creation_unix_millis: u128,
+    baseline_captured_at_unix_millis: u128,
+    duel_captured_at_unix_millis: u128,
+) -> Result<(), String> {
+    if baseline_captured_at_unix_millis > duel_captured_at_unix_millis
+        || creation_unix_millis < baseline_captured_at_unix_millis
+        || creation_unix_millis > duel_captured_at_unix_millis
+    {
+        return Err(
+            "selected visible Game Log was not created inside the Pairing Ready to duel bracket"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn private_path_inventory_commitment_v1(paths: &HashSet<PathBuf>) -> Result<String, String> {
+    let mut path_commitments = paths
+        .iter()
+        .map(|path| {
+            let wide = path.as_os_str().encode_wide().collect::<Vec<_>>();
+            let mut bytes = Vec::with_capacity(wide.len() * 2);
+            for value in wide {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            sha256_hex_v1(&bytes)
+        })
+        .collect::<Vec<_>>();
+    path_commitments.sort();
+    let parts = path_commitments
+        .iter()
+        .map(|value| value.as_bytes())
+        .collect::<Vec<_>>();
+    Ok(commitment_v1(
+        b"mtgo-private-visible-game-log-path-inventory-v1",
+        &parts,
+    ))
 }
 
 fn source_id_from_game_log_filename_v1(path: &Path) -> Result<&str, String> {
@@ -885,6 +1663,66 @@ mod tests {
         )
         .is_err());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn pairing_ready_inventory_requires_exactly_one_new_log() {
+        let old_a = PathBuf::from(r"C:\private\old-a.dat");
+        let old_b = PathBuf::from(r"C:\private\old-b.dat");
+        let new = PathBuf::from(r"C:\private\new.dat");
+        let baseline = [old_a.clone(), old_b.clone()]
+            .into_iter()
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            select_one_new_game_log_v1(&baseline, vec![old_a.clone(), old_b.clone(), new.clone()])
+                .unwrap(),
+            new
+        );
+        assert!(select_one_new_game_log_v1(&baseline, vec![old_a, old_b]).is_err());
+        assert!(select_one_new_game_log_v1(
+            &baseline,
+            vec![PathBuf::from("new-a"), PathBuf::from("new-b")]
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn new_log_creation_must_fall_inside_pairing_to_duel_window() {
+        assert!(require_game_log_creation_in_selection_window_v1(100, 100, 200).is_ok());
+        assert!(require_game_log_creation_in_selection_window_v1(200, 100, 200).is_ok());
+        assert!(require_game_log_creation_in_selection_window_v1(99, 100, 200).is_err());
+        assert!(require_game_log_creation_in_selection_window_v1(201, 100, 200).is_err());
+        assert!(require_game_log_creation_in_selection_window_v1(150, 200, 100).is_err());
+    }
+
+    #[test]
+    fn private_inventory_commitment_is_order_independent_and_framed() {
+        let left = [
+            PathBuf::from(r"C:\private\a"),
+            PathBuf::from(r"C:\private\bc"),
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
+        let reordered = [
+            PathBuf::from(r"C:\private\bc"),
+            PathBuf::from(r"C:\private\a"),
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
+        let different = [
+            PathBuf::from(r"C:\private\ab"),
+            PathBuf::from(r"C:\private\c"),
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
+        assert_eq!(
+            private_path_inventory_commitment_v1(&left).unwrap(),
+            private_path_inventory_commitment_v1(&reordered).unwrap()
+        );
+        assert_ne!(
+            private_path_inventory_commitment_v1(&left).unwrap(),
+            private_path_inventory_commitment_v1(&different).unwrap()
+        );
     }
 
     #[test]

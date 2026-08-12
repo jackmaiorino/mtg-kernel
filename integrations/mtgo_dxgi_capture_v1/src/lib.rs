@@ -258,15 +258,18 @@ pub use competitive_visible_history_readiness::{
 };
 #[cfg(target_os = "windows")]
 pub use competitive_visible_match_memory::{
-    bind_competitive_player_visible_game_memory_v1, OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1,
+    bind_competitive_player_visible_game_memory_v1,
+    bind_match_scoped_competitive_player_visible_game_memory_v1,
+    OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1,
 };
 
 #[cfg(target_os = "windows")]
 pub use probe::{
+    advance_competitive_visible_game_log_baseline_v1,
     advance_evaluated_competitive_event_monitor_v1,
     advance_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
     advance_opaque_competitive_duel_gesture_sequence_v1,
-    begin_evaluated_competitive_event_monitor_v1,
+    begin_competitive_visible_game_log_baseline_v1, begin_evaluated_competitive_event_monitor_v1,
     begin_opaque_competitive_duel_gesture_sequence_v1,
     bind_classified_competitive_event_listing_to_evaluation_v1,
     bind_classified_navigation_frame_to_competitive_entry_review_identity_v1,
@@ -274,6 +277,7 @@ pub use probe::{
     bind_classified_navigation_frame_to_lifecycle_control_v1,
     bind_classified_navigation_frame_to_visible_event_record_v1,
     bind_classifier_backed_competitive_entry_control_and_deck_dry_run_v2,
+    bind_competitive_match_visible_game_log_lease_v1,
     bind_opaque_competitive_duel_continuation_gesture_stage_v1,
     bind_opaque_competitive_duel_source_gesture_stage_v1,
     bind_opaque_navigation_frame_to_competitive_entry_review_identity_v1,
@@ -320,9 +324,10 @@ pub use probe::{
     prepare_opaque_competitive_duel_pass_actuation_v1,
     probe_mtgo_process_epoch_visible_game_log_v1, probe_mtgo_visible_accessibility_exact_text_v1,
     probe_mtgo_visible_accessibility_exact_text_with_pixel_corroboration_v1,
-    resolve_opaque_profile_bound_duel_control_v1, run_cli_v3,
-    run_visible_accessibility_pixel_corroboration_cli_v1, run_visible_accessibility_probe_cli_v1,
-    score_and_select_card_aware_bottoming_model_v5, score_and_select_card_aware_pregame_model_v4,
+    refresh_competitive_match_visible_game_log_v1, resolve_opaque_profile_bound_duel_control_v1,
+    run_cli_v3, run_visible_accessibility_pixel_corroboration_cli_v1,
+    run_visible_accessibility_probe_cli_v1, score_and_select_card_aware_bottoming_model_v5,
+    score_and_select_card_aware_pregame_model_v4,
     score_and_select_opaque_admitted_duel_perception_v1,
     score_and_select_pinned_current_solitaire_pregame_v1, score_and_select_pregame_model_v3,
     start_card_aware_bottoming_session_v5, validate_card_aware_bottoming_score_response_v5,
@@ -398,7 +403,9 @@ pub use probe::{
     OpaqueMtgoCompetitiveDuelGestureSequenceV1, OpaqueMtgoCompetitiveDuelGestureStageV1,
     OpaqueMtgoCompetitiveEntryControlDryRunV1, OpaqueMtgoCompetitiveEntryReviewIdentityV1,
     OpaqueMtgoCompetitiveEventMonitorV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
-    OpaqueMtgoCompetitiveLifecycleControlV1, OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1,
+    OpaqueMtgoCompetitiveLifecycleControlV1, OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+    OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1,
     OpaqueMtgoConfirmedBottomingSubmitV5, OpaqueMtgoConfirmedKeepToBottomSixTransitionV3,
     OpaqueMtgoConfirmedKeepToFirstMainTransitionV3, OpaqueMtgoConfirmedMulliganTransitionV3,
     OpaqueMtgoDxgiBottomSixInitialMeasurementV3, OpaqueMtgoDxgiBottomSixReflowMeasurementV3,

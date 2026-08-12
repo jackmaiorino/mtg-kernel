@@ -1,4 +1,7 @@
-use crate::OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1;
+use crate::{
+    OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1,
+};
 use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
     MtgoCompetitivePlayerVisibleDecisionViewV1, MtgoVisibleGameLogSemanticEventViewV1,
@@ -32,9 +35,61 @@ struct VisibleGameLineageRefV1<'a> {
 /// require_clone::<OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1>();
 /// ```
 pub struct OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
-    game_log: OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1,
+    game_log: OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1,
     confirmed_decisions: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
     memory_commitment_sha256: String,
+}
+
+enum OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1 {
+    LegacyProcessEpoch(Box<OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1>),
+    MatchScoped(Box<OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1>),
+}
+
+impl OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1 {
+    fn event_count_v1(&self) -> usize {
+        match self {
+            Self::LegacyProcessEpoch(source) => source.event_count_v1(),
+            Self::MatchScoped(source) => source.event_count_v1(),
+        }
+    }
+
+    fn event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+        match self {
+            Self::LegacyProcessEpoch(source) => source.event_v1(index),
+            Self::MatchScoped(source) => source.event_v1(index),
+        }
+    }
+
+    fn lineage_v1(&self) -> VisibleGameLineageRefV1<'_> {
+        match self {
+            Self::LegacyProcessEpoch(source) => VisibleGameLineageRefV1 {
+                event_kind: source.event_kind_v1(),
+                event_identity_sha256: source.event_identity_sha256_v1(),
+                match_identity_sha256: source.match_identity_sha256_v1(),
+                game_number: source.game_number_v1(),
+            },
+            Self::MatchScoped(source) => VisibleGameLineageRefV1 {
+                event_kind: source.event_kind_v1(),
+                event_identity_sha256: source.event_identity_sha256_v1(),
+                match_identity_sha256: source.match_identity_sha256_v1(),
+                game_number: source.game_number_v1(),
+            },
+        }
+    }
+
+    fn source_commitment_sha256_v1(&self) -> &str {
+        match self {
+            Self::LegacyProcessEpoch(source) => source.binding_commitment_sha256_v1(),
+            Self::MatchScoped(source) => source.snapshot_commitment_sha256_v1(),
+        }
+    }
+
+    fn semantic_projection_commitment_sha256_v1(&self) -> &str {
+        match self {
+            Self::LegacyProcessEpoch(source) => source.semantic_projection_commitment_sha256_v1(),
+            Self::MatchScoped(source) => source.semantic_projection_commitment_sha256_v1(),
+        }
+    }
 }
 
 impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
@@ -61,11 +116,11 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
     }
 
     pub fn match_identity_sha256_v1(&self) -> &str {
-        self.game_log.match_identity_sha256_v1()
+        self.game_log.lineage_v1().match_identity_sha256
     }
 
     pub fn game_number_v1(&self) -> u8 {
-        self.game_log.game_number_v1()
+        self.game_log.lineage_v1().game_number
     }
 
     pub fn policy_deployment_commitment_sha256_v1(&self) -> &str {
@@ -96,6 +151,29 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
     pub fn permits_spending_v1(&self) -> bool {
         false
     }
+
+    /// Consumes a match-scoped game memory after its immutable public views
+    /// have been imported and returns the exact log lease plus confirmed
+    /// decision history. The lease can then be consumed only by the matching
+    /// Sideboarding baseline. Legacy process-epoch sources cannot advance.
+    pub fn into_match_log_lease_and_confirmed_decisions_v1(
+        self,
+    ) -> Result<
+        (
+            crate::OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+        ),
+        String,
+    > {
+        match self.game_log {
+            OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::MatchScoped(source) => {
+                Ok(((*source).into_match_lease_v1(), self.confirmed_decisions))
+            }
+            OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::LegacyProcessEpoch(_) => Err(
+                "legacy process-epoch visible Game Log memory cannot advance a match".to_owned(),
+            ),
+        }
+    }
 }
 
 /// Requires both retained histories to describe the exact same event, match,
@@ -106,13 +184,31 @@ pub fn bind_competitive_player_visible_game_memory_v1(
     game_log: OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1,
     confirmed_decisions: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
 ) -> Result<OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, String> {
+    bind_competitive_player_visible_game_memory_source_v1(
+        OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::LegacyProcessEpoch(Box::new(game_log)),
+        confirmed_decisions,
+    )
+}
+
+/// Joins the match-scoped per-game visible log snapshot to the exact confirmed
+/// decision history for that same League or Challenge game.
+pub fn bind_match_scoped_competitive_player_visible_game_memory_v1(
+    game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_decisions: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+) -> Result<OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, String> {
+    bind_competitive_player_visible_game_memory_source_v1(
+        OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::MatchScoped(Box::new(game_log)),
+        confirmed_decisions,
+    )
+}
+
+fn bind_competitive_player_visible_game_memory_source_v1(
+    game_log: OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1,
+    confirmed_decisions: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+) -> Result<OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, String> {
+    let game_log_lineage = game_log.lineage_v1();
     validate_combined_visible_game_lineage_v1(
-        VisibleGameLineageRefV1 {
-            event_kind: game_log.event_kind_v1(),
-            event_identity_sha256: game_log.event_identity_sha256_v1(),
-            match_identity_sha256: game_log.match_identity_sha256_v1(),
-            game_number: game_log.game_number_v1(),
-        },
+        game_log_lineage,
         VisibleGameLineageRefV1 {
             event_kind: confirmed_decisions.event_kind_v1(),
             event_identity_sha256: confirmed_decisions.event_identity_sha256_v1(),
@@ -121,7 +217,7 @@ pub fn bind_competitive_player_visible_game_memory_v1(
         },
     )?;
     let memory_commitment_sha256 = commitment_v1(&[
-        game_log.binding_commitment_sha256_v1().as_bytes(),
+        game_log.source_commitment_sha256_v1().as_bytes(),
         game_log
             .semantic_projection_commitment_sha256_v1()
             .as_bytes(),
@@ -131,9 +227,9 @@ pub fn bind_competitive_player_visible_game_memory_v1(
         confirmed_decisions
             .policy_deployment_commitment_sha256_v1()
             .as_bytes(),
-        game_log.event_identity_sha256_v1().as_bytes(),
-        game_log.match_identity_sha256_v1().as_bytes(),
-        &[game_log.game_number_v1()],
+        game_log_lineage.event_identity_sha256.as_bytes(),
+        game_log_lineage.match_identity_sha256.as_bytes(),
+        &[game_log_lineage.game_number],
         b"dual_source_public_history_ready_for_explicit_kernel_import_no_scoring_no_input",
     ]);
     Ok(OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {

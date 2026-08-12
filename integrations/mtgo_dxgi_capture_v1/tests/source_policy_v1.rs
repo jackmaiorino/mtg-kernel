@@ -43,6 +43,68 @@ fn production_source_uses_composed_desktop_and_excludes_hidden_or_input_apis() {
 }
 
 #[test]
+fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
+    let source = include_str!("../src/probe/visible_game_log.rs");
+    let memory = include_str!("../src/competitive_visible_match_memory.rs");
+    for required in [
+        "begin_competitive_visible_game_log_baseline_v1",
+        "advance_competitive_visible_game_log_baseline_v1",
+        "bind_competitive_match_visible_game_log_lease_v1",
+        "refresh_competitive_match_visible_game_log_v1",
+        "require_game_log_creation_in_selection_window_v1",
+        "require_exactly_one_acting_player_join_v1",
+        "expected_acting_player_alias_sha256",
+        "expected_opponent_alias_sha256",
+        "safe_for_model_scoring_v1(&self) -> bool {\n        false",
+        "safe_for_input_v1(&self) -> bool {\n        false",
+        "permits_event_entry_v1(&self) -> bool {\n        false",
+        "permits_spending_v1(&self) -> bool {\n        false",
+    ] {
+        assert!(
+            source.contains(required),
+            "competitive visible Game Log seam is missing: {required}"
+        );
+    }
+    for required in [
+        "bind_match_scoped_competitive_player_visible_game_memory_v1",
+        "into_match_log_lease_and_confirmed_decisions_v1",
+        "ready_for_kernel_history_import_v1(&self) -> bool",
+    ] {
+        assert!(
+            memory.contains(required),
+            "match-scoped visible memory seam is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub fn candidate_path",
+        "pub fn data_root",
+        "pub fn source_id",
+        "pub fn raw_bytes",
+        "pub fn acting_player_alias_v1",
+        "pub fn opponent_alias_v1",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+        "WinHttp",
+        "WinSock",
+        "TcpStream",
+        "UdpSocket",
+        "SendInput",
+        "SetCursorPos",
+        "mouse_event",
+        "keybd_event",
+        "PostMessage",
+        "SendMessage",
+        "UIAutomation",
+    ] {
+        assert!(
+            !source.contains(forbidden) && !memory.contains(forbidden),
+            "competitive visible Game Log exposes forbidden channel or authority: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn acting_player_duel_mode_is_role_explicit_and_still_non_actionable() {
     let library = include_str!("../src/lib.rs");
     let probe = include_str!("../src/probe.rs");

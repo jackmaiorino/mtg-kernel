@@ -1372,6 +1372,12 @@ impl OpaqueMtgoCompetitiveEventRuntimeV1 {
     pub fn permits_additional_spending_v1(&self) -> bool {
         false
     }
+
+    pub(crate) fn current_frame_for_visible_game_log_v1(
+        &self,
+    ) -> &OpaqueMtgoClassifiedCompetitiveNavigationFrameV1 {
+        &self.current_frame
+    }
 }
 
 /// Derives the only next high-level driver branch from the current opaque
