@@ -25,6 +25,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub player_visible_information_boundary_is_transport_independent: bool,
     pub persisted_visible_game_log_parser_present: bool,
     pub persisted_visible_game_log_local_corpus_passed: bool,
+    pub post_entry_operator_pairing_ready_game_log_baseline_present: bool,
+    pub post_entry_operator_attended_match_game_log_lease_present: bool,
+    pub post_entry_operator_attended_match_log_refresh_identity_retained: bool,
     pub external_public_history_import_contract_present: bool,
     pub external_public_history_cross_source_ordering_policy_present: bool,
     pub native_checkpoint_external_public_history_import_present: bool,
@@ -109,6 +112,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             player_visible_information_boundary_is_transport_independent: true,
             persisted_visible_game_log_parser_present: true,
             persisted_visible_game_log_local_corpus_passed: true,
+            post_entry_operator_pairing_ready_game_log_baseline_present: true,
+            post_entry_operator_attended_match_game_log_lease_present: true,
+            post_entry_operator_attended_match_log_refresh_identity_retained: true,
             external_public_history_import_contract_present: true,
             external_public_history_cross_source_ordering_policy_present: true,
             native_checkpoint_external_public_history_import_present: false,
@@ -213,6 +219,21 @@ mod tests {
             report
                 .known_wiring_gaps
                 .persisted_visible_game_log_local_corpus_passed
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .post_entry_operator_pairing_ready_game_log_baseline_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .post_entry_operator_attended_match_game_log_lease_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .post_entry_operator_attended_match_log_refresh_identity_retained
         );
         assert!(
             report
