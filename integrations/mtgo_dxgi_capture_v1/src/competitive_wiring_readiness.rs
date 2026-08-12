@@ -22,6 +22,12 @@ pub enum MtgoCompetitiveStaticReadinessStatusV1 {
 pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub operator_resource_bootstrap_present: bool,
     pub checkpoint_bound_model_capability_commitment_present: bool,
+    pub player_visible_information_boundary_is_transport_independent: bool,
+    pub persisted_visible_game_log_parser_present: bool,
+    pub persisted_visible_game_log_local_corpus_passed: bool,
+    pub external_public_history_import_contract_present: bool,
+    pub external_public_history_cross_source_ordering_policy_present: bool,
+    pub native_checkpoint_external_public_history_import_present: bool,
     pub pre_entry_operator_loop_present: bool,
     pub post_entry_operator_loop_present: bool,
     pub end_to_end_operator_loop_present: bool,
@@ -90,6 +96,12 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
         known_wiring_gaps: MtgoCompetitiveKnownWiringGapsV1 {
             operator_resource_bootstrap_present: true,
             checkpoint_bound_model_capability_commitment_present: true,
+            player_visible_information_boundary_is_transport_independent: true,
+            persisted_visible_game_log_parser_present: true,
+            persisted_visible_game_log_local_corpus_passed: true,
+            external_public_history_import_contract_present: true,
+            external_public_history_cross_source_ordering_policy_present: true,
+            native_checkpoint_external_public_history_import_present: false,
             pre_entry_operator_loop_present: true,
             post_entry_operator_loop_present: true,
             end_to_end_operator_loop_present: false,
@@ -166,6 +178,36 @@ mod tests {
             report
                 .known_wiring_gaps
                 .checkpoint_bound_model_capability_commitment_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .player_visible_information_boundary_is_transport_independent
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .persisted_visible_game_log_parser_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .persisted_visible_game_log_local_corpus_passed
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .external_public_history_import_contract_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .external_public_history_cross_source_ordering_policy_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .native_checkpoint_external_public_history_import_present
         );
         assert!(report.known_wiring_gaps.pre_entry_operator_loop_present);
         assert!(report.known_wiring_gaps.post_entry_operator_loop_present);
