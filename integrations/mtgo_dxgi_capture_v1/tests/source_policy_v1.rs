@@ -2797,13 +2797,11 @@ fn player_visible_duel_gesture_contract_and_opaque_join_withhold_internal_identi
 #[test]
 fn player_visible_gesture_target_protocol_withholds_kernel_identity_and_input() {
     let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let wire = include_str!("../src/probe/player_visible_duel_gesture_target_wire.rs");
     let classifier = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
     let public_api = include_str!("../src/lib.rs");
 
     for required in [
-        "pub(crate) struct MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1",
-        "pub(crate) struct MtgoPlayerVisibleDuelGestureTargetCandidateV1",
-        "pub(crate) struct MtgoPlayerVisibleDuelGestureTargetSetV1",
         "pub(crate) struct CheckedUntrustedMtgoPlayerVisibleDuelGestureTargetRequestV1",
         "pub struct OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1",
         "pub struct AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1",
@@ -2825,14 +2823,27 @@ fn player_visible_gesture_target_protocol_withholds_kernel_identity_and_input() 
         );
     }
 
-    let header_start = runtime
-        .find("pub(crate) struct MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1")
+    for required in [
+        "pub(super) struct MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1",
+        "pub(super) struct MtgoPlayerVisibleDuelGestureTargetCandidateV1",
+        "pub(super) struct MtgoPlayerVisibleDuelGestureTargetSetV1",
+        "pub(super) struct MtgoPlayerVisibleDuelGestureTargetProcessResponseV1",
+    ] {
+        assert!(
+            wire.contains(required),
+            "private visible target wire is missing: {required}"
+        );
+    }
+    assert!(runtime.contains("include_bytes!(\"player_visible_duel_gesture_target_wire.rs\")"));
+
+    let header_start = wire
+        .find("pub(super) struct MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1")
         .expect("visible target request header");
-    let header_end = runtime[header_start..]
+    let header_end = wire[header_start..]
         .find("\n}\n")
         .map(|offset| header_start + offset + 3)
         .expect("visible target request header end");
-    let header = &runtime[header_start..header_end];
+    let header = &wire[header_start..header_end];
     for forbidden in [
         "CardStableRefV1",
         "ActionSemanticV1",

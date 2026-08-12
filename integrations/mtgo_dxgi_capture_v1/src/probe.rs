@@ -13,6 +13,7 @@ mod competitive_sideboard_runtime;
 mod duel_perception_runtime;
 mod duel_profile_frame;
 mod live_frame;
+mod player_visible_duel_gesture_target_wire;
 mod pregame_heuristic;
 mod visible_accessibility;
 mod visible_game_log;

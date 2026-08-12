@@ -1,3 +1,8 @@
+use super::player_visible_duel_gesture_target_wire::{
+    MtgoPlayerVisibleDuelGestureTargetCandidateV1,
+    MtgoPlayerVisibleDuelGestureTargetProcessResponseV1,
+    MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1, MtgoPlayerVisibleDuelGestureTargetSetV1,
+};
 use super::{
     capture_admitted_mtgo_duel_visible_frame_v1, choose_cursor_park_point_v3,
     competitive_entry_window_continuity_commitment_for_frame_v1,
@@ -42,10 +47,9 @@ use mtgo_blackbox_v1::{
     MtgoDuelGestureStageV1, MtgoDuelGestureTargetRoleV1, MtgoDxgiCaptureRoleV2,
     MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1, MtgoLifecycleVisibleFactKindV1,
     MtgoNativeCheckpointObservationScorerV1, MtgoObservationReconstructionAuditV1,
-    MtgoObservedDecisionV1, MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelDecisionInputV1,
-    MtgoPlayerVisibleDuelGesturePlanV1, MtgoPlayerVisibleDuelGesturePrimitiveV1,
-    MtgoPlayerVisibleDuelGestureTargetRoleV1, MtgoPlayerVisibleDuelScorerV1,
-    MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    MtgoObservedDecisionV1, MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelGesturePlanV1,
+    MtgoPlayerVisibleDuelGesturePrimitiveV1, MtgoPlayerVisibleDuelGestureTargetRoleV1,
+    MtgoPlayerVisibleDuelScorerV1, MtgoProfileBoundPostconditionAfterFrameMetadataV1,
     MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoProfileBoundPostconditionCalibrationV1,
     MtgoProfileBoundPostconditionCandidateStatusV1, MtgoProfileBoundPostconditionRegionSetV1,
     MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
@@ -76,8 +80,10 @@ const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_REQUEST_SCHEMA_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-duel-gesture-target-request-schema-v1";
 const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RESPONSE_SCHEMA_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-duel-gesture-target-response-schema-v1";
-const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RUNTIME_SOURCE_V1: &[u8] =
-    include_bytes!("duel_perception_runtime.rs");
+const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_SCHEMA_REVIEW_DOMAIN_V1: &[u8] =
+    b"mtgo-player-visible-duel-gesture-target-schema-review-v1";
+const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_WIRE_SOURCE_V1: &[u8] =
+    include_bytes!("player_visible_duel_gesture_target_wire.rs");
 const PLAYER_VISIBLE_DUEL_INPUT_SOURCE_V1: &[u8] =
     include_bytes!("../../../mtgo_blackbox_v1/src/player_visible_duel_input.rs");
 const PLAYER_VISIBLE_DUEL_GESTURE_SOURCE_V1: &[u8] =
@@ -117,6 +123,8 @@ const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_PROTOCOL_MAGIC_V1: &[u8] =
 const MAX_RUNTIME_ARTIFACT_BYTES_V1: u64 = 512 * 1024 * 1024;
 const MAX_PERCEPTION_RESPONSE_BYTES_V1: usize = 16 * 1024 * 1024;
 const MAX_PERCEPTION_STDERR_BYTES_V1: usize = 64 * 1024;
+
+pub const MTGO_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_SCHEMA_REVIEW_SCHEMA_V1: u32 = 1;
 
 pub const MTGO_OPAQUE_COMPETITIVE_DUEL_GESTURE_TRANSITION_SCHEMA_V1: u32 = 1;
 
@@ -207,65 +215,6 @@ pub struct MtgoDuelGestureTargetProcessResponseV1 {
     pub schema_version: u32,
     pub request_commitment_sha256: String,
     pub target_set: MtgoVisibleDuelGestureTargetSetV1,
-}
-
-/// Visible-only source-frame request for one gesture primitive. The exact
-/// pixels follow this header on a private pipe. Public/model-facing fields are
-/// limited to the selected visible action and transient visible ordinals;
-/// frame and integrity fields are adapter-private transport bindings. The
-/// transport type itself is crate-private and is never returned to a caller.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1 {
-    pub schema_version: u32,
-    pub protocol: String,
-    pub frame_id: u64,
-    pub frame_sequence: u64,
-    pub canonical_width: u32,
-    pub canonical_height: u32,
-    pub canonical_stride: u32,
-    pub canonical_byte_length: usize,
-    pub canonical_bgra8_sha256: String,
-    pub source_capture_commitment_sha256: String,
-    pub perception_result_commitment_sha256: String,
-    pub decision_input: MtgoPlayerVisibleDuelDecisionInputV1,
-    pub gesture_plan: MtgoPlayerVisibleDuelGesturePlanV1,
-    pub primitive_index: u16,
-    pub gesture_evaluation_commitment_sha256: String,
-    pub gesture_profile_admission_commitment_sha256: String,
-    pub runtime_identity_commitment_sha256: String,
-    pub gesture_target_runtime_binary_sha256: String,
-    pub gesture_target_assets_manifest_sha256: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MtgoPlayerVisibleDuelGestureTargetCandidateV1 {
-    pub target_id: String,
-    pub role: MtgoPlayerVisibleDuelGestureTargetRoleV1,
-    pub rect_client_px: MtgoRectPxV1,
-    pub content_sha256: String,
-    pub confidence_bps: u16,
-    pub visibly_enabled: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MtgoPlayerVisibleDuelGestureTargetSetV1 {
-    pub schema_version: u32,
-    pub frame_id: u64,
-    pub frame_sequence: u64,
-    pub primitive_index: u16,
-    pub candidate_set_complete: bool,
-    pub targets: Vec<MtgoPlayerVisibleDuelGestureTargetCandidateV1>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MtgoPlayerVisibleDuelGestureTargetProcessResponseV1 {
-    pub schema_version: u32,
-    pub request_commitment_sha256: String,
-    pub target_set: MtgoPlayerVisibleDuelGestureTargetSetV1,
 }
 
 /// Structurally checked protocol request metadata. This does not attest that a
@@ -437,6 +386,57 @@ pub struct AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1 {
     response_schema_sha256: String,
 }
 
+/// Non-authorizing review material for the exact code-derived visible-only
+/// request and response schemas. It contains no runtime path, pixels, target
+/// geometry, client identity, account identity, or production authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPlayerVisibleDuelGestureTargetSchemaReviewV1 {
+    pub schema_version: u32,
+    pub protocol: String,
+    pub request_schema_sha256: String,
+    pub response_schema_sha256: String,
+    pub schema_review_material_commitment_sha256: String,
+    pub visible_only_payload_review_required: bool,
+    pub all_action_families_replay_required: bool,
+    pub exact_target_regions_review_required: bool,
+    pub production_ratification_present: bool,
+    pub safe_for_live_input: bool,
+    pub permits_event_entry: bool,
+    pub permits_spending: bool,
+}
+
+/// Produces reproducible schema commitments for later human review. This does
+/// not read artifacts or admit the private target protocol.
+pub fn review_player_visible_duel_gesture_target_schema_v1(
+) -> MtgoPlayerVisibleDuelGestureTargetSchemaReviewV1 {
+    let request_schema_sha256 = player_visible_duel_gesture_target_request_schema_sha256_v1();
+    let response_schema_sha256 = player_visible_duel_gesture_target_response_schema_sha256_v1();
+    let schema_review_material_commitment_sha256 = commitment_v1(
+        PLAYER_VISIBLE_DUEL_GESTURE_TARGET_SCHEMA_REVIEW_DOMAIN_V1,
+        &[
+            request_schema_sha256.as_bytes(),
+            response_schema_sha256.as_bytes(),
+            b"visible_only_payload_all_families_exact_targets_no_authority",
+        ],
+    );
+    MtgoPlayerVisibleDuelGestureTargetSchemaReviewV1 {
+        schema_version: MTGO_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_SCHEMA_REVIEW_SCHEMA_V1,
+        protocol: "mtgo_player_visible_duel_gesture_target_v1".to_owned(),
+        request_schema_sha256,
+        response_schema_sha256,
+        schema_review_material_commitment_sha256,
+        visible_only_payload_review_required: true,
+        all_action_families_replay_required: true,
+        exact_target_regions_review_required: true,
+        production_ratification_present:
+            RATIFIED_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_PROTOCOL_REVIEW_V1.is_some(),
+        safe_for_live_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    }
+}
+
 impl AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1 {
     pub fn safe_for_live_input_v1(&self) -> bool {
         false
@@ -536,7 +536,7 @@ fn player_visible_duel_gesture_target_request_schema_sha256_v1() -> String {
     commitment_v1(
         PLAYER_VISIBLE_DUEL_GESTURE_TARGET_REQUEST_SCHEMA_DOMAIN_V1,
         &[
-            PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RUNTIME_SOURCE_V1,
+            PLAYER_VISIBLE_DUEL_GESTURE_TARGET_WIRE_SOURCE_V1,
             PLAYER_VISIBLE_DUEL_INPUT_SOURCE_V1,
             PLAYER_VISIBLE_DUEL_GESTURE_SOURCE_V1,
         ],
@@ -547,7 +547,7 @@ fn player_visible_duel_gesture_target_response_schema_sha256_v1() -> String {
     commitment_v1(
         PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RESPONSE_SCHEMA_DOMAIN_V1,
         &[
-            PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RUNTIME_SOURCE_V1,
+            PLAYER_VISIBLE_DUEL_GESTURE_TARGET_WIRE_SOURCE_V1,
             PLAYER_VISIBLE_DUEL_GESTURE_SOURCE_V1,
         ],
     )
@@ -7119,7 +7119,7 @@ mod tests {
             canonical_bgra8_sha256: sha256_hex_v1(pixels),
             source_capture_commitment_sha256: "1".repeat(64),
             perception_result_commitment_sha256: "2".repeat(64),
-            decision_input: MtgoPlayerVisibleDuelDecisionInputV1 {
+            decision_input: mtgo_blackbox_v1::MtgoPlayerVisibleDuelDecisionInputV1 {
                 current_state: mtgo_blackbox_v1::MtgoPlayerVisibleDuelStateV1 {
                     acting_player: mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1::SeatedPlayer,
                     turn: 1,
@@ -7292,9 +7292,38 @@ mod tests {
             request,
             commitment_v1(
                 PLAYER_VISIBLE_DUEL_GESTURE_TARGET_REQUEST_SCHEMA_DOMAIN_V1,
-                &[PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RUNTIME_SOURCE_V1],
+                &[PLAYER_VISIBLE_DUEL_GESTURE_TARGET_WIRE_SOURCE_V1],
             )
         );
+    }
+
+    #[test]
+    fn public_visible_target_schema_review_is_reproducible_and_non_authorizing() {
+        let first = review_player_visible_duel_gesture_target_schema_v1();
+        let second = review_player_visible_duel_gesture_target_schema_v1();
+        assert_eq!(first, second);
+        assert_eq!(
+            first.schema_version,
+            MTGO_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_SCHEMA_REVIEW_SCHEMA_V1
+        );
+        assert_eq!(
+            first.request_schema_sha256,
+            player_visible_duel_gesture_target_request_schema_sha256_v1()
+        );
+        assert_eq!(
+            first.response_schema_sha256,
+            player_visible_duel_gesture_target_response_schema_sha256_v1()
+        );
+        assert!(looks_like_lower_sha256_v1(
+            &first.schema_review_material_commitment_sha256
+        ));
+        assert!(first.visible_only_payload_review_required);
+        assert!(first.all_action_families_replay_required);
+        assert!(first.exact_target_regions_review_required);
+        assert!(!first.production_ratification_present);
+        assert!(!first.safe_for_live_input);
+        assert!(!first.permits_event_entry);
+        assert!(!first.permits_spending);
     }
 
     fn visible_target_candidate_v1(
