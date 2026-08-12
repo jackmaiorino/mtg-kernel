@@ -245,6 +245,27 @@ pub fn parse_checked_untrusted_mtgo_visible_game_log_v1(
     })
 }
 
+/// Computes the same one-way commitment used by a parsed projection without
+/// exposing the source match UUID through the checked type.
+///
+/// This is intended for a Windows-side source binder that derives the UUID
+/// from the canonical `Match_GameLog_<uuid>.dat` filename and compares it to
+/// the parsed payload. It creates no evidence, scoring, or input authority.
+pub fn mtgo_visible_game_log_source_id_commitment_v1(
+    source_match_id: &str,
+) -> Result<String, MtgoContractErrorV1> {
+    if !valid_source_match_id_v1(source_match_id) {
+        return Err(error_v1(
+            "visible_game_log_source_id",
+            "the persisted Game Log source identifier is not canonical",
+        ));
+    }
+    Ok(commitment_v1(
+        VISIBLE_GAME_LOG_SOURCE_ID_DOMAIN_V1,
+        &[source_match_id.as_bytes()],
+    ))
+}
+
 fn project_visible_text_v1(raw: &str) -> Result<String, MtgoContractErrorV1> {
     if raw.is_empty()
         || raw
@@ -518,6 +539,10 @@ mod tests {
         assert!(!parsed.safe_for_current_game_semantic_evidence_v1());
         assert!(!parsed.safe_for_model_scoring_v1());
         assert!(!parsed.safe_for_input_v1());
+        assert_eq!(
+            parsed.source_match_id_commitment_sha256_v1(),
+            mtgo_visible_game_log_source_id_commitment_v1(SOURCE_ID_V1).unwrap()
+        );
     }
 
     #[test]
