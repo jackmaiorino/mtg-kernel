@@ -19,6 +19,8 @@ mod competitive_pre_entry_operator;
 #[cfg(target_os = "windows")]
 mod competitive_pregame_policy;
 #[cfg(target_os = "windows")]
+mod competitive_visible_history_readiness;
+#[cfg(target_os = "windows")]
 mod competitive_visible_match_memory;
 
 #[cfg(target_os = "windows")]
@@ -248,6 +250,11 @@ pub use competitive_pregame_policy::{
     MtgoReviewedCompetitivePregameHeuristicCandidateV1,
     OpaqueMtgoCompetitiveOperatorPregameResourcesV1,
     MTGO_COMPETITIVE_PREGAME_HEURISTIC_REVIEW_SCHEMA_V1,
+};
+#[cfg(target_os = "windows")]
+pub use competitive_visible_history_readiness::{
+    check_competitive_visible_history_readiness_v1, MtgoCompetitiveVisibleHistoryReadinessStatusV1,
+    MtgoCompetitiveVisibleHistoryReadinessV1, MTGO_COMPETITIVE_VISIBLE_HISTORY_READINESS_SCHEMA_V1,
 };
 #[cfg(target_os = "windows")]
 pub use competitive_visible_match_memory::{
