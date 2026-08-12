@@ -42,6 +42,9 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub confirmed_model_decision_history_present: bool,
     pub dual_source_exact_game_memory_present: bool,
     pub explicit_kernel_consumer_contract_present: bool,
+    pub ongoing_history_snapshot_replay_contract_present: bool,
+    pub first_gameplay_decision_zero_action_history_supported: bool,
+    pub ongoing_history_to_visible_scorer_bridge_present: bool,
     pub kernel_consumer_receives_game_facts_only: bool,
     pub kernel_consumer_adapter_metadata_withheld: bool,
     pub kernel_consumer_public_zones_present: bool,
@@ -91,6 +94,9 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         confirmed_model_decision_history_present: true,
         dual_source_exact_game_memory_present: true,
         explicit_kernel_consumer_contract_present: true,
+        ongoing_history_snapshot_replay_contract_present: true,
+        first_gameplay_decision_zero_action_history_supported: true,
+        ongoing_history_to_visible_scorer_bridge_present: true,
         kernel_consumer_receives_game_facts_only: true,
         kernel_consumer_adapter_metadata_withheld: true,
         kernel_consumer_public_zones_present: true,
@@ -144,6 +150,9 @@ mod tests {
         assert!(report.confirmed_model_decision_history_present);
         assert!(report.dual_source_exact_game_memory_present);
         assert!(report.explicit_kernel_consumer_contract_present);
+        assert!(report.ongoing_history_snapshot_replay_contract_present);
+        assert!(report.first_gameplay_decision_zero_action_history_supported);
+        assert!(report.ongoing_history_to_visible_scorer_bridge_present);
         assert!(report.kernel_consumer_receives_game_facts_only);
         assert!(report.kernel_consumer_adapter_metadata_withheld);
         assert!(report.kernel_consumer_public_zones_present);

@@ -47,6 +47,7 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
     let source = include_str!("../src/probe/visible_game_log.rs");
     let memory = include_str!("../src/competitive_visible_match_memory.rs");
     let readiness = include_str!("../src/competitive_visible_history_readiness.rs");
+    let scoring = include_str!("../src/probe/duel_perception_runtime.rs");
     for required in [
         "begin_competitive_visible_game_log_baseline_v1",
         "advance_competitive_visible_game_log_baseline_v1",
@@ -77,6 +78,10 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
         "kernel object references, and internal card IDs remain",
         "MtgoCompetitiveExternalPublicGameLogEventV1",
         "visit_external_public_history_v1",
+        "visit_ongoing_external_public_history_v1",
+        "authoritative snapshots, not append-only deltas",
+        "confirmed_decisions: Option<&CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>",
+        "score_and_select_opaque_player_visible_duel_perception_with_ongoing_history_v1",
         "SeparateOrderedStreamsNoCrossSourceTotalOrder",
         "cannot replace, the exact current visible",
         "into_visible_game_outcome_v1",
@@ -86,7 +91,7 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
         "kernel_consumer_kernel_bookkeeping_withheld: true",
     ] {
         assert!(
-            memory.contains(required) || readiness.contains(required),
+            memory.contains(required) || readiness.contains(required) || scoring.contains(required),
             "match-scoped visible memory seam is missing: {required}"
         );
     }

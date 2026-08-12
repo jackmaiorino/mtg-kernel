@@ -4,6 +4,10 @@ use super::{
     mtgo_process_continuity_commitment_for_frame_v1, serialize_manifest_v2, sha256_hex_v1,
     MtgoAdmittedDuelVisibleFrameCommitmentsV1, OpaqueMtgoAdmittedDuelVisibleFrameV1, SignedRectV1,
 };
+use crate::{
+    MtgoCompetitiveExternalPublicHistoryConsumerV1,
+    OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+};
 use mtgo_blackbox_v1::{
     bind_profile_bound_action_plan_to_competitive_match_v1, bind_visible_duel_gesture_stage_v1,
     canonical_duel_gesture_action_families_v1,
@@ -23,8 +27,9 @@ use mtgo_blackbox_v1::{
     AdmittedMtgoDuelPerceptionProfileV1, CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1,
     CheckedUntrustedMtgoCompetitiveGameplayBeforeInputV1,
     CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
-    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, CheckedUntrustedMtgoDuelGesturePlanV1,
-    CheckedUntrustedMtgoDuelGestureStageBindingV1,
+    CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    CheckedUntrustedMtgoDuelGesturePlanV1, CheckedUntrustedMtgoDuelGestureStageBindingV1,
     CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
     CheckedUntrustedMtgoPlayerVisibleProfileBoundDuelModelSelectionV1,
     CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1,
@@ -2053,6 +2058,72 @@ pub fn score_and_select_opaque_player_visible_duel_perception_v1<
     })
 }
 
+/// Replaces one scorer's current MTGO public-history state from an exact
+/// player-visible snapshot, then scores the strictly newer current duel
+/// perception through the same scorer instance. The Game Log and confirmed
+/// decisions cross only through the narrow player-visible consumer callbacks.
+/// Event, match, game, capture, and deployment lineage remain adapter-private.
+///
+/// `confirmed_decisions` is `None` before the model's first in-game action.
+/// The Game Log stream is still imported in that state. Repeated calls replay
+/// complete authoritative snapshots, so `begin_public_history_v1` must replace
+/// rather than append to the scorer's prior MTGO history state.
+pub fn score_and_select_opaque_player_visible_duel_perception_with_ongoing_history_v1<S>(
+    snapshot: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_decisions: Option<&CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    deployment_commitment_sha256: &str,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoPlayerVisibleDuelModelSelectionV1, String>
+where
+    S: MtgoPlayerVisibleDuelScorerV1 + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>,
+{
+    let lifecycle = perception
+        .competitive_lifecycle_v1()
+        .ok_or("history-backed duel scoring requires classifier-bound competitive lifecycle")?;
+    let event_identity_sha256 = lifecycle
+        .event_identity_sha256_v1()
+        .ok_or("history-backed duel scoring lifecycle lacks event identity")?;
+    let match_identity_sha256 = lifecycle
+        .match_identity_sha256_v1()
+        .ok_or("history-backed duel scoring lifecycle lacks match identity")?;
+    let game_number = lifecycle
+        .game_number_v1()
+        .ok_or("history-backed duel scoring lifecycle lacks game number")?;
+    let perception_captured_at_unix_millis = perception
+        .commitments_v1()
+        .source_frame
+        .source_capture
+        .captured_at_unix_millis;
+    let current_frame_sequence = perception.commitments_v1().frame_sequence;
+    validate_ongoing_history_score_source_v1(
+        lifecycle.event_kind(),
+        event_identity_sha256,
+        match_identity_sha256,
+        game_number,
+        perception_captured_at_unix_millis,
+        snapshot,
+    )?;
+    if let Some(decisions) = confirmed_decisions {
+        mtgo_blackbox_v1::validate_competitive_player_visible_game_history_for_scoring_v1(
+            decisions,
+            deployment_commitment_sha256,
+            current_frame_sequence,
+        )
+        .map_err(|error| format!("validate confirmed player-visible scoring history: {error}"))?;
+    }
+    snapshot
+        .visit_ongoing_external_public_history_v1(confirmed_decisions, scorer)
+        .map_err(|error| format!("import current player-visible public history: {error}"))?;
+    score_and_select_opaque_player_visible_duel_perception_v1(
+        perception,
+        profile,
+        deployment_commitment_sha256,
+        scorer,
+    )
+}
+
 /// Scores one opaque player-visible perception and privately resolves the
 /// selected index against the exact complete visible-control set emitted by
 /// the same classifier invocation.
@@ -2064,12 +2135,43 @@ pub fn score_select_and_resolve_opaque_player_visible_duel_perception_v1<
     deployment_commitment_sha256: &str,
     scorer: &mut S,
 ) -> Result<OpaqueMtgoPlayerVisibleDuelResolvedControlV1, String> {
-    let mut selection = score_and_select_opaque_player_visible_duel_perception_v1(
+    let selection = score_and_select_opaque_player_visible_duel_perception_v1(
         perception,
         profile,
         deployment_commitment_sha256,
         scorer,
     )?;
+    finish_player_visible_duel_control_resolution_v1(selection)
+}
+
+/// Imports one complete player-visible ongoing-game history snapshot, scores
+/// the newer current perception, and privately resolves the selected visible
+/// action to the exact same-frame enabled control. This remains non-actuating.
+pub fn score_select_and_resolve_opaque_player_visible_duel_perception_with_ongoing_history_v1<S>(
+    snapshot: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_decisions: Option<&CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    deployment_commitment_sha256: &str,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoPlayerVisibleDuelResolvedControlV1, String>
+where
+    S: MtgoPlayerVisibleDuelScorerV1 + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>,
+{
+    let selection = score_and_select_opaque_player_visible_duel_perception_with_ongoing_history_v1(
+        snapshot,
+        confirmed_decisions,
+        perception,
+        profile,
+        deployment_commitment_sha256,
+        scorer,
+    )?;
+    finish_player_visible_duel_control_resolution_v1(selection)
+}
+
+fn finish_player_visible_duel_control_resolution_v1(
+    mut selection: OpaqueMtgoPlayerVisibleDuelModelSelectionV1,
+) -> Result<OpaqueMtgoPlayerVisibleDuelResolvedControlV1, String> {
     let checked_selection = selection
         .selection
         .take()
@@ -2091,6 +2193,33 @@ pub fn score_select_and_resolve_opaque_player_visible_duel_perception_v1<
         selected_action,
         result,
     })
+}
+
+fn validate_ongoing_history_score_source_v1(
+    event_kind: MtgoCompetitiveEventKindV1,
+    event_identity_sha256: &str,
+    match_identity_sha256: &str,
+    game_number: u8,
+    perception_captured_at_unix_millis: u128,
+    snapshot: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+) -> Result<(), String> {
+    if snapshot.event_kind_v1() != event_kind
+        || snapshot.event_identity_sha256_v1() != event_identity_sha256
+        || snapshot.match_identity_sha256_v1() != match_identity_sha256
+        || snapshot.game_number_v1() != game_number
+    {
+        return Err(
+            "current duel perception and player-visible history describe different games"
+                .to_owned(),
+        );
+    }
+    if perception_captured_at_unix_millis <= snapshot.latest_capture_unix_millis_v1() {
+        return Err(
+            "current duel perception is not strictly newer than its visible history refresh"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 /// Scores one retained visible duel perception through the exact loaded

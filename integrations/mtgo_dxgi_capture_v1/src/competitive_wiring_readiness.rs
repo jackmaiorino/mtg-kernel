@@ -33,6 +33,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub external_public_history_cross_source_ordering_policy_present: bool,
     pub external_public_history_model_facts_only_present: bool,
     pub external_public_history_adapter_metadata_withheld: bool,
+    pub ongoing_external_public_history_snapshot_replay_present: bool,
+    pub first_gameplay_decision_zero_action_history_supported: bool,
+    pub ongoing_public_history_to_player_visible_scorer_bridge_present: bool,
     pub native_checkpoint_external_public_history_import_present: bool,
     pub pre_entry_operator_loop_present: bool,
     pub post_entry_operator_loop_present: bool,
@@ -128,6 +131,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             external_public_history_cross_source_ordering_policy_present: true,
             external_public_history_model_facts_only_present: true,
             external_public_history_adapter_metadata_withheld: true,
+            ongoing_external_public_history_snapshot_replay_present: true,
+            first_gameplay_decision_zero_action_history_supported: true,
+            ongoing_public_history_to_player_visible_scorer_bridge_present: true,
             native_checkpoint_external_public_history_import_present: false,
             pre_entry_operator_loop_present: true,
             post_entry_operator_loop_present: true,
@@ -275,6 +281,21 @@ mod tests {
             report
                 .known_wiring_gaps
                 .external_public_history_adapter_metadata_withheld
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .ongoing_external_public_history_snapshot_replay_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .first_gameplay_decision_zero_action_history_supported
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .ongoing_public_history_to_player_visible_scorer_bridge_present
         );
         assert!(
             !report

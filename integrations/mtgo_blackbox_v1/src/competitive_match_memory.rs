@@ -128,6 +128,14 @@ impl CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1 {
             .map(|record| MtgoCompetitivePlayerVisibleDecisionViewV1 { record })
     }
 
+    pub(crate) fn last_after_frame_sequence_v1(&self) -> u64 {
+        self.record
+            .decisions
+            .last()
+            .expect("validated visible decision history is nonempty")
+            .after_frame_sequence
+    }
+
     pub fn history_commitment_sha256_v1(&self) -> &str {
         &self.history_commitment_sha256
     }
@@ -229,6 +237,31 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_v1(
         .decisions
         .push(decision_record_v1(sequence, &confirmed)?);
     finish_v1(history.record)
+}
+
+/// Checks private deployment and visible-frame continuity before an existing
+/// history is replayed into a scorer. The underlying frame sequence remains
+/// sealed; callers receive only success or one non-sensitive failure reason.
+#[doc(hidden)]
+pub fn validate_competitive_player_visible_game_history_for_scoring_v1(
+    history: &CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    deployment_commitment_sha256: &str,
+    current_frame_sequence: u64,
+) -> Result<(), MtgoContractErrorV1> {
+    require_sha256_v1(deployment_commitment_sha256)?;
+    if history.record.policy_deployment_commitment_sha256 != deployment_commitment_sha256 {
+        return Err(error_v1(
+            "competitive_player_visible_history_scoring_deployment",
+            "confirmed decision history belongs to another model deployment",
+        ));
+    }
+    if current_frame_sequence <= history.last_after_frame_sequence_v1() {
+        return Err(error_v1(
+            "competitive_player_visible_history_scoring_frame",
+            "current duel perception is not newer than the last confirmed visible action",
+        ));
+    }
+    Ok(())
 }
 
 fn decision_record_v1(
@@ -489,5 +522,44 @@ mod tests {
         assert_eq!(history.decision_count_v1(), 2);
         assert_ne!(history.history_commitment_sha256_v1(), prior_commitment);
         assert_eq!(history.decision_v1(1).unwrap().sequence_v1(), 2);
+    }
+
+    #[test]
+    fn scoring_history_requires_exact_deployment_and_newer_current_frame() {
+        let confirmed = competitive_gameplay_postcondition_for_match_memory_test_v1();
+        let deployment = confirmed.deployment_commitment_sha256_v1().to_owned();
+        let after_frame_sequence = confirmed.after_frame_sequence();
+        let history = begin_checked_untrusted_competitive_player_visible_game_history_v1(
+            "league-match-game-one-visible-history-v1",
+            confirmed,
+        )
+        .unwrap();
+
+        validate_competitive_player_visible_game_history_for_scoring_v1(
+            &history,
+            &deployment,
+            after_frame_sequence + 1,
+        )
+        .unwrap();
+        assert_eq!(
+            validate_competitive_player_visible_game_history_for_scoring_v1(
+                &history,
+                &"f".repeat(64),
+                after_frame_sequence + 1,
+            )
+            .unwrap_err()
+            .code(),
+            "competitive_player_visible_history_scoring_deployment"
+        );
+        assert_eq!(
+            validate_competitive_player_visible_game_history_for_scoring_v1(
+                &history,
+                &deployment,
+                after_frame_sequence,
+            )
+            .unwrap_err()
+            .code(),
+            "competitive_player_visible_history_scoring_frame"
+        );
     }
 }

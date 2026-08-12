@@ -219,6 +219,10 @@ impl OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
         &self.snapshot_commitment_sha256
     }
 
+    pub(crate) fn latest_capture_unix_millis_v1(&self) -> u128 {
+        self._after_frame.commitments_v3().captured_at_unix_millis
+    }
+
     pub fn into_match_lease_v1(self) -> OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {
         self.lease
     }

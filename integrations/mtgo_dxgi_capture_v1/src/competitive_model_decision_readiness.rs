@@ -15,6 +15,7 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub player_visible_duel_decision_input_contract_present: bool,
     pub player_visible_duel_scorer_transport_contract_present: bool,
     pub player_visible_duel_selection_to_visible_control_bridge_present: bool,
+    pub ongoing_player_visible_history_to_duel_scorer_bridge_present: bool,
     pub native_checkpoint_player_visible_only_duel_action_interface_present: bool,
     pub current_duel_scorer_kernel_bookkeeping_withheld: bool,
     pub public_model_owned_duel_action_path_present: bool,
@@ -45,6 +46,7 @@ impl MtgoCompetitiveModelDecisionReadinessV1 {
             && self.player_visible_duel_decision_input_contract_present
             && self.player_visible_duel_scorer_transport_contract_present
             && self.player_visible_duel_selection_to_visible_control_bridge_present
+            && self.ongoing_player_visible_history_to_duel_scorer_bridge_present
             && self.native_checkpoint_player_visible_only_duel_action_interface_present
             && self.current_duel_scorer_kernel_bookkeeping_withheld
             && self.public_model_owned_duel_action_path_present
@@ -77,6 +79,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         player_visible_duel_decision_input_contract_present: true,
         player_visible_duel_scorer_transport_contract_present: true,
         player_visible_duel_selection_to_visible_control_bridge_present: true,
+        ongoing_player_visible_history_to_duel_scorer_bridge_present: true,
         native_checkpoint_player_visible_only_duel_action_interface_present: false,
         current_duel_scorer_kernel_bookkeeping_withheld: false,
         public_model_owned_duel_action_path_present: false,
@@ -123,6 +126,7 @@ mod tests {
         assert!(report.player_visible_duel_decision_input_contract_present);
         assert!(report.player_visible_duel_scorer_transport_contract_present);
         assert!(report.player_visible_duel_selection_to_visible_control_bridge_present);
+        assert!(report.ongoing_player_visible_history_to_duel_scorer_bridge_present);
         assert!(!report.native_checkpoint_player_visible_only_duel_action_interface_present);
         assert!(!report.current_duel_scorer_kernel_bookkeeping_withheld);
         assert!(!report.public_model_owned_duel_action_path_present);

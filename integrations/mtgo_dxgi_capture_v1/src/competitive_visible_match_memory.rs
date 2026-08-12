@@ -174,6 +174,71 @@ pub trait MtgoCompetitiveExternalPublicHistoryConsumerV1 {
     fn finish_public_history_v1(&mut self) -> Result<Self::Output, String>;
 }
 
+/// Replays the complete current player-visible history snapshot for one
+/// in-progress League or Challenge game. A consumer must replace its prior
+/// imported MTGO history at `begin_public_history_v1`; repeated refreshes are
+/// authoritative snapshots, not append-only deltas. This prevents duplicate
+/// recurrent updates when the retained Game Log is reread before each score.
+///
+/// The optional confirmed-decision stream is absent before the model's first
+/// in-game action. Game Log events remain eligible in that state, so the first
+/// decision does not require a fabricated model action or adapter identifier.
+impl OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
+    pub fn visit_ongoing_external_public_history_v1<C>(
+        &self,
+        confirmed_decisions: Option<&CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+        consumer: &mut C,
+    ) -> Result<C::Output, String>
+    where
+        C: MtgoCompetitiveExternalPublicHistoryConsumerV1,
+    {
+        validate_optional_visible_decision_history_lineage_v1(
+            VisibleGameLineageRefV1 {
+                event_kind: self.event_kind_v1(),
+                event_identity_sha256: self.event_identity_sha256_v1(),
+                match_identity_sha256: self.match_identity_sha256_v1(),
+                game_number: self.game_number_v1(),
+            },
+            confirmed_decisions,
+        )?;
+        let confirmed_decision_count = confirmed_decisions
+            .map(CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::decision_count_v1)
+            .unwrap_or(0);
+        consumer.begin_public_history_v1(MtgoCompetitiveExternalPublicHistoryHeaderV1 {
+            event_kind: self.event_kind_v1(),
+            game_number: self.game_number_v1(),
+            confirmed_decision_count,
+            public_event_count: self.event_count_v1(),
+        })?;
+
+        if let Some(decisions) = confirmed_decisions {
+            for index in 0..confirmed_decision_count {
+                let decision = decisions.decision_v1(index).ok_or_else(|| {
+                    "confirmed decision stream changed while it was being visited".to_owned()
+                })?;
+                consumer.consume_confirmed_decision_v1(
+                    MtgoCompetitiveExternalConfirmedDecisionV1 {
+                        within_source_position: decision.sequence_v1(),
+                        player_visible_decision: decision.player_visible_decision_v1().clone(),
+                    },
+                )?;
+            }
+        }
+        consumer.finish_confirmed_decision_stream_v1()?;
+
+        for index in 0..self.event_count_v1() {
+            let event = self.event_v1(index).ok_or_else(|| {
+                "public Game Log stream changed while it was being visited".to_owned()
+            })?;
+            consumer.consume_public_game_log_event_v1(
+                MtgoCompetitiveExternalPublicGameLogEventV1 { event },
+            )?;
+        }
+        consumer.finish_public_game_log_stream_v1()?;
+        consumer.finish_public_history_v1()
+    }
+}
+
 #[derive(Clone, Copy)]
 struct VisibleGameLineageRefV1<'a> {
     event_kind: mtgo_blackbox_v1::MtgoCompetitiveEventKindV1,
@@ -562,6 +627,24 @@ fn validate_combined_visible_game_lineage_v1(
     Ok(())
 }
 
+fn validate_optional_visible_decision_history_lineage_v1(
+    log: VisibleGameLineageRefV1<'_>,
+    decisions: Option<&CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+) -> Result<(), String> {
+    let Some(decisions) = decisions else {
+        return Ok(());
+    };
+    validate_combined_visible_game_lineage_v1(
+        log,
+        VisibleGameLineageRefV1 {
+            event_kind: decisions.event_kind_v1(),
+            event_identity_sha256: decisions.event_identity_sha256_v1(),
+            match_identity_sha256: decisions.match_identity_sha256_v1(),
+            game_number: decisions.game_number_v1(),
+        },
+    )
+}
+
 fn derive_visible_game_winner_v1(
     events: impl IntoIterator<
         Item = (
@@ -669,6 +752,17 @@ mod tests {
             };
             assert!(result.is_err());
         }
+    }
+
+    #[test]
+    fn ongoing_history_accepts_no_confirmed_decisions_before_first_action() {
+        let lineage = VisibleGameLineageRefV1 {
+            event_kind: League,
+            event_identity_sha256: "event",
+            match_identity_sha256: "match",
+            game_number: 1,
+        };
+        validate_optional_visible_decision_history_lineage_v1(lineage, None).unwrap();
     }
 
     #[test]
