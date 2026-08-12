@@ -200,6 +200,10 @@ impl CheckedUntrustedMtgoProfileBoundActionPostconditionPlanV1 {
     pub(crate) fn source_client_size_px_v1(&self) -> &MtgoSizePxV1 {
         &self.source_client_size_px
     }
+
+    pub(crate) fn source_observation_v1(&self) -> &mtg_kernel::rl::ObservationV5 {
+        self.resolution.validated_decision_v1().observation()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

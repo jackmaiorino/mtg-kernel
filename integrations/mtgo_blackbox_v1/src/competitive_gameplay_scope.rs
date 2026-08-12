@@ -11,7 +11,7 @@ use crate::{
     MtgoProfileBoundPostconditionBeforeInputFrameV1,
     MtgoProfileBoundPostconditionCandidateStatusV1, MtgoRuntimeModeV1,
 };
-use mtg_kernel::rl::ActionSemanticV1;
+use mtg_kernel::rl::{ActionSemanticV1, ObservationV5};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -121,7 +121,17 @@ impl CheckedUntrustedMtgoCompetitiveGameplayActionPlanV1 {
 pub struct CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
     _postcondition: CheckedUntrustedMtgoProfileBoundActionPostconditionV1,
     event_kind: MtgoCompetitiveEventKindV1,
+    event_identity_sha256: String,
+    match_identity_sha256: String,
     game_number: u8,
+    selected_semantic: ActionSemanticV1,
+    source_observation: ObservationV5,
+    decision_commitment_sha256: String,
+    selection_commitment_sha256: String,
+    deployment_commitment_sha256: String,
+    source_frame_id: u64,
+    source_frame_sequence: u64,
+    source_frame_sha256: String,
     after_frame_id: u64,
     after_frame_sequence: u64,
     confirmation_commitment_sha256: String,
@@ -134,6 +144,46 @@ impl CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
 
     pub fn game_number(&self) -> u8 {
         self.game_number
+    }
+
+    pub fn event_identity_sha256_v1(&self) -> &str {
+        &self.event_identity_sha256
+    }
+
+    pub fn match_identity_sha256_v1(&self) -> &str {
+        &self.match_identity_sha256
+    }
+
+    pub fn selected_semantic_v1(&self) -> &ActionSemanticV1 {
+        &self.selected_semantic
+    }
+
+    pub fn source_observation_v1(&self) -> &ObservationV5 {
+        &self.source_observation
+    }
+
+    pub fn decision_commitment_sha256_v1(&self) -> &str {
+        &self.decision_commitment_sha256
+    }
+
+    pub fn selection_commitment_sha256_v1(&self) -> &str {
+        &self.selection_commitment_sha256
+    }
+
+    pub fn deployment_commitment_sha256_v1(&self) -> &str {
+        &self.deployment_commitment_sha256
+    }
+
+    pub fn source_frame_id_v1(&self) -> u64 {
+        self.source_frame_id
+    }
+
+    pub fn source_frame_sequence_v1(&self) -> u64 {
+        self.source_frame_sequence
+    }
+
+    pub fn source_frame_sha256_v1(&self) -> &str {
+        &self.source_frame_sha256
     }
 
     pub fn after_frame_id(&self) -> u64 {
@@ -295,6 +345,19 @@ pub fn check_untrusted_competitive_gameplay_postcondition_pixels_v1(
 ) -> Result<CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1, MtgoContractErrorV1> {
     let event_kind = competitive.event_kind;
     let game_number = competitive.game_number;
+    let event_identity_sha256 = competitive
+        ._lifecycle
+        .event_identity_sha256_v1()
+        .expect("validated match phase has an event identity")
+        .to_owned();
+    let match_identity_sha256 = competitive
+        ._lifecycle
+        .match_identity_sha256_v1()
+        .expect("validated match phase has a match identity")
+        .to_owned();
+    let plan_commitments = competitive.plan.commitments_v1();
+    let selected_semantic = competitive.plan.selected_semantic().clone();
+    let source_observation = competitive.plan.source_observation_v1().clone();
     let mode_authorization_commitment_sha256 =
         competitive.mode_authorization_commitment_sha256.clone();
     let authorization_commitment_sha256 = competitive.authorization_commitment_sha256.clone();
@@ -330,7 +393,17 @@ pub fn check_untrusted_competitive_gameplay_postcondition_pixels_v1(
     Ok(CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
         _postcondition: postcondition,
         event_kind,
+        event_identity_sha256,
+        match_identity_sha256,
         game_number,
+        selected_semantic,
+        source_observation,
+        decision_commitment_sha256: plan_commitments.decision_commitment_sha256,
+        selection_commitment_sha256: plan_commitments.selection_commitment_sha256,
+        deployment_commitment_sha256: plan_commitments.deployment_commitment_sha256,
+        source_frame_id: plan_commitments.frame_id,
+        source_frame_sequence: plan_commitments.frame_sequence,
+        source_frame_sha256: plan_commitments.source_frame_sha256,
         after_frame_id,
         after_frame_sequence,
         confirmation_commitment_sha256,
@@ -489,6 +562,12 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 }
 
 #[cfg(test)]
+pub(crate) use tests::{
+    competitive_gameplay_postcondition_for_match_memory_test_v1,
+    later_competitive_gameplay_postcondition_for_match_memory_test_v1,
+};
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
@@ -632,6 +711,57 @@ mod tests {
             exact_match_gameplay_authorized: true,
             valid_through_frame_sequence: frame_sequence + 100,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn competitive_gameplay_postcondition_for_match_memory_test_v1(
+    ) -> CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
+        let plan = plan_v1();
+        let sequence = plan.source_frame_sequence_v1();
+        let lifecycle = lifecycle_v1(&plan, 0, MtgoCompetitiveEventKindV1::League);
+        let competitive = bind_profile_bound_action_plan_to_competitive_match_v1(
+            plan,
+            lifecycle,
+            &mode_v1(),
+            &authorization_v1(sequence, MtgoCompetitiveEventKindV1::League),
+        )
+        .unwrap();
+        let plan_commitments = competitive.plan.commitments_v1();
+        let size = plan_commitments.source_client_size_px.clone();
+        let metadata = MtgoProfileBoundPostconditionAfterFrameMetadataV1 {
+            schema_version: crate::MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
+            plan_commitment_sha256: competitive.plan.plan_commitment_sha256().to_owned(),
+            frame_id: competitive.plan.source_frame_id_v1() + 1,
+            frame_sequence: competitive.plan.source_frame_sequence_v1() + 1,
+            manifest_sha256: "a".repeat(64),
+            output_identity_sha256: plan_commitments.source_output_identity_sha256,
+            perception_profile_admission_commitment_sha256: plan_commitments
+                .perception_profile_admission_commitment_sha256,
+            client_size_px: size.clone(),
+            capture_role: crate::MtgoDxgiCaptureRoleV2::ActingPlayerDuel,
+        };
+        let pixels =
+            vec![
+                31_u8;
+                usize::try_from(size.width).unwrap() * usize::try_from(size.height).unwrap() * 4
+            ];
+        check_untrusted_competitive_gameplay_postcondition_pixels_v1(competitive, metadata, &pixels)
+            .unwrap()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn later_competitive_gameplay_postcondition_for_match_memory_test_v1(
+    ) -> CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1 {
+        let mut confirmed = competitive_gameplay_postcondition_for_match_memory_test_v1();
+        confirmed.source_frame_id += 2;
+        confirmed.source_frame_sequence += 2;
+        confirmed.source_frame_sha256 = "b".repeat(64);
+        confirmed.after_frame_id += 2;
+        confirmed.after_frame_sequence += 2;
+        confirmed.decision_commitment_sha256 = "c".repeat(64);
+        confirmed.selection_commitment_sha256 = "d".repeat(64);
+        confirmed.confirmation_commitment_sha256 = "e".repeat(64);
+        confirmed
     }
 
     #[test]
@@ -794,41 +924,7 @@ mod tests {
 
     #[test]
     fn competitive_postcondition_recomputes_private_regions_from_exact_pixels() {
-        let plan = plan_v1();
-        let sequence = plan.source_frame_sequence_v1();
-        let lifecycle = lifecycle_v1(&plan, 0, MtgoCompetitiveEventKindV1::League);
-        let competitive = bind_profile_bound_action_plan_to_competitive_match_v1(
-            plan,
-            lifecycle,
-            &mode_v1(),
-            &authorization_v1(sequence, MtgoCompetitiveEventKindV1::League),
-        )
-        .unwrap();
-        let plan_commitments = competitive.plan.commitments_v1();
-        let size = plan_commitments.source_client_size_px.clone();
-        let metadata = MtgoProfileBoundPostconditionAfterFrameMetadataV1 {
-            schema_version: crate::MTGO_PROFILE_BOUND_POSTCONDITION_AFTER_FRAME_SCHEMA_V1,
-            plan_commitment_sha256: competitive.plan.plan_commitment_sha256().to_owned(),
-            frame_id: competitive.plan.source_frame_id_v1() + 1,
-            frame_sequence: competitive.plan.source_frame_sequence_v1() + 1,
-            manifest_sha256: "a".repeat(64),
-            output_identity_sha256: plan_commitments.source_output_identity_sha256,
-            perception_profile_admission_commitment_sha256: plan_commitments
-                .perception_profile_admission_commitment_sha256,
-            client_size_px: size.clone(),
-            capture_role: crate::MtgoDxgiCaptureRoleV2::ActingPlayerDuel,
-        };
-        let pixels =
-            vec![
-                31_u8;
-                usize::try_from(size.width).unwrap() * usize::try_from(size.height).unwrap() * 4
-            ];
-        let confirmed = check_untrusted_competitive_gameplay_postcondition_pixels_v1(
-            competitive,
-            metadata,
-            &pixels,
-        )
-        .unwrap();
+        let confirmed = competitive_gameplay_postcondition_for_match_memory_test_v1();
         assert_eq!(confirmed.event_kind(), MtgoCompetitiveEventKindV1::League);
         assert_eq!(confirmed.game_number(), 1);
         assert_eq!(confirmed.after_frame_id(), 2);
