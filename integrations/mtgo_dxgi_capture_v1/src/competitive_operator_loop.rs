@@ -50,6 +50,7 @@ use crate::probe::{
     begin_competitive_visible_game_log_baseline_v1, begin_evaluated_competitive_event_monitor_v1,
     begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
     bind_competitive_match_visible_game_log_lease_v1,
+    bind_opaque_player_visible_duel_gesture_intent_v1,
     prepare_opaque_competitive_duel_action_plan_v1, refresh_competitive_match_visible_game_log_v1,
     resolve_opaque_profile_bound_duel_control_v1,
     score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
@@ -59,17 +60,19 @@ use crate::probe::{
     OpaqueMtgoClassifiedCompetitivePregameModelContextV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
     OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
     OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
-    OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, OpaqueMtgoPlayerVisibleDuelResolvedControlV1,
-    OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, OpaqueMtgoPlayerVisibleDuelGestureIntentV1,
+    OpaqueMtgoPlayerVisibleDuelResolvedControlV1, OpaqueMtgoProfileBoundDuelResolvedControlV1,
 };
 use mtgo_blackbox_v1::{
     validate_competitive_player_visible_game_history_for_session_v1,
     validate_native_checkpoint_competitive_capabilities_v1,
-    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, MtgoCompetitiveEventKindV1,
+    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1, MtgoDuelGestureStageV1,
     MtgoNativeCheckpointCompetitiveCapabilitiesV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
-    MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelScorerV1,
-    MtgoProfileBoundPostconditionCalibrationV1, MtgoProfileBoundPostconditionRegionSetV1,
+    MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelGesturePrimitiveV1,
+    MtgoPlayerVisibleDuelScorerV1, MtgoProfileBoundPostconditionCalibrationV1,
+    MtgoProfileBoundPostconditionRegionSetV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -384,6 +387,64 @@ pub struct OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1 {
 impl OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1 {
     pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
         &self.selected_action
+    }
+
+    pub fn prior_confirmed_action_count_v1(&self) -> usize {
+        self.confirmed_history
+            .as_ref()
+            .map(CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::decision_count_v1)
+            .unwrap_or(0)
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Move-only operator ownership after the selected player-visible action is
+/// joined to a complete coordinate-free player-visible gesture. It retains
+/// the exact event lease, game session, Game Log snapshot, confirmed history,
+/// and private current-frame control. No coordinates or input method cross
+/// this boundary.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1;
+/// fn cannot_act(value: OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1) {
+///     let _ = value.input_command();
+///     let _ = value.coordinates();
+///     let _ = value.event_session();
+/// }
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1 {
+    _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    gesture: OpaqueMtgoPlayerVisibleDuelGestureIntentV1,
+    selected_action: MtgoPlayerVisibleDuelActionV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1 {
+    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        &self.selected_action
+    }
+
+    pub fn primitives_v1(&self) -> &[MtgoPlayerVisibleDuelGesturePrimitiveV1] {
+        self.gesture.primitives_v1()
     }
 
     pub fn prior_confirmed_action_count_v1(&self) -> usize {
@@ -1896,6 +1957,36 @@ where
             _visible_game_log: visible_game_log,
             confirmed_history,
             _control: control,
+            selected_action,
+        },
+    )
+}
+
+/// Joins the exact operator-owned player-visible selection to a validated
+/// coordinate-free gesture plan for the same selected visible action. This is
+/// an offline ownership transition only. Fresh target pixels, a fresh pre-input
+/// Game Log refresh, authorization, input, and a newer postcondition are all
+/// still absent.
+pub fn bind_competitive_post_entry_operator_player_visible_gameplay_gesture_v1(
+    selection: OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1,
+    gesture: CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1, String> {
+    let OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1 {
+        _lease: lease,
+        _session: session,
+        _visible_game_log: visible_game_log,
+        confirmed_history,
+        _control: control,
+        selected_action,
+    } = selection;
+    let gesture = bind_opaque_player_visible_duel_gesture_intent_v1(control, gesture)?;
+    Ok(
+        OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1 {
+            _lease: lease,
+            _session: session,
+            _visible_game_log: visible_game_log,
+            confirmed_history,
+            gesture,
             selected_action,
         },
     )
