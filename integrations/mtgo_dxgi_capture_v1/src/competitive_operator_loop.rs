@@ -581,7 +581,7 @@ pub struct OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1 {
 /// ```
 pub struct OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1 {
     resolved: OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1,
-    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
     visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1,
     visible_game_log_lease_commitment_sha256: String,
 }
@@ -1356,8 +1356,47 @@ pub fn resolve_checked_untrusted_competitive_operator_attended_native_pregame_v1
     Ok(
         OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1 {
             resolved,
-            _visible_identity: visible_identity,
+            visible_identity,
             visible_game_log,
+            visible_game_log_lease_commitment_sha256,
+        },
+    )
+}
+
+/// Refreshes the exact sealed visible Game Log after offline pregame semantic
+/// resolution without changing the selected action or creating a live resume
+/// path. The source remains bound to the same attended launch identity.
+pub fn refresh_resolved_competitive_operator_attended_pregame_visible_game_log_v1(
+    value: OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1,
+    request: MtgoDxgiCaptureRequestV3,
+) -> Result<OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1, String> {
+    let OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1 {
+        resolved,
+        visible_identity,
+        visible_game_log,
+        visible_game_log_lease_commitment_sha256,
+    } = value;
+    let lease = match visible_game_log {
+        OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(lease) => *lease,
+        OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => {
+            (*snapshot).into_match_lease_v1()
+        }
+    };
+    if lease.lease_commitment_sha256_v1() != visible_game_log_lease_commitment_sha256 {
+        return Err(
+            "resolved competitive operator visible Game Log lease changed before refresh"
+                .to_owned(),
+        );
+    }
+    let snapshot =
+        refresh_competitive_match_visible_game_log_v1(lease, &visible_identity, request)?;
+    Ok(
+        OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1 {
+            resolved,
+            visible_identity,
+            visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(
+                Box::new(snapshot),
+            ),
             visible_game_log_lease_commitment_sha256,
         },
     )

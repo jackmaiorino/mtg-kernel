@@ -2330,6 +2330,7 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "ratify_competitive_post_entry_operator_match_launch_attended_v1",
         "checkout_competitive_post_entry_operator_attended_native_pregame_v1",
         "refresh_competitive_post_entry_operator_attended_pregame_visible_game_log_v1",
+        "refresh_resolved_competitive_operator_attended_pregame_visible_game_log_v1",
         "score_checked_untrusted_competitive_operator_attended_native_pregame_v1",
         "resolve_checked_untrusted_competitive_operator_attended_native_pregame_v1",
         "begin_competitive_visible_game_log_baseline_v1",

@@ -272,6 +272,7 @@ pub use competitive_operator_loop::{
     prepare_competitive_post_entry_operator_lifecycle_v1,
     ratify_competitive_post_entry_operator_match_launch_attended_v1,
     refresh_competitive_post_entry_operator_attended_pregame_visible_game_log_v1,
+    refresh_resolved_competitive_operator_attended_pregame_visible_game_log_v1,
     resolve_checked_untrusted_competitive_operator_attended_native_pregame_v1,
     resolve_checked_untrusted_competitive_operator_native_pregame_v1,
     resolve_checked_untrusted_competitive_operator_native_sideboard_v1,
