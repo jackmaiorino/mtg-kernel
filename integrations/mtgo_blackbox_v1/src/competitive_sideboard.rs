@@ -244,7 +244,6 @@ pub enum MtgoCompetitiveSideboardTransferDirectionV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoCompetitiveSideboardTransferV1 {
-    pub card_db_id: u16,
     pub card_name: String,
     pub direction: MtgoCompetitiveSideboardTransferDirectionV1,
     pub count: u16,
@@ -866,12 +865,12 @@ fn derive_transfers_v1(
             )
         };
         transfers.push(MtgoCompetitiveSideboardTransferV1 {
-            card_db_id,
             card_name,
             direction,
             count,
         });
     }
+    transfers.sort_by(|left, right| left.card_name.cmp(&right.card_name));
     Ok(transfers)
 }
 

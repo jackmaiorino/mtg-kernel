@@ -211,6 +211,17 @@ fn sideboard_classifier_response_has_no_kernel_card_identifier() {
     assert!(response_type.contains("pub card_name: String"));
     assert!(!response_type.contains("card_db_id"));
 
+    let start = contract
+        .find("pub struct MtgoCompetitiveSideboardTransferV1")
+        .expect("public sideboard transfer type must exist");
+    let end = contract[start..]
+        .find("\n}\n")
+        .map(|offset| start + offset)
+        .expect("public sideboard transfer type must have one body");
+    let transfer_type = &contract[start..end];
+    assert!(transfer_type.contains("pub card_name: String"));
+    assert!(!transfer_type.contains("card_db_id"));
+
     let classifier = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
     let start = classifier
         .find("struct MtgoCompetitiveSideboardCardProfileV1")
@@ -222,6 +233,24 @@ fn sideboard_classifier_response_has_no_kernel_card_identifier() {
     let profile = &classifier[start..end];
     assert!(profile.contains("card_name: String"));
     assert!(!profile.contains("card_db_id"));
+
+    let actuator = include_str!("../src/actuator.rs");
+    let start = actuator
+        .find("pub struct MtgoAtomicCompetitiveSideboardTransferV1")
+        .expect("public atomic sideboard transfer type must exist");
+    let end = actuator[start..]
+        .find("\n}\n")
+        .map(|offset| start + offset)
+        .expect("public atomic sideboard transfer type must have one body");
+    let atomic_transfer_type = &actuator[start..end];
+    assert!(atomic_transfer_type.contains("pub card_name: String"));
+    assert!(!atomic_transfer_type.contains("card_db_id"));
+    assert!(!actuator.contains(
+        "pub fn configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1"
+    ));
+    assert!(!actuator.contains(
+        "pub fn target_configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1"
+    ));
 }
 
 #[test]

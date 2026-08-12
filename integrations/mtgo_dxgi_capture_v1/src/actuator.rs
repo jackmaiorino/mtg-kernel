@@ -1639,8 +1639,9 @@ pub struct MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
 }
 
 /// The event coordinator withheld while its exact current sideboard frame is
-/// measured. The coordinate-free configuration may be inspected for model
-/// selection, but no pixels, rectangles, input, or submit operation is exposed.
+/// measured. The raw local configuration stays private; model selection sees
+/// only the player-visible name-and-count projection through the native request.
+/// No pixels, rectangles, input, or submit operation is exposed.
 pub struct OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     _lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
@@ -1658,7 +1659,7 @@ impl OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
         self.commitments.clone()
     }
 
-    pub fn configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
+    pub(crate) fn configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
         self.classified.configuration_v1()
     }
 
@@ -1741,8 +1742,10 @@ pub struct MtgoPlannedCompetitiveEventSideboardCommitmentsV1 {
 }
 
 /// The event coordinator withheld with one exact coordinate-free model plan.
-/// Transfer semantics are observable, while pixels, rectangles, process
-/// handles, input primitives, and sideboard submission remain private or absent.
+/// Public transfer semantics contain only visible names, counts, directions,
+/// and sequence positions. Pixels, rectangles, local kernel card identifiers,
+/// process handles, input primitives, and sideboard submission remain private
+/// or absent.
 pub struct OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
@@ -1760,14 +1763,6 @@ impl OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
         self.commitments.clone()
     }
 
-    pub fn target_configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
-        self.planned.target_configuration_v1()
-    }
-
-    pub fn transfers_v1(&self) -> &[MtgoCompetitiveSideboardTransferV1] {
-        self.planned.transfers_v1()
-    }
-
     pub fn safe_for_input_v1(&self) -> bool {
         false
     }
@@ -1780,7 +1775,6 @@ impl OpaqueMtgoPlannedCompetitiveEventSideboardV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoAtomicCompetitiveSideboardTransferV1 {
     pub step_index: u16,
-    pub card_db_id: u16,
     pub card_name: String,
     pub direction: MtgoCompetitiveSideboardTransferDirectionV1,
 }
@@ -5975,7 +5969,6 @@ pub fn prepare_competitive_event_sideboard_transfer_drag_v1(
                 .current_sideboard_snapshot_commitment_sha256
                 .as_bytes(),
             transfer.step_index.to_be_bytes().as_slice(),
-            transfer.card_db_id.to_be_bytes().as_slice(),
             transfer.card_name.as_bytes(),
             competitive_sideboard_transfer_direction_tag_v1(transfer.direction),
             source_card.rect_client_px.x.to_be_bytes().as_slice(),
@@ -6330,12 +6323,6 @@ pub fn execute_fresh_competitive_event_sideboard_drag_v1(
                 .commitments
                 .transfer
                 .step_index
-                .to_be_bytes()
-                .as_slice(),
-            prepared
-                .commitments
-                .transfer
-                .card_db_id
                 .to_be_bytes()
                 .as_slice(),
             prepared.commitments.transfer.card_name.as_bytes(),
@@ -11562,7 +11549,6 @@ fn expand_atomic_sideboard_transfers_v1(
                     .map_err(|_| "atomic sideboard transfer count overflow")?;
                 atomic.push(MtgoAtomicCompetitiveSideboardTransferV1 {
                     step_index,
-                    card_db_id: transfer.card_db_id,
                     card_name: transfer.card_name.clone(),
                     direction,
                 });
@@ -11576,31 +11562,30 @@ fn apply_atomic_sideboard_transfer_v1(
     current: &MtgoCompetitiveDeckConfigurationV1,
     transfer: &MtgoAtomicCompetitiveSideboardTransferV1,
 ) -> Result<MtgoCompetitiveDeckConfigurationV1, String> {
+    let mut matching_card_db_ids = current
+        .mainboard
+        .iter()
+        .chain(&current.sideboard)
+        .filter(|card| card.card_name == transfer.card_name)
+        .map(|card| card.card_db_id);
+    let card_db_id = matching_card_db_ids
+        .next()
+        .ok_or("sideboard transfer visible card name is absent from the current configuration")?;
+    if matching_card_db_ids.any(|candidate| candidate != card_db_id) {
+        return Err(
+            "sideboard transfer visible card name resolved to conflicting local identities"
+                .to_owned(),
+        );
+    }
     let mut next = current.clone();
     match transfer.direction {
         MtgoCompetitiveSideboardTransferDirectionV1::SideboardToMainboard => {
-            remove_one_sideboard_card_v1(
-                &mut next.sideboard,
-                transfer.card_db_id,
-                &transfer.card_name,
-            )?;
-            add_one_sideboard_card_v1(
-                &mut next.mainboard,
-                transfer.card_db_id,
-                &transfer.card_name,
-            )?;
+            remove_one_sideboard_card_v1(&mut next.sideboard, card_db_id, &transfer.card_name)?;
+            add_one_sideboard_card_v1(&mut next.mainboard, card_db_id, &transfer.card_name)?;
         }
         MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard => {
-            remove_one_sideboard_card_v1(
-                &mut next.mainboard,
-                transfer.card_db_id,
-                &transfer.card_name,
-            )?;
-            add_one_sideboard_card_v1(
-                &mut next.sideboard,
-                transfer.card_db_id,
-                &transfer.card_name,
-            )?;
+            remove_one_sideboard_card_v1(&mut next.mainboard, card_db_id, &transfer.card_name)?;
+            add_one_sideboard_card_v1(&mut next.sideboard, card_db_id, &transfer.card_name)?;
         }
     }
     Ok(next)
@@ -20891,16 +20876,18 @@ mod tests {
 
     #[test]
     fn atomic_sideboard_sequence_moves_in_before_out_and_applies_one_copy() {
+        let out_card_name = "Lightning Bolt";
+        let in_card_name = "Searing Blaze";
+        let out_card_db_id = mtg_kernel::card_def::card_id_by_name(out_card_name).unwrap();
+        let in_card_db_id = mtg_kernel::card_def::card_id_by_name(in_card_name).unwrap();
         let transfers = vec![
             MtgoCompetitiveSideboardTransferV1 {
-                card_db_id: 1,
-                card_name: "Out".to_owned(),
+                card_name: out_card_name.to_owned(),
                 direction: MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard,
                 count: 2,
             },
             MtgoCompetitiveSideboardTransferV1 {
-                card_db_id: 2,
-                card_name: "In".to_owned(),
+                card_name: in_card_name.to_owned(),
                 direction: MtgoCompetitiveSideboardTransferDirectionV1::SideboardToMainboard,
                 count: 2,
             },
@@ -20920,48 +20907,73 @@ mod tests {
 
         let configuration = MtgoCompetitiveDeckConfigurationV1 {
             mainboard: vec![mtgo_blackbox_v1::MtgoCompetitiveDeckCardCountV1 {
-                card_db_id: 1,
-                card_name: "Out".to_owned(),
+                card_db_id: out_card_db_id,
+                card_name: out_card_name.to_owned(),
                 count: 2,
             }],
             sideboard: vec![mtgo_blackbox_v1::MtgoCompetitiveDeckCardCountV1 {
-                card_db_id: 2,
-                card_name: "In".to_owned(),
+                card_db_id: in_card_db_id,
+                card_name: in_card_name.to_owned(),
                 count: 2,
             }],
         };
         let first = apply_atomic_sideboard_transfer_v1(&configuration, &atomic[0]).unwrap();
-        assert_eq!(first.mainboard[0].card_db_id, 1);
-        assert_eq!(first.mainboard[1].card_db_id, 2);
-        assert_eq!(first.mainboard[1].count, 1);
+        assert_eq!(
+            first
+                .mainboard
+                .iter()
+                .find(|card| card.card_name == in_card_name)
+                .unwrap()
+                .count,
+            1
+        );
+        assert_eq!(first.sideboard[0].card_name, in_card_name);
         assert_eq!(first.sideboard[0].count, 1);
         let second = apply_atomic_sideboard_transfer_v1(&first, &atomic[1]).unwrap();
-        assert_eq!(second.mainboard[1].count, 2);
+        assert_eq!(
+            second
+                .mainboard
+                .iter()
+                .find(|card| card.card_name == in_card_name)
+                .unwrap()
+                .count,
+            2
+        );
         assert!(second.sideboard.is_empty());
         let third = apply_atomic_sideboard_transfer_v1(&second, &atomic[2]).unwrap();
-        assert_eq!(third.mainboard[0].count, 1);
-        assert_eq!(third.sideboard[0].card_db_id, 1);
+        assert_eq!(
+            third
+                .mainboard
+                .iter()
+                .find(|card| card.card_name == out_card_name)
+                .unwrap()
+                .count,
+            1
+        );
+        assert_eq!(third.sideboard[0].card_name, out_card_name);
         assert_eq!(third.sideboard[0].count, 1);
         let fourth = apply_atomic_sideboard_transfer_v1(&third, &atomic[3]).unwrap();
         assert_eq!(fourth.mainboard.len(), 1);
-        assert_eq!(fourth.mainboard[0].card_db_id, 2);
+        assert_eq!(fourth.mainboard[0].card_name, in_card_name);
+        assert_eq!(fourth.mainboard[0].card_db_id, in_card_db_id);
+        assert_eq!(fourth.sideboard[0].card_db_id, out_card_db_id);
         assert_eq!(fourth.sideboard[0].count, 2);
     }
 
     #[test]
-    fn atomic_sideboard_application_rejects_absent_source_or_crossed_name() {
+    fn atomic_sideboard_application_rejects_absent_or_unknown_visible_name() {
+        let exact_card_name = "Lightning Bolt";
         let configuration = MtgoCompetitiveDeckConfigurationV1 {
             mainboard: vec![mtgo_blackbox_v1::MtgoCompetitiveDeckCardCountV1 {
-                card_db_id: 1,
-                card_name: "Exact".to_owned(),
+                card_db_id: mtg_kernel::card_def::card_id_by_name(exact_card_name).unwrap(),
+                card_name: exact_card_name.to_owned(),
                 count: 1,
             }],
             sideboard: Vec::new(),
         };
-        for (card_db_id, card_name) in [(2, "Missing"), (1, "Crossed")] {
+        for card_name in ["Searing Blaze", "Not A Kernel Card"] {
             let transfer = MtgoAtomicCompetitiveSideboardTransferV1 {
                 step_index: 0,
-                card_db_id,
                 card_name: card_name.to_owned(),
                 direction: MtgoCompetitiveSideboardTransferDirectionV1::MainboardToSideboard,
             };

@@ -12,9 +12,8 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoCompetitiveSideboardPlanV1,
     CheckedUntrustedMtgoCompetitiveSideboardSnapshotV1, MtgoCompetitiveDeckConfigurationV1,
     MtgoCompetitiveEventKindV1, MtgoCompetitiveLifecyclePhaseV1,
-    MtgoCompetitiveSideboardSelectionV1, MtgoCompetitiveSideboardTransferV1, MtgoSizePxV1,
-    MtgoVisibleCompetitiveLifecycleSnapshotV1, MtgoVisibleCompetitiveSideboardSnapshotV1,
-    ValidatedMtgoCompetitiveDeckManifestV1,
+    MtgoCompetitiveSideboardSelectionV1, MtgoSizePxV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
+    MtgoVisibleCompetitiveSideboardSnapshotV1, ValidatedMtgoCompetitiveDeckManifestV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -150,7 +149,7 @@ impl OpaqueMtgoClassifiedCompetitiveSideboardV1 {
         self.commitments.clone()
     }
 
-    pub fn configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
+    pub(crate) fn configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
         self.sideboard.configuration_v1()
     }
 
@@ -219,14 +218,6 @@ pub(crate) struct MtgoCompetitiveSideboardDragPointerTargetV1 {
 impl OpaqueMtgoPlannedCompetitiveSideboardV1 {
     pub fn commitments_v1(&self) -> MtgoPlannedCompetitiveSideboardCommitmentsV1 {
         self.commitments.clone()
-    }
-
-    pub fn target_configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1 {
-        self.plan.target_configuration_v1()
-    }
-
-    pub fn transfers_v1(&self) -> &[MtgoCompetitiveSideboardTransferV1] {
-        self.plan.transfers_v1()
     }
 
     pub fn safe_for_input_v1(&self) -> bool {
