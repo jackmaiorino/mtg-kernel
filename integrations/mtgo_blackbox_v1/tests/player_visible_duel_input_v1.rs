@@ -275,10 +275,22 @@ fn validated_decision_projects_to_owned_visible_state_and_ordered_actions() {
 
 #[test]
 fn kernel_bookkeeping_and_transport_metadata_do_not_change_visible_input() {
-    let original = validate_observed_decision_v1(valid_record()).unwrap();
+    let mut original_record = valid_record();
+    let actor = original_record.payload.observation.acting_player;
+    let actor_index = match actor {
+        PlayerSeatV1::P0 => 0,
+        PlayerSeatV1::P1 => 1,
+    };
+    let mut battlefield_card = plotted_exile_card(actor, 9_003, 603, "Visible Card");
+    battlefield_card.stable.zone = Zone::Battlefield;
+    battlefield_card.plotted_turn = None;
+    original_record.payload.observation.projection.surface.battlefield[actor_index]
+        .push(battlefield_card);
+    refresh_record_commitments(&mut original_record);
+    let original = validate_observed_decision_v1(original_record.clone()).unwrap();
     let original_input = build_player_visible_duel_decision_input_v1(&original).unwrap();
 
-    let mut changed = valid_record();
+    let mut changed = original_record;
     changed.payload.observation.step_index += 100;
     changed.payload.observation.physical_decision_id += 100;
     changed
@@ -295,6 +307,7 @@ fn kernel_bookkeeping_and_transport_metadata_do_not_change_visible_input() {
         .surface
         .surface_context
         .combat_priority_spent = [true, true];
+    changed.payload.observation.projection.surface.battlefield[actor_index][0].face_index += 1;
     refresh_record_commitments(&mut changed);
     let changed = validate_observed_decision_v1(changed).unwrap();
     let changed_input = build_player_visible_duel_decision_input_v1(&changed).unwrap();

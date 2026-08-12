@@ -77,7 +77,6 @@ pub struct MtgoPlayerVisibleBattlefieldCardV1 {
     pub marked_damage: u16,
     pub counters: MtgoPlayerVisibleCounterStateV1,
     pub is_token: bool,
-    pub visible_face_index: u8,
     pub visible_effective_power: Option<i32>,
     pub visible_effective_toughness: Option<i32>,
 }
@@ -723,7 +722,6 @@ fn visible_battlefield_card_v1(
             lore: card.counters.lore,
         },
         is_token: card.is_token,
-        visible_face_index: card.face_index,
         visible_effective_power: card.characteristics.effective_power,
         visible_effective_toughness: card.characteristics.effective_toughness,
     })
