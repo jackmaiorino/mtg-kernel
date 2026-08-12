@@ -249,16 +249,20 @@ pub use competitive_operator_bootstrap::{
 pub use competitive_operator_loop::{
     advance_competitive_post_entry_operator_observed_v1, begin_competitive_post_entry_operator_v1,
     checkout_competitive_post_entry_operator_gameplay_v1,
+    checkout_competitive_post_entry_operator_native_pregame_v1,
     confirm_pending_competitive_post_entry_operator_lifecycle_v1,
     execute_prepared_competitive_post_entry_operator_lifecycle_v1,
     next_competitive_post_entry_operator_directive_v1,
     observe_competitive_post_entry_operator_event_record_v1,
     prepare_competitive_post_entry_operator_lifecycle_v1,
     return_competitive_post_entry_operator_gameplay_v1,
+    score_checked_untrusted_competitive_operator_native_pregame_v1,
     MtgoCompetitivePostEntryOperatorCommitmentsV1, MtgoCompetitivePostEntryOperatorDirectiveV1,
     MtgoCompetitivePostEntryOperatorRouteV1, OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
-    OpaqueMtgoCompetitivePostEntryOperatorV1, OpaqueMtgoPendingCompetitiveOperatorLifecycleV1,
+    OpaqueMtgoCompetitiveOperatorNativePregameRequestV1, OpaqueMtgoCompetitivePostEntryOperatorV1,
+    OpaqueMtgoPendingCompetitiveOperatorLifecycleV1,
     OpaqueMtgoPreparedCompetitiveOperatorLifecycleV1,
+    OpaqueMtgoScoredCompetitiveOperatorNativePregameV1,
 };
 #[cfg(target_os = "windows")]
 pub use competitive_pre_entry_operator::{

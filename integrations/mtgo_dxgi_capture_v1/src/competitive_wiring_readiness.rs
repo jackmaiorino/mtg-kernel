@@ -30,6 +30,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub native_checkpoint_external_public_history_import_present: bool,
     pub pre_entry_operator_loop_present: bool,
     pub post_entry_operator_loop_present: bool,
+    pub post_entry_operator_native_pregame_request_checkout_present: bool,
+    pub post_entry_operator_checked_untrusted_native_pregame_scoring_present: bool,
+    pub post_entry_operator_model_owned_pregame_resume_present: bool,
     pub end_to_end_operator_loop_present: bool,
     pub selected_listing_classifier_protocol_present: bool,
     pub navigation_lifecycle_classifier_protocol_present: bool,
@@ -104,6 +107,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             native_checkpoint_external_public_history_import_present: false,
             pre_entry_operator_loop_present: true,
             post_entry_operator_loop_present: true,
+            post_entry_operator_native_pregame_request_checkout_present: true,
+            post_entry_operator_checked_untrusted_native_pregame_scoring_present: true,
+            post_entry_operator_model_owned_pregame_resume_present: false,
             end_to_end_operator_loop_present: false,
             selected_listing_classifier_protocol_present: true,
             navigation_lifecycle_classifier_protocol_present: true,
@@ -211,6 +217,21 @@ mod tests {
         );
         assert!(report.known_wiring_gaps.pre_entry_operator_loop_present);
         assert!(report.known_wiring_gaps.post_entry_operator_loop_present);
+        assert!(
+            report
+                .known_wiring_gaps
+                .post_entry_operator_native_pregame_request_checkout_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .post_entry_operator_checked_untrusted_native_pregame_scoring_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .post_entry_operator_model_owned_pregame_resume_present
+        );
         assert!(!report.known_wiring_gaps.end_to_end_operator_loop_present);
         assert!(
             report

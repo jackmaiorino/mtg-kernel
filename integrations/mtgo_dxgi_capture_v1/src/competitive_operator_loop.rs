@@ -1,6 +1,8 @@
 use crate::actuator::{
     advance_competitive_event_monitor_in_runtime_v1, advance_competitive_event_runtime_observed_v1,
-    attach_competitive_event_monitor_to_runtime_v1, checkout_competitive_event_gameplay_session_v1,
+    attach_competitive_event_monitor_to_runtime_v1,
+    bind_competitive_event_pregame_native_request_v1,
+    checkout_competitive_event_gameplay_session_v1,
     confirm_pending_competitive_event_lifecycle_control_v1,
     execute_prepared_competitive_event_lifecycle_control_v1,
     next_competitive_event_driver_directive_v1,
@@ -11,8 +13,13 @@ use crate::actuator::{
     MtgoPendingCompetitiveEventLifecycleControlCommitmentsV1,
     MtgoPreparedCompetitiveEventLifecycleControlCommitmentsV1,
     OpaqueMtgoCompetitiveEventGameplayLeaseV1, OpaqueMtgoCompetitiveEventRuntimeV1,
-    OpaqueMtgoCompetitiveGestureGameSessionV1, OpaqueMtgoPendingCompetitiveEventLifecycleControlV1,
-    OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1,
+    OpaqueMtgoCompetitiveGestureGameSessionV1, OpaqueMtgoCompetitiveNativePregameRequestV1,
+    OpaqueMtgoPendingCompetitiveEventLifecycleControlV1,
+    OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1, RatifiedMtgoCompetitiveMatchLaunchV1,
+};
+use crate::competitive_auxiliary_model_scoring::{
+    score_checked_untrusted_competitive_native_pregame_request_v1,
+    MtgoCompetitiveNativePregameScorerV1, OpaqueMtgoScoredCompetitiveNativePregameRequestV1,
 };
 use crate::competitive_model_decision_readiness::check_competitive_model_decision_readiness_v1;
 use crate::competitive_operator_bootstrap::{
@@ -22,6 +29,7 @@ use crate::competitive_operator_bootstrap::{
 use crate::probe::{
     begin_evaluated_competitive_event_monitor_v1, OpaqueMtgoClassifiedCompetitiveEventRecordV1,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
 };
 use mtgo_blackbox_v1::{
     validate_native_checkpoint_competitive_capabilities_v1, MtgoCompetitiveEventKindV1,
@@ -210,6 +218,88 @@ pub struct OpaqueMtgoCompetitiveOperatorGameplayLeaseV1 {
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 }
 
+/// Move-only ownership of the complete post-entry operator while one exact
+/// player-visible pregame request is outside the operator for native scoring.
+/// The paid-event runtime remains inside `request` and cannot be recovered
+/// through this type.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorNativePregameRequestV1;
+/// fn cannot_act(value: OpaqueMtgoCompetitiveOperatorNativePregameRequestV1) {
+///     let _ = value.into_event_runtime();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
+    resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    request: OpaqueMtgoCompetitiveNativePregameRequestV1,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
+    pub fn model_input_v1(&self) -> &crate::MtgoCompetitiveNativePregameModelInputV1 {
+        self.request.model_input_v1()
+    }
+
+    pub fn model_input_commitment_sha256_v1(&self) -> &str {
+        self.request.model_input_commitment_sha256_v1()
+    }
+
+    pub fn deployment_commitment_sha256_v1(&self) -> &str {
+        &self.prior_operator.policy_deployment_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Offline checked scorer result that still owns every resource and the exact
+/// source request. It deliberately has no path back to the event operator. A
+/// future return seam must accept a kernel-owned opaque response, not this
+/// checked-untrusted scorer result.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoScoredCompetitiveOperatorNativePregameV1;
+/// fn cannot_resume(value: OpaqueMtgoScoredCompetitiveOperatorNativePregameV1) {
+///     let _ = value.into_operator();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
+    _resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    _resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    scored_request: OpaqueMtgoScoredCompetitiveNativePregameRequestV1,
+    _prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+impl OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
+    pub fn selected_index_v1(&self) -> usize {
+        self.scored_request.selected_index_v1()
+    }
+
+    pub fn selected_action_v1(&self) -> &crate::MtgoCompetitiveNativePregameActionV1 {
+        self.scored_request.selected_action_v1()
+    }
+
+    pub fn selection_commitment_sha256_v1(&self) -> &str {
+        self.scored_request.selection_commitment_sha256_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+}
+
 impl OpaqueMtgoCompetitiveOperatorGameplayLeaseV1 {
     pub fn duel_perception_profile_v1(
         &self,
@@ -282,6 +372,114 @@ pub fn next_competitive_post_entry_operator_directive_v1(
         operator.resources.changed_sideboard_evaluation.is_some(),
         &driver,
     )
+}
+
+/// Checks out the exact post-entry runtime into one player-visible native
+/// pregame request while retaining every operator resource. This performs no
+/// scoring or input. It is valid even while the static readiness report says
+/// the native pregame head is missing, so an offline scorer can exercise the
+/// complete ownership path without falsely advertising a live model path.
+pub fn checkout_competitive_post_entry_operator_native_pregame_v1(
+    operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
+    match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    context: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorNativePregameRequestV1, String> {
+    let directive = next_competitive_post_entry_operator_directive_v1(&operator)?;
+    let (match_identity_sha256, game_number) = match directive.route {
+        MtgoCompetitivePostEntryOperatorRouteV1::ResolvePregameWithNativeModel {
+            match_identity_sha256,
+            game_number,
+            ..
+        } => (match_identity_sha256, game_number),
+        _ => {
+            return Err(
+                "competitive post-entry operator is not at a native pregame request".to_owned(),
+            )
+        }
+    };
+    let launch = match_launch.gameplay_authorization_record_v2();
+    validate_operator_native_pregame_checkout_v1(&OperatorNativePregameCheckoutIdentityV1 {
+        route_match_identity_sha256: match_identity_sha256,
+        route_game_number: game_number,
+        launch_match_identity_sha256: launch.match_identity_sha256.clone(),
+        launch_game_number: launch.game_number,
+        launch_event_kind: launch.event_kind,
+        operator_event_kind: operator.commitments.event_kind,
+        resource_bundle_commitment_sha256: operator
+            .resource_commitments
+            .resource_bundle_commitment_sha256
+            .clone(),
+        operator_resource_bundle_commitment_sha256: operator
+            .commitments
+            .resource_bundle_commitment_sha256
+            .clone(),
+    })?;
+    let OpaqueMtgoCompetitivePostEntryOperatorV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        commitments,
+    } = operator;
+    let request = bind_competitive_event_pregame_native_request_v1(
+        runtime,
+        match_launch,
+        context,
+        &resources.deck_manifest,
+    )?;
+    require_sha256_v1(
+        request.model_input_commitment_sha256_v1(),
+        "competitive operator pregame request",
+    )?;
+    Ok(OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
+        resources,
+        resource_commitments,
+        request,
+        prior_operator: commitments,
+    })
+}
+
+/// Runs the full post-entry ownership path through a checked-untrusted offline
+/// scorer. All live resources remain consumed and inaccessible afterward.
+pub fn score_checked_untrusted_competitive_operator_native_pregame_v1<
+    S: MtgoCompetitiveNativePregameScorerV1,
+>(
+    value: OpaqueMtgoCompetitiveOperatorNativePregameRequestV1,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoScoredCompetitiveOperatorNativePregameV1, String> {
+    validate_operator_native_pregame_scoring_v1(&OperatorNativePregameScoringIdentityV1 {
+        resource_bundle_commitment_sha256: value
+            .resource_commitments
+            .resource_bundle_commitment_sha256
+            .clone(),
+        prior_resource_bundle_commitment_sha256: value
+            .prior_operator
+            .resource_bundle_commitment_sha256
+            .clone(),
+        request_deployment_commitment_sha256: value.deployment_commitment_sha256_v1().to_owned(),
+        loaded_checkpoint_deployment_commitment_sha256: value
+            .resources
+            .checkpoint_deployment
+            .deployment_commitment_sha256()
+            .to_owned(),
+    })?;
+    let deployment_commitment_sha256 = value.deployment_commitment_sha256_v1().to_owned();
+    let OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
+        resources,
+        resource_commitments,
+        request,
+        prior_operator,
+    } = value;
+    let scored_request = score_checked_untrusted_competitive_native_pregame_request_v1(
+        request,
+        &deployment_commitment_sha256,
+        scorer,
+    )?;
+    Ok(OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
+        _resources: resources,
+        _resource_commitments: resource_commitments,
+        scored_request,
+        _prior_operator: prior_operator,
+    })
 }
 
 pub fn advance_competitive_post_entry_operator_observed_v1(
@@ -495,6 +693,94 @@ struct PostEntryOperatorJoinIdentityV1 {
     event_kind: MtgoCompetitiveEventKindV1,
     current_phase: MtgoCompetitiveLifecyclePhaseV1,
     current_frame_sequence: u64,
+}
+
+#[derive(Clone)]
+struct OperatorNativePregameCheckoutIdentityV1 {
+    route_match_identity_sha256: String,
+    route_game_number: u8,
+    launch_match_identity_sha256: String,
+    launch_game_number: u8,
+    launch_event_kind: MtgoCompetitiveEventKindV1,
+    operator_event_kind: MtgoCompetitiveEventKindV1,
+    resource_bundle_commitment_sha256: String,
+    operator_resource_bundle_commitment_sha256: String,
+}
+
+fn validate_operator_native_pregame_checkout_v1(
+    value: &OperatorNativePregameCheckoutIdentityV1,
+) -> Result<(), String> {
+    for (digest, label) in [
+        (&value.route_match_identity_sha256, "pregame route match"),
+        (&value.launch_match_identity_sha256, "pregame launch match"),
+        (
+            &value.resource_bundle_commitment_sha256,
+            "pregame resource bundle",
+        ),
+        (
+            &value.operator_resource_bundle_commitment_sha256,
+            "pregame operator resource bundle",
+        ),
+    ] {
+        require_sha256_v1(digest, label)?;
+    }
+    if value.route_game_number == 0 || value.launch_game_number == 0 {
+        return Err("competitive operator pregame checkout requires a nonzero game".to_owned());
+    }
+    if value.route_match_identity_sha256 != value.launch_match_identity_sha256
+        || value.route_game_number != value.launch_game_number
+        || value.launch_event_kind != value.operator_event_kind
+        || value.resource_bundle_commitment_sha256
+            != value.operator_resource_bundle_commitment_sha256
+    {
+        return Err(
+            "competitive operator pregame checkout changed the exact event, match, game, or resources"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone)]
+struct OperatorNativePregameScoringIdentityV1 {
+    resource_bundle_commitment_sha256: String,
+    prior_resource_bundle_commitment_sha256: String,
+    request_deployment_commitment_sha256: String,
+    loaded_checkpoint_deployment_commitment_sha256: String,
+}
+
+fn validate_operator_native_pregame_scoring_v1(
+    value: &OperatorNativePregameScoringIdentityV1,
+) -> Result<(), String> {
+    for (digest, label) in [
+        (
+            &value.resource_bundle_commitment_sha256,
+            "pregame scoring resource bundle",
+        ),
+        (
+            &value.prior_resource_bundle_commitment_sha256,
+            "pregame scoring prior resource bundle",
+        ),
+        (
+            &value.request_deployment_commitment_sha256,
+            "pregame scoring request deployment",
+        ),
+        (
+            &value.loaded_checkpoint_deployment_commitment_sha256,
+            "pregame scoring loaded checkpoint deployment",
+        ),
+    ] {
+        require_sha256_v1(digest, label)?;
+    }
+    if value.resource_bundle_commitment_sha256 != value.prior_resource_bundle_commitment_sha256
+        || value.request_deployment_commitment_sha256
+            != value.loaded_checkpoint_deployment_commitment_sha256
+    {
+        return Err(
+            "competitive operator pregame scoring changed resources or deployment".to_owned(),
+        );
+    }
+    Ok(())
 }
 
 fn post_entry_operator_commitments_v1(
@@ -1023,6 +1309,28 @@ mod tests {
         }
     }
 
+    fn native_pregame_checkout_identity_v1() -> OperatorNativePregameCheckoutIdentityV1 {
+        OperatorNativePregameCheckoutIdentityV1 {
+            route_match_identity_sha256: digest('1'),
+            route_game_number: 2,
+            launch_match_identity_sha256: digest('1'),
+            launch_game_number: 2,
+            launch_event_kind: MtgoCompetitiveEventKindV1::League,
+            operator_event_kind: MtgoCompetitiveEventKindV1::League,
+            resource_bundle_commitment_sha256: digest('2'),
+            operator_resource_bundle_commitment_sha256: digest('2'),
+        }
+    }
+
+    fn native_pregame_scoring_identity_v1() -> OperatorNativePregameScoringIdentityV1 {
+        OperatorNativePregameScoringIdentityV1 {
+            resource_bundle_commitment_sha256: digest('1'),
+            prior_resource_bundle_commitment_sha256: digest('1'),
+            request_deployment_commitment_sha256: digest('2'),
+            loaded_checkpoint_deployment_commitment_sha256: digest('2'),
+        }
+    }
+
     #[test]
     fn exact_post_entry_join_accepts_both_modes_and_rejects_crossed_resources() {
         let mut league = join_v1();
@@ -1057,6 +1365,50 @@ mod tests {
             mutate(&mut crossed);
             assert!(validate_post_entry_operator_join_v1(&crossed).is_err());
         }
+    }
+
+    #[test]
+    fn native_pregame_checkout_accepts_both_modes_and_rejects_crossed_lineage() {
+        let mut exact = native_pregame_checkout_identity_v1();
+        validate_operator_native_pregame_checkout_v1(&exact).unwrap();
+        exact.launch_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        exact.operator_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        validate_operator_native_pregame_checkout_v1(&exact).unwrap();
+
+        for mutate in [
+            |value: &mut OperatorNativePregameCheckoutIdentityV1| {
+                value.launch_match_identity_sha256 = digest('3')
+            },
+            |value: &mut OperatorNativePregameCheckoutIdentityV1| value.launch_game_number = 3,
+            |value: &mut OperatorNativePregameCheckoutIdentityV1| {
+                value.launch_event_kind = MtgoCompetitiveEventKindV1::Challenge
+            },
+            |value: &mut OperatorNativePregameCheckoutIdentityV1| {
+                value.operator_resource_bundle_commitment_sha256 = digest('3')
+            },
+            |value: &mut OperatorNativePregameCheckoutIdentityV1| value.route_game_number = 0,
+        ] {
+            let mut crossed = native_pregame_checkout_identity_v1();
+            mutate(&mut crossed);
+            assert!(validate_operator_native_pregame_checkout_v1(&crossed).is_err());
+        }
+    }
+
+    #[test]
+    fn native_pregame_scoring_requires_exact_resources_and_loaded_deployment() {
+        validate_operator_native_pregame_scoring_v1(&native_pregame_scoring_identity_v1()).unwrap();
+
+        let mut crossed_resources = native_pregame_scoring_identity_v1();
+        crossed_resources.prior_resource_bundle_commitment_sha256 = digest('3');
+        assert!(validate_operator_native_pregame_scoring_v1(&crossed_resources).is_err());
+
+        let mut crossed_deployment = native_pregame_scoring_identity_v1();
+        crossed_deployment.loaded_checkpoint_deployment_commitment_sha256 = digest('3');
+        assert!(validate_operator_native_pregame_scoring_v1(&crossed_deployment).is_err());
+
+        let mut malformed = native_pregame_scoring_identity_v1();
+        malformed.request_deployment_commitment_sha256 = "not-a-digest".to_owned();
+        assert!(validate_operator_native_pregame_scoring_v1(&malformed).is_err());
     }
 
     #[test]
