@@ -12,9 +12,12 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 pub const MTGO_PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_SCHEMA_V1: u32 = 1;
+pub const MTGO_PLAYER_VISIBLE_GAMEPLAY_BEFORE_INPUT_SCHEMA_V1: u32 = 1;
 
 const PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-gameplay-postcondition-v1";
+const PLAYER_VISIBLE_GAMEPLAY_BEFORE_INPUT_DOMAIN_V1: &[u8] =
+    b"mtgo-player-visible-gameplay-before-input-v1";
 const MAX_PLAYER_VISIBLE_POSTCONDITION_TRANSITIONS_V1: usize = 16;
 
 /// Action-specific visible region category used to confirm one emitted
@@ -45,6 +48,98 @@ pub struct MtgoPlayerVisibleGameplayRegionTransitionV1 {
     pub rect_client_px: MtgoRectPxV1,
     pub before_bgra8_sha256: String,
     pub after_bgra8_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPlayerVisibleGameplayBeforeRegionV1 {
+    pub kind: MtgoPlayerVisibleGameplayPostconditionKindV1,
+    pub rect_client_px: MtgoRectPxV1,
+    pub before_bgra8_sha256: String,
+}
+
+/// Complete visible-only change plan declared before one gesture primitive is
+/// emitted. A trusted producer must compute each hash from its retained source
+/// pixels. This record contains no coordinates suitable for input and grants no
+/// authority to emit the gesture.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPlayerVisibleGameplayBeforeInputRecordV1 {
+    pub schema_version: u32,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: String,
+    pub match_identity_sha256: String,
+    pub game_number: u8,
+    pub deployment_commitment_sha256: String,
+    pub decision_commitment_sha256: String,
+    pub selection_commitment_sha256: String,
+    pub source_frame_id: u64,
+    pub source_frame_sequence: u64,
+    pub source_frame_sha256: String,
+    pub client_size_px: MtgoSizePxV1,
+    pub player_visible_decision: MtgoPlayerVisibleConfirmedDuelDecisionV1,
+    pub gesture_plan: MtgoPlayerVisibleDuelGesturePlanV1,
+    pub primitive_index: u16,
+    pub primitive_is_final: bool,
+    pub region_set_complete: bool,
+    pub regions: Vec<MtgoPlayerVisibleGameplayBeforeRegionV1>,
+    pub expected_game_log_baseline_commitment_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPlayerVisibleGameplayAfterRegionV1 {
+    pub kind: MtgoPlayerVisibleGameplayPostconditionKindV1,
+    pub rect_client_px: MtgoRectPxV1,
+    pub after_bgra8_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPlayerVisibleGameplayAfterFrameV1 {
+    pub after_frame_id: u64,
+    pub after_frame_sequence: u64,
+    pub after_frame_sha256: String,
+    pub regions: Vec<MtgoPlayerVisibleGameplayAfterRegionV1>,
+}
+
+/// Structurally checked before-input declaration. It is deliberately opaque:
+/// callers can retain its commitment but cannot recover rectangles or convert
+/// it to an input operation.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoPlayerVisibleGameplayBeforeInputV1;
+/// fn cannot_act(value: CheckedUntrustedMtgoPlayerVisibleGameplayBeforeInputV1) {
+///     let _ = value.regions();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct CheckedUntrustedMtgoPlayerVisibleGameplayBeforeInputV1 {
+    record: MtgoPlayerVisibleGameplayBeforeInputRecordV1,
+    action_family: MtgoDuelActionFamilyV1,
+    before_input_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoPlayerVisibleGameplayBeforeInputV1 {
+    pub fn action_family_v1(&self) -> MtgoDuelActionFamilyV1 {
+        self.action_family
+    }
+
+    pub fn before_input_commitment_sha256_v1(&self) -> &str {
+        &self.before_input_commitment_sha256
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
 }
 
 /// Producer-facing visible-only postcondition record. A future opaque capture
@@ -172,6 +267,151 @@ impl CheckedUntrustedMtgoPlayerVisibleGameplayPostconditionV1 {
     pub(crate) fn source_frame_sha256_v1(&self) -> &str {
         &self.record.source_frame_sha256
     }
+}
+
+/// Checks that the entire player-visible region plan was fixed before input.
+/// This is a structural, untrusted boundary. A Windows producer must still
+/// rehash every region from an opaque retained DXGI frame.
+pub fn check_untrusted_player_visible_gameplay_before_input_v1(
+    record: MtgoPlayerVisibleGameplayBeforeInputRecordV1,
+) -> Result<CheckedUntrustedMtgoPlayerVisibleGameplayBeforeInputV1, MtgoContractErrorV1> {
+    validate_before_input_record_shape_v1(&record)?;
+    let checked_gesture =
+        validate_player_visible_duel_gesture_plan_v1(record.gesture_plan.clone())?;
+    if checked_gesture.selected_action_v1() != &record.player_visible_decision.selected_action {
+        return Err(error_v1(
+            "player_visible_before_input_action_mismatch",
+            "gesture and confirmed decision must retain the exact selected visible action",
+        ));
+    }
+    let primitive = checked_gesture
+        .primitives_v1()
+        .get(usize::from(record.primitive_index))
+        .ok_or_else(|| {
+            error_v1(
+                "player_visible_before_input_primitive_index",
+                record.primitive_index.to_string(),
+            )
+        })?;
+    if record.primitive_is_final
+        != (usize::from(record.primitive_index) + 1 == checked_gesture.primitives_v1().len())
+    {
+        return Err(error_v1(
+            "player_visible_before_input_primitive_finality",
+            "primitive finality differs from the complete visible gesture plan",
+        ));
+    }
+    let action_family = checked_gesture.action_family_v1();
+    let kinds = validate_before_regions_v1(&record)?;
+    require_action_specific_transition_v1(
+        action_family,
+        primitive,
+        record.primitive_is_final,
+        &kinds,
+    )?;
+    if let Some(expected) = record
+        .expected_game_log_baseline_commitment_sha256
+        .as_deref()
+    {
+        require_sha256_v1(
+            expected,
+            "player_visible_before_input_game_log_baseline_hash",
+        )?;
+        if !record.primitive_is_final
+            || expected_game_log_kind_v1(&record.player_visible_decision.selected_action).is_none()
+        {
+            return Err(error_v1(
+                "player_visible_before_input_game_log_unsupported",
+                "a Game Log baseline is valid only for a supported final visible primitive",
+            ));
+        }
+    }
+
+    let record_json = serde_json::to_vec(&record).map_err(|error| {
+        error_v1(
+            "player_visible_before_input_serialization",
+            error.to_string(),
+        )
+    })?;
+    let family_json = serde_json::to_vec(&action_family).map_err(|error| {
+        error_v1(
+            "player_visible_before_input_serialization",
+            error.to_string(),
+        )
+    })?;
+    let before_input_commitment_sha256 = commitment_v1(
+        PLAYER_VISIBLE_GAMEPLAY_BEFORE_INPUT_DOMAIN_V1,
+        &[
+            &record_json,
+            &family_json,
+            b"checked_untrusted_visible_only_no_input_or_event_entry",
+        ],
+    );
+    Ok(CheckedUntrustedMtgoPlayerVisibleGameplayBeforeInputV1 {
+        record,
+        action_family,
+        before_input_commitment_sha256,
+    })
+}
+
+/// Consumes the exact before-input declaration and pairs it with hashes for
+/// the same visible rectangles in a newer frame. No region may be added,
+/// removed, relabelled, or moved after input.
+pub fn complete_untrusted_player_visible_gameplay_postcondition_v1(
+    before: CheckedUntrustedMtgoPlayerVisibleGameplayBeforeInputV1,
+    after: MtgoPlayerVisibleGameplayAfterFrameV1,
+    game_log_corroboration: Option<CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1>,
+) -> Result<CheckedUntrustedMtgoPlayerVisibleGameplayPostconditionV1, MtgoContractErrorV1> {
+    if after.regions.len() != before.record.regions.len() {
+        return Err(error_v1(
+            "player_visible_postcondition_after_region_set",
+            "after-frame regions must exactly match the complete before-input plan",
+        ));
+    }
+    let mut transitions = Vec::with_capacity(before.record.regions.len());
+    for (before_region, after_region) in before.record.regions.iter().zip(&after.regions) {
+        if before_region.kind != after_region.kind
+            || before_region.rect_client_px != after_region.rect_client_px
+        {
+            return Err(error_v1(
+                "player_visible_postcondition_after_region_identity",
+                "after-frame region kind or rectangle differs from the before-input plan",
+            ));
+        }
+        transitions.push(MtgoPlayerVisibleGameplayRegionTransitionV1 {
+            kind: before_region.kind,
+            rect_client_px: before_region.rect_client_px.clone(),
+            before_bgra8_sha256: before_region.before_bgra8_sha256.clone(),
+            after_bgra8_sha256: after_region.after_bgra8_sha256.clone(),
+        });
+    }
+    let record = MtgoPlayerVisibleGameplayPostconditionRecordV1 {
+        schema_version: MTGO_PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_SCHEMA_V1,
+        event_kind: before.record.event_kind,
+        event_identity_sha256: before.record.event_identity_sha256,
+        match_identity_sha256: before.record.match_identity_sha256,
+        game_number: before.record.game_number,
+        deployment_commitment_sha256: before.record.deployment_commitment_sha256,
+        decision_commitment_sha256: before.record.decision_commitment_sha256,
+        selection_commitment_sha256: before.record.selection_commitment_sha256,
+        source_frame_id: before.record.source_frame_id,
+        source_frame_sequence: before.record.source_frame_sequence,
+        source_frame_sha256: before.record.source_frame_sha256,
+        after_frame_id: after.after_frame_id,
+        after_frame_sequence: after.after_frame_sequence,
+        after_frame_sha256: after.after_frame_sha256,
+        client_size_px: before.record.client_size_px,
+        player_visible_decision: before.record.player_visible_decision,
+        gesture_plan: before.record.gesture_plan,
+        primitive_index: before.record.primitive_index,
+        primitive_is_final: before.record.primitive_is_final,
+        transition_set_complete: true,
+        transitions,
+        expected_game_log_baseline_commitment_sha256: before
+            .record
+            .expected_game_log_baseline_commitment_sha256,
+    };
+    check_untrusted_player_visible_gameplay_postcondition_v1(record, game_log_corroboration)
 }
 
 /// Checks one exact player-visible gesture stage against action-specific UI
@@ -374,6 +614,108 @@ fn validate_record_shape_v1(
     Ok(())
 }
 
+fn validate_before_input_record_shape_v1(
+    record: &MtgoPlayerVisibleGameplayBeforeInputRecordV1,
+) -> Result<(), MtgoContractErrorV1> {
+    if record.schema_version != MTGO_PLAYER_VISIBLE_GAMEPLAY_BEFORE_INPUT_SCHEMA_V1 {
+        return Err(error_v1(
+            "player_visible_before_input_schema",
+            record.schema_version.to_string(),
+        ));
+    }
+    if !(1..=3).contains(&record.game_number)
+        || record.source_frame_id == 0
+        || record.source_frame_sequence == 0
+        || record.client_size_px.width == 0
+        || record.client_size_px.height == 0
+        || record.player_visible_decision.current_state.acting_player
+            != MtgoPlayerRelativeRoleV1::SeatedPlayer
+        || action_actor_v1(&record.player_visible_decision.selected_action)
+            != MtgoPlayerRelativeRoleV1::SeatedPlayer
+    {
+        return Err(error_v1(
+            "player_visible_before_input_source",
+            "event, source, geometry, or seated-player identity is invalid",
+        ));
+    }
+    for (value, code) in [
+        (
+            &record.event_identity_sha256,
+            "player_visible_before_input_event_hash",
+        ),
+        (
+            &record.match_identity_sha256,
+            "player_visible_before_input_match_hash",
+        ),
+        (
+            &record.deployment_commitment_sha256,
+            "player_visible_before_input_deployment_hash",
+        ),
+        (
+            &record.decision_commitment_sha256,
+            "player_visible_before_input_decision_hash",
+        ),
+        (
+            &record.selection_commitment_sha256,
+            "player_visible_before_input_selection_hash",
+        ),
+        (
+            &record.source_frame_sha256,
+            "player_visible_before_input_source_frame_hash",
+        ),
+    ] {
+        require_sha256_v1(value, code)?;
+    }
+    Ok(())
+}
+
+fn validate_before_regions_v1(
+    record: &MtgoPlayerVisibleGameplayBeforeInputRecordV1,
+) -> Result<HashSet<MtgoPlayerVisibleGameplayPostconditionKindV1>, MtgoContractErrorV1> {
+    if !record.region_set_complete
+        || record.regions.is_empty()
+        || record.regions.len() > MAX_PLAYER_VISIBLE_POSTCONDITION_TRANSITIONS_V1
+    {
+        return Err(error_v1(
+            "player_visible_before_input_region_set",
+            record.regions.len().to_string(),
+        ));
+    }
+    let mut kinds = HashSet::new();
+    let mut rects = Vec::with_capacity(record.regions.len());
+    for region in &record.regions {
+        require_sha256_v1(
+            &region.before_bgra8_sha256,
+            "player_visible_before_input_region_hash",
+        )?;
+        let rect = &region.rect_client_px;
+        let right = rect
+            .x
+            .checked_add(rect.width)
+            .ok_or_else(|| error_v1("player_visible_before_input_region", "right edge overflow"))?;
+        let bottom = rect.y.checked_add(rect.height).ok_or_else(|| {
+            error_v1("player_visible_before_input_region", "bottom edge overflow")
+        })?;
+        let rect_key = (rect.x, rect.y, rect.width, rect.height);
+        if rect.width == 0
+            || rect.height == 0
+            || right > record.client_size_px.width
+            || bottom > record.client_size_px.height
+            || !kinds.insert(region.kind)
+            || rects
+                .iter()
+                .any(|existing| transition_rects_intersect_v1(*existing, rect_key))
+        {
+            return Err(error_v1(
+                "player_visible_before_input_region",
+                "regions must be unique, nonoverlapping, nonempty, and inside the client",
+            ));
+        }
+        rects.push(rect_key);
+    }
+    Ok(kinds)
+}
+
 fn validate_transitions_v1(
     record: &MtgoPlayerVisibleGameplayPostconditionRecordV1,
 ) -> Result<HashSet<MtgoPlayerVisibleGameplayPostconditionKindV1>, MtgoContractErrorV1> {
@@ -475,8 +817,7 @@ fn require_action_specific_transition_v1(
                 K::GraveyardChanged,
                 K::LibraryChanged,
                 K::ExileChanged,
-            ])
-                && any(&[K::StackChanged, K::ExileChanged, K::PromptChanged])
+            ]) && any(&[K::StackChanged, K::ExileChanged, K::PromptChanged])
         }
         MtgoDuelActionFamilyV1::ManaAbility => {
             kinds.contains(&K::ManaPoolChanged)
@@ -760,6 +1101,61 @@ mod tests {
         record
     }
 
+    fn before_input_from_record_v1(
+        record: &MtgoPlayerVisibleGameplayPostconditionRecordV1,
+    ) -> MtgoPlayerVisibleGameplayBeforeInputRecordV1 {
+        MtgoPlayerVisibleGameplayBeforeInputRecordV1 {
+            schema_version: MTGO_PLAYER_VISIBLE_GAMEPLAY_BEFORE_INPUT_SCHEMA_V1,
+            event_kind: record.event_kind,
+            event_identity_sha256: record.event_identity_sha256.clone(),
+            match_identity_sha256: record.match_identity_sha256.clone(),
+            game_number: record.game_number,
+            deployment_commitment_sha256: record.deployment_commitment_sha256.clone(),
+            decision_commitment_sha256: record.decision_commitment_sha256.clone(),
+            selection_commitment_sha256: record.selection_commitment_sha256.clone(),
+            source_frame_id: record.source_frame_id,
+            source_frame_sequence: record.source_frame_sequence,
+            source_frame_sha256: record.source_frame_sha256.clone(),
+            client_size_px: record.client_size_px.clone(),
+            player_visible_decision: record.player_visible_decision.clone(),
+            gesture_plan: record.gesture_plan.clone(),
+            primitive_index: record.primitive_index,
+            primitive_is_final: record.primitive_is_final,
+            region_set_complete: record.transition_set_complete,
+            regions: record
+                .transitions
+                .iter()
+                .map(|transition| MtgoPlayerVisibleGameplayBeforeRegionV1 {
+                    kind: transition.kind,
+                    rect_client_px: transition.rect_client_px.clone(),
+                    before_bgra8_sha256: transition.before_bgra8_sha256.clone(),
+                })
+                .collect(),
+            expected_game_log_baseline_commitment_sha256: record
+                .expected_game_log_baseline_commitment_sha256
+                .clone(),
+        }
+    }
+
+    fn after_frame_from_record_v1(
+        record: &MtgoPlayerVisibleGameplayPostconditionRecordV1,
+    ) -> MtgoPlayerVisibleGameplayAfterFrameV1 {
+        MtgoPlayerVisibleGameplayAfterFrameV1 {
+            after_frame_id: record.after_frame_id,
+            after_frame_sequence: record.after_frame_sequence,
+            after_frame_sha256: record.after_frame_sha256.clone(),
+            regions: record
+                .transitions
+                .iter()
+                .map(|transition| MtgoPlayerVisibleGameplayAfterRegionV1 {
+                    kind: transition.kind,
+                    rect_client_px: transition.rect_client_px.clone(),
+                    after_bgra8_sha256: transition.after_bgra8_sha256.clone(),
+                })
+                .collect(),
+        }
+    }
+
     fn play_land_corroboration_v1() -> (
         String,
         CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1,
@@ -887,12 +1283,7 @@ mod tests {
         assert_eq!(history.decision_v1(1).unwrap().sequence_v1(), 2);
     }
 
-    fn error_code_v1(
-        result: Result<
-            CheckedUntrustedMtgoPlayerVisibleGameplayPostconditionV1,
-            MtgoContractErrorV1,
-        >,
-    ) -> &'static str {
+    fn error_code_v1<T>(result: Result<T, MtgoContractErrorV1>) -> &'static str {
         match result {
             Ok(_) => panic!("expected player-visible postcondition rejection"),
             Err(error) => error.code(),
@@ -1072,12 +1463,8 @@ mod tests {
         record.player_visible_decision.selected_action = action.clone();
         record.gesture_plan.selected_action = action;
         record.gesture_plan.primitives = vec![
-            MtgoPlayerVisibleDuelGesturePrimitiveV1::SelectVisibleObject {
-                object: cards[0],
-            },
-            MtgoPlayerVisibleDuelGesturePrimitiveV1::SelectVisibleObject {
-                object: cards[1],
-            },
+            MtgoPlayerVisibleDuelGesturePrimitiveV1::SelectVisibleObject { object: cards[0] },
+            MtgoPlayerVisibleDuelGesturePrimitiveV1::SelectVisibleObject { object: cards[1] },
             MtgoPlayerVisibleDuelGesturePrimitiveV1::Submit,
         ];
         record.primitive_is_final = false;
@@ -1114,6 +1501,104 @@ mod tests {
                 Some(corroboration),
             )),
             "player_visible_postcondition_game_log_finality"
+        );
+    }
+
+    #[test]
+    fn complete_before_input_region_plan_pairs_only_the_same_newer_visible_regions() {
+        let final_record = play_land_record_v1();
+        let before_record = before_input_from_record_v1(&final_record);
+        let before = check_untrusted_player_visible_gameplay_before_input_v1(before_record)
+            .expect("complete before-input plan");
+        assert_eq!(before.action_family_v1(), MtgoDuelActionFamilyV1::PlayLand);
+        assert!(!before.safe_for_input_v1());
+        assert!(!before.permits_event_entry_v1());
+        assert!(!before.permits_spending_v1());
+        assert_eq!(before.before_input_commitment_sha256_v1().len(), 64);
+
+        let checked = complete_untrusted_player_visible_gameplay_postcondition_v1(
+            before,
+            after_frame_from_record_v1(&final_record),
+            None,
+        )
+        .expect("same visible regions changed in a newer frame");
+        assert_eq!(checked.action_family_v1(), MtgoDuelActionFamilyV1::PlayLand);
+        assert_eq!(checked.after_frame_id_v1(), final_record.after_frame_id);
+    }
+
+    #[test]
+    fn before_input_plan_rejects_incomplete_missing_and_overlapping_regions() {
+        let record = play_land_record_v1();
+
+        let mut incomplete = before_input_from_record_v1(&record);
+        incomplete.region_set_complete = false;
+        assert_eq!(
+            error_code_v1(check_untrusted_player_visible_gameplay_before_input_v1(
+                incomplete,
+            )),
+            "player_visible_before_input_region_set"
+        );
+
+        let mut missing = before_input_from_record_v1(&record);
+        missing.regions.pop();
+        assert_eq!(
+            error_code_v1(check_untrusted_player_visible_gameplay_before_input_v1(
+                missing,
+            )),
+            "player_visible_postcondition_action_transition"
+        );
+
+        let mut overlapping = before_input_from_record_v1(&record);
+        overlapping.regions[1].rect_client_px.y = overlapping.regions[0].rect_client_px.y;
+        assert_eq!(
+            error_code_v1(check_untrusted_player_visible_gameplay_before_input_v1(
+                overlapping,
+            )),
+            "player_visible_before_input_region"
+        );
+    }
+
+    #[test]
+    fn after_frame_cannot_change_the_predeclared_region_set_or_reuse_source_pixels() {
+        let record = play_land_record_v1();
+
+        let before = check_untrusted_player_visible_gameplay_before_input_v1(
+            before_input_from_record_v1(&record),
+        )
+        .unwrap();
+        let mut missing = after_frame_from_record_v1(&record);
+        missing.regions.pop();
+        assert_eq!(
+            error_code_v1(complete_untrusted_player_visible_gameplay_postcondition_v1(
+                before, missing, None,
+            )),
+            "player_visible_postcondition_after_region_set"
+        );
+
+        let before = check_untrusted_player_visible_gameplay_before_input_v1(
+            before_input_from_record_v1(&record),
+        )
+        .unwrap();
+        let mut moved = after_frame_from_record_v1(&record);
+        moved.regions[0].rect_client_px.x += 1;
+        assert_eq!(
+            error_code_v1(complete_untrusted_player_visible_gameplay_postcondition_v1(
+                before, moved, None,
+            )),
+            "player_visible_postcondition_after_region_identity"
+        );
+
+        let before = check_untrusted_player_visible_gameplay_before_input_v1(
+            before_input_from_record_v1(&record),
+        )
+        .unwrap();
+        let mut unchanged = after_frame_from_record_v1(&record);
+        unchanged.regions[0].after_bgra8_sha256 = record.transitions[0].before_bgra8_sha256.clone();
+        assert_eq!(
+            error_code_v1(complete_untrusted_player_visible_gameplay_postcondition_v1(
+                before, unchanged, None,
+            )),
+            "player_visible_postcondition_region"
         );
     }
 }
