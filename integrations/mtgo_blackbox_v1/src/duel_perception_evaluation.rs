@@ -1,6 +1,7 @@
 use crate::{
-    validate_observed_decision_v1, CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
-    MtgoContractErrorV1, MtgoObservedDecisionV1, MtgoSizePxV1,
+    validate_observed_decision_v1, CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
+    CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1, MtgoContractErrorV1,
+    MtgoObservedDecisionV1, MtgoSizePxV1,
 };
 use mtg_kernel::rl::ActionSemanticV1;
 use serde::{Deserialize, Serialize};
@@ -461,6 +462,7 @@ pub(crate) fn duel_perception_profile_admitted_for_test_v1(
 
 pub fn evaluate_untrusted_duel_perception_profile_v1(
     profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
+    corpus: &CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
     spec: MtgoDuelPerceptionEvaluationSpecV1,
     cases: Vec<MtgoDuelPerceptionEvaluationCaseV1<'_>>,
 ) -> Result<CheckedUntrustedMtgoDuelPerceptionEvaluationV1, MtgoContractErrorV1> {
@@ -473,10 +475,24 @@ pub fn evaluate_untrusted_duel_perception_profile_v1(
             "evaluation spec must bind the exact runtime profile and supported action families",
         ));
     }
+    if spec.corpus_manifest_sha256 != corpus.canonical_manifest_sha256()
+        || profile.game_format() != corpus.manifest_v1().game_format
+    {
+        return Err(error_v1(
+            "duel_perception_evaluation_corpus_mismatch",
+            "evaluation spec and runtime profile must bind the exact checked duel corpus",
+        ));
+    }
     if cases.is_empty() || cases.len() > 100_000 {
         return Err(error_v1(
             "duel_perception_case_count_invalid",
             cases.len().to_string(),
+        ));
+    }
+    if cases.len() != corpus.sample_count() {
+        return Err(error_v1(
+            "duel_perception_evaluation_corpus_coverage",
+            "evaluation must contain exactly one case for every checked corpus sample",
         ));
     }
 
@@ -499,7 +515,7 @@ pub fn evaluate_untrusted_duel_perception_profile_v1(
     let mut exact_object_binding_count = 0_u32;
     let mut exact_payload_count = 0_u32;
 
-    for case in &cases {
+    for (corpus_sample, case) in corpus.manifest_v1().samples.iter().zip(&cases) {
         validate_safe_identifier_v1(&case.case_id, "duel_perception_case_id_invalid")?;
         if previous_case_id.is_some_and(|previous| previous >= case.case_id.as_str()) {
             return Err(error_v1(
@@ -519,6 +535,15 @@ pub fn evaluate_untrusted_duel_perception_profile_v1(
         if case.source_frame_sequence == 0 {
             return Err(error_v1(
                 "duel_perception_source_sequence_invalid",
+                case.case_id.clone(),
+            ));
+        }
+        if case.case_id != corpus_sample.sample_id
+            || case.source_manifest_sha256 != corpus_sample.source_manifest_sha256
+            || case.source_canonical_bgra8_sha256 != corpus_sample.source_canonical_bgra8_sha256
+        {
+            return Err(error_v1(
+                "duel_perception_evaluation_corpus_source_mismatch",
                 case.case_id.clone(),
             ));
         }
@@ -899,6 +924,7 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 mod tests {
     use super::*;
     use crate::{
+        build_checked_untrusted_acting_player_duel_calibration_corpus_v1,
         checked_untrusted_dxgi_artifact_for_test_v1,
         complete_acting_player_duel_audit_record_for_test_v1,
         dxgi_observed_decision_record_for_test_v1, local_metadata_commitment_v1,
@@ -908,12 +934,13 @@ mod tests {
 
     fn spec_v1(
         profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
+        corpus: &CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
     ) -> MtgoDuelPerceptionEvaluationSpecV1 {
         MtgoDuelPerceptionEvaluationSpecV1 {
             schema_version: MTGO_DUEL_PERCEPTION_EVALUATION_SCHEMA_V1,
             evaluation_id: "duel-perception-evaluation-test-v1".to_owned(),
             perception_profile_commitment_sha256: profile.profile_commitment_sha256().to_owned(),
-            corpus_manifest_sha256: "b".repeat(64),
+            corpus_manifest_sha256: corpus.canonical_manifest_sha256().to_owned(),
             annotation_protocol_sha256: "c".repeat(64),
             evaluator_binary_sha256: "d".repeat(64),
             minimum_unique_cases: 1,
@@ -925,6 +952,7 @@ mod tests {
     fn fixture_v1(
         profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
     ) -> (
+        CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
         CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
         MtgoObservedDecisionV1,
     ) {
@@ -944,15 +972,21 @@ mod tests {
             expected.clone(),
         )
         .unwrap();
-        (prediction, expected)
+        let corpus = build_checked_untrusted_acting_player_duel_calibration_corpus_v1(
+            "duel-perception-test-corpus-v1",
+            &[&source],
+        )
+        .unwrap();
+        (corpus, prediction, expected)
     }
 
     fn case_v1<'a>(
+        corpus: &CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
         prediction: &'a CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
         expected: MtgoObservedDecisionV1,
     ) -> MtgoDuelPerceptionEvaluationCaseV1<'a> {
         MtgoDuelPerceptionEvaluationCaseV1 {
-            case_id: "case-0001".to_owned(),
+            case_id: corpus.manifest_v1().samples[0].sample_id.clone(),
             source_manifest_sha256: prediction.source_manifest_sha256().to_owned(),
             source_canonical_bgra8_sha256: prediction.source_canonical_bgra8_sha256().to_owned(),
             source_frame_sequence: prediction.frame_sequence(),
@@ -1029,11 +1063,12 @@ mod tests {
     #[test]
     fn exact_semantics_and_required_families_pass_without_runtime_authority() {
         let profile = duel_perception_runtime_profile_for_test_v1();
-        let (prediction, expected) = fixture_v1(&profile);
+        let (corpus, prediction, expected) = fixture_v1(&profile);
         let evaluation = evaluate_untrusted_duel_perception_profile_v1(
             &profile,
-            spec_v1(&profile),
-            vec![case_v1(&prediction, expected)],
+            &corpus,
+            spec_v1(&profile, &corpus),
+            vec![case_v1(&corpus, &prediction, expected)],
         )
         .unwrap();
 
@@ -1053,13 +1088,14 @@ mod tests {
     #[test]
     fn semantic_mismatch_and_abstention_fail_declared_gate() {
         let profile = duel_perception_runtime_profile_for_test_v1();
-        let (prediction, mut expected) = fixture_v1(&profile);
+        let (corpus, prediction, mut expected) = fixture_v1(&profile);
         expected.payload.object_bindings[0].adapter_object_id = "manual-label:hand:0".to_owned();
         refresh_expected_payload_v1(&mut expected);
         let mismatch = evaluate_untrusted_duel_perception_profile_v1(
             &profile,
-            spec_v1(&profile),
-            vec![case_v1(&prediction, expected)],
+            &corpus,
+            spec_v1(&profile, &corpus),
+            vec![case_v1(&corpus, &prediction, expected)],
         )
         .unwrap();
         assert_eq!(mismatch.exact_observation_count(), 1);
@@ -1068,12 +1104,13 @@ mod tests {
         assert_eq!(mismatch.exact_payload_count(), 0);
         assert!(!mismatch.passes_declared_gate());
 
-        let (prediction, expected) = fixture_v1(&profile);
-        let mut abstained_case = case_v1(&prediction, expected);
+        let (corpus, prediction, expected) = fixture_v1(&profile);
+        let mut abstained_case = case_v1(&corpus, &prediction, expected);
         abstained_case.prediction = None;
         let abstained = evaluate_untrusted_duel_perception_profile_v1(
             &profile,
-            spec_v1(&profile),
+            &corpus,
+            spec_v1(&profile, &corpus),
             vec![abstained_case],
         )
         .unwrap();
@@ -1085,14 +1122,15 @@ mod tests {
     #[test]
     fn profile_source_and_coverage_substitution_fail_closed() {
         let profile = duel_perception_runtime_profile_for_test_v1();
-        let (prediction, expected) = fixture_v1(&profile);
-        let mut wrong_profile_spec = spec_v1(&profile);
+        let (corpus, prediction, expected) = fixture_v1(&profile);
+        let mut wrong_profile_spec = spec_v1(&profile, &corpus);
         wrong_profile_spec.perception_profile_commitment_sha256 = "e".repeat(64);
         assert_eq!(
             evaluate_untrusted_duel_perception_profile_v1(
                 &profile,
+                &corpus,
                 wrong_profile_spec,
-                vec![case_v1(&prediction, expected.clone())],
+                vec![case_v1(&corpus, &prediction, expected.clone())],
             )
             .err()
             .unwrap()
@@ -1100,29 +1138,62 @@ mod tests {
             "duel_perception_evaluation_profile_mismatch"
         );
 
-        let mut wrong_source_case = case_v1(&prediction, expected.clone());
+        let mut wrong_corpus_spec = spec_v1(&profile, &corpus);
+        wrong_corpus_spec.corpus_manifest_sha256 = "a".repeat(64);
+        assert_eq!(
+            evaluate_untrusted_duel_perception_profile_v1(
+                &profile,
+                &corpus,
+                wrong_corpus_spec,
+                vec![case_v1(&corpus, &prediction, expected.clone())],
+            )
+            .err()
+            .unwrap()
+            .code(),
+            "duel_perception_evaluation_corpus_mismatch"
+        );
+
+        assert_eq!(
+            evaluate_untrusted_duel_perception_profile_v1(
+                &profile,
+                &corpus,
+                spec_v1(&profile, &corpus),
+                vec![
+                    case_v1(&corpus, &prediction, expected.clone()),
+                    case_v1(&corpus, &prediction, expected.clone()),
+                ],
+            )
+            .err()
+            .unwrap()
+            .code(),
+            "duel_perception_evaluation_corpus_coverage"
+        );
+
+        let mut wrong_source_case = case_v1(&corpus, &prediction, expected.clone());
         wrong_source_case.source_canonical_bgra8_sha256 = "f".repeat(64);
         assert_eq!(
             evaluate_untrusted_duel_perception_profile_v1(
                 &profile,
-                spec_v1(&profile),
+                &corpus,
+                spec_v1(&profile, &corpus),
                 vec![wrong_source_case],
             )
             .err()
             .unwrap()
             .code(),
-            "duel_perception_expected_source_mismatch"
+            "duel_perception_evaluation_corpus_source_mismatch"
         );
 
-        let mut missing_family_spec = spec_v1(&profile);
+        let mut missing_family_spec = spec_v1(&profile, &corpus);
         missing_family_spec
             .required_action_families
             .push(MtgoDuelActionFamilyV1::CastOrPlotSpell);
         assert_eq!(
             evaluate_untrusted_duel_perception_profile_v1(
                 &profile,
+                &corpus,
                 missing_family_spec,
-                vec![case_v1(&prediction, expected)],
+                vec![case_v1(&corpus, &prediction, expected)],
             )
             .err()
             .unwrap()
@@ -1134,11 +1205,12 @@ mod tests {
     #[test]
     fn production_ratification_is_empty_and_private_test_path_is_profile_only() {
         let profile = duel_perception_runtime_profile_for_test_v1();
-        let (prediction, expected) = fixture_v1(&profile);
+        let (corpus, prediction, expected) = fixture_v1(&profile);
         let evaluation = evaluate_untrusted_duel_perception_profile_v1(
             &profile,
-            spec_v1(&profile),
-            vec![case_v1(&prediction, expected)],
+            &corpus,
+            spec_v1(&profile, &corpus),
+            vec![case_v1(&corpus, &prediction, expected)],
         )
         .unwrap();
         let commitment = evaluation.evaluation_commitment_sha256().to_owned();
@@ -1151,11 +1223,12 @@ mod tests {
         );
 
         let profile = duel_perception_runtime_profile_for_test_v1();
-        let (prediction, expected) = fixture_v1(&profile);
+        let (corpus, prediction, expected) = fixture_v1(&profile);
         let evaluation = evaluate_untrusted_duel_perception_profile_v1(
             &profile,
-            spec_v1(&profile),
-            vec![case_v1(&prediction, expected)],
+            &corpus,
+            spec_v1(&profile, &corpus),
+            vec![case_v1(&corpus, &prediction, expected)],
         )
         .unwrap();
         assert_eq!(evaluation.evaluation_commitment_sha256(), commitment);

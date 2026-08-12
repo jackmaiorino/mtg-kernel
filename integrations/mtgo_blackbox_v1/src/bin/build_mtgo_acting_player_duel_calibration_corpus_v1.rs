@@ -3,7 +3,6 @@ use mtgo_blackbox_v1::{
     check_untrusted_dxgi_capture_artifact_v1, CheckedUntrustedMtgoDxgiCaptureArtifactV1,
 };
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -39,16 +38,12 @@ fn run() -> Result<(), String> {
     let corpus =
         build_checked_untrusted_acting_player_duel_calibration_corpus_v1(&corpus_id, &checked_refs)
             .map_err(|error| error.to_string())?;
-    let manifest_bytes = serde_json::to_vec_pretty(corpus.manifest_v1())
-        .map_err(|error| format!("serialize corpus manifest: {error}"))?;
-    let manifest_sha256 = format!("{:x}", Sha256::digest(&manifest_bytes));
-
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
             "status": "checked_untrusted_not_admitted",
             "corpus_manifest": corpus.manifest_v1(),
-            "corpus_manifest_sha256": manifest_sha256,
+            "corpus_manifest_sha256": corpus.canonical_manifest_sha256(),
             "corpus_commitment_sha256": corpus.corpus_commitment_sha256(),
             "sample_count": corpus.sample_count(),
             "safe_for_semantic_evidence": corpus.safe_for_semantic_evidence(),

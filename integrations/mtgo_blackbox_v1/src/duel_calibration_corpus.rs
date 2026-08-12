@@ -59,6 +59,7 @@ pub struct MtgoActingPlayerDuelCalibrationCorpusManifestV1 {
 /// ```
 pub struct CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1 {
     manifest: MtgoActingPlayerDuelCalibrationCorpusManifestV1,
+    canonical_manifest_sha256: String,
     corpus_commitment_sha256: String,
 }
 
@@ -69,6 +70,10 @@ impl CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1 {
 
     pub fn corpus_commitment_sha256(&self) -> &str {
         &self.corpus_commitment_sha256
+    }
+
+    pub fn canonical_manifest_sha256(&self) -> &str {
+        &self.canonical_manifest_sha256
     }
 
     pub fn sample_count(&self) -> usize {
@@ -259,9 +264,13 @@ pub fn validate_untrusted_acting_player_duel_calibration_corpus_v1(
         }
     }
 
-    let corpus_commitment_sha256 = corpus_commitment_v1(manifest)?;
+    let canonical_manifest_bytes = serde_json::to_vec(manifest)
+        .map_err(|error| error_v1("duel_calibration_corpus_serialization", error.to_string()))?;
+    let canonical_manifest_sha256 = format!("{:x}", Sha256::digest(&canonical_manifest_bytes));
+    let corpus_commitment_sha256 = corpus_commitment_from_bytes_v1(&canonical_manifest_bytes);
     Ok(CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1 {
         manifest: manifest.clone(),
+        canonical_manifest_sha256,
         corpus_commitment_sha256,
     })
 }
@@ -303,16 +312,12 @@ fn require_same_capture_identity_v1(
     Ok(())
 }
 
-fn corpus_commitment_v1(
-    manifest: &MtgoActingPlayerDuelCalibrationCorpusManifestV1,
-) -> Result<String, MtgoContractErrorV1> {
-    let bytes = serde_json::to_vec(manifest)
-        .map_err(|error| error_v1("duel_calibration_corpus_serialization", error.to_string()))?;
+fn corpus_commitment_from_bytes_v1(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(CORPUS_COMMITMENT_DOMAIN_V1);
     hasher.update((bytes.len() as u64).to_be_bytes());
     hasher.update(bytes);
-    Ok(format!("{:x}", hasher.finalize()))
+    format!("{:x}", hasher.finalize())
 }
 
 fn validate_identifier_v1(value: &str) -> Result<(), MtgoContractErrorV1> {
@@ -406,6 +411,10 @@ mod tests {
         assert_eq!(
             first.corpus_commitment_sha256(),
             second.corpus_commitment_sha256()
+        );
+        assert_eq!(
+            first.canonical_manifest_sha256(),
+            second.canonical_manifest_sha256()
         );
     }
 
