@@ -4,7 +4,8 @@ use mtgo_blackbox_v1::{
     mtgo_visible_game_log_source_id_commitment_v1,
     parse_checked_untrusted_mtgo_visible_game_log_v1,
     CheckedUntrustedMtgoVisibleGameLogProjectionV1,
-    CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, MtgoVisibleGameLogTextViewV1,
+    CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, MtgoVisibleGameLogSemanticEventViewV1,
+    MtgoVisibleGameLogTextViewV1,
 };
 use sha2::{Digest, Sha256};
 use std::fs::Metadata;
@@ -58,6 +59,52 @@ pub struct OpaqueMtgoProcessEpochVisibleGameLogV1 {
     binding_commitment_sha256: String,
 }
 
+/// Player-role semantic events that retain their opaque process/window-bound
+/// Game Log source. The checked offline semantic projection cannot be
+/// substituted for this type.
+pub struct OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1 {
+    _source: OpaqueMtgoProcessEpochVisibleGameLogV1,
+    semantics: CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1,
+}
+
+impl OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1 {
+    pub fn event_count_v1(&self) -> usize {
+        self.semantics.event_count_v1()
+    }
+
+    pub fn event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+        self.semantics.event_v1(index)
+    }
+
+    pub fn classified_source_record_count_v1(&self) -> usize {
+        self.semantics.classified_source_record_count_v1()
+    }
+
+    pub fn unclassified_source_record_count_v1(&self) -> usize {
+        self.semantics.unclassified_source_record_count_v1()
+    }
+
+    pub fn semantic_projection_commitment_sha256_v1(&self) -> &str {
+        self.semantics.projection_commitment_sha256_v1()
+    }
+
+    pub fn source_bound_to_stable_game_window_and_process_epoch_v1(&self) -> bool {
+        true
+    }
+
+    pub fn complete_for_current_state_reconstruction_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
 impl OpaqueMtgoProcessEpochVisibleGameLogV1 {
     pub fn record_count_v1(&self) -> usize {
         self.projection.record_count_v1()
@@ -90,10 +137,10 @@ impl OpaqueMtgoProcessEpochVisibleGameLogV1 {
     /// Reduces the bound rendered lines to conservative public event kinds.
     /// The supplied alias must be the authorized seated account. Names are
     /// hashed or reduced to acting-player/opponent roles in the result.
-    pub fn classify_visible_semantics_v1(
-        &self,
+    pub fn into_visible_semantics_v1(
+        self,
         acting_player_alias: &str,
-    ) -> Result<CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, String> {
+    ) -> Result<OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1, String> {
         let semantics = classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(
             &self.projection,
             acting_player_alias,
@@ -104,7 +151,10 @@ impl OpaqueMtgoProcessEpochVisibleGameLogV1 {
         {
             return Err("visible Game Log semantic projection lost its bound source".to_owned());
         }
-        Ok(semantics)
+        Ok(OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1 {
+            _source: self,
+            semantics,
+        })
     }
 }
 
