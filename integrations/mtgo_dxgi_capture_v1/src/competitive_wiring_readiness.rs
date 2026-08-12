@@ -170,7 +170,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             player_visible_duel_source_gesture_target_protocol_present: true,
             player_visible_duel_source_gesture_target_pixels_rehashed: true,
             player_visible_duel_gesture_target_protocol_ratified: false,
-            player_visible_duel_gesture_continuation_target_binding_present: false,
+            player_visible_duel_gesture_continuation_target_binding_present: true,
             native_checkpoint_player_visible_only_duel_action_interface_present: false,
             current_duel_scorer_kernel_bookkeeping_withheld: false,
             native_checkpoint_pregame_interface_present: false,

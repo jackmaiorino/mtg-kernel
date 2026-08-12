@@ -1930,7 +1930,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_source_gesture_target_protocol_present: true",
         "player_visible_duel_source_gesture_target_pixels_rehashed: true",
         "player_visible_duel_gesture_target_protocol_ratified: false",
-        "player_visible_duel_gesture_continuation_target_binding_present: false",
+        "player_visible_duel_gesture_continuation_target_binding_present: true",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "native_checkpoint_pregame_interface_present: false",
@@ -1993,7 +1993,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_source_gesture_target_protocol_present: true",
         "player_visible_duel_source_gesture_target_pixels_rehashed: true",
         "player_visible_duel_gesture_target_protocol_ratified: false",
-        "player_visible_duel_gesture_continuation_target_binding_present: false",
+        "player_visible_duel_gesture_continuation_target_binding_present: true",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "public_model_owned_duel_action_path_present: false",
@@ -2808,6 +2808,10 @@ fn player_visible_gesture_target_protocol_withholds_kernel_identity_and_input() 
         "const RATIFIED_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_PROTOCOL_REVIEW_V1: Option<&str> = None",
         "pub(crate) fn check_untrusted_player_visible_duel_gesture_target_request_v1",
         "pub fn bind_opaque_player_visible_duel_source_gesture_target_v1",
+        "pub fn advance_opaque_player_visible_duel_gesture_target_v1",
+        "validate_same_duel_window_incarnation_v1(prior_manifest, current_manifest)",
+        "player-visible gesture continuation changed the sanitized visible decision",
+        "validate_player_visible_gesture_target_transition_v1(",
         "visible_frame_region_content_sha256_v1(&source.canonical_bgra8, &size, rect)",
         "pub fn safe_for_live_input_v1(&self) -> bool",
         "pub fn permits_event_session_recovery_v1(&self) -> bool",
@@ -2912,6 +2916,7 @@ fn player_visible_gesture_target_protocol_withholds_kernel_identity_and_input() 
 
     for exported in [
         "bind_opaque_player_visible_duel_source_gesture_target_v1,",
+        "advance_opaque_player_visible_duel_gesture_target_v1,",
         "AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,",
         "OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,",
     ] {

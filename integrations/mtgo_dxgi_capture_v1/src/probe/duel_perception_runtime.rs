@@ -817,15 +817,6 @@ pub fn bind_opaque_player_visible_duel_source_gesture_target_v1(
     primitive_index: u16,
     timeout_ms: u32,
 ) -> Result<OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1, String> {
-    if !(100..=60_000).contains(&timeout_ms) {
-        return Err(
-            "player-visible gesture-target timeout must be between 100 and 60000 ms".to_owned(),
-        );
-    }
-    let primitive = intent
-        .primitives_v1()
-        .get(usize::from(primitive_index))
-        .ok_or("player-visible gesture primitive is absent")?;
     if primitive_index != 0 {
         return Err(
             "source-frame target binding accepts only primitive zero; later primitives require a fresh visible continuation frame"
@@ -833,6 +824,195 @@ pub fn bind_opaque_player_visible_duel_source_gesture_target_v1(
         );
     }
     let perception = &intent.control.selection.perception;
+    let primitive = intent
+        .primitives_v1()
+        .first()
+        .ok_or("player-visible gesture primitive is absent")?;
+    let target_set = invoke_player_visible_duel_gesture_target_runtime_v1(
+        &intent,
+        perception,
+        profile,
+        runtime,
+        protocol,
+        primitive_index,
+        timeout_ms,
+    )?;
+    let selected_semantic = perception
+        .validated_decision
+        .legal_actions()
+        .get(intent.control.result.selected_index)
+        .ok_or("player-visible selected index is absent from the retained decision")?;
+    let matching_controls = perception
+        .visible_controls
+        .controls
+        .iter()
+        .filter(|candidate| candidate.semantic == *selected_semantic)
+        .collect::<Vec<_>>();
+    if matching_controls.len() != 1 {
+        return Err(
+            "player-visible source gesture lost its unique selected visible control".to_owned(),
+        );
+    }
+    let (selected_control_rect, selected_control_content_sha256) = frame_region_for_evidence_v1(
+        &perception.decision_record,
+        matching_controls[0].frame_region_evidence_id,
+    )?;
+    let targets = validate_player_visible_duel_source_gesture_targets_v1(
+        &target_set,
+        primitive,
+        perception,
+        PlayerVisibleGestureTargetExpectationV1 {
+            frame_id: perception.commitments_v1().frame_id,
+            frame_sequence: perception.commitments_v1().frame_sequence,
+            primitive_index,
+            selected_primary: Some((selected_control_rect, selected_control_content_sha256)),
+        },
+    )?;
+    Ok(OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1 {
+        intent,
+        primitive_index,
+        targets,
+        continuation_perception: None,
+    })
+}
+
+/// Advances one player-visible gesture target by exactly one primitive on a
+/// distinct newer visible frame. The same sanitized decision must remain in
+/// force, the MTGO process/window and classifier lineage must remain exact,
+/// and at least one prior-or-next target rectangle must visibly change. This
+/// observes UI continuation only and neither proves action causality nor
+/// creates an input command.
+pub fn advance_opaque_player_visible_duel_gesture_target_v1(
+    mut binding: OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
+    current_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    protocol: &AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1, String> {
+    let next_primitive_index = binding
+        .primitive_index
+        .checked_add(1)
+        .ok_or("player-visible gesture primitive index overflow")?;
+    let primitive = binding
+        .intent
+        .primitives_v1()
+        .get(usize::from(next_primitive_index))
+        .ok_or("player-visible gesture has no next primitive")?;
+    let prior_perception = binding.current_perception_v1();
+    let prior_manifest = &prior_perception.source_frame.source_frame.manifest;
+    let current_manifest = &current_perception.source_frame.source_frame.manifest;
+    validate_same_duel_window_incarnation_v1(prior_manifest, current_manifest)?;
+
+    let prior_commitments = prior_perception.commitments_v1();
+    let current_commitments = current_perception.commitments_v1();
+    if current_commitments.frame_sequence <= prior_commitments.frame_sequence
+        || current_commitments.frame_id == prior_commitments.frame_id
+        || current_commitments
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis
+            <= prior_commitments
+                .source_frame
+                .source_capture
+                .captured_at_unix_millis
+        || current_commitments
+            .source_frame
+            .source_capture
+            .capture_commitment_sha256
+            == prior_commitments
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+        || current_perception.runtime_identity_commitment_sha256
+            != prior_perception.runtime_identity_commitment_sha256
+        || current_perception
+            .source_frame
+            .perception_profile_commitment_sha256
+            != prior_perception
+                .source_frame
+                .perception_profile_commitment_sha256
+        || current_perception
+            .source_frame
+            .perception_profile_admission_commitment_sha256
+            != prior_perception
+                .source_frame
+                .perception_profile_admission_commitment_sha256
+    {
+        return Err(
+            "player-visible gesture continuation changed or reused its visible frame lineage"
+                .to_owned(),
+        );
+    }
+    let source_input = binding
+        .intent
+        .control
+        .selection
+        .perception
+        .player_visible_duel_decision_input_v1()
+        .map_err(|error| format!("build source player-visible gesture decision: {error}"))?;
+    let current_input = current_perception
+        .player_visible_duel_decision_input_v1()
+        .map_err(|error| format!("build continuation player-visible gesture decision: {error}"))?;
+    if current_input != source_input {
+        return Err(
+            "player-visible gesture continuation changed the sanitized visible decision".to_owned(),
+        );
+    }
+    let target_set = invoke_player_visible_duel_gesture_target_runtime_v1(
+        &binding.intent,
+        &current_perception,
+        profile,
+        runtime,
+        protocol,
+        next_primitive_index,
+        timeout_ms,
+    )?;
+    let targets = validate_player_visible_duel_source_gesture_targets_v1(
+        &target_set,
+        primitive,
+        &current_perception,
+        PlayerVisibleGestureTargetExpectationV1 {
+            frame_id: current_commitments.frame_id,
+            frame_sequence: current_commitments.frame_sequence,
+            primitive_index: next_primitive_index,
+            selected_primary: None,
+        },
+    )?;
+    validate_player_visible_gesture_target_transition_v1(
+        prior_perception,
+        &binding.targets,
+        &current_perception,
+        &targets,
+    )?;
+
+    binding.primitive_index = next_primitive_index;
+    binding.targets = targets;
+    binding.continuation_perception = Some(Box::new(current_perception));
+    Ok(binding)
+}
+
+fn invoke_player_visible_duel_gesture_target_runtime_v1(
+    intent: &OpaqueMtgoPlayerVisibleDuelGestureIntentV1,
+    perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    profile: &AdmittedMtgoDuelGestureProfileV1,
+    runtime: &OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
+    protocol: &AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,
+    primitive_index: u16,
+    timeout_ms: u32,
+) -> Result<MtgoPlayerVisibleDuelGestureTargetSetV1, String> {
+    if !(100..=60_000).contains(&timeout_ms) {
+        return Err(
+            "player-visible gesture-target timeout must be between 100 and 60000 ms".to_owned(),
+        );
+    }
+    if intent
+        .primitives_v1()
+        .get(usize::from(primitive_index))
+        .is_none()
+    {
+        return Err("player-visible gesture primitive is absent".to_owned());
+    }
     let perception_commitments = perception.commitments_v1();
     if profile.supported_action_families() != canonical_duel_gesture_action_families_v1()
         || !profile.supported_action_families().contains(
@@ -952,38 +1132,7 @@ pub fn bind_opaque_player_visible_duel_source_gesture_target_v1(
             "player-visible gesture-target response does not bind the exact request".to_owned(),
         );
     }
-    let selected_semantic = perception
-        .validated_decision
-        .legal_actions()
-        .get(intent.control.result.selected_index)
-        .ok_or("player-visible selected index is absent from the retained decision")?;
-    let matching_controls = perception
-        .visible_controls
-        .controls
-        .iter()
-        .filter(|candidate| candidate.semantic == *selected_semantic)
-        .collect::<Vec<_>>();
-    if matching_controls.len() != 1 {
-        return Err(
-            "player-visible source gesture lost its unique selected visible control".to_owned(),
-        );
-    }
-    let (selected_control_rect, selected_control_content_sha256) = frame_region_for_evidence_v1(
-        &perception.decision_record,
-        matching_controls[0].frame_region_evidence_id,
-    )?;
-    let targets = validate_player_visible_duel_source_gesture_targets_v1(
-        &response.target_set,
-        primitive,
-        perception,
-        selected_control_rect,
-        selected_control_content_sha256,
-    )?;
-    Ok(OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1 {
-        intent,
-        primitive_index,
-        targets,
-    })
+    Ok(response.target_set)
 }
 
 /// Copyable commitments for one owner-readable League or Challenge launch
@@ -1645,11 +1794,11 @@ struct PrivatePlayerVisibleGestureTargetRegionV1 {
     content_sha256: String,
 }
 
-struct PlayerVisibleGestureTargetSourceExpectationV1<'a> {
+struct PlayerVisibleGestureTargetExpectationV1<'a> {
     frame_id: u64,
     frame_sequence: u64,
-    selected_control_rect: &'a MtgoRectPxV1,
-    selected_control_content_sha256: &'a str,
+    primitive_index: u16,
+    selected_primary: Option<(&'a MtgoRectPxV1, &'a str)>,
 }
 
 struct SelectedPlayerVisibleGestureTargetV1<'a> {
@@ -1675,9 +1824,16 @@ pub struct OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1 {
     primitive_index: u16,
     #[allow(dead_code)]
     targets: Vec<PrivatePlayerVisibleGestureTargetRegionV1>,
+    continuation_perception: Option<Box<OpaqueMtgoAdmittedDuelPerceptionV1>>,
 }
 
 impl OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1 {
+    fn current_perception_v1(&self) -> &OpaqueMtgoAdmittedDuelPerceptionV1 {
+        self.continuation_perception
+            .as_deref()
+            .unwrap_or(&self.intent.control.selection.perception)
+    }
+
     pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
         self.intent.selected_action_v1()
     }
@@ -4749,20 +4905,10 @@ fn validate_player_visible_duel_source_gesture_targets_v1(
     target_set: &MtgoPlayerVisibleDuelGestureTargetSetV1,
     primitive: &MtgoPlayerVisibleDuelGesturePrimitiveV1,
     perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
-    selected_control_rect: &MtgoRectPxV1,
-    selected_control_content_sha256: &str,
+    expectation: PlayerVisibleGestureTargetExpectationV1<'_>,
 ) -> Result<Vec<PrivatePlayerVisibleGestureTargetRegionV1>, String> {
-    let commitments = perception.commitments_v1();
-    let selected_targets = select_player_visible_duel_source_gesture_targets_v1(
-        target_set,
-        primitive,
-        PlayerVisibleGestureTargetSourceExpectationV1 {
-            frame_id: commitments.frame_id,
-            frame_sequence: commitments.frame_sequence,
-            selected_control_rect,
-            selected_control_content_sha256,
-        },
-    )?;
+    let selected_targets =
+        select_player_visible_duel_source_gesture_targets_v1(target_set, primitive, expectation)?;
     let source = &perception.source_frame.source_frame;
     let size = MtgoSizePxV1 {
         width: source.manifest.frame.canonical_width,
@@ -4806,14 +4952,14 @@ fn validate_player_visible_gesture_target_pixels_v1(
 fn select_player_visible_duel_source_gesture_targets_v1<'a>(
     target_set: &'a MtgoPlayerVisibleDuelGestureTargetSetV1,
     primitive: &MtgoPlayerVisibleDuelGesturePrimitiveV1,
-    expected: PlayerVisibleGestureTargetSourceExpectationV1<'_>,
+    expected: PlayerVisibleGestureTargetExpectationV1<'_>,
 ) -> Result<Vec<SelectedPlayerVisibleGestureTargetV1<'a>>, String> {
     let required_roles =
         mtgo_blackbox_v1::required_player_visible_duel_gesture_target_roles_v1(primitive);
     if target_set.schema_version != 1
         || target_set.frame_id != expected.frame_id
         || target_set.frame_sequence != expected.frame_sequence
-        || target_set.primitive_index != 0
+        || target_set.primitive_index != expected.primitive_index
         || !target_set.candidate_set_complete
         || target_set.targets.len() != required_roles.len()
     {
@@ -4857,18 +5003,98 @@ fn select_player_visible_duel_source_gesture_targets_v1<'a>(
             return Err("player-visible gesture target role is absent or ambiguous".to_owned());
         }
         let target = matches[0];
-        if role == MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl
-            && (&target.rect_client_px != expected.selected_control_rect
-                || target.content_sha256 != expected.selected_control_content_sha256)
-        {
-            return Err(
-                "player-visible gesture primary differs from the selected visible control"
-                    .to_owned(),
-            );
+        if role == MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl {
+            if let Some((selected_control_rect, selected_control_content_sha256)) =
+                expected.selected_primary
+            {
+                if &target.rect_client_px != selected_control_rect
+                    || target.content_sha256 != selected_control_content_sha256
+                {
+                    return Err(
+                        "player-visible gesture primary differs from the selected visible control"
+                            .to_owned(),
+                    );
+                }
+            }
         }
         resolved.push(SelectedPlayerVisibleGestureTargetV1 { role, target });
     }
     Ok(resolved)
+}
+
+fn validate_player_visible_gesture_target_transition_v1(
+    prior_perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    prior_targets: &[PrivatePlayerVisibleGestureTargetRegionV1],
+    current_perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    current_targets: &[PrivatePlayerVisibleGestureTargetRegionV1],
+) -> Result<(), String> {
+    let before_source = &prior_perception.source_frame.source_frame;
+    let after_source = &current_perception.source_frame.source_frame;
+    let before_size = MtgoSizePxV1 {
+        width: before_source.manifest.frame.canonical_width,
+        height: before_source.manifest.frame.canonical_height,
+    };
+    let after_size = MtgoSizePxV1 {
+        width: after_source.manifest.frame.canonical_width,
+        height: after_source.manifest.frame.canonical_height,
+    };
+    if before_size != after_size {
+        return Err("player-visible gesture continuation changed client size".to_owned());
+    }
+
+    validate_player_visible_gesture_target_transition_pixels_v1(
+        &before_source.canonical_bgra8,
+        &after_source.canonical_bgra8,
+        &before_size,
+        prior_targets,
+        current_targets,
+    )
+}
+
+fn validate_player_visible_gesture_target_transition_pixels_v1(
+    before_pixels: &[u8],
+    after_pixels: &[u8],
+    size: &MtgoSizePxV1,
+    prior_targets: &[PrivatePlayerVisibleGestureTargetRegionV1],
+    current_targets: &[PrivatePlayerVisibleGestureTargetRegionV1],
+) -> Result<(), String> {
+    for target in prior_targets {
+        let before_sha256 =
+            visible_frame_region_content_sha256_v1(before_pixels, size, &target.rect_client_px)
+                .map_err(|error| format!("rehash prior player-visible gesture target: {error}"))?;
+        if before_sha256 != target.content_sha256 {
+            return Err(
+                "prior player-visible gesture target differs from its retained pixels".to_owned(),
+            );
+        }
+        let after_sha256 =
+            visible_frame_region_content_sha256_v1(after_pixels, size, &target.rect_client_px)
+                .map_err(|error| {
+                    format!("rehash current player-visible gesture target: {error}")
+                })?;
+        if before_sha256 != after_sha256 {
+            return Ok(());
+        }
+    }
+    for target in current_targets {
+        let before_sha256 =
+            visible_frame_region_content_sha256_v1(before_pixels, size, &target.rect_client_px)
+                .map_err(|error| format!("rehash prior player-visible gesture target: {error}"))?;
+        let after_sha256 =
+            visible_frame_region_content_sha256_v1(after_pixels, size, &target.rect_client_px)
+                .map_err(|error| {
+                    format!("rehash current player-visible gesture target: {error}")
+                })?;
+        if after_sha256 != target.content_sha256 {
+            return Err(
+                "current player-visible gesture target differs from its retained pixels".to_owned(),
+            );
+        }
+        if before_sha256 != after_sha256 {
+            return Ok(());
+        }
+    }
+    Err("no target-related visible change ties adjacent player-visible gesture frames".to_owned())
 }
 
 /// Recaptures and reclassifies the exact current duel state immediately before
@@ -7050,11 +7276,11 @@ mod tests {
             candidate_set_complete: true,
             targets: vec![primary.clone()],
         };
-        let expectation = || PlayerVisibleGestureTargetSourceExpectationV1 {
+        let expectation = || PlayerVisibleGestureTargetExpectationV1 {
             frame_id: 17,
             frame_sequence: 23,
-            selected_control_rect: &primary_rect,
-            selected_control_content_sha256: &primary_sha256,
+            primitive_index: 0,
+            selected_primary: Some((&primary_rect, &primary_sha256)),
         };
         let selected =
             select_player_visible_duel_source_gesture_targets_v1(&base, &primitive, expectation())
@@ -7106,6 +7332,44 @@ mod tests {
             expectation(),
         )
         .is_err());
+
+        let continuation = MtgoPlayerVisibleDuelGestureTargetSetV1 {
+            schema_version: 1,
+            frame_id: 31,
+            frame_sequence: 37,
+            primitive_index: 1,
+            candidate_set_complete: true,
+            targets: vec![visible_target_candidate_v1(
+                "menu-choice",
+                MtgoPlayerVisibleDuelGestureTargetRoleV1::SemanticMenuChoice,
+                MtgoRectPxV1 {
+                    x: 6,
+                    y: 7,
+                    width: 8,
+                    height: 9,
+                },
+                "c".repeat(64),
+            )],
+        };
+        let continuation_primitive =
+            MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivateSemanticMenuChoice {
+                activation: mtgo_blackbox_v1::MtgoDuelPrimaryActivationV1::SingleLeftClick,
+            };
+        assert_eq!(
+            select_player_visible_duel_source_gesture_targets_v1(
+                &continuation,
+                &continuation_primitive,
+                PlayerVisibleGestureTargetExpectationV1 {
+                    frame_id: 31,
+                    frame_sequence: 37,
+                    primitive_index: 1,
+                    selected_primary: None,
+                },
+            )
+            .unwrap()
+            .len(),
+            1
+        );
     }
 
     #[test]
@@ -7144,6 +7408,126 @@ mod tests {
             validate_player_visible_gesture_target_pixels_v1(&pixels, &size, &changed_target,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn visible_target_continuation_requires_target_change_and_rehashes_both_frames() {
+        let size = MtgoSizePxV1 {
+            width: 3,
+            height: 1,
+        };
+        let prior_rect = MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        let current_rect = MtgoRectPxV1 {
+            x: 2,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        let before = [1_u8, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255];
+        let mut after = before;
+        after[0] ^= 1;
+        let prior = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl,
+            rect_client_px: prior_rect.clone(),
+            content_sha256: visible_frame_region_content_sha256_v1(&before, &size, &prior_rect)
+                .unwrap(),
+        };
+        let current = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::SubmitControl,
+            rect_client_px: current_rect.clone(),
+            content_sha256: visible_frame_region_content_sha256_v1(&after, &size, &current_rect)
+                .unwrap(),
+        };
+        validate_player_visible_gesture_target_transition_pixels_v1(
+            &before,
+            &after,
+            &size,
+            &[prior],
+            &[current],
+        )
+        .unwrap();
+
+        let unchanged_prior = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl,
+            rect_client_px: prior_rect.clone(),
+            content_sha256: visible_frame_region_content_sha256_v1(&before, &size, &prior_rect)
+                .unwrap(),
+        };
+        let unchanged_current = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::SubmitControl,
+            rect_client_px: current_rect.clone(),
+            content_sha256: visible_frame_region_content_sha256_v1(&before, &size, &current_rect)
+                .unwrap(),
+        };
+        assert!(validate_player_visible_gesture_target_transition_pixels_v1(
+            &before,
+            &before,
+            &size,
+            &[unchanged_prior],
+            &[unchanged_current],
+        )
+        .is_err());
+
+        let forged_prior = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl,
+            rect_client_px: prior_rect,
+            content_sha256: "0".repeat(64),
+        };
+        let current = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::SubmitControl,
+            rect_client_px: current_rect.clone(),
+            content_sha256: visible_frame_region_content_sha256_v1(&after, &size, &current_rect)
+                .unwrap(),
+        };
+        assert!(validate_player_visible_gesture_target_transition_pixels_v1(
+            &before,
+            &after,
+            &size,
+            &[forged_prior],
+            &[current],
+        )
+        .is_err());
+
+        let prior = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl,
+            rect_client_px: MtgoRectPxV1 {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            content_sha256: visible_frame_region_content_sha256_v1(
+                &before,
+                &size,
+                &MtgoRectPxV1 {
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 1,
+                },
+            )
+            .unwrap(),
+        };
+        let forged_current = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::SubmitControl,
+            rect_client_px: current_rect,
+            content_sha256: "f".repeat(64),
+        };
+        let mut after_current_changed = before;
+        after_current_changed[8] ^= 1;
+        assert!(validate_player_visible_gesture_target_transition_pixels_v1(
+            &before,
+            &after_current_changed,
+            &size,
+            &[prior],
+            &[forged_current],
+        )
+        .is_err());
     }
 
     #[test]

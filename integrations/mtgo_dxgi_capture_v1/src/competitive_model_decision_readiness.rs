@@ -99,7 +99,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         player_visible_duel_source_gesture_target_protocol_present: true,
         player_visible_duel_source_gesture_target_pixels_rehashed: true,
         player_visible_duel_gesture_target_protocol_ratified: false,
-        player_visible_duel_gesture_continuation_target_binding_present: false,
+        player_visible_duel_gesture_continuation_target_binding_present: true,
         ongoing_player_visible_history_to_duel_scorer_bridge_present: true,
         native_checkpoint_player_visible_only_duel_action_interface_present: false,
         current_duel_scorer_kernel_bookkeeping_withheld: false,
@@ -153,7 +153,7 @@ mod tests {
         assert!(report.player_visible_duel_source_gesture_target_protocol_present);
         assert!(report.player_visible_duel_source_gesture_target_pixels_rehashed);
         assert!(!report.player_visible_duel_gesture_target_protocol_ratified);
-        assert!(!report.player_visible_duel_gesture_continuation_target_binding_present);
+        assert!(report.player_visible_duel_gesture_continuation_target_binding_present);
         assert!(report.ongoing_player_visible_history_to_duel_scorer_bridge_present);
         assert!(!report.native_checkpoint_player_visible_only_duel_action_interface_present);
         assert!(!report.current_duel_scorer_kernel_bookkeeping_withheld);
