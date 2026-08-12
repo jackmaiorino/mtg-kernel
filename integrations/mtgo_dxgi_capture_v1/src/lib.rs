@@ -258,9 +258,12 @@ pub use competitive_operator_bootstrap::{
 
 #[cfg(target_os = "windows")]
 pub use competitive_operator_loop::{
-    advance_competitive_post_entry_operator_observed_v1, begin_competitive_post_entry_operator_v1,
+    advance_competitive_post_entry_operator_observed_v1,
+    advance_competitive_post_entry_operator_player_visible_gameplay_target_v1,
+    begin_competitive_post_entry_operator_v1,
     bind_competitive_post_entry_operator_match_launch_identity_v1,
     bind_competitive_post_entry_operator_player_visible_gameplay_gesture_v1,
+    bind_competitive_post_entry_operator_player_visible_gameplay_source_target_v1,
     checkout_competitive_post_entry_operator_attended_native_pregame_v1,
     checkout_competitive_post_entry_operator_gameplay_v1,
     checkout_competitive_post_entry_operator_native_pregame_v1,
@@ -290,6 +293,7 @@ pub use competitive_operator_loop::{
     OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1,
     OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayGestureV1,
     OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1,
+    OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayTargetV1,
     OpaqueMtgoCompetitivePostEntryOperatorV1, OpaqueMtgoPendingCompetitiveOperatorLifecycleV1,
     OpaqueMtgoPreparedCompetitiveOperatorLifecycleV1,
     OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1,
