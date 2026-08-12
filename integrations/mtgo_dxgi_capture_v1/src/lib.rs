@@ -339,11 +339,9 @@ pub use competitive_visible_match_memory::{
     bind_match_scoped_competitive_player_visible_game_memory_v1,
     MtgoCompetitiveExternalConfirmedDecisionV1, MtgoCompetitiveExternalPublicGameLogEventV1,
     MtgoCompetitiveExternalPublicHistoryConsumerV1, MtgoCompetitiveExternalPublicHistoryHeaderV1,
-    MtgoCompetitiveExternalPublicHistoryOrderingV1,
-    MtgoCompetitiveExternalVisibleBattlefieldCardV1, MtgoCompetitiveExternalVisibleObservationV1,
-    MtgoCompetitiveExternalVisiblePublicZoneCardV1, MtgoCompetitiveExternalVisibleStackItemV1,
-    MtgoCompetitivePlayerRelativeGameWinnerV1, OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1,
-    OpaqueMtgoCompetitiveVisibleGameOutcomeV1, MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
+    MtgoCompetitiveExternalPublicHistoryOrderingV1, MtgoCompetitivePlayerRelativeGameWinnerV1,
+    OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+    MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
 };
 
 #[cfg(target_os = "windows")]
@@ -414,6 +412,7 @@ pub use probe::{
     run_visible_accessibility_probe_cli_v1, score_and_select_card_aware_bottoming_model_v5,
     score_and_select_card_aware_pregame_model_v4,
     score_and_select_opaque_admitted_duel_perception_v1,
+    score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
     score_and_select_pinned_current_solitaire_pregame_v1, score_and_select_pregame_model_v3,
     start_card_aware_bottoming_session_v5, validate_card_aware_bottoming_score_response_v5,
     validate_card_aware_pregame_score_response_v4, validate_pregame_score_response_v3,

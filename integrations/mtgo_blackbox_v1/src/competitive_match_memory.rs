@@ -1,8 +1,9 @@
 use crate::{
+    build_player_visible_confirmed_duel_decision_v1,
     CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1, MtgoCompetitiveEventKindV1,
-    MtgoContractErrorV1,
+    MtgoContractErrorV1, MtgoPlayerVisibleConfirmedDuelDecisionV1,
 };
-use mtg_kernel::rl::{ActionSemanticV1, ObservationV5};
+use mtg_kernel::rl::ActionSemanticV1;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -21,8 +22,7 @@ struct MtgoCompetitivePlayerVisibleDecisionRecordV1 {
     source_frame_sha256: String,
     after_frame_id: u64,
     after_frame_sequence: u64,
-    observation: ObservationV5,
-    selected_semantic: ActionSemanticV1,
+    player_visible_decision: MtgoPlayerVisibleConfirmedDuelDecisionV1,
     decision_commitment_sha256: String,
     selection_commitment_sha256: String,
     visible_postcondition_commitment_sha256: String,
@@ -60,12 +60,11 @@ impl<'a> MtgoCompetitivePlayerVisibleDecisionViewV1<'a> {
         self.record.sequence
     }
 
-    pub fn observation_v1(&self) -> &ObservationV5 {
-        &self.record.observation
-    }
-
-    pub fn selected_semantic_v1(&self) -> &ActionSemanticV1 {
-        &self.record.selected_semantic
+    /// Returns the retained decision as owned player-visible state plus its one
+    /// confirmed selected action. Kernel and adapter identifiers remain in the
+    /// private history record and cannot cross this public seam.
+    pub fn player_visible_decision_v1(&self) -> &MtgoPlayerVisibleConfirmedDuelDecisionV1 {
+        &self.record.player_visible_decision
     }
 
     pub fn source_frame_sequence_v1(&self) -> u64 {
@@ -292,8 +291,10 @@ fn decision_record_v1(
         source_frame_sha256: confirmed.source_frame_sha256_v1().to_owned(),
         after_frame_id: confirmed.after_frame_id(),
         after_frame_sequence: confirmed.after_frame_sequence(),
-        observation: confirmed.source_observation_v1().clone(),
-        selected_semantic: confirmed.selected_semantic_v1().clone(),
+        player_visible_decision: build_player_visible_confirmed_duel_decision_v1(
+            confirmed.source_observation_v1(),
+            confirmed.selected_semantic_v1(),
+        )?,
         decision_commitment_sha256: confirmed.decision_commitment_sha256_v1().to_owned(),
         selection_commitment_sha256: confirmed.selection_commitment_sha256_v1().to_owned(),
         visible_postcondition_commitment_sha256: confirmed
@@ -435,14 +436,39 @@ mod tests {
         assert_eq!(history.history_commitment_sha256_v1().len(), 64);
         let decision = history.decision_v1(0).unwrap();
         assert_eq!(decision.sequence_v1(), 1);
+        let visible_input = decision.player_visible_decision_v1();
         assert!(matches!(
-            decision.selected_semantic_v1(),
-            ActionSemanticV1::PlayLand { .. }
+            visible_input.selected_action,
+            crate::MtgoPlayerVisibleDuelActionV1::PlayLand { .. }
         ));
         assert_eq!(
-            decision.observation_v1().acting_player,
-            action_actor_v1(decision.selected_semantic_v1()).unwrap()
+            visible_input.current_state.acting_player,
+            crate::PlayerSeatV1::P0
         );
+        let json = serde_json::to_value(visible_input).unwrap();
+        fn reject_forbidden_keys(value: &serde_json::Value) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    for (key, child) in fields {
+                        assert!(
+                            !matches!(
+                                key.as_str(),
+                                "arena_id" | "card_db_id" | "zone_change_count" | "engine_context"
+                            ),
+                            "forbidden history field: {key}"
+                        );
+                        reject_forbidden_keys(child);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for child in values {
+                        reject_forbidden_keys(child);
+                    }
+                }
+                _ => {}
+            }
+        }
+        reject_forbidden_keys(&json);
         assert!(decision.after_frame_sequence_v1() > decision.source_frame_sequence_v1());
         assert!(!history.safe_for_model_scoring_v1());
         assert!(!history.safe_for_input_v1());

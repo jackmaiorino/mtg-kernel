@@ -391,6 +391,18 @@ impl OpaqueMtgoAdmittedDuelPerceptionV1 {
         false
     }
 
+    /// Produces the owned player-visible current-state and ordered-action
+    /// contract intended for the future kernel scorer. Capture provenance and
+    /// the complete kernel observation remain sealed in this opaque value.
+    pub fn player_visible_duel_decision_input_v1(
+        &self,
+    ) -> Result<
+        mtgo_blackbox_v1::MtgoPlayerVisibleDuelDecisionInputV1,
+        mtgo_blackbox_v1::MtgoContractErrorV1,
+    > {
+        mtgo_blackbox_v1::build_player_visible_duel_decision_input_v1(&self.validated_decision)
+    }
+
     pub(crate) fn competitive_lifecycle_v1(
         &self,
     ) -> Option<&CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1> {

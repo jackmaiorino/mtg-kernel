@@ -12,6 +12,7 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub purpose: String,
     pub supported_event_kinds: Vec<MtgoCompetitiveEventKindV1>,
     pub native_checkpoint_duel_action_interface_present: bool,
+    pub player_visible_duel_decision_input_contract_present: bool,
     pub native_checkpoint_player_visible_only_duel_action_interface_present: bool,
     pub current_duel_scorer_kernel_bookkeeping_withheld: bool,
     pub public_model_owned_duel_action_path_present: bool,
@@ -39,6 +40,7 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
 impl MtgoCompetitiveModelDecisionReadinessV1 {
     pub fn recompute_all_required_model_decision_surfaces_present_v1(&self) -> bool {
         self.native_checkpoint_duel_action_interface_present
+            && self.player_visible_duel_decision_input_contract_present
             && self.native_checkpoint_player_visible_only_duel_action_interface_present
             && self.current_duel_scorer_kernel_bookkeeping_withheld
             && self.public_model_owned_duel_action_path_present
@@ -68,6 +70,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
             MtgoCompetitiveEventKindV1::Challenge,
         ],
         native_checkpoint_duel_action_interface_present: true,
+        player_visible_duel_decision_input_contract_present: true,
         native_checkpoint_player_visible_only_duel_action_interface_present: false,
         current_duel_scorer_kernel_bookkeeping_withheld: false,
         public_model_owned_duel_action_path_present: true,
@@ -111,6 +114,7 @@ mod tests {
             ]
         );
         assert!(report.native_checkpoint_duel_action_interface_present);
+        assert!(report.player_visible_duel_decision_input_contract_present);
         assert!(!report.native_checkpoint_player_visible_only_duel_action_interface_present);
         assert!(!report.current_duel_scorer_kernel_bookkeeping_withheld);
         assert!(report.public_model_owned_duel_action_path_present);
