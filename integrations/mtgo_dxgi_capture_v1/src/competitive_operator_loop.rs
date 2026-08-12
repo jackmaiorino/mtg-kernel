@@ -526,6 +526,22 @@ pub struct OpaqueMtgoScoredCompetitiveOperatorNativePregameV1 {
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 }
 
+/// Offline checked scorer result that retains the exact attended visible-log
+/// source without exposing its transport. The scorer receives only the
+/// ordinary player-visible pregame input and cannot recover this source.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1>();
+/// ```
+pub struct OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1 {
+    scored: OpaqueMtgoScoredCompetitiveOperatorNativePregameV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1,
+    visible_game_log_lease_commitment_sha256: String,
+}
+
 /// Move-only proof that the full post-entry ownership chain survived one
 /// checked-untrusted pregame score and exact visible semantic resolution.
 /// It still cannot recover the event session or reach live input. A future
@@ -552,6 +568,22 @@ pub struct OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1 {
     resolution: CheckedUntrustedMtgoCompetitivePregameSemanticResolutionV1,
     operator_resolution_commitment_sha256: String,
     _prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+/// Move-only offline proof that the exact attended visible-log source survives
+/// pregame scoring and semantic resolution. It grants no event-session or
+/// input authority and exposes only the conservative visible event projection.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1>();
+/// ```
+pub struct OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1 {
+    resolved: OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1,
+    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1,
+    visible_game_log_lease_commitment_sha256: String,
 }
 
 /// Move-only ownership of every post-entry resource while the non-cloneable
@@ -675,6 +707,85 @@ impl OpaqueMtgoResolvedCompetitiveOperatorNativePregameV1 {
     }
 
     pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+impl OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1 {
+    pub fn selected_action_v1(&self) -> &crate::MtgoCompetitiveNativePregameActionV1 {
+        self.scored.scored_request.selected_action_v1()
+    }
+
+    pub fn visible_game_log_snapshot_present_v1(&self) -> bool {
+        matches!(
+            self.visible_game_log,
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(_)
+        )
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+}
+
+impl OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1 {
+    pub fn selected_action_v1(&self) -> &crate::MtgoCompetitivePregameSelectedActionV1 {
+        self.resolved.selected_action_v1()
+    }
+
+    pub fn expected_postcondition_v1(
+        &self,
+    ) -> &crate::MtgoCompetitivePregameExpectedPostconditionV1 {
+        self.resolved.expected_postcondition_v1()
+    }
+
+    pub fn operator_resolution_commitment_sha256_v1(&self) -> &str {
+        self.resolved.operator_resolution_commitment_sha256_v1()
+    }
+
+    pub fn visible_game_log_lease_commitment_sha256_v1(&self) -> &str {
+        &self.visible_game_log_lease_commitment_sha256
+    }
+
+    pub fn visible_game_log_snapshot_commitment_sha256_v1(&self) -> Option<&str> {
+        match &self.visible_game_log {
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(_) => None,
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => {
+                Some(snapshot.snapshot_commitment_sha256_v1())
+            }
+        }
+    }
+
+    pub fn visible_game_log_event_count_v1(&self) -> Option<usize> {
+        match &self.visible_game_log {
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(_) => None,
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => {
+                Some(snapshot.event_count_v1())
+            }
+        }
+    }
+
+    pub fn visible_game_log_event_v1(
+        &self,
+        index: usize,
+    ) -> Option<mtgo_blackbox_v1::MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+        match &self.visible_game_log {
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(_) => None,
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => {
+                snapshot.event_v1(index)
+            }
+        }
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
         false
     }
 }
@@ -1162,6 +1273,30 @@ pub fn score_checked_untrusted_competitive_operator_native_pregame_v1<
     })
 }
 
+/// Exercises the complete attended ownership chain through an offline scorer.
+/// Only the visible-only pregame request is scored; the bound Game Log source
+/// stays sealed in the returned move-only holder.
+pub fn score_checked_untrusted_competitive_operator_attended_native_pregame_v1<
+    S: MtgoCompetitiveNativePregameScorerV1,
+>(
+    value: OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1, String> {
+    let OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
+        request,
+        visible_identity,
+        visible_game_log,
+        visible_game_log_lease_commitment_sha256,
+    } = value;
+    let scored = score_checked_untrusted_competitive_operator_native_pregame_v1(request, scorer)?;
+    Ok(OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1 {
+        scored,
+        visible_identity,
+        visible_game_log,
+        visible_game_log_lease_commitment_sha256,
+    })
+}
+
 /// Carries every retained post-entry resource through exact coordinate-free
 /// pregame semantic resolution. This is an offline ownership proof only.
 pub fn resolve_checked_untrusted_competitive_operator_native_pregame_v1(
@@ -1203,6 +1338,29 @@ pub fn resolve_checked_untrusted_competitive_operator_native_pregame_v1(
         operator_resolution_commitment_sha256,
         _prior_operator: prior_operator,
     })
+}
+
+/// Carries the sealed attended visible-log source through exact offline
+/// semantic resolution. This proves ownership continuity only and creates no
+/// live resume or input path.
+pub fn resolve_checked_untrusted_competitive_operator_attended_native_pregame_v1(
+    value: OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1,
+) -> Result<OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1, String> {
+    let OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1 {
+        scored,
+        visible_identity,
+        visible_game_log,
+        visible_game_log_lease_commitment_sha256,
+    } = value;
+    let resolved = resolve_checked_untrusted_competitive_operator_native_pregame_v1(scored)?;
+    Ok(
+        OpaqueMtgoResolvedCompetitiveOperatorAttendedNativePregameV1 {
+            resolved,
+            _visible_identity: visible_identity,
+            visible_game_log,
+            visible_game_log_lease_commitment_sha256,
+        },
+    )
 }
 
 /// Consumes the exact Sideboarding operator state into one player-visible
