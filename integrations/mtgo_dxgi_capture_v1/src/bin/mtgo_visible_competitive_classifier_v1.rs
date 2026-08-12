@@ -16,8 +16,9 @@ use mtgo_blackbox_v1::{
     MtgoCompetitiveEventVisibleStatusV1, MtgoCompetitiveLifecyclePhaseV1, MtgoEvidenceSourceV1,
     MtgoLifecycleVisibleFactKindV1, MtgoLifecycleVisibleFactV1,
     MtgoObservationReconstructionAuditV1, MtgoObservedDecisionV1,
-    MtgoPlayerVisibleDuelDecisionInputV1, MtgoPlayerVisibleDuelGesturePlanV1,
-    MtgoPlayerVisibleDuelGestureTargetRoleV1, MtgoRectPxV1, MtgoSizePxV1,
+    MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoPlayerVisibleDuelDecisionInputV1,
+    MtgoPlayerVisibleDuelGesturePlanV1, MtgoPlayerVisibleDuelGestureTargetRoleV1,
+    MtgoPlayerVisibleGameplayPostconditionKindV1, MtgoRectPxV1, MtgoSizePxV1,
     MtgoVisibleActionControlSetV1, MtgoVisibleCompetitiveEventListingSelectionV1,
     MtgoVisibleCompetitiveEventRecordV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
     MtgoVisibleCompetitiveSideboardCardV1, MtgoVisibleCompetitiveSideboardSnapshotV1,
@@ -71,6 +72,9 @@ const DUEL_PERCEPTION_MODE_ARGUMENT_V1: &str = "--mtgo-visible-duel-perception-v
 const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_MODE_ARGUMENT_V1: &str =
     "--mtgo-player-visible-duel-gesture-target-v1";
 #[cfg(target_os = "windows")]
+const PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_MODE_ARGUMENT_V1: &str =
+    "--mtgo-player-visible-gameplay-postcondition-v1";
+#[cfg(target_os = "windows")]
 const EVENT_LISTING_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1\0";
 #[cfg(target_os = "windows")]
 const NAVIGATION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1\0";
@@ -83,6 +87,9 @@ const DUEL_PERCEPTION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_DUEL_PERCEPTION_
 #[cfg(target_os = "windows")]
 const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_PROTOCOL_MAGIC_V1: &[u8] =
     b"MTGO_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_V1\0";
+#[cfg(target_os = "windows")]
+const PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_PROTOCOL_MAGIC_V1: &[u8] =
+    b"MTGO_PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_V1\0";
 #[cfg(target_os = "windows")]
 const EVENT_LISTING_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_event_listing_v1";
 #[cfg(target_os = "windows")]
@@ -130,6 +137,9 @@ const DUEL_PERCEPTION_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-duel-percepti
 const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-duel-gesture-target-request-v1";
 #[cfg(target_os = "windows")]
+const PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-player-visible-gameplay-postcondition-request-v1";
+#[cfg(target_os = "windows")]
 const DUEL_PERCEPTION_DYNAMIC_ID_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-perception-dynamic-id-v1";
 #[cfg(target_os = "windows")]
 const NAVIGATION_SNAPSHOT_ID_DOMAIN_V1: &[u8] =
@@ -156,6 +166,8 @@ const MAX_DUEL_PERCEPTION_PROFILES_V1: usize = 256;
 const MAX_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_PROFILES_V1: usize = 1024;
 #[cfg(target_os = "windows")]
 const MAX_PLAYER_VISIBLE_DUEL_GESTURE_TARGETS_V1: usize = 8;
+#[cfg(target_os = "windows")]
+const MAX_PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_REGIONS_V1: usize = 16;
 #[cfg(target_os = "windows")]
 const MAX_EXPECTED_LABEL_BYTES_V1: usize = 256;
 
@@ -292,6 +304,8 @@ struct MtgoPlayerVisibleDuelGestureTargetClassifierAssetsV1 {
     scope: String,
     canonical_pixel_format: String,
     profiles: Vec<MtgoPlayerVisibleDuelGestureTargetReferenceProfileV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    gameplay_postcondition_profiles: Vec<MtgoPlayerVisibleGameplayPostconditionReferenceProfileV1>,
 }
 
 #[cfg(target_os = "windows")]
@@ -379,6 +393,88 @@ struct MtgoPlayerVisibleDuelGestureTargetProcessResponseWireV1 {
     schema_version: u32,
     request_commitment_sha256: String,
     target_set: MtgoPlayerVisibleDuelGestureTargetSetWireV1,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoPlayerVisibleGameplayPostconditionReferenceProfileV1 {
+    profile_id: String,
+    gesture_evaluation_commitment_sha256: String,
+    gesture_profile_admission_commitment_sha256: String,
+    client_size_px: MtgoSizePxV1,
+    player_visible_decision: MtgoPlayerVisibleConfirmedDuelDecisionV1,
+    gesture_plan: MtgoPlayerVisibleDuelGesturePlanV1,
+    primitive_index: u16,
+    regions: Vec<MtgoPlayerVisibleGameplayPostconditionReferenceRegionV1>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoPlayerVisibleGameplayPostconditionReferenceRegionV1 {
+    region_id: String,
+    kind: MtgoPlayerVisibleGameplayPostconditionKindV1,
+    rect_client_px: MtgoRectPxV1,
+    accepted_reference_sha256s: Vec<String>,
+    confidence_bps: u16,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoPlayerVisibleGameplayPostconditionRequestHeaderWireV1 {
+    schema_version: u32,
+    protocol: String,
+    frame_id: u64,
+    frame_sequence: u64,
+    canonical_width: u32,
+    canonical_height: u32,
+    canonical_stride: u32,
+    canonical_byte_length: usize,
+    canonical_bgra8_sha256: String,
+    source_capture_commitment_sha256: String,
+    perception_result_commitment_sha256: String,
+    player_visible_decision: MtgoPlayerVisibleConfirmedDuelDecisionV1,
+    gesture_plan: MtgoPlayerVisibleDuelGesturePlanV1,
+    primitive_index: u16,
+    gesture_evaluation_commitment_sha256: String,
+    gesture_profile_admission_commitment_sha256: String,
+    runtime_identity_commitment_sha256: String,
+    runtime_binary_sha256: String,
+    assets_manifest_sha256: String,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoPlayerVisibleGameplayPostconditionRegionCandidateWireV1 {
+    region_id: String,
+    kind: MtgoPlayerVisibleGameplayPostconditionKindV1,
+    rect_client_px: MtgoRectPxV1,
+    content_sha256: String,
+    confidence_bps: u16,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoPlayerVisibleGameplayPostconditionRegionSetWireV1 {
+    schema_version: u32,
+    frame_id: u64,
+    frame_sequence: u64,
+    primitive_index: u16,
+    candidate_set_complete: bool,
+    regions: Vec<MtgoPlayerVisibleGameplayPostconditionRegionCandidateWireV1>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoPlayerVisibleGameplayPostconditionProcessResponseWireV1 {
+    schema_version: u32,
+    request_commitment_sha256: String,
+    region_set: MtgoPlayerVisibleGameplayPostconditionRegionSetWireV1,
 }
 
 #[cfg(target_os = "windows")]
@@ -487,6 +583,18 @@ fn run_v1() -> Result<Vec<u8>, String> {
         }
         Some(PLAYER_VISIBLE_DUEL_GESTURE_TARGET_MODE_ARGUMENT_V1) => Err(
             "player-visible gesture target requires the exact pinned assets argument".to_owned(),
+        ),
+        Some(PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_MODE_ARGUMENT_V1)
+            if args.len() == 4 && args[2] == "--gesture-target-assets-manifest" =>
+        {
+            run_player_visible_gameplay_postcondition_v1(
+                &actual_classifier_sha256,
+                Path::new(&args[3]),
+            )
+        }
+        Some(PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_MODE_ARGUMENT_V1) => Err(
+            "player-visible gameplay postcondition requires the exact pinned assets argument"
+                .to_owned(),
         ),
         _ => Err("exactly one supported bounded classifier mode is required".to_owned()),
     }
@@ -1000,6 +1108,182 @@ fn run_player_visible_duel_gesture_target_v1(
 }
 
 #[cfg(target_os = "windows")]
+fn run_player_visible_gameplay_postcondition_v1(
+    actual_classifier_sha256: &str,
+    assets_manifest_path: &Path,
+) -> Result<Vec<u8>, String> {
+    let mut stdin = io::stdin().lock();
+    let mut magic = vec![0_u8; PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_PROTOCOL_MAGIC_V1.len()];
+    stdin
+        .read_exact(&mut magic)
+        .map_err(|error| format!("read player-visible gameplay postcondition magic: {error}"))?;
+    if magic != PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_PROTOCOL_MAGIC_V1 {
+        return Err("player-visible gameplay postcondition protocol magic differs".to_owned());
+    }
+    let header_length = read_u64_be_v1(
+        &mut stdin,
+        "player-visible gameplay postcondition header length",
+    )?;
+    let header_length = bounded_usize_v1(
+        header_length,
+        MAX_HEADER_BYTES_V1,
+        "player-visible gameplay postcondition header",
+    )?;
+    let header_json = read_exact_vec_v1(
+        &mut stdin,
+        header_length,
+        "player-visible gameplay postcondition header",
+    )?;
+    let header =
+        parse_canonical_json_v1::<MtgoPlayerVisibleGameplayPostconditionRequestHeaderWireV1>(
+            &header_json,
+            "player-visible gameplay postcondition request header",
+        )?;
+    let assets_json = read_bounded_file_bytes_v1(
+        assets_manifest_path,
+        MAX_ASSETS_BYTES_V1 as u64,
+        "player-visible gameplay postcondition assets manifest",
+    )?;
+    validate_player_visible_gameplay_postcondition_header_identity_v1(
+        &header,
+        &assets_json,
+        actual_classifier_sha256,
+    )?;
+    let pixel_length = bounded_usize_v1(
+        u64::try_from(header.canonical_byte_length).map_err(|_| {
+            "player-visible gameplay postcondition byte length does not fit u64".to_owned()
+        })?,
+        usize::try_from(MAX_CANONICAL_BYTES_V1)
+            .map_err(|_| "classifier byte bound does not fit this process".to_owned())?,
+        "player-visible gameplay postcondition canonical pixels",
+    )?;
+    let canonical_bgra8 = read_exact_vec_v1(
+        &mut stdin,
+        pixel_length,
+        "player-visible gameplay postcondition canonical pixels",
+    )?;
+    let mut trailing = [0_u8; 1];
+    if stdin.read(&mut trailing).map_err(|error| {
+        format!("check player-visible gameplay postcondition request end: {error}")
+    })? != 0
+    {
+        return Err("player-visible gameplay postcondition request has trailing bytes".to_owned());
+    }
+    validate_player_visible_gameplay_postcondition_pixels_v1(&header, &canonical_bgra8)?;
+    let assets = parse_canonical_json_v1::<MtgoPlayerVisibleDuelGestureTargetClassifierAssetsV1>(
+        &assets_json,
+        "player-visible gameplay postcondition assets manifest",
+    )?;
+    let profile = validate_player_visible_gameplay_postcondition_assets_and_match_profile_v1(
+        &assets,
+        &header,
+        &canonical_bgra8,
+    )?;
+    let request_commitment_sha256 = commitment_v1(
+        PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_REQUEST_COMMITMENT_DOMAIN_V1,
+        &[&header_json, &canonical_bgra8],
+    );
+    let response = build_player_visible_gameplay_postcondition_response_v1(
+        &header,
+        profile,
+        &canonical_bgra8,
+        request_commitment_sha256,
+    )?;
+    serde_json::to_vec(&response).map_err(|error| {
+        format!("serialize player-visible gameplay postcondition response: {error}")
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn validate_player_visible_gameplay_postcondition_header_identity_v1(
+    header: &MtgoPlayerVisibleGameplayPostconditionRequestHeaderWireV1,
+    assets_json: &[u8],
+    actual_classifier_sha256: &str,
+) -> Result<(), String> {
+    if header.schema_version != 1
+        || header.protocol != "mtgo_player_visible_gameplay_postcondition_v1"
+        || header.frame_id == 0
+        || header.frame_sequence == 0
+        || header.canonical_width == 0
+        || header.canonical_height == 0
+        || header.canonical_width > 16_384
+        || header.canonical_height > 16_384
+        || header.primitive_index > 31
+    {
+        return Err("player-visible gameplay postcondition request identity is invalid".to_owned());
+    }
+    let expected_stride = header
+        .canonical_width
+        .checked_mul(4)
+        .ok_or("player-visible gameplay postcondition stride overflow")?;
+    let expected_length = usize::try_from(header.canonical_width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(header.canonical_height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("player-visible gameplay postcondition pixel length overflow")?;
+    if header.canonical_stride != expected_stride
+        || header.canonical_byte_length != expected_length
+        || expected_length == 0
+        || u64::try_from(expected_length)
+            .ok()
+            .is_none_or(|length| length > MAX_CANONICAL_BYTES_V1)
+        || header.assets_manifest_sha256 != sha256_hex_v1(assets_json)
+        || header.runtime_binary_sha256 != actual_classifier_sha256
+    {
+        return Err(
+            "player-visible gameplay postcondition runtime, geometry, or artifacts differ"
+                .to_owned(),
+        );
+    }
+    for digest in [
+        header.canonical_bgra8_sha256.as_str(),
+        header.source_capture_commitment_sha256.as_str(),
+        header.perception_result_commitment_sha256.as_str(),
+        header.gesture_evaluation_commitment_sha256.as_str(),
+        header.gesture_profile_admission_commitment_sha256.as_str(),
+        header.runtime_identity_commitment_sha256.as_str(),
+        header.runtime_binary_sha256.as_str(),
+        header.assets_manifest_sha256.as_str(),
+    ] {
+        validate_sha256_v1(
+            digest,
+            "player-visible gameplay postcondition request commitment",
+        )?;
+    }
+    let gesture =
+        mtgo_blackbox_v1::validate_player_visible_duel_gesture_plan_v1(header.gesture_plan.clone())
+            .map_err(|error| {
+                format!("validate player-visible gameplay postcondition plan: {error}")
+            })?;
+    if usize::from(header.primitive_index) >= gesture.primitives_v1().len()
+        || gesture.selected_action_v1() != &header.player_visible_decision.selected_action
+    {
+        return Err("player-visible gameplay postcondition action or primitive differs".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_player_visible_gameplay_postcondition_pixels_v1(
+    header: &MtgoPlayerVisibleGameplayPostconditionRequestHeaderWireV1,
+    canonical_bgra8: &[u8],
+) -> Result<(), String> {
+    if canonical_bgra8.len() != header.canonical_byte_length
+        || sha256_hex_v1(canonical_bgra8) != header.canonical_bgra8_sha256
+    {
+        return Err(
+            "player-visible gameplay postcondition pixels differ from the request header"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 fn validate_player_visible_duel_gesture_target_header_identity_v1(
     header: &MtgoPlayerVisibleDuelGestureTargetRequestHeaderWireV1,
     assets_json: &[u8],
@@ -1278,6 +1562,246 @@ fn build_player_visible_duel_gesture_target_response_v1(
             targets,
         },
     })
+}
+
+#[cfg(target_os = "windows")]
+fn validate_player_visible_gameplay_postcondition_assets_and_match_profile_v1<'a>(
+    assets: &'a MtgoPlayerVisibleDuelGestureTargetClassifierAssetsV1,
+    header: &MtgoPlayerVisibleGameplayPostconditionRequestHeaderWireV1,
+    canonical_bgra8: &[u8],
+) -> Result<&'a MtgoPlayerVisibleGameplayPostconditionReferenceProfileV1, String> {
+    if assets.schema_version != 1
+        || assets.scope != PLAYER_VISIBLE_DUEL_GESTURE_TARGET_ASSET_SCOPE_V1
+        || assets.canonical_pixel_format != PIXEL_FORMAT_V1
+        || assets.gameplay_postcondition_profiles.is_empty()
+        || assets.gameplay_postcondition_profiles.len()
+            > MAX_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_PROFILES_V1
+    {
+        return Err(
+            "player-visible gameplay postcondition assets are outside the bounded schema"
+                .to_owned(),
+        );
+    }
+    let mut profile_ids = HashSet::new();
+    let mut matches = Vec::new();
+    for profile in &assets.gameplay_postcondition_profiles {
+        let profile_bounds = MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: profile.client_size_px.width,
+            height: profile.client_size_px.height,
+        };
+        validate_identifier_v1(
+            &profile.profile_id,
+            "player-visible gameplay postcondition profile id",
+        )?;
+        if !profile_ids.insert(profile.profile_id.as_str()) {
+            return Err(
+                "player-visible gameplay postcondition profile ids must be unique".to_owned(),
+            );
+        }
+        validate_sha256_v1(
+            &profile.gesture_evaluation_commitment_sha256,
+            "player-visible gameplay postcondition gesture evaluation",
+        )?;
+        validate_sha256_v1(
+            &profile.gesture_profile_admission_commitment_sha256,
+            "player-visible gameplay postcondition gesture admission",
+        )?;
+        let checked = mtgo_blackbox_v1::validate_player_visible_duel_gesture_plan_v1(
+            profile.gesture_plan.clone(),
+        )
+        .map_err(|error| {
+            format!("validate player-visible gameplay postcondition profile plan: {error}")
+        })?;
+        if checked
+            .primitives_v1()
+            .get(usize::from(profile.primitive_index))
+            .is_none()
+            || checked.selected_action_v1() != &profile.player_visible_decision.selected_action
+            || profile.client_size_px.width == 0
+            || profile.client_size_px.height == 0
+            || profile.regions.is_empty()
+            || profile.regions.len() > MAX_PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_REGIONS_V1
+        {
+            return Err(
+                "player-visible gameplay postcondition profile is structurally invalid".to_owned(),
+            );
+        }
+        let mut region_ids = HashSet::new();
+        let mut kinds = HashSet::new();
+        let mut rects = Vec::new();
+        let mut pixels_match = true;
+        for region in &profile.regions {
+            validate_identifier_v1(
+                &region.region_id,
+                "player-visible gameplay postcondition region id",
+            )?;
+            let rect_key = (
+                region.rect_client_px.x,
+                region.rect_client_px.y,
+                region.rect_client_px.width,
+                region.rect_client_px.height,
+            );
+            if !region_ids.insert(region.region_id.as_str())
+                || !kinds.insert(region.kind)
+                || !rect_inside_v1(&region.rect_client_px, &profile_bounds)
+                || rects
+                    .iter()
+                    .any(|existing| rect_keys_intersect_v1(*existing, rect_key))
+                || !(mtgo_blackbox_v1::MIN_GAME_INFORMATION_CONFIDENCE_BPS_V1..=10_000)
+                    .contains(&region.confidence_bps)
+                || region.accepted_reference_sha256s.is_empty()
+                || region.accepted_reference_sha256s.len() > 32
+            {
+                return Err(
+                    "player-visible gameplay postcondition region is invalid or duplicated"
+                        .to_owned(),
+                );
+            }
+            rects.push(rect_key);
+            let mut hashes = HashSet::new();
+            for accepted in &region.accepted_reference_sha256s {
+                validate_sha256_v1(
+                    accepted,
+                    "player-visible gameplay postcondition reference hash",
+                )?;
+                if !hashes.insert(accepted.as_str()) {
+                    return Err(
+                        "player-visible gameplay postcondition reference hashes must be unique"
+                            .to_owned(),
+                    );
+                }
+            }
+            if profile.client_size_px.width == header.canonical_width
+                && profile.client_size_px.height == header.canonical_height
+            {
+                let actual = visible_frame_region_content_sha256_v1(
+                    canonical_bgra8,
+                    &profile.client_size_px,
+                    &region.rect_client_px,
+                )
+                .map_err(|error| {
+                    format!("hash player-visible gameplay postcondition region: {error}")
+                })?;
+                pixels_match &= region.accepted_reference_sha256s.contains(&actual);
+            }
+        }
+        let shape_record = mtgo_blackbox_v1::MtgoPlayerVisibleGameplayBeforeInputRecordV1 {
+            schema_version: mtgo_blackbox_v1::MTGO_PLAYER_VISIBLE_GAMEPLAY_BEFORE_INPUT_SCHEMA_V1,
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            event_identity_sha256: "1".repeat(64),
+            match_identity_sha256: "2".repeat(64),
+            game_number: 1,
+            deployment_commitment_sha256: "3".repeat(64),
+            decision_commitment_sha256: "4".repeat(64),
+            selection_commitment_sha256: "5".repeat(64),
+            source_frame_id: 1,
+            source_frame_sequence: 1,
+            source_frame_sha256: "6".repeat(64),
+            client_size_px: profile.client_size_px.clone(),
+            player_visible_decision: profile.player_visible_decision.clone(),
+            gesture_plan: profile.gesture_plan.clone(),
+            primitive_index: profile.primitive_index,
+            primitive_is_final: usize::from(profile.primitive_index) + 1
+                == checked.primitives_v1().len(),
+            region_set_complete: true,
+            regions: profile
+                .regions
+                .iter()
+                .map(
+                    |region| mtgo_blackbox_v1::MtgoPlayerVisibleGameplayBeforeRegionV1 {
+                        kind: region.kind,
+                        rect_client_px: region.rect_client_px.clone(),
+                        before_bgra8_sha256: region.accepted_reference_sha256s[0].clone(),
+                    },
+                )
+                .collect(),
+            expected_game_log_baseline_commitment_sha256: None,
+        };
+        mtgo_blackbox_v1::check_untrusted_player_visible_gameplay_before_input_v1(shape_record)
+            .map_err(|error| {
+                format!("validate player-visible gameplay postcondition profile shape: {error}")
+            })?;
+        if profile.client_size_px.width == header.canonical_width
+            && profile.client_size_px.height == header.canonical_height
+            && profile.gesture_evaluation_commitment_sha256
+                == header.gesture_evaluation_commitment_sha256
+            && profile.gesture_profile_admission_commitment_sha256
+                == header.gesture_profile_admission_commitment_sha256
+            && profile.player_visible_decision == header.player_visible_decision
+            && profile.gesture_plan == header.gesture_plan
+            && profile.primitive_index == header.primitive_index
+            && pixels_match
+        {
+            matches.push(profile);
+        }
+    }
+    if matches.len() != 1 {
+        return Err(
+            "expected exactly one reviewed player-visible gameplay postcondition profile match"
+                .to_owned(),
+        );
+    }
+    Ok(matches[0])
+}
+
+#[cfg(target_os = "windows")]
+fn build_player_visible_gameplay_postcondition_response_v1(
+    header: &MtgoPlayerVisibleGameplayPostconditionRequestHeaderWireV1,
+    profile: &MtgoPlayerVisibleGameplayPostconditionReferenceProfileV1,
+    canonical_bgra8: &[u8],
+    request_commitment_sha256: String,
+) -> Result<MtgoPlayerVisibleGameplayPostconditionProcessResponseWireV1, String> {
+    let regions = profile
+        .regions
+        .iter()
+        .map(|region| {
+            let content_sha256 = visible_frame_region_content_sha256_v1(
+                canonical_bgra8,
+                &profile.client_size_px,
+                &region.rect_client_px,
+            )
+            .map_err(|error| {
+                format!("hash selected player-visible gameplay postcondition region: {error}")
+            })?;
+            Ok(
+                MtgoPlayerVisibleGameplayPostconditionRegionCandidateWireV1 {
+                    region_id: region.region_id.clone(),
+                    kind: region.kind,
+                    rect_client_px: region.rect_client_px.clone(),
+                    content_sha256,
+                    confidence_bps: region.confidence_bps,
+                },
+            )
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(
+        MtgoPlayerVisibleGameplayPostconditionProcessResponseWireV1 {
+            schema_version: 1,
+            request_commitment_sha256,
+            region_set: MtgoPlayerVisibleGameplayPostconditionRegionSetWireV1 {
+                schema_version: 1,
+                frame_id: header.frame_id,
+                frame_sequence: header.frame_sequence,
+                primitive_index: header.primitive_index,
+                candidate_set_complete: true,
+                regions,
+            },
+        },
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn rect_keys_intersect_v1(left: (u32, u32, u32, u32), right: (u32, u32, u32, u32)) -> bool {
+    let left_right = u64::from(left.0) + u64::from(left.2);
+    let left_bottom = u64::from(left.1) + u64::from(left.3);
+    let right_right = u64::from(right.0) + u64::from(right.2);
+    let right_bottom = u64::from(right.1) + u64::from(right.3);
+    u64::from(left.0) < right_right
+        && u64::from(right.0) < left_right
+        && u64::from(left.1) < right_bottom
+        && u64::from(right.1) < left_bottom
 }
 
 #[cfg(target_os = "windows")]
@@ -4489,6 +5013,7 @@ mod tests {
             scope: PLAYER_VISIBLE_DUEL_GESTURE_TARGET_ASSET_SCOPE_V1.to_owned(),
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: vec![profile],
+            gameplay_postcondition_profiles: Vec::new(),
         };
         let assets_json = serde_json::to_vec(&assets).unwrap();
         let header = MtgoPlayerVisibleDuelGestureTargetRequestHeaderWireV1 {
@@ -4511,6 +5036,83 @@ mod tests {
             runtime_identity_commitment_sha256: digest('7'),
             gesture_target_runtime_binary_sha256: digest('8'),
             gesture_target_assets_manifest_sha256: sha256_hex_v1(&assets_json),
+        };
+        (assets, header)
+    }
+
+    fn player_visible_gameplay_postcondition_fixture_v1(
+        pixels: &[u8],
+    ) -> (
+        MtgoPlayerVisibleDuelGestureTargetClassifierAssetsV1,
+        MtgoPlayerVisibleGameplayPostconditionRequestHeaderWireV1,
+    ) {
+        let (mut assets, target_header) = player_visible_target_fixture_v1(pixels);
+        let rect = MtgoRectPxV1 {
+            x: 10,
+            y: 2,
+            width: 6,
+            height: 3,
+        };
+        let player_visible_decision = MtgoPlayerVisibleConfirmedDuelDecisionV1 {
+            current_state: target_header.decision_input.current_state.clone(),
+            selected_action: target_header.gesture_plan.selected_action.clone(),
+        };
+        assets.gameplay_postcondition_profiles.push(
+            MtgoPlayerVisibleGameplayPostconditionReferenceProfileV1 {
+                profile_id: "pass-prompt-postcondition-32x16-v1".to_owned(),
+                gesture_evaluation_commitment_sha256: target_header
+                    .gesture_evaluation_commitment_sha256
+                    .clone(),
+                gesture_profile_admission_commitment_sha256: target_header
+                    .gesture_profile_admission_commitment_sha256
+                    .clone(),
+                client_size_px: MtgoSizePxV1 {
+                    width: target_header.canonical_width,
+                    height: target_header.canonical_height,
+                },
+                player_visible_decision: player_visible_decision.clone(),
+                gesture_plan: target_header.gesture_plan.clone(),
+                primitive_index: target_header.primitive_index,
+                regions: vec![MtgoPlayerVisibleGameplayPostconditionReferenceRegionV1 {
+                    region_id: "priority-prompt-v1".to_owned(),
+                    kind: MtgoPlayerVisibleGameplayPostconditionKindV1::PromptChanged,
+                    rect_client_px: rect.clone(),
+                    accepted_reference_sha256s: vec![visible_frame_region_content_sha256_v1(
+                        pixels,
+                        &MtgoSizePxV1 {
+                            width: target_header.canonical_width,
+                            height: target_header.canonical_height,
+                        },
+                        &rect,
+                    )
+                    .unwrap()],
+                    confidence_bps: 9_500,
+                }],
+            },
+        );
+        let assets_json = serde_json::to_vec(&assets).unwrap();
+        let header = MtgoPlayerVisibleGameplayPostconditionRequestHeaderWireV1 {
+            schema_version: 1,
+            protocol: "mtgo_player_visible_gameplay_postcondition_v1".to_owned(),
+            frame_id: target_header.frame_id,
+            frame_sequence: target_header.frame_sequence,
+            canonical_width: target_header.canonical_width,
+            canonical_height: target_header.canonical_height,
+            canonical_stride: target_header.canonical_stride,
+            canonical_byte_length: target_header.canonical_byte_length,
+            canonical_bgra8_sha256: target_header.canonical_bgra8_sha256,
+            source_capture_commitment_sha256: target_header.source_capture_commitment_sha256,
+            perception_result_commitment_sha256: target_header.perception_result_commitment_sha256,
+            player_visible_decision,
+            gesture_plan: target_header.gesture_plan,
+            primitive_index: target_header.primitive_index,
+            gesture_evaluation_commitment_sha256: target_header
+                .gesture_evaluation_commitment_sha256,
+            gesture_profile_admission_commitment_sha256: target_header
+                .gesture_profile_admission_commitment_sha256,
+            runtime_identity_commitment_sha256: target_header.runtime_identity_commitment_sha256,
+            runtime_binary_sha256: target_header.gesture_target_runtime_binary_sha256,
+            assets_manifest_sha256: sha256_hex_v1(&assets_json),
         };
         (assets, header)
     }
@@ -4601,6 +5203,92 @@ mod tests {
             MtgoPlayerVisibleDuelGestureTargetRoleV1::SubmitControl;
         assert!(
             validate_player_visible_duel_gesture_target_assets_and_match_profile_v1(
+                &assets, &header, &pixels,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn exact_player_visible_gameplay_postcondition_profile_rehashes_complete_regions() {
+        let pixels = (0..32 * 16 * 4)
+            .map(|index| ((index * 17 + 29) % 251) as u8)
+            .collect::<Vec<_>>();
+        let (assets, header) = player_visible_gameplay_postcondition_fixture_v1(&pixels);
+        let assets_json = serde_json::to_vec(&assets).unwrap();
+        validate_player_visible_gameplay_postcondition_header_identity_v1(
+            &header,
+            &assets_json,
+            &header.runtime_binary_sha256,
+        )
+        .unwrap();
+        validate_player_visible_gameplay_postcondition_pixels_v1(&header, &pixels).unwrap();
+        let profile = validate_player_visible_gameplay_postcondition_assets_and_match_profile_v1(
+            &assets, &header, &pixels,
+        )
+        .unwrap();
+        let response = build_player_visible_gameplay_postcondition_response_v1(
+            &header,
+            profile,
+            &pixels,
+            digest('9'),
+        )
+        .unwrap();
+        assert!(response.region_set.candidate_set_complete);
+        assert_eq!(response.region_set.regions.len(), 1);
+        assert_eq!(
+            response.region_set.regions[0].content_sha256,
+            assets.gameplay_postcondition_profiles[0].regions[0].accepted_reference_sha256s[0]
+        );
+    }
+
+    #[test]
+    fn player_visible_gameplay_postcondition_drift_ambiguity_and_overlap_fail_closed() {
+        let pixels = (0..32 * 16 * 4)
+            .map(|index| ((index * 13 + 7) % 251) as u8)
+            .collect::<Vec<_>>();
+        let (mut assets, header) = player_visible_gameplay_postcondition_fixture_v1(&pixels);
+        let rect = assets.gameplay_postcondition_profiles[0].regions[0]
+            .rect_client_px
+            .clone();
+        let changed_index =
+            (usize::try_from(rect.y).unwrap() * 32 + usize::try_from(rect.x).unwrap()) * 4;
+        let mut changed_pixels = pixels.clone();
+        changed_pixels[changed_index] ^= 1;
+        assert!(
+            validate_player_visible_gameplay_postcondition_assets_and_match_profile_v1(
+                &assets,
+                &header,
+                &changed_pixels,
+            )
+            .is_err()
+        );
+
+        let mut duplicate = assets.gameplay_postcondition_profiles[0].clone();
+        duplicate.profile_id = "pass-prompt-postcondition-32x16-v2".to_owned();
+        assets.gameplay_postcondition_profiles.push(duplicate);
+        assert!(
+            validate_player_visible_gameplay_postcondition_assets_and_match_profile_v1(
+                &assets, &header, &pixels,
+            )
+            .is_err()
+        );
+
+        assets.gameplay_postcondition_profiles.pop();
+        let profile = &mut assets.gameplay_postcondition_profiles[0];
+        profile
+            .regions
+            .push(MtgoPlayerVisibleGameplayPostconditionReferenceRegionV1 {
+                region_id: "phase-bar-overlap-v1".to_owned(),
+                kind: MtgoPlayerVisibleGameplayPostconditionKindV1::PhaseBarChanged,
+                rect_client_px: rect,
+                accepted_reference_sha256s: vec![
+                    profile.regions[0].accepted_reference_sha256s[0].clone()
+                ],
+                confidence_bps: 9_500,
+            });
+        assert!(
+            validate_player_visible_gameplay_postcondition_assets_and_match_profile_v1(
                 &assets, &header, &pixels,
             )
             .is_err()
