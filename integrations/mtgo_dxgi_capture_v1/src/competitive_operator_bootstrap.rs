@@ -148,16 +148,19 @@ pub(crate) struct MtgoCompetitiveOperatorResourcesDuringSideboardV1 {
     pub(crate) _duel_gesture_profile: AdmittedMtgoDuelGestureProfileV1,
     pub(crate) _duel_gesture_runtime: OpaqueMtgoVerifiedDuelGestureTargetRuntimeV1,
     pub(crate) checkpoint_deployment: LoadedMtgoNativeCheckpointDeploymentV1,
-    pub(crate) _changed_sideboard_evaluation: Option<AdmittedMtgoCompetitiveSideboardEvaluationV1>,
 }
 
 impl MtgoCompetitiveOperatorResourcesPartsV1 {
-    pub(crate) fn into_sideboard_parts_v1(
+    pub(crate) fn into_sideboard_model_parts_v1(
         self,
-    ) -> (
-        ValidatedMtgoCompetitiveDeckManifestV1,
-        MtgoCompetitiveOperatorResourcesDuringSideboardV1,
-    ) {
+    ) -> Result<
+        (
+            ValidatedMtgoCompetitiveDeckManifestV1,
+            AdmittedMtgoCompetitiveSideboardEvaluationV1,
+            MtgoCompetitiveOperatorResourcesDuringSideboardV1,
+        ),
+        String,
+    > {
         let Self {
             navigation_profile,
             navigation_runtime,
@@ -172,8 +175,12 @@ impl MtgoCompetitiveOperatorResourcesPartsV1 {
             checkpoint_deployment,
             changed_sideboard_evaluation,
         } = self;
-        (
+        let sideboard_evaluation = changed_sideboard_evaluation.ok_or(
+            "competitive operator native sideboard checkout requires retained sideboard evaluation",
+        )?;
+        Ok((
             deck_manifest,
+            sideboard_evaluation,
             MtgoCompetitiveOperatorResourcesDuringSideboardV1 {
                 _navigation_profile: navigation_profile,
                 navigation_runtime,
@@ -185,9 +192,8 @@ impl MtgoCompetitiveOperatorResourcesPartsV1 {
                 _duel_gesture_profile: duel_gesture_profile,
                 _duel_gesture_runtime: duel_gesture_runtime,
                 checkpoint_deployment,
-                _changed_sideboard_evaluation: changed_sideboard_evaluation,
             },
-        )
+        ))
     }
 }
 

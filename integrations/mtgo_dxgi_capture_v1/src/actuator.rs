@@ -1632,7 +1632,8 @@ fn competitive_event_driver_directive_v1(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
     pub prior_event_runtime_commitment_sha256: String,
-    pub sideboard_automation_ratification_commitment_sha256: String,
+    pub sideboard_evaluation_ratification_commitment_sha256: String,
+    pub sideboard_evaluation_admission_commitment_sha256: String,
     pub sideboard_classification: MtgoClassifiedCompetitiveSideboardCommitmentsV1,
     pub measurement_binding_commitment_sha256: String,
 }
@@ -1643,7 +1644,7 @@ pub struct MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
 pub struct OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
     _spent_entry_authorization: RatifiedMtgoCompetitiveEntryAuthorizationV1,
     _lifecycle_authorization: RatifiedMtgoCompetitiveLifecycleAuthorizationV1,
-    _sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
+    _sideboard_evaluation: AdmittedMtgoCompetitiveSideboardEvaluationV1,
     classified: OpaqueMtgoClassifiedCompetitiveSideboardV1,
     _player_known_deck_state: MtgoCompetitivePlayerKnownDeckStateV1,
     _manifest: ValidatedMtgoCompetitiveDeckManifestV1,
@@ -5586,12 +5587,14 @@ pub fn begin_competitive_event_runtime_after_entry_v1(
 }
 
 /// Consumes the event coordinator while its exact current Sideboarding frame
-/// is parsed against the entry-bound deck and policy. This is a checked-untrusted
-/// measurement only. It neither ratifies the parser nor releases input authority.
+/// is parsed against the entry-bound deck and policy. The parser must already
+/// have passed the four-slice League/Challenge sideboard evaluation. No drag or
+/// Submit Deck authorization is required until a model selects a changed target.
+/// This measurement neither releases input authority nor permits submission.
 pub fn measure_competitive_event_runtime_sideboard_v1(
     runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
     manifest: ValidatedMtgoCompetitiveDeckManifestV1,
-    sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
+    sideboard_evaluation: AdmittedMtgoCompetitiveSideboardEvaluationV1,
     classifier_runtime: &OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
     timeout_ms: u32,
 ) -> Result<OpaqueMtgoMeasuredCompetitiveEventSideboardV1, String> {
@@ -5613,33 +5616,20 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
         event_monitor,
         commitments: prior,
     } = runtime;
-    let sideboard_authorization_commitments = sideboard_authorization.commitments_v1();
-    if sideboard_authorization_commitments.lifecycle_authorization_commitment_sha256
-        != lifecycle_authorization
-            .commitments
-            .ratification_commitment_sha256
-        || sideboard_authorization_commitments.permission_review_commitment_sha256
-            != prior.permission_review_commitment_sha256
-        || sideboard_authorization_commitments.mode_authorization_commitment_sha256
-            != prior.mode_authorization_commitment_sha256
-        || sideboard_authorization_commitments.approved_account_alias_sha256
+    let sideboard_evaluation_commitments = sideboard_evaluation.commitments_v1();
+    if sideboard_evaluation_commitments.profile_commitment_sha256
+        != prior.navigation_profile_commitment_sha256
+        || sideboard_evaluation_commitments.approved_account_alias_sha256
             != prior.approved_account_alias_sha256
-        || sideboard_authorization_commitments.navigation_profile_commitment_sha256
-            != prior.navigation_profile_commitment_sha256
-        || sideboard_authorization_commitments.navigation_profile_admission_commitment_sha256
-            != prior.navigation_profile_admission_commitment_sha256
-        || sideboard_authorization_commitments.deck_list_sha256 != prior.deck_list_sha256
-        || sideboard_authorization_commitments.deck_manifest_commitment_sha256
+        || sideboard_evaluation_commitments.deck_list_sha256 != prior.deck_list_sha256
+        || sideboard_evaluation_commitments.deck_manifest_commitment_sha256
             != manifest.manifest_commitment_sha256()
-        || sideboard_authorization_commitments.deck_format_sha256 != prior.deck_format_sha256
-        || sideboard_authorization_commitments.policy_deployment_commitment_sha256
+        || sideboard_evaluation_commitments.deck_format_sha256 != prior.deck_format_sha256
+        || sideboard_evaluation_commitments.policy_deployment_commitment_sha256
             != prior.policy_deployment_commitment_sha256
-        || sideboard_authorization_commitments.automation_scope_commitment_sha256
-            != competitive_sideboard_automation_scope_v1()
-        || sideboard_authorization_commitments.event_kind != prior.event_kind
     {
         return Err(
-            "sideboard automation authorization differs from the exact event, deck, policy, or mode"
+            "sideboard evaluation differs from the exact event, account, deck, or policy"
                 .to_owned(),
         );
     }
@@ -5689,8 +5679,11 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
         COMPETITIVE_EVENT_SIDEBOARD_MEASUREMENT_DOMAIN_V1,
         &[
             prior.runtime_commitment_sha256.as_bytes(),
-            sideboard_authorization_commitments
+            sideboard_evaluation_commitments
                 .ratification_commitment_sha256
+                .as_bytes(),
+            sideboard_evaluation
+                .admission_commitment_sha256_v1()
                 .as_bytes(),
             sideboard.classification_result_commitment_sha256.as_bytes(),
             sideboard.sideboard_snapshot_commitment_sha256.as_bytes(),
@@ -5704,15 +5697,18 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
     );
     let commitments = MtgoMeasuredCompetitiveEventSideboardCommitmentsV1 {
         prior_event_runtime_commitment_sha256: prior.runtime_commitment_sha256.clone(),
-        sideboard_automation_ratification_commitment_sha256: sideboard_authorization_commitments
+        sideboard_evaluation_ratification_commitment_sha256: sideboard_evaluation_commitments
             .ratification_commitment_sha256,
+        sideboard_evaluation_admission_commitment_sha256: sideboard_evaluation
+            .admission_commitment_sha256_v1()
+            .to_owned(),
         sideboard_classification: sideboard,
         measurement_binding_commitment_sha256,
     };
     Ok(OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
         _spent_entry_authorization,
         _lifecycle_authorization: lifecycle_authorization,
-        _sideboard_authorization: sideboard_authorization,
+        _sideboard_evaluation: sideboard_evaluation,
         classified,
         _player_known_deck_state: player_known_deck_state,
         _manifest: manifest,
@@ -5778,7 +5774,11 @@ pub fn bind_competitive_event_native_sideboard_request_v1(
                 .as_bytes(),
             measurement
                 .commitments
-                .sideboard_automation_ratification_commitment_sha256
+                .sideboard_evaluation_ratification_commitment_sha256
+                .as_bytes(),
+            measurement
+                .commitments
+                .sideboard_evaluation_admission_commitment_sha256
                 .as_bytes(),
             sideboard.sideboard_snapshot_commitment_sha256.as_bytes(),
             sideboard.deck_manifest_commitment_sha256.as_bytes(),

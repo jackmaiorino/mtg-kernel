@@ -162,6 +162,8 @@ fn native_sideboard_live_binder_is_visible_outcome_bound_and_non_actuating() {
     let binder = &source[start..end];
     for required in [
         "OpaqueMtgoCompetitiveVisibleGameOutcomeV1",
+        "sideboard_evaluation_ratification_commitment_sha256",
+        "sideboard_evaluation_admission_commitment_sha256",
         "outcome.lineage_v1()",
         "MtgoCompetitiveLifecyclePhaseV1::Sideboarding",
         "sideboard.event_identity_sha256 != outcome_lineage.event_identity_sha256",
@@ -178,6 +180,8 @@ fn native_sideboard_live_binder_is_visible_outcome_bound_and_non_actuating() {
     for forbidden in [
         "SendInput",
         "SetCursorPos",
+        "RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1",
+        "sideboard_automation_ratification_commitment_sha256",
         "execute_prepared",
         "submit_sideboard",
         "capture_mtgo_dxgi_frame_candidate_v3",

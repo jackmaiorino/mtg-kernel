@@ -28,6 +28,8 @@ pub struct MtgoCompetitiveSemanticRatificationReadinessV1 {
     pub duel_lifecycle_evaluation_present: bool,
     pub competitive_pregame_evaluation_present: bool,
     pub competitive_pregame_public_context_evaluation_present: bool,
+    /// The retained V1 field name predates the four-slice contract. This root
+    /// now covers unchanged and changed configurations in both event modes.
     pub changed_sideboard_evaluation_present: bool,
 }
 
@@ -41,11 +43,11 @@ impl MtgoCompetitiveSemanticRatificationReadinessV1 {
             && self.duel_lifecycle_evaluation_present
             && self.competitive_pregame_evaluation_present
             && self.competitive_pregame_public_context_evaluation_present
+            && self.changed_sideboard_evaluation_present
     }
 
     pub fn changed_sideboard_event_path_present_v1(&self) -> bool {
         self.unchanged_sideboard_event_path_present_v1()
-            && self.changed_sideboard_evaluation_present
     }
 
     pub fn grants_live_authority_v1(&self) -> bool {
@@ -80,6 +82,35 @@ pub fn competitive_semantic_ratification_readiness_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn readiness_with_sideboard_v1(
+        changed_sideboard_evaluation_present: bool,
+    ) -> MtgoCompetitiveSemanticRatificationReadinessV1 {
+        MtgoCompetitiveSemanticRatificationReadinessV1 {
+            schema_version: MTGO_COMPETITIVE_SEMANTIC_READINESS_SCHEMA_V1,
+            navigation_evaluation_present: true,
+            event_listing_evaluation_present: true,
+            event_record_evaluation_present: true,
+            duel_perception_evaluation_present: true,
+            duel_gesture_evaluation_present: true,
+            duel_lifecycle_evaluation_present: true,
+            competitive_pregame_evaluation_present: true,
+            competitive_pregame_public_context_evaluation_present: true,
+            changed_sideboard_evaluation_present,
+        }
+    }
+
+    #[test]
+    fn four_slice_sideboard_evaluation_is_required_for_both_model_paths() {
+        let missing = readiness_with_sideboard_v1(false);
+        assert!(!missing.unchanged_sideboard_event_path_present_v1());
+        assert!(!missing.changed_sideboard_event_path_present_v1());
+
+        let present = readiness_with_sideboard_v1(true);
+        assert!(present.unchanged_sideboard_event_path_present_v1());
+        assert!(present.changed_sideboard_event_path_present_v1());
+        assert!(!present.grants_live_authority_v1());
+    }
 
     #[test]
     fn production_readiness_is_non_authorizing_and_current_roots_are_empty() {

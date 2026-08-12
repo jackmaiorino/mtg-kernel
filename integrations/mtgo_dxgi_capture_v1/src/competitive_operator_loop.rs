@@ -18,7 +18,6 @@ use crate::actuator::{
     OpaqueMtgoCompetitiveNativeSideboardRequestV1,
     OpaqueMtgoPendingCompetitiveEventLifecycleControlV1,
     OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1, RatifiedMtgoCompetitiveMatchLaunchV1,
-    RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
 };
 use crate::competitive_auxiliary_model_scoring::{
     score_checked_untrusted_competitive_native_pregame_request_v1,
@@ -577,11 +576,12 @@ pub fn score_checked_untrusted_competitive_operator_native_pregame_v1<
 /// Consumes the exact Sideboarding operator state into one player-visible
 /// native sideboard request. The manifest moves into the request because it is
 /// intentionally non-cloneable; all other original resources remain in the
-/// returned opaque holder. This parses retained visible pixels but performs no
-/// capture, scoring, drag, submission, or other input.
+/// returned opaque holder. The admitted four-slice parser evaluation is
+/// consumed here, but changed-sideboard drag authorization is deliberately not
+/// required before the model chooses a target. This parses retained visible
+/// pixels but performs no capture, scoring, drag, submission, or other input.
 pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
     operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
-    sideboard_authorization: RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
     outcome: OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
     classifier_timeout_ms: u32,
 ) -> Result<OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1, String> {
@@ -606,7 +606,6 @@ pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
             }
         };
     let outcome_lineage = outcome.lineage_v1();
-    let authorization = sideboard_authorization.commitments_v1();
     validate_operator_native_sideboard_checkout_v1(&OperatorNativeSideboardCheckoutIdentityV1 {
         route_match_identity_sha256,
         route_game_number,
@@ -614,7 +613,6 @@ pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
         outcome_match_identity_sha256: outcome_lineage.match_identity_sha256.to_owned(),
         outcome_game_number: outcome_lineage.game_number,
         outcome_event_kind: outcome_lineage.event_kind,
-        authorization_event_kind: authorization.event_kind,
         operator_event_kind: operator.commitments.event_kind,
         resource_bundle_commitment_sha256: operator
             .resource_commitments
@@ -628,25 +626,13 @@ pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
             .resource_commitments
             .changed_sideboard_evaluation_ratification_commitment_sha256
             .clone(),
-        authorization_sideboard_evaluation_ratification_commitment_sha256: authorization
-            .sideboard_evaluation_ratification_commitment_sha256
-            .clone(),
         resource_sideboard_evaluation_admission_commitment_sha256: operator
             .resource_commitments
             .changed_sideboard_evaluation_admission_commitment_sha256
             .clone(),
-        authorization_sideboard_evaluation_admission_commitment_sha256: authorization
-            .sideboard_evaluation_admission_commitment_sha256
-            .clone(),
-        authorization_deck_manifest_commitment_sha256: authorization
-            .deck_manifest_commitment_sha256
-            .clone(),
         operator_deck_manifest_commitment_sha256: operator
             .commitments
             .deck_manifest_commitment_sha256
-            .clone(),
-        authorization_policy_deployment_commitment_sha256: authorization
-            .policy_deployment_commitment_sha256
             .clone(),
         operator_policy_deployment_commitment_sha256: operator
             .commitments
@@ -659,11 +645,12 @@ pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
         runtime,
         commitments,
     } = operator;
-    let (deck_manifest, resources) = resources.into_sideboard_parts_v1();
+    let (deck_manifest, sideboard_evaluation, resources) =
+        resources.into_sideboard_model_parts_v1()?;
     let measurement = measure_competitive_event_runtime_sideboard_v1(
         runtime,
         deck_manifest,
-        sideboard_authorization,
+        sideboard_evaluation,
         &resources.navigation_runtime,
         classifier_timeout_ms,
     )?;
@@ -1034,17 +1021,12 @@ struct OperatorNativeSideboardCheckoutIdentityV1 {
     outcome_match_identity_sha256: String,
     outcome_game_number: u8,
     outcome_event_kind: MtgoCompetitiveEventKindV1,
-    authorization_event_kind: MtgoCompetitiveEventKindV1,
     operator_event_kind: MtgoCompetitiveEventKindV1,
     resource_bundle_commitment_sha256: String,
     operator_resource_bundle_commitment_sha256: String,
     resource_sideboard_evaluation_ratification_commitment_sha256: Option<String>,
-    authorization_sideboard_evaluation_ratification_commitment_sha256: String,
     resource_sideboard_evaluation_admission_commitment_sha256: Option<String>,
-    authorization_sideboard_evaluation_admission_commitment_sha256: String,
-    authorization_deck_manifest_commitment_sha256: String,
     operator_deck_manifest_commitment_sha256: String,
-    authorization_policy_deployment_commitment_sha256: String,
     operator_policy_deployment_commitment_sha256: String,
 }
 
@@ -1066,24 +1048,8 @@ fn validate_operator_native_sideboard_checkout_v1(
             "sideboard operator resource bundle",
         ),
         (
-            &value.authorization_sideboard_evaluation_ratification_commitment_sha256,
-            "sideboard authorization evaluation",
-        ),
-        (
-            &value.authorization_sideboard_evaluation_admission_commitment_sha256,
-            "sideboard authorization evaluation admission",
-        ),
-        (
-            &value.authorization_deck_manifest_commitment_sha256,
-            "sideboard authorization deck manifest",
-        ),
-        (
             &value.operator_deck_manifest_commitment_sha256,
             "sideboard operator deck manifest",
-        ),
-        (
-            &value.authorization_policy_deployment_commitment_sha256,
-            "sideboard authorization policy",
         ),
         (
             &value.operator_policy_deployment_commitment_sha256,
@@ -1111,18 +1077,9 @@ fn validate_operator_native_sideboard_checkout_v1(
     if !value.route_changed_resources_present
         || value.route_match_identity_sha256 != value.outcome_match_identity_sha256
         || value.route_game_number != value.outcome_game_number
-        || value.outcome_event_kind != value.authorization_event_kind
         || value.outcome_event_kind != value.operator_event_kind
         || value.resource_bundle_commitment_sha256
             != value.operator_resource_bundle_commitment_sha256
-        || resource_evaluation
-            != value.authorization_sideboard_evaluation_ratification_commitment_sha256
-        || resource_admission
-            != value.authorization_sideboard_evaluation_admission_commitment_sha256
-        || value.authorization_deck_manifest_commitment_sha256
-            != value.operator_deck_manifest_commitment_sha256
-        || value.authorization_policy_deployment_commitment_sha256
-            != value.operator_policy_deployment_commitment_sha256
     {
         return Err(
             "competitive operator sideboard checkout changed the exact event, outcome, resources, deck, or deployment"
@@ -1730,17 +1687,12 @@ mod tests {
             outcome_match_identity_sha256: digest('1'),
             outcome_game_number: 1,
             outcome_event_kind: MtgoCompetitiveEventKindV1::League,
-            authorization_event_kind: MtgoCompetitiveEventKindV1::League,
             operator_event_kind: MtgoCompetitiveEventKindV1::League,
             resource_bundle_commitment_sha256: digest('2'),
             operator_resource_bundle_commitment_sha256: digest('2'),
             resource_sideboard_evaluation_ratification_commitment_sha256: Some(digest('3')),
-            authorization_sideboard_evaluation_ratification_commitment_sha256: digest('3'),
             resource_sideboard_evaluation_admission_commitment_sha256: Some(digest('4')),
-            authorization_sideboard_evaluation_admission_commitment_sha256: digest('4'),
-            authorization_deck_manifest_commitment_sha256: digest('5'),
             operator_deck_manifest_commitment_sha256: digest('5'),
-            authorization_policy_deployment_commitment_sha256: digest('6'),
             operator_policy_deployment_commitment_sha256: digest('6'),
         }
     }
@@ -1839,7 +1791,6 @@ mod tests {
         let mut exact = native_sideboard_checkout_identity_v1();
         validate_operator_native_sideboard_checkout_v1(&exact).unwrap();
         exact.outcome_event_kind = MtgoCompetitiveEventKindV1::Challenge;
-        exact.authorization_event_kind = MtgoCompetitiveEventKindV1::Challenge;
         exact.operator_event_kind = MtgoCompetitiveEventKindV1::Challenge;
         validate_operator_native_sideboard_checkout_v1(&exact).unwrap();
 
@@ -1852,7 +1803,7 @@ mod tests {
             },
             |value: &mut OperatorNativeSideboardCheckoutIdentityV1| value.outcome_game_number = 2,
             |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
-                value.authorization_event_kind = MtgoCompetitiveEventKindV1::Challenge
+                value.operator_event_kind = MtgoCompetitiveEventKindV1::Challenge
             },
             |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
                 value.operator_resource_bundle_commitment_sha256 = digest('7')
@@ -1864,10 +1815,10 @@ mod tests {
                 value.resource_sideboard_evaluation_admission_commitment_sha256 = None
             },
             |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
-                value.authorization_deck_manifest_commitment_sha256 = digest('7')
+                value.operator_deck_manifest_commitment_sha256 = "not-a-digest".to_owned()
             },
             |value: &mut OperatorNativeSideboardCheckoutIdentityV1| {
-                value.authorization_policy_deployment_commitment_sha256 = digest('7')
+                value.operator_policy_deployment_commitment_sha256 = "not-a-digest".to_owned()
             },
         ] {
             let mut crossed = native_sideboard_checkout_identity_v1();
