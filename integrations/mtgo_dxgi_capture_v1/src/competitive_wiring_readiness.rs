@@ -39,6 +39,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub competitive_pregame_public_context_contract_present: bool,
     pub competitive_pregame_play_draw_context_present: bool,
     pub competitive_pregame_match_score_context_present: bool,
+    pub competitive_pregame_score_response_contract_present: bool,
     pub visible_accessibility_exact_text_probe_present: bool,
     pub visible_accessibility_same_frame_pixel_corroboration_present: bool,
     pub terminal_outcome_trained_pregame_head_present: bool,
@@ -55,6 +56,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub native_checkpoint_changed_sideboard_interface_present: bool,
     pub competitive_player_visible_sideboard_payload_contract_present: bool,
     pub competitive_player_visible_sideboard_score_binding_present: bool,
+    pub competitive_sideboard_score_response_contract_present: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,6 +107,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             competitive_pregame_public_context_contract_present: true,
             competitive_pregame_play_draw_context_present: true,
             competitive_pregame_match_score_context_present: true,
+            competitive_pregame_score_response_contract_present: true,
             visible_accessibility_exact_text_probe_present: true,
             visible_accessibility_same_frame_pixel_corroboration_present: true,
             terminal_outcome_trained_pregame_head_present: false,
@@ -122,6 +125,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             native_checkpoint_changed_sideboard_interface_present: false,
             competitive_player_visible_sideboard_payload_contract_present: true,
             competitive_player_visible_sideboard_score_binding_present: true,
+            competitive_sideboard_score_response_contract_present: true,
         },
         status:
             MtgoCompetitiveStaticReadinessStatusV1::BlockedMissingRatificationsAndModelInterfaces,
@@ -239,6 +243,11 @@ mod tests {
         assert!(
             report
                 .known_wiring_gaps
+                .competitive_pregame_score_response_contract_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
                 .visible_accessibility_exact_text_probe_present
         );
         assert!(
@@ -311,6 +320,11 @@ mod tests {
             report
                 .known_wiring_gaps
                 .competitive_player_visible_sideboard_score_binding_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .competitive_sideboard_score_response_contract_present
         );
         assert!(!report.safe_for_live_capture);
         assert!(!report.safe_for_input);

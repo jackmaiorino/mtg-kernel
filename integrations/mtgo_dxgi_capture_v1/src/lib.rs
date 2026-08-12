@@ -11,6 +11,9 @@ mod competitive_wiring_readiness;
 mod competitive_model_decision_readiness;
 
 #[cfg(target_os = "windows")]
+mod competitive_auxiliary_model_scoring;
+
+#[cfg(target_os = "windows")]
 mod competitive_native_sideboard;
 
 #[cfg(target_os = "windows")]
@@ -207,6 +210,21 @@ pub use competitive_wiring_readiness::{
 pub use competitive_model_decision_readiness::{
     check_competitive_model_decision_readiness_v1, MtgoCompetitiveModelDecisionReadinessV1,
     MTGO_COMPETITIVE_MODEL_DECISION_READINESS_SCHEMA_V1,
+};
+
+#[cfg(target_os = "windows")]
+pub use competitive_auxiliary_model_scoring::{
+    score_checked_untrusted_competitive_native_pregame_request_v1,
+    score_checked_untrusted_competitive_native_pregame_v1,
+    score_checked_untrusted_competitive_native_sideboard_request_v1,
+    score_checked_untrusted_competitive_native_sideboard_v1,
+    CheckedUntrustedMtgoCompetitiveNativePregameModelSelectionV1,
+    CheckedUntrustedMtgoCompetitiveNativeSideboardModelSelectionV1,
+    MtgoCompetitiveNativePregameScoreResponseV1, MtgoCompetitiveNativePregameScorerV1,
+    MtgoCompetitiveNativeSideboardScoreResponseV1, MtgoCompetitiveNativeSideboardScorerV1,
+    OpaqueMtgoScoredCompetitiveNativePregameRequestV1,
+    OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
+    MTGO_COMPETITIVE_AUXILIARY_MODEL_SCORING_SCHEMA_V1,
 };
 
 #[cfg(target_os = "windows")]
