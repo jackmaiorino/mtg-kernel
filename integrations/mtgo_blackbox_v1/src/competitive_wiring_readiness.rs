@@ -6,7 +6,7 @@ use crate::competitive_pregame_evaluation::RATIFIED_COMPETITIVE_PREGAME_EVALUATI
 use crate::competitive_pregame_public_context_evaluation::RATIFIED_COMPETITIVE_PREGAME_PUBLIC_CONTEXT_EVALUATION_COMMITMENT_V1;
 use crate::competitive_sideboard_evaluation::RATIFIED_COMPETITIVE_SIDEBOARD_EVALUATION_COMMITMENT_V1;
 use crate::duel_gesture_evaluation::RATIFIED_DUEL_GESTURE_EVALUATION_COMMITMENT_V1;
-use crate::duel_perception_evaluation::RATIFIED_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V1;
+use crate::duel_perception_evaluation::RATIFIED_PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V2;
 use serde::{Deserialize, Serialize};
 
 pub const MTGO_COMPETITIVE_SEMANTIC_READINESS_SCHEMA_V1: u32 = 1;
@@ -65,8 +65,8 @@ pub fn competitive_semantic_ratification_readiness_v1(
             RATIFIED_COMPETITIVE_EVENT_LISTING_EVALUATION_COMMITMENT_V1.is_some(),
         event_record_evaluation_present: RATIFIED_COMPETITIVE_EVENT_RECORD_EVALUATION_COMMITMENT_V1
             .is_some(),
-        duel_perception_evaluation_present: RATIFIED_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V1
-            .is_some(),
+        duel_perception_evaluation_present:
+            RATIFIED_PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V2.is_some(),
         duel_gesture_evaluation_present: RATIFIED_DUEL_GESTURE_EVALUATION_COMMITMENT_V1.is_some(),
         duel_lifecycle_evaluation_present:
             RATIFIED_COMPETITIVE_DUEL_LIFECYCLE_EVALUATION_COMMITMENT_V1.is_some(),

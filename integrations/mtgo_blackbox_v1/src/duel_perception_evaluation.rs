@@ -1,7 +1,9 @@
 use crate::{
-    validate_observed_decision_v1, CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
+    build_player_visible_duel_decision_input_v1, validate_observed_decision_v1,
+    CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
     CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1, MtgoContractErrorV1,
-    MtgoObservedDecisionV1, MtgoSizePxV1,
+    MtgoObservedDecisionV1, MtgoPlayerRelativeRoleV1, MtgoPlayerVisibleDuelActionV1,
+    MtgoPlayerVisibleDuelDecisionInputV1, MtgoSizePxV1,
 };
 use mtg_kernel::rl::ActionSemanticV1;
 use serde::{Deserialize, Serialize};
@@ -9,11 +11,18 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 pub const MTGO_DUEL_PERCEPTION_EVALUATION_SCHEMA_V1: u32 = 1;
+pub const MTGO_PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_SCHEMA_V2: u32 = 2;
 
 const DUEL_PERCEPTION_EVALUATION_DOMAIN_V1: &[u8] = b"mtgo-duel-perception-evaluation-v1";
+const PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_DOMAIN_V2: &[u8] =
+    b"mtgo-player-visible-duel-perception-evaluation-v2";
 const DUEL_PERCEPTION_PROFILE_ADMISSION_DOMAIN_V1: &[u8] =
     b"mtgo-duel-perception-profile-admission-v1";
-pub(crate) const RATIFIED_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V1: Option<&str> = None;
+const PLAYER_VISIBLE_DUEL_PERCEPTION_PROFILE_ADMISSION_DOMAIN_V2: &[u8] =
+    b"mtgo-player-visible-duel-perception-profile-admission-v2";
+const RATIFIED_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V1: Option<&str> = None;
+pub(crate) const RATIFIED_PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V2: Option<&str> =
+    None;
 const CANONICAL_PIXEL_FORMAT_V1: &str = "bgra8_unorm_top_down_tightly_packed_v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -131,12 +140,11 @@ pub struct MtgoDuelPerceptionEvaluationSpecV1 {
     pub required_action_families: Vec<MtgoDuelActionFamilyV1>,
 }
 
-/// One expected semantic decision and the optional perception result for the
-/// same visible acting-player duel frame.
+/// Legacy full-kernel reconstruction comparison for one acting-player frame.
 ///
-/// The source hashes and expected record are still untrusted corpus inputs.
-/// Evaluation recomputes structural validity and semantic equality, but only a
-/// separately reviewed production commitment may ratify the result.
+/// This is retained for offline adapter diagnostics only. Its expected value
+/// can represent kernel bookkeeping, so v1 is permanently ineligible for the
+/// competitive perception ratification path.
 pub struct MtgoDuelPerceptionEvaluationCaseV1<'a> {
     pub case_id: String,
     pub source_manifest_sha256: String,
@@ -144,6 +152,112 @@ pub struct MtgoDuelPerceptionEvaluationCaseV1<'a> {
     pub source_frame_sequence: u64,
     pub expected: MtgoObservedDecisionV1,
     pub prediction: Option<&'a CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPlayerVisibleDuelPerceptionEvaluationSpecV2 {
+    pub schema_version: u32,
+    pub evaluation_id: String,
+    pub perception_profile_commitment_sha256: String,
+    pub corpus_manifest_sha256: String,
+    pub annotation_protocol_sha256: String,
+    pub evaluator_binary_sha256: String,
+    pub minimum_unique_cases: u32,
+    pub minimum_prediction_coverage_bps: u16,
+    pub required_action_families: Vec<MtgoDuelActionFamilyV1>,
+}
+
+/// One player-visible annotation and optional prediction for an exact corpus
+/// frame. The expected value's type cannot represent `ObservationV5`, kernel
+/// object references, card database identifiers, capture lineage, or any
+/// hidden opponent zone.
+pub struct MtgoPlayerVisibleDuelPerceptionEvaluationCaseV2<'a> {
+    pub case_id: String,
+    pub source_manifest_sha256: String,
+    pub source_canonical_bgra8_sha256: String,
+    pub source_frame_sequence: u64,
+    pub expected: MtgoPlayerVisibleDuelDecisionInputV1,
+    pub prediction: Option<&'a CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1>,
+}
+
+/// Recomputed accuracy over the exact player-visible model payload. It has no
+/// observations, pixels, source metadata, model-scoring authority, or input
+/// conversion.
+///
+/// This type intentionally has no `Debug`, `Clone`, or serde implementation.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoPlayerVisibleDuelPerceptionEvaluationV2;
+/// fn cannot_read_predictions(
+///     value: &CheckedUntrustedMtgoPlayerVisibleDuelPerceptionEvaluationV2,
+/// ) {
+///     let _ = value.observation();
+///     let _ = value.legal_actions();
+///     let _ = value.pixels();
+/// }
+/// ```
+pub struct CheckedUntrustedMtgoPlayerVisibleDuelPerceptionEvaluationV2 {
+    perception_profile_commitment_sha256: String,
+    evaluation_commitment_sha256: String,
+    unique_case_count: u32,
+    prediction_count: u32,
+    exact_visible_state_count: u32,
+    exact_visible_legal_action_count: u32,
+    exact_visible_decision_input_count: u32,
+    prediction_coverage_bps: u16,
+    missing_action_families: Vec<MtgoDuelActionFamilyV1>,
+    passes_declared_gate: bool,
+}
+
+impl CheckedUntrustedMtgoPlayerVisibleDuelPerceptionEvaluationV2 {
+    pub fn perception_profile_commitment_sha256(&self) -> &str {
+        &self.perception_profile_commitment_sha256
+    }
+
+    pub fn evaluation_commitment_sha256(&self) -> &str {
+        &self.evaluation_commitment_sha256
+    }
+
+    pub fn unique_case_count(&self) -> u32 {
+        self.unique_case_count
+    }
+
+    pub fn prediction_count(&self) -> u32 {
+        self.prediction_count
+    }
+
+    pub fn exact_visible_state_count(&self) -> u32 {
+        self.exact_visible_state_count
+    }
+
+    pub fn exact_visible_legal_action_count(&self) -> u32 {
+        self.exact_visible_legal_action_count
+    }
+
+    pub fn exact_visible_decision_input_count(&self) -> u32 {
+        self.exact_visible_decision_input_count
+    }
+
+    pub fn prediction_coverage_bps(&self) -> u16 {
+        self.prediction_coverage_bps
+    }
+
+    pub fn missing_action_families(&self) -> &[MtgoDuelActionFamilyV1] {
+        &self.missing_action_families
+    }
+
+    pub fn passes_declared_gate(&self) -> bool {
+        self.passes_declared_gate
+    }
+
+    pub fn safe_for_model_scoring(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input(&self) -> bool {
+        false
+    }
 }
 
 /// Recomputed corpus result without runtime authority.
@@ -636,9 +750,183 @@ pub fn evaluate_untrusted_duel_perception_profile_v1(
     })
 }
 
-/// Admits only the exact corpus evaluation pinned by the private production
-/// trust root. The production root is deliberately empty until a real,
-/// reviewed acting-player duel corpus and evaluator run exist.
+pub fn evaluate_untrusted_player_visible_duel_perception_profile_v2(
+    profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
+    corpus: &CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
+    spec: MtgoPlayerVisibleDuelPerceptionEvaluationSpecV2,
+    cases: Vec<MtgoPlayerVisibleDuelPerceptionEvaluationCaseV2<'_>>,
+) -> Result<CheckedUntrustedMtgoPlayerVisibleDuelPerceptionEvaluationV2, MtgoContractErrorV1> {
+    validate_player_visible_spec_v2(&spec)?;
+    if spec.perception_profile_commitment_sha256 != profile.profile_commitment_sha256()
+        || spec.required_action_families != profile.supported_action_families()
+    {
+        return Err(error_v1(
+            "player_visible_duel_perception_evaluation_profile_mismatch",
+            "evaluation spec must bind the exact runtime profile and supported action families",
+        ));
+    }
+    if spec.corpus_manifest_sha256 != corpus.canonical_manifest_sha256()
+        || profile.game_format() != corpus.manifest_v1().game_format
+    {
+        return Err(error_v1(
+            "player_visible_duel_perception_evaluation_corpus_mismatch",
+            "evaluation spec and runtime profile must bind the exact checked duel corpus",
+        ));
+    }
+    if cases.is_empty() || cases.len() > 100_000 {
+        return Err(error_v1(
+            "player_visible_duel_perception_case_count_invalid",
+            cases.len().to_string(),
+        ));
+    }
+    if cases.len() != corpus.sample_count() {
+        return Err(error_v1(
+            "player_visible_duel_perception_evaluation_corpus_coverage",
+            "evaluation must contain exactly one case for every checked corpus sample",
+        ));
+    }
+
+    let encoded_spec = serde_json::to_vec(&spec).map_err(|error| {
+        error_v1(
+            "player_visible_duel_perception_spec_serialization_failed",
+            error.to_string(),
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_DOMAIN_V2);
+    hash_part_v1(&mut hasher, &encoded_spec);
+
+    let mut previous_case_id: Option<&str> = None;
+    let mut source_manifests = HashSet::new();
+    let mut observed_action_families = HashSet::new();
+    let mut prediction_count = 0_u32;
+    let mut exact_visible_state_count = 0_u32;
+    let mut exact_visible_legal_action_count = 0_u32;
+    let mut exact_visible_decision_input_count = 0_u32;
+
+    for (corpus_sample, case) in corpus.manifest_v1().samples.iter().zip(&cases) {
+        validate_safe_identifier_v1(
+            &case.case_id,
+            "player_visible_duel_perception_case_id_invalid",
+        )?;
+        if previous_case_id.is_some_and(|previous| previous >= case.case_id.as_str()) {
+            return Err(error_v1(
+                "player_visible_duel_perception_case_order_invalid",
+                "case IDs must be unique and strictly increasing",
+            ));
+        }
+        previous_case_id = Some(&case.case_id);
+        validate_lower_hex_sha256_v1(
+            "player_visible_duel_perception_source_manifest",
+            &case.source_manifest_sha256,
+        )?;
+        validate_lower_hex_sha256_v1(
+            "player_visible_duel_perception_source_frame",
+            &case.source_canonical_bgra8_sha256,
+        )?;
+        if case.source_frame_sequence == 0 {
+            return Err(error_v1(
+                "player_visible_duel_perception_source_sequence_invalid",
+                case.case_id.clone(),
+            ));
+        }
+        if case.case_id != corpus_sample.sample_id
+            || case.source_manifest_sha256 != corpus_sample.source_manifest_sha256
+            || case.source_canonical_bgra8_sha256 != corpus_sample.source_canonical_bgra8_sha256
+        {
+            return Err(error_v1(
+                "player_visible_duel_perception_evaluation_corpus_source_mismatch",
+                case.case_id.clone(),
+            ));
+        }
+        if !source_manifests.insert(case.source_manifest_sha256.as_str()) {
+            return Err(error_v1(
+                "player_visible_duel_perception_duplicate_source",
+                case.case_id.clone(),
+            ));
+        }
+        validate_player_visible_expected_v2(&case.expected)?;
+        for action in &case.expected.ordered_legal_actions {
+            observed_action_families.insert(player_visible_duel_action_family_v1(action));
+        }
+
+        let mut visible_state_exact = false;
+        let mut visible_legal_actions_exact = false;
+        let mut visible_decision_input_exact = false;
+        let prediction_commitment = if let Some(prediction) = case.prediction {
+            validate_player_visible_prediction_source_v2(&spec, case, prediction)?;
+            prediction_count += 1;
+            let predicted =
+                build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())?;
+            visible_state_exact = predicted.current_state == case.expected.current_state;
+            visible_legal_actions_exact =
+                predicted.ordered_legal_actions == case.expected.ordered_legal_actions;
+            visible_decision_input_exact = visible_state_exact && visible_legal_actions_exact;
+            exact_visible_state_count += u32::from(visible_state_exact);
+            exact_visible_legal_action_count += u32::from(visible_legal_actions_exact);
+            exact_visible_decision_input_count += u32::from(visible_decision_input_exact);
+            prediction.candidate_commitment_sha256()
+        } else {
+            "abstained"
+        };
+        let expected_commitment = case.expected.commitment_sha256_v1()?;
+        for part in [
+            case.case_id.as_bytes(),
+            case.source_manifest_sha256.as_bytes(),
+            case.source_canonical_bgra8_sha256.as_bytes(),
+            &case.source_frame_sequence.to_le_bytes(),
+            expected_commitment.as_bytes(),
+            prediction_commitment.as_bytes(),
+            &[
+                u8::from(visible_state_exact),
+                u8::from(visible_legal_actions_exact),
+                u8::from(visible_decision_input_exact),
+            ],
+        ] {
+            hash_part_v1(&mut hasher, part);
+        }
+    }
+
+    let unique_case_count = u32::try_from(cases.len()).map_err(|_| {
+        error_v1(
+            "player_visible_duel_perception_case_count_invalid",
+            "case count does not fit u32",
+        )
+    })?;
+    let prediction_coverage_bps = ratio_bps_v1(prediction_count, unique_case_count);
+    let missing_action_families = spec
+        .required_action_families
+        .iter()
+        .copied()
+        .filter(|family| !observed_action_families.contains(family))
+        .collect::<Vec<_>>();
+    let passes_declared_gate = unique_case_count >= spec.minimum_unique_cases
+        && prediction_coverage_bps >= spec.minimum_prediction_coverage_bps
+        && prediction_count != 0
+        && exact_visible_state_count == prediction_count
+        && exact_visible_legal_action_count == prediction_count
+        && exact_visible_decision_input_count == prediction_count
+        && missing_action_families.is_empty();
+
+    Ok(
+        CheckedUntrustedMtgoPlayerVisibleDuelPerceptionEvaluationV2 {
+            perception_profile_commitment_sha256: spec.perception_profile_commitment_sha256,
+            evaluation_commitment_sha256: format!("{:x}", hasher.finalize()),
+            unique_case_count,
+            prediction_count,
+            exact_visible_state_count,
+            exact_visible_legal_action_count,
+            exact_visible_decision_input_count,
+            prediction_coverage_bps,
+            missing_action_families,
+            passes_declared_gate,
+        },
+    )
+}
+
+/// Legacy v1 admission is permanently empty because its annotation can carry
+/// full kernel bookkeeping. Use the player-visible v2 path for any future
+/// competitive perception ratification.
 pub fn admit_ratified_duel_perception_profile_v1(
     profile: CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
     evaluation: CheckedUntrustedMtgoDuelPerceptionEvaluationV1,
@@ -648,6 +936,72 @@ pub fn admit_ratified_duel_perception_profile_v1(
         evaluation,
         RATIFIED_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V1,
     )
+}
+
+/// Admits only the exact player-visible corpus evaluation pinned by the
+/// private production trust root. The root is deliberately empty until a real,
+/// reviewed acting-player duel corpus and evaluator run exist.
+pub fn admit_ratified_player_visible_duel_perception_profile_v2(
+    profile: CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
+    evaluation: CheckedUntrustedMtgoPlayerVisibleDuelPerceptionEvaluationV2,
+) -> Result<AdmittedMtgoDuelPerceptionProfileV1, MtgoContractErrorV1> {
+    admit_player_visible_duel_perception_profile_against_ratification_v2(
+        profile,
+        evaluation,
+        RATIFIED_PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_COMMITMENT_V2,
+    )
+}
+
+fn admit_player_visible_duel_perception_profile_against_ratification_v2(
+    profile: CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
+    evaluation: CheckedUntrustedMtgoPlayerVisibleDuelPerceptionEvaluationV2,
+    ratified_evaluation_commitment: Option<&str>,
+) -> Result<AdmittedMtgoDuelPerceptionProfileV1, MtgoContractErrorV1> {
+    if evaluation.perception_profile_commitment_sha256 != profile.profile_commitment_sha256() {
+        return Err(error_v1(
+            "player_visible_duel_perception_evaluation_profile_mismatch",
+            "evaluation and runtime profile commitments differ",
+        ));
+    }
+    if !evaluation.passes_declared_gate {
+        return Err(error_v1(
+            "player_visible_duel_perception_declared_gate_failed",
+            evaluation.evaluation_commitment_sha256,
+        ));
+    }
+    let ratified = ratified_evaluation_commitment.ok_or_else(|| {
+        error_v1(
+            "player_visible_duel_perception_profile_not_ratified",
+            "production contains no ratified player-visible duel perception evaluation",
+        )
+    })?;
+    validate_lower_hex_sha256_v1("player_visible_duel_perception_ratification", ratified)?;
+    if evaluation.evaluation_commitment_sha256 != ratified {
+        return Err(error_v1(
+            "player_visible_duel_perception_profile_not_ratified",
+            "evaluation does not match the ratified player-visible production commitment",
+        ));
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(PLAYER_VISIBLE_DUEL_PERCEPTION_PROFILE_ADMISSION_DOMAIN_V2);
+    hash_part_v1(
+        &mut hasher,
+        evaluation.perception_profile_commitment_sha256.as_bytes(),
+    );
+    hash_part_v1(
+        &mut hasher,
+        evaluation.evaluation_commitment_sha256.as_bytes(),
+    );
+    hash_part_v1(
+        &mut hasher,
+        b"player_visible_payload_only_profile_identity_no_scoring_or_input",
+    );
+    Ok(AdmittedMtgoDuelPerceptionProfileV1 {
+        profile,
+        evaluation_commitment_sha256: evaluation.evaluation_commitment_sha256,
+        admission_commitment_sha256: format!("{:x}", hasher.finalize()),
+    })
 }
 
 fn admit_duel_perception_profile_against_ratification_v1(
@@ -740,6 +1094,185 @@ fn validate_spec_v1(spec: &MtgoDuelPerceptionEvaluationSpecV1) -> Result<(), Mtg
         ));
     }
     validate_action_families_v1(&spec.required_action_families)
+}
+
+fn validate_player_visible_spec_v2(
+    spec: &MtgoPlayerVisibleDuelPerceptionEvaluationSpecV2,
+) -> Result<(), MtgoContractErrorV1> {
+    if spec.schema_version != MTGO_PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_SCHEMA_V2 {
+        return Err(error_v1(
+            "player_visible_duel_perception_evaluation_schema_mismatch",
+            spec.schema_version.to_string(),
+        ));
+    }
+    validate_safe_identifier_v1(
+        &spec.evaluation_id,
+        "player_visible_duel_perception_evaluation_id_invalid",
+    )?;
+    for (field, value) in [
+        (
+            "player_visible_duel_perception_profile_commitment",
+            spec.perception_profile_commitment_sha256.as_str(),
+        ),
+        (
+            "player_visible_duel_perception_corpus_manifest",
+            spec.corpus_manifest_sha256.as_str(),
+        ),
+        (
+            "player_visible_duel_perception_annotation_protocol",
+            spec.annotation_protocol_sha256.as_str(),
+        ),
+        (
+            "player_visible_duel_perception_evaluator_binary",
+            spec.evaluator_binary_sha256.as_str(),
+        ),
+    ] {
+        validate_lower_hex_sha256_v1(field, value)?;
+    }
+    if spec.minimum_unique_cases == 0 || spec.minimum_unique_cases > 100_000 {
+        return Err(error_v1(
+            "player_visible_duel_perception_minimum_cases_invalid",
+            spec.minimum_unique_cases.to_string(),
+        ));
+    }
+    if !(9_500..=10_000).contains(&spec.minimum_prediction_coverage_bps) {
+        return Err(error_v1(
+            "player_visible_duel_perception_coverage_threshold_invalid",
+            spec.minimum_prediction_coverage_bps.to_string(),
+        ));
+    }
+    validate_action_families_v1(&spec.required_action_families)
+}
+
+fn validate_player_visible_expected_v2(
+    expected: &MtgoPlayerVisibleDuelDecisionInputV1,
+) -> Result<(), MtgoContractErrorV1> {
+    if expected.current_state.acting_player != MtgoPlayerRelativeRoleV1::SeatedPlayer
+        || expected.ordered_legal_actions.is_empty()
+        || expected.ordered_legal_actions.len() > 64
+    {
+        return Err(error_v1(
+            "player_visible_duel_perception_expected_invalid",
+            "expected input must be a seated-player decision with 1 to 64 visible actions",
+        ));
+    }
+    if expected.ordered_legal_actions.iter().any(|action| {
+        player_visible_action_actor_v1(action) != MtgoPlayerRelativeRoleV1::SeatedPlayer
+    }) {
+        return Err(error_v1(
+            "player_visible_duel_perception_expected_actor_mismatch",
+            "every expected visible action must belong to the seated player",
+        ));
+    }
+    let _ = expected.commitment_sha256_v1()?;
+    Ok(())
+}
+
+fn validate_player_visible_prediction_source_v2(
+    spec: &MtgoPlayerVisibleDuelPerceptionEvaluationSpecV2,
+    case: &MtgoPlayerVisibleDuelPerceptionEvaluationCaseV2<'_>,
+    prediction: &CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
+) -> Result<(), MtgoContractErrorV1> {
+    if prediction.perception_profile_commitment_sha256()
+        != spec.perception_profile_commitment_sha256
+        || prediction.source_manifest_sha256() != case.source_manifest_sha256
+        || prediction.source_canonical_bgra8_sha256() != case.source_canonical_bgra8_sha256
+        || prediction.frame_sequence() != case.source_frame_sequence
+    {
+        return Err(error_v1(
+            "player_visible_duel_perception_prediction_source_mismatch",
+            case.case_id.clone(),
+        ));
+    }
+    Ok(())
+}
+
+fn player_visible_action_actor_v1(
+    action: &MtgoPlayerVisibleDuelActionV1,
+) -> MtgoPlayerRelativeRoleV1 {
+    match action {
+        MtgoPlayerVisibleDuelActionV1::Pass { actor }
+        | MtgoPlayerVisibleDuelActionV1::PlayLand { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::CastSpell { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ActivateManaAbility { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ActivateAbility { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::PlotSpell { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseTarget { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseCostTarget { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseCastMode { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseKicker { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseSpellMode { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectOption { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectTarget { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::FinishEffectSelection { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectColor { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectNumber { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectBoolean { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::FinishTargetSelection { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseOptionalCostUse { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseOptionalCostWhich { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseSpellCopyPayment { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseSpellCopyRetarget { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseMadnessCast { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::Discard { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::DeclareAttackers { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::DeclareBlockersForAttacker { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseAttackerInclusion { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseBlockerInclusion { actor, .. }
+        | MtgoPlayerVisibleDuelActionV1::OrderTriggers { actor, .. } => *actor,
+    }
+}
+
+fn player_visible_duel_action_family_v1(
+    action: &MtgoPlayerVisibleDuelActionV1,
+) -> MtgoDuelActionFamilyV1 {
+    match action {
+        MtgoPlayerVisibleDuelActionV1::Pass { .. } => MtgoDuelActionFamilyV1::PriorityPass,
+        MtgoPlayerVisibleDuelActionV1::PlayLand { .. } => MtgoDuelActionFamilyV1::PlayLand,
+        MtgoPlayerVisibleDuelActionV1::CastSpell { .. }
+        | MtgoPlayerVisibleDuelActionV1::PlotSpell { .. } => {
+            MtgoDuelActionFamilyV1::CastOrPlotSpell
+        }
+        MtgoPlayerVisibleDuelActionV1::ActivateManaAbility { .. } => {
+            MtgoDuelActionFamilyV1::ManaAbility
+        }
+        MtgoPlayerVisibleDuelActionV1::ActivateAbility { .. } => {
+            MtgoDuelActionFamilyV1::NonManaAbility
+        }
+        MtgoPlayerVisibleDuelActionV1::ChooseTarget { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseCostTarget { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectTarget { .. }
+        | MtgoPlayerVisibleDuelActionV1::FinishTargetSelection { .. } => {
+            MtgoDuelActionFamilyV1::TargetChoice
+        }
+        MtgoPlayerVisibleDuelActionV1::ChooseCastMode { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseKicker { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseSpellMode { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseOptionalCostUse { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseOptionalCostWhich { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseSpellCopyPayment { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseSpellCopyRetarget { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseMadnessCast { .. } => {
+            MtgoDuelActionFamilyV1::CostOrModeChoice
+        }
+        MtgoPlayerVisibleDuelActionV1::ChooseEffectOption { .. }
+        | MtgoPlayerVisibleDuelActionV1::FinishEffectSelection { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectColor { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectNumber { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseEffectBoolean { .. } => {
+            MtgoDuelActionFamilyV1::EffectChoice
+        }
+        MtgoPlayerVisibleDuelActionV1::Discard { .. } => MtgoDuelActionFamilyV1::Discard,
+        MtgoPlayerVisibleDuelActionV1::DeclareAttackers { .. }
+        | MtgoPlayerVisibleDuelActionV1::DeclareBlockersForAttacker { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseAttackerInclusion { .. }
+        | MtgoPlayerVisibleDuelActionV1::ChooseBlockerInclusion { .. } => {
+            MtgoDuelActionFamilyV1::CombatChoice
+        }
+        MtgoPlayerVisibleDuelActionV1::OrderTriggers { .. } => {
+            MtgoDuelActionFamilyV1::TriggerOrdering
+        }
+    }
 }
 
 fn validate_action_families_v1(
@@ -949,6 +1482,23 @@ mod tests {
         }
     }
 
+    fn player_visible_spec_v2(
+        profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
+        corpus: &CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
+    ) -> MtgoPlayerVisibleDuelPerceptionEvaluationSpecV2 {
+        MtgoPlayerVisibleDuelPerceptionEvaluationSpecV2 {
+            schema_version: MTGO_PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_SCHEMA_V2,
+            evaluation_id: "player-visible-duel-perception-evaluation-test-v2".to_owned(),
+            perception_profile_commitment_sha256: profile.profile_commitment_sha256().to_owned(),
+            corpus_manifest_sha256: corpus.canonical_manifest_sha256().to_owned(),
+            annotation_protocol_sha256: "c".repeat(64),
+            evaluator_binary_sha256: "d".repeat(64),
+            minimum_unique_cases: 1,
+            minimum_prediction_coverage_bps: 10_000,
+            required_action_families: profile.supported_action_families().to_vec(),
+        }
+    }
+
     fn fixture_v1(
         profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
     ) -> (
@@ -986,6 +1536,21 @@ mod tests {
         expected: MtgoObservedDecisionV1,
     ) -> MtgoDuelPerceptionEvaluationCaseV1<'a> {
         MtgoDuelPerceptionEvaluationCaseV1 {
+            case_id: corpus.manifest_v1().samples[0].sample_id.clone(),
+            source_manifest_sha256: prediction.source_manifest_sha256().to_owned(),
+            source_canonical_bgra8_sha256: prediction.source_canonical_bgra8_sha256().to_owned(),
+            source_frame_sequence: prediction.frame_sequence(),
+            expected,
+            prediction: Some(prediction),
+        }
+    }
+
+    fn player_visible_case_v2<'a>(
+        corpus: &CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
+        prediction: &'a CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
+        expected: MtgoPlayerVisibleDuelDecisionInputV1,
+    ) -> MtgoPlayerVisibleDuelPerceptionEvaluationCaseV2<'a> {
+        MtgoPlayerVisibleDuelPerceptionEvaluationCaseV2 {
             case_id: corpus.manifest_v1().samples[0].sample_id.clone(),
             source_manifest_sha256: prediction.source_manifest_sha256().to_owned(),
             source_canonical_bgra8_sha256: prediction.source_canonical_bgra8_sha256().to_owned(),
@@ -1083,6 +1648,102 @@ mod tests {
         assert!(evaluation.passes_declared_gate());
         assert!(!evaluation.safe_for_model_scoring());
         assert!(!evaluation.safe_for_input());
+    }
+
+    #[test]
+    fn exact_player_visible_payload_passes_without_runtime_authority() {
+        let profile = duel_perception_runtime_profile_for_test_v1();
+        let (corpus, prediction, _) = fixture_v1(&profile);
+        let expected =
+            build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
+                .unwrap();
+        let evaluation = evaluate_untrusted_player_visible_duel_perception_profile_v2(
+            &profile,
+            &corpus,
+            player_visible_spec_v2(&profile, &corpus),
+            vec![player_visible_case_v2(&corpus, &prediction, expected)],
+        )
+        .unwrap();
+
+        assert_eq!(evaluation.unique_case_count(), 1);
+        assert_eq!(evaluation.prediction_count(), 1);
+        assert_eq!(evaluation.exact_visible_state_count(), 1);
+        assert_eq!(evaluation.exact_visible_legal_action_count(), 1);
+        assert_eq!(evaluation.exact_visible_decision_input_count(), 1);
+        assert_eq!(evaluation.prediction_coverage_bps(), 10_000);
+        assert!(evaluation.missing_action_families().is_empty());
+        assert!(evaluation.passes_declared_gate());
+        assert!(!evaluation.safe_for_model_scoring());
+        assert!(!evaluation.safe_for_input());
+    }
+
+    #[test]
+    fn player_visible_mismatch_fails_gate_without_kernel_annotation() {
+        let profile = duel_perception_runtime_profile_for_test_v1();
+        let (corpus, prediction, _) = fixture_v1(&profile);
+        let mut expected =
+            build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
+                .unwrap();
+        expected.current_state.life_totals[0] += 1;
+        let evaluation = evaluate_untrusted_player_visible_duel_perception_profile_v2(
+            &profile,
+            &corpus,
+            player_visible_spec_v2(&profile, &corpus),
+            vec![player_visible_case_v2(&corpus, &prediction, expected)],
+        )
+        .unwrap();
+
+        assert_eq!(evaluation.exact_visible_state_count(), 0);
+        assert_eq!(evaluation.exact_visible_legal_action_count(), 1);
+        assert_eq!(evaluation.exact_visible_decision_input_count(), 0);
+        assert!(!evaluation.passes_declared_gate());
+    }
+
+    #[test]
+    fn player_visible_annotation_serialization_excludes_kernel_and_capture_metadata() {
+        let profile = duel_perception_runtime_profile_for_test_v1();
+        let (_, prediction, _) = fixture_v1(&profile);
+        let expected =
+            build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
+                .unwrap();
+        let serialized = serde_json::to_string(&expected).unwrap();
+        for forbidden in [
+            "arena_id",
+            "card_db_id",
+            "zone_change_count",
+            "adapter_object_id",
+            "engine_context",
+            "surface_context",
+            "policy_surface_context",
+            "frame_id",
+            "decision_commitment",
+            "source_manifest",
+        ] {
+            assert!(!serialized.contains(forbidden), "found {forbidden}");
+        }
+    }
+
+    #[test]
+    fn player_visible_corpus_source_substitution_fails_closed() {
+        let profile = duel_perception_runtime_profile_for_test_v1();
+        let (corpus, prediction, _) = fixture_v1(&profile);
+        let expected =
+            build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
+                .unwrap();
+        let mut case = player_visible_case_v2(&corpus, &prediction, expected);
+        case.source_manifest_sha256 = "f".repeat(64);
+        assert_eq!(
+            evaluate_untrusted_player_visible_duel_perception_profile_v2(
+                &profile,
+                &corpus,
+                player_visible_spec_v2(&profile, &corpus),
+                vec![case],
+            )
+            .err()
+            .unwrap()
+            .code(),
+            "player_visible_duel_perception_evaluation_corpus_source_mismatch"
+        );
     }
 
     #[test]
@@ -1245,6 +1906,52 @@ mod tests {
         assert_eq!(admitted.perception_profile_commitment_sha256().len(), 64);
         assert_eq!(admitted.evaluation_commitment_sha256(), commitment);
         assert_eq!(admitted.admission_commitment_sha256().len(), 64);
+        assert!(!admitted.safe_for_model_scoring());
+        assert!(!admitted.safe_for_input());
+    }
+
+    #[test]
+    fn only_player_visible_v2_has_a_future_competitive_ratification_path() {
+        let profile = duel_perception_runtime_profile_for_test_v1();
+        let (corpus, prediction, _) = fixture_v1(&profile);
+        let expected =
+            build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
+                .unwrap();
+        let evaluation = evaluate_untrusted_player_visible_duel_perception_profile_v2(
+            &profile,
+            &corpus,
+            player_visible_spec_v2(&profile, &corpus),
+            vec![player_visible_case_v2(&corpus, &prediction, expected)],
+        )
+        .unwrap();
+        let commitment = evaluation.evaluation_commitment_sha256().to_owned();
+        assert_eq!(
+            admit_ratified_player_visible_duel_perception_profile_v2(profile, evaluation)
+                .err()
+                .unwrap()
+                .code(),
+            "player_visible_duel_perception_profile_not_ratified"
+        );
+
+        let profile = duel_perception_runtime_profile_for_test_v1();
+        let (corpus, prediction, _) = fixture_v1(&profile);
+        let expected =
+            build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
+                .unwrap();
+        let evaluation = evaluate_untrusted_player_visible_duel_perception_profile_v2(
+            &profile,
+            &corpus,
+            player_visible_spec_v2(&profile, &corpus),
+            vec![player_visible_case_v2(&corpus, &prediction, expected)],
+        )
+        .unwrap();
+        let admitted = admit_player_visible_duel_perception_profile_against_ratification_v2(
+            profile,
+            evaluation,
+            Some(&commitment),
+        )
+        .unwrap();
+        assert_eq!(admitted.evaluation_commitment_sha256(), commitment);
         assert!(!admitted.safe_for_model_scoring());
         assert!(!admitted.safe_for_input());
     }
