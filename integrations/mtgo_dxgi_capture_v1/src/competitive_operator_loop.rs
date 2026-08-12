@@ -56,6 +56,7 @@ use crate::probe::{
     bind_opaque_player_visible_duel_source_gesture_target_v1,
     capture_admitted_mtgo_duel_visible_frame_v1, perceive_admitted_duel_frame_v1,
     prepare_opaque_competitive_duel_action_plan_v1,
+    prepare_opaque_player_visible_duel_gesture_pointer_v1,
     rebind_opaque_player_visible_duel_gesture_target_v1,
     refresh_competitive_match_visible_game_log_v1, resolve_opaque_profile_bound_duel_control_v1,
     score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
@@ -68,7 +69,9 @@ use crate::probe::{
     OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, OpaqueMtgoPlayerVisibleDuelGestureIntentV1,
     OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
-    OpaqueMtgoPlayerVisibleDuelResolvedControlV1, OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    OpaqueMtgoPlayerVisibleDuelResolvedControlV1,
+    OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1,
+    OpaqueMtgoProfileBoundDuelResolvedControlV1,
 };
 use mtgo_blackbox_v1::{
     validate_competitive_player_visible_game_history_for_session_v1,
@@ -599,6 +602,75 @@ impl OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1 {
 
     pub fn is_final_primitive_v1(&self) -> bool {
         self.target.is_final_primitive_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Move-only, non-actuating operator holder after the exact reviewed target
+/// regions have been converted privately to current desktop points. It retains
+/// the complete player-visible decision, Game Log, session, and target-runtime
+/// lineages but exposes no point, rectangle, pixel, process, or input method.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1;
+/// fn cannot_act(value: OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1) {
+///     let _ = value.points_desktop_px();
+///     let _ = value.process_handle();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1 {
+    _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    _action_baseline: Option<CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1>,
+    _confirmed_decision: MtgoPlayerVisibleConfirmedDuelDecisionV1,
+    _pointer: OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1,
+    selected_action: MtgoPlayerVisibleDuelActionV1,
+    primitive: MtgoPlayerVisibleDuelGesturePrimitiveV1,
+    primitive_index: u16,
+    is_final_primitive: bool,
+}
+
+impl OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1 {
+    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        &self.selected_action
+    }
+
+    pub fn primitive_index_v1(&self) -> u16 {
+        self.primitive_index
+    }
+
+    pub fn primitive_v1(&self) -> &MtgoPlayerVisibleDuelGesturePrimitiveV1 {
+        &self.primitive
+    }
+
+    pub fn is_final_primitive_v1(&self) -> bool {
+        self.is_final_primitive
+    }
+
+    pub fn prior_confirmed_action_count_v1(&self) -> usize {
+        self.confirmed_history
+            .as_ref()
+            .map(CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::decision_count_v1)
+            .unwrap_or(0)
+    }
+
+    pub fn visible_game_log_corroboration_available_v1(&self) -> bool {
+        self._action_baseline.is_some()
     }
 
     pub fn safe_for_live_input_v1(&self) -> bool {
@@ -2387,6 +2459,46 @@ pub fn refresh_competitive_post_entry_operator_player_visible_gameplay_target_v1
             _confirmed_decision: confirmed_decision,
             target,
             selected_action,
+        },
+    )
+}
+
+/// Privately derives current desktop points from the exact refreshed visible
+/// target regions while retaining the complete operator ownership chain. This
+/// creates no input command and does not reserve or modify the shared input
+/// gate.
+pub fn prepare_competitive_post_entry_operator_player_visible_gameplay_pointer_v1(
+    value: OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1, String> {
+    let OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayFreshTargetV1 {
+        _lease: lease,
+        _session: session,
+        _visible_identity: visible_identity,
+        _visible_game_log: visible_game_log,
+        confirmed_history,
+        _action_baseline: action_baseline,
+        _confirmed_decision: confirmed_decision,
+        target,
+        selected_action,
+    } = value;
+    let primitive = target.primitive_v1().clone();
+    let primitive_index = target.primitive_index_v1();
+    let is_final_primitive = target.is_final_primitive_v1();
+    let pointer = prepare_opaque_player_visible_duel_gesture_pointer_v1(target)?;
+    Ok(
+        OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayPreparedPointerV1 {
+            _lease: lease,
+            _session: session,
+            _visible_identity: visible_identity,
+            _visible_game_log: visible_game_log,
+            confirmed_history,
+            _action_baseline: action_baseline,
+            _confirmed_decision: confirmed_decision,
+            _pointer: pointer,
+            selected_action,
+            primitive,
+            primitive_index,
+            is_final_primitive,
         },
     )
 }

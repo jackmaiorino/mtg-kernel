@@ -82,6 +82,10 @@ const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_RESPONSE_SCHEMA_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-duel-gesture-target-response-schema-v1";
 const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_SCHEMA_REVIEW_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-duel-gesture-target-schema-review-v1";
+const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-player-visible-duel-gesture-target-binding-v1";
+const PLAYER_VISIBLE_DUEL_GESTURE_POINTER_PREPARATION_DOMAIN_V1: &[u8] =
+    b"mtgo-player-visible-duel-gesture-pointer-preparation-v1";
 const PLAYER_VISIBLE_DUEL_GESTURE_TARGET_WIRE_SOURCE_V1: &[u8] =
     include_bytes!("player_visible_duel_gesture_target_wire.rs");
 const PLAYER_VISIBLE_DUEL_INPUT_SOURCE_V1: &[u8] =
@@ -896,7 +900,7 @@ pub fn bind_opaque_player_visible_duel_source_gesture_target_v1(
         .primitives_v1()
         .first()
         .ok_or("player-visible gesture primitive is absent")?;
-    let target_set = invoke_player_visible_duel_gesture_target_runtime_v1(
+    let (target_set, target_runtime) = invoke_player_visible_duel_gesture_target_runtime_v1(
         &intent,
         perception,
         profile,
@@ -940,6 +944,7 @@ pub fn bind_opaque_player_visible_duel_source_gesture_target_v1(
         intent,
         primitive_index,
         targets,
+        target_runtime,
         continuation_perception: None,
     })
 }
@@ -1027,7 +1032,7 @@ pub fn advance_opaque_player_visible_duel_gesture_target_v1(
             "player-visible gesture continuation changed the sanitized visible decision".to_owned(),
         );
     }
-    let target_set = invoke_player_visible_duel_gesture_target_runtime_v1(
+    let (target_set, target_runtime) = invoke_player_visible_duel_gesture_target_runtime_v1(
         &binding.intent,
         &current_perception,
         profile,
@@ -1056,6 +1061,7 @@ pub fn advance_opaque_player_visible_duel_gesture_target_v1(
 
     binding.primitive_index = next_primitive_index;
     binding.targets = targets;
+    binding.target_runtime = target_runtime;
     binding.continuation_perception = Some(Box::new(current_perception));
     Ok(binding)
 }
@@ -1168,7 +1174,7 @@ pub(crate) fn rebind_opaque_player_visible_duel_gesture_target_v1(
         &current_perception.decision_record,
         matching_controls[0].frame_region_evidence_id,
     )?;
-    let target_set = invoke_player_visible_duel_gesture_target_runtime_v1(
+    let (target_set, target_runtime) = invoke_player_visible_duel_gesture_target_runtime_v1(
         &binding.intent,
         &current_perception,
         profile,
@@ -1189,6 +1195,7 @@ pub(crate) fn rebind_opaque_player_visible_duel_gesture_target_v1(
         },
     )?;
     binding.targets = targets;
+    binding.target_runtime = target_runtime;
     binding.continuation_perception = Some(Box::new(current_perception));
     Ok(binding)
 }
@@ -1201,7 +1208,13 @@ fn invoke_player_visible_duel_gesture_target_runtime_v1(
     protocol: &AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,
     primitive_index: u16,
     timeout_ms: u32,
-) -> Result<MtgoPlayerVisibleDuelGestureTargetSetV1, String> {
+) -> Result<
+    (
+        MtgoPlayerVisibleDuelGestureTargetSetV1,
+        PrivatePlayerVisibleGestureTargetRuntimeBindingV1,
+    ),
+    String,
+> {
     if !(100..=60_000).contains(&timeout_ms) {
         return Err(
             "player-visible gesture-target timeout must be between 100 and 60000 ms".to_owned(),
@@ -1337,7 +1350,28 @@ fn invoke_player_visible_duel_gesture_target_runtime_v1(
             "player-visible gesture-target response does not bind the exact request".to_owned(),
         );
     }
-    Ok(response.target_set)
+    let target_set_json = serde_json::to_vec(&response.target_set)
+        .map_err(|error| format!("serialize player-visible gesture-target response: {error}"))?;
+    let response_commitment_sha256 = commitment_v1(
+        PLAYER_VISIBLE_DUEL_GESTURE_TARGET_BINDING_DOMAIN_V1,
+        &[
+            request_commitment_sha256.as_bytes(),
+            &target_set_json,
+            protocol.review_sha256.as_bytes(),
+        ],
+    );
+    Ok((
+        response.target_set,
+        PrivatePlayerVisibleGestureTargetRuntimeBindingV1 {
+            protocol_review_sha256: protocol.review_sha256.clone(),
+            runtime_identity_commitment_sha256: runtime
+                .commitments
+                .runtime_identity_commitment_sha256
+                .clone(),
+            request_commitment_sha256,
+            response_commitment_sha256,
+        },
+    ))
 }
 
 /// Copyable commitments for one owner-readable League or Challenge launch
@@ -1992,11 +2026,19 @@ struct ResolvedOpaqueGestureTargetsV1 {
     regions: Vec<PrivateOpaqueGestureTargetRegionV1>,
 }
 
-#[allow(dead_code)]
+#[derive(Serialize)]
 struct PrivatePlayerVisibleGestureTargetRegionV1 {
     role: MtgoPlayerVisibleDuelGestureTargetRoleV1,
     rect_client_px: MtgoRectPxV1,
     content_sha256: String,
+}
+
+#[derive(Serialize)]
+struct PrivatePlayerVisibleGestureTargetRuntimeBindingV1 {
+    protocol_review_sha256: String,
+    runtime_identity_commitment_sha256: String,
+    request_commitment_sha256: String,
+    response_commitment_sha256: String,
 }
 
 struct PlayerVisibleGestureTargetExpectationV1<'a> {
@@ -2027,8 +2069,8 @@ struct SelectedPlayerVisibleGestureTargetV1<'a> {
 pub struct OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1 {
     intent: OpaqueMtgoPlayerVisibleDuelGestureIntentV1,
     primitive_index: u16,
-    #[allow(dead_code)]
     targets: Vec<PrivatePlayerVisibleGestureTargetRegionV1>,
+    target_runtime: PrivatePlayerVisibleGestureTargetRuntimeBindingV1,
     continuation_perception: Option<Box<OpaqueMtgoAdmittedDuelPerceptionV1>>,
 }
 
@@ -2070,6 +2112,187 @@ impl OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1 {
     pub fn permits_spending_v1(&self) -> bool {
         false
     }
+}
+
+#[allow(dead_code)]
+pub(crate) struct MtgoPrivatePlayerVisibleDuelGesturePointerPreparationCommitmentsV1 {
+    pub(crate) protocol_review_sha256: String,
+    pub(crate) runtime_identity_commitment_sha256: String,
+    pub(crate) target_request_commitment_sha256: String,
+    pub(crate) target_response_commitment_sha256: String,
+    pub(crate) preparation_commitment_sha256: String,
+    pub(crate) frame_id: u64,
+    pub(crate) frame_sequence: u64,
+    pub(crate) captured_at_unix_millis: u128,
+    pub(crate) primitive_index: u16,
+    pub(crate) target_count: u16,
+}
+
+/// Coordinate-private preparation of one player-visible gesture primitive.
+/// The target protocol, child request and response, retained pixels, window
+/// identity, and derived desktop points remain sealed. This crate-private type
+/// has no input conversion.
+#[allow(dead_code)]
+pub(crate) struct OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1 {
+    _binding: OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
+    pub(crate) commitments: MtgoPrivatePlayerVisibleDuelGesturePointerPreparationCommitmentsV1,
+    #[allow(dead_code)]
+    pub(crate) primitive: MtgoPlayerVisibleDuelGesturePrimitiveV1,
+    #[allow(dead_code)]
+    pub(crate) target_points_desktop_px: Vec<(i32, i32)>,
+    #[allow(dead_code)]
+    pub(crate) hwnd: u64,
+    #[allow(dead_code)]
+    pub(crate) process_id: u32,
+    #[allow(dead_code)]
+    pub(crate) process_start_filetime_100ns: u64,
+    #[allow(dead_code)]
+    pub(crate) dpi: u32,
+    #[allow(dead_code)]
+    pub(crate) client_rect_desktop_px: SignedRectV1,
+    #[allow(dead_code)]
+    pub(crate) park_x_desktop_px: i32,
+    #[allow(dead_code)]
+    pub(crate) park_y_desktop_px: i32,
+}
+
+pub(crate) fn prepare_opaque_player_visible_duel_gesture_pointer_v1(
+    binding: OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
+) -> Result<OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1, String> {
+    let perception = binding.current_perception_v1();
+    let perception_commitments = perception.commitments_v1();
+    let source = &perception.source_frame.source_frame;
+    let manifest = &source.manifest;
+    if manifest.pre != manifest.post {
+        return Err("player-visible pointer preparation window changed during capture".to_owned());
+    }
+    let primitive = binding.primitive_v1().clone();
+    let required_roles =
+        mtgo_blackbox_v1::required_player_visible_duel_gesture_target_roles_v1(&primitive);
+    if binding.targets.len() != required_roles.len()
+        || !binding
+            .targets
+            .iter()
+            .zip(&required_roles)
+            .all(|(target, role)| target.role == *role)
+    {
+        return Err(
+            "player-visible pointer preparation changed the ordered target roles".to_owned(),
+        );
+    }
+    let client_rect = manifest.pre.client_rect_desktop_px;
+    let target_points_desktop_px =
+        player_visible_gesture_target_points_v1(&binding.targets, &client_rect)?;
+    let target_count = u16::try_from(target_points_desktop_px.len())
+        .map_err(|_| "player-visible pointer target count overflow")?;
+    let primitive_json = serde_json::to_vec(&primitive)
+        .map_err(|error| format!("serialize player-visible pointer primitive: {error}"))?;
+    let targets_json = serde_json::to_vec(&binding.targets)
+        .map_err(|error| format!("serialize player-visible pointer targets: {error}"))?;
+    let preparation_commitment_sha256 = commitment_v1(
+        PLAYER_VISIBLE_DUEL_GESTURE_POINTER_PREPARATION_DOMAIN_V1,
+        &[
+            binding.target_runtime.protocol_review_sha256.as_bytes(),
+            binding
+                .target_runtime
+                .runtime_identity_commitment_sha256
+                .as_bytes(),
+            binding.target_runtime.request_commitment_sha256.as_bytes(),
+            binding.target_runtime.response_commitment_sha256.as_bytes(),
+            perception_commitments
+                .source_frame
+                .source_capture
+                .capture_commitment_sha256
+                .as_bytes(),
+            perception_commitments
+                .perception_result_commitment_sha256
+                .as_bytes(),
+            &primitive_json,
+            &targets_json,
+            &binding.primitive_index.to_be_bytes(),
+            &target_count.to_be_bytes(),
+            b"private_pointer_points_no_input_or_event_authority",
+        ],
+    );
+    let output_bounds = manifest.output.bounds_desktop_px;
+    let (park_x_desktop_px, park_y_desktop_px) =
+        choose_cursor_park_point_v3(&client_rect, &output_bounds)?;
+    let hwnd = manifest.pre.hwnd;
+    let process_id = manifest.pre.process_id;
+    let process_start_filetime_100ns = manifest.pre.process_start_filetime_100ns;
+    let dpi = manifest.pre.dpi;
+    let commitments = MtgoPrivatePlayerVisibleDuelGesturePointerPreparationCommitmentsV1 {
+        protocol_review_sha256: binding.target_runtime.protocol_review_sha256.clone(),
+        runtime_identity_commitment_sha256: binding
+            .target_runtime
+            .runtime_identity_commitment_sha256
+            .clone(),
+        target_request_commitment_sha256: binding.target_runtime.request_commitment_sha256.clone(),
+        target_response_commitment_sha256: binding
+            .target_runtime
+            .response_commitment_sha256
+            .clone(),
+        preparation_commitment_sha256,
+        frame_id: perception_commitments.frame_id,
+        frame_sequence: perception_commitments.frame_sequence,
+        captured_at_unix_millis: perception_commitments
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis,
+        primitive_index: binding.primitive_index,
+        target_count,
+    };
+    Ok(OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1 {
+        _binding: binding,
+        commitments,
+        primitive,
+        target_points_desktop_px,
+        hwnd,
+        process_id,
+        process_start_filetime_100ns,
+        dpi,
+        client_rect_desktop_px: client_rect,
+        park_x_desktop_px,
+        park_y_desktop_px,
+    })
+}
+
+fn player_visible_gesture_target_points_v1(
+    targets: &[PrivatePlayerVisibleGestureTargetRegionV1],
+    client_rect: &SignedRectV1,
+) -> Result<Vec<(i32, i32)>, String> {
+    let mut points = Vec::with_capacity(targets.len());
+    for target in targets {
+        let center_x = target
+            .rect_client_px
+            .x
+            .checked_add(target.rect_client_px.width / 2)
+            .ok_or("player-visible target client x overflow")?;
+        let center_y = target
+            .rect_client_px
+            .y
+            .checked_add(target.rect_client_px.height / 2)
+            .ok_or("player-visible target client y overflow")?;
+        let desktop_x = client_rect
+            .left
+            .checked_add(
+                i32::try_from(center_x).map_err(|_| "player-visible target x is too large")?,
+            )
+            .ok_or("player-visible target desktop x overflow")?;
+        let desktop_y = client_rect
+            .top
+            .checked_add(
+                i32::try_from(center_y).map_err(|_| "player-visible target y is too large")?,
+            )
+            .ok_or("player-visible target desktop y overflow")?;
+        if !client_rect.contains_point(desktop_x, desktop_y) {
+            return Err(
+                "player-visible target center is outside the current MTGO client".to_owned(),
+            );
+        }
+        points.push((desktop_x, desktop_y));
+    }
+    Ok(points)
 }
 
 /// One checked gesture stage bound to target regions on its required opaque
@@ -7672,6 +7895,42 @@ mod tests {
             validate_player_visible_gesture_target_pixels_v1(&pixels, &size, &changed_target,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn player_visible_pointer_targets_use_signed_client_origin_and_reject_outside_centers() {
+        let target = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl,
+            rect_client_px: MtgoRectPxV1 {
+                x: 10,
+                y: 20,
+                width: 4,
+                height: 6,
+            },
+            content_sha256: "a".repeat(64),
+        };
+        let client = SignedRectV1 {
+            left: -200,
+            top: -100,
+            right: 100,
+            bottom: 100,
+        };
+        assert_eq!(
+            player_visible_gesture_target_points_v1(&[target], &client).unwrap(),
+            vec![(-188, -77)]
+        );
+
+        let outside = PrivatePlayerVisibleGestureTargetRegionV1 {
+            role: MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl,
+            rect_client_px: MtgoRectPxV1 {
+                x: 301,
+                y: 0,
+                width: 2,
+                height: 2,
+            },
+            content_sha256: "b".repeat(64),
+        };
+        assert!(player_visible_gesture_target_points_v1(&[outside], &client).is_err());
     }
 
     #[test]
