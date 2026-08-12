@@ -60,7 +60,9 @@ const DUEL_GESTURE_TARGET_RUNTIME_IDENTITY_DOMAIN_V1: &[u8] =
     b"mtgo-duel-gesture-target-runtime-identity-v1";
 const DUEL_GESTURE_TARGET_REQUEST_DOMAIN_V1: &[u8] = b"mtgo-duel-gesture-target-request-v1";
 const DUEL_PERCEPTION_RESULT_DOMAIN_V1: &[u8] = b"mtgo-duel-perception-result-v1";
+#[allow(dead_code)]
 const DUEL_OPAQUE_MODEL_SELECTION_DOMAIN_V1: &[u8] = b"mtgo-opaque-duel-model-selection-v1";
+#[allow(dead_code)]
 const DUEL_OPAQUE_CONTROL_RESOLUTION_DOMAIN_V1: &[u8] = b"mtgo-opaque-duel-control-resolution-v1";
 const DUEL_OPAQUE_COMPETITIVE_LAUNCH_IDENTITY_DOMAIN_V1: &[u8] =
     b"mtgo-opaque-competitive-launch-visible-identity-v1";
@@ -354,6 +356,7 @@ pub struct MtgoAdmittedDuelPerceptionCommitmentsV1 {
 pub struct OpaqueMtgoAdmittedDuelPerceptionV1 {
     pub(super) source_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1,
     pub(super) validated_decision: ValidatedMtgoObservedDecisionV1,
+    #[allow(dead_code)]
     source_candidate: Option<CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1>,
     pub(super) decision_record: MtgoObservedDecisionV1,
     pub(super) visible_controls: MtgoVisibleActionControlSetV1,
@@ -799,7 +802,7 @@ fn rect_contains_rect_v1(outer: &MtgoRectPxV1, inner: &MtgoRectPxV1) -> Result<b
 /// Copyable scoring telemetry without an observation, semantic, coordinate, or
 /// input conversion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MtgoOpaqueDuelModelSelectionCommitmentsV1 {
+pub(crate) struct MtgoOpaqueDuelModelSelectionCommitmentsV1 {
     pub perception_result_commitment_sha256: String,
     pub decision_commitment_sha256: String,
     pub deployment_commitment_sha256: String,
@@ -827,7 +830,8 @@ pub struct MtgoOpaqueDuelModelSelectionCommitmentsV1 {
 ///     let _ = value.target_point_client_px();
 /// }
 /// ```
-pub struct OpaqueMtgoProfileBoundDuelModelSelectionV1 {
+#[allow(dead_code)]
+pub(crate) struct OpaqueMtgoProfileBoundDuelModelSelectionV1 {
     pub(super) perception: OpaqueMtgoAdmittedDuelPerceptionV1,
     pub(super) selection: Option<CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1>,
     commitments: MtgoOpaqueDuelModelSelectionCommitmentsV1,
@@ -835,16 +839,17 @@ pub struct OpaqueMtgoProfileBoundDuelModelSelectionV1 {
     opaque_selection_commitment_sha256: String,
 }
 
+#[allow(dead_code)]
 impl OpaqueMtgoProfileBoundDuelModelSelectionV1 {
-    pub fn commitments_v1(&self) -> MtgoOpaqueDuelModelSelectionCommitmentsV1 {
+    pub(crate) fn commitments_v1(&self) -> MtgoOpaqueDuelModelSelectionCommitmentsV1 {
         self.commitments.clone()
     }
 
-    pub fn safe_for_input_v1(&self) -> bool {
+    pub(crate) fn safe_for_input_v1(&self) -> bool {
         false
     }
 
-    pub fn permits_event_entry_v1(&self) -> bool {
+    pub(crate) fn permits_event_entry_v1(&self) -> bool {
         false
     }
 }
@@ -899,6 +904,7 @@ impl OpaqueMtgoProfileBoundDuelResolvedControlV1 {
         false
     }
 
+    #[allow(dead_code)]
     pub(crate) fn gesture_plan_for_operator_v1(
         &self,
         stages: Vec<MtgoDuelGestureStageV1>,
@@ -1862,7 +1868,8 @@ pub fn perceive_admitted_duel_frame_v1(
     })
 }
 
-pub fn score_and_select_opaque_admitted_duel_perception_v1(
+#[allow(dead_code)]
+pub(crate) fn score_and_select_opaque_admitted_duel_perception_v1(
     mut perception: OpaqueMtgoAdmittedDuelPerceptionV1,
     profile: &AdmittedMtgoDuelPerceptionProfileV1,
     deployment: &MtgoExpectedModelDeploymentV1,
@@ -1893,7 +1900,8 @@ pub fn score_and_select_opaque_admitted_duel_perception_v1(
 /// checkpoint deployment. The deployment record remains private inside the
 /// loaded value, preventing a crossed caller-supplied identity at the live
 /// composition boundary.
-pub fn score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1(
+#[allow(dead_code)]
+pub(crate) fn score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1(
     mut perception: OpaqueMtgoAdmittedDuelPerceptionV1,
     profile: &AdmittedMtgoDuelPerceptionProfileV1,
     deployment: &LoadedMtgoNativeCheckpointDeploymentV1,
@@ -1915,6 +1923,7 @@ pub fn score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v
     finish_opaque_duel_model_selection_v1(perception, selection)
 }
 
+#[allow(dead_code)]
 fn finish_opaque_duel_model_selection_v1(
     perception: OpaqueMtgoAdmittedDuelPerceptionV1,
     selection: CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
@@ -1974,7 +1983,8 @@ fn finish_opaque_duel_model_selection_v1(
 /// rechecks decision, frame, prompt, enabled state, confidence, legality, and
 /// unique selected match. This Windows-side wrapper additionally retains the
 /// opaque source frame and its private pixel-region coordinates.
-pub fn resolve_opaque_profile_bound_duel_control_v1(
+#[allow(dead_code)]
+pub(crate) fn resolve_opaque_profile_bound_duel_control_v1(
     mut selection: OpaqueMtgoProfileBoundDuelModelSelectionV1,
 ) -> Result<OpaqueMtgoProfileBoundDuelResolvedControlV1, String> {
     let profile_bound_selection = selection
@@ -2208,6 +2218,7 @@ pub fn begin_opaque_competitive_duel_gesture_sequence_v1(
 /// then begins the ordinary opaque gesture sequence. This is the production
 /// composition seam for callers that already own the complete competitive
 /// action plan. It performs no input and returns no coordinates.
+#[allow(dead_code)]
 pub(crate) fn begin_opaque_competitive_duel_gesture_sequence_from_pinned_runtime_v1(
     plan: OpaqueMtgoCompetitiveDuelActionPlanV1,
     profile: &AdmittedMtgoDuelGestureProfileV1,
@@ -4498,10 +4509,7 @@ pub(crate) fn bind_opaque_duel_control_to_competitive_action_plan_v1(
     let opaque = opaque_duel_action_binding_view_v1(&control)?;
     let gesture_commitments = gesture.commitments_v1();
     let postcondition = competitive.postcondition_plan_commitments_v1();
-    validate_opaque_competitive_action_binding_v1(
-        &opaque,
-        &postcondition,
-    )?;
+    validate_opaque_competitive_action_binding_v1(&opaque, &postcondition)?;
     if gesture_commitments.profile_bound_resolution_commitment_sha256
         != opaque.profile_bound_resolution_commitment_sha256
         || gesture_commitments.decision_commitment_sha256 != opaque.decision_commitment_sha256
@@ -5807,9 +5815,7 @@ mod tests {
             source_frame_sha256: opaque.source_frame_sha256.clone(),
             source_output_identity_sha256: opaque.source_output_identity_sha256.clone(),
             source_client_size_px: opaque.source_client_size_px.clone(),
-            selected_semantic_sha256: selected_semantic_sha256_v1(
-                &opaque.selected_semantic_json,
-            ),
+            selected_semantic_sha256: selected_semantic_sha256_v1(&opaque.selected_semantic_json),
             plan_commitment_sha256: "b".repeat(64),
         };
         validate_opaque_competitive_action_binding_v1(&opaque, &baseline).unwrap();

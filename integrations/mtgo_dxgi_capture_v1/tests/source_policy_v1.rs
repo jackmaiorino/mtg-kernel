@@ -259,12 +259,11 @@ fn sideboard_classifier_response_has_no_kernel_card_identifier() {
     let atomic_transfer_type = &actuator[start..end];
     assert!(atomic_transfer_type.contains("pub card_name: String"));
     assert!(!atomic_transfer_type.contains("card_db_id"));
-    assert!(!actuator.contains(
-        "pub fn configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1"
-    ));
-    assert!(!actuator.contains(
-        "pub fn target_configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1"
-    ));
+    assert!(
+        !actuator.contains("pub fn configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1")
+    );
+    assert!(!actuator
+        .contains("pub fn target_configuration_v1(&self) -> &MtgoCompetitiveDeckConfigurationV1"));
 }
 
 #[test]
@@ -1974,7 +1973,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_decision_input_contract_present: true",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
-        "public_model_owned_duel_action_path_present: true",
+        "public_model_owned_duel_action_path_present: false",
         "native_checkpoint_pregame_interface_present: false",
         "public_player_visible_pregame_request_contract_present: true",
         "public_player_known_submitted_pregame_deck_configuration_present: true",
@@ -2432,6 +2431,7 @@ fn competitive_operator_bootstrap_cross_checks_resources_without_authority() {
 #[test]
 fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_entry_authority() {
     let source = include_str!("../src/competitive_operator_loop.rs");
+    let public_api = include_str!("../src/lib.rs");
     for required in [
         "begin_competitive_post_entry_operator_v1",
         "next_competitive_post_entry_operator_directive_v1",
@@ -2516,6 +2516,43 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         assert!(
             !source.contains(forbidden),
             "post-entry operator loop exposes a forbidden new-entry capability: {forbidden}"
+        );
+    }
+    for forbidden_export in [
+        "select_competitive_post_entry_operator_gameplay_action_v1,",
+        "bind_competitive_post_entry_operator_gameplay_action_v1,",
+        "OpaqueMtgoCompetitiveOperatorGameplaySelectionV1,",
+        "score_and_select_opaque_admitted_duel_perception_v1,",
+        "score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,",
+        "resolve_opaque_profile_bound_duel_control_v1,",
+        "OpaqueMtgoProfileBoundDuelModelSelectionV1,",
+        "MtgoOpaqueDuelModelSelectionCommitmentsV1,",
+    ] {
+        assert!(
+            !public_api.contains(forbidden_export),
+            "public API exports the legacy complete-observation competitive scorer: {forbidden_export}"
+        );
+    }
+    for required_private_parent in ["mod competitive_operator_loop;", "mod probe;"] {
+        assert!(
+            public_api.contains(required_private_parent),
+            "legacy gameplay route is not retained beneath a private parent module: {required_private_parent}"
+        );
+    }
+    for forbidden_public_parent in ["pub mod competitive_operator_loop;", "pub mod probe;"] {
+        assert!(
+            !public_api.contains(forbidden_public_parent),
+            "legacy gameplay route parent module is public: {forbidden_public_parent}"
+        );
+    }
+    for required_private in [
+        "pub(crate) fn select_competitive_post_entry_operator_gameplay_action_v1(",
+        "pub(crate) fn bind_competitive_post_entry_operator_gameplay_action_v1(",
+        "pub(crate) struct OpaqueMtgoCompetitiveOperatorGameplaySelectionV1",
+    ] {
+        assert!(
+            source.contains(required_private),
+            "legacy gameplay route is not explicitly crate-private: {required_private}"
         );
     }
 }

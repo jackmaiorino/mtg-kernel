@@ -73,7 +73,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         player_visible_duel_decision_input_contract_present: true,
         native_checkpoint_player_visible_only_duel_action_interface_present: false,
         current_duel_scorer_kernel_bookkeeping_withheld: false,
-        public_model_owned_duel_action_path_present: true,
+        public_model_owned_duel_action_path_present: false,
         native_checkpoint_pregame_interface_present: false,
         public_player_visible_pregame_request_contract_present: true,
         public_player_known_submitted_pregame_deck_configuration_present: true,
@@ -117,7 +117,7 @@ mod tests {
         assert!(report.player_visible_duel_decision_input_contract_present);
         assert!(!report.native_checkpoint_player_visible_only_duel_action_interface_present);
         assert!(!report.current_duel_scorer_kernel_bookkeeping_withheld);
-        assert!(report.public_model_owned_duel_action_path_present);
+        assert!(!report.public_model_owned_duel_action_path_present);
         assert!(!report.native_checkpoint_pregame_interface_present);
         assert!(report.public_player_visible_pregame_request_contract_present);
         assert!(report.public_player_known_submitted_pregame_deck_configuration_present);

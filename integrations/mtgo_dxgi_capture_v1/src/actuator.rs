@@ -3482,6 +3482,7 @@ impl OpaqueMtgoCompetitiveGestureGameSessionV1 {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn competitive_gesture_game_session_action_authorities_v1(
     session: &OpaqueMtgoCompetitiveGestureGameSessionV1,
 ) -> (

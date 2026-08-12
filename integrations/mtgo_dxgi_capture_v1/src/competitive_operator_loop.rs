@@ -347,27 +347,30 @@ pub struct OpaqueMtgoCompetitiveOperatorGameplayLeaseV1 {
 /// the exact loaded checkpoint selected one current player-visible legal
 /// action. Only the sanitized player-visible action is exposed so the reviewed
 /// UI adapter can build its coordinate-free gesture stages.
-pub struct OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
+// Dormant until the kernel exposes a player-visible-only scorer.
+#[allow(dead_code)]
+pub(crate) struct OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
     control: OpaqueMtgoProfileBoundDuelResolvedControlV1,
     player_visible_selected_action: MtgoPlayerVisibleDuelActionV1,
 }
 
+#[allow(dead_code)]
 impl OpaqueMtgoCompetitiveOperatorGameplaySelectionV1 {
-    pub fn player_visible_selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+    pub(crate) fn player_visible_selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
         &self.player_visible_selected_action
     }
 
-    pub fn safe_for_live_input_v1(&self) -> bool {
+    pub(crate) fn safe_for_live_input_v1(&self) -> bool {
         false
     }
 
-    pub fn permits_event_entry_v1(&self) -> bool {
+    pub(crate) fn permits_event_entry_v1(&self) -> bool {
         false
     }
 
-    pub fn permits_spending_v1(&self) -> bool {
+    pub(crate) fn permits_spending_v1(&self) -> bool {
         false
     }
 }
@@ -1783,7 +1786,8 @@ pub fn return_competitive_post_entry_operator_gameplay_v1(
 ///     let _ = value.input_command();
 /// }
 /// ```
-pub fn select_competitive_post_entry_operator_gameplay_action_v1(
+#[allow(dead_code)]
+pub(crate) fn select_competitive_post_entry_operator_gameplay_action_v1(
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
     perception: OpaqueMtgoAdmittedDuelPerceptionV1,
@@ -1827,7 +1831,8 @@ pub fn select_competitive_post_entry_operator_gameplay_action_v1(
 /// exact League or Challenge session and profile-pinned source target runtime.
 /// The returned ordinary session-bound action still requires one distinct
 /// fresh visible perception before any primitive can be prepared.
-pub fn bind_competitive_post_entry_operator_gameplay_action_v1(
+#[allow(dead_code)]
+pub(crate) fn bind_competitive_post_entry_operator_gameplay_action_v1(
     selected: OpaqueMtgoCompetitiveOperatorGameplaySelectionV1,
     gesture_stages: Vec<MtgoDuelGestureStageV1>,
     postcondition_calibration: MtgoProfileBoundPostconditionCalibrationV1,
@@ -2536,6 +2541,7 @@ fn validate_operator_gameplay_session_resources_v1(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn validate_operator_gameplay_action_source_v1(
     resources: &MtgoCompetitiveOperatorResourceCommitmentsV1,
     lease: &MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
