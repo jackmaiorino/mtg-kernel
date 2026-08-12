@@ -75,7 +75,7 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
         "MtgoCompetitiveExternalPublicGameLogEventV1",
         "visit_external_public_history_v1",
         "SeparateOrderedStreamsNoCrossSourceTotalOrder",
-        "game_log_is_complete_current_state: false",
+        "cannot replace, the exact current visible",
         "into_visible_game_outcome_v1",
         "OpaqueMtgoCompetitiveVisibleGameOutcomeV1",
         "derive_visible_game_winner_v1",

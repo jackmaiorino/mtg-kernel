@@ -7,7 +7,7 @@
 
 pub use mtg_kernel::rl::{
     ActionSemanticV1, CardPrivateV1, KnownLibraryCardV4, ObservationV5, PlayerSeatV1,
-    PublicObservationProjectionV5,
+    ZoneIndependentStepV1,
 };
 
 mod action_resolution;

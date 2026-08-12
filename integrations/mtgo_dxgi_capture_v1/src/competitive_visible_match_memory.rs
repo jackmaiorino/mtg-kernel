@@ -6,8 +6,7 @@ use mtgo_blackbox_v1::{
     ActionSemanticV1, CardPrivateV1, CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
     KnownLibraryCardV4, MtgoCompetitiveEventKindV1, MtgoCompetitivePlayerVisibleDecisionViewV1,
     MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogPlayerRoleV1,
-    MtgoVisibleGameLogSemanticEventViewV1, ObservationV5, PlayerSeatV1,
-    PublicObservationProjectionV5,
+    MtgoVisibleGameLogSemanticEventViewV1, ObservationV5, PlayerSeatV1, ZoneIndependentStepV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -45,19 +44,25 @@ pub enum MtgoCompetitivePlayerRelativeGameWinnerV1 {
 /// This header contains game facts and counts only. Event and match identity,
 /// deployment and source commitments, paths, source UUIDs, raw markup, pixels,
 /// coordinates, process data, and authority stay outside the model-facing
-/// callback. `game_log_is_complete_current_state` is permanently false: public
+/// callback. The separate-stream ordering contract and the rule that public
 /// log events supplement, but cannot replace, the exact current visible
-/// observation reconstructed from the admitted client frame.
+/// observation are type-level API invariants rather than model inputs.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::MtgoCompetitiveExternalPublicHistoryHeaderV1;
+/// fn cannot_tensorize_protocol_metadata(value: &MtgoCompetitiveExternalPublicHistoryHeaderV1) {
+///     let _ = value.schema_version;
+///     let _ = value.ordering;
+///     let _ = value.player_visible_information_only;
+///     let _ = value.game_log_is_complete_current_state;
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MtgoCompetitiveExternalPublicHistoryHeaderV1 {
-    pub schema_version: u32,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub game_number: u8,
     pub confirmed_decision_count: usize,
     pub public_event_count: usize,
-    pub ordering: MtgoCompetitiveExternalPublicHistoryOrderingV1,
-    pub player_visible_information_only: bool,
-    pub game_log_is_complete_current_state: bool,
 }
 
 /// Narrow model-facing view of one confirmed visible decision. Adapter frame
@@ -87,6 +92,7 @@ pub struct MtgoCompetitiveExternalConfirmedDecisionV1<'a> {
 ///     let _ = value.card_db_hash;
 ///     let _ = value.step_index;
 ///     let _ = value.visible_projection_hash;
+///     let _ = value.public_projection_v1();
 /// }
 /// ```
 pub struct MtgoCompetitiveExternalVisibleObservationV1<'a> {
@@ -98,8 +104,40 @@ impl MtgoCompetitiveExternalVisibleObservationV1<'_> {
         self.observation.acting_player
     }
 
-    pub fn public_projection_v1(&self) -> &PublicObservationProjectionV5 {
-        &self.observation.projection
+    pub fn turn_v1(&self) -> u32 {
+        self.observation.projection.surface.turn
+    }
+
+    pub fn phase_v1(&self) -> ZoneIndependentStepV1 {
+        self.observation.projection.surface.phase
+    }
+
+    pub fn active_player_v1(&self) -> PlayerSeatV1 {
+        self.observation.projection.surface.active_player
+    }
+
+    pub fn priority_player_v1(&self) -> PlayerSeatV1 {
+        self.observation.projection.surface.priority_player
+    }
+
+    pub fn initiative_v1(&self) -> Option<PlayerSeatV1> {
+        self.observation.projection.surface.initiative
+    }
+
+    pub fn life_totals_v1(&self) -> [i32; 2] {
+        self.observation.projection.surface.life_totals
+    }
+
+    pub fn mana_pools_v1(&self) -> [[u8; 6]; 2] {
+        self.observation.projection.surface.mana_pools
+    }
+
+    pub fn hand_counts_v1(&self) -> [usize; 2] {
+        self.observation.projection.surface.hand_counts
+    }
+
+    pub fn library_counts_v1(&self) -> [usize; 2] {
+        self.observation.projection.surface.library_counts
     }
 
     pub fn own_hand_v1(&self) -> &[CardPrivateV1] {
@@ -481,14 +519,10 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
     {
         let lineage = self.game_log.lineage_v1();
         consumer.begin_public_history_v1(MtgoCompetitiveExternalPublicHistoryHeaderV1 {
-            schema_version: MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
             event_kind: lineage.event_kind,
             game_number: lineage.game_number,
             confirmed_decision_count: self.confirmed_decision_count_v1(),
             public_event_count: self.public_event_count_v1(),
-            ordering: MtgoCompetitiveExternalPublicHistoryOrderingV1::SeparateOrderedStreamsNoCrossSourceTotalOrder,
-            player_visible_information_only: true,
-            game_log_is_complete_current_state: false,
         })?;
 
         for index in 0..self.confirmed_decision_count_v1() {
