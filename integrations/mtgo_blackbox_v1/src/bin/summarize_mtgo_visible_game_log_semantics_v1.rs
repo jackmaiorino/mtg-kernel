@@ -9,6 +9,9 @@ use std::{collections::BTreeMap, path::PathBuf};
 struct VisibleGameLogSemanticSummaryV1 {
     schema_version: u32,
     source_file_count: usize,
+    seated_player_source_file_count: usize,
+    spectator_source_file_count: usize,
+    spectator_source_record_count: usize,
     semantically_supported_file_count: usize,
     semantically_unsupported_file_count: usize,
     source_record_count: usize,
@@ -51,6 +54,9 @@ fn run_v1() -> Result<VisibleGameLogSemanticSummaryV1, String> {
         .ok_or("acting-player alias is not valid UTF-8")?;
     let mut source_record_count = 0_usize;
     let source_file_count = paths.len();
+    let mut seated_player_source_file_count = 0_usize;
+    let mut spectator_source_file_count = 0_usize;
+    let mut spectator_source_record_count = 0_usize;
     let mut semantically_supported_file_count = 0_usize;
     let mut semantically_unsupported_file_count = 0_usize;
     let mut classified_source_record_count = 0_usize;
@@ -66,6 +72,22 @@ fn run_v1() -> Result<VisibleGameLogSemanticSummaryV1, String> {
         source_record_count = source_record_count
             .checked_add(source.record_count_v1())
             .ok_or("source record count overflow")?;
+        let spectator_opening = format!("{acting_player_alias} has started watching.");
+        if source
+            .record_v1(0)
+            .is_some_and(|record| record.visible_text_v1() == spectator_opening)
+        {
+            spectator_source_file_count = spectator_source_file_count
+                .checked_add(1)
+                .ok_or("spectator file count overflow")?;
+            spectator_source_record_count = spectator_source_record_count
+                .checked_add(source.record_count_v1())
+                .ok_or("spectator source record count overflow")?;
+            continue;
+        }
+        seated_player_source_file_count = seated_player_source_file_count
+            .checked_add(1)
+            .ok_or("seated-player file count overflow")?;
         let semantics = match classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(
             &source,
             acting_player_alias,
@@ -102,6 +124,9 @@ fn run_v1() -> Result<VisibleGameLogSemanticSummaryV1, String> {
     Ok(VisibleGameLogSemanticSummaryV1 {
         schema_version: 1,
         source_file_count,
+        seated_player_source_file_count,
+        spectator_source_file_count,
+        spectator_source_record_count,
         semantically_supported_file_count,
         semantically_unsupported_file_count,
         source_record_count,
@@ -122,6 +147,7 @@ fn run_v1() -> Result<VisibleGameLogSemanticSummaryV1, String> {
 fn event_kind_label_v1(kind: MtgoVisibleGameLogEventKindV1) -> &'static str {
     use MtgoVisibleGameLogEventKindV1::*;
     match kind {
+        JoinedGame => "joined_game",
         TurnStarted => "turn_started",
         OpeningHand => "opening_hand",
         Mulligan => "mulligan",

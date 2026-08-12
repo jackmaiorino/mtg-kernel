@@ -26,6 +26,7 @@ impl MtgoVisibleGameLogPlayerRoleV1 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MtgoVisibleGameLogEventKindV1 {
+    JoinedGame,
     TurnStarted,
     OpeningHand,
     Mulligan,
@@ -243,6 +244,9 @@ fn classify_record_v1(
     if text == "Your game has not completed within allowed time limits.  To facilitate progress, the match has been forced complete.  If you believe you are entitled to reimbursement, please contact customer support."
     {
         kind = Some(MtgoVisibleGameLogEventKindV1::ForcedComplete);
+    } else if let Some(actor) = text.strip_suffix(" joined the game.") {
+        actor_role = Some(role_for_actor_v1(actor, acting_player_alias, opponent_alias)?);
+        kind = Some(MtgoVisibleGameLogEventKindV1::JoinedGame);
     } else if let Some(rest) = text.strip_prefix("Turn ") {
         if let Some((number, actor)) = rest.split_once(": ") {
             turn_number = Some(parse_decimal_u32_v1(number, "turn number")?);
@@ -539,6 +543,7 @@ mod tests {
     #[test]
     fn exact_public_events_reduce_names_to_roles_and_keep_visible_cards() {
         let source = source_v1(&[
+            "@PUnbuckledPie joined the game.",
             "Turn 1: @PUnbuckledPie",
             "@PUnbuckledPie begins the game with seven cards in hand.",
             "@PUnbuckledPie mulligans to one card.",
@@ -554,32 +559,32 @@ mod tests {
         let projection =
             classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(&source, "UnbuckledPie")
                 .unwrap();
-        assert_eq!(projection.event_count_v1(), 11);
-        assert_eq!(projection.classified_source_record_count_v1(), 11);
+        assert_eq!(projection.event_count_v1(), 12);
+        assert_eq!(projection.classified_source_record_count_v1(), 12);
         assert_eq!(projection.unclassified_source_record_count_v1(), 0);
         assert_eq!(
-            projection.event_v1(5).unwrap().kind_v1(),
+            projection.event_v1(6).unwrap().kind_v1(),
             MtgoVisibleGameLogEventKindV1::PlayedCard
         );
         assert_eq!(
-            projection.event_v1(5).unwrap().visible_card_name_v1(0),
+            projection.event_v1(6).unwrap().visible_card_name_v1(0),
             Some("Island")
-        );
-        assert_eq!(
-            projection.event_v1(6).unwrap().actor_role_v1(),
-            Some(MtgoVisibleGameLogPlayerRoleV1::Opponent)
         );
         assert_eq!(
             projection.event_v1(7).unwrap().actor_role_v1(),
             Some(MtgoVisibleGameLogPlayerRoleV1::Opponent)
         );
-        assert_eq!(projection.event_v1(2).unwrap().primary_count_v1(), Some(1));
-        assert_eq!(projection.event_v1(3).unwrap().primary_count_v1(), Some(6));
         assert_eq!(
-            projection.event_v1(3).unwrap().secondary_count_v1(),
+            projection.event_v1(8).unwrap().actor_role_v1(),
+            Some(MtgoVisibleGameLogPlayerRoleV1::Opponent)
+        );
+        assert_eq!(projection.event_v1(3).unwrap().primary_count_v1(), Some(1));
+        assert_eq!(projection.event_v1(4).unwrap().primary_count_v1(), Some(6));
+        assert_eq!(
+            projection.event_v1(4).unwrap().secondary_count_v1(),
             Some(1)
         );
-        let match_win = projection.event_v1(10).unwrap();
+        let match_win = projection.event_v1(11).unwrap();
         assert_eq!(match_win.primary_count_v1(), Some(2));
         assert_eq!(match_win.secondary_count_v1(), Some(1));
         assert!(projection.opponent_alias_sha256_v1().is_some());
@@ -598,9 +603,14 @@ mod tests {
         let projection =
             classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(&source, "UnbuckledPie")
                 .unwrap();
-        assert_eq!(projection.event_count_v1(), 1);
-        assert_eq!(projection.unclassified_source_record_count_v1(), 2);
-        assert_eq!(projection.event_v1(0).unwrap().source_sequence_v1(), 3);
+        assert_eq!(projection.event_count_v1(), 2);
+        assert_eq!(projection.unclassified_source_record_count_v1(), 1);
+        assert_eq!(projection.event_v1(0).unwrap().source_sequence_v1(), 1);
+        assert_eq!(
+            projection.event_v1(0).unwrap().kind_v1(),
+            MtgoVisibleGameLogEventKindV1::JoinedGame
+        );
+        assert_eq!(projection.event_v1(1).unwrap().source_sequence_v1(), 3);
     }
 
     #[test]
