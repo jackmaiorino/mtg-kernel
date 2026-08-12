@@ -2366,6 +2366,8 @@ fn directive_from_driver_v1(
         driver.allowed_observed_advances_v1(),
         checkpoint.pregame_head_ready_v1() && model.public_model_owned_pregame_action_path_present,
         checkpoint.native_duel_action_interface_present
+            && model.native_checkpoint_player_visible_only_duel_action_interface_present
+            && model.current_duel_scorer_kernel_bookkeeping_withheld
             && model.public_model_owned_duel_action_path_present,
         checkpoint.sideboard_head_ready_v1()
             && model.public_model_owned_changed_sideboard_path_present
@@ -3214,7 +3216,7 @@ mod tests {
     }
 
     #[test]
-    fn gameplay_route_requires_the_exact_loaded_checkpoint_capability() {
+    fn gameplay_route_requires_checkpoint_and_player_visible_only_interface() {
         let unavailable_capabilities = checkpoint_capabilities_v1(false);
         let mut unavailable_operator = operator_commitments_v1();
         unavailable_operator.checkpoint_competitive_capabilities_commitment_sha256 =
@@ -3261,10 +3263,15 @@ mod tests {
         assert!(matches!(
             available.route,
             MtgoCompetitivePostEntryOperatorRouteV1::LaunchGameplay {
-                native_model_path_present: true,
+                native_model_path_present: false,
                 ..
             }
         ));
+
+        let model = check_competitive_model_decision_readiness_v1();
+        assert!(model.native_checkpoint_duel_action_interface_present);
+        assert!(!model.native_checkpoint_player_visible_only_duel_action_interface_present);
+        assert!(!model.current_duel_scorer_kernel_bookkeeping_withheld);
 
         assert!(directive_from_driver_v1(
             &unavailable_operator,

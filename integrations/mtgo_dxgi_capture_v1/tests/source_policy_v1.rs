@@ -1850,6 +1850,8 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "checkpoint_bound_model_capability_commitment_present: true",
         "end_to_end_operator_loop_present: false",
         "native_checkpoint_duel_action_interface_present: true",
+        "native_checkpoint_player_visible_only_duel_action_interface_present: false",
+        "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "native_checkpoint_pregame_interface_present: false",
         "competitive_player_visible_pregame_request_contract_present: true",
         "competitive_pregame_player_known_submitted_deck_configuration_present: true",
@@ -1901,6 +1903,8 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
     for required in [
         "check_competitive_model_decision_readiness_v1",
         "native_checkpoint_duel_action_interface_present: true",
+        "native_checkpoint_player_visible_only_duel_action_interface_present: false",
+        "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "public_model_owned_duel_action_path_present: true",
         "native_checkpoint_pregame_interface_present: false",
         "public_player_visible_pregame_request_contract_present: true",

@@ -12,6 +12,8 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub purpose: String,
     pub supported_event_kinds: Vec<MtgoCompetitiveEventKindV1>,
     pub native_checkpoint_duel_action_interface_present: bool,
+    pub native_checkpoint_player_visible_only_duel_action_interface_present: bool,
+    pub current_duel_scorer_kernel_bookkeeping_withheld: bool,
     pub public_model_owned_duel_action_path_present: bool,
     pub native_checkpoint_pregame_interface_present: bool,
     pub public_player_visible_pregame_request_contract_present: bool,
@@ -37,6 +39,8 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
 impl MtgoCompetitiveModelDecisionReadinessV1 {
     pub fn recompute_all_required_model_decision_surfaces_present_v1(&self) -> bool {
         self.native_checkpoint_duel_action_interface_present
+            && self.native_checkpoint_player_visible_only_duel_action_interface_present
+            && self.current_duel_scorer_kernel_bookkeeping_withheld
             && self.public_model_owned_duel_action_path_present
             && self.native_checkpoint_pregame_interface_present
             && self.public_player_known_submitted_pregame_deck_configuration_present
@@ -64,6 +68,8 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
             MtgoCompetitiveEventKindV1::Challenge,
         ],
         native_checkpoint_duel_action_interface_present: true,
+        native_checkpoint_player_visible_only_duel_action_interface_present: false,
+        current_duel_scorer_kernel_bookkeeping_withheld: false,
         public_model_owned_duel_action_path_present: true,
         native_checkpoint_pregame_interface_present: false,
         public_player_visible_pregame_request_contract_present: true,
@@ -95,7 +101,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_report_has_only_the_native_gameplay_decision_surface() {
+    fn current_report_blocks_all_three_competitive_model_surfaces() {
         let report = check_competitive_model_decision_readiness_v1();
         assert_eq!(
             report.supported_event_kinds,
@@ -105,6 +111,8 @@ mod tests {
             ]
         );
         assert!(report.native_checkpoint_duel_action_interface_present);
+        assert!(!report.native_checkpoint_player_visible_only_duel_action_interface_present);
+        assert!(!report.current_duel_scorer_kernel_bookkeeping_withheld);
         assert!(report.public_model_owned_duel_action_path_present);
         assert!(!report.native_checkpoint_pregame_interface_present);
         assert!(report.public_player_visible_pregame_request_contract_present);

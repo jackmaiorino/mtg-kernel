@@ -53,6 +53,8 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub sideboard_classifier_protocol_present: bool,
     pub duel_perception_classifier_protocol_present: bool,
     pub native_checkpoint_duel_action_interface_present: bool,
+    pub native_checkpoint_player_visible_only_duel_action_interface_present: bool,
+    pub current_duel_scorer_kernel_bookkeeping_withheld: bool,
     pub native_checkpoint_pregame_interface_present: bool,
     pub competitive_player_visible_pregame_request_contract_present: bool,
     pub competitive_pregame_player_known_submitted_deck_configuration_present: bool,
@@ -143,6 +145,8 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             sideboard_classifier_protocol_present: true,
             duel_perception_classifier_protocol_present: true,
             native_checkpoint_duel_action_interface_present: true,
+            native_checkpoint_player_visible_only_duel_action_interface_present: false,
+            current_duel_scorer_kernel_bookkeeping_withheld: false,
             native_checkpoint_pregame_interface_present: false,
             competitive_player_visible_pregame_request_contract_present: true,
             competitive_pregame_player_known_submitted_deck_configuration_present: true,
@@ -353,6 +357,16 @@ mod tests {
             report
                 .known_wiring_gaps
                 .native_checkpoint_duel_action_interface_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .native_checkpoint_player_visible_only_duel_action_interface_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .current_duel_scorer_kernel_bookkeeping_withheld
         );
         assert!(
             !report
