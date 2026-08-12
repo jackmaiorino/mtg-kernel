@@ -1927,6 +1927,10 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_gesture_contract_present: true",
         "player_visible_duel_gesture_to_opaque_control_join_present: true",
         "player_visible_duel_gesture_kernel_object_references_withheld: true",
+        "player_visible_duel_source_gesture_target_protocol_present: true",
+        "player_visible_duel_source_gesture_target_pixels_rehashed: true",
+        "player_visible_duel_gesture_target_protocol_ratified: false",
+        "player_visible_duel_gesture_continuation_target_binding_present: false",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "native_checkpoint_pregame_interface_present: false",
@@ -1986,6 +1990,10 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_gesture_contract_present: true",
         "player_visible_duel_gesture_to_opaque_control_join_present: true",
         "player_visible_duel_gesture_kernel_object_references_withheld: true",
+        "player_visible_duel_source_gesture_target_protocol_present: true",
+        "player_visible_duel_source_gesture_target_pixels_rehashed: true",
+        "player_visible_duel_gesture_target_protocol_ratified: false",
+        "player_visible_duel_gesture_continuation_target_binding_present: false",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "public_model_owned_duel_action_path_present: false",
@@ -2780,6 +2788,149 @@ fn player_visible_duel_gesture_contract_and_opaque_join_withhold_internal_identi
         assert!(
             public_api.contains(required_export),
             "public API omits player-visible gesture join: {required_export}"
+        );
+    }
+}
+
+#[test]
+fn player_visible_gesture_target_protocol_withholds_kernel_identity_and_input() {
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "pub(crate) struct MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1",
+        "pub(crate) struct MtgoPlayerVisibleDuelGestureTargetCandidateV1",
+        "pub(crate) struct MtgoPlayerVisibleDuelGestureTargetSetV1",
+        "pub(crate) struct CheckedUntrustedMtgoPlayerVisibleDuelGestureTargetRequestV1",
+        "pub struct OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1",
+        "pub struct AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1",
+        "pub(crate) fn admit_ratified_player_visible_duel_gesture_target_protocol_v1",
+        "const RATIFIED_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_PROTOCOL_REVIEW_V1: Option<&str> = None",
+        "pub(crate) fn check_untrusted_player_visible_duel_gesture_target_request_v1",
+        "pub fn bind_opaque_player_visible_duel_source_gesture_target_v1",
+        "visible_frame_region_content_sha256_v1(&source.canonical_bgra8, &size, rect)",
+        "pub fn safe_for_live_input_v1(&self) -> bool",
+        "pub fn permits_event_session_recovery_v1(&self) -> bool",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "visible target seam is missing: {required}"
+        );
+    }
+
+    let header_start = runtime
+        .find("pub(crate) struct MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1")
+        .expect("visible target request header");
+    let header_end = runtime[header_start..]
+        .find("\n}\n")
+        .map(|offset| header_start + offset + 3)
+        .expect("visible target request header end");
+    let header = &runtime[header_start..header_end];
+    for forbidden in [
+        "CardStableRefV1",
+        "ActionSemanticV1",
+        "arena_id",
+        "card_db_id",
+        "zone_change_count",
+        "decision_commitment_sha256",
+        "gesture_plan_commitment_sha256",
+        "control_id",
+        "rect_client_px",
+    ] {
+        assert!(
+            !header.contains(forbidden),
+            "visible request leaks: {forbidden}"
+        );
+    }
+
+    let opaque_start = runtime
+        .find("impl OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1")
+        .expect("visible target binding implementation");
+    let opaque_end = runtime[opaque_start..]
+        .find("\n}\n")
+        .map(|offset| opaque_start + offset + 3)
+        .expect("visible target binding implementation end");
+    let opaque = &runtime[opaque_start..opaque_end];
+    for forbidden in [
+        "pub fn rect_client_px",
+        "pub fn frame_id",
+        "pub fn evidence_id",
+        "pub fn target_id",
+        "pub fn points_desktop_px",
+        "pub fn input_command",
+        "pub fn commitment",
+    ] {
+        assert!(
+            !opaque.contains(forbidden),
+            "opaque target binding exposes: {forbidden}"
+        );
+    }
+
+    let process_start = runtime
+        .find("fn invoke_verified_player_visible_gesture_target_process_v1")
+        .expect("visible target process helper");
+    let process_end = runtime[process_start..]
+        .find("\nfn read_bounded_and_drain_v1")
+        .map(|offset| process_start + offset)
+        .expect("visible target process helper end");
+    let process = &runtime[process_start..process_end];
+    for forbidden in [
+        "stderr_sha256",
+        "stderr_digest}",
+        "canonical_bgra8_sha256}",
+        "request_commitment_sha256}",
+        "runtime_identity_commitment_sha256}",
+    ] {
+        assert!(
+            !process.contains(forbidden),
+            "visible target error path exposes private metadata: {forbidden}"
+        );
+    }
+    let binder_start = runtime
+        .find("pub fn bind_opaque_player_visible_duel_source_gesture_target_v1")
+        .expect("visible source target binder");
+    let binder_end = runtime[binder_start..]
+        .find("\n/// Copyable commitments")
+        .map(|offset| binder_start + offset)
+        .expect("visible source target binder end");
+    let binder = &runtime[binder_start..binder_end];
+    for required in [
+        "perception_profile_admission_commitment_sha256",
+        "response is malformed or unsupported",
+        "primitive_index != 0",
+        "selected_control_content_sha256",
+    ] {
+        assert!(
+            binder.contains(required),
+            "visible source target binder is missing: {required}"
+        );
+    }
+    assert!(
+        !binder.contains("format!(\"player-visible gesture-target response"),
+        "visible source target parser exposes private parse details"
+    );
+
+    for exported in [
+        "bind_opaque_player_visible_duel_source_gesture_target_v1,",
+        "AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,",
+        "OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,",
+    ] {
+        assert!(
+            public_api.contains(exported),
+            "visible target API is not exported: {exported}"
+        );
+    }
+    for private in [
+        "check_untrusted_player_visible_duel_gesture_target_request_v1,",
+        "MtgoPlayerVisibleDuelGestureTargetRequestHeaderV1,",
+        "MtgoPlayerVisibleDuelGestureTargetProcessResponseV1,",
+        "MtgoPlayerVisibleDuelGestureTargetSetV1,",
+        "admit_ratified_player_visible_duel_gesture_target_protocol_v1,",
+        "MtgoPlayerVisibleDuelGestureTargetProtocolReviewV1,",
+    ] {
+        assert!(
+            !public_api.contains(private),
+            "private target transport was exported: {private}"
         );
     }
 }

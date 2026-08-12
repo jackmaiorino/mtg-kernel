@@ -18,6 +18,10 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub player_visible_duel_gesture_contract_present: bool,
     pub player_visible_duel_gesture_to_opaque_control_join_present: bool,
     pub player_visible_duel_gesture_kernel_object_references_withheld: bool,
+    pub player_visible_duel_source_gesture_target_protocol_present: bool,
+    pub player_visible_duel_source_gesture_target_pixels_rehashed: bool,
+    pub player_visible_duel_gesture_target_protocol_ratified: bool,
+    pub player_visible_duel_gesture_continuation_target_binding_present: bool,
     pub ongoing_player_visible_history_to_duel_scorer_bridge_present: bool,
     pub native_checkpoint_player_visible_only_duel_action_interface_present: bool,
     pub current_duel_scorer_kernel_bookkeeping_withheld: bool,
@@ -52,6 +56,10 @@ impl MtgoCompetitiveModelDecisionReadinessV1 {
             && self.player_visible_duel_gesture_contract_present
             && self.player_visible_duel_gesture_to_opaque_control_join_present
             && self.player_visible_duel_gesture_kernel_object_references_withheld
+            && self.player_visible_duel_source_gesture_target_protocol_present
+            && self.player_visible_duel_source_gesture_target_pixels_rehashed
+            && self.player_visible_duel_gesture_target_protocol_ratified
+            && self.player_visible_duel_gesture_continuation_target_binding_present
             && self.ongoing_player_visible_history_to_duel_scorer_bridge_present
             && self.native_checkpoint_player_visible_only_duel_action_interface_present
             && self.current_duel_scorer_kernel_bookkeeping_withheld
@@ -88,6 +96,10 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         player_visible_duel_gesture_contract_present: true,
         player_visible_duel_gesture_to_opaque_control_join_present: true,
         player_visible_duel_gesture_kernel_object_references_withheld: true,
+        player_visible_duel_source_gesture_target_protocol_present: true,
+        player_visible_duel_source_gesture_target_pixels_rehashed: true,
+        player_visible_duel_gesture_target_protocol_ratified: false,
+        player_visible_duel_gesture_continuation_target_binding_present: false,
         ongoing_player_visible_history_to_duel_scorer_bridge_present: true,
         native_checkpoint_player_visible_only_duel_action_interface_present: false,
         current_duel_scorer_kernel_bookkeeping_withheld: false,
@@ -138,6 +150,10 @@ mod tests {
         assert!(report.player_visible_duel_gesture_contract_present);
         assert!(report.player_visible_duel_gesture_to_opaque_control_join_present);
         assert!(report.player_visible_duel_gesture_kernel_object_references_withheld);
+        assert!(report.player_visible_duel_source_gesture_target_protocol_present);
+        assert!(report.player_visible_duel_source_gesture_target_pixels_rehashed);
+        assert!(!report.player_visible_duel_gesture_target_protocol_ratified);
+        assert!(!report.player_visible_duel_gesture_continuation_target_binding_present);
         assert!(report.ongoing_player_visible_history_to_duel_scorer_bridge_present);
         assert!(!report.native_checkpoint_player_visible_only_duel_action_interface_present);
         assert!(!report.current_duel_scorer_kernel_bookkeeping_withheld);

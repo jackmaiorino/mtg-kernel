@@ -35,6 +35,25 @@ pub enum MtgoPlayerVisibleDuelGesturePrimitiveV1 {
     Submit,
 }
 
+/// One visual role required to locate a player-visible gesture primitive.
+/// Object roles carry only the transient ordinal from the same visible
+/// decision input. This type contains no rectangle, evidence identity, or
+/// adapter lineage.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "target_role", rename_all = "snake_case", deny_unknown_fields)]
+pub enum MtgoPlayerVisibleDuelGestureTargetRoleV1 {
+    PrimarySemanticControl,
+    SemanticMenuChoice,
+    VisibleObject {
+        object: MtgoPlayerVisibleObjectRefV1,
+    },
+    CalibratedPlayArea,
+    OrderSlot {
+        slot_index: u16,
+    },
+    SubmitControl,
+}
+
 /// Player-visible action plus its complete coordinate-free UI operation
 /// sequence. It contains no capture, frame, process, control, source,
 /// authorization, or internal card identity.
@@ -173,6 +192,38 @@ pub fn player_visible_duel_action_family_v1(
         }
         MtgoPlayerVisibleDuelActionV1::OrderTriggers { .. } => {
             MtgoDuelActionFamilyV1::TriggerOrdering
+        }
+    }
+}
+
+pub fn required_player_visible_duel_gesture_target_roles_v1(
+    primitive: &MtgoPlayerVisibleDuelGesturePrimitiveV1,
+) -> Vec<MtgoPlayerVisibleDuelGestureTargetRoleV1> {
+    match primitive {
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivatePrimary { .. } => {
+            vec![MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl]
+        }
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::ActivateSemanticMenuChoice { .. } => {
+            vec![MtgoPlayerVisibleDuelGestureTargetRoleV1::SemanticMenuChoice]
+        }
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::DragPrimaryToCalibratedPlayArea => vec![
+            MtgoPlayerVisibleDuelGestureTargetRoleV1::PrimarySemanticControl,
+            MtgoPlayerVisibleDuelGestureTargetRoleV1::CalibratedPlayArea,
+        ],
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::SelectVisibleObject { object } => {
+            vec![MtgoPlayerVisibleDuelGestureTargetRoleV1::VisibleObject { object: *object }]
+        }
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::DragVisibleObjectToOrderSlot {
+            object,
+            slot_index,
+        } => vec![
+            MtgoPlayerVisibleDuelGestureTargetRoleV1::VisibleObject { object: *object },
+            MtgoPlayerVisibleDuelGestureTargetRoleV1::OrderSlot {
+                slot_index: *slot_index,
+            },
+        ],
+        MtgoPlayerVisibleDuelGesturePrimitiveV1::Submit => {
+            vec![MtgoPlayerVisibleDuelGestureTargetRoleV1::SubmitControl]
         }
     }
 }
@@ -589,6 +640,40 @@ mod tests {
             assert!(
                 !json.contains(forbidden),
                 "forbidden field leaked: {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn target_roles_preserve_only_visible_ordinal_and_slot() {
+        let object = object_v1(9);
+        assert_eq!(
+            required_player_visible_duel_gesture_target_roles_v1(
+                &MtgoPlayerVisibleDuelGesturePrimitiveV1::DragVisibleObjectToOrderSlot {
+                    object,
+                    slot_index: 2,
+                },
+            ),
+            vec![
+                MtgoPlayerVisibleDuelGestureTargetRoleV1::VisibleObject { object },
+                MtgoPlayerVisibleDuelGestureTargetRoleV1::OrderSlot { slot_index: 2 },
+            ]
+        );
+        let json = serde_json::to_string(&required_player_visible_duel_gesture_target_roles_v1(
+            &MtgoPlayerVisibleDuelGesturePrimitiveV1::SelectVisibleObject { object },
+        ))
+        .unwrap();
+        for forbidden in [
+            "arena_id",
+            "card_db_id",
+            "zone_change_count",
+            "frame_id",
+            "evidence_id",
+            "rect_client_px",
+        ] {
+            assert!(
+                !json.contains(forbidden),
+                "forbidden role field leaked: {forbidden}"
             );
         }
     }
