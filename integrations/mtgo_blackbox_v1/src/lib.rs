@@ -57,6 +57,7 @@ mod offline_pregame_episode;
 mod offline_visible_card_identity;
 mod reconstruction_audit;
 mod validation;
+mod visible_game_log_file;
 mod visible_history;
 
 pub use action_resolution::*;
@@ -111,4 +112,5 @@ pub use offline_pregame_episode::*;
 pub use offline_visible_card_identity::*;
 pub use reconstruction_audit::*;
 pub use validation::*;
+pub use visible_game_log_file::*;
 pub use visible_history::*;
