@@ -41,7 +41,7 @@ impl<'a> MtgoVisibleGameLogTextViewV1<'a> {
         &self.record.visible_text
     }
 
-    pub fn visible_text_sha256_v1(&self) -> &str {
+    pub(crate) fn visible_text_sha256_v1(&self) -> &str {
         &self.record.visible_text_sha256
     }
 
@@ -54,10 +54,6 @@ impl<'a> MtgoVisibleGameLogTextViewV1<'a> {
             .visible_card_names
             .get(index)
             .map(String::as_str)
-    }
-
-    pub fn source_record_commitment_sha256_v1(&self) -> &str {
-        &self.record.source_record_commitment_sha256
     }
 }
 

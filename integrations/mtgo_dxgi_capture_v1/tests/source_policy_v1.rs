@@ -101,6 +101,11 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
         "pub fn raw_bytes",
         "pub fn acting_player_alias_v1",
         "pub fn opponent_alias_v1",
+        "pub fn source_visible_text_sha256_v1",
+        "pub fn source_record_commitment_sha256_v1",
+        "pub fn public_event_v1",
+        "pub fn confirmed_decision_v1",
+        "pub fn memory_commitment_sha256_v1",
         "ReadProcessMemory",
         "WriteProcessMemory",
         "CreateRemoteThread",
@@ -119,6 +124,15 @@ fn competitive_visible_game_log_is_game_scoped_private_and_non_actuating() {
         assert!(
             !source.contains(forbidden) && !memory.contains(forbidden),
             "competitive visible Game Log exposes forbidden channel or authority: {forbidden}"
+        );
+    }
+    for forbidden_memory_getter in [
+        "pub fn match_identity_sha256_v1(&self) -> &str",
+        "pub fn policy_deployment_commitment_sha256_v1(&self) -> &str",
+    ] {
+        assert!(
+            !memory.contains(forbidden_memory_getter),
+            "competitive visible memory exposes private lineage: {forbidden_memory_getter}"
         );
     }
 }

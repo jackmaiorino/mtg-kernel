@@ -339,10 +339,7 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
         self.game_log.event_count_v1()
     }
 
-    pub fn public_event_v1(
-        &self,
-        index: usize,
-    ) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+    fn public_event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
         self.game_log.event_v1(index)
     }
 
@@ -350,28 +347,15 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
         self.confirmed_decisions.decision_count_v1()
     }
 
-    pub fn confirmed_decision_v1(
+    fn confirmed_decision_v1(
         &self,
         index: usize,
     ) -> Option<MtgoCompetitivePlayerVisibleDecisionViewV1<'_>> {
         self.confirmed_decisions.decision_v1(index)
     }
 
-    pub fn match_identity_sha256_v1(&self) -> &str {
-        self.game_log.lineage_v1().match_identity_sha256
-    }
-
     pub fn game_number_v1(&self) -> u8 {
         self.game_log.lineage_v1().game_number
-    }
-
-    pub fn policy_deployment_commitment_sha256_v1(&self) -> &str {
-        self.confirmed_decisions
-            .policy_deployment_commitment_sha256_v1()
-    }
-
-    pub fn memory_commitment_sha256_v1(&self) -> &str {
-        &self.memory_commitment_sha256
     }
 
     pub fn ready_for_kernel_history_import_v1(&self) -> bool {

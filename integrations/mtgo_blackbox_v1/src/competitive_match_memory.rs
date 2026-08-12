@@ -64,26 +64,6 @@ impl<'a> MtgoCompetitivePlayerVisibleDecisionViewV1<'a> {
     pub fn player_visible_decision_v1(&self) -> &MtgoPlayerVisibleConfirmedDuelDecisionV1 {
         &self.record.player_visible_decision
     }
-
-    pub fn source_frame_sequence_v1(&self) -> u64 {
-        self.record.source_frame_sequence
-    }
-
-    pub fn after_frame_sequence_v1(&self) -> u64 {
-        self.record.after_frame_sequence
-    }
-
-    pub fn decision_commitment_sha256_v1(&self) -> &str {
-        &self.record.decision_commitment_sha256
-    }
-
-    pub fn selection_commitment_sha256_v1(&self) -> &str {
-        &self.record.selection_commitment_sha256
-    }
-
-    pub fn visible_postcondition_commitment_sha256_v1(&self) -> &str {
-        &self.record.visible_postcondition_commitment_sha256
-    }
 }
 
 /// Move-only player-visible semantic memory for one exact game lineage.
@@ -465,7 +445,7 @@ mod tests {
             }
         }
         reject_forbidden_keys(&json);
-        assert!(decision.after_frame_sequence_v1() > decision.source_frame_sequence_v1());
+        assert!(decision.record.after_frame_sequence > decision.record.source_frame_sequence);
         assert!(!history.safe_for_model_scoring_v1());
         assert!(!history.safe_for_input_v1());
         assert!(!history.permits_event_entry_v1());

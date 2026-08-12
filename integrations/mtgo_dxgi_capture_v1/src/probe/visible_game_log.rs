@@ -710,18 +710,21 @@ pub struct OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1 {
     event_identity_sha256: String,
     match_identity_sha256: String,
     game_number: u8,
-    competitive_launch_identity_commitment_sha256: String,
+    _competitive_launch_identity_commitment_sha256: String,
     current_game_event_start_index: usize,
     current_game_event_count: usize,
     binding_commitment_sha256: String,
 }
 
 impl OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1 {
-    pub fn event_count_v1(&self) -> usize {
+    pub(crate) fn event_count_v1(&self) -> usize {
         self.current_game_event_count
     }
 
-    pub fn event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+    pub(crate) fn event_v1(
+        &self,
+        index: usize,
+    ) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
         if index >= self.current_game_event_count {
             return None;
         }
@@ -730,35 +733,27 @@ impl OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1 {
             .and_then(|source_index| self.source.event_v1(source_index))
     }
 
-    pub fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
+    pub(crate) fn event_kind_v1(&self) -> MtgoCompetitiveEventKindV1 {
         self.event_kind
     }
 
-    pub fn event_identity_sha256_v1(&self) -> &str {
+    pub(crate) fn event_identity_sha256_v1(&self) -> &str {
         &self.event_identity_sha256
     }
 
-    pub fn match_identity_sha256_v1(&self) -> &str {
+    pub(crate) fn match_identity_sha256_v1(&self) -> &str {
         &self.match_identity_sha256
     }
 
-    pub fn game_number_v1(&self) -> u8 {
+    pub(crate) fn game_number_v1(&self) -> u8 {
         self.game_number
     }
 
-    pub fn acting_player_alias_sha256_v1(&self) -> &str {
-        self.source.acting_player_alias_sha256_v1()
-    }
-
-    pub fn semantic_projection_commitment_sha256_v1(&self) -> &str {
+    pub(crate) fn semantic_projection_commitment_sha256_v1(&self) -> &str {
         self.source.semantic_projection_commitment_sha256_v1()
     }
 
-    pub fn competitive_launch_identity_commitment_sha256_v1(&self) -> &str {
-        &self.competitive_launch_identity_commitment_sha256
-    }
-
-    pub fn binding_commitment_sha256_v1(&self) -> &str {
+    pub(crate) fn binding_commitment_sha256_v1(&self) -> &str {
         &self.binding_commitment_sha256
     }
 
@@ -780,7 +775,10 @@ impl OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1 {
         self.semantics.event_count_v1()
     }
 
-    pub fn event_v1(&self, index: usize) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
+    pub(crate) fn event_v1(
+        &self,
+        index: usize,
+    ) -> Option<MtgoVisibleGameLogSemanticEventViewV1<'_>> {
         self.semantics.event_v1(index)
     }
 
@@ -792,41 +790,8 @@ impl OpaqueMtgoProcessEpochVisibleGameLogSemanticsV1 {
         self.semantics.unclassified_source_record_count_v1()
     }
 
-    pub fn semantic_projection_commitment_sha256_v1(&self) -> &str {
+    pub(crate) fn semantic_projection_commitment_sha256_v1(&self) -> &str {
         self.semantics.projection_commitment_sha256_v1()
-    }
-
-    pub fn acting_player_alias_sha256_v1(&self) -> &str {
-        self.semantics.acting_player_alias_sha256_v1()
-    }
-
-    pub fn opponent_alias_sha256_v1(&self) -> Option<&str> {
-        self.semantics.opponent_alias_sha256_v1()
-    }
-
-    pub fn process_continuity_commitment_sha256_v1(&self) -> &str {
-        &self._source.process_continuity_commitment_sha256
-    }
-
-    pub fn competitive_duel_title_identity_commitment_sha256_v1(&self) -> Option<&str> {
-        self._source
-            .duel_title_identity
-            .as_ref()
-            .map(|identity| identity.identity_commitment_sha256.as_str())
-    }
-
-    pub fn visible_match_id_sha256_v1(&self) -> Option<&str> {
-        self._source
-            .duel_title_identity
-            .as_ref()
-            .map(|identity| identity.visible_match_id_sha256.as_str())
-    }
-
-    pub fn visible_game_id_sha256_v1(&self) -> Option<&str> {
-        self._source
-            .duel_title_identity
-            .as_ref()
-            .map(|identity| identity.visible_game_id_sha256.as_str())
     }
 
     pub fn source_bound_to_stable_game_window_and_process_epoch_v1(&self) -> bool {
@@ -972,7 +937,7 @@ pub fn bind_process_epoch_visible_game_log_semantics_to_competitive_launch_ident
         event_identity_sha256: launch.event_identity_sha256_v1().to_owned(),
         match_identity_sha256: launch.match_identity_sha256_v1().to_owned(),
         game_number: launch_commitments.game_number,
-        competitive_launch_identity_commitment_sha256: launch_commitments
+        _competitive_launch_identity_commitment_sha256: launch_commitments
             .launch_identity_commitment_sha256,
         current_game_event_start_index,
         current_game_event_count,

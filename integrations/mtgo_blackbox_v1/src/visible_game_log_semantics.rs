@@ -64,10 +64,6 @@ impl<'a> MtgoVisibleGameLogSemanticEventViewV1<'a> {
         self.record.source_sequence
     }
 
-    pub fn source_visible_text_sha256_v1(&self) -> &str {
-        &self.record.source_visible_text_sha256
-    }
-
     pub fn kind_v1(&self) -> MtgoVisibleGameLogEventKindV1 {
         self.record.kind
     }
