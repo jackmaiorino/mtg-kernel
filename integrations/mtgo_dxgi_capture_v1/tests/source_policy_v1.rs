@@ -1924,6 +1924,9 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_decision_input_contract_present: true",
         "player_visible_duel_scorer_transport_contract_present: true",
         "player_visible_duel_selection_to_visible_control_bridge_present: true",
+        "player_visible_duel_gesture_contract_present: true",
+        "player_visible_duel_gesture_to_opaque_control_join_present: true",
+        "player_visible_duel_gesture_kernel_object_references_withheld: true",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "native_checkpoint_pregame_interface_present: false",
@@ -1980,6 +1983,9 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "player_visible_duel_decision_input_contract_present: true",
         "player_visible_duel_scorer_transport_contract_present: true",
         "player_visible_duel_selection_to_visible_control_bridge_present: true",
+        "player_visible_duel_gesture_contract_present: true",
+        "player_visible_duel_gesture_to_opaque_control_join_present: true",
+        "player_visible_duel_gesture_kernel_object_references_withheld: true",
         "native_checkpoint_player_visible_only_duel_action_interface_present: false",
         "current_duel_scorer_kernel_bookkeeping_withheld: false",
         "public_model_owned_duel_action_path_present: false",
@@ -2683,6 +2689,97 @@ fn player_visible_duel_scorer_and_control_bridge_withhold_non_ui_information() {
         assert!(
             public_api.contains(required_export),
             "public API omits the non-authorizing player-visible route: {required_export}"
+        );
+    }
+}
+
+#[test]
+fn player_visible_duel_gesture_contract_and_opaque_join_withhold_internal_identity() {
+    let gesture = include_str!("../../mtgo_blackbox_v1/src/player_visible_duel_gesture.rs");
+    let runtime = include_str!("../src/probe/duel_perception_runtime.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "pub enum MtgoPlayerVisibleDuelGesturePrimitiveV1",
+        "SelectVisibleObject",
+        "DragVisibleObjectToOrderSlot",
+        "pub struct MtgoPlayerVisibleDuelGesturePlanV1",
+        "pub fn validate_player_visible_duel_gesture_plan_v1",
+        "pub struct OpaqueMtgoPlayerVisibleDuelGestureIntentV1",
+        "pub fn bind_opaque_player_visible_duel_gesture_intent_v1",
+        "pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1",
+        "pub fn primitives_v1(&self) -> &[MtgoPlayerVisibleDuelGesturePrimitiveV1]",
+        "pub fn safe_for_live_input_v1(&self) -> bool",
+        "pub fn permits_event_session_recovery_v1(&self) -> bool",
+        "pub fn permits_event_entry_v1(&self) -> bool",
+        "pub fn permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            gesture.contains(required) || runtime.contains(required),
+            "player-visible gesture seam is missing: {required}"
+        );
+    }
+
+    let plan_start = gesture
+        .find("pub struct MtgoPlayerVisibleDuelGesturePlanV1")
+        .expect("player-visible gesture plan");
+    let plan_end = gesture[plan_start..]
+        .find("\n}\n")
+        .map(|offset| plan_start + offset + 3)
+        .expect("player-visible gesture plan end");
+    let plan_source = &gesture[plan_start..plan_end];
+    for forbidden in [
+        "CardStableRefV1",
+        "ActionSemanticV1",
+        "arena_id",
+        "card_db_id",
+        "zone_change_count",
+        "frame_id",
+        "frame_sequence",
+        "control_id",
+        "decision_commitment",
+        "source_",
+        "profile_bound",
+        "rect_client_px",
+        "authorization",
+    ] {
+        assert!(
+            !plan_source.contains(forbidden),
+            "player-visible gesture plan exposes internal identity: {forbidden}"
+        );
+    }
+
+    let intent_start = runtime
+        .find("impl OpaqueMtgoPlayerVisibleDuelGestureIntentV1")
+        .expect("player-visible gesture intent implementation");
+    let intent_end = runtime[intent_start..]
+        .find("\n}\n")
+        .map(|offset| intent_start + offset + 3)
+        .expect("player-visible gesture intent implementation end");
+    let intent_source = &runtime[intent_start..intent_end];
+
+    for forbidden_public in [
+        "pub fn control_id",
+        "pub fn frame_id",
+        "pub fn frame_sequence",
+        "pub fn coordinates",
+        "pub fn rect_client_px",
+        "pub fn kernel_object_ref",
+        "pub fn input_command",
+    ] {
+        assert!(
+            !intent_source.contains(forbidden_public),
+            "player-visible opaque gesture join exposes private adapter state: {forbidden_public}"
+        );
+    }
+
+    for required_export in [
+        "bind_opaque_player_visible_duel_gesture_intent_v1,",
+        "OpaqueMtgoPlayerVisibleDuelGestureIntentV1,",
+    ] {
+        assert!(
+            public_api.contains(required_export),
+            "public API omits player-visible gesture join: {required_export}"
         );
     }
 }

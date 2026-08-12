@@ -31,6 +31,7 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
     CheckedUntrustedMtgoDuelGesturePlanV1, CheckedUntrustedMtgoDuelGestureStageBindingV1,
     CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
+    CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1,
     CheckedUntrustedMtgoPlayerVisibleProfileBoundDuelModelSelectionV1,
     CheckedUntrustedMtgoPlayerVisibleResolvedActionControlV1,
     CheckedUntrustedMtgoProfileBoundDuelModelSelectionV1,
@@ -41,8 +42,8 @@ use mtgo_blackbox_v1::{
     MtgoDuelGestureStageV1, MtgoDuelGestureTargetRoleV1, MtgoDxgiCaptureRoleV2,
     MtgoEvidenceSourceV1, MtgoExpectedModelDeploymentV1, MtgoLifecycleVisibleFactKindV1,
     MtgoNativeCheckpointObservationScorerV1, MtgoObservationReconstructionAuditV1,
-    MtgoObservedDecisionV1, MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelScorerV1,
-    MtgoProfileBoundPostconditionAfterFrameMetadataV1,
+    MtgoObservedDecisionV1, MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelGesturePrimitiveV1,
+    MtgoPlayerVisibleDuelScorerV1, MtgoProfileBoundPostconditionAfterFrameMetadataV1,
     MtgoProfileBoundPostconditionBeforeInputFrameV1, MtgoProfileBoundPostconditionCalibrationV1,
     MtgoProfileBoundPostconditionCandidateStatusV1, MtgoProfileBoundPostconditionRegionSetV1,
     MtgoRectPxV1, MtgoSignedRectDesktopPxV1, MtgoSizePxV1, MtgoVisibleActionControlSetV1,
@@ -503,6 +504,53 @@ pub struct OpaqueMtgoPlayerVisibleDuelResolvedControlV1 {
     result: MtgoPlayerVisibleDuelModelSelectionResultV1,
 }
 
+/// Move-only join between one player-visible-only model selection, its exact
+/// same-frame visible control, and a coordinate-free gesture expressed only
+/// with player-visible values. Private control and source lineage remain
+/// sealed. This value has no input, event-entry, spending, or session-recovery
+/// authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoPlayerVisibleDuelGestureIntentV1;
+/// fn cannot_read_adapter_state(value: OpaqueMtgoPlayerVisibleDuelGestureIntentV1) {
+///     let _ = value.control_id();
+///     let _ = value.frame_id();
+///     let _ = value.coordinates();
+///     let _ = value.input_command();
+/// }
+/// ```
+pub struct OpaqueMtgoPlayerVisibleDuelGestureIntentV1 {
+    #[allow(dead_code)]
+    control: OpaqueMtgoPlayerVisibleDuelResolvedControlV1,
+    gesture: CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1,
+}
+
+impl OpaqueMtgoPlayerVisibleDuelGestureIntentV1 {
+    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        self.gesture.selected_action_v1()
+    }
+
+    pub fn primitives_v1(&self) -> &[MtgoPlayerVisibleDuelGesturePrimitiveV1] {
+        self.gesture.primitives_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
 impl OpaqueMtgoPlayerVisibleDuelResolvedControlV1 {
     pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
         &self.selected_action
@@ -527,6 +575,23 @@ impl OpaqueMtgoPlayerVisibleDuelResolvedControlV1 {
     pub fn permits_spending_v1(&self) -> bool {
         false
     }
+}
+
+/// Binds one validated player-visible gesture shape to the exact opaque
+/// selected action and control. The adapter-private lineage is retained but
+/// not exported. A later visible-target binder must still resolve every
+/// primitive against fresh UI evidence before any separately authorized input.
+pub fn bind_opaque_player_visible_duel_gesture_intent_v1(
+    control: OpaqueMtgoPlayerVisibleDuelResolvedControlV1,
+    gesture: CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1,
+) -> Result<OpaqueMtgoPlayerVisibleDuelGestureIntentV1, String> {
+    if control.selected_action_v1() != gesture.selected_action_v1() {
+        return Err(
+            "player-visible gesture plan changed the exact model-selected visible action"
+                .to_owned(),
+        );
+    }
+    Ok(OpaqueMtgoPlayerVisibleDuelGestureIntentV1 { control, gesture })
 }
 
 /// Copyable commitments for one owner-readable League or Challenge launch
