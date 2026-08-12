@@ -14,6 +14,9 @@ mod competitive_model_decision_readiness;
 mod competitive_auxiliary_model_scoring;
 
 #[cfg(target_os = "windows")]
+mod competitive_auxiliary_action_resolution;
+
+#[cfg(target_os = "windows")]
 mod competitive_native_sideboard;
 
 #[cfg(target_os = "windows")]
@@ -225,6 +228,14 @@ pub use competitive_auxiliary_model_scoring::{
     OpaqueMtgoScoredCompetitiveNativePregameRequestV1,
     OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
     MTGO_COMPETITIVE_AUXILIARY_MODEL_SCORING_SCHEMA_V1,
+};
+
+#[cfg(target_os = "windows")]
+pub use competitive_auxiliary_action_resolution::{
+    resolve_checked_untrusted_competitive_native_pregame_selection_v1,
+    resolve_checked_untrusted_competitive_native_sideboard_selection_v1,
+    CheckedUntrustedMtgoCompetitivePregameSemanticResolutionV1,
+    CheckedUntrustedMtgoCompetitiveSideboardSemanticResolutionV1,
 };
 
 #[cfg(target_os = "windows")]

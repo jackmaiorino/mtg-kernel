@@ -2377,6 +2377,42 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
 }
 
 #[test]
+fn auxiliary_model_resolution_maps_visible_semantics_without_live_authority() {
+    let source = include_str!("../src/competitive_auxiliary_action_resolution.rs");
+    for required in [
+        "resolve_checked_untrusted_competitive_native_pregame_selection_v1",
+        "resolve_checked_untrusted_competitive_native_sideboard_selection_v1",
+        "visible_card_name",
+        "manifest_visible_name_index_v1",
+        "player-visible inventory differs from the submitted deck manifest",
+        "safe_for_live_input_v1(&self) -> bool",
+        "permits_event_session_recovery_v1(&self) -> bool",
+        "permits_sideboard_submission_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            source.contains(required),
+            "auxiliary model resolution is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "execute_prepared_competitive",
+        "prepare_fresh_competitive",
+        "ratify_competitive",
+        "ReadProcessMemory",
+        "WinHttp",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "auxiliary model resolution exposes a forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn pre_entry_operator_retains_exact_resources_through_attended_spending_and_handoff() {
     let source = include_str!("../src/competitive_pre_entry_operator.rs");
     for required in [

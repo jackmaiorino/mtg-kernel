@@ -8468,7 +8468,7 @@ fn competitive_pregame_visible_card_labels_equal_v1(
         })
 }
 
-fn competitive_pregame_expected_postcondition_v1(
+pub(crate) fn competitive_pregame_expected_postcondition_v1(
     stage: MtgoCompetitivePregameStageLabelV1,
     selected_action: &MtgoCompetitivePregameSelectedActionV1,
 ) -> Result<MtgoCompetitivePregameExpectedPostconditionV1, String> {
