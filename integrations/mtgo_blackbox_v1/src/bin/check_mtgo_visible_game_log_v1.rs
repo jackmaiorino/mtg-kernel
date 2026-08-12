@@ -1,6 +1,6 @@
 fn main() {
-    let path = match one_path_argument_v1() {
-        Ok(path) => path,
+    let (path, emit_visible_text) = match arguments_v1() {
+        Ok(arguments) => arguments,
         Err(error) => {
             eprintln!("{error}");
             std::process::exit(2);
@@ -21,6 +21,12 @@ fn main() {
                 std::process::exit(1);
             }
         };
+    let visible_records = emit_visible_text.then(|| {
+        (0..projection.record_count_v1())
+            .filter_map(|index| projection.record_v1(index))
+            .map(|record| record.visible_text_v1().to_owned())
+            .collect::<Vec<_>>()
+    });
     let summary = serde_json::json!({
         "schema_version": mtgo_blackbox_v1::MTGO_VISIBLE_GAME_LOG_FILE_PROJECTION_SCHEMA_V1,
         "source_file_sha256": projection.source_file_sha256_v1(),
@@ -31,6 +37,7 @@ fn main() {
         "safe_for_current_game_semantic_evidence": projection.safe_for_current_game_semantic_evidence_v1(),
         "safe_for_model_scoring": projection.safe_for_model_scoring_v1(),
         "safe_for_input": projection.safe_for_input_v1(),
+        "visible_records": visible_records,
     });
     match serde_json::to_string(&summary) {
         Ok(json) => println!("{json}"),
@@ -41,13 +48,14 @@ fn main() {
     }
 }
 
-fn one_path_argument_v1() -> Result<std::path::PathBuf, String> {
-    let mut arguments = std::env::args_os().skip(1);
-    let path = arguments
-        .next()
-        .ok_or("usage: check_mtgo_visible_game_log_v1 <Match_GameLog_*.dat>")?;
-    if arguments.next().is_some() {
-        return Err("exactly one visible Game Log path is required".to_owned());
+fn arguments_v1() -> Result<(std::path::PathBuf, bool), String> {
+    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    match arguments.as_slice() {
+        [path] => Ok((path.into(), false)),
+        [flag, path] if flag == "--emit-visible-text" => Ok((path.into(), true)),
+        _ => Err(
+            "usage: check_mtgo_visible_game_log_v1 [--emit-visible-text] <Match_GameLog_*.dat>"
+                .to_owned(),
+        ),
     }
-    Ok(path.into())
 }

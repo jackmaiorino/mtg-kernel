@@ -18,6 +18,8 @@ const VISIBLE_GAME_LOG_PROJECTION_DOMAIN_V1: &[u8] = b"mtgo-visible-game-log-fil
 struct MtgoVisibleGameLogProjectedRecordV1 {
     sequence: u32,
     visible_text: String,
+    #[serde(skip)]
+    visible_card_names: Vec<String>,
     visible_text_sha256: String,
     source_record_commitment_sha256: String,
 }
@@ -41,6 +43,17 @@ impl<'a> MtgoVisibleGameLogTextViewV1<'a> {
 
     pub fn visible_text_sha256_v1(&self) -> &str {
         &self.record.visible_text_sha256
+    }
+
+    pub fn visible_card_name_count_v1(&self) -> usize {
+        self.record.visible_card_names.len()
+    }
+
+    pub fn visible_card_name_v1(&self, index: usize) -> Option<&str> {
+        self.record
+            .visible_card_names
+            .get(index)
+            .map(String::as_str)
     }
 
     pub fn source_record_commitment_sha256_v1(&self) -> &str {
@@ -186,7 +199,8 @@ pub fn parse_checked_untrusted_mtgo_visible_game_log_v1(
             ));
         }
         let raw_text = reader.read_dotnet_string_v1(MAX_VISIBLE_GAME_LOG_TEXT_BYTES_V1)?;
-        let visible_text = project_visible_text_v1(&raw_text)?;
+        let projected_text = project_visible_text_v1(&raw_text)?;
+        let visible_text = projected_text.visible_text;
         let sequence = u32::try_from(records.len() + 1).map_err(|_| {
             error_v1(
                 "visible_game_log_record_sequence",
@@ -206,6 +220,7 @@ pub fn parse_checked_untrusted_mtgo_visible_game_log_v1(
         records.push(MtgoVisibleGameLogProjectedRecordV1 {
             sequence,
             visible_text,
+            visible_card_names: projected_text.visible_card_names,
             visible_text_sha256,
             source_record_commitment_sha256,
         });
@@ -266,7 +281,12 @@ pub fn mtgo_visible_game_log_source_id_commitment_v1(
     ))
 }
 
-fn project_visible_text_v1(raw: &str) -> Result<String, MtgoContractErrorV1> {
+struct ProjectedVisibleTextV1 {
+    visible_text: String,
+    visible_card_names: Vec<String>,
+}
+
+fn project_visible_text_v1(raw: &str) -> Result<ProjectedVisibleTextV1, MtgoContractErrorV1> {
     if raw.is_empty()
         || raw
             .chars()
@@ -278,6 +298,7 @@ fn project_visible_text_v1(raw: &str) -> Result<String, MtgoContractErrorV1> {
         ));
     }
     let mut projected = String::with_capacity(raw.len());
+    let mut visible_card_names = Vec::new();
     let mut cursor = 0;
     while cursor < raw.len() {
         let remainder = &raw[cursor..];
@@ -310,6 +331,7 @@ fn project_visible_text_v1(raw: &str) -> Result<String, MtgoContractErrorV1> {
                 ));
             }
             projected.push_str(visible_name);
+            visible_card_names.push(visible_name.to_owned());
             cursor += close_offset + 2;
             continue;
         }
@@ -335,7 +357,10 @@ fn project_visible_text_v1(raw: &str) -> Result<String, MtgoContractErrorV1> {
             "Game Log markup produced no visible text",
         ));
     }
-    Ok(projected)
+    Ok(ProjectedVisibleTextV1 {
+        visible_text: projected,
+        visible_card_names,
+    })
 }
 
 fn valid_source_match_id_v1(value: &str) -> bool {

@@ -1,8 +1,10 @@
 use super::*;
 use mtgo_blackbox_v1::{
+    classify_checked_untrusted_mtgo_visible_game_log_semantics_v1,
     mtgo_visible_game_log_source_id_commitment_v1,
     parse_checked_untrusted_mtgo_visible_game_log_v1,
-    CheckedUntrustedMtgoVisibleGameLogProjectionV1, MtgoVisibleGameLogTextViewV1,
+    CheckedUntrustedMtgoVisibleGameLogProjectionV1,
+    CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, MtgoVisibleGameLogTextViewV1,
 };
 use sha2::{Digest, Sha256};
 use std::fs::Metadata;
@@ -83,6 +85,26 @@ impl OpaqueMtgoProcessEpochVisibleGameLogV1 {
 
     pub fn safe_for_input_v1(&self) -> bool {
         false
+    }
+
+    /// Reduces the bound rendered lines to conservative public event kinds.
+    /// The supplied alias must be the authorized seated account. Names are
+    /// hashed or reduced to acting-player/opponent roles in the result.
+    pub fn classify_visible_semantics_v1(
+        &self,
+        acting_player_alias: &str,
+    ) -> Result<CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1, String> {
+        let semantics = classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(
+            &self.projection,
+            acting_player_alias,
+        )
+        .map_err(|error| format!("{}: {}", error.code(), error.detail()))?;
+        if semantics.source_projection_commitment_sha256_v1()
+            != self.projection.projection_commitment_sha256_v1()
+        {
+            return Err("visible Game Log semantic projection lost its bound source".to_owned());
+        }
+        Ok(semantics)
     }
 }
 
