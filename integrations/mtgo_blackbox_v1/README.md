@@ -396,9 +396,9 @@ All live-input flags default to false. On 2026-08-10, the account owner reported
 ## Intended pipeline
 
 1. Import the exact private correspondence bytes, review their conditions against the approved account, and derive one local League or Challenge scope. Separately compile-ratify that exact review before any input path can use it.
-2. Capture only pixels that a player can see in the MTGO client.
-3. Parse visible zones, cards, counters, prompts, phase, priority, game log, and timers. Accessibility text may assist only when the same content is visibly corroborated.
-4. Reconcile the visible state into `ObservationV5`, a complete ordered `ActionSemanticV1` vector, and synthetic object incarnations. A zone change creates a new `zone_change_count`.
+2. Acquire only the information available to the seated player. Visible pixels, the rendered Game Log's persisted representation, or another direct client source are eligible only after a narrow adapter discards every field that is not shown to that player. Hidden cards, RNG state, process memory, private protocol-only fields, and non-rendered identifiers must not reach model, operator, diagnostics, logs, or training.
+3. Parse visible zones, cards, counters, prompts, phase, priority, game log, and timers. Accessibility or direct client data may assist only when the exported fact is player-visible; private identifiers may exist transiently inside the adapter solely to join a visible fact to its current control and must never cross a public, model, operator, diagnostic, or training boundary.
+4. Reconcile the visible state into the player-visible decision contract and complete ordered visible legal choices. Legacy `ObservationV5` reconstruction remains an offline compatibility and audit tool, not the competitive model boundary. Synthetic object incarnations remain adapter-private, and a zone change creates a new incarnation.
 5. Validate per-leaf provenance, readiness, actor agreement, action bindings, and confidence through this crate.
 6. Score the validated observation and ordered legal actions through the exact native checkpoint external-observation scorer seam.
 7. Resolve the selected semantic action against current visible evidence. Do not use fixed screen coordinates.
