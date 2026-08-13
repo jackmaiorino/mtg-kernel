@@ -583,6 +583,19 @@ pub(crate) fn prepare_attested_direct_visible_competitive_before_dispatch_v1(
         MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => {
             return Err("refreshed direct-source observation abstained".to_owned())
         }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
+        | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+            ..
+        }
+        | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+            ..
+        }
+        | MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection { .. }
+        | MtgoVisibleDuelViewModelBrokerResultV1::VisibleBlockerTargetSelection { .. } => {
+            return Err(
+                "refreshed direct-source observation is a combat-specific selection".to_owned(),
+            )
+        }
     };
 
     let corroborating_frame = capture_admitted_mtgo_duel_visible_frame_v1(profile, timeout_ms)?;
@@ -1235,7 +1248,18 @@ impl OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
     pub fn abstention_reason_v1(&self) -> Option<MtgoVisibleDuelViewModelBrokerAbstentionReasonV1> {
         match self.result {
             MtgoVisibleDuelViewModelBrokerResultV1::Abstained { reason } => Some(reason),
-            MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. } => None,
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleBlockerTargetSelection { .. } => None,
         }
     }
 
@@ -1312,7 +1336,18 @@ impl OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
     pub fn abstention_reason_v1(&self) -> Option<MtgoVisibleDuelViewModelBrokerAbstentionReasonV1> {
         match self.result {
             MtgoVisibleDuelViewModelBrokerResultV1::Abstained { reason } => Some(reason),
-            MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. } => None,
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleBlockerTargetSelection { .. } => None,
         }
     }
 
