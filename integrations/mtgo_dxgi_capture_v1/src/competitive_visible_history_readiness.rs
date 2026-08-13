@@ -26,8 +26,14 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub hidden_client_state_permitted: bool,
     pub direct_source_visible_projection_contract_present: bool,
     pub direct_source_exact_reviewed_frame_evaluation_present: bool,
+    pub direct_source_visible_viewmodel_candidate_surface_present: bool,
+    pub direct_source_visible_viewmodel_broker_protocol_present: bool,
+    pub direct_source_audited_broker_runtime_present: bool,
     pub direct_source_live_producer_attestation_present: bool,
     pub visible_accessibility_requires_pixel_corroboration: bool,
+    pub visible_accessibility_fixed_known_label_catalog_present: bool,
+    pub visible_accessibility_fixed_known_label_pixel_corroboration_present: bool,
+    pub visible_accessibility_catalog_semantic_evaluation_present: bool,
     pub raw_accessibility_metadata_permitted_as_semantic_input: bool,
     pub persisted_visible_game_log_parser_present: bool,
     pub nonrendered_game_log_metadata_discarded: bool,
@@ -85,8 +91,14 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         hidden_client_state_permitted: false,
         direct_source_visible_projection_contract_present: true,
         direct_source_exact_reviewed_frame_evaluation_present: true,
+        direct_source_visible_viewmodel_candidate_surface_present: true,
+        direct_source_visible_viewmodel_broker_protocol_present: true,
+        direct_source_audited_broker_runtime_present: false,
         direct_source_live_producer_attestation_present: false,
         visible_accessibility_requires_pixel_corroboration: true,
+        visible_accessibility_fixed_known_label_catalog_present: true,
+        visible_accessibility_fixed_known_label_pixel_corroboration_present: true,
+        visible_accessibility_catalog_semantic_evaluation_present: false,
         raw_accessibility_metadata_permitted_as_semantic_input: false,
         persisted_visible_game_log_parser_present: true,
         nonrendered_game_log_metadata_discarded: true,
@@ -148,8 +160,14 @@ mod tests {
         assert!(!report.hidden_client_state_permitted);
         assert!(report.direct_source_visible_projection_contract_present);
         assert!(report.direct_source_exact_reviewed_frame_evaluation_present);
+        assert!(report.direct_source_visible_viewmodel_candidate_surface_present);
+        assert!(report.direct_source_visible_viewmodel_broker_protocol_present);
+        assert!(!report.direct_source_audited_broker_runtime_present);
         assert!(!report.direct_source_live_producer_attestation_present);
         assert!(report.visible_accessibility_requires_pixel_corroboration);
+        assert!(report.visible_accessibility_fixed_known_label_catalog_present);
+        assert!(report.visible_accessibility_fixed_known_label_pixel_corroboration_present);
+        assert!(!report.visible_accessibility_catalog_semantic_evaluation_present);
         assert!(!report.raw_accessibility_metadata_permitted_as_semantic_input);
         assert!(report.persisted_visible_game_log_parser_present);
         assert!(report.nonrendered_game_log_metadata_discarded);

@@ -25,6 +25,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub player_visible_information_boundary_is_transport_independent: bool,
     pub direct_source_visible_projection_contract_present: bool,
     pub direct_source_exact_reviewed_frame_evaluation_present: bool,
+    pub direct_source_visible_viewmodel_candidate_surface_present: bool,
+    pub direct_source_visible_viewmodel_broker_protocol_present: bool,
+    pub direct_source_audited_broker_runtime_present: bool,
     pub direct_source_live_producer_attestation_present: bool,
     pub persisted_visible_game_log_parser_present: bool,
     pub persisted_visible_game_log_local_corpus_passed: bool,
@@ -99,6 +102,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub competitive_pregame_score_response_contract_present: bool,
     pub visible_accessibility_exact_text_probe_present: bool,
     pub visible_accessibility_same_frame_pixel_corroboration_present: bool,
+    pub visible_accessibility_fixed_known_label_catalog_present: bool,
+    pub visible_accessibility_fixed_known_label_pixel_corroboration_present: bool,
+    pub visible_accessibility_catalog_semantic_evaluation_present: bool,
     pub terminal_outcome_trained_pregame_head_present: bool,
     pub non_model_pregame_scorer_present: bool,
     pub competitive_pregame_heuristic_deployment_ratification_present: bool,
@@ -151,6 +157,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             player_visible_information_boundary_is_transport_independent: true,
             direct_source_visible_projection_contract_present: true,
             direct_source_exact_reviewed_frame_evaluation_present: true,
+            direct_source_visible_viewmodel_candidate_surface_present: true,
+            direct_source_visible_viewmodel_broker_protocol_present: true,
+            direct_source_audited_broker_runtime_present: false,
             direct_source_live_producer_attestation_present: false,
             persisted_visible_game_log_parser_present: true,
             persisted_visible_game_log_local_corpus_passed: true,
@@ -225,6 +234,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             competitive_pregame_score_response_contract_present: true,
             visible_accessibility_exact_text_probe_present: true,
             visible_accessibility_same_frame_pixel_corroboration_present: true,
+            visible_accessibility_fixed_known_label_catalog_present: true,
+            visible_accessibility_fixed_known_label_pixel_corroboration_present: true,
+            visible_accessibility_catalog_semantic_evaluation_present: false,
             terminal_outcome_trained_pregame_head_present: false,
             non_model_pregame_scorer_present: true,
             competitive_pregame_heuristic_deployment_ratification_present:
@@ -297,6 +309,21 @@ mod tests {
             report
                 .known_wiring_gaps
                 .direct_source_exact_reviewed_frame_evaluation_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .direct_source_visible_viewmodel_candidate_surface_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .direct_source_visible_viewmodel_broker_protocol_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .direct_source_audited_broker_runtime_present
         );
         assert!(
             !report
@@ -595,6 +622,21 @@ mod tests {
             report
                 .known_wiring_gaps
                 .visible_accessibility_same_frame_pixel_corroboration_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .visible_accessibility_fixed_known_label_catalog_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .visible_accessibility_fixed_known_label_pixel_corroboration_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .visible_accessibility_catalog_semantic_evaluation_present
         );
         assert!(
             !report
