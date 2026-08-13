@@ -53,7 +53,6 @@ pub struct MtgoVisibleAccessibilityCatalogEntrySummaryV1 {
     pub slice: MtgoVisibleAccessibilityCatalogSliceV1,
     pub expected_visible_text_sha256: String,
     pub exact_visible_match_count: u32,
-    pub observed_control_type_ids: Vec<i32>,
     pub private_match_set_commitment_sha256: String,
 }
 
@@ -65,8 +64,6 @@ pub struct MtgoVisibleAccessibilityCatalogProbeSummaryV1 {
     pub source_probe_commitment_sha256: String,
     pub source_window_identity_commitment_sha256: String,
     pub report_commitment_sha256: String,
-    pub eligible_visible_element_count: u32,
-    pub visible_named_element_count: u32,
     pub catalog_entry_count: u32,
     pub matched_catalog_entry_count: u32,
     pub total_exact_visible_match_count: u32,
@@ -87,7 +84,6 @@ pub struct MtgoVisibleAccessibilityPixelCatalogEntrySummaryV1 {
     pub slice: MtgoVisibleAccessibilityCatalogSliceV1,
     pub expected_visible_text_sha256: String,
     pub exact_visible_match_count: u32,
-    pub observed_control_type_ids: Vec<i32>,
     pub private_pixel_match_set_commitment_sha256: String,
 }
 
@@ -124,7 +120,6 @@ pub struct MtgoVisibleAccessibilityCatalogReviewEntryV1 {
     pub slice: MtgoVisibleAccessibilityCatalogSliceV1,
     pub expected_visible_text_sha256: String,
     pub reviewed_exact_visible_match_count: u32,
-    pub reviewed_control_type_ids: Vec<i32>,
     pub reviewed_private_pixel_match_set_commitment_sha256: String,
     pub every_matched_region_visibly_contains_exact_catalog_label: bool,
     pub visible_absence_reviewed_when_match_count_is_zero: bool,
@@ -222,7 +217,6 @@ pub struct MtgoVisibleAccessibilityQueryResultV1 {
     pub query_id: String,
     pub expected_visible_text_sha256: String,
     pub exact_visible_match_count: u32,
-    pub observed_control_type_ids: Vec<i32>,
     pub private_match_set_commitment_sha256: String,
 }
 
@@ -231,12 +225,6 @@ pub struct MtgoVisibleAccessibilityQueryResultV1 {
 pub struct MtgoVisibleAccessibilityProbeSummaryV1 {
     pub schema_version: u32,
     pub source_window_identity_commitment_sha256: String,
-    pub process_id: u32,
-    pub window_handle: u64,
-    pub client_rect_desktop_sha256: String,
-    pub dpi: u32,
-    pub eligible_visible_element_count: u32,
-    pub visible_named_element_count: u32,
     pub query_results: Vec<MtgoVisibleAccessibilityQueryResultV1>,
     pub raw_visible_text_exposed: bool,
     pub requires_same_frame_pixel_corroboration: bool,
@@ -252,7 +240,6 @@ pub struct MtgoVisibleAccessibilityPixelQueryResultV1 {
     pub query_id: String,
     pub expected_visible_text_sha256: String,
     pub exact_visible_match_count: u32,
-    pub observed_control_type_ids: Vec<i32>,
     pub private_pixel_match_set_commitment_sha256: String,
 }
 
@@ -441,8 +428,6 @@ pub fn probe_mtgo_visible_accessibility_exact_text_v1(
         return Err("UI Automation subtree is outside the bounded element count".to_owned());
     }
 
-    let mut eligible_visible_element_count = 0_u32;
-    let mut visible_named_element_count = 0_u32;
     let mut private_matches = Vec::new();
     for index in 0..element_count {
         let element = unsafe {
@@ -483,10 +468,6 @@ pub fn probe_mtgo_visible_accessibility_exact_text_v1(
         {
             continue;
         }
-        eligible_visible_element_count = eligible_visible_element_count
-            .checked_add(1)
-            .ok_or("visible accessibility eligible element count overflow")?;
-
         // Keep this read after process, off-screen, and client containment
         // checks. The probe never reads names from hidden or off-client UIA.
         let name = unsafe {
@@ -498,9 +479,6 @@ pub fn probe_mtgo_visible_accessibility_exact_text_v1(
         if name.is_empty() {
             continue;
         }
-        visible_named_element_count = visible_named_element_count
-            .checked_add(1)
-            .ok_or("visible accessibility named element count overflow")?;
         for (query_index, query) in queries.iter().enumerate() {
             if name == query.expected_visible_text {
                 let control_type_id = unsafe {
@@ -544,20 +522,10 @@ pub fn probe_mtgo_visible_accessibility_exact_text_v1(
         &[&serde_json::to_vec(&pre)
             .map_err(|error| format!("serialize accessibility window identity: {error}"))?],
     );
-    let client_rect_desktop_sha256 = sha256_hex_v1(
-        &serde_json::to_vec(&pre.client_rect_desktop_px)
-            .map_err(|error| format!("serialize accessibility client bounds: {error}"))?,
-    );
     let query_results = build_query_results_v1(&queries, &private_matches)?;
     let mut summary = MtgoVisibleAccessibilityProbeSummaryV1 {
         schema_version: MTGO_VISIBLE_ACCESSIBILITY_PROBE_SCHEMA_V1,
         source_window_identity_commitment_sha256,
-        process_id: pre.process_id,
-        window_handle: pre.hwnd,
-        client_rect_desktop_sha256,
-        dpi: pre.dpi,
-        eligible_visible_element_count,
-        visible_named_element_count,
         query_results,
         raw_visible_text_exposed: false,
         requires_same_frame_pixel_corroboration: true,
@@ -631,17 +599,8 @@ fn bind_visible_accessibility_pixel_corroboration_v1(
                 .to_owned(),
         );
     }
-    if accessibility_probe.summary.process_id != before.pre.process_id
-        || accessibility_probe.summary.window_handle != before.pre.hwnd
-        || accessibility_probe.summary.dpi != before.pre.dpi
-        || accessibility_probe.summary.client_rect_desktop_sha256
-            != sha256_hex_v1(
-                &serde_json::to_vec(&before.pre.client_rect_desktop_px).map_err(|error| {
-                    format!("serialize corroborated accessibility client bounds: {error}")
-                })?,
-            )
-        || accessibility_probe.summary.report_commitment_sha256
-            != summary_commitment_v1(&accessibility_probe.summary)?
+    if accessibility_probe.summary.report_commitment_sha256
+        != summary_commitment_v1(&accessibility_probe.summary)?
     {
         return Err("accessibility report does not bind the exact capture bracket".to_owned());
     }
@@ -709,7 +668,6 @@ fn bind_visible_accessibility_pixel_corroboration_v1(
         if plain.query_id != pixel.query_id
             || plain.expected_visible_text_sha256 != pixel.expected_visible_text_sha256
             || plain.exact_visible_match_count != pixel.exact_visible_match_count
-            || plain.observed_control_type_ids != pixel.observed_control_type_ids
         {
             return Err("pixel corroboration changed the accessibility match inventory".to_owned());
         }
@@ -799,7 +757,6 @@ pub fn probe_mtgo_visible_accessibility_known_label_catalog_v1(
                 slice: entry.slice,
                 expected_visible_text_sha256: result.expected_visible_text_sha256.clone(),
                 exact_visible_match_count: result.exact_visible_match_count,
-                observed_control_type_ids: result.observed_control_type_ids.clone(),
                 private_match_set_commitment_sha256: result
                     .private_match_set_commitment_sha256
                     .clone(),
@@ -824,8 +781,6 @@ pub fn probe_mtgo_visible_accessibility_known_label_catalog_v1(
         &catalog_commitment_sha256,
         &source.report_commitment_sha256,
         &source.source_window_identity_commitment_sha256,
-        source.eligible_visible_element_count,
-        source.visible_named_element_count,
         catalog_entry_count,
         matched_catalog_entry_count,
         total_exact_visible_match_count,
@@ -837,8 +792,6 @@ pub fn probe_mtgo_visible_accessibility_known_label_catalog_v1(
         source_probe_commitment_sha256: source.report_commitment_sha256,
         source_window_identity_commitment_sha256: source.source_window_identity_commitment_sha256,
         report_commitment_sha256,
-        eligible_visible_element_count: source.eligible_visible_element_count,
-        visible_named_element_count: source.visible_named_element_count,
         catalog_entry_count,
         matched_catalog_entry_count,
         total_exact_visible_match_count,
@@ -959,16 +912,12 @@ fn known_label_catalog_report_commitment_v1(
     catalog_commitment_sha256: &str,
     source_probe_commitment_sha256: &str,
     source_window_identity_commitment_sha256: &str,
-    eligible_visible_element_count: u32,
-    visible_named_element_count: u32,
     catalog_entry_count: u32,
     matched_catalog_entry_count: u32,
     total_exact_visible_match_count: u32,
     entries: &[MtgoVisibleAccessibilityCatalogEntrySummaryV1],
 ) -> Result<String, String> {
     let counts = [
-        eligible_visible_element_count,
-        visible_named_element_count,
         catalog_entry_count,
         matched_catalog_entry_count,
         total_exact_visible_match_count,
@@ -1033,7 +982,6 @@ fn build_known_label_pixel_catalog_summary_v1(
                 slice: entry.slice,
                 expected_visible_text_sha256: result.expected_visible_text_sha256.clone(),
                 exact_visible_match_count: result.exact_visible_match_count,
-                observed_control_type_ids: result.observed_control_type_ids.clone(),
                 private_pixel_match_set_commitment_sha256: result
                     .private_pixel_match_set_commitment_sha256
                     .clone(),
@@ -1212,7 +1160,6 @@ fn validate_visible_accessibility_catalog_review_v1(
             || observed.slice != expected.slice
             || observed.expected_visible_text_sha256 != expected.expected_visible_text_sha256
             || observed.reviewed_exact_visible_match_count != expected.exact_visible_match_count
-            || observed.reviewed_control_type_ids != expected.observed_control_type_ids
             || observed.reviewed_private_pixel_match_set_commitment_sha256
                 != expected.private_pixel_match_set_commitment_sha256
         {
@@ -1324,18 +1271,11 @@ fn build_query_results_v1(
                 .map_err(|error| format!("serialize private accessibility match set: {error}"))?;
             let expected_visible_text_sha256 =
                 sha256_hex_v1(query.expected_visible_text.as_bytes());
-            let mut observed_control_type_ids = matched
-                .iter()
-                .map(|matched| matched.control_type_id)
-                .collect::<Vec<_>>();
-            observed_control_type_ids.sort_unstable();
-            observed_control_type_ids.dedup();
             Ok(MtgoVisibleAccessibilityQueryResultV1 {
                 query_id: query.query_id.clone(),
                 expected_visible_text_sha256: expected_visible_text_sha256.clone(),
                 exact_visible_match_count: u32::try_from(matched.len())
                     .map_err(|_| "visible accessibility match count overflow")?,
-                observed_control_type_ids,
                 private_match_set_commitment_sha256: commitment_v1(
                     VISIBLE_ACCESSIBILITY_MATCH_SET_DOMAIN_V1,
                     &[expected_visible_text_sha256.as_bytes(), &matched_json],
@@ -1410,12 +1350,6 @@ fn build_pixel_query_results_v1(
                     "visible accessibility query produced too many pixel matches".to_owned(),
                 );
             }
-            let mut observed_control_type_ids = matched
-                .iter()
-                .map(|matched| matched.control_type_id)
-                .collect::<Vec<_>>();
-            observed_control_type_ids.sort_unstable();
-            observed_control_type_ids.dedup();
             let expected_visible_text_sha256 =
                 sha256_hex_v1(query.expected_visible_text.as_bytes());
             let match_bytes = serde_json::to_vec(&matched)
@@ -1425,7 +1359,6 @@ fn build_pixel_query_results_v1(
                 expected_visible_text_sha256: expected_visible_text_sha256.clone(),
                 exact_visible_match_count: u32::try_from(matched.len())
                     .map_err(|_| "visible accessibility pixel match count overflow")?,
-                observed_control_type_ids,
                 private_pixel_match_set_commitment_sha256: commitment_v1(
                     VISIBLE_ACCESSIBILITY_PIXEL_MATCH_SET_DOMAIN_V1,
                     &[expected_visible_text_sha256.as_bytes(), &match_bytes],
@@ -1688,7 +1621,6 @@ mod tests {
                         entry.expected_visible_text.as_bytes(),
                     ),
                     exact_visible_match_count: u32::from(index == 0),
-                    observed_control_type_ids: if index == 0 { vec![50_000] } else { Vec::new() },
                     private_pixel_match_set_commitment_sha256: format!("{index:064x}"),
                 },
             )
@@ -1733,7 +1665,6 @@ mod tests {
                 slice: entry.slice,
                 expected_visible_text_sha256: entry.expected_visible_text_sha256.clone(),
                 reviewed_exact_visible_match_count: entry.exact_visible_match_count,
-                reviewed_control_type_ids: entry.observed_control_type_ids.clone(),
                 reviewed_private_pixel_match_set_commitment_sha256: entry
                     .private_pixel_match_set_commitment_sha256
                     .clone(),
@@ -1795,11 +1726,11 @@ mod tests {
         let results = build_query_results_v1(&queries, &matches).unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].exact_visible_match_count, 1);
-        assert_eq!(results[0].observed_control_type_ids, vec![50_007]);
         let json = serde_json::to_string(&results).unwrap();
         assert!(!json.contains("Premodern"));
         assert!(!json.contains("left"));
         assert!(!json.contains("top"));
+        assert!(!json.contains("control_type"));
     }
 
     #[test]
@@ -1834,7 +1765,6 @@ mod tests {
                 slice: entry.slice,
                 expected_visible_text_sha256: sha256_hex_v1(entry.expected_visible_text.as_bytes()),
                 exact_visible_match_count: 0,
-                observed_control_type_ids: Vec::new(),
                 private_match_set_commitment_sha256: "a".repeat(64),
             })
             .collect::<Vec<_>>();
@@ -1844,8 +1774,6 @@ mod tests {
             source_probe_commitment_sha256: "b".repeat(64),
             source_window_identity_commitment_sha256: "c".repeat(64),
             report_commitment_sha256: "d".repeat(64),
-            eligible_visible_element_count: 0,
-            visible_named_element_count: 0,
             catalog_entry_count: 5,
             matched_catalog_entry_count: 0,
             total_exact_visible_match_count: 0,
@@ -1876,7 +1804,6 @@ mod tests {
                 query_id: entry.query_id.to_owned(),
                 expected_visible_text_sha256: sha256_hex_v1(entry.expected_visible_text.as_bytes()),
                 exact_visible_match_count: 0,
-                observed_control_type_ids: Vec::new(),
                 private_pixel_match_set_commitment_sha256: "a".repeat(64),
             })
             .collect();
@@ -1954,9 +1881,6 @@ mod tests {
         let mut changed_count = review.clone();
         changed_count.entries[0].reviewed_exact_visible_match_count = 2;
         mutations.push(changed_count);
-        let mut changed_type = review.clone();
-        changed_type.entries[0].reviewed_control_type_ids[0] += 1;
-        mutations.push(changed_type);
         let mut missing_positive_review = review.clone();
         missing_positive_review.entries[0]
             .every_matched_region_visibly_contains_exact_catalog_label = false;

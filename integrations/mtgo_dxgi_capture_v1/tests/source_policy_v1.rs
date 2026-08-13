@@ -2416,6 +2416,21 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         !source.contains("RATIFIED_VISIBLE_ACCESSIBILITY_CATALOG_EVALUATION_COMMITMENT_V1"),
         "a single catalog case must not own a production ratification root"
     );
+    for forbidden_public_metadata in [
+        "pub observed_control_type_ids",
+        "pub reviewed_control_type_ids",
+        "pub process_id: u32",
+        "pub window_handle: u64",
+        "pub client_rect_desktop_sha256",
+        "pub dpi: u32",
+        "pub eligible_visible_element_count",
+        "pub visible_named_element_count",
+    ] {
+        assert!(
+            !source.contains(forbidden_public_metadata),
+            "visible accessibility output exposes non-UI metadata: {forbidden_public_metadata}"
+        );
+    }
     for forbidden in ["--query", "CurrentName", "GetCurrentPattern", "SendInput"] {
         assert!(
             !binary.contains(forbidden) && !pixel_binary.contains(forbidden),
