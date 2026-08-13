@@ -3633,10 +3633,10 @@ where
     })
 }
 
-/// Runs one current-game direct visible selection while retaining every
-/// earlier completed game. The scorer receives the earlier best-of-three
-/// prefix first through its completed-history visitor and then the current
-/// game's two ordered visible streams through the ordinary history visitor.
+/// Qualification-only current-game direct visible selection retaining every
+/// earlier completed game. This stays crate-private because its scorer is
+/// caller supplied. The production live route must resume only from an opaque
+/// exact-checkpoint-owned selection.
 #[allow(clippy::too_many_arguments)]
 pub fn select_competitive_operator_attended_direct_visible_gameplay_action_v1<S>(
     owner: OpaqueMtgoCompetitiveOperatorAttendedGameplayV1,

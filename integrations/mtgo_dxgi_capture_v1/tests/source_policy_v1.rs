@@ -2732,6 +2732,7 @@ fn competitive_operator_bootstrap_cross_checks_resources_without_authority() {
 #[test]
 fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_entry_authority() {
     let source = include_str!("../src/competitive_operator_loop.rs");
+    let direct_source = include_str!("../src/probe/direct_visible_source_runtime.rs");
     let public_api = include_str!("../src/lib.rs");
     for required in [
         "begin_competitive_post_entry_operator_v1",
@@ -2870,6 +2871,12 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1,",
         "OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1,",
         "OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1,",
+        "select_competitive_operator_attended_direct_visible_gameplay_action_v1,",
+        "retry_competitive_operator_attended_direct_visible_gameplay_action_v1,",
+        "score_ratified_attested_direct_visible_source_observation_v1,",
+        "refresh_ratified_attested_direct_visible_selection_v1,",
+        "OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1,",
+        "OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,",
     ] {
         assert!(
             !public_api.contains(forbidden_export),
@@ -2902,6 +2909,18 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
             "legacy gameplay route is not explicitly crate-private: {required_private}"
         );
     }
+    for qualification_only_implementation in [
+        "pub fn select_competitive_operator_attended_direct_visible_gameplay_action_v1",
+        "pub fn retry_competitive_operator_attended_direct_visible_gameplay_action_v1",
+        "pub fn score_ratified_attested_direct_visible_source_observation_v1",
+        "pub fn refresh_ratified_attested_direct_visible_selection_v1",
+    ] {
+        assert!(
+            source.contains(qualification_only_implementation)
+                || direct_source.contains(qualification_only_implementation),
+            "qualification-only direct-source implementation is missing: {qualification_only_implementation}"
+        );
+    }
     for required_player_visible_export in [
         "select_competitive_post_entry_operator_player_visible_gameplay_action_v1,",
         "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplaySelectionV1,",
@@ -2923,8 +2942,6 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "select_next_competitive_post_entry_operator_player_visible_gameplay_action_v1,",
         "begin_competitive_operator_attended_gameplay_v1,",
         "refresh_competitive_operator_attended_gameplay_visible_game_log_v1,",
-        "select_competitive_operator_attended_direct_visible_gameplay_action_v1,",
-        "retry_competitive_operator_attended_direct_visible_gameplay_action_v1,",
         "execute_competitive_operator_attended_direct_visible_action_v1,",
         "confirm_competitive_operator_attended_direct_visible_action_v1,",
         "complete_competitive_operator_attended_visible_game_for_sideboard_v1,",

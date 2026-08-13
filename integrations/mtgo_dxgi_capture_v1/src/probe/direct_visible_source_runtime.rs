@@ -262,23 +262,9 @@ pub struct OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
     commitments: MtgoAttestedDirectVisibleSourceObservationCommitmentsV1,
 }
 
-/// A player-visible-only scoring outcome that retains the exact admitted live
-/// observation that produced it. The outcome is move-only and has no generic
-/// checked-untrusted selection extractor.
-///
-/// ```compile_fail
-/// use mtgo_dxgi_capture_v1::OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1;
-/// fn require_clone<T: Clone>() {}
-/// require_clone::<OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1>();
-/// ```
-///
-/// ```compile_fail
-/// use mtgo_dxgi_capture_v1::OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1;
-/// fn cannot_extract_or_act(value: OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1) {
-///     let _ = value.generic_selection();
-///     value.dispatch();
-/// }
-/// ```
+/// Qualification-only player-visible scoring outcome retaining the exact
+/// admitted observation that produced it. This type stays crate-private so a
+/// caller-supplied scorer can never become a production live-action source.
 pub struct OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
     _observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
     outcome: CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
@@ -329,24 +315,9 @@ impl OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
     }
 }
 
-/// One selected player-visible action re-observed after scoring through the
-/// exact release-pinned producer. It retains both attested observations and
-/// the generic refreshed selection privately. There is no generic selection,
-/// dispatch, process, event-entry, or spending extractor.
-///
-/// ```compile_fail
-/// use mtgo_dxgi_capture_v1::OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1;
-/// fn require_clone<T: Clone>() {}
-/// require_clone::<OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1>();
-/// ```
-///
-/// ```compile_fail
-/// use mtgo_dxgi_capture_v1::OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1;
-/// fn cannot_extract_or_act(value: OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1) {
-///     let _ = value.generic_selection();
-///     value.dispatch();
-/// }
-/// ```
+/// Qualification-only selected action re-observed through the exact pinned
+/// producer. The private type cannot carry caller-selected logits into an
+/// externally callable live dispatch route.
 pub struct OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
     _initial_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
     _refreshed_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
@@ -433,11 +404,10 @@ impl OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
     }
 }
 
-/// Consumes one profile-admitted, execution-attested observation into the
-/// player-visible-only scorer only after the exact no-stakes producer
-/// qualification commitment has been pinned in this build. The production
-/// ratification root is currently empty, so the scorer cannot yet be called.
-/// The qualification-only observation type has no corresponding scoring path.
+/// Qualification-only bridge into a caller-supplied player-visible scorer.
+/// This must remain crate-private even after a no-stakes producer commitment is
+/// pinned. A future production bridge must obtain inference only from the
+/// opaque loaded checkpoint and its native player-visible capability.
 pub fn score_ratified_attested_direct_visible_source_observation_v1<
     S: MtgoPlayerVisibleDuelScorerV1,
 >(
