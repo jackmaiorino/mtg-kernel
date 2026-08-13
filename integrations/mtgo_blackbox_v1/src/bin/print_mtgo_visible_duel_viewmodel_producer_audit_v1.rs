@@ -7,6 +7,8 @@ fn main() {
                 "allowed_property_count": checked.allowed_property_count_v1(),
                 "visible_chrome_getter_layer_present": checked.visible_chrome_getter_layer_present_v1(),
                 "visible_chrome_getter_count": checked.visible_chrome_getter_count_v1(),
+                "visible_zone_and_card_getter_layer_present": checked.visible_zone_and_card_getter_layer_present_v1(),
+                "visible_zone_and_card_getter_count": checked.visible_zone_and_card_getter_count_v1(),
                 "producer_execution_attested": checked.producer_execution_attested_v1(),
                 "full_projection_implemented": checked.full_projection_implemented_v1(),
                 "safe_for_live_semantic_evidence": checked.safe_for_live_semantic_evidence_v1(),

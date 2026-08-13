@@ -76,6 +76,46 @@ namespace Shiny.Play.Duel.ViewModel
         }
     }
 
+    public static class VisibleZoneGetterProbeV1
+    {
+        private static readonly HashSet<string> Calls = new HashSet<string>();
+
+        public static void Record(string name)
+        {
+            Calls.Add(name);
+        }
+
+        public static bool SawEveryVisibleZoneAndCardGetterV1()
+        {
+            string[] expected =
+            {
+                "Duel.StackZone",
+                "Player.BattlefieldCards",
+                "Player.HandZone",
+                "Player.LibraryZone",
+                "Player.GraveyardZone",
+                "Player.ExileZone",
+                "Player.RevealedZone",
+                "Zone.IsVisible",
+                "Zone.Count",
+                "Zone.Cards",
+                "DuelCard.CardAttachedTo",
+                "DuelCard.IsToken",
+                "DuelCard.VisibleCounters",
+                "Counter.Quantity",
+                "Counter.Type"
+            };
+            foreach (string name in expected)
+            {
+                if (!Calls.Contains(name))
+                {
+                    return false;
+                }
+            }
+            return Calls.Count == expected.Length;
+        }
+    }
+
     public sealed class DuelSceneViewModel
     {
         public WotC.MtGO.Client.Model.Play.GamePhase CurrentPhase
@@ -114,11 +154,22 @@ namespace Shiny.Play.Duel.ViewModel
             }
         }
 
-        public ZoneViewModel StackZone { get; } = new ZoneViewModel();
+        public ZoneViewModel StackZone
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Duel.StackZone");
+                return Stack;
+            }
+        }
 
         public ObservableCollection<PlayerViewModel> PlayerItems { get; } =
             new ObservableCollection<PlayerViewModel>();
         public PromptBoxViewModel Prompt { get; } = new PromptBoxViewModel();
+        public ZoneViewModel Stack { get; } = new ZoneViewModel
+        {
+            IsVisibleFixture = true
+        };
     }
 
     public sealed class PlayerViewModel
@@ -187,18 +238,72 @@ namespace Shiny.Play.Duel.ViewModel
         }
 
         public string Name { get; set; } = "fixture-player";
-        public ZoneViewModel HandZone { get; } = new ZoneViewModel();
-        public ZoneViewModel LibraryZone { get; } = new ZoneViewModel();
-        public ZoneViewModel GraveyardZone { get; } = new ZoneViewModel();
-        public ZoneViewModel ExileZone { get; } = new ZoneViewModel();
-        public ZoneViewModel RevealedZone { get; } = new ZoneViewModel();
-        public ObservableCollection<DuelSceneCardViewModel> BattlefieldCards { get; } =
-            new ObservableCollection<DuelSceneCardViewModel>();
+        public ZoneViewModel HandZone
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Player.HandZone");
+                return Hand;
+            }
+        }
+        public ZoneViewModel LibraryZone
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Player.LibraryZone");
+                return Library;
+            }
+        }
+        public ZoneViewModel GraveyardZone
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Player.GraveyardZone");
+                return Graveyard;
+            }
+        }
+        public ZoneViewModel ExileZone
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Player.ExileZone");
+                return Exile;
+            }
+        }
+        public ZoneViewModel RevealedZone
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Player.RevealedZone");
+                return Revealed;
+            }
+        }
+        public ObservableCollection<DuelSceneCardViewModel> BattlefieldCards
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Player.BattlefieldCards");
+                return Battlefield;
+            }
+        }
         public ObservableCollection<ManaPoolItemViewModel> ManaItems { get; } =
             new ObservableCollection<ManaPoolItemViewModel>();
         public bool IsLocalFixture { get; set; }
         public bool IsActiveFixture { get; set; }
         public bool IsPriorityFixture { get; set; }
+        public ZoneViewModel Hand { get; } = new ZoneViewModel();
+        public ZoneViewModel Library { get; } = new ZoneViewModel();
+        public ZoneViewModel Graveyard { get; } = new ZoneViewModel
+        {
+            IsVisibleFixture = true
+        };
+        public ZoneViewModel Exile { get; } = new ZoneViewModel
+        {
+            IsVisibleFixture = true
+        };
+        public ZoneViewModel Revealed { get; } = new ZoneViewModel();
+        public ObservableCollection<DuelSceneCardViewModel> Battlefield { get; } =
+            new ObservableCollection<DuelSceneCardViewModel>();
     }
 
     public sealed class ManaPoolItemViewModel
@@ -287,23 +392,100 @@ namespace Shiny.Play.Duel.ViewModel
 
     public sealed class ZoneViewModel
     {
-        public bool IsVisible { get; set; }
-        public int Count { get; set; }
-        public ObservableCollection<DuelSceneCardViewModel> Cards { get; } =
+        public bool IsVisible
+        {
+            get
+            {
+                if (ThrowIfAnyGetterFixture)
+                {
+                    throw new System.InvalidOperationException("hidden library was inspected");
+                }
+                VisibleZoneGetterProbeV1.Record("Zone.IsVisible");
+                return IsVisibleFixture;
+            }
+        }
+        public int Count
+        {
+            get
+            {
+                if (ThrowIfAnyGetterFixture)
+                {
+                    throw new System.InvalidOperationException("hidden library was inspected");
+                }
+                VisibleZoneGetterProbeV1.Record("Zone.Count");
+                return CardItems.Count;
+            }
+        }
+        public ObservableCollection<DuelSceneCardViewModel> Cards
+        {
+            get
+            {
+                if (ThrowIfAnyGetterFixture || ThrowIfCardsReadFixture)
+                {
+                    throw new System.InvalidOperationException("hidden zone cards were inspected");
+                }
+                VisibleZoneGetterProbeV1.Record("Zone.Cards");
+                return CardItems;
+            }
+        }
+        public bool IsVisibleFixture { get; set; }
+        public bool ThrowIfAnyGetterFixture { get; set; }
+        public bool ThrowIfCardsReadFixture { get; set; }
+        public ObservableCollection<DuelSceneCardViewModel> CardItems { get; } =
             new ObservableCollection<DuelSceneCardViewModel>();
     }
 
     public sealed class DuelSceneCardViewModel : CardViewModel
     {
-        public DuelSceneCardViewModel? CardAttachedTo { get; set; }
-        public bool IsToken { get; set; }
-        public IList<CardCounterViewModel> VisibleCounters { get; } =
+        public DuelSceneCardViewModel? CardAttachedTo
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.CardAttachedTo");
+                return CardAttachedToFixture;
+            }
+        }
+        public bool IsToken
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.IsToken");
+                return IsTokenFixture;
+            }
+        }
+        public IList<CardCounterViewModel> VisibleCounters
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.VisibleCounters");
+                return CounterItems;
+            }
+        }
+        public DuelSceneCardViewModel? CardAttachedToFixture { get; set; }
+        public bool IsTokenFixture { get; set; }
+        public IList<CardCounterViewModel> CounterItems { get; } =
             new List<CardCounterViewModel>();
     }
 
     public sealed class CardCounterViewModel
     {
-        public int Quantity { get; set; }
-        public WotC.MtGO.Client.Model.Play.Counter Type { get; set; }
+        public int Quantity
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Counter.Quantity");
+                return QuantityFixture;
+            }
+        }
+        public WotC.MtGO.Client.Model.Play.Counter Type
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Counter.Type");
+                return TypeFixture;
+            }
+        }
+        public int QuantityFixture { get; set; }
+        public WotC.MtGO.Client.Model.Play.Counter TypeFixture { get; set; }
     }
 }

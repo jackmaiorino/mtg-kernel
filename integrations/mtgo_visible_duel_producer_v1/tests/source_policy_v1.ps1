@@ -18,12 +18,31 @@ $required = @(
     'TryReadExactPropertyV1',
     'property.GetValue(target, null)',
     'MaximumVisibleTextCharacters',
-    'MaximumVisibleCollectionItems'
+    'MaximumVisibleCollectionItems',
+    'TryValidateVisibleZonesAndCardsV1',
+    'TryValidateNeverEnumeratedZoneRootV1',
+    'TryValidateConditionalVisibleZoneV1',
+    'TryValidateVisibleBattlefieldCardV1',
+    'TryValidateVisibleZoneCardV1',
+    'AllowedGetters.Contains(exactKey, StringComparer.Ordinal)'
 )
 foreach ($marker in $required) {
     if (-not $source.Contains($marker)) {
         throw "required visible-producer marker missing: $marker"
     }
+}
+
+if (-not $source.Contains('TryValidateConditionalVisibleZoneV1(libraryZone, false, false)') -and
+    -not $source.Contains('TryValidateNeverEnumeratedZoneRootV1(libraryZone)')) {
+    throw 'library zone must remain non-enumerated'
+}
+if ($source.Contains('TryValidateEnumeratedVisibleZoneV1(libraryZone')) {
+    throw 'library cards must never be enumerated'
+}
+if (-not $source.Contains('TryValidateConditionalVisibleZoneV1(') -or
+    -not $source.Contains('handZone,') -or
+    -not $source.Contains('localPlayer,')) {
+    throw 'hand enumeration must remain local-player or visible-zone gated'
 }
 
 if ([regex]::Matches($source, [regex]::Escape('property.GetValue(target, null)')).Count -ne 1) {

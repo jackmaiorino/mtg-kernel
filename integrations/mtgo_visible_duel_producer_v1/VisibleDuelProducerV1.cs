@@ -13,10 +13,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.1 invokes only the exact allowlisted visible chrome and player-panel
-    /// getters and can emit only fixed abstentions. It proves the exact WPF
-    /// root and bounded public-value route without heap scanning or exporting
-    /// client objects or values.
+    /// V1.2 invokes only exact allowlisted getters for visible chrome, player
+    /// panels, public zones, and card presentation, and can emit only fixed
+    /// abstentions. It proves a bounded player-visible route without heap
+    /// scanning or exporting client objects or values.
     /// </summary>
     public static class VisibleDuelProducerV1
     {
@@ -182,9 +182,9 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.1 qualifies the exact visible chrome and player-panel getter
-            // route. The temporary values never leave this call, and the
-            // producer still emits only projection_incomplete.
+            // V1.2 qualifies exact visible chrome, player-panel, public-zone,
+            // and card-presentation getter routes. The temporary values never
+            // leave this call, and the producer emits only projection_incomplete.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
             {
                 return ProjectionIncomplete;
@@ -339,7 +339,280 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             {
                 return false;
             }
+            return TryValidateVisibleZonesAndCardsV1(viewModel, players);
+        }
+
+        private static bool TryValidateVisibleZonesAndCardsV1(
+            object viewModel,
+            List<object> players)
+        {
+            var battlefieldCards = new List<object>();
+            var attachmentTargets = new List<object>();
+            foreach (object player in players)
+            {
+                const string playerType = "Shiny.Play.Duel.ViewModel.PlayerViewModel";
+                if (!TryReadExactPropertyV1(
+                        player,
+                        "DuelScene",
+                        playerType,
+                        "LocalPlayer",
+                        out object? localValue) ||
+                    !(localValue is bool localPlayer) ||
+                    !TryReadExactPropertyV1(
+                        player,
+                        "DuelScene",
+                        playerType,
+                        "BattlefieldCards",
+                        out object? battlefieldValue) ||
+                    !TryBoundedCollectionV1(
+                        battlefieldValue,
+                        512,
+                        out List<object> playerBattlefield))
+                {
+                    return false;
+                }
+                foreach (object card in playerBattlefield)
+                {
+                    if (!TryValidateVisibleBattlefieldCardV1(card, out object? attachedTo))
+                    {
+                        return false;
+                    }
+                    battlefieldCards.Add(card);
+                    if (attachedTo != null)
+                    {
+                        attachmentTargets.Add(attachedTo);
+                    }
+                }
+
+                if (!TryReadExactPropertyV1(
+                        player, "DuelScene", playerType, "HandZone", out object? handZone) ||
+                    handZone == null ||
+                    !TryValidateConditionalVisibleZoneV1(
+                        handZone,
+                        localPlayer,
+                        localPlayer) ||
+                    !TryReadExactPropertyV1(
+                        player,
+                        "DuelScene",
+                        playerType,
+                        "LibraryZone",
+                        out object? libraryZone) ||
+                    libraryZone == null ||
+                    !TryValidateNeverEnumeratedZoneRootV1(libraryZone) ||
+                    !TryReadExactPropertyV1(
+                        player,
+                        "DuelScene",
+                        playerType,
+                        "GraveyardZone",
+                        out object? graveyardZone) ||
+                    graveyardZone == null ||
+                    !TryValidateEnumeratedVisibleZoneV1(graveyardZone, false) ||
+                    !TryReadExactPropertyV1(
+                        player, "DuelScene", playerType, "ExileZone", out object? exileZone) ||
+                    exileZone == null ||
+                    !TryValidateEnumeratedVisibleZoneV1(exileZone, false) ||
+                    !TryReadExactPropertyV1(
+                        player,
+                        "DuelScene",
+                        playerType,
+                        "RevealedZone",
+                        out object? revealedZone) ||
+                    revealedZone == null ||
+                    !TryValidateConditionalVisibleZoneV1(revealedZone, false, true))
+                {
+                    return false;
+                }
+            }
+
+            foreach (object attachedTo in attachmentTargets)
+            {
+                if (!battlefieldCards.Any(card => ReferenceEquals(card, attachedTo)))
+                {
+                    return false;
+                }
+            }
+
+            if (!TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "StackZone",
+                    out object? stackZone) ||
+                stackZone == null ||
+                !TryValidateEnumeratedVisibleZoneV1(stackZone, false))
+            {
+                return false;
+            }
             return true;
+        }
+
+        private static bool TryValidateNeverEnumeratedZoneRootV1(object zone)
+        {
+            return zone.GetType().FullName == "Shiny.Play.Duel.ViewModel.ZoneViewModel";
+        }
+
+        private static bool TryValidateVisibleBattlefieldCardV1(
+            object card,
+            out object? attachedTo)
+        {
+            attachedTo = null;
+            const string cardAssembly = "Card";
+            const string cardType = "Shiny.Card.ViewModels.CardViewModel";
+            const string duelCardType =
+                "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel";
+            if (!TryReadExactPropertyV1(
+                    card, cardAssembly, cardType, "IsFaceDown", out object? faceDownValue) ||
+                !(faceDownValue is bool faceDown) ||
+                (!faceDown &&
+                    (!TryReadExactPropertyV1(
+                        card, cardAssembly, cardType, "Name", out object? nameValue) ||
+                    !(nameValue is string name) ||
+                    !IsBoundedVisibleStringV1(name, 512, true))) ||
+                !TryReadExactPropertyV1(
+                    card, cardAssembly, cardType, "IsTapped", out object? tappedValue) ||
+                !(tappedValue is bool) ||
+                !TryReadExactPropertyV1(
+                    card, cardAssembly, cardType, "IsAttacking", out object? attackingValue) ||
+                !(attackingValue is bool) ||
+                !TryReadExactPropertyV1(
+                    card, cardAssembly, cardType, "IsBlocking", out object? blockingValue) ||
+                !(blockingValue is bool) ||
+                !TryReadExactPropertyV1(
+                    card,
+                    cardAssembly,
+                    cardType,
+                    "CurrentDamage",
+                    out object? damageValue) ||
+                !(damageValue is int damage) || damage < 0 || damage > ushort.MaxValue ||
+                !TryReadExactPropertyV1(
+                    card, cardAssembly, cardType, "Power", out object? powerValue) ||
+                (powerValue != null && !(powerValue is int)) ||
+                !TryReadExactPropertyV1(
+                    card, cardAssembly, cardType, "Toughness", out object? toughnessValue) ||
+                (toughnessValue != null && !(toughnessValue is int)) ||
+                !TryReadExactPropertyV1(
+                    card, "DuelScene", duelCardType, "IsToken", out object? tokenValue) ||
+                !(tokenValue is bool) ||
+                !TryReadExactPropertyV1(
+                    card,
+                    "DuelScene",
+                    duelCardType,
+                    "CardAttachedTo",
+                    out attachedTo) ||
+                (attachedTo != null && attachedTo.GetType().FullName != duelCardType) ||
+                !TryReadExactPropertyV1(
+                    card,
+                    "DuelScene",
+                    duelCardType,
+                    "VisibleCounters",
+                    out object? countersValue) ||
+                !TryBoundedCollectionV1(countersValue, 128, out List<object> counters))
+            {
+                return false;
+            }
+
+            foreach (object counter in counters)
+            {
+                const string counterType =
+                    "Shiny.Play.Duel.ViewModel.CardCounterViewModel";
+                if (!TryReadExactPropertyV1(
+                        counter,
+                        "DuelScene",
+                        counterType,
+                        "Quantity",
+                        out object? quantityValue) ||
+                    !(quantityValue is int quantity) ||
+                    quantity < 0 || quantity > short.MaxValue ||
+                    !TryReadExactPropertyV1(
+                        counter,
+                        "DuelScene",
+                        counterType,
+                        "Type",
+                        out object? typeValue) ||
+                    typeValue == null ||
+                    typeValue.GetType().FullName != "WotC.MtGO.Client.Model.Play.Counter")
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool TryValidateConditionalVisibleZoneV1(
+            object zone,
+            bool enumerateRegardless,
+            bool faceDownNameVisible)
+        {
+            const string zoneType = "Shiny.Play.Duel.ViewModel.ZoneViewModel";
+            if (!TryReadExactPropertyV1(
+                    zone,
+                    "DuelScene",
+                    zoneType,
+                    "IsVisible",
+                    out object? visibleValue) ||
+                !(visibleValue is bool visible))
+            {
+                return false;
+            }
+            if (!enumerateRegardless && !visible)
+            {
+                return true;
+            }
+            return TryValidateEnumeratedVisibleZoneV1(zone, faceDownNameVisible);
+        }
+
+        private static bool TryValidateEnumeratedVisibleZoneV1(
+            object zone,
+            bool faceDownNameVisible)
+        {
+            const string zoneType = "Shiny.Play.Duel.ViewModel.ZoneViewModel";
+            if (!TryReadExactPropertyV1(
+                    zone, "DuelScene", zoneType, "IsVisible", out object? visibleValue) ||
+                !(visibleValue is bool) ||
+                !TryReadExactPropertyV1(
+                    zone, "DuelScene", zoneType, "Count", out object? countValue) ||
+                !(countValue is int count) || count < 0 ||
+                count > MaximumVisibleCollectionItems ||
+                !TryReadExactPropertyV1(
+                    zone, "DuelScene", zoneType, "Cards", out object? cardsValue) ||
+                !TryBoundedCollectionV1(
+                    cardsValue,
+                    MaximumVisibleCollectionItems,
+                    out List<object> cards) ||
+                cards.Count != count)
+            {
+                return false;
+            }
+
+            foreach (object card in cards)
+            {
+                if (!TryValidateVisibleZoneCardV1(card, faceDownNameVisible))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool TryValidateVisibleZoneCardV1(
+            object card,
+            bool faceDownNameVisible)
+        {
+            const string cardType = "Shiny.Card.ViewModels.CardViewModel";
+            if (!TryReadExactPropertyV1(
+                    card, "Card", cardType, "IsFaceDown", out object? faceDownValue) ||
+                !(faceDownValue is bool faceDown))
+            {
+                return false;
+            }
+            if (faceDown && !faceDownNameVisible)
+            {
+                return true;
+            }
+            return TryReadExactPropertyV1(
+                    card, "Card", cardType, "Name", out object? nameValue) &&
+                nameValue is string name &&
+                IsBoundedVisibleStringV1(name, 512, true);
         }
 
         private static bool TryValidateVisiblePlayerPanelV1(
@@ -465,6 +738,11 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             out object? value)
         {
             value = null;
+            string exactKey = assemblyName + "|" + declaringTypeName + "|" + propertyName;
+            if (!AllowedGetters.Contains(exactKey, StringComparer.Ordinal))
+            {
+                return false;
+            }
             Assembly[] matchingAssemblies = AppDomain.CurrentDomain.GetAssemblies()
                 .Where(assembly => string.Equals(
                     assembly.GetName().Name,

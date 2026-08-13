@@ -7,11 +7,15 @@ future direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.1 invokes only 19 exact allowlisted getters for the player-visible
-game chrome, two player panels, mana display, prompt, and visible standard
-buttons. It checks exact declaring types, bounded collections, bounded visible
-strings, and basic two-seat consistency. Getter values remain local and are
-discarded. The only output is still a fixed
+Version 1.2 invokes only exact allowlisted getters for the player-visible game
+chrome, two player panels, mana display, prompt, visible standard buttons,
+public zones, battlefield and stack cards, attachments, and visible counters.
+It checks exact declaring types, bounded collections, bounded visible strings,
+and basic two-seat consistency. It never enumerates either library. It
+enumerates the seated player's hand, but not the opponent's hidden hand. It
+does not read a face-down card name unless that zone is explicitly visible to
+the seated player. Getter values remain local and are discarded. The only
+output is still a fixed
 `MtgoVisibleDuelViewModelBrokerResultV1::Abstained` JSON value. The one public
 method writes that bounded result to an exact broker-created local memory
 channel and returns only a fixed transport status code. It has no logger, file
@@ -20,12 +24,14 @@ serializer, free-form error, model scorer, or input surface. A duel surface
 that passes the root, metadata, and visible-chrome checks returns
 `projection_incomplete`; every other condition returns one fixed abstention.
 
-The synthetic WPF fixture verifies that all 19 intended getters are invoked and
+The synthetic WPF fixture verifies all intended chrome, zone, and card getters
+and booby-traps either-library enumeration, opponent hidden-hand enumeration,
+closed revealed-zone enumeration, and face-down name reads. It also verifies
 that no fixture value enters the output channel. It does not attest execution
-of version 1.1 inside MTGO, a complete visible projection, model scoring,
+of version 1.2 inside MTGO, a complete visible projection, model scoring,
 input, event entry, or spending. The already-qualified live broker pins the
 older producer binary and must be rebuilt and requalified after an MTGO client
-restart before version 1.1 is used live. The next tranche must add the visible
-zones, cards, counters, and action joins from the exact getter allowlist,
+restart before version 1.2 is used live. The next tranche must add legal-action
+joins, visible-history handling, and the complete sanitized output schema,
 qualify them against reviewed UI frames, and retain the same first exported
 player-visible schema.
