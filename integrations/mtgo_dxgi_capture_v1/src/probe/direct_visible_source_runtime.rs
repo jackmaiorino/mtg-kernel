@@ -14,7 +14,7 @@ use crate::actuator::{
 use mtgo_blackbox_v1::{
     bind_refreshed_direct_visible_selection_to_competitive_match_v1,
     complete_direct_visible_gameplay_postcondition_v1,
-    parse_and_validate_visible_duel_producer_result_v1,
+    parse_and_validate_visible_duel_producer_result_v1, player_visible_duel_action_family_v1,
     prepare_direct_visible_gameplay_before_dispatch_v1,
     refresh_direct_visible_selection_before_dispatch_v1,
     score_and_select_strict_visible_duel_producer_result_v1, AdmittedMtgoDuelPerceptionProfileV1,
@@ -24,7 +24,7 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDirectVisibleCompetitiveObservationBracketV1,
     MtgoDirectVisibleGameplayBeforeDispatchRecordV1, MtgoDirectVisibleGameplayBeforeRegionV1,
-    MtgoEvidenceSourceV1, MtgoPlayerVisibleDuelScorerV1,
+    MtgoDuelActionFamilyV1, MtgoEvidenceSourceV1, MtgoPlayerVisibleDuelScorerV1,
     MtgoPlayerVisibleGameplayPostconditionKindV1, MtgoRectPxV1, MtgoSizePxV1,
     MtgoVisibleDuelViewModelBrokerAbstentionReasonV1, MtgoVisibleDuelViewModelBrokerResultV1,
     MTGO_DIRECT_VISIBLE_COMPETITIVE_OBSERVATION_BRACKET_SCHEMA_V1,
@@ -588,7 +588,7 @@ pub(crate) fn prepare_attested_direct_visible_competitive_before_dispatch_v1(
     profile: &AdmittedMtgoDuelPerceptionProfileV1,
     perception_runtime: &OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
     corroborating_frame_sequence: u64,
-    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
+    region_set: Option<MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1>,
     mode_authorization: &MtgoAuthorizationScopeV1,
     gameplay_authorization: &MtgoCompetitiveMatchGameplayAuthorizationV1,
     timeout_ms: u32,
@@ -596,10 +596,12 @@ pub(crate) fn prepare_attested_direct_visible_competitive_before_dispatch_v1(
     if corroborating_frame_sequence < 2 {
         return Err("corroborating direct-source frame sequence must be at least two".to_owned());
     }
-    if !region_set.candidate_set_complete {
-        return Err("direct-source before-dispatch region set is incomplete".to_owned());
+    if let Some(region_set) = region_set.as_ref() {
+        if !region_set.candidate_set_complete {
+            return Err("direct-source before-dispatch region set is incomplete".to_owned());
+        }
+        validate_requested_postcondition_categories_v1(&region_set.regions)?;
     }
-    validate_requested_postcondition_categories_v1(&region_set.regions)?;
     let OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
         _initial_observation: initial_observation,
         _refreshed_observation: refreshed_observation,
@@ -649,6 +651,15 @@ pub(crate) fn prepare_attested_direct_visible_competitive_before_dispatch_v1(
                 .to_owned(),
         );
     }
+    let region_set = match region_set {
+        Some(region_set) => region_set,
+        None => derive_direct_visible_postcondition_region_set_v1(
+            &corroborating_perception,
+            selection.selected_index_v1(),
+            &pixel_decision,
+            selection.selected_action_v1(),
+        )?,
+    };
 
     let equivalent_visible_regions_commitment_sha256 =
         exact_equivalent_visible_regions_commitment_v1(
@@ -872,6 +883,165 @@ fn direct_postcondition_region_from_perception_v1(
     }
     bounding_visible_rect_v1(supported_rects.values())
         .ok_or("direct before-dispatch category lacks current visible provenance".to_owned())
+}
+
+fn derive_direct_visible_postcondition_region_set_v1(
+    perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    selected_index: usize,
+    decision: &mtgo_blackbox_v1::MtgoPlayerVisibleDuelDecisionInputV1,
+    action: &mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1,
+) -> Result<MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1, String> {
+    let family = player_visible_duel_action_family_v1(action);
+    let recipes = direct_visible_postcondition_recipes_v1(decision, action)?;
+    for recipe in &recipes {
+        let mut rects = Vec::with_capacity(recipe.len());
+        let mut supported = true;
+        for kind in recipe {
+            let Ok(rect) =
+                direct_postcondition_region_from_perception_v1(perception, selected_index, *kind)
+            else {
+                supported = false;
+                break;
+            };
+            let candidate = (rect.x, rect.y, rect.width, rect.height);
+            if rects
+                .iter()
+                .any(|existing| direct_visible_rects_intersect_v1(*existing, candidate))
+            {
+                supported = false;
+                break;
+            }
+            rects.push(candidate);
+        }
+        if supported {
+            return Ok(MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1 {
+                candidate_set_complete: true,
+                regions: recipe
+                    .iter()
+                    .copied()
+                    .map(|kind| MtgoAttestedDirectVisibleBeforeDispatchRegionSpecV1 { kind })
+                    .collect(),
+            });
+        }
+    }
+    Err(format!(
+        "fresh visible perception lacks a complete nonoverlapping {family:?} postcondition recipe"
+    ))
+}
+
+fn direct_visible_postcondition_recipes_v1(
+    decision: &mtgo_blackbox_v1::MtgoPlayerVisibleDuelDecisionInputV1,
+    action: &mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1,
+) -> Result<Vec<Vec<MtgoPlayerVisibleGameplayPostconditionKindV1>>, String> {
+    use mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1 as A;
+    use MtgoPlayerVisibleGameplayPostconditionKindV1 as K;
+
+    Ok(match player_visible_duel_action_family_v1(action) {
+        MtgoDuelActionFamilyV1::PriorityPass => {
+            vec![vec![K::PromptChanged], vec![K::PhaseBarChanged]]
+        }
+        MtgoDuelActionFamilyV1::PlayLand => {
+            let A::PlayLand { source, .. } = action else {
+                unreachable!("action family and variant disagree")
+            };
+            vec![vec![
+                K::BattlefieldChanged,
+                direct_visible_source_zone_kind_v1(decision, source)?,
+            ]]
+        }
+        MtgoDuelActionFamilyV1::CastOrPlotSpell => {
+            let (source, destination) = match action {
+                A::CastSpell { source, .. } => (source, K::StackChanged),
+                A::PlotSpell { source, .. } => (source, K::ExileChanged),
+                _ => unreachable!("action family and variant disagree"),
+            };
+            let source_kind = direct_visible_source_zone_kind_v1(decision, source)?;
+            if source_kind == destination {
+                vec![vec![source_kind]]
+            } else {
+                vec![vec![source_kind, destination]]
+            }
+        }
+        MtgoDuelActionFamilyV1::ManaAbility => vec![
+            vec![K::ManaPoolChanged, K::SelectedControlChanged],
+            vec![K::ManaPoolChanged, K::BattlefieldChanged],
+            vec![K::ManaPoolChanged, K::PlayerCountsChanged],
+        ],
+        MtgoDuelActionFamilyV1::NonManaAbility => vec![
+            vec![K::StackChanged],
+            vec![K::ChoiceSurfaceChanged],
+            vec![K::ManaPoolChanged],
+            vec![K::BattlefieldChanged],
+        ],
+        MtgoDuelActionFamilyV1::TargetChoice
+        | MtgoDuelActionFamilyV1::CostOrModeChoice
+        | MtgoDuelActionFamilyV1::EffectChoice => vec![
+            vec![K::PromptChanged],
+            vec![K::ChoiceSurfaceChanged],
+            vec![K::StackChanged],
+        ],
+        MtgoDuelActionFamilyV1::Discard => vec![vec![K::HandChanged]],
+        MtgoDuelActionFamilyV1::CombatChoice => vec![vec![K::CombatChanged]],
+        MtgoDuelActionFamilyV1::TriggerOrdering => {
+            vec![vec![K::StackChanged], vec![K::ChoiceSurfaceChanged]]
+        }
+    })
+}
+
+fn direct_visible_source_zone_kind_v1(
+    decision: &mtgo_blackbox_v1::MtgoPlayerVisibleDuelDecisionInputV1,
+    source: &mtgo_blackbox_v1::MtgoPlayerVisibleObjectRefV1,
+) -> Result<MtgoPlayerVisibleGameplayPostconditionKindV1, String> {
+    use MtgoPlayerVisibleGameplayPostconditionKindV1 as K;
+
+    let state = &decision.current_state;
+    let mut matches = Vec::new();
+    if state.own_hand.iter().any(|card| card.object_ref == *source) {
+        matches.push(K::HandChanged);
+    }
+    if state
+        .graveyards
+        .iter()
+        .flatten()
+        .any(|card| card.object_ref == *source)
+    {
+        matches.push(K::GraveyardChanged);
+    }
+    if state
+        .known_library_cards
+        .iter()
+        .flatten()
+        .any(|card| card.card.object_ref == *source)
+    {
+        matches.push(K::LibraryChanged);
+    }
+    if state.exile.iter().any(|card| card.object_ref == *source) {
+        matches.push(K::ExileChanged);
+    }
+    match matches.as_slice() {
+        [kind] => Ok(*kind),
+        [] => Err("selected land or spell source has no visible source zone".to_owned()),
+        _ => Err("selected land or spell source appears in multiple visible zones".to_owned()),
+    }
+}
+
+fn direct_visible_rects_intersect_v1(
+    left: (u32, u32, u32, u32),
+    right: (u32, u32, u32, u32),
+) -> bool {
+    let Some(left_right) = left.0.checked_add(left.2) else {
+        return true;
+    };
+    let Some(left_bottom) = left.1.checked_add(left.3) else {
+        return true;
+    };
+    let Some(right_right) = right.0.checked_add(right.2) else {
+        return true;
+    };
+    let Some(right_bottom) = right.1.checked_add(right.3) else {
+        return true;
+    };
+    left.0 < right_right && right.0 < left_right && left.1 < right_bottom && right.1 < left_bottom
 }
 
 fn validate_requested_postcondition_categories_v1(
@@ -2166,6 +2336,41 @@ fn commitment_v1(domain: &[u8], parts: &[&[u8]]) -> String {
 mod tests {
     use super::*;
 
+    fn visible_decision_v1(
+        action: mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1,
+    ) -> mtgo_blackbox_v1::MtgoPlayerVisibleDuelDecisionInputV1 {
+        use mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1 as R;
+        mtgo_blackbox_v1::MtgoPlayerVisibleDuelDecisionInputV1 {
+            current_state: mtgo_blackbox_v1::MtgoPlayerVisibleDuelStateV1 {
+                acting_player: R::SeatedPlayer,
+                turn: 1,
+                phase: mtg_kernel::rl::ZoneIndependentStepV1::Main1,
+                active_player: R::SeatedPlayer,
+                priority_player: R::SeatedPlayer,
+                initiative: None,
+                life_totals: [20, 20],
+                mana_pools: [[0; 6]; 2],
+                hand_counts: [1, 0],
+                library_counts: [52, 53],
+                battlefield: [Vec::new(), Vec::new()],
+                graveyards: [Vec::new(), Vec::new()],
+                exile: Vec::new(),
+                stack: Vec::new(),
+                combat: mtgo_blackbox_v1::MtgoPlayerVisibleCombatStateV1 {
+                    attackers_declared: false,
+                    blockers_declared: false,
+                    ordered_attackers: Vec::new(),
+                    blocker_assignments: Vec::new(),
+                },
+                visible_object_relations: Vec::new(),
+                own_hand: Vec::new(),
+                known_library_cards: [Vec::new(), Vec::new()],
+                known_hand_cards: [Vec::new(), Vec::new()],
+            },
+            ordered_legal_actions: vec![action],
+        }
+    }
+
     #[test]
     fn source_freshness_is_bounded_and_clock_ordered() {
         require_fresh_source_v1(8_000, 10_000).unwrap();
@@ -2315,6 +2520,103 @@ mod tests {
             },
         ])
         .unwrap();
+    }
+
+    #[test]
+    fn automatic_postcondition_recipes_bind_the_selected_visible_source_zone() {
+        use mtgo_blackbox_v1::{
+            MtgoPlayerRelativeRoleV1 as R, MtgoPlayerVisibleDuelActionV1 as A,
+            MtgoPlayerVisibleExileCardV1, MtgoPlayerVisibleNamedCardV1,
+            MtgoPlayerVisibleObjectRefV1,
+        };
+        use MtgoPlayerVisibleGameplayPostconditionKindV1 as K;
+
+        let source = MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 7 };
+        let action = A::CastSpell {
+            actor: R::SeatedPlayer,
+            source,
+        };
+        let mut hand = visible_decision_v1(action.clone());
+        hand.current_state
+            .own_hand
+            .push(MtgoPlayerVisibleNamedCardV1 {
+                object_ref: source,
+                card_name: "Visible spell".to_owned(),
+            });
+        assert_eq!(
+            direct_visible_postcondition_recipes_v1(&hand, &action).unwrap(),
+            vec![vec![K::HandChanged, K::StackChanged]]
+        );
+
+        let mut exile = visible_decision_v1(action.clone());
+        exile
+            .current_state
+            .exile
+            .push(MtgoPlayerVisibleExileCardV1 {
+                object_ref: source,
+                visible_card_name: Some("Visible spell".to_owned()),
+            });
+        assert_eq!(
+            direct_visible_postcondition_recipes_v1(&exile, &action).unwrap(),
+            vec![vec![K::ExileChanged, K::StackChanged]]
+        );
+
+        let plot = A::PlotSpell {
+            actor: R::SeatedPlayer,
+            source,
+        };
+        assert_eq!(
+            direct_visible_postcondition_recipes_v1(&hand, &plot).unwrap(),
+            vec![vec![K::HandChanged, K::ExileChanged]]
+        );
+    }
+
+    #[test]
+    fn automatic_postcondition_recipes_fail_closed_on_unknown_or_ambiguous_source_zone() {
+        use mtgo_blackbox_v1::{
+            MtgoPlayerRelativeRoleV1 as R, MtgoPlayerVisibleDuelActionV1 as A,
+            MtgoPlayerVisibleExileCardV1, MtgoPlayerVisibleNamedCardV1,
+            MtgoPlayerVisibleObjectRefV1,
+        };
+
+        let source = MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 9 };
+        let action = A::PlayLand {
+            actor: R::SeatedPlayer,
+            source,
+        };
+        let mut decision = visible_decision_v1(action.clone());
+        assert!(direct_visible_postcondition_recipes_v1(&decision, &action).is_err());
+        decision
+            .current_state
+            .own_hand
+            .push(MtgoPlayerVisibleNamedCardV1 {
+                object_ref: source,
+                card_name: "Visible land".to_owned(),
+            });
+        decision
+            .current_state
+            .exile
+            .push(MtgoPlayerVisibleExileCardV1 {
+                object_ref: source,
+                visible_card_name: Some("Visible land".to_owned()),
+            });
+        assert!(direct_visible_postcondition_recipes_v1(&decision, &action).is_err());
+    }
+
+    #[test]
+    fn automatic_postcondition_region_overlap_check_is_conservative() {
+        assert!(direct_visible_rects_intersect_v1(
+            (0, 0, 10, 10),
+            (9, 9, 2, 2)
+        ));
+        assert!(!direct_visible_rects_intersect_v1(
+            (0, 0, 10, 10),
+            (10, 0, 2, 2)
+        ));
+        assert!(direct_visible_rects_intersect_v1(
+            (u32::MAX, 0, 1, 1),
+            (0, 0, 1, 1)
+        ));
     }
 
     #[test]

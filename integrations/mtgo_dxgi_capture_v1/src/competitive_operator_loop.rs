@@ -2682,7 +2682,6 @@ pub fn select_competitive_post_entry_operator_direct_visible_gameplay_action_v1<
     visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
     direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
     reviewed_qualification_commitment_sha256: &str,
-    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
     capture_timeout_ms: u32,
     broker_timeout_ms: u32,
     scorer: &mut S,
@@ -2760,14 +2759,13 @@ where
         capture_timeout_ms,
         broker_timeout_ms,
     )?;
-    bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
+    bind_competitive_post_entry_operator_direct_visible_before_dispatch_auto_v1(
         lease,
         session,
         visible_identity,
         visible_game_log,
         confirmed_history,
         refreshed,
-        region_set,
         capture_timeout_ms,
     )
     .map(|ready| {
@@ -2784,7 +2782,6 @@ pub fn retry_competitive_post_entry_operator_direct_visible_gameplay_action_v1<S
     visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
     direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
     reviewed_qualification_commitment_sha256: &str,
-    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
     capture_timeout_ms: u32,
     broker_timeout_ms: u32,
     scorer: &mut S,
@@ -2810,7 +2807,6 @@ where
         visible_game_log_capture_request,
         direct_source_runtime,
         reviewed_qualification_commitment_sha256,
-        region_set,
         capture_timeout_ms,
         broker_timeout_ms,
         scorer,
@@ -2825,7 +2821,6 @@ pub fn select_next_competitive_post_entry_operator_direct_visible_gameplay_actio
     visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
     direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
     reviewed_qualification_commitment_sha256: &str,
-    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
     capture_timeout_ms: u32,
     broker_timeout_ms: u32,
     scorer: &mut S,
@@ -2850,7 +2845,6 @@ where
         visible_game_log_capture_request,
         direct_source_runtime,
         reviewed_qualification_commitment_sha256,
-        region_set,
         capture_timeout_ms,
         broker_timeout_ms,
         scorer,
@@ -2869,6 +2863,29 @@ pub fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
     confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
     refreshed: OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,
     region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1, String> {
+    bind_competitive_post_entry_operator_direct_visible_before_dispatch_inner_v1(
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        refreshed,
+        Some(region_set),
+        timeout_ms,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_inner_v1(
+    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    refreshed: OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,
+    region_set: Option<MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1>,
     timeout_ms: u32,
 ) -> Result<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1, String> {
     let lease_commitments = lease.lease.commitments_v1();
@@ -2976,6 +2993,28 @@ pub fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
         selected_action,
         operator_binding_commitment_sha256,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_auto_v1(
+    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    refreshed: OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1, String> {
+    bind_competitive_post_entry_operator_direct_visible_before_dispatch_inner_v1(
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        refreshed,
+        None,
+        timeout_ms,
+    )
 }
 
 /// Attempts the single sealed direct-client action only through the separately
