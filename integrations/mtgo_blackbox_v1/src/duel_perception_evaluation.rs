@@ -176,8 +176,6 @@ pub struct MtgoPlayerVisibleDuelPerceptionEvaluationCaseV2<'a> {
     pub case_id: String,
     pub source_manifest_sha256: String,
     pub source_canonical_bgra8_sha256: String,
-    pub source_frame_sequence: u64,
-    pub expected: MtgoPlayerVisibleDuelDecisionInputV1,
     pub prediction: Option<&'a CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1>,
 }
 
@@ -753,6 +751,7 @@ pub fn evaluate_untrusted_duel_perception_profile_v1(
 pub fn evaluate_untrusted_player_visible_duel_perception_profile_v2(
     profile: &CheckedUntrustedMtgoDuelPerceptionRuntimeProfileV1,
     corpus: &CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
+    annotations: &crate::CheckedUntrustedMtgoPlayerVisibleDuelAnnotationSetV1,
     spec: MtgoPlayerVisibleDuelPerceptionEvaluationSpecV2,
     cases: Vec<MtgoPlayerVisibleDuelPerceptionEvaluationCaseV2<'_>>,
 ) -> Result<CheckedUntrustedMtgoPlayerVisibleDuelPerceptionEvaluationV2, MtgoContractErrorV1> {
@@ -767,6 +766,9 @@ pub fn evaluate_untrusted_player_visible_duel_perception_profile_v2(
     }
     if spec.corpus_manifest_sha256 != corpus.canonical_manifest_sha256()
         || profile.game_format() != corpus.manifest_v1().game_format
+        || annotations.corpus_manifest_sha256() != corpus.canonical_manifest_sha256()
+        || annotations.corpus_commitment_sha256() != corpus.corpus_commitment_sha256()
+        || spec.annotation_protocol_sha256 != annotations.annotation_protocol_sha256()
     {
         return Err(error_v1(
             "player_visible_duel_perception_evaluation_corpus_mismatch",
@@ -795,6 +797,10 @@ pub fn evaluate_untrusted_player_visible_duel_perception_profile_v2(
     let mut hasher = Sha256::new();
     hasher.update(PLAYER_VISIBLE_DUEL_PERCEPTION_EVALUATION_DOMAIN_V2);
     hash_part_v1(&mut hasher, &encoded_spec);
+    hash_part_v1(
+        &mut hasher,
+        annotations.annotation_set_commitment_sha256().as_bytes(),
+    );
 
     let mut previous_case_id: Option<&str> = None;
     let mut source_manifests = HashSet::new();
@@ -804,7 +810,13 @@ pub fn evaluate_untrusted_player_visible_duel_perception_profile_v2(
     let mut exact_visible_legal_action_count = 0_u32;
     let mut exact_visible_decision_input_count = 0_u32;
 
-    for (corpus_sample, case) in corpus.manifest_v1().samples.iter().zip(&cases) {
+    for ((corpus_sample, annotation), case) in corpus
+        .manifest_v1()
+        .samples
+        .iter()
+        .zip(&annotations.manifest_v1().entries)
+        .zip(&cases)
+    {
         validate_safe_identifier_v1(
             &case.case_id,
             "player_visible_duel_perception_case_id_invalid",
@@ -824,15 +836,12 @@ pub fn evaluate_untrusted_player_visible_duel_perception_profile_v2(
             "player_visible_duel_perception_source_frame",
             &case.source_canonical_bgra8_sha256,
         )?;
-        if case.source_frame_sequence == 0 {
-            return Err(error_v1(
-                "player_visible_duel_perception_source_sequence_invalid",
-                case.case_id.clone(),
-            ));
-        }
         if case.case_id != corpus_sample.sample_id
+            || case.case_id != annotation.case_id
             || case.source_manifest_sha256 != corpus_sample.source_manifest_sha256
+            || case.source_manifest_sha256 != annotation.source_manifest_sha256
             || case.source_canonical_bgra8_sha256 != corpus_sample.source_canonical_bgra8_sha256
+            || case.source_canonical_bgra8_sha256 != annotation.source_canonical_bgra8_sha256
         {
             return Err(error_v1(
                 "player_visible_duel_perception_evaluation_corpus_source_mismatch",
@@ -845,8 +854,8 @@ pub fn evaluate_untrusted_player_visible_duel_perception_profile_v2(
                 case.case_id.clone(),
             ));
         }
-        validate_player_visible_expected_v2(&case.expected)?;
-        for action in &case.expected.ordered_legal_actions {
+        validate_player_visible_expected_v2(&annotation.expected)?;
+        for action in &annotation.expected.ordered_legal_actions {
             observed_action_families.insert(player_visible_duel_action_family_v1(action));
         }
 
@@ -858,9 +867,9 @@ pub fn evaluate_untrusted_player_visible_duel_perception_profile_v2(
             prediction_count += 1;
             let predicted =
                 build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())?;
-            visible_state_exact = predicted.current_state == case.expected.current_state;
+            visible_state_exact = predicted.current_state == annotation.expected.current_state;
             visible_legal_actions_exact =
-                predicted.ordered_legal_actions == case.expected.ordered_legal_actions;
+                predicted.ordered_legal_actions == annotation.expected.ordered_legal_actions;
             visible_decision_input_exact = visible_state_exact && visible_legal_actions_exact;
             exact_visible_state_count += u32::from(visible_state_exact);
             exact_visible_legal_action_count += u32::from(visible_legal_actions_exact);
@@ -869,12 +878,11 @@ pub fn evaluate_untrusted_player_visible_duel_perception_profile_v2(
         } else {
             "abstained"
         };
-        let expected_commitment = case.expected.commitment_sha256_v1()?;
+        let expected_commitment = annotation.expected.commitment_sha256_v1()?;
         for part in [
             case.case_id.as_bytes(),
             case.source_manifest_sha256.as_bytes(),
             case.source_canonical_bgra8_sha256.as_bytes(),
-            &case.source_frame_sequence.to_le_bytes(),
             expected_commitment.as_bytes(),
             prediction_commitment.as_bytes(),
             &[
@@ -1144,7 +1152,7 @@ fn validate_player_visible_spec_v2(
     validate_action_families_v1(&spec.required_action_families)
 }
 
-fn validate_player_visible_expected_v2(
+pub(crate) fn validate_player_visible_expected_v2(
     expected: &MtgoPlayerVisibleDuelDecisionInputV1,
 ) -> Result<(), MtgoContractErrorV1> {
     if expected.current_state.acting_player != MtgoPlayerRelativeRoleV1::SeatedPlayer
@@ -1177,7 +1185,6 @@ fn validate_player_visible_prediction_source_v2(
         != spec.perception_profile_commitment_sha256
         || prediction.source_manifest_sha256() != case.source_manifest_sha256
         || prediction.source_canonical_bgra8_sha256() != case.source_canonical_bgra8_sha256
-        || prediction.frame_sequence() != case.source_frame_sequence
     {
         return Err(error_v1(
             "player_visible_duel_perception_prediction_source_mismatch",
@@ -1459,6 +1466,7 @@ mod tests {
     use crate::{
         build_checked_untrusted_acting_player_duel_calibration_corpus_v1,
         checked_untrusted_dxgi_artifact_for_test_v1,
+        checked_untrusted_player_visible_duel_annotation_set_for_test_v1,
         complete_acting_player_duel_audit_record_for_test_v1,
         dxgi_observed_decision_record_for_test_v1, local_metadata_commitment_v1,
         payload_leaf_inventory_v1, validate_dxgi_bound_observation_reconstruction_audit_v1,
@@ -1491,7 +1499,8 @@ mod tests {
             evaluation_id: "player-visible-duel-perception-evaluation-test-v2".to_owned(),
             perception_profile_commitment_sha256: profile.profile_commitment_sha256().to_owned(),
             corpus_manifest_sha256: corpus.canonical_manifest_sha256().to_owned(),
-            annotation_protocol_sha256: "c".repeat(64),
+            annotation_protocol_sha256:
+                crate::mtgo_player_visible_duel_annotation_protocol_sha256_v1(),
             evaluator_binary_sha256: "d".repeat(64),
             minimum_unique_cases: 1,
             minimum_prediction_coverage_bps: 10_000,
@@ -1548,14 +1557,11 @@ mod tests {
     fn player_visible_case_v2<'a>(
         corpus: &CheckedUntrustedMtgoActingPlayerDuelCalibrationCorpusV1,
         prediction: &'a CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1,
-        expected: MtgoPlayerVisibleDuelDecisionInputV1,
     ) -> MtgoPlayerVisibleDuelPerceptionEvaluationCaseV2<'a> {
         MtgoPlayerVisibleDuelPerceptionEvaluationCaseV2 {
             case_id: corpus.manifest_v1().samples[0].sample_id.clone(),
             source_manifest_sha256: prediction.source_manifest_sha256().to_owned(),
             source_canonical_bgra8_sha256: prediction.source_canonical_bgra8_sha256().to_owned(),
-            source_frame_sequence: prediction.frame_sequence(),
-            expected,
             prediction: Some(prediction),
         }
     }
@@ -1657,11 +1663,14 @@ mod tests {
         let expected =
             build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
                 .unwrap();
+        let annotations =
+            checked_untrusted_player_visible_duel_annotation_set_for_test_v1(&corpus, expected);
         let evaluation = evaluate_untrusted_player_visible_duel_perception_profile_v2(
             &profile,
             &corpus,
+            &annotations,
             player_visible_spec_v2(&profile, &corpus),
-            vec![player_visible_case_v2(&corpus, &prediction, expected)],
+            vec![player_visible_case_v2(&corpus, &prediction)],
         )
         .unwrap();
 
@@ -1685,11 +1694,14 @@ mod tests {
             build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
                 .unwrap();
         expected.current_state.life_totals[0] += 1;
+        let annotations =
+            checked_untrusted_player_visible_duel_annotation_set_for_test_v1(&corpus, expected);
         let evaluation = evaluate_untrusted_player_visible_duel_perception_profile_v2(
             &profile,
             &corpus,
+            &annotations,
             player_visible_spec_v2(&profile, &corpus),
-            vec![player_visible_case_v2(&corpus, &prediction, expected)],
+            vec![player_visible_case_v2(&corpus, &prediction)],
         )
         .unwrap();
 
@@ -1730,12 +1742,15 @@ mod tests {
         let expected =
             build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
                 .unwrap();
-        let mut case = player_visible_case_v2(&corpus, &prediction, expected);
+        let annotations =
+            checked_untrusted_player_visible_duel_annotation_set_for_test_v1(&corpus, expected);
+        let mut case = player_visible_case_v2(&corpus, &prediction);
         case.source_manifest_sha256 = "f".repeat(64);
         assert_eq!(
             evaluate_untrusted_player_visible_duel_perception_profile_v2(
                 &profile,
                 &corpus,
+                &annotations,
                 player_visible_spec_v2(&profile, &corpus),
                 vec![case],
             )
@@ -1744,6 +1759,49 @@ mod tests {
             .code(),
             "player_visible_duel_perception_evaluation_corpus_source_mismatch"
         );
+    }
+
+    #[test]
+    fn player_visible_evaluation_binds_the_checked_annotation_commitment() {
+        let profile = duel_perception_runtime_profile_for_test_v1();
+        let (corpus, prediction, _) = fixture_v1(&profile);
+        let expected =
+            build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
+                .unwrap();
+        let annotations = checked_untrusted_player_visible_duel_annotation_set_for_test_v1(
+            &corpus,
+            expected.clone(),
+        );
+        let first = evaluate_untrusted_player_visible_duel_perception_profile_v2(
+            &profile,
+            &corpus,
+            &annotations,
+            player_visible_spec_v2(&profile, &corpus),
+            vec![player_visible_case_v2(&corpus, &prediction)],
+        )
+        .unwrap();
+
+        let mut changed_expected = expected;
+        changed_expected.current_state.life_totals[0] += 1;
+        let changed_annotations = checked_untrusted_player_visible_duel_annotation_set_for_test_v1(
+            &corpus,
+            changed_expected,
+        );
+        let second = evaluate_untrusted_player_visible_duel_perception_profile_v2(
+            &profile,
+            &corpus,
+            &changed_annotations,
+            player_visible_spec_v2(&profile, &corpus),
+            vec![player_visible_case_v2(&corpus, &prediction)],
+        )
+        .unwrap();
+
+        assert_ne!(
+            first.evaluation_commitment_sha256(),
+            second.evaluation_commitment_sha256()
+        );
+        assert!(first.passes_declared_gate());
+        assert!(!second.passes_declared_gate());
     }
 
     #[test]
@@ -1917,11 +1975,14 @@ mod tests {
         let expected =
             build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
                 .unwrap();
+        let annotations =
+            checked_untrusted_player_visible_duel_annotation_set_for_test_v1(&corpus, expected);
         let evaluation = evaluate_untrusted_player_visible_duel_perception_profile_v2(
             &profile,
             &corpus,
+            &annotations,
             player_visible_spec_v2(&profile, &corpus),
-            vec![player_visible_case_v2(&corpus, &prediction, expected)],
+            vec![player_visible_case_v2(&corpus, &prediction)],
         )
         .unwrap();
         let commitment = evaluation.evaluation_commitment_sha256().to_owned();
@@ -1938,11 +1999,14 @@ mod tests {
         let expected =
             build_player_visible_duel_decision_input_v1(prediction.validated_decision_v1())
                 .unwrap();
+        let annotations =
+            checked_untrusted_player_visible_duel_annotation_set_for_test_v1(&corpus, expected);
         let evaluation = evaluate_untrusted_player_visible_duel_perception_profile_v2(
             &profile,
             &corpus,
+            &annotations,
             player_visible_spec_v2(&profile, &corpus),
-            vec![player_visible_case_v2(&corpus, &prediction, expected)],
+            vec![player_visible_case_v2(&corpus, &prediction)],
         )
         .unwrap();
         let admitted = admit_player_visible_duel_perception_profile_against_ratification_v2(
