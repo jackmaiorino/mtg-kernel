@@ -28,11 +28,12 @@ $publicMethods = @(
     $type.GetMethods([Reflection.BindingFlags]'Public,Static,DeclaredOnly') |
         Where-Object { -not $_.IsSpecialName }
 )
-if ($publicMethods.Count -ne 4 -or
+if ($publicMethods.Count -ne 5 -or
     (Compare-Object @(
         'DispatchSelectedVisibleActionV1',
         'DispatchVisibleAttackerStepV1',
         'DispatchVisibleBlockerStepV1',
+        'DispatchVisibleSingleBlockerStepV1',
         'ExportVisibleDecisionOrAbstainV1'
     ) @($publicMethods.Name | Sort-Object)) -or
     @($publicMethods | Where-Object {
@@ -40,13 +41,14 @@ if ($publicMethods.Count -ne 4 -or
         $_.GetParameters()[0].ParameterType -ne [string] -or
         $_.ReturnType -ne [int]
     }).Count -ne 0) {
-    throw 'producer must expose exactly four string-to-integer broker methods'
+    throw 'producer must expose exactly five string-to-integer broker methods'
 }
 
 $exportMethod = $publicMethods | Where-Object Name -eq 'ExportVisibleDecisionOrAbstainV1'
 $dispatchMethod = $publicMethods | Where-Object Name -eq 'DispatchSelectedVisibleActionV1'
 $attackerDispatchMethod = $publicMethods | Where-Object Name -eq 'DispatchVisibleAttackerStepV1'
 $blockerDispatchMethod = $publicMethods | Where-Object Name -eq 'DispatchVisibleBlockerStepV1'
+$singleBlockerDispatchMethod = $publicMethods | Where-Object Name -eq 'DispatchVisibleSingleBlockerStepV1'
 $invalidStatus = [int]$exportMethod.Invoke($null, @('invalid'))
 if ($invalidStatus -ne 2) {
     throw 'invalid broker channel name was not rejected'
@@ -59,6 +61,9 @@ if ([int]$attackerDispatchMethod.Invoke($null, @('invalid')) -ne 2) {
 }
 if ([int]$blockerDispatchMethod.Invoke($null, @('invalid')) -ne 2) {
     throw 'invalid blocker dispatch channel name was not rejected'
+}
+if ([int]$singleBlockerDispatchMethod.Invoke($null, @('invalid')) -ne 2) {
+    throw 'invalid single-blocker dispatch channel name was not rejected'
 }
 
 $channelName = 'Local\mtgkernel_mtgo_visible_v1_' + ('a' * 64)

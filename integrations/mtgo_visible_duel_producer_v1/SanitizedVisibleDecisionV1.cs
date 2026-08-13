@@ -340,6 +340,18 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         }
 
         [DataContract]
+        private sealed class VisibleSingleAttackerBlockerExecutionStateResultV1
+        {
+            [DataMember(Name = "result_kind", Order = 1)]
+            public string ResultKind { get; set; } =
+                "visible_single_attacker_blocker_execution_state";
+
+            [DataMember(Name = "selection", Order = 2)]
+            public VisibleSingleAttackerBlockerSelectionV1 Selection { get; set; } =
+                new VisibleSingleAttackerBlockerSelectionV1();
+        }
+
+        [DataContract]
         private sealed class VisibleMultiAttackerBlockerSelectionV1
         {
             [DataMember(Name = "current_state", Order = 1)]
@@ -458,8 +470,17 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                         viewModel,
                         out result))
                 {
-                    // Blocker deliberation is observation-only in V1.21.
-                    // No client action binding leaves this branch.
+                    // Client action bindings never leave this branch. The
+                    // separate sealed plan dispatcher must rebuild it.
+                    return true;
+                }
+                if (TryBuildSanitizedVisibleSingleAttackerBlockerExecutionStateV1(
+                        viewModel,
+                        out result))
+                {
+                    // This is a fresh complete rendered postcondition for a
+                    // monotonic single-attacker blocker plan. It carries no
+                    // client action or target binding.
                     return true;
                 }
                 if (TryBuildSanitizedVisibleMultiAttackerBlockerSelectionV1(
@@ -562,6 +583,131 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 result = Array.Empty<byte>();
                 return false;
             }
+        }
+
+        internal static bool TryBuildSanitizedVisibleSingleAttackerBlockerStateAndBindingsV1(
+            object viewModel,
+            out byte[] result,
+            out List<SealedVisibleSingleBlockerBindingV1> bindings,
+            out List<SealedVisibleBlockerAssignmentV1> visibleAssignments,
+            out object? doneAction,
+            out uint turn,
+            out string visibleUniverseSha256)
+        {
+            result = Array.Empty<byte>();
+            bindings = new List<SealedVisibleSingleBlockerBindingV1>();
+            visibleAssignments = new List<SealedVisibleBlockerAssignmentV1>();
+            doneAction = null;
+            turn = 0;
+            visibleUniverseSha256 = string.Empty;
+            try
+            {
+                if (TryBuildSanitizedVisibleSingleAttackerBlockerSelectionCoreV1(
+                        viewModel,
+                        out VisibleSingleAttackerBlockerSelectionResultV1 initial,
+                        out List<SealedVisibleBlockerBindingV1> initialBindings,
+                        out doneAction) &&
+                    doneAction != null &&
+                    TryComputeVisibleBlockerUniverseSha256V1(
+                        initial.Selection.CurrentState,
+                        out visibleUniverseSha256) &&
+                    TrySerializeSanitizedVisibleCombatPayloadV1(initial, out result))
+                {
+                    bindings = initialBindings.Select(binding =>
+                        new SealedVisibleSingleBlockerBindingV1
+                        {
+                            BlockerCard = binding.BlockerCard,
+                            BlockerVisibleOrdinal = binding.BlockerVisibleOrdinal,
+                            CurrentlyBlocking = false,
+                            BlockAction = binding.BlockAction
+                        }).ToList();
+                    turn = initial.Selection.CurrentState.Turn;
+                    return true;
+                }
+
+                if (!TryBuildVisibleDeclareBlockersSnapshotV1(
+                        viewModel,
+                        false,
+                        out VisibleStateV1 state,
+                        out List<object> seatedBattlefield,
+                        out List<object> opponentBattlefield,
+                        out Dictionary<object, VisibleObjectRefV1> objectRefs,
+                        out List<VisibleObjectRefV1> visibleAttackers) ||
+                    visibleAttackers.Count != 1 ||
+                    !TryMapVisibleBlockerAssignmentsV1(
+                        seatedBattlefield,
+                        opponentBattlefield,
+                        objectRefs,
+                        visibleAttackers,
+                        out List<VisibleBlockerAssignmentV1> assignments,
+                        out visibleAssignments) ||
+                    assignments.Count != 1 ||
+                    !TryMapVisibleSingleAttackerBlockerExecutionCandidatesV1(
+                        seatedBattlefield,
+                        objectRefs,
+                        visibleAssignments,
+                        out List<VisibleSingleAttackerBlockerCandidateV1> candidates,
+                        out bindings) ||
+                    !TryRequireVisibleAttackerDoneControlV1(viewModel, out doneAction) ||
+                    doneAction == null)
+                {
+                    return false;
+                }
+                state.Combat.AttackersDeclared = true;
+                state.Combat.OrderedAttackers = visibleAttackers;
+                state.Combat.BlockerAssignments = assignments;
+                var current = new VisibleSingleAttackerBlockerExecutionStateResultV1
+                {
+                    Selection = new VisibleSingleAttackerBlockerSelectionV1
+                    {
+                        CurrentState = state,
+                        Attacker = visibleAttackers.Single(),
+                        OrderedCandidates = candidates,
+                        UniqueVisibleEnabledDoneControl = true
+                    }
+                };
+                if (!TryComputeVisibleBlockerUniverseSha256V1(
+                        state,
+                        out visibleUniverseSha256) ||
+                    !TrySerializeSanitizedVisibleCombatPayloadV1(current, out result))
+                {
+                    return false;
+                }
+                turn = state.Turn;
+                return true;
+            }
+            catch
+            {
+                result = Array.Empty<byte>();
+                bindings = new List<SealedVisibleSingleBlockerBindingV1>();
+                visibleAssignments = new List<SealedVisibleBlockerAssignmentV1>();
+                doneAction = null;
+                turn = 0;
+                visibleUniverseSha256 = string.Empty;
+                return false;
+            }
+        }
+
+        internal static bool TryBuildSanitizedVisibleSingleAttackerBlockerExecutionStateV1(
+            object viewModel,
+            out byte[] result)
+        {
+            result = Array.Empty<byte>();
+            if (!TryBuildSanitizedVisibleSingleAttackerBlockerStateAndBindingsV1(
+                    viewModel,
+                    out byte[] current,
+                    out _,
+                    out List<SealedVisibleBlockerAssignmentV1> assignments,
+                    out _,
+                    out _,
+                    out _) ||
+                assignments.Count != 1 || current.Length == 0 ||
+                !IsSanitizedVisibleSingleAttackerBlockerExecutionStateResultV1(current))
+            {
+                return false;
+            }
+            result = current;
+            return true;
         }
 
         internal static bool TryBuildSanitizedVisibleMultiAttackerBlockerSelectionV1(
@@ -1301,7 +1447,22 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             object viewModel,
             out VisibleSingleAttackerBlockerSelectionResultV1 result)
         {
+            return TryBuildSanitizedVisibleSingleAttackerBlockerSelectionCoreV1(
+                viewModel,
+                out result,
+                out _,
+                out _);
+        }
+
+        private static bool TryBuildSanitizedVisibleSingleAttackerBlockerSelectionCoreV1(
+            object viewModel,
+            out VisibleSingleAttackerBlockerSelectionResultV1 result,
+            out List<SealedVisibleBlockerBindingV1> bindings,
+            out object? exactDoneAction)
+        {
             result = new VisibleSingleAttackerBlockerSelectionResultV1();
+            bindings = new List<SealedVisibleBlockerBindingV1>();
+            exactDoneAction = null;
             if (!TryRequireSupportedDuelVariantV1(viewModel) ||
                 !TryReadExactPropertyV1(
                     viewModel,
@@ -1449,7 +1610,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !TryMapVisibleSingleAttackerBlockerCandidatesV1(
                     seated.Battlefield,
                     objectRefs,
-                    out List<VisibleSingleAttackerBlockerCandidateV1> candidates))
+                    out List<VisibleSingleAttackerBlockerCandidateV1> candidates,
+                    out bindings))
             {
                 return false;
             }
@@ -1492,6 +1654,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 OrderedCandidates = candidates,
                 UniqueVisibleEnabledDoneControl = true
             };
+            exactDoneAction = doneAction;
             return true;
         }
 
@@ -2977,9 +3140,11 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static bool TryMapVisibleSingleAttackerBlockerCandidatesV1(
             List<object> seatedBattlefield,
             Dictionary<object, VisibleObjectRefV1> refs,
-            out List<VisibleSingleAttackerBlockerCandidateV1> candidates)
+            out List<VisibleSingleAttackerBlockerCandidateV1> candidates,
+            out List<SealedVisibleBlockerBindingV1> bindings)
         {
             candidates = new List<VisibleSingleAttackerBlockerCandidateV1>();
+            bindings = new List<SealedVisibleBlockerBindingV1>();
             foreach (object card in seatedBattlefield)
             {
                 if (!refs.TryGetValue(card, out VisibleObjectRefV1? blocker) ||
@@ -3049,8 +3214,104 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     CurrentlyBlocking = false,
                     BlockActionVisible = true
                 });
+                bindings.Add(new SealedVisibleBlockerBindingV1
+                {
+                    BlockerCard = card,
+                    BlockerVisibleOrdinal = blocker.VisibleOrdinal,
+                    BlockAction = blockActions.Single()
+                });
             }
-            return candidates.Count <= 64;
+            return candidates.Count <= 64 && candidates.Count == bindings.Count;
+        }
+
+        private static bool TryMapVisibleSingleAttackerBlockerExecutionCandidatesV1(
+            List<object> seatedBattlefield,
+            Dictionary<object, VisibleObjectRefV1> refs,
+            List<SealedVisibleBlockerAssignmentV1> assignments,
+            out List<VisibleSingleAttackerBlockerCandidateV1> candidates,
+            out List<SealedVisibleSingleBlockerBindingV1> bindings)
+        {
+            candidates = new List<VisibleSingleAttackerBlockerCandidateV1>();
+            bindings = new List<SealedVisibleSingleBlockerBindingV1>();
+            HashSet<uint> assigned = assignments
+                .SelectMany(assignment => assignment.OrderedBlockerVisibleOrdinals)
+                .ToHashSet();
+            foreach (object card in seatedBattlefield)
+            {
+                if (!refs.TryGetValue(card, out VisibleObjectRefV1? blocker) ||
+                    !TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "VisuallyBlocking",
+                        out object? blockingValue) ||
+                    !(blockingValue is bool currentlyBlocking) ||
+                    currentlyBlocking != assigned.Contains(blocker.VisibleOrdinal) ||
+                    !TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "HasNoBlockingAction",
+                        out object? noBlockingValue) ||
+                    !(noBlockingValue is bool hasNoBlockingAction) ||
+                    !TryReadExactPrivateVisibleActionPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "Actions",
+                        out object? actionsValue) ||
+                    !TryBoundedCollectionV1(actionsValue, 64, out List<object> actions))
+                {
+                    return false;
+                }
+                var blockActions = new List<object>();
+                foreach (object action in actions)
+                {
+                    if (!TryReadExactPrivateVisibleActionPropertyV1(
+                            action,
+                            "WotC.MtGO.Client.Model.Reference",
+                            "WotC.MtGO.Client.Model.Play.IGameAction",
+                            "Name",
+                            out object? nameValue) ||
+                        !(nameValue is string name) ||
+                        !IsBoundedVisibleStringV1(name, 512, true))
+                    {
+                        return false;
+                    }
+                    if (!string.Equals(name, "Block", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    if (!TryRequireSimpleVisibleBlockerActionV1(action))
+                    {
+                        return false;
+                    }
+                    blockActions.Add(action);
+                }
+                if (blockActions.Count > 1 ||
+                    hasNoBlockingAction != (blockActions.Count == 0))
+                {
+                    return false;
+                }
+                if (!currentlyBlocking && blockActions.Count == 0)
+                {
+                    continue;
+                }
+                candidates.Add(new VisibleSingleAttackerBlockerCandidateV1
+                {
+                    Blocker = blocker,
+                    CurrentlyBlocking = currentlyBlocking,
+                    BlockActionVisible = blockActions.Count == 1
+                });
+                bindings.Add(new SealedVisibleSingleBlockerBindingV1
+                {
+                    BlockerCard = card,
+                    BlockerVisibleOrdinal = blocker.VisibleOrdinal,
+                    CurrentlyBlocking = currentlyBlocking,
+                    BlockAction = blockActions.SingleOrDefault()
+                });
+            }
+            return candidates.Count <= 64 && candidates.Count == bindings.Count;
         }
 
         private static bool TryRequireSimpleVisibleBlockerActionV1(object action)

@@ -191,6 +191,60 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     if (args.Length == 1 && string.Equals(
                             args[0],
+                            "--wait-for-single-blocker-broker",
+                            StringComparison.Ordinal))
+                    {
+                        seated.Battlefield.Clear();
+                        opponent.Battlefield.Clear();
+                        seated.IsActiveFixture = false;
+                        opponent.IsActiveFixture = true;
+                        var blocker = new DuelSceneCardViewModel
+                        {
+                            NameFixture = "fixture-visible-broker-single-blocker",
+                            PowerFixture = 2,
+                            ToughnessFixture = 2
+                        };
+                        var blockAction = new VisibleFixtureCardAction
+                        {
+                            NameFixture = "Block",
+                            CastFixture = false
+                        };
+                        blocker.ActionItems.Add(blockAction);
+                        seated.Battlefield.Add(blocker);
+                        opponent.Battlefield.Add(new DuelSceneCardViewModel
+                        {
+                            NameFixture = "fixture-visible-broker-single-attacker",
+                            VisuallyAttackingFixture = true,
+                            ThrowIfActionsReadFixture = true
+                        });
+                        viewModel.CurrentPhaseFixture = GamePhase.DeclareBlockers;
+                        viewModel.Prompt.ShowOkPromptButtonFixture = false;
+                        viewModel.Prompt.Buttons.Remove(
+                            viewModel.Prompt.OkPromptButtonFixture);
+                        var brokerDoneButton = new OptionButton
+                        {
+                            NameFixture = "Done",
+                            VisibleFixture = true,
+                            EnabledFixture = true,
+                            ActionFixture = new VisibleFixturePromptAction
+                            {
+                                NameFixture = "Done"
+                            }
+                        };
+                        viewModel.Prompt.DoneButtonFixture = brokerDoneButton;
+                        viewModel.Prompt.Buttons.Add(brokerDoneButton);
+                        viewModel.GameFixture.ExpectedAction = blockAction;
+                        var timeout = new DispatcherTimer
+                        {
+                            Interval = TimeSpan.FromMinutes(2)
+                        };
+                        timeout.Tick += (_, __) => window.Close();
+                        timeout.Start();
+                        application.Run(window);
+                        return 0;
+                    }
+                    if (args.Length == 1 && string.Equals(
+                            args[0],
                             "--wait-for-blocker-broker",
                             StringComparison.Ordinal))
                     {
@@ -890,8 +944,8 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         return 74;
                     }
 
-                    // The first blocker slice is observation-only and
-                    // deliberately accepts exactly one visually attacking
+                    // The first blocker slice deliberately accepts exactly
+                    // one visually attacking
                     // opposing creature with an initially empty block lane.
                     // Backing IsAttacking and IsBlocking fixture values are
                     // inverted here to prove the outward state follows the
@@ -980,6 +1034,131 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     {
                         return 82;
                     }
+
+                    // Execute a complete monotonic single-attacker blocking
+                    // plan. Each next input is locked until the previous
+                    // blocker appears in the freshly rendered block lane.
+                    const string desiredBlockerMaskHex = "0000000000000003";
+                    string blockerPlanCommitment = SingleBlockerPlanCommitmentFixtureV1(
+                        blockersSha,
+                        2,
+                        desiredBlockerMaskHex);
+                    viewModel.GameFixture.ExpectedAction = firstBlockAction;
+                    if (!DispatchSingleBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            blockersSha,
+                            2,
+                            desiredBlockerMaskHex,
+                            blockerPlanCommitment,
+                            true) ||
+                        viewModel.GameFixture.ExecutionCount != 1)
+                    {
+                        return 181;
+                    }
+                    firstBlocker.VisuallyBlockingFixture = true;
+                    firstBlocker.VisualBlockingOrderItems.Add(
+                        new OrderedCombatParticipant
+                        {
+                            Order = 1,
+                            Target = singleVisibleAttacker.GameCardFixture
+                        });
+                    firstBlocker.ActionItems.Clear();
+                    byte[] firstBlockerVisibleBytes = ExportVisibleBytesFixtureV1(
+                        channelName,
+                        view);
+                    string firstBlockerVisible = Encoding.UTF8.GetString(
+                        firstBlockerVisibleBytes);
+                    if (!firstBlockerVisible.StartsWith(
+                            "{\"result_kind\":\"visible_single_attacker_blocker_execution_state\",\"selection\":",
+                            StringComparison.Ordinal) ||
+                        !firstBlockerVisible.Contains(
+                            "\"blocker_assignments\":[{\"attacker\":{\"visible_ordinal\":2},\"ordered_blockers\":[{\"visible_ordinal\":0}]}]") ||
+                        !firstBlockerVisible.Contains(
+                            "\"blocker\":{\"visible_ordinal\":0},\"currently_blocking\":true") ||
+                        firstBlockerVisible.Contains("GameCard"))
+                    {
+                        return 182;
+                    }
+                    string firstBlockerVisibleSha = LowerSha256FixtureV1(
+                        firstBlockerVisibleBytes);
+                    viewModel.GameFixture.ExpectedAction = secondBlockAction;
+                    if (!DispatchSingleBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            blockersSha,
+                            2,
+                            desiredBlockerMaskHex,
+                            blockerPlanCommitment,
+                            false) ||
+                        viewModel.GameFixture.ExecutionCount != 1 ||
+                        !DispatchSingleBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            firstBlockerVisibleSha,
+                            2,
+                            desiredBlockerMaskHex,
+                            blockerPlanCommitment,
+                            true) ||
+                        viewModel.GameFixture.ExecutionCount != 2)
+                    {
+                        return 183;
+                    }
+                    secondBlocker.VisuallyBlockingFixture = true;
+                    secondBlocker.VisualBlockingOrderItems.Add(
+                        new OrderedCombatParticipant
+                        {
+                            Order = 2,
+                            Target = singleVisibleAttacker.GameCardFixture
+                        });
+                    secondBlocker.ActionItems.Clear();
+                    byte[] completedBlockersBytes = ExportVisibleBytesFixtureV1(
+                        channelName,
+                        view);
+                    string completedBlockers = Encoding.UTF8.GetString(
+                        completedBlockersBytes);
+                    if (!completedBlockers.Contains(
+                            "\"ordered_blockers\":[{\"visible_ordinal\":0},{\"visible_ordinal\":1}]") ||
+                        !completedBlockers.Contains(
+                            "\"blocker\":{\"visible_ordinal\":1},\"currently_blocking\":true") ||
+                        completedBlockers.Contains("GameCard"))
+                    {
+                        return 184;
+                    }
+                    string completedBlockersSha = LowerSha256FixtureV1(
+                        completedBlockersBytes);
+                    viewModel.GameFixture.ExpectedAction = doneButton.ActionFixture;
+                    if (!DispatchSingleBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            completedBlockersSha,
+                            2,
+                            desiredBlockerMaskHex,
+                            blockerPlanCommitment,
+                            true) ||
+                        viewModel.GameFixture.ExecutionCount != 3 ||
+                        !DispatchSingleBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            completedBlockersSha,
+                            2,
+                            desiredBlockerMaskHex,
+                            blockerPlanCommitment,
+                            false) ||
+                        viewModel.GameFixture.ExecutionCount != 3)
+                    {
+                        return 185;
+                    }
+
+                    // Restore the empty visible block lane for the existing
+                    // multi-attacker target-selection fixture.
+                    firstBlocker.VisualBlockingOrderItems.Clear();
+                    secondBlocker.VisualBlockingOrderItems.Clear();
+                    firstBlocker.VisuallyBlockingFixture = false;
+                    secondBlocker.VisuallyBlockingFixture = false;
+                    firstBlocker.ActionItems.Add(firstBlockAction);
+                    secondBlocker.ActionItems.Add(secondBlockAction);
+                    viewModel.GameFixture.ResetExecutionFixture();
 
                     var secondVisibleAttacker = new DuelSceneCardViewModel
                     {
@@ -1558,6 +1737,41 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
             return string.Equals(Encoding.UTF8.GetString(receipt), expected, StringComparison.Ordinal);
         }
 
+        private static bool DispatchSingleBlockerStepFixtureV1(
+            string channelName,
+            MemoryMappedViewAccessor view,
+            string currentSelectionSha256,
+            int candidateCount,
+            string desiredMaskHex,
+            string planCommitmentSha256,
+            bool expectSubmitted)
+        {
+            byte[] command = Encoding.ASCII.GetBytes(
+                "execute_visible_single_blocker_step_v1|" + currentSelectionSha256 + "|" +
+                candidateCount.ToString() + "|" + desiredMaskHex + "|" +
+                planCommitmentSha256);
+            view.Write(0, command.Length);
+            view.Write(4, 5);
+            view.WriteArray(8, command, 0, command.Length);
+            view.Flush();
+            int status = VisibleDuelProducerV1.DispatchVisibleSingleBlockerStepV1(
+                channelName);
+            int length = view.ReadInt32(0);
+            if (status != 0 || length <= 0 || length > Capacity - 8)
+            {
+                return false;
+            }
+            var receipt = new byte[length];
+            view.ReadArray(8, receipt, 0, receipt.Length);
+            string expected = expectSubmitted
+                ? "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"submitted\"}"
+                : "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"rejected\"}";
+            return string.Equals(
+                Encoding.UTF8.GetString(receipt),
+                expected,
+                StringComparison.Ordinal);
+        }
+
         private static string LowerSha256FixtureV1(byte[] bytes)
         {
             using (SHA256 sha256 = SHA256.Create())
@@ -1587,6 +1801,35 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
             var committed = new System.Collections.Generic.List<byte>();
             committed.AddRange(Encoding.ASCII.GetBytes(
                 "mtgo-visible-attacker-execution-plan-v1"));
+            foreach (string part in new[]
+            {
+                sourceSelectionSha256,
+                candidateCount.ToString(),
+                desiredMaskHex
+            })
+            {
+                byte[] bytes = Encoding.ASCII.GetBytes(part);
+                ulong count = (ulong)bytes.Length;
+                var length = new byte[8];
+                for (int index = 7; index >= 0; index--)
+                {
+                    length[index] = (byte)(count & 0xff);
+                    count >>= 8;
+                }
+                committed.AddRange(length);
+                committed.AddRange(bytes);
+            }
+            return LowerSha256FixtureV1(committed.ToArray());
+        }
+
+        private static string SingleBlockerPlanCommitmentFixtureV1(
+            string sourceSelectionSha256,
+            int candidateCount,
+            string desiredMaskHex)
+        {
+            var committed = new System.Collections.Generic.List<byte>();
+            committed.AddRange(Encoding.ASCII.GetBytes(
+                "mtgo-visible-single-attacker-blocker-execution-plan-v1"));
             foreach (string part in new[]
             {
                 sourceSelectionSha256,

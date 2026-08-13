@@ -73,6 +73,12 @@ pub struct MtgoPlayerVisibleSingleAttackerBlockerPlanV1 {
 }
 
 impl MtgoPlayerVisibleSingleAttackerBlockerPlanV1 {
+    pub(crate) fn source_selection_v1(
+        &self,
+    ) -> &MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1 {
+        &self.source_selection
+    }
+
     pub fn attacker_v1(&self) -> MtgoPlayerVisibleObjectRefV1 {
         self.source_selection.attacker
     }
@@ -285,6 +291,92 @@ fn validate_blocker_selection_input_v1(
                 "the first blocker slice requires one visible Block action per candidate and an initially empty visible block lane",
             ));
         }
+    }
+    Ok(())
+}
+
+pub fn validate_player_visible_single_attacker_blocker_execution_state_v1(
+    input: &MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1,
+) -> Result<(), MtgoContractErrorV1> {
+    validate_player_visible_duel_decision_input_strict_v1(&MtgoPlayerVisibleDuelDecisionInputV1 {
+        current_state: input.current_state.clone(),
+        ordered_legal_actions: Vec::new(),
+    })?;
+    let state = &input.current_state;
+    if state.phase != ZoneIndependentStepV1::DeclareBlockers
+        || state.acting_player != MtgoPlayerRelativeRoleV1::SeatedPlayer
+        || state.active_player != MtgoPlayerRelativeRoleV1::Opponent
+        || state.priority_player != MtgoPlayerRelativeRoleV1::SeatedPlayer
+        || !state.combat.attackers_declared
+        || state.combat.blockers_declared
+        || state.combat.ordered_attackers.as_slice() != [input.attacker]
+        || !state.stack.is_empty()
+        || !state.battlefield[1]
+            .iter()
+            .any(|card| card.object_ref == input.attacker)
+        || !input.unique_visible_enabled_done_control
+        || input.ordered_candidates.len() > MAX_VISIBLE_BLOCKER_CANDIDATES_V1
+    {
+        return Err(error_v1(
+            "visible_single_blocker_execution_state",
+            "single-attacker blocker execution requires one opposing visible attacker and the seated player's complete uncomplicated declare-blockers presentation",
+        ));
+    }
+
+    let battlefield_positions = state.battlefield[0]
+        .iter()
+        .enumerate()
+        .map(|(position, card)| (card.object_ref.visible_ordinal, position))
+        .collect::<HashMap<_, _>>();
+    let mut candidate_ordinals = HashSet::new();
+    let mut prior_position = None;
+    let mut declared_blockers = HashSet::new();
+    for assignment in &state.combat.blocker_assignments {
+        if assignment.attacker != input.attacker {
+            return Err(error_v1(
+                "visible_single_blocker_execution_assignment_target",
+                "every visible blocker assignment must point to the sole visible attacker",
+            ));
+        }
+        for blocker in &assignment.ordered_blockers {
+            if !declared_blockers.insert(blocker.visible_ordinal) {
+                return Err(error_v1(
+                    "visible_single_blocker_execution_assignment_duplicate",
+                    "a visible blocker may occur only once in the sole attacker's rendered lane",
+                ));
+            }
+        }
+    }
+    for candidate in &input.ordered_candidates {
+        let position = *battlefield_positions
+            .get(&candidate.blocker.visible_ordinal)
+            .ok_or_else(|| {
+                error_v1(
+                    "visible_single_blocker_execution_candidate_zone",
+                    "every execution candidate must be a seated-player battlefield object",
+                )
+            })?;
+        if !candidate_ordinals.insert(candidate.blocker.visible_ordinal)
+            || prior_position.is_some_and(|prior| position <= prior)
+            || candidate.currently_blocking
+                != declared_blockers.contains(&candidate.blocker.visible_ordinal)
+            || (!candidate.currently_blocking && !candidate.block_action_visible)
+        {
+            return Err(error_v1(
+                "visible_single_blocker_execution_candidate_shape",
+                "execution candidates must be unique in visible battlefield order and exactly reconcile their rendered blocking state and available Block action",
+            ));
+        }
+        prior_position = Some(position);
+    }
+    if declared_blockers
+        .iter()
+        .any(|blocker| !candidate_ordinals.contains(blocker))
+    {
+        return Err(error_v1(
+            "visible_single_blocker_execution_assignment_candidate",
+            "every rendered blocker must remain in the exact visible execution candidate universe",
+        ));
     }
     Ok(())
 }

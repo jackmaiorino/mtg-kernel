@@ -3,7 +3,8 @@ use crate::{
     begin_player_visible_single_attacker_blocker_deliberation_v1,
     validate_player_visible_blocker_target_selection_v1,
     validate_player_visible_duel_decision_input_strict_v1, validate_player_visible_expected_v2,
-    validate_player_visible_multi_attacker_blocker_selection_v1, MtgoContractErrorV1,
+    validate_player_visible_multi_attacker_blocker_selection_v1,
+    validate_player_visible_single_attacker_blocker_execution_state_v1, MtgoContractErrorV1,
     MtgoPlayerVisibleAttackerSelectionInputV1, MtgoPlayerVisibleBlockerTargetSelectionInputV1,
     MtgoPlayerVisibleDuelDecisionInputV1, MtgoPlayerVisibleMultiAttackerBlockerSelectionInputV1,
     MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1,
@@ -66,6 +67,9 @@ pub enum MtgoVisibleDuelViewModelBrokerResultV1 {
     VisibleSingleAttackerBlockerSelection {
         selection: Box<MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1>,
     },
+    VisibleSingleAttackerBlockerExecutionState {
+        selection: Box<MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1>,
+    },
     VisibleMultiAttackerBlockerSelection {
         selection: Box<MtgoPlayerVisibleMultiAttackerBlockerSelectionInputV1>,
     },
@@ -106,6 +110,9 @@ pub fn parse_and_validate_visible_duel_producer_result_v1(
                 (**selection).clone(),
             )?;
         }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+            selection,
+        } => validate_player_visible_single_attacker_blocker_execution_state_v1(selection)?,
         MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
             selection,
         } => validate_player_visible_multi_attacker_blocker_selection_v1(selection)?,
@@ -188,6 +195,9 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelBrokerResponseV1 {
             | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
                 ..
             }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+                ..
+            }
             | MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
                 ..
             }
@@ -204,6 +214,9 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelBrokerResponseV1 {
             }
             MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
             | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
                 ..
             }
             | MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
@@ -369,6 +382,9 @@ pub fn check_untrusted_visible_duel_viewmodel_broker_response_v1(
                 (**selection).clone(),
             )?;
         }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+            selection,
+        } => validate_player_visible_single_attacker_blocker_execution_state_v1(selection)?,
         MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
             selection,
         } => validate_player_visible_multi_attacker_blocker_selection_v1(selection)?,

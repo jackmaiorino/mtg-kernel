@@ -11,12 +11,15 @@ foreach ($required in @(
     'ExportVisibleDecisionOrAbstainV1',
     'DispatchVisibleAttackerStepV1',
     'execute_visible_attacker_step_v1|',
+    'DispatchVisibleSingleBlockerStepV1',
+    'execute_visible_single_blocker_step_v1|',
     'DispatchVisibleBlockerStepV1',
     'execute_visible_blocker_step_v1|',
     '--blocker-selection-sha256',
     '--model-selection-sha256',
     '--step-sha256',
     '--attacker-selection-sha256',
+    '--single-blocker-selection-sha256',
     '--candidate-count',
     '--desired-mask',
     '--plan-sha256',
@@ -36,8 +39,8 @@ foreach ($required in @(
     '071338a98d845d5c8db6ebd2f3c847e38ad548f50ba11d2a36973438cdec2ea8',
     'f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8',
     '1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b',
-    '3a8eab519d053c151ac081eb214a9c0845ee9302ff323c208b83d4c4373e98cd',
-    'e95e60bdf3ff6b4e2347609e79b6b9950152912d92cb6105ccef9dc95085fd16',
+    '857478e466fc3cb7e4473d069ec46837f95abfa137b815062da818859b237e60',
+    '942508d83653f9fbc3555174102645e70a6a6d07f445debe1221504a7ba5cb96',
     'WotC.MtGO.Client.Model.Reference.dll',
     'AuthenticodeValidV1',
     'ExactPinnedVersionV1',
@@ -53,7 +56,8 @@ foreach ($required in @(
 foreach ($requiredBuild in @(
     'mtgo_visible_duel_live_dispatch_broker_v1.exe',
     '/DMTGO_LIVE_PINNED_V1 /DMTGO_LIVE_DISPATCH_ADMITTED_V1',
-    'ea299fb49927731eedc033096d359db219fb15bdbbdaa7d9b1b8a57f72d23d87',
+    'c0e02fec4355083d334e667151b9354558a48c78cae77630efbd6fe40e7dc547',
+    'b67b5c4e31f65c81e26c04578655015812d1da56359314d57e95ac538e400233',
     'native live observe-only broker differs from its release pin'
 )) {
     if (-not $buildScript.Contains($requiredBuild)) {

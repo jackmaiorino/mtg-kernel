@@ -7,7 +7,7 @@ direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.22 invokes only exact allowlisted getters for the player-visible game
+Version 1.23 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
@@ -65,13 +65,20 @@ turns it into the checkpoint's sequential include/exclude deliberation without
 touching the client. Exert, grouped attacks, alternate victims, modals,
 nonempty stack, and ambiguous or incomplete controls still abstain.
 
-Version 1.21 also retains the observation-only blocker-selection result for the
+Version 1.23 retains the blocker-selection result for the
 narrow case with exactly one visibly attacking opposing creature, an initially
 empty block lane, simple visible `Block` actions, and one enabled visible
 `Done` control. The result contains visible battlefield ordinals and rendered
-combat state only. It carries no client target, action object, input method, or
-dispatch authority. The ordinary selected-index dispatcher explicitly rejects
-this result.
+combat state only. A separate sealed monotonic dispatcher may add only blockers
+chosen from that exact visible candidate order. It rebuilds the complete
+sanitized state before every step, requires each prior blocker to appear in the
+rendered assignment before another action, and presses `Done` only after the
+exact desired visible set is present. It refuses preexisting or unexpected
+assignments because removing a blocker has not been qualified. Client objects
+remain transaction-local and are discarded after resolving the one already
+visible `Block` or `Done` control. No target, action object, identifier, input
+primitive, or hidden state is serialized. The ordinary selected-index
+dispatcher still rejects this result.
 
 For multiple visible attackers, version 1.22 emits two separate staged results.
 The first presents only the rendered current assignments, unassigned visible
@@ -135,10 +142,10 @@ that dispatch nor another index for the same decision can be replayed.
 The fixture also validates one selected and one unselected direct-opponent
 attacker, rejects exert, alternate-victim, and missing-`Done` variants, and
 proves the legacy selected-index dispatcher cannot execute the new result.
-It separately validates the single-attacker blocker observation, proves that
+It separately validates the complete single-attacker blocker execution, proves that
 rendered attacking and blocking state wins over contradictory backing fixture
-flags, and proves the ordinary dispatcher performs zero actions for the blocker
-result. It also validates two attackers and two blockers, an existing rendered
+flags, proves the ordinary dispatcher performs zero actions for the blocker
+result, and proves stale or replayed steps cannot add an action. It also validates two attackers and two blockers, an existing rendered
 assignment, and the intermediate visible target prompt. The fixture proves the
 backing target-set candidates never enter the serialized result.
 The fixture also runs the full blocker action, target click, visible assignment,
@@ -169,7 +176,7 @@ represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
 abstention. Target-bearing, X-bearing, sideboard, fake, confirmation, and
 mode-count action state likewise forces abstention until its subsequent
-player-visible modal is represented. Version 1.22 has not been loaded into
+player-visible modal is represented. Version 1.23 has not been loaded into
 MTGO. Version 1.17 remains loaded in the current broker process; no attempt was
 made to replace its locked assembly. A separate deterministic Release build of
 the v1.22 source succeeded outside the client with zero warnings and zero

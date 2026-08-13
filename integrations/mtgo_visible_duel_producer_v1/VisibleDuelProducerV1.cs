@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.22 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.23 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -247,6 +247,18 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 SealedVisibleDispatchKindV1.BlockerStep);
         }
 
+        /// <summary>
+        /// Executes one checked monotonic single-attacker blocker-plan step.
+        /// Each added blocker must appear in the fresh rendered block lane
+        /// before another action or Done can be submitted.
+        /// </summary>
+        public static int DispatchVisibleSingleBlockerStepV1(string channelName)
+        {
+            return RunVisibleDecisionTransactionV1(
+                channelName,
+                SealedVisibleDispatchKindV1.SingleBlockerStep);
+        }
+
         private static int RunVisibleDecisionTransactionV1(
             string channelName,
             SealedVisibleDispatchKindV1? dispatchKind)
@@ -349,7 +361,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.22 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.23 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -437,6 +449,32 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     null,
                     0,
                     null,
+                    turn,
+                    visibleUniverseSha256,
+                    dispatchRequest)
+                        ? VisibleActionSubmitted
+                        : VisibleActionRejected;
+            }
+            if (dispatchRequest != null &&
+                dispatchRequest.Kind == SealedVisibleDispatchKindV1.SingleBlockerStep)
+            {
+                if (!TryBuildSanitizedVisibleSingleAttackerBlockerStateAndBindingsV1(
+                        viewModel,
+                        out byte[] currentSelection,
+                        out List<SealedVisibleSingleBlockerBindingV1> bindings,
+                        out _,
+                        out object? doneAction,
+                        out uint turn,
+                        out string visibleUniverseSha256) ||
+                    doneAction == null)
+                {
+                    return VisibleActionRejected;
+                }
+                return TryExecuteSealedVisibleSingleBlockerStepV1(
+                    viewModel,
+                    currentSelection,
+                    bindings,
+                    doneAction,
                     turn,
                     visibleUniverseSha256,
                     dispatchRequest)
@@ -1750,6 +1788,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !IsSanitizedVisibleDecisionResultV1(value) &&
                 !IsSanitizedVisibleAttackerSelectionResultV1(value) &&
                 !IsSanitizedVisibleSingleAttackerBlockerSelectionResultV1(value) &&
+                !IsSanitizedVisibleSingleAttackerBlockerExecutionStateResultV1(value) &&
                 !IsSanitizedVisibleMultiAttackerBlockerSelectionResultV1(value) &&
                 !IsSanitizedVisibleBlockerTargetSelectionResultV1(value))
             {
@@ -1840,6 +1879,14 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 }
             }
             return value[value.Length - 1] == (byte)'}';
+        }
+
+        private static bool IsSanitizedVisibleSingleAttackerBlockerExecutionStateResultV1(
+            byte[] value)
+        {
+            byte[] prefix = Encoding.UTF8.GetBytes(
+                "{\"result_kind\":\"visible_single_attacker_blocker_execution_state\",\"selection\":");
+            return HasExactSanitizedResultEnvelopeV1(value, prefix);
         }
 
         private static bool IsSanitizedVisibleMultiAttackerBlockerSelectionResultV1(

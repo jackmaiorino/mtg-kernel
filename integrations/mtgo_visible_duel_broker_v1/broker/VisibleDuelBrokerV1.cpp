@@ -34,6 +34,8 @@ constexpr wchar_t kProducerDispatchMethodV1[] =
     L"DispatchSelectedVisibleActionV1";
 constexpr wchar_t kProducerAttackerDispatchMethodV1[] =
     L"DispatchVisibleAttackerStepV1";
+constexpr wchar_t kProducerSingleBlockerDispatchMethodV1[] =
+    L"DispatchVisibleSingleBlockerStepV1";
 constexpr wchar_t kProducerBlockerDispatchMethodV1[] =
     L"DispatchVisibleBlockerStepV1";
 #ifndef MTGO_LIVE_PINNED_V1
@@ -54,9 +56,9 @@ constexpr char kExpectedReferenceSha256[] =
 constexpr char kExpectedBootstrapSha256[] =
     "1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b";
 constexpr char kExpectedProducerSha256[] =
-    "3a8eab519d053c151ac081eb214a9c0845ee9302ff323c208b83d4c4373e98cd";
+    "857478e466fc3cb7e4473d069ec46837f95abfa137b815062da818859b237e60";
 constexpr char kExpectedValidatorSha256[] =
-    "e95e60bdf3ff6b4e2347609e79b6b9950152912d92cb6105ccef9dc95085fd16";
+    "942508d83653f9fbc3555174102645e70a6a6d07f445debe1221504a7ba5cb96";
 #endif
 
 struct VisibleDuelBootstrapParametersV1 {
@@ -546,7 +548,8 @@ int wmain(int argc, wchar_t** argv) {
        (wcscmp(argv[9], L"--decision-sha256") != 0 ||
          wcscmp(argv[11], L"--selected-index") != 0)) ||
       (argc == 17 &&
-       (wcscmp(argv[9], L"--attacker-selection-sha256") != 0 ||
+       ((wcscmp(argv[9], L"--attacker-selection-sha256") != 0 &&
+         wcscmp(argv[9], L"--single-blocker-selection-sha256") != 0) ||
         wcscmp(argv[11], L"--candidate-count") != 0 ||
         wcscmp(argv[13], L"--desired-mask") != 0 ||
         wcscmp(argv[15], L"--plan-sha256") != 0)) ||
@@ -569,10 +572,15 @@ int wmain(int argc, wchar_t** argv) {
     return FailV1("input_validation");
   }
   bool ordinary_dispatch_requested = argc == 13;
-  bool attacker_dispatch_requested = argc == 17;
+  bool attacker_dispatch_requested =
+      argc == 17 && wcscmp(argv[9], L"--attacker-selection-sha256") == 0;
+  bool single_blocker_dispatch_requested =
+      argc == 17 &&
+      wcscmp(argv[9], L"--single-blocker-selection-sha256") == 0;
   bool blocker_dispatch_requested = argc == 23;
   bool dispatch_requested = ordinary_dispatch_requested ||
                             attacker_dispatch_requested ||
+                            single_blocker_dispatch_requested ||
                             blocker_dispatch_requested;
 #if defined(MTGO_LIVE_PINNED_V1) && !defined(MTGO_LIVE_DISPATCH_ADMITTED_V1)
   if (dispatch_requested) {
@@ -596,7 +604,8 @@ int wmain(int argc, wchar_t** argv) {
     dispatch_command.append(argv[10]);
     dispatch_command.push_back(L'|');
     dispatch_command.append(argv[12]);
-  } else if (attacker_dispatch_requested) {
+  } else if (attacker_dispatch_requested ||
+             single_blocker_dispatch_requested) {
     wchar_t* count_end = nullptr;
     unsigned long candidate_count = wcstoul(argv[12], &count_end, 10);
     auto lower_sha256 = [](const wchar_t* value) {
@@ -617,7 +626,9 @@ int wmain(int argc, wchar_t** argv) {
         !lower_sha256(argv[16])) {
       return FailV1("input_validation");
     }
-    dispatch_command = L"execute_visible_attacker_step_v1|";
+    dispatch_command = single_blocker_dispatch_requested
+                           ? L"execute_visible_single_blocker_step_v1|"
+                           : L"execute_visible_attacker_step_v1|";
     dispatch_command.append(argv[10]);
     dispatch_command.push_back(L'|');
     dispatch_command.append(argv[12]);
@@ -689,7 +700,9 @@ int wmain(int argc, wchar_t** argv) {
     header[0] = static_cast<std::uint32_t>(dispatch_command.size());
     header[1] = blocker_dispatch_requested
                     ? 4
-                    : (attacker_dispatch_requested ? 3 : 2);
+                    : (single_blocker_dispatch_requested
+                           ? 5
+                           : (attacker_dispatch_requested ? 3 : 2));
     char* command_bytes = static_cast<char*>(channel_view) + 8;
     for (std::size_t index = 0; index < dispatch_command.size(); ++index) {
       command_bytes[index] = static_cast<char>(dispatch_command[index]);
@@ -776,11 +789,13 @@ int wmain(int argc, wchar_t** argv) {
                    std::size(parameters.producer_method),
                     blocker_dispatch_requested
                         ? kProducerBlockerDispatchMethodV1
-                        : (attacker_dispatch_requested
-                               ? kProducerAttackerDispatchMethodV1
-                               : (ordinary_dispatch_requested
-                                      ? kProducerDispatchMethodV1
-                                      : kProducerObserveMethodV1)))) {
+                        : (single_blocker_dispatch_requested
+                               ? kProducerSingleBlockerDispatchMethodV1
+                               : (attacker_dispatch_requested
+                                      ? kProducerAttackerDispatchMethodV1
+                                      : (ordinary_dispatch_requested
+                                             ? kProducerDispatchMethodV1
+                                             : kProducerObserveMethodV1))))) {
     UnmapViewOfFile(channel_view);
     return FailV1("parameter_copy");
   }

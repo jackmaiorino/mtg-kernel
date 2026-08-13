@@ -64,6 +64,16 @@ the unchanged selection is rejected. The observe-only live build rejects this
 command at the same compile-separated gate as ordinary dispatch. No live
 attacker input has been attempted or authorized.
 
+The broker also accepts the separately typed single-attacker blocker plan. Its
+command carries only the exact current sanitized selection hash, candidate
+count, desired visible-blocker mask, and plan commitment. The producer rebuilds
+the visible state and submits at most one `Block` action or a fully reconciled
+`Done`. The native fixture proves the sealed route and proves an unchanged
+source cannot unlock a second input. Client objects remain inside the producer
+for that one transaction. No hidden candidate, target identifier, coordinate,
+or input primitive crosses the broker boundary. The running MTGO process has
+the older producer loaded, so this path has not been invoked against it.
+
 The broker now also carries the dormant blocker-step command. Its payload is
 limited to the exact sanitized source hash, selected visible index, blocker
 stage and visible ordinals, model-selection commitment, and execution-step

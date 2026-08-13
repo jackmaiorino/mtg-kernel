@@ -16,16 +16,21 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private const int OrdinaryDispatchCommandSchemaV1 = 2;
         private const int AttackerDispatchCommandSchemaV1 = 3;
         private const int BlockerDispatchCommandSchemaV1 = 4;
+        private const int SingleBlockerDispatchCommandSchemaV1 = 5;
         private const int MaximumDispatchCommandBytesV1 = 384;
         private const string DispatchCommandPrefixV1 = "execute_visible_action_v1|";
         private const string AttackerDispatchCommandPrefixV1 =
             "execute_visible_attacker_step_v1|";
         private const string BlockerDispatchCommandPrefixV1 =
             "execute_visible_blocker_step_v1|";
+        private const string SingleBlockerDispatchCommandPrefixV1 =
+            "execute_visible_single_blocker_step_v1|";
         private const string AttackerPlanCommitmentDomainV1 =
             "mtgo-visible-attacker-execution-plan-v1";
         private const string BlockerStepCommitmentDomainV1 =
             "mtgo-visible-multi-attacker-blocker-execution-step-v1";
+        private const string SingleBlockerPlanCommitmentDomainV1 =
+            "mtgo-visible-single-attacker-blocker-execution-plan-v1";
         private static readonly byte[] VisibleActionSubmitted = Encoding.UTF8.GetBytes(
             "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"submitted\"}");
         private static readonly byte[] VisibleActionRejected = Encoding.UTF8.GetBytes(
@@ -37,12 +42,15 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             VisibleAttackerPlanLedgerV1 = new SealedVisibleAttackerPlanLedgerV1();
         private static readonly SealedVisibleBlockerPlanLedgerV1
             VisibleBlockerPlanLedgerV1 = new SealedVisibleBlockerPlanLedgerV1();
+        private static readonly SealedVisibleSingleBlockerPlanLedgerV1
+            VisibleSingleBlockerPlanLedgerV1 = new SealedVisibleSingleBlockerPlanLedgerV1();
 
         internal enum SealedVisibleDispatchKindV1
         {
             OrdinaryAction,
             AttackerStep,
-            BlockerStep
+            BlockerStep,
+            SingleBlockerStep
         }
 
         internal sealed class SealedVisibleAttackerBindingV1
@@ -70,6 +78,14 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         {
             internal uint AttackerVisibleOrdinal;
             internal List<uint> OrderedBlockerVisibleOrdinals = new List<uint>();
+        }
+
+        internal sealed class SealedVisibleSingleBlockerBindingV1
+        {
+            internal object BlockerCard = new object();
+            internal uint BlockerVisibleOrdinal;
+            internal bool CurrentlyBlocking;
+            internal object? BlockAction;
         }
 
         internal sealed class SealedVisibleActionDispatchRequestV1
@@ -138,6 +154,28 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 new HashSet<string>(StringComparer.Ordinal);
         }
 
+        private sealed class SealedVisibleSingleBlockerPlanStateV1
+        {
+            internal string PlanCommitmentSha256 = string.Empty;
+            internal int CandidateCount;
+            internal ulong DesiredMask;
+            internal uint Turn;
+            internal string VisibleUniverseSha256 = string.Empty;
+            internal uint[] CandidateVisibleOrdinals = Array.Empty<uint>();
+            internal bool[] ExpectedCurrentSelection = Array.Empty<bool>();
+        }
+
+        private sealed class SealedVisibleSingleBlockerPlanLedgerV1
+        {
+            internal SealedVisibleSingleBlockerPlanStateV1? ActivePlan;
+            internal HashSet<string> UsedPlanCommitments =
+                new HashSet<string>(StringComparer.Ordinal);
+            internal HashSet<string> UsedSourceSelectionHashes =
+                new HashSet<string>(StringComparer.Ordinal);
+            internal HashSet<string> CompletedVisibleUniverseHashes =
+                new HashSet<string>(StringComparer.Ordinal);
+        }
+
         private static bool TryReadSealedVisibleActionDispatchRequestV1(
             string channelName,
             SealedVisibleDispatchKindV1 expectedKind,
@@ -164,7 +202,9 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                         ? OrdinaryDispatchCommandSchemaV1
                         : expectedKind == SealedVisibleDispatchKindV1.AttackerStep
                             ? AttackerDispatchCommandSchemaV1
-                            : BlockerDispatchCommandSchemaV1;
+                            : expectedKind == SealedVisibleDispatchKindV1.BlockerStep
+                                ? BlockerDispatchCommandSchemaV1
+                                : SingleBlockerDispatchCommandSchemaV1;
                     if (schema != expectedSchema || length <= 0 ||
                         length > MaximumDispatchCommandBytesV1)
                     {
@@ -196,10 +236,16 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                             SelectedIndex = index
                         };
                     }
-                    else if (expectedKind == SealedVisibleDispatchKindV1.AttackerStep)
+                    else if (expectedKind == SealedVisibleDispatchKindV1.AttackerStep ||
+                        expectedKind == SealedVisibleDispatchKindV1.SingleBlockerStep)
                     {
                         if (parts.Length != 5 ||
-                            !string.Equals(parts[0], AttackerDispatchCommandPrefixV1.TrimEnd('|'), StringComparison.Ordinal) ||
+                            !string.Equals(
+                                parts[0],
+                                (expectedKind == SealedVisibleDispatchKindV1.AttackerStep
+                                    ? AttackerDispatchCommandPrefixV1
+                                    : SingleBlockerDispatchCommandPrefixV1).TrimEnd('|'),
+                                StringComparison.Ordinal) ||
                             !IsLowerSha256V1(parts[1]) ||
                             !int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out int candidateCount) ||
                             candidateCount < 0 || candidateCount > 64 ||
@@ -453,6 +499,152 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 {
                     // Completion is consumed before the client call. An
                     // uncertain Done invocation can never be retried.
+                    if (ledger.CompletedVisibleUniverseHashes.Count >= 4096 ||
+                        !ledger.CompletedVisibleUniverseHashes.Add(visibleUniverseSha256))
+                    {
+                        ledger.ActivePlan = null;
+                        return false;
+                    }
+                    ledger.ActivePlan = null;
+                }
+                execute.Invoke(game, new[] { selectedAction });
+                return true;
+            }
+        }
+
+        private static bool TryExecuteSealedVisibleSingleBlockerStepV1(
+            object viewModel,
+            byte[] currentSanitizedSelection,
+            List<SealedVisibleSingleBlockerBindingV1> bindings,
+            object doneAction,
+            uint turn,
+            string visibleUniverseSha256,
+            SealedVisibleActionDispatchRequestV1 request)
+        {
+            string currentSha256 = LowerSha256V1(currentSanitizedSelection);
+            if (request.Kind != SealedVisibleDispatchKindV1.SingleBlockerStep ||
+                !string.Equals(currentSha256, request.ExpectedDecisionSha256, StringComparison.Ordinal) ||
+                request.AttackerCandidateCount != bindings.Count ||
+                !IsLowerSha256V1(visibleUniverseSha256) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "Game",
+                    out object? game) || game == null)
+            {
+                return false;
+            }
+
+            SealedVisibleSingleBlockerPlanLedgerV1 ledger = VisibleSingleBlockerPlanLedgerV1;
+            lock (ledger)
+            {
+                SealedVisibleSingleBlockerPlanStateV1? state = ledger.ActivePlan;
+                if (state == null)
+                {
+                    string expectedPlanCommitment = SingleBlockerPlanCommitmentSha256V1(
+                        currentSha256,
+                        request.AttackerCandidateCount,
+                        request.DesiredAttackerMaskHex);
+                    if (!string.Equals(
+                            expectedPlanCommitment,
+                            request.AttackerPlanCommitmentSha256,
+                            StringComparison.Ordinal) ||
+                        bindings.Any(binding => binding.CurrentlyBlocking) ||
+                        ledger.UsedPlanCommitments.Count >= 4096 ||
+                        ledger.UsedSourceSelectionHashes.Count >= 4096 ||
+                        ledger.CompletedVisibleUniverseHashes.Contains(visibleUniverseSha256) ||
+                        !ledger.UsedPlanCommitments.Add(request.AttackerPlanCommitmentSha256) ||
+                        !ledger.UsedSourceSelectionHashes.Add(currentSha256))
+                    {
+                        return false;
+                    }
+                    state = new SealedVisibleSingleBlockerPlanStateV1
+                    {
+                        PlanCommitmentSha256 = request.AttackerPlanCommitmentSha256,
+                        CandidateCount = request.AttackerCandidateCount,
+                        DesiredMask = request.DesiredAttackerMask,
+                        Turn = turn,
+                        VisibleUniverseSha256 = visibleUniverseSha256,
+                        CandidateVisibleOrdinals = bindings
+                            .Select(binding => binding.BlockerVisibleOrdinal)
+                            .ToArray(),
+                        ExpectedCurrentSelection = bindings
+                            .Select(binding => binding.CurrentlyBlocking)
+                            .ToArray()
+                    };
+                    ledger.ActivePlan = state;
+                }
+                else if (!string.Equals(
+                        state.PlanCommitmentSha256,
+                        request.AttackerPlanCommitmentSha256,
+                        StringComparison.Ordinal) ||
+                    state.CandidateCount != request.AttackerCandidateCount ||
+                    state.DesiredMask != request.DesiredAttackerMask ||
+                    state.Turn != turn ||
+                    !string.Equals(
+                        state.VisibleUniverseSha256,
+                        visibleUniverseSha256,
+                        StringComparison.Ordinal))
+                {
+                    ledger.ActivePlan = null;
+                    return false;
+                }
+
+                if (state.CandidateVisibleOrdinals.Length != bindings.Count ||
+                    state.ExpectedCurrentSelection.Length != bindings.Count)
+                {
+                    ledger.ActivePlan = null;
+                    return false;
+                }
+                for (int index = 0; index < bindings.Count; index++)
+                {
+                    bool desired = ((state.DesiredMask >> index) & 1UL) != 0;
+                    if (state.CandidateVisibleOrdinals[index] != bindings[index].BlockerVisibleOrdinal ||
+                        state.ExpectedCurrentSelection[index] != bindings[index].CurrentlyBlocking ||
+                        (bindings[index].CurrentlyBlocking && !desired))
+                    {
+                        ledger.ActivePlan = null;
+                        return false;
+                    }
+                }
+
+                int nextAddIndex = -1;
+                for (int index = 0; index < bindings.Count; index++)
+                {
+                    bool desired = ((state.DesiredMask >> index) & 1UL) != 0;
+                    if (desired && !bindings[index].CurrentlyBlocking)
+                    {
+                        if (bindings[index].BlockAction == null)
+                        {
+                            ledger.ActivePlan = null;
+                            return false;
+                        }
+                        nextAddIndex = index;
+                        break;
+                    }
+                }
+                object selectedAction = nextAddIndex >= 0
+                    ? bindings[nextAddIndex].BlockAction!
+                    : doneAction;
+                if (!TryResolveExactGameActionExecutorV1(
+                        viewModel,
+                        selectedAction,
+                        out object? resolvedGame,
+                        out MethodInfo? execute) ||
+                    resolvedGame == null || execute == null ||
+                    !ReferenceEquals(game, resolvedGame))
+                {
+                    ledger.ActivePlan = null;
+                    return false;
+                }
+
+                if (nextAddIndex >= 0)
+                {
+                    state.ExpectedCurrentSelection[nextAddIndex] = true;
+                }
+                else
+                {
                     if (ledger.CompletedVisibleUniverseHashes.Count >= 4096 ||
                         !ledger.CompletedVisibleUniverseHashes.Add(visibleUniverseSha256))
                     {
@@ -812,6 +1004,39 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     blocker,
                     attacker,
                     modelSelectionCommitmentSha256
+                })
+                {
+                    byte[] bytes = Encoding.ASCII.GetBytes(part);
+                    var length = new byte[8];
+                    ulong count = (ulong)bytes.Length;
+                    for (int index = 7; index >= 0; index--)
+                    {
+                        length[index] = (byte)(count & 0xff);
+                        count >>= 8;
+                    }
+                    committed.AddRange(length);
+                    committed.AddRange(bytes);
+                }
+                return string.Concat(sha256.ComputeHash(committed.ToArray()).Select(
+                    item => item.ToString("x2", CultureInfo.InvariantCulture)));
+            }
+        }
+
+        private static string SingleBlockerPlanCommitmentSha256V1(
+            string sourceSelectionSha256,
+            int candidateCount,
+            string desiredMaskHex)
+        {
+            using (SHA256 sha256 = SHA256.Create())
+            {
+                var committed = new List<byte>(256);
+                committed.AddRange(Encoding.ASCII.GetBytes(
+                    SingleBlockerPlanCommitmentDomainV1));
+                foreach (string part in new[]
+                {
+                    sourceSelectionSha256,
+                    candidateCount.ToString(CultureInfo.InvariantCulture),
+                    desiredMaskHex
                 })
                 {
                     byte[] bytes = Encoding.ASCII.GetBytes(part);
