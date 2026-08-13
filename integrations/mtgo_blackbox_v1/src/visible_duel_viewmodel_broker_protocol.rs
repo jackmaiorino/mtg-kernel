@@ -350,7 +350,8 @@ mod tests {
     use super::*;
     use crate::{
         MtgoPlayerRelativeRoleV1, MtgoPlayerVisibleCombatStateV1, MtgoPlayerVisibleDuelActionV1,
-        MtgoPlayerVisibleDuelStateV1, ZoneIndependentStepV1,
+        MtgoPlayerVisibleDuelStateV1, MtgoPlayerVisibleExileCardV1,
+        MtgoPlayerVisibleObjectRefV1, ZoneIndependentStepV1,
     };
 
     fn request_v1() -> MtgoVisibleDuelViewModelBrokerRequestV1 {
@@ -428,6 +429,31 @@ mod tests {
                 reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1::ProjectionIncomplete
             }
         ));
+    }
+
+    #[test]
+    fn strict_producer_result_parser_requires_visible_exile_panel_owner() {
+        let mut decision = decision_v1();
+        decision.current_state.exile.push(MtgoPlayerVisibleExileCardV1 {
+            object_ref: MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 0 },
+            zone_owner: MtgoPlayerRelativeRoleV1::Opponent,
+            visible_card_name: Some("Lightning Bolt".to_owned()),
+        });
+        let visible = MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
+            decision: Box::new(decision),
+        };
+        let bytes = serde_json::to_vec(&visible).unwrap();
+        assert!(parse_and_validate_visible_duel_producer_result_v1(&bytes).is_ok());
+
+        let mut missing_owner = serde_json::to_value(&visible).unwrap();
+        missing_owner["decision"]["current_state"]["exile"][0]
+            .as_object_mut()
+            .expect("exile card object")
+            .remove("zone_owner");
+        assert!(parse_and_validate_visible_duel_producer_result_v1(
+            &serde_json::to_vec(&missing_owner).unwrap()
+        )
+        .is_err());
     }
 
     #[test]

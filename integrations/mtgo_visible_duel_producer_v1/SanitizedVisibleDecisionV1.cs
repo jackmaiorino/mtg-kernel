@@ -49,7 +49,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             [DataMember(Name = "object_ref", Order = 1)]
             public VisibleObjectRefV1 ObjectRef { get; set; } = new VisibleObjectRefV1();
 
-            [DataMember(Name = "visible_card_name", Order = 2)]
+            [DataMember(Name = "zone_owner", Order = 2)]
+            public string ZoneOwner { get; set; } = string.Empty;
+
+            [DataMember(Name = "visible_card_name", Order = 3)]
             public string? VisibleCardName { get; set; }
         }
 
@@ -419,8 +422,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !TryMapBattlefieldV1(opponent.Battlefield, objectRefs, out List<VisibleBattlefieldCardV1> opponentBattlefield, out List<VisibleRelationV1> opponentRelations) ||
                 !TryMapNamedCardsV1(seated.Graveyard, objectRefs, out List<VisibleNamedCardV1> seatedGraveyard) ||
                 !TryMapNamedCardsV1(opponent.Graveyard, objectRefs, out List<VisibleNamedCardV1> opponentGraveyard) ||
-                !TryMapExileV1(seated.Exile, objectRefs, out List<VisibleExileCardV1> seatedExile) ||
-                !TryMapExileV1(opponent.Exile, objectRefs, out List<VisibleExileCardV1> opponentExile) ||
+                !TryMapExileV1(seated.Exile, "seated_player", objectRefs, out List<VisibleExileCardV1> seatedExile) ||
+                !TryMapExileV1(opponent.Exile, "opponent", objectRefs, out List<VisibleExileCardV1> opponentExile) ||
                 !TryMapNamedCardsV1(seated.Hand, objectRefs, out List<VisibleNamedCardV1> ownHand) ||
                 !TryMapNamedCardsV1(opponent.Hand, objectRefs, out List<VisibleNamedCardV1> opponentKnownHand))
             {
@@ -895,6 +898,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 
         private static bool TryMapExileV1(
             IEnumerable<object> cards,
+            string zoneOwner,
             Dictionary<object, VisibleObjectRefV1> refs,
             out List<VisibleExileCardV1> mapped)
         {
@@ -918,7 +922,12 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     }
                     name = visibleName;
                 }
-                mapped.Add(new VisibleExileCardV1 { ObjectRef = refs[card], VisibleCardName = name });
+                mapped.Add(new VisibleExileCardV1
+                {
+                    ObjectRef = refs[card],
+                    ZoneOwner = zoneOwner,
+                    VisibleCardName = name
+                });
             }
             return true;
         }

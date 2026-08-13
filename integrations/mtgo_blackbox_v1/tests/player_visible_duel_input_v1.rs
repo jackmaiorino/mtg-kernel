@@ -421,7 +421,22 @@ fn opponent_plotted_card_name_is_concealed_while_own_name_remains_visible() {
         input.current_state.exile[own].visible_card_name.as_deref(),
         Some("Own Plotted Card")
     );
+    assert_eq!(
+        input.current_state.exile[own].zone_owner,
+        MtgoPlayerRelativeRoleV1::SeatedPlayer
+    );
     assert_eq!(input.current_state.exile[opponent].visible_card_name, None);
+    assert_eq!(
+        input.current_state.exile[opponent].zone_owner,
+        MtgoPlayerRelativeRoleV1::Opponent
+    );
+    let mut wrong_zone_owner = input.clone();
+    wrong_zone_owner.current_state.exile[opponent].zone_owner =
+        MtgoPlayerRelativeRoleV1::SeatedPlayer;
+    assert_ne!(
+        wrong_zone_owner.commitment_sha256_v1().unwrap(),
+        input.commitment_sha256_v1().unwrap()
+    );
     assert!(!serde_json::to_string(&input)
         .unwrap()
         .contains("Opponent Secret Card"));

@@ -7,7 +7,7 @@ direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.7 invokes only exact allowlisted getters for the player-visible game
+Version 1.8 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
@@ -27,6 +27,9 @@ name of a face-down exiled card for either player. Getter objects
 remain local and are discarded. The producer can serialize a bounded
 `MtgoPlayerVisibleDuelDecisionInputV1` slice containing only sanitized
 player-visible values, or return one of the fixed abstentions. The slice is
+explicit about which player-relative rendered exile panel contains each
+visible exiled object, so later positions cannot collapse the two UI panels.
+The slice is
 limited to an untouched 60-card Turn 1 Main 1 opening with seated-player
 priority, base life, zero mana, and empty public zones, stack, combat,
 revealed zone, active prompt, and modal choice. Its supported actions
@@ -65,7 +68,7 @@ producer now also reduces the rendered per-player Shields zone and each
 rendered card's public frame style to an Initiative-holder candidate. A
 non-null or ambiguous holder still forces abstention until an exact live UI
 corpus qualifies the per-player placement. No shield card, client object, or
-internal identifier is exported. Version 1.7 has not been
+internal identifier is exported. Version 1.8 has not been
 loaded into MTGO.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.

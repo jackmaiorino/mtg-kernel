@@ -2524,6 +2524,7 @@ mod tests {
             .exile
             .push(MtgoPlayerVisibleExileCardV1 {
                 object_ref: source,
+                zone_owner: R::SeatedPlayer,
                 visible_card_name: Some("Visible spell".to_owned()),
             });
         assert_eq!(
@@ -2568,6 +2569,7 @@ mod tests {
             .exile
             .push(MtgoPlayerVisibleExileCardV1 {
                 object_ref: source,
+                zone_owner: R::SeatedPlayer,
                 visible_card_name: Some("Visible land".to_owned()),
             });
         assert!(direct_visible_postcondition_recipes_v1(&decision, &action).is_err());

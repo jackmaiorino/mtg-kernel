@@ -124,9 +124,10 @@ while the client was outside a duel. It returned only the fixed
 `duel_surface_unavailable` abstention, as required. This lobby-only check does
 not attest any data-bearing getter or success path. The synthetic Pass control
 has not yet been confirmed in a real duel, and later special visible
-game state remains incomplete. Version 1.7 adds the 48-getter visible
+game state remains incomplete. Version 1.8 adds the 48-getter visible
 Initiative candidate seam, derives the turn only from the rendered
-`GameTurnText`, and remains offline-only. This work
+`GameTurnText`, preserves which rendered player-relative exile panel contains
+each visible exiled object, and remains offline-only. This work
 does not implement a complete projection, admit a
 live decision, authorize event entry or spending, or send live MTGO input. Until the
 reviewed complete producer and corpus exist, DXGI remains a candidate source

@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 const PLAYER_VISIBLE_DUEL_DECISION_INPUT_DOMAIN_V1: &[u8] =
-    b"mtgo-player-visible-duel-decision-input-v1";
+    b"mtgo-player-visible-duel-decision-input-v1-exile-zone-owner-v1";
 
 /// Player identity relative to the person seated at the approved MTGO
 /// account. Kernel seat labels are adapter bookkeeping and never enter the
@@ -56,6 +56,8 @@ pub struct MtgoPlayerVisibleNamedCardV1 {
 #[serde(deny_unknown_fields)]
 pub struct MtgoPlayerVisibleExileCardV1 {
     pub object_ref: MtgoPlayerVisibleObjectRefV1,
+    /// The player-relative exile panel containing this visible object.
+    pub zone_owner: MtgoPlayerRelativeRoleV1,
     pub visible_card_name: Option<String>,
 }
 
@@ -720,6 +722,7 @@ fn visible_exile_card_v1(
     };
     Ok(MtgoPlayerVisibleExileCardV1 {
         object_ref: refs.get_v1(&card.stable)?,
+        zone_owner: relative_player_v1(card.stable.owner, acting_player),
         visible_card_name,
     })
 }
