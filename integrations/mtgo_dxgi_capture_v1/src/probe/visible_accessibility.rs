@@ -2,7 +2,9 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::System::Com::{
@@ -24,6 +26,9 @@ const MAX_VISIBLE_ACCESSIBILITY_QUERIES_V1: usize = 64;
 const MAX_VISIBLE_ACCESSIBILITY_ELEMENTS_V1: i32 = 4_096;
 const MAX_MATCHES_PER_QUERY_V1: usize = 64;
 const MAX_VISIBLE_ACCESSIBILITY_CORPUS_CASES_V1: usize = 64;
+const MAX_VISIBLE_ACCESSIBILITY_REVIEW_IMAGE_DIMENSION_V1: u32 = 8_192;
+const MAX_VISIBLE_ACCESSIBILITY_REVIEW_DECODED_IMAGE_BYTES_V1: usize = 64 * 1_024 * 1_024;
+const MAX_VISIBLE_ACCESSIBILITY_REVIEW_TOTAL_CROP_PNG_BYTES_V1: usize = 128 * 1_024 * 1_024;
 const MAX_VISIBLE_ACCESSIBILITY_CAPTURE_BRACKET_MILLIS_V1: u128 = 5_000;
 const VISIBLE_ACCESSIBILITY_REPORT_DOMAIN_V1: &[u8] = b"mtgo-visible-accessibility-report-v1";
 const VISIBLE_ACCESSIBILITY_PIXEL_MATCH_SET_DOMAIN_V1: &[u8] =
@@ -206,14 +211,16 @@ pub struct MtgoVisibleAccessibilityCatalogReviewArtifactReceiptV1 {
     pub safe_for_input: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PrivateVisibleAccessibilityCatalogReviewCropV1 {
     file: String,
     png_sha256: String,
     region_bgra8_sha256: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PrivateVisibleAccessibilityCatalogReviewArtifactEntryV1 {
     query_id: String,
     slice: MtgoVisibleAccessibilityCatalogSliceV1,
@@ -222,7 +229,8 @@ struct PrivateVisibleAccessibilityCatalogReviewArtifactEntryV1 {
     match_crops: Vec<PrivateVisibleAccessibilityCatalogReviewCropV1>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PrivateVisibleAccessibilityCatalogReviewArtifactManifestV1 {
     schema_version: u32,
     artifact_kind: String,
@@ -258,12 +266,27 @@ struct PrivateVisibleAccessibilityCatalogReviewArtifactFilesV1 {
     crop_files: Vec<(String, Vec<u8>)>,
 }
 
+struct PrivateLoadedVisibleAccessibilityCatalogReviewArtifactV1 {
+    _files: PrivateVisibleAccessibilityCatalogReviewArtifactFilesV1,
+    catalog_summary: MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
+}
+
+enum PrivateVisibleAccessibilityCatalogCaseSourceV1 {
+    Live {
+        _source: Box<OpaqueMtgoVisibleAccessibilityPixelCorroborationV1>,
+    },
+    ReviewedArtifact {
+        _artifact: Box<PrivateLoadedVisibleAccessibilityCatalogReviewArtifactV1>,
+    },
+}
+
 /// Move-only evaluation of one exact fixed-catalog pixel bracket. It retains
 /// the opaque source so application code cannot replace a real captured case
 /// with copied report hashes. The review is caller-authored and the result is
 /// therefore only a non-authorizing ratification candidate.
 pub struct CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1 {
-    _source: OpaqueMtgoVisibleAccessibilityPixelCorroborationV1,
+    _source: PrivateVisibleAccessibilityCatalogCaseSourceV1,
+    _catalog_summary: MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
     _review: MtgoVisibleAccessibilityCatalogReviewV1,
     summary: MtgoVisibleAccessibilityCatalogCaseEvaluationSummaryV1,
 }
@@ -1030,34 +1053,7 @@ fn build_visible_accessibility_catalog_review_artifact_v1(
         width: frame.manifest.frame.canonical_width,
         height: frame.manifest.frame.canonical_height,
     };
-    let review_template = MtgoVisibleAccessibilityCatalogReviewV1 {
-        schema_version: MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_SCHEMA_V1,
-        catalog_commitment_sha256: catalog_summary.catalog_commitment_sha256.clone(),
-        source_pixel_report_commitment_sha256: catalog_summary
-            .source_pixel_report_commitment_sha256
-            .clone(),
-        before_frame_sha256: catalog_summary.before_frame_sha256.clone(),
-        after_frame_sha256: catalog_summary.after_frame_sha256.clone(),
-        reviewer_alias_sha256: String::new(),
-        client_only_and_unobscured_confirmed: false,
-        exact_frame_pair_identity_confirmed: false,
-        entries: catalog_summary
-            .entries
-            .iter()
-            .map(|entry| MtgoVisibleAccessibilityCatalogReviewEntryV1 {
-                query_id: entry.query_id.clone(),
-                slice: entry.slice,
-                expected_visible_text_sha256: entry.expected_visible_text_sha256.clone(),
-                reviewed_exact_visible_match_count: entry.exact_visible_match_count,
-                reviewed_visible_pixel_match_set_commitment_sha256: entry
-                    .visible_pixel_match_set_commitment_sha256
-                    .clone(),
-                every_matched_region_visibly_contains_exact_catalog_label: false,
-                visible_absence_reviewed_when_match_count_is_zero: false,
-            })
-            .collect(),
-        review_commitment_sha256: String::new(),
-    };
+    let review_template = review_template_for_catalog_summary_v1(&catalog_summary)?;
     let review_template_bytes = serde_json::to_vec_pretty(&review_template)
         .map_err(|error| format!("serialize accessibility review template: {error}"))?;
     let review_template_sha256 = sha256_hex_v1(&review_template_bytes);
@@ -1165,6 +1161,44 @@ fn build_visible_accessibility_catalog_review_artifact_v1(
         before_visible_client_png: frame.preview_png.clone(),
         after_visible_client_png: after_frame.preview_png.clone(),
         crop_files,
+    })
+}
+
+fn review_template_for_catalog_summary_v1(
+    catalog_summary: &MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
+) -> Result<MtgoVisibleAccessibilityCatalogReviewV1, String> {
+    if catalog_summary.report_commitment_sha256
+        != known_label_pixel_catalog_report_commitment_v1(catalog_summary)?
+    {
+        return Err("accessibility review template source commitment changed".to_owned());
+    }
+    Ok(MtgoVisibleAccessibilityCatalogReviewV1 {
+        schema_version: MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_SCHEMA_V1,
+        catalog_commitment_sha256: catalog_summary.catalog_commitment_sha256.clone(),
+        source_pixel_report_commitment_sha256: catalog_summary
+            .source_pixel_report_commitment_sha256
+            .clone(),
+        before_frame_sha256: catalog_summary.before_frame_sha256.clone(),
+        after_frame_sha256: catalog_summary.after_frame_sha256.clone(),
+        reviewer_alias_sha256: String::new(),
+        client_only_and_unobscured_confirmed: false,
+        exact_frame_pair_identity_confirmed: false,
+        entries: catalog_summary
+            .entries
+            .iter()
+            .map(|entry| MtgoVisibleAccessibilityCatalogReviewEntryV1 {
+                query_id: entry.query_id.clone(),
+                slice: entry.slice,
+                expected_visible_text_sha256: entry.expected_visible_text_sha256.clone(),
+                reviewed_exact_visible_match_count: entry.exact_visible_match_count,
+                reviewed_visible_pixel_match_set_commitment_sha256: entry
+                    .visible_pixel_match_set_commitment_sha256
+                    .clone(),
+                every_matched_region_visibly_contains_exact_catalog_label: false,
+                visible_absence_reviewed_when_match_count_is_zero: false,
+            })
+            .collect(),
+        review_commitment_sha256: String::new(),
     })
 }
 
@@ -1352,6 +1386,439 @@ fn persist_visible_accessibility_catalog_review_artifact_v1(
         let _ = fs::remove_dir_all(&partial);
     }
     result
+}
+
+fn load_visible_accessibility_catalog_review_artifact_v1(
+    artifact_directory: &Path,
+) -> Result<PrivateLoadedVisibleAccessibilityCatalogReviewArtifactV1, String> {
+    if !artifact_directory.is_absolute()
+        || fs::symlink_metadata(artifact_directory)
+            .map_err(|error| format!("inspect accessibility review artifact directory: {error}"))?
+            .file_type()
+            .is_symlink()
+    {
+        return Err(
+            "accessibility review artifact must be an absolute non-symlink directory".to_owned(),
+        );
+    }
+    let directory = artifact_directory
+        .canonicalize()
+        .map_err(|error| format!("canonicalize accessibility review artifact: {error}"))?;
+    if !directory.is_dir() {
+        return Err("accessibility review artifact is not a directory".to_owned());
+    }
+    let manifest_bytes = read_bounded_regular_file_v1(
+        &directory.join("manifest.json"),
+        512 * 1_024,
+        "accessibility review artifact manifest",
+    )?;
+    let manifest: PrivateVisibleAccessibilityCatalogReviewArtifactManifestV1 =
+        serde_json::from_slice(&manifest_bytes)
+            .map_err(|error| format!("parse accessibility review artifact manifest: {error}"))?;
+    let canonical_manifest_bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("canonicalize accessibility review artifact manifest: {error}"))?;
+    if manifest_bytes != canonical_manifest_bytes {
+        return Err("accessibility review artifact manifest is not canonical".to_owned());
+    }
+    validate_visible_accessibility_review_artifact_manifest_v1(&manifest)?;
+
+    let review_template_bytes = read_bounded_regular_file_v1(
+        &directory.join(&manifest.review_template_file),
+        256 * 1_024,
+        "accessibility review template",
+    )?;
+    let before_visible_client_png = read_bounded_regular_file_v1(
+        &directory.join(&manifest.before_visible_client_png_file),
+        64 * 1_024 * 1_024,
+        "before visible client PNG",
+    )?;
+    let after_visible_client_png = read_bounded_regular_file_v1(
+        &directory.join(&manifest.after_visible_client_png_file),
+        64 * 1_024 * 1_024,
+        "after visible client PNG",
+    )?;
+    if sha256_hex_v1(&before_visible_client_png) != manifest.before_visible_client_png_sha256
+        || sha256_hex_v1(&after_visible_client_png) != manifest.after_visible_client_png_sha256
+    {
+        return Err("visible client PNG hash changed".to_owned());
+    }
+    let (before_width, before_height, before_bgra8) =
+        decode_visible_accessibility_png_to_bgra8_v1(&before_visible_client_png)?;
+    let (after_width, after_height, after_bgra8) =
+        decode_visible_accessibility_png_to_bgra8_v1(&after_visible_client_png)?;
+    if (before_width, before_height) != (after_width, after_height)
+        || sha256_hex_v1(&before_bgra8) != manifest.before_frame_sha256
+        || sha256_hex_v1(&after_bgra8) != manifest.after_frame_sha256
+    {
+        return Err("visible client PNG pixels do not bind the declared frame pair".to_owned());
+    }
+
+    let mut crop_files = Vec::new();
+    let mut total_crop_png_bytes = 0_usize;
+    let mut query_results = Vec::new();
+    let mut expected_files = HashSet::from([
+        "manifest.json".to_owned(),
+        manifest.review_template_file.clone(),
+        manifest.before_visible_client_png_file.clone(),
+        manifest.after_visible_client_png_file.clone(),
+    ]);
+    for (query_index, entry) in manifest.entries.iter().enumerate() {
+        let mut region_hashes = Vec::new();
+        for (match_index, crop) in entry.match_crops.iter().enumerate() {
+            let expected_file = format!("match-{query_index:02}-{match_index:02}.png");
+            if crop.file != expected_file || !expected_files.insert(crop.file.clone()) {
+                return Err(
+                    "accessibility review crop filename changed or is duplicated".to_owned(),
+                );
+            }
+            let bytes = read_bounded_regular_file_v1(
+                &directory.join(&crop.file),
+                16 * 1_024 * 1_024,
+                "visible accessibility match crop",
+            )?;
+            total_crop_png_bytes = total_crop_png_bytes
+                .checked_add(bytes.len())
+                .ok_or("visible accessibility match crop byte total overflow")?;
+            if total_crop_png_bytes > MAX_VISIBLE_ACCESSIBILITY_REVIEW_TOTAL_CROP_PNG_BYTES_V1 {
+                return Err(
+                    "visible accessibility match crop files exceed the bounded byte total"
+                        .to_owned(),
+                );
+            }
+            let (crop_width, crop_height, bgra8) =
+                decode_visible_accessibility_png_to_bgra8_v1(&bytes)?;
+            if sha256_hex_v1(&bytes) != crop.png_sha256
+                || sha256_hex_v1(&bgra8) != crop.region_bgra8_sha256
+                || !visible_crop_exists_at_same_position_v1(
+                    &before_bgra8,
+                    &after_bgra8,
+                    before_width,
+                    before_height,
+                    &bgra8,
+                    crop_width,
+                    crop_height,
+                )?
+            {
+                return Err(
+                    "visible accessibility crop pixels changed or are not in the frame pair"
+                        .to_owned(),
+                );
+            }
+            region_hashes.push(crop.region_bgra8_sha256.as_str());
+            crop_files.push((crop.file.clone(), bytes));
+        }
+        region_hashes.sort_unstable();
+        let match_bytes = serde_json::to_vec(&region_hashes)
+            .map_err(|error| format!("serialize loaded visible match set: {error}"))?;
+        query_results.push(MtgoVisibleAccessibilityPixelQueryResultV1 {
+            query_id: entry.query_id.clone(),
+            expected_visible_text_sha256: entry.expected_visible_text_sha256.clone(),
+            exact_visible_match_count: entry.exact_visible_match_count,
+            visible_pixel_match_set_commitment_sha256: commitment_v1(
+                VISIBLE_ACCESSIBILITY_PIXEL_MATCH_SET_DOMAIN_V1,
+                &[entry.expected_visible_text_sha256.as_bytes(), &match_bytes],
+            ),
+        });
+    }
+    let actual_files = fs::read_dir(&directory)
+        .map_err(|error| format!("enumerate accessibility review artifact: {error}"))?
+        .map(|entry| {
+            entry
+                .map_err(|error| format!("read accessibility review artifact entry: {error}"))
+                .and_then(|entry| {
+                    entry.file_name().into_string().map_err(|_| {
+                        "accessibility review artifact filename is not Unicode".to_owned()
+                    })
+                })
+        })
+        .collect::<Result<HashSet<_>, _>>()?;
+    if actual_files != expected_files {
+        return Err(
+            "accessibility review artifact contains missing or unexpected files".to_owned(),
+        );
+    }
+
+    let catalog_summary =
+        reconstruct_loaded_visible_accessibility_catalog_summary_v1(&manifest, query_results)?;
+    let expected_review_template = review_template_for_catalog_summary_v1(&catalog_summary)?;
+    let expected_review_template_bytes = serde_json::to_vec_pretty(&expected_review_template)
+        .map_err(|error| format!("serialize expected accessibility review template: {error}"))?;
+    if review_template_bytes != expected_review_template_bytes
+        || sha256_hex_v1(&review_template_bytes) != manifest.review_template_sha256
+    {
+        return Err("accessibility review template changed or is already approved".to_owned());
+    }
+    let files = PrivateVisibleAccessibilityCatalogReviewArtifactFilesV1 {
+        manifest,
+        manifest_bytes,
+        review_template_bytes,
+        before_visible_client_png,
+        after_visible_client_png,
+        crop_files,
+    };
+    if files.manifest.artifact_commitment_sha256
+        != visible_accessibility_catalog_review_artifact_commitment_v1(
+            &files.manifest,
+            &files.review_template_bytes,
+            &files.before_visible_client_png,
+            &files.after_visible_client_png,
+            &files.crop_files,
+        )?
+    {
+        return Err("accessibility review artifact commitment changed".to_owned());
+    }
+    Ok(PrivateLoadedVisibleAccessibilityCatalogReviewArtifactV1 {
+        _files: files,
+        catalog_summary,
+    })
+}
+
+fn validate_visible_accessibility_review_artifact_manifest_v1(
+    manifest: &PrivateVisibleAccessibilityCatalogReviewArtifactManifestV1,
+) -> Result<(), String> {
+    let catalog = known_label_catalog_v1();
+    if manifest.schema_version != MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_ARTIFACT_SCHEMA_V1
+        || manifest.artifact_kind != "mtgo_visible_accessibility_catalog_review_artifact_v1"
+        || manifest.catalog_commitment_sha256 != known_label_catalog_commitment_v1(&catalog)?
+        || manifest.before_visible_client_png_file != "before-visible-client.png"
+        || manifest.after_visible_client_png_file != "after-visible-client.png"
+        || manifest.review_template_file != "review-template.json"
+        || manifest.entries.len() != catalog.len()
+        || manifest.raw_or_unmatched_visible_text_exposed
+        || manifest.pixel_coordinates_exposed
+        || manifest.accessibility_metadata_exposed
+        || manifest.process_or_window_metadata_exposed
+        || manifest.human_review_complete
+        || manifest.safe_for_semantic_evidence
+        || manifest.safe_for_policy_scoring
+        || manifest.safe_for_input
+    {
+        return Err(
+            "accessibility review artifact manifest is invalid or too authoritative".to_owned(),
+        );
+    }
+    for digest in [
+        &manifest.source_pixel_report_commitment_sha256,
+        &manifest.before_frame_sha256,
+        &manifest.after_frame_sha256,
+        &manifest.before_visible_client_png_sha256,
+        &manifest.after_visible_client_png_sha256,
+        &manifest.review_template_sha256,
+        &manifest.artifact_commitment_sha256,
+    ] {
+        validate_sha256_text_v1(digest)?;
+    }
+    let mut total = 0_u32;
+    for (expected, entry) in catalog.iter().zip(&manifest.entries) {
+        if entry.query_id != expected.query_id
+            || entry.slice != expected.slice
+            || entry.expected_visible_text_sha256
+                != sha256_hex_v1(expected.expected_visible_text.as_bytes())
+            || usize::try_from(entry.exact_visible_match_count).ok()
+                != Some(entry.match_crops.len())
+            || entry.match_crops.len() > MAX_MATCHES_PER_QUERY_V1
+        {
+            return Err("accessibility review artifact catalog entry changed".to_owned());
+        }
+        total = total
+            .checked_add(entry.exact_visible_match_count)
+            .ok_or("accessibility review artifact crop total overflow")?;
+        for crop in &entry.match_crops {
+            validate_sha256_text_v1(&crop.png_sha256)?;
+            validate_sha256_text_v1(&crop.region_bgra8_sha256)?;
+        }
+    }
+    if total != manifest.exact_visible_match_crop_count {
+        return Err("accessibility review artifact crop total changed".to_owned());
+    }
+    Ok(())
+}
+
+fn reconstruct_loaded_visible_accessibility_catalog_summary_v1(
+    manifest: &PrivateVisibleAccessibilityCatalogReviewArtifactManifestV1,
+    query_results: Vec<MtgoVisibleAccessibilityPixelQueryResultV1>,
+) -> Result<MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1, String> {
+    let mut plain = MtgoVisibleAccessibilityProbeSummaryV1 {
+        schema_version: MTGO_VISIBLE_ACCESSIBILITY_PROBE_SCHEMA_V1,
+        query_results: query_results
+            .iter()
+            .map(|entry| MtgoVisibleAccessibilityQueryResultV1 {
+                query_id: entry.query_id.clone(),
+                expected_visible_text_sha256: entry.expected_visible_text_sha256.clone(),
+                exact_visible_match_count: entry.exact_visible_match_count,
+            })
+            .collect(),
+        raw_visible_text_exposed: false,
+        requires_same_frame_pixel_corroboration: true,
+        safe_for_semantic_evidence: false,
+        safe_for_policy_scoring: false,
+        safe_for_input: false,
+        report_commitment_sha256: String::new(),
+    };
+    plain.report_commitment_sha256 = summary_commitment_v1(&plain)?;
+    let total = query_results.iter().try_fold(0_u32, |total, entry| {
+        total
+            .checked_add(entry.exact_visible_match_count)
+            .ok_or("loaded accessibility match count overflow")
+    })?;
+    let mut pixel = MtgoVisibleAccessibilityPixelCorroborationSummaryV1 {
+        schema_version: MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CORROBORATION_SCHEMA_V1,
+        before_frame_sha256: manifest.before_frame_sha256.clone(),
+        after_frame_sha256: manifest.after_frame_sha256.clone(),
+        accessibility_report_commitment_sha256: plain.report_commitment_sha256,
+        query_results,
+        total_pixel_corroborated_match_count: total,
+        has_pixel_corroborated_match: total != 0,
+        matched_regions_pixel_stable_across_bracket: true,
+        raw_visible_text_exposed: false,
+        private_match_rectangles_exposed: false,
+        safe_for_semantic_evidence: false,
+        safe_for_policy_scoring: false,
+        safe_for_input: false,
+        report_commitment_sha256: String::new(),
+    };
+    pixel.report_commitment_sha256 = pixel_summary_commitment_v1(&pixel)?;
+    if pixel.report_commitment_sha256 != manifest.source_pixel_report_commitment_sha256 {
+        return Err("loaded accessibility source report commitment changed".to_owned());
+    }
+    let catalog = known_label_catalog_v1();
+    build_known_label_pixel_catalog_summary_v1(
+        &catalog,
+        manifest.catalog_commitment_sha256.clone(),
+        pixel,
+    )
+}
+
+fn read_bounded_regular_file_v1(
+    path: &Path,
+    maximum_bytes: u64,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| format!("inspect {label}: {error}"))?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > maximum_bytes
+    {
+        return Err(format!(
+            "{label} must be one bounded non-symlink regular file"
+        ));
+    }
+    let bytes = fs::read(path).map_err(|error| format!("read {label}: {error}"))?;
+    if u64::try_from(bytes.len()).ok() != Some(metadata.len()) {
+        return Err(format!("{label} changed while being read"));
+    }
+    Ok(bytes)
+}
+
+fn decode_visible_accessibility_png_to_bgra8_v1(
+    bytes: &[u8],
+) -> Result<(u32, u32, Vec<u8>), String> {
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::IDENTITY);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("decode accessibility review PNG header: {error}"))?;
+    let info = reader.info();
+    if info.width == 0
+        || info.height == 0
+        || info.width > MAX_VISIBLE_ACCESSIBILITY_REVIEW_IMAGE_DIMENSION_V1
+        || info.height > MAX_VISIBLE_ACCESSIBILITY_REVIEW_IMAGE_DIMENSION_V1
+        || info.interlaced
+        || info.animation_control.is_some()
+        || info.bit_depth != png::BitDepth::Eight
+        || info.color_type != png::ColorType::Rgba
+    {
+        return Err(
+            "accessibility review PNG must be one bounded non-interlaced opaque RGBA8 image"
+                .to_owned(),
+        );
+    }
+    let width = info.width;
+    let height = info.height;
+    let source_length = usize::try_from(width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or("accessibility review PNG geometry overflow")?;
+    if source_length > MAX_VISIBLE_ACCESSIBILITY_REVIEW_DECODED_IMAGE_BYTES_V1 {
+        return Err("accessibility review PNG decoded byte length exceeds its bound".to_owned());
+    }
+    let mut rgba = vec![0_u8; source_length];
+    let frame = reader
+        .next_frame(&mut rgba)
+        .map_err(|error| format!("decode accessibility review PNG pixels: {error}"))?;
+    if frame.width != width
+        || frame.height != height
+        || frame.color_type != png::ColorType::Rgba
+        || frame.bit_depth != png::BitDepth::Eight
+        || frame.buffer_size() != source_length
+    {
+        return Err("decoded accessibility review PNG differs from its header".to_owned());
+    }
+    let mut bgra = Vec::with_capacity(source_length);
+    for pixel in rgba.chunks_exact(4) {
+        if pixel[3] != 255 {
+            return Err("accessibility review PNG must be fully opaque".to_owned());
+        }
+        bgra.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
+    }
+    Ok((width, height, bgra))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn visible_crop_exists_at_same_position_v1(
+    before: &[u8],
+    after: &[u8],
+    frame_width: u32,
+    frame_height: u32,
+    crop: &[u8],
+    crop_width: u32,
+    crop_height: u32,
+) -> Result<bool, String> {
+    if crop_width == 0 || crop_height == 0 || crop_width > frame_width || crop_height > frame_height
+    {
+        return Ok(false);
+    }
+    let frame_row_bytes = usize::try_from(frame_width)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .ok_or("visible crop frame row overflow")?;
+    let crop_row_bytes = usize::try_from(crop_width)
+        .ok()
+        .and_then(|width| width.checked_mul(4))
+        .ok_or("visible crop row overflow")?;
+    let frame_length = frame_row_bytes
+        .checked_mul(usize::try_from(frame_height).map_err(|_| "visible crop frame overflow")?)
+        .ok_or("visible crop frame length overflow")?;
+    let crop_length = crop_row_bytes
+        .checked_mul(usize::try_from(crop_height).map_err(|_| "visible crop height overflow")?)
+        .ok_or("visible crop length overflow")?;
+    if before.len() != frame_length || after.len() != frame_length || crop.len() != crop_length {
+        return Err("visible crop bytes do not match their decoded geometry".to_owned());
+    }
+    for y in 0..=frame_height - crop_height {
+        for x in 0..=frame_width - crop_width {
+            let matches = (0..crop_height).all(|row| {
+                let frame_start = usize::try_from(y + row).unwrap() * frame_row_bytes
+                    + usize::try_from(x).unwrap() * 4;
+                let crop_start = usize::try_from(row).unwrap() * crop_row_bytes;
+                let frame_end = frame_start + crop_row_bytes;
+                let crop_end = crop_start + crop_row_bytes;
+                before[frame_start..frame_end] == crop[crop_start..crop_end]
+                    && after[frame_start..frame_end] == crop[crop_start..crop_end]
+            });
+            if matches {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 pub fn run_visible_accessibility_known_label_catalog_pixel_corroboration_cli_v1(
@@ -1590,7 +2057,41 @@ pub fn evaluate_untrusted_visible_accessibility_catalog_case_v1(
 
     Ok(
         CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1 {
-            _source: source,
+            _source: PrivateVisibleAccessibilityCatalogCaseSourceV1::Live {
+                _source: Box::new(source),
+            },
+            _catalog_summary: catalog_summary,
+            _review: review,
+            summary,
+        },
+    )
+}
+
+pub fn load_checked_untrusted_visible_accessibility_catalog_case_from_review_artifact_v1(
+    artifact_directory: &Path,
+    completed_review_path: &Path,
+) -> Result<CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1, String> {
+    if !completed_review_path.is_absolute() {
+        return Err("completed accessibility catalog review path must be absolute".to_owned());
+    }
+    let loaded = load_visible_accessibility_catalog_review_artifact_v1(artifact_directory)?;
+    let completed_review_bytes = read_bounded_regular_file_v1(
+        completed_review_path,
+        256 * 1_024,
+        "completed accessibility catalog review",
+    )?;
+    let review: MtgoVisibleAccessibilityCatalogReviewV1 =
+        serde_json::from_slice(&completed_review_bytes)
+            .map_err(|error| format!("parse completed accessibility catalog review: {error}"))?;
+    validate_visible_accessibility_catalog_review_v1(&loaded.catalog_summary, &review)?;
+    let summary =
+        evaluate_visible_accessibility_catalog_case_summary_v1(&loaded.catalog_summary, &review)?;
+    Ok(
+        CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1 {
+            _catalog_summary: loaded.catalog_summary.clone(),
+            _source: PrivateVisibleAccessibilityCatalogCaseSourceV1::ReviewedArtifact {
+                _artifact: Box::new(loaded),
+            },
             _review: review,
             summary,
         },
@@ -1616,27 +2117,36 @@ pub fn evaluate_untrusted_visible_accessibility_catalog_corpus_v1(
     )
 }
 
+pub fn run_visible_accessibility_catalog_corpus_evaluation_cli_v1(
+) -> Result<MtgoVisibleAccessibilityCatalogCorpusEvaluationSummaryV1, String> {
+    let sources = parse_catalog_corpus_arguments_v1(std::env::args_os().skip(1))?;
+    let cases = sources
+        .into_iter()
+        .map(|(artifact_directory, completed_review_path)| {
+            load_checked_untrusted_visible_accessibility_catalog_case_from_review_artifact_v1(
+                &artifact_directory,
+                &completed_review_path,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(evaluate_untrusted_visible_accessibility_catalog_corpus_v1(cases)?.summary_v1())
+}
+
 fn private_catalog_corpus_case_v1(
     case: &CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1,
 ) -> Result<PrivateVisibleAccessibilityCatalogCorpusCaseV1, String> {
-    let catalog = known_label_catalog_v1();
-    let source_summary = case._source.summary_v1();
-    let catalog_summary = build_known_label_pixel_catalog_summary_v1(
-        &catalog,
-        known_label_catalog_commitment_v1(&catalog)?,
-        source_summary,
-    )?;
+    let catalog_summary = &case._catalog_summary;
     let expected =
-        evaluate_visible_accessibility_catalog_case_summary_v1(&catalog_summary, &case._review)?;
+        evaluate_visible_accessibility_catalog_case_summary_v1(catalog_summary, &case._review)?;
     if expected != case.summary {
         return Err("accessibility catalog corpus case summary changed".to_owned());
     }
     Ok(PrivateVisibleAccessibilityCatalogCorpusCaseV1 {
         catalog_commitment_sha256: expected.catalog_commitment_sha256,
-        before_frame_sha256: catalog_summary.before_frame_sha256,
-        after_frame_sha256: catalog_summary.after_frame_sha256,
+        before_frame_sha256: catalog_summary.before_frame_sha256.clone(),
+        after_frame_sha256: catalog_summary.after_frame_sha256.clone(),
         case_candidate_commitment_sha256: expected.ratification_candidate_commitment_sha256,
-        entries: catalog_summary.entries,
+        entries: catalog_summary.entries.clone(),
     })
 }
 
@@ -2176,6 +2686,36 @@ fn parse_catalog_review_artifact_cli_v1() -> Result<(MtgoDxgiCaptureRequestV3, P
     ))
 }
 
+fn parse_catalog_corpus_arguments_v1<I>(args: I) -> Result<Vec<(PathBuf, PathBuf)>, String>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+    let mut cases = Vec::new();
+    while let Some(argument) = args.next() {
+        if argument != "--case" {
+            return Err("corpus evaluation accepts only repeated --case arguments".to_owned());
+        }
+        let artifact_directory = args
+            .next()
+            .ok_or("--case requires an artifact directory and completed review path")?;
+        let completed_review_path = args
+            .next()
+            .ok_or("--case requires an artifact directory and completed review path")?;
+        cases.push((
+            PathBuf::from(artifact_directory),
+            PathBuf::from(completed_review_path),
+        ));
+        if cases.len() > MAX_VISIBLE_ACCESSIBILITY_CORPUS_CASES_V1 {
+            return Err("catalog corpus accepts at most 64 reviewed cases".to_owned());
+        }
+    }
+    if cases.is_empty() {
+        return Err("catalog corpus requires at least one --case pair".to_owned());
+    }
+    Ok(cases)
+}
+
 fn parse_catalog_arguments_v1<I>(
     args: I,
     permit_output: bool,
@@ -2435,27 +2975,86 @@ mod tests {
     fn synthetic_review_artifact_files_v1(
     ) -> PrivateVisibleAccessibilityCatalogReviewArtifactFilesV1 {
         let before_pixels = vec![10, 20, 30, 255, 40, 50, 60, 255];
-        let after_pixels = vec![11, 21, 31, 255, 41, 51, 61, 255];
+        let after_pixels = vec![10, 20, 30, 255, 41, 51, 61, 255];
         let crop_pixels = before_pixels[..4].to_vec();
         let before_png = encode_visible_accessibility_png_v1(&before_pixels, 2, 1).unwrap();
         let after_png = encode_visible_accessibility_png_v1(&after_pixels, 2, 1).unwrap();
         let crop_png = encode_visible_accessibility_png_v1(&crop_pixels, 1, 1).unwrap();
         let crop_file = "match-00-00.png".to_owned();
         let crop_files = vec![(crop_file.clone(), crop_png.clone())];
-        let review_template = serde_json::json!({
-            "schema_version": MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_SCHEMA_V1,
-            "reviewer_alias_sha256": "",
-            "client_only_and_unobscured_confirmed": false,
-            "exact_frame_pair_identity_confirmed": false,
-            "human_review_complete": false,
-            "review_commitment_sha256": ""
-        });
+        let catalog = known_label_catalog_v1();
+        let query_results = catalog
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let expected_visible_text_sha256 =
+                    sha256_hex_v1(entry.expected_visible_text.as_bytes());
+                let region_hashes = if index == 0 {
+                    vec![sha256_hex_v1(&crop_pixels)]
+                } else {
+                    Vec::new()
+                };
+                let match_bytes = serde_json::to_vec(&region_hashes).unwrap();
+                MtgoVisibleAccessibilityPixelQueryResultV1 {
+                    query_id: entry.query_id.to_owned(),
+                    expected_visible_text_sha256: expected_visible_text_sha256.clone(),
+                    exact_visible_match_count: u32::from(index == 0),
+                    visible_pixel_match_set_commitment_sha256: commitment_v1(
+                        VISIBLE_ACCESSIBILITY_PIXEL_MATCH_SET_DOMAIN_V1,
+                        &[expected_visible_text_sha256.as_bytes(), &match_bytes],
+                    ),
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut plain = MtgoVisibleAccessibilityProbeSummaryV1 {
+            schema_version: MTGO_VISIBLE_ACCESSIBILITY_PROBE_SCHEMA_V1,
+            query_results: query_results
+                .iter()
+                .map(|entry| MtgoVisibleAccessibilityQueryResultV1 {
+                    query_id: entry.query_id.clone(),
+                    expected_visible_text_sha256: entry.expected_visible_text_sha256.clone(),
+                    exact_visible_match_count: entry.exact_visible_match_count,
+                })
+                .collect(),
+            raw_visible_text_exposed: false,
+            requires_same_frame_pixel_corroboration: true,
+            safe_for_semantic_evidence: false,
+            safe_for_policy_scoring: false,
+            safe_for_input: false,
+            report_commitment_sha256: String::new(),
+        };
+        plain.report_commitment_sha256 = summary_commitment_v1(&plain).unwrap();
+        let mut pixel = MtgoVisibleAccessibilityPixelCorroborationSummaryV1 {
+            schema_version: MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CORROBORATION_SCHEMA_V1,
+            before_frame_sha256: sha256_hex_v1(&before_pixels),
+            after_frame_sha256: sha256_hex_v1(&after_pixels),
+            accessibility_report_commitment_sha256: plain.report_commitment_sha256,
+            query_results,
+            total_pixel_corroborated_match_count: 1,
+            has_pixel_corroborated_match: true,
+            matched_regions_pixel_stable_across_bracket: true,
+            raw_visible_text_exposed: false,
+            private_match_rectangles_exposed: false,
+            safe_for_semantic_evidence: false,
+            safe_for_policy_scoring: false,
+            safe_for_input: false,
+            report_commitment_sha256: String::new(),
+        };
+        pixel.report_commitment_sha256 = pixel_summary_commitment_v1(&pixel).unwrap();
+        let catalog_summary = build_known_label_pixel_catalog_summary_v1(
+            &catalog,
+            known_label_catalog_commitment_v1(&catalog).unwrap(),
+            pixel,
+        )
+        .unwrap();
+        let review_template = review_template_for_catalog_summary_v1(&catalog_summary).unwrap();
         let review_template_bytes = serde_json::to_vec_pretty(&review_template).unwrap();
         let mut manifest = PrivateVisibleAccessibilityCatalogReviewArtifactManifestV1 {
             schema_version: MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_ARTIFACT_SCHEMA_V1,
             artifact_kind: "mtgo_visible_accessibility_catalog_review_artifact_v1".to_owned(),
-            catalog_commitment_sha256: "1".repeat(64),
-            source_pixel_report_commitment_sha256: "2".repeat(64),
+            catalog_commitment_sha256: catalog_summary.catalog_commitment_sha256,
+            source_pixel_report_commitment_sha256: catalog_summary
+                .source_pixel_report_commitment_sha256,
             before_frame_sha256: sha256_hex_v1(&before_pixels),
             after_frame_sha256: sha256_hex_v1(&after_pixels),
             before_visible_client_png_file: "before-visible-client.png".to_owned(),
@@ -2464,17 +3063,28 @@ mod tests {
             after_visible_client_png_sha256: sha256_hex_v1(&after_png),
             review_template_file: "review-template.json".to_owned(),
             review_template_sha256: sha256_hex_v1(&review_template_bytes),
-            entries: vec![PrivateVisibleAccessibilityCatalogReviewArtifactEntryV1 {
-                query_id: "pregame.keep".to_owned(),
-                slice: MtgoVisibleAccessibilityCatalogSliceV1::Pregame,
-                expected_visible_text_sha256: sha256_hex_v1(b"Keep"),
-                exact_visible_match_count: 1,
-                match_crops: vec![PrivateVisibleAccessibilityCatalogReviewCropV1 {
-                    file: crop_file,
-                    png_sha256: sha256_hex_v1(&crop_png),
-                    region_bgra8_sha256: sha256_hex_v1(&crop_pixels),
-                }],
-            }],
+            entries: catalog_summary
+                .entries
+                .into_iter()
+                .enumerate()
+                .map(
+                    |(index, entry)| PrivateVisibleAccessibilityCatalogReviewArtifactEntryV1 {
+                        query_id: entry.query_id,
+                        slice: entry.slice,
+                        expected_visible_text_sha256: entry.expected_visible_text_sha256,
+                        exact_visible_match_count: entry.exact_visible_match_count,
+                        match_crops: if index == 0 {
+                            vec![PrivateVisibleAccessibilityCatalogReviewCropV1 {
+                                file: crop_file.clone(),
+                                png_sha256: sha256_hex_v1(&crop_png),
+                                region_bgra8_sha256: sha256_hex_v1(&crop_pixels),
+                            }]
+                        } else {
+                            Vec::new()
+                        },
+                    },
+                )
+                .collect(),
             exact_visible_match_crop_count: 1,
             raw_or_unmatched_visible_text_exposed: false,
             pixel_coordinates_exposed: false,
@@ -3022,7 +3632,8 @@ mod tests {
         assert!(manifest.contains("\"process_or_window_metadata_exposed\": false"));
         assert!(manifest.contains("\"pixel_coordinates_exposed\": false"));
         let review = String::from_utf8(files.review_template_bytes.clone()).unwrap();
-        assert!(review.contains("\"human_review_complete\": false"));
+        assert!(review.contains("\"client_only_and_unobscured_confirmed\": false"));
+        assert!(review.contains("\"exact_frame_pair_identity_confirmed\": false"));
         assert!(review.contains("\"review_commitment_sha256\": \"\""));
 
         let mut changed_after = files.after_visible_client_png.clone();
@@ -3113,5 +3724,128 @@ mod tests {
         assert!(!output.exists());
         assert_eq!(fs::read_dir(&parent).unwrap().count(), 0);
         fs::remove_dir(&parent).unwrap();
+    }
+
+    #[test]
+    fn persisted_review_artifact_reloads_only_with_exact_completed_review() {
+        let files = synthetic_review_artifact_files_v1();
+        let parent = unique_temp_review_output_v1("loader-success-parent");
+        fs::create_dir(&parent).unwrap();
+        let artifact = parent.join("artifact");
+        persist_visible_accessibility_catalog_review_artifact_v1(&artifact, &files).unwrap();
+        let checked = load_visible_accessibility_catalog_review_artifact_v1(&artifact).unwrap();
+        let review = exact_catalog_review_v1(&checked.catalog_summary);
+        let review_path = parent.join("completed-review.json");
+        fs::write(&review_path, serde_json::to_vec_pretty(&review).unwrap()).unwrap();
+        let evaluated =
+            load_checked_untrusted_visible_accessibility_catalog_case_from_review_artifact_v1(
+                &artifact,
+                &review_path,
+            )
+            .unwrap();
+        assert!(evaluated.summary_v1().exact_review_agreement);
+        assert_eq!(evaluated.summary_v1().positive_entry_count, 1);
+        assert!(!evaluated.production_evaluation_ratified_v1());
+        assert!(!evaluated.safe_for_semantic_evidence_v1());
+        assert!(!evaluated.safe_for_policy_scoring_v1());
+        assert!(!evaluated.safe_for_input_v1());
+        fs::remove_dir_all(&parent).unwrap();
+    }
+
+    #[test]
+    fn persisted_review_artifact_loader_rejects_tamper_extra_files_and_review_drift() {
+        let files = synthetic_review_artifact_files_v1();
+        let parent = unique_temp_review_output_v1("loader-reject-parent");
+        fs::create_dir(&parent).unwrap();
+        let artifact = parent.join("artifact");
+        persist_visible_accessibility_catalog_review_artifact_v1(&artifact, &files).unwrap();
+        let checked = load_visible_accessibility_catalog_review_artifact_v1(&artifact).unwrap();
+        let review = exact_catalog_review_v1(&checked.catalog_summary);
+        let review_path = parent.join("completed-review.json");
+        fs::write(&review_path, serde_json::to_vec_pretty(&review).unwrap()).unwrap();
+
+        let crop_path = artifact.join("match-00-00.png");
+        let original_crop = fs::read(&crop_path).unwrap();
+        let mut changed_crop = original_crop.clone();
+        let last = changed_crop.len() - 1;
+        changed_crop[last] ^= 1;
+        fs::write(&crop_path, changed_crop).unwrap();
+        assert!(load_visible_accessibility_catalog_review_artifact_v1(&artifact).is_err());
+        fs::write(&crop_path, original_crop).unwrap();
+
+        fs::write(artifact.join("unexpected.txt"), b"visible but undeclared").unwrap();
+        assert!(load_visible_accessibility_catalog_review_artifact_v1(&artifact).is_err());
+        fs::remove_file(artifact.join("unexpected.txt")).unwrap();
+
+        let mut changed_review = review;
+        changed_review.entries[0].reviewed_exact_visible_match_count = 2;
+        changed_review.review_commitment_sha256 =
+            mtgo_visible_accessibility_catalog_review_commitment_v1(&changed_review).unwrap();
+        fs::write(
+            &review_path,
+            serde_json::to_vec_pretty(&changed_review).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            load_checked_untrusted_visible_accessibility_catalog_case_from_review_artifact_v1(
+                &artifact,
+                &review_path,
+            )
+            .is_err()
+        );
+        fs::remove_dir_all(&parent).unwrap();
+    }
+
+    #[test]
+    fn persisted_review_crop_must_exist_at_one_stable_visible_frame_position() {
+        let before = vec![1, 2, 3, 255, 4, 5, 6, 255];
+        let same_position_after = vec![1, 2, 3, 255, 7, 8, 9, 255];
+        let moved_after = vec![7, 8, 9, 255, 1, 2, 3, 255];
+        let crop = vec![1, 2, 3, 255];
+        assert!(visible_crop_exists_at_same_position_v1(
+            &before,
+            &same_position_after,
+            2,
+            1,
+            &crop,
+            1,
+            1
+        )
+        .unwrap());
+        assert!(
+            !visible_crop_exists_at_same_position_v1(&before, &moved_after, 2, 1, &crop, 1, 1)
+                .unwrap()
+        );
+        assert!(!visible_crop_exists_at_same_position_v1(
+            &before,
+            &same_position_after,
+            2,
+            1,
+            &[10, 11, 12, 255],
+            1,
+            1
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn catalog_corpus_cli_accepts_only_bounded_complete_case_pairs() {
+        let parsed = parse_catalog_corpus_arguments_v1([
+            OsString::from("--case"),
+            OsString::from(r"C:\review-artifact"),
+            OsString::from(r"C:\review.json"),
+        ])
+        .unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].0, PathBuf::from(r"C:\review-artifact"));
+        assert_eq!(parsed[0].1, PathBuf::from(r"C:\review.json"));
+        assert!(parse_catalog_corpus_arguments_v1(Vec::<OsString>::new()).is_err());
+        assert!(parse_catalog_corpus_arguments_v1([OsString::from("--case")]).is_err());
+        assert!(parse_catalog_corpus_arguments_v1([
+            OsString::from("--artifact"),
+            OsString::from(r"C:\review-artifact"),
+            OsString::from(r"C:\review.json"),
+        ])
+        .is_err());
     }
 }
