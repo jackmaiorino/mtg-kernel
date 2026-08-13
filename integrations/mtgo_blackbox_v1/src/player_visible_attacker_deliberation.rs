@@ -33,7 +33,7 @@ pub struct MtgoPlayerVisibleAttackerSelectionInputV1 {
 /// One model subdecision. The context is derived only from the complete
 /// visible candidate order and choices already made by the model in this
 /// local deliberation. It is not MTGO rules state or client metadata.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MtgoPlayerVisibleAttackerInclusionDecisionV1 {
     pub current_state: MtgoPlayerVisibleDuelStateV1,
     pub ordered_candidate_attackers: Vec<MtgoPlayerVisibleObjectRefV1>,

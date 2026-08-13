@@ -503,6 +503,22 @@ cargo run --bin evaluate_mtgo_visible_direct_duel_projection_v1 -- <corpus-id> <
 
 ## External model scoring envelope
 
+The declare-attackers slice uses a separate player-visible-only scoring
+boundary because MTGO presents independent attacker toggles while the trained
+policy expects a sequential false-or-true inclusion scan.
+`MtgoPlayerVisibleAttackerScorerV1` receives only the complete visible duel
+state, the visible battlefield-order candidates, the current candidate, the
+earlier choices made by the model in this same local scan, and the exact ordered
+`false` then `true` visible action pair. It cannot receive `ObservationV5`,
+`ActionSemanticV1`, MTGO client objects, client identifiers, process data, or
+simulator pending-combat state. The adapter validates two finite logits and a
+finite value, applies lower-index tie breaking, commits the exact input,
+deployment, response, and selected visible action, then consumes the move-only
+scan into its next candidate or final attacker plan. The boundary has no input,
+event-entry, or spending conversion. A real checkpoint implementation remains
+blocked on the kernel-owned player-visible scorer described in
+`PLAYER_VISIBLE_NATIVE_SCORER_V1.md`.
+
 The adapter now defines the coordinate-free half of step 6. `MtgoExternalScoringRequestV1` binds one validated decision commitment, the exact `ObservationV5`, the complete ordered `ActionSemanticV1` vector, action count, and an expected checkpoint deployment commitment. The deployment identity includes the run, checkpoint manifest, checkpoint payload, train-state, model-parameter, generation, and scorer-contract identities exposed by the native checkpoint handle.
 
 `MtgoExternalModelScoreResponseV1` returns exact f32 policy-logit and value bits bound to that request. Validation requires one finite logit per legal action and a finite value, then uses the kernel scorer's deterministic `total_cmp` argmax with lower-index ties. The resulting opaque selection can create only an offline intent for the exact source decision. It has no coordinates or live-input authority.
