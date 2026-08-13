@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::fs;
-use std::io::Cursor;
+use std::fs::{self, OpenOptions};
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::System::Com::{
@@ -206,6 +206,21 @@ pub struct MtgoVisibleAccessibilityCatalogReviewArtifactReceiptV1 {
     pub exact_visible_match_crop_count: u32,
     pub contains_only_player_visible_pixels_and_opaque_commitments: bool,
     pub human_review_complete: bool,
+    pub safe_for_semantic_evidence: bool,
+    pub safe_for_policy_scoring: bool,
+    pub safe_for_input: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityCatalogCompletedReviewReceiptV1 {
+    pub schema_version: u32,
+    pub catalog_commitment_sha256: String,
+    pub source_pixel_report_commitment_sha256: String,
+    pub review_commitment_sha256: String,
+    pub reviewed_entry_count: u32,
+    pub completed_review_written: bool,
+    pub production_evaluation_ratified: bool,
     pub safe_for_semantic_evidence: bool,
     pub safe_for_policy_scoring: bool,
     pub safe_for_input: bool,
@@ -2098,6 +2113,136 @@ pub fn load_checked_untrusted_visible_accessibility_catalog_case_from_review_art
     )
 }
 
+pub fn finalize_visible_accessibility_catalog_review_artifact_v1(
+    artifact_directory: &Path,
+    edited_review_path: &Path,
+    reviewer_alias_path: &Path,
+    output_path: &Path,
+) -> Result<MtgoVisibleAccessibilityCatalogCompletedReviewReceiptV1, String> {
+    for (path, label) in [
+        (edited_review_path, "edited accessibility catalog review"),
+        (reviewer_alias_path, "reviewer alias"),
+        (output_path, "completed accessibility catalog review output"),
+    ] {
+        if !path.is_absolute() {
+            return Err(format!("{label} path must be absolute"));
+        }
+    }
+    if output_path.exists() {
+        return Err("completed accessibility catalog review output must be new".to_owned());
+    }
+
+    let loaded = load_visible_accessibility_catalog_review_artifact_v1(artifact_directory)?;
+    let artifact_directory = artifact_directory
+        .canonicalize()
+        .map_err(|error| format!("canonicalize accessibility review artifact: {error}"))?;
+    let output_parent = output_path
+        .parent()
+        .ok_or("completed accessibility catalog review output has no parent")?
+        .canonicalize()
+        .map_err(|error| format!("canonicalize completed review output parent: {error}"))?;
+    if output_parent.starts_with(&artifact_directory) {
+        return Err(
+            "completed accessibility catalog review may not modify the source artifact directory"
+                .to_owned(),
+        );
+    }
+    let edited_review_bytes = read_bounded_regular_file_v1(
+        edited_review_path,
+        256 * 1_024,
+        "edited accessibility catalog review",
+    )?;
+    let mut review: MtgoVisibleAccessibilityCatalogReviewV1 =
+        serde_json::from_slice(&edited_review_bytes)
+            .map_err(|error| format!("parse edited accessibility catalog review: {error}"))?;
+    let reviewer_alias_bytes =
+        read_bounded_regular_file_v1(reviewer_alias_path, 256, "reviewer alias")?;
+    let reviewer_alias =
+        std::str::from_utf8(&reviewer_alias_bytes).map_err(|_| "reviewer alias must be UTF-8")?;
+    if reviewer_alias.trim() != reviewer_alias
+        || reviewer_alias.is_empty()
+        || reviewer_alias.chars().any(char::is_control)
+    {
+        return Err(
+            "reviewer alias must be nonempty bounded printable UTF-8 without surrounding whitespace"
+                .to_owned(),
+        );
+    }
+    review.reviewer_alias_sha256 = sha256_hex_v1(reviewer_alias_bytes.as_slice());
+    review.review_commitment_sha256.clear();
+    review.review_commitment_sha256 =
+        mtgo_visible_accessibility_catalog_review_commitment_v1(&review)?;
+    validate_visible_accessibility_catalog_review_v1(&loaded.catalog_summary, &review)?;
+    let canonical = serde_json::to_vec_pretty(&review)
+        .map_err(|error| format!("serialize completed accessibility catalog review: {error}"))?;
+    write_new_regular_file_v1(
+        output_path,
+        &canonical,
+        "completed accessibility catalog review",
+    )?;
+    Ok(MtgoVisibleAccessibilityCatalogCompletedReviewReceiptV1 {
+        schema_version: MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_SCHEMA_V1,
+        catalog_commitment_sha256: review.catalog_commitment_sha256,
+        source_pixel_report_commitment_sha256: review.source_pixel_report_commitment_sha256,
+        review_commitment_sha256: review.review_commitment_sha256,
+        reviewed_entry_count: u32::try_from(review.entries.len())
+            .map_err(|_| "completed accessibility review entry count overflow")?,
+        completed_review_written: true,
+        production_evaluation_ratified: false,
+        safe_for_semantic_evidence: false,
+        safe_for_policy_scoring: false,
+        safe_for_input: false,
+    })
+}
+
+fn write_new_regular_file_v1(path: &Path, bytes: &[u8], label: &str) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{label} has no parent"))?;
+    let metadata =
+        fs::symlink_metadata(parent).map_err(|error| format!("inspect {label} parent: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(format!("{label} parent must be a non-symlink directory"));
+    }
+    let partial = parent.join(format!(
+        ".mtgo-visible-accessibility-completed-review-partial-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system clock is before epoch: {error}"))?
+            .as_nanos()
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(|error| format!("create {label}: {error}"))?;
+    let result = (|| -> Result<(), String> {
+        file.write_all(bytes)
+            .map_err(|error| format!("write {label}: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("sync {label}: {error}"))?;
+        drop(file);
+        fs::rename(&partial, path).map_err(|error| format!("commit {label}: {error}"))
+    })();
+    if result.is_err() && partial.exists() {
+        let _ = fs::remove_file(&partial);
+    }
+    result
+}
+
+pub fn run_visible_accessibility_catalog_review_finalization_cli_v1(
+) -> Result<MtgoVisibleAccessibilityCatalogCompletedReviewReceiptV1, String> {
+    let (artifact, edited_review, reviewer_alias, output) =
+        parse_catalog_review_finalization_arguments_v1(std::env::args_os().skip(1))?;
+    finalize_visible_accessibility_catalog_review_artifact_v1(
+        &artifact,
+        &edited_review,
+        &reviewer_alias,
+        &output,
+    )
+}
+
 pub fn evaluate_untrusted_visible_accessibility_catalog_corpus_v1(
     cases: Vec<CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1>,
 ) -> Result<CheckedUntrustedMtgoVisibleAccessibilityCatalogCorpusEvaluationV1, String> {
@@ -2714,6 +2859,46 @@ where
         return Err("catalog corpus requires at least one --case pair".to_owned());
     }
     Ok(cases)
+}
+
+fn parse_catalog_review_finalization_arguments_v1<I>(
+    args: I,
+) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf), String>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+    let mut artifact = None;
+    let mut edited_review = None;
+    let mut reviewer_alias = None;
+    let mut output = None;
+    while let Some(argument) = args.next() {
+        let destination = match argument.to_str() {
+            Some("--artifact") => &mut artifact,
+            Some("--edited-review") => &mut edited_review,
+            Some("--reviewer-alias") => &mut reviewer_alias,
+            Some("--output") => &mut output,
+            _ => {
+                return Err(
+                    "review finalization accepts only --artifact, --edited-review, --reviewer-alias, and --output"
+                        .to_owned(),
+                )
+            }
+        };
+        if destination.is_some() {
+            return Err("review finalization arguments may appear only once".to_owned());
+        }
+        *destination = Some(PathBuf::from(
+            args.next()
+                .ok_or("review finalization argument is missing its path")?,
+        ));
+    }
+    Ok((
+        artifact.ok_or("--artifact is required")?,
+        edited_review.ok_or("--edited-review is required")?,
+        reviewer_alias.ok_or("--reviewer-alias is required")?,
+        output.ok_or("--output is required")?,
+    ))
 }
 
 fn parse_catalog_arguments_v1<I>(
@@ -3845,6 +4030,142 @@ mod tests {
             OsString::from("--artifact"),
             OsString::from(r"C:\review-artifact"),
             OsString::from(r"C:\review.json"),
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn review_finalizer_hashes_alias_commits_review_and_never_ratifies() {
+        let files = synthetic_review_artifact_files_v1();
+        let parent = unique_temp_review_output_v1("finalizer-success-parent");
+        fs::create_dir(&parent).unwrap();
+        let artifact = parent.join("artifact");
+        persist_visible_accessibility_catalog_review_artifact_v1(&artifact, &files).unwrap();
+        let loaded = load_visible_accessibility_catalog_review_artifact_v1(&artifact).unwrap();
+        let mut edited_review = exact_catalog_review_v1(&loaded.catalog_summary);
+        edited_review.reviewer_alias_sha256.clear();
+        edited_review.review_commitment_sha256.clear();
+        let edited_review_path = parent.join("edited-review.json");
+        let reviewer_alias_path = parent.join("reviewer-alias.txt");
+        let output = parent.join("completed-review.json");
+        fs::write(
+            &edited_review_path,
+            serde_json::to_vec_pretty(&edited_review).unwrap(),
+        )
+        .unwrap();
+        fs::write(&reviewer_alias_path, b"reviewer-one").unwrap();
+
+        let receipt = finalize_visible_accessibility_catalog_review_artifact_v1(
+            &artifact,
+            &edited_review_path,
+            &reviewer_alias_path,
+            &output,
+        )
+        .unwrap();
+        assert!(receipt.completed_review_written);
+        assert!(!receipt.production_evaluation_ratified);
+        assert!(!receipt.safe_for_semantic_evidence);
+        assert!(!receipt.safe_for_policy_scoring);
+        assert!(!receipt.safe_for_input);
+        let completed: MtgoVisibleAccessibilityCatalogReviewV1 =
+            serde_json::from_slice(&fs::read(&output).unwrap()).unwrap();
+        assert_eq!(
+            completed.reviewer_alias_sha256,
+            sha256_hex_v1(b"reviewer-one")
+        );
+        assert_eq!(
+            completed.review_commitment_sha256,
+            mtgo_visible_accessibility_catalog_review_commitment_v1(&completed).unwrap()
+        );
+        assert!(
+            load_checked_untrusted_visible_accessibility_catalog_case_from_review_artifact_v1(
+                &artifact, &output
+            )
+            .is_ok()
+        );
+        fs::remove_dir_all(&parent).unwrap();
+    }
+
+    #[test]
+    fn review_finalizer_rejects_incomplete_review_alias_and_source_mutation() {
+        let files = synthetic_review_artifact_files_v1();
+        let parent = unique_temp_review_output_v1("finalizer-reject-parent");
+        fs::create_dir(&parent).unwrap();
+        let artifact = parent.join("artifact");
+        persist_visible_accessibility_catalog_review_artifact_v1(&artifact, &files).unwrap();
+        let loaded = load_visible_accessibility_catalog_review_artifact_v1(&artifact).unwrap();
+        let mut edited_review = exact_catalog_review_v1(&loaded.catalog_summary);
+        edited_review.reviewer_alias_sha256.clear();
+        edited_review.review_commitment_sha256.clear();
+        edited_review.client_only_and_unobscured_confirmed = false;
+        let edited_review_path = parent.join("edited-review.json");
+        let reviewer_alias_path = parent.join("reviewer-alias.txt");
+        let output = parent.join("completed-review.json");
+        fs::write(
+            &edited_review_path,
+            serde_json::to_vec_pretty(&edited_review).unwrap(),
+        )
+        .unwrap();
+        fs::write(&reviewer_alias_path, b"reviewer-one").unwrap();
+        assert!(finalize_visible_accessibility_catalog_review_artifact_v1(
+            &artifact,
+            &edited_review_path,
+            &reviewer_alias_path,
+            &output
+        )
+        .is_err());
+        assert!(!output.exists());
+
+        edited_review.client_only_and_unobscured_confirmed = true;
+        fs::write(
+            &edited_review_path,
+            serde_json::to_vec_pretty(&edited_review).unwrap(),
+        )
+        .unwrap();
+        fs::write(&reviewer_alias_path, b"reviewer-one\n").unwrap();
+        assert!(finalize_visible_accessibility_catalog_review_artifact_v1(
+            &artifact,
+            &edited_review_path,
+            &reviewer_alias_path,
+            &output
+        )
+        .is_err());
+        assert!(!output.exists());
+
+        fs::write(&reviewer_alias_path, b"reviewer-one").unwrap();
+        let inside_artifact = artifact.join("completed-review.json");
+        assert!(finalize_visible_accessibility_catalog_review_artifact_v1(
+            &artifact,
+            &edited_review_path,
+            &reviewer_alias_path,
+            &inside_artifact
+        )
+        .is_err());
+        assert!(!inside_artifact.exists());
+        fs::remove_dir_all(&parent).unwrap();
+    }
+
+    #[test]
+    fn review_finalization_cli_requires_each_exact_path_once() {
+        let parsed = parse_catalog_review_finalization_arguments_v1([
+            OsString::from("--artifact"),
+            OsString::from(r"C:\artifact"),
+            OsString::from("--edited-review"),
+            OsString::from(r"C:\edited.json"),
+            OsString::from("--reviewer-alias"),
+            OsString::from(r"C:\alias.txt"),
+            OsString::from("--output"),
+            OsString::from(r"C:\completed.json"),
+        ])
+        .unwrap();
+        assert_eq!(parsed.0, PathBuf::from(r"C:\artifact"));
+        assert_eq!(parsed.3, PathBuf::from(r"C:\completed.json"));
+        assert!(parse_catalog_review_finalization_arguments_v1(Vec::<OsString>::new()).is_err());
+        assert!(parse_catalog_review_finalization_arguments_v1([
+            OsString::from("--artifact"),
+            OsString::from(r"C:\artifact"),
+            OsString::from("--artifact"),
+            OsString::from(r"C:\other"),
         ])
         .is_err());
     }

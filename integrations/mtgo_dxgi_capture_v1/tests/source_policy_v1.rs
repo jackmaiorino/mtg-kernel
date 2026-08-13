@@ -2368,6 +2368,10 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_pixels_v1.rs");
     let review_binary =
         include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_review_v1.rs");
+    let finalize_binary =
+        include_str!("../src/bin/finalize_mtgo_visible_accessibility_catalog_review_v1.rs");
+    let corpus_binary =
+        include_str!("../src/bin/evaluate_mtgo_visible_accessibility_catalog_corpus_v1.rs");
 
     for required in [
         "fn known_label_catalog_v1()",
@@ -2396,6 +2400,10 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         .contains("run_visible_accessibility_known_label_catalog_pixel_corroboration_cli_v1"));
     assert!(review_binary
         .contains("run_visible_accessibility_known_label_catalog_review_artifact_cli_v1"));
+    assert!(
+        finalize_binary.contains("run_visible_accessibility_catalog_review_finalization_cli_v1")
+    );
+    assert!(corpus_binary.contains("run_visible_accessibility_catalog_corpus_evaluation_cli_v1"));
     for required in [
         "probe_mtgo_visible_accessibility_known_label_catalog_with_pixel_corroboration_v1",
         "build_known_label_pixel_catalog_summary_v1",
@@ -2419,6 +2427,9 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         "accessibility_metadata_exposed: false",
         "process_or_window_metadata_exposed: false",
         "load_checked_untrusted_visible_accessibility_catalog_case_from_review_artifact_v1",
+        "finalize_visible_accessibility_catalog_review_artifact_v1",
+        "run_visible_accessibility_catalog_review_finalization_cli_v1",
+        "completed accessibility catalog review may not modify the source artifact directory",
         "run_visible_accessibility_catalog_corpus_evaluation_cli_v1",
         "decode_visible_accessibility_png_to_bgra8_v1",
         "visible_crop_exists_at_same_position_v1",
