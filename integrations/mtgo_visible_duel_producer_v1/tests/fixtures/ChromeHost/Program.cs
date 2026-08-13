@@ -1,6 +1,7 @@
 using System;
 using System.IO.MemoryMappedFiles;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
@@ -143,6 +144,84 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     seated.Battlefield.Clear();
                     opponent.Battlefield.Clear();
 
+                    // A rendered Initiative emblem is recognized from the
+                    // public presentation surface, but production remains
+                    // closed until its live per-player placement is qualified.
+                    seated.Shields.CardItems.Add(new DuelSceneCardViewModel
+                    {
+                        CardFrameIDFixture = Shiny.Card.Enums.FrameStyle.CLBInitiativeEmblem
+                    });
+                    if (!TryReadInitiativeHolderFixtureV1(
+                            seated,
+                            opponent,
+                            out string? seatedHolder) ||
+                        seatedHolder != "seated_player")
+                    {
+                        return 22;
+                    }
+                    int initiativeStatus =
+                        VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+                    int initiativeLength = view.ReadInt32(0);
+                    byte[] initiativeBytes = new byte[initiativeLength];
+                    view.ReadArray(8, initiativeBytes, 0, initiativeBytes.Length);
+                    if (initiativeStatus != 0 ||
+                        Encoding.UTF8.GetString(initiativeBytes) !=
+                            "{\"result_kind\":\"abstained\",\"reason\":\"projection_incomplete\"}")
+                    {
+                        return 18;
+                    }
+                    seated.Shields.CardItems.Clear();
+
+                    opponent.Shields.CardItems.Add(new DuelSceneCardViewModel
+                    {
+                        CardFrameIDFixture = Shiny.Card.Enums.FrameStyle.CLBInitiativeEmblem
+                    });
+                    if (!TryReadInitiativeHolderFixtureV1(
+                            seated,
+                            opponent,
+                            out string? opponentHolder) ||
+                        opponentHolder != "opponent")
+                    {
+                        return 23;
+                    }
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 19;
+                    }
+                    seated.Shields.CardItems.Add(new DuelSceneCardViewModel
+                    {
+                        CardFrameIDFixture = Shiny.Card.Enums.FrameStyle.CLBInitiativeEmblem
+                    });
+                    if (TryReadInitiativeHolderFixtureV1(
+                            seated,
+                            opponent,
+                            out _))
+                    {
+                        return 24;
+                    }
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 20;
+                    }
+                    seated.Shields.CardItems.Clear();
+                    opponent.Shields.CardItems.Clear();
+                    seated.Shields.CardItems.Add(new DuelSceneCardViewModel
+                    {
+                        CardFrameIDFixture = Shiny.Card.Enums.FrameStyle.OtherVisibleEmblem
+                    });
+                    if (TryReadInitiativeHolderFixtureV1(
+                            seated,
+                            opponent,
+                            out _))
+                    {
+                        return 25;
+                    }
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 21;
+                    }
+                    seated.Shields.CardItems.Clear();
+
                     int status = VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(
                         channelName);
                     int length = view.ReadInt32(0);
@@ -260,6 +339,62 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     application.Shutdown();
                 }
             }
+        }
+
+        private static bool ExportsProjectionIncompleteV1(
+            string channelName,
+            MemoryMappedViewAccessor view)
+        {
+            int status = VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+            int length = view.ReadInt32(0);
+            if (status != 0 || length <= 0 || length > Capacity - 8)
+            {
+                return false;
+            }
+            byte[] bytes = new byte[length];
+            view.ReadArray(8, bytes, 0, bytes.Length);
+            return Encoding.UTF8.GetString(bytes) ==
+                "{\"result_kind\":\"abstained\",\"reason\":\"projection_incomplete\"}";
+        }
+
+        private static bool TryReadInitiativeHolderFixtureV1(
+            PlayerViewModel seated,
+            PlayerViewModel opponent,
+            out string? holder)
+        {
+            holder = null;
+            Type producerType = typeof(VisibleDuelProducerV1);
+            MethodInfo? snapshotMethod = producerType.GetMethod(
+                "TryBuildPlayerSnapshotV1",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo? holderMethod = producerType.GetMethod(
+                "TryMapVisibleInitiativeHolderV1",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            if (snapshotMethod == null || holderMethod == null)
+            {
+                return false;
+            }
+            object?[] seatedArguments = { seated, null };
+            object?[] opponentArguments = { opponent, null };
+            if (!(snapshotMethod.Invoke(null, seatedArguments) is bool seatedOk) ||
+                !seatedOk || seatedArguments[1] == null ||
+                !(snapshotMethod.Invoke(null, opponentArguments) is bool opponentOk) ||
+                !opponentOk || opponentArguments[1] == null)
+            {
+                return false;
+            }
+            object?[] holderArguments =
+            {
+                seatedArguments[1],
+                opponentArguments[1],
+                null
+            };
+            if (!(holderMethod.Invoke(null, holderArguments) is bool mapped) || !mapped)
+            {
+                return false;
+            }
+            holder = holderArguments[2] as string;
+            return true;
         }
     }
 }

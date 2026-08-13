@@ -131,7 +131,7 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
     }
 
     pub fn visible_zone_and_card_getter_count_v1(&self) -> u32 {
-        23
+        25
     }
 
     pub fn private_visible_action_join_layer_present_v1(&self) -> bool {
@@ -212,7 +212,7 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         visible_chrome_getter_count: 19,
         visible_chrome_values_exported: true,
         visible_zone_and_card_getter_layer_present: true,
-        visible_zone_and_card_getter_count: 23,
+        visible_zone_and_card_getter_count: 25,
         visible_zone_and_card_values_exported: true,
         private_visible_action_join_layer_present: true,
         private_visible_action_join_getter_count: PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1,
@@ -269,7 +269,7 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.visible_chrome_getter_count != 19
         || !audit.visible_chrome_values_exported
         || !audit.visible_zone_and_card_getter_layer_present
-        || audit.visible_zone_and_card_getter_count != 23
+        || audit.visible_zone_and_card_getter_count != 25
         || !audit.visible_zone_and_card_values_exported
         || !audit.private_visible_action_join_layer_present
         || audit.private_visible_action_join_getter_count
@@ -524,11 +524,11 @@ mod tests {
             mtgo_visible_duel_viewmodel_producer_audit_v1(),
         )
         .unwrap();
-        assert_eq!(checked.allowed_property_count_v1(), 46);
+        assert_eq!(checked.allowed_property_count_v1(), 48);
         assert!(checked.visible_chrome_getter_layer_present_v1());
         assert_eq!(checked.visible_chrome_getter_count_v1(), 19);
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
-        assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 23);
+        assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 25);
         assert!(checked.private_visible_action_join_layer_present_v1());
         assert_eq!(checked.private_visible_action_join_getter_count_v1(), 15);
         assert!(checked.offline_sealed_action_dispatch_present_v1());
@@ -576,8 +576,7 @@ mod tests {
         let mut missing_dispatch = mtgo_visible_duel_viewmodel_producer_audit_v1();
         missing_dispatch.action_execution_present = false;
         assert!(
-            check_untrusted_visible_duel_viewmodel_producer_audit_v1(missing_dispatch)
-                .is_err()
+            check_untrusted_visible_duel_viewmodel_producer_audit_v1(missing_dispatch).is_err()
         );
     }
 

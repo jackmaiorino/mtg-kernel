@@ -61,10 +61,12 @@ producer boundary.
 - Monarch: `IGameCard.IsMonarch` affects card presentation, but the backing
   value is not itself an eligible export. A public presentation counterpart or
   exact rendered-frame qualification is required.
-- Initiative: `CardFrameID` contains `CLBInitiativeEmblem`, suggesting that the
-  visible emblem can identify the current holder. No exact player association
-  has yet been qualified. The current producer must continue to abstain after
-  the untouched opening until that mapping is proven.
+- Initiative: `PlayerViewModel.ShieldsZone` is a public rendered zone and
+  `CardViewModel.CardFrameID` contains `CLBInitiativeEmblem`. The direct
+  producer now reduces that presentation to a relative holder candidate and
+  rejects duplicate or ambiguous emblems. No exact live player association has
+  yet been qualified, so a non-null candidate still forces abstention and the
+  producer remains closed after the untouched opening.
 
 ## Visible action completeness
 

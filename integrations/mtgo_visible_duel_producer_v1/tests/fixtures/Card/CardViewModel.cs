@@ -16,6 +16,7 @@ namespace Shiny.Card.ViewModels
         {
             string[] expected =
             {
+                "Card.CardFrameID",
                 "Card.CurrentDamage",
                 "Card.IsAttacking",
                 "Card.IsBlocking",
@@ -38,6 +39,15 @@ namespace Shiny.Card.ViewModels
 
     public class CardViewModel
     {
+        public Shiny.Card.Enums.FrameStyle CardFrameID
+        {
+            get
+            {
+                VisibleCardGetterProbeV1.Record("Card.CardFrameID");
+                return CardFrameIDFixture;
+            }
+        }
+
         public int CurrentDamage
         {
             get
@@ -115,6 +125,7 @@ namespace Shiny.Card.ViewModels
         }
 
         public int CurrentDamageFixture { get; set; }
+        public Shiny.Card.Enums.FrameStyle CardFrameIDFixture { get; set; }
         public bool IsAttackingFixture { get; set; }
         public bool IsBlockingFixture { get; set; }
         public bool IsFaceDownFixture { get; set; }
@@ -123,5 +134,15 @@ namespace Shiny.Card.ViewModels
         public string NameFixture { get; set; } = "fixture-card";
         public int? PowerFixture { get; set; }
         public int? ToughnessFixture { get; set; }
+    }
+}
+
+namespace Shiny.Card.Enums
+{
+    public enum FrameStyle
+    {
+        Normal = 0,
+        CLBInitiativeEmblem = 1,
+        OtherVisibleEmblem = 2
     }
 }

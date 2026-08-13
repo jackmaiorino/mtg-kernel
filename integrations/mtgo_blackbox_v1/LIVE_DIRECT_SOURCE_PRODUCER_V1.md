@@ -104,12 +104,12 @@ until a newer player-visible postcondition extends the exact-game history.
 
 The first managed root seam identifies the exact public WPF `DuelScene`,
 requires its `DataContext` to be the exact duel view-model type, and checks the
-46-getter candidate surface. The identity-pinned native broker has now loaded
-and invoked that producer once against the exact client, receiving only the
+48-getter candidate surface. The identity-pinned native broker has loaded and
+invoked the prior 46-getter build once against the exact client, receiving only the
 fixed `duel_surface_unavailable` abstention while no duel was open. It
 deliberately invoked no MTGO getter in that qualified version. Version 1.2 now
 has an offline-qualified layer for player-visible chrome, player panels,
-public zones, cards, attachments, and counters. Version 1.5 adds an offline
+public zones, cards, attachments, and counters. Version 1.5 added an offline
 synthetic sanitized-success slice for an untouched 60-card Turn 1 Main 1
 opening and
 passes that output through the strict Rust schema validator. It also proves an
@@ -119,12 +119,13 @@ call. The live broker
 compile-disables dispatch until the authorization and confirmed-postcondition
 chain is joined. It never enumerates either library or an opponent's hidden
 hand or action collection, and it never reads a face-down exiled card name.
-Version 1.5 has been loaded into a clean 3.4.158.4691 MTGO process and invoked
+Version 1.5 was loaded into a clean 3.4.158.4691 MTGO process and invoked
 while the client was outside a duel. It returned only the fixed
 `duel_surface_unavailable` abstention, as required. This lobby-only check does
 not attest any data-bearing getter or success path. The synthetic Pass control
 has not yet been confirmed in a real duel, and later special visible
-game state remains incomplete. This work
+game state remains incomplete. Version 1.6 adds the 48-getter visible
+Initiative candidate seam and remains offline-only. This work
 does not implement a complete projection, admit a
 live decision, authorize event entry or spending, or send live MTGO input. Until the
 reviewed complete producer and corpus exist, DXGI remains a candidate source

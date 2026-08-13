@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.5 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.6 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -46,6 +46,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         // allowed.
         private static readonly string[] AllowedGetters =
         {
+            "Card|Shiny.Card.ViewModels.CardViewModel|CardFrameID",
             "Card|Shiny.Card.ViewModels.CardViewModel|CurrentDamage",
             "Card|Shiny.Card.ViewModels.CardViewModel|IsAttacking",
             "Card|Shiny.Card.ViewModels.CardViewModel|IsBlocking",
@@ -86,6 +87,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|MatActive",
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|Name",
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|RevealedZone",
+            "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|ShieldsZone",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|IsPromptBoxActive",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|StandardButtons",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|Text",
@@ -237,7 +239,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.5 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.6 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -298,8 +300,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static bool ValidateExactGetterSurface()
         {
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-            if (AllowedGetters.Length != 46 ||
-                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 46 ||
+            if (AllowedGetters.Length != 48 ||
+                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 48 ||
                 PrivateVisibleActionJoinGetters.Length != 15 ||
                 PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 15)
             {
@@ -531,7 +533,15 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                         "RevealedZone",
                         out object? revealedZone) ||
                     revealedZone == null ||
-                    !TryValidateConditionalVisibleZoneV1(revealedZone, false, true))
+                    !TryValidateConditionalVisibleZoneV1(revealedZone, false, true) ||
+                    !TryReadExactPropertyV1(
+                        player,
+                        "DuelScene",
+                        playerType,
+                        "ShieldsZone",
+                        out object? shieldsZone) ||
+                    shieldsZone == null ||
+                    !TryValidateVisibleInitiativeShieldZoneV1(shieldsZone))
                 {
                     return false;
                 }
@@ -578,6 +588,48 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             }
             return TryValidatePrivateVisibleCardActionJoinsV1(
                 seatedPlayerVisibleActionCards);
+        }
+
+        private static bool TryValidateVisibleInitiativeShieldZoneV1(object zone)
+        {
+            const string zoneType = "Shiny.Play.Duel.ViewModel.ZoneViewModel";
+            const string cardType = "Shiny.Card.ViewModels.CardViewModel";
+            if (!TryReadExactPropertyV1(
+                    zone, "DuelScene", zoneType, "IsVisible", out object? visibleValue) ||
+                !(visibleValue is bool visible))
+            {
+                return false;
+            }
+            if (!visible)
+            {
+                return true;
+            }
+            if (!TryReadExactPropertyV1(
+                    zone, "DuelScene", zoneType, "Count", out object? countValue) ||
+                !(countValue is int count) || count < 0 ||
+                count > MaximumVisibleCollectionItems ||
+                !TryReadExactPropertyV1(
+                    zone, "DuelScene", zoneType, "Cards", out object? cardsValue) ||
+                !TryBoundedCollectionV1(
+                    cardsValue,
+                    MaximumVisibleCollectionItems,
+                    out List<object> cards) ||
+                cards.Count != count)
+            {
+                return false;
+            }
+            foreach (object card in cards)
+            {
+                if (!TryReadExactPropertyV1(
+                        card, "Card", cardType, "CardFrameID", out object? frameValue) ||
+                    frameValue == null ||
+                    frameValue.GetType().FullName != "Shiny.Card.Enums.FrameStyle" ||
+                    Enum.GetName(frameValue.GetType(), frameValue) == null)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private static bool TryAppendVisibleZoneCardsForPrivateActionJoinV1(

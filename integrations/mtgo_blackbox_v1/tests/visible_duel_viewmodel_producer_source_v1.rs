@@ -22,12 +22,10 @@ fn complete_producer_source_v1() -> String {
         "SanitizedVisibleDecisionV1.cs",
         "SealedVisibleActionDispatchV1.cs",
     ]
-        .into_iter()
-        .map(|name| {
-            fs::read_to_string(producer_root_v1().join(name)).expect("read producer source")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    .into_iter()
+    .map(|name| fs::read_to_string(producer_root_v1().join(name)).expect("read producer source"))
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn compiled_getter_entries_v1(source: &str) -> HashSet<String> {
@@ -74,7 +72,7 @@ fn managed_producer_getter_allowlist_exactly_matches_reviewed_surface() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 46);
+    assert_eq!(actual.len(), 48);
     assert_eq!(actual, expected);
 }
 

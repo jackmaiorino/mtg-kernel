@@ -145,6 +145,7 @@ namespace Shiny.Play.Duel.ViewModel
                 "Player.GraveyardZone",
                 "Player.ExileZone",
                 "Player.RevealedZone",
+                "Player.ShieldsZone",
                 "Zone.IsVisible",
                 "Zone.Count",
                 "Zone.Cards",
@@ -337,6 +338,14 @@ namespace Shiny.Play.Duel.ViewModel
                 return Revealed;
             }
         }
+        public ZoneViewModel ShieldsZone
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Player.ShieldsZone");
+                return Shields;
+            }
+        }
         public ObservableCollection<DuelSceneCardViewModel> BattlefieldCards
         {
             get
@@ -363,6 +372,10 @@ namespace Shiny.Play.Duel.ViewModel
             IsVisibleFixture = true
         };
         public ZoneViewModel Revealed { get; } = new ZoneViewModel();
+        public ZoneViewModel Shields { get; } = new ZoneViewModel
+        {
+            IsVisibleFixture = true
+        };
         public ObservableCollection<DuelSceneCardViewModel> Battlefield { get; } =
             new ObservableCollection<DuelSceneCardViewModel>();
     }

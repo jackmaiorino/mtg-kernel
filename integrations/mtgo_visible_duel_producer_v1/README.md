@@ -3,11 +3,11 @@
 This isolated .NET Framework 4.7.2 assembly is the in-process root seam for a
 direct player-visible MTGO projection. It locates exactly one visible
 `Shiny.Play.Duel.DuelScene` through the WPF visual tree, requires its public
-`DataContext` to be the exact duel view-model type, and checks that all 46
+`DataContext` to be the exact duel view-model type, and checks that all 48
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.5 invokes only exact allowlisted getters for the player-visible game
+Version 1.6 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
@@ -50,7 +50,7 @@ native offline broker test observes the opening, dispatches its Pass index,
 and proves neither that dispatch nor another index for the same decision can be
 replayed.
 
-Version 1.5 has been loaded into a clean MTGO 3.4.158.4691 process and invoked
+Version 1.5 was loaded into a clean MTGO 3.4.158.4691 process and invoked
 while no duel was open. It returned only the fixed
 `duel_surface_unavailable` abstention. That lobby-only result does not attest a
 data-bearing getter, a complete visible projection, model scoring, live input,
@@ -59,7 +59,13 @@ confirmed its priority-pass control against a real duel. Its untouched-opening
 restriction makes a null Initiative complete before any game action has
 occurred, but later states remain unsupported. The slice is therefore not
 live-authorized. The
-live broker build explicitly rejects the dispatch command until it is joined to
+producer now also reduces the rendered per-player Shields zone and each
+rendered card's public frame style to an Initiative-holder candidate. A
+non-null or ambiguous holder still forces abstention until an exact live UI
+corpus qualifies the per-player placement. No shield card, client object, or
+internal identifier is exported. Version 1.6 has not been
+loaded into MTGO.
+The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.
 The next tranche must confirm the exact client pass control, add later special
 visible game state, and validate the producer result inside the live broker

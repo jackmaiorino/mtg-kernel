@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_SURFACE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1: &str =
-    "19f25384a934c7673b2c1e22ad8dfc7bc2cdb35b2d714dd012de954bbe22a1fe";
+    "492ed37d7752aae20cbfecbfc108579575873f295b13b10a71c4230d26b8678c";
 
 const SURFACE_KIND_V1: &str = "mtgo_visible_duel_viewmodel_candidate_surface_v1";
 const INFORMATION_BOUNDARY_V1: &str = "seated_player_visible_ui_equivalent_only_v1";
@@ -296,6 +296,15 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
         candidate(
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.PlayerViewModel",
+            "ShieldsZone",
+            "ZoneViewModel",
+            MtgoVisibleViewModelPropertyContextV1::TransientTraversalOnly,
+            "rendered emblem zone used only to derive a visible Initiative holder",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.PlayerViewModel",
             "BattlefieldCards",
             "ObservableCollection<DuelSceneCardViewModel>",
             MtgoVisibleViewModelPropertyContextV1::SeatedPlayerOrPublicOrExplicitlyVisibleZone,
@@ -362,6 +371,15 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
                 "current_state.known_library_cards",
                 "current_state.known_hand_cards",
             ],
+        ),
+        candidate(
+            "Card.dll",
+            "Shiny.Card.ViewModels.CardViewModel",
+            "CardFrameID",
+            "Shiny.Card.Enums.FrameStyle",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered card-frame style, reduced to the Initiative emblem predicate only",
+            &["current_state.initiative"],
         ),
         candidate(
             "Card.dll",
@@ -925,12 +943,17 @@ mod tests {
 
     #[test]
     fn compiled_candidate_surface_is_checked_but_non_authorizing() {
-        let checked = check_untrusted_visible_duel_viewmodel_candidate_surface_v1(
-            mtgo_visible_duel_viewmodel_candidate_surface_v1(),
-        )
-        .expect("compiled metadata candidate surface");
+        let manifest = mtgo_visible_duel_viewmodel_candidate_surface_v1();
+        let canonical = serde_json::to_vec(&manifest).expect("candidate surface JSON");
+        let actual_commitment = commitment_v1(SURFACE_DOMAIN_V1, &[&canonical]);
+        assert_eq!(
+            actual_commitment,
+            MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1
+        );
+        let checked = check_untrusted_visible_duel_viewmodel_candidate_surface_v1(manifest)
+            .expect("compiled metadata candidate surface");
         assert_eq!(checked.product_version_v1(), "3.4.158.4691");
-        assert_eq!(checked.candidate_property_count_v1(), 46);
+        assert_eq!(checked.candidate_property_count_v1(), 48);
         assert_eq!(checked.forbidden_property_count_v1(), 28);
         assert_eq!(
             checked.commitment_sha256_v1(),

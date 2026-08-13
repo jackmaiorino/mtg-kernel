@@ -120,7 +120,7 @@ authority.
 The first version-pinned candidate surface is now encoded in
 `src/visible_duel_viewmodel_surface.rs`. For MTGO 3.4.158.4691 it binds the
 signed executable, ClickOnce manifests, `DuelScene.dll`, and `Card.dll`; lists
-46 UI-facing property candidates with their required visibility context; and
+48 UI-facing property candidates with their required visibility context; and
 lists 28 forbidden backing properties. Its deterministic commitment is
 `19f25384a934c7673b2c1e22ad8dfc7bc2cdb35b2d714dd012de954bbe22a1fe`.
 

@@ -13,7 +13,7 @@ $required = @(
     'FrameworkElement',
     'DataContext',
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
-    'AllowedGetters.Length != 46',
+    'AllowedGetters.Length != 48',
     'PrivateVisibleActionJoinGetters.Length != 15',
     'projection_incomplete',
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
@@ -30,6 +30,11 @@ $required = @(
     'TryValidateConditionalVisibleZoneV1',
     'TryValidateVisibleBattlefieldCardV1',
     'TryValidateVisibleZoneCardV1',
+    'TryValidateVisibleInitiativeShieldZoneV1',
+    'TryMapVisibleInitiativeHolderV1',
+    'CLBInitiativeEmblem',
+    'seatedCount != seated.Shields.Count',
+    'visibleInitiative != null',
     'AllowedGetters.Contains(exactKey, StringComparer.Ordinal)',
     'TryValidatePrivateVisibleCardActionJoinsV1',
     'TryValidatePrivateVisibleActionV1',
@@ -112,8 +117,8 @@ if ($publicStart -lt 0 -or $privateStart -le $publicStart) {
 }
 $publicGetterSource = $source.Substring($publicStart, $privateStart - $publicStart)
 $getterLines = [regex]::Matches($publicGetterSource, '"(?:Card|DuelScene)\|[^"\r\n]+\|[^"\r\n]+"')
-if ($getterLines.Count -ne 46) {
-    throw "producer source must contain exactly 46 compile-time getter entries"
+if ($getterLines.Count -ne 48) {
+    throw "producer source must contain exactly 48 compile-time getter entries"
 }
 
 $privateEnd = $source.IndexOf('};', $privateStart)

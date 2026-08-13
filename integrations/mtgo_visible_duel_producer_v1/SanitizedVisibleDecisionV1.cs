@@ -231,6 +231,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             internal List<object> Graveyard = new List<object>();
             internal List<object> Exile = new List<object>();
             internal List<object> Revealed = new List<object>();
+            internal List<object> Shields = new List<object>();
         }
 
         private static bool TryBuildFirstSanitizedVisibleDecisionV1(
@@ -348,6 +349,17 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             }
             PlayerSnapshotV1 seated = snapshots.Single(player => player.Local);
             PlayerSnapshotV1 opponent = snapshots.Single(player => !player.Local);
+            if (!TryMapVisibleInitiativeHolderV1(
+                    seated,
+                    opponent,
+                    out string? visibleInitiative) ||
+                visibleInitiative != null)
+            {
+                // The source mapping is structurally exercised, but a non-null
+                // holder remains closed until an exact live UI corpus qualifies
+                // the Shields-zone player association for this client version.
+                return false;
+            }
             // The first emitted slice deliberately excludes temporary revealed
             // zones. Until every revealed-zone presentation can be assigned to
             // the exact public state field, omitting one would be incomplete.
@@ -463,7 +475,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 Phase = phase,
                 ActivePlayer = seated.Active ? "seated_player" : "opponent",
                 PriorityPlayer = "seated_player",
-                Initiative = null,
+                Initiative = visibleInitiative,
                 LifeTotals = new[] { seated.Life, opponent.Life },
                 ManaPools = new[] { seated.ManaPool, opponent.ManaPool },
                 HandCounts = new[] { seated.HandCount, opponent.HandCount },
@@ -512,6 +524,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !TryReadZoneCardsForSnapshotV1(player, "GraveyardZone", true, out List<object> graveyard) ||
                 !TryReadZoneCardsForSnapshotV1(player, "ExileZone", true, out List<object> exile) ||
                 !TryReadZoneCardsForSnapshotV1(player, "RevealedZone", false, out List<object> revealed) ||
+                !TryReadZoneCardsForSnapshotV1(player, "ShieldsZone", false, out List<object> shields) ||
                 (local && hand.Count != handCount))
             {
                 return false;
@@ -528,6 +541,72 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             snapshot.Graveyard = graveyard;
             snapshot.Exile = exile;
             snapshot.Revealed = revealed;
+            snapshot.Shields = shields;
+            return true;
+        }
+
+        private static bool TryMapVisibleInitiativeHolderV1(
+            PlayerSnapshotV1 seated,
+            PlayerSnapshotV1 opponent,
+            out string? holder)
+        {
+            holder = null;
+            if (!TryCountVisibleInitiativeEmblemsV1(
+                    seated.Shields,
+                    out int seatedCount) ||
+                !TryCountVisibleInitiativeEmblemsV1(
+                    opponent.Shields,
+                    out int opponentCount) ||
+                seatedCount != seated.Shields.Count ||
+                opponentCount != opponent.Shields.Count ||
+                seatedCount > 1 || opponentCount > 1 ||
+                seatedCount + opponentCount > 1)
+            {
+                return false;
+            }
+            if (seatedCount == 1)
+            {
+                holder = "seated_player";
+            }
+            else if (opponentCount == 1)
+            {
+                holder = "opponent";
+            }
+            return true;
+        }
+
+        private static bool TryCountVisibleInitiativeEmblemsV1(
+            List<object> shields,
+            out int count)
+        {
+            count = 0;
+            const string cardType = "Shiny.Card.ViewModels.CardViewModel";
+            foreach (object card in shields)
+            {
+                if (!TryReadExactPropertyV1(
+                        card,
+                        "Card",
+                        cardType,
+                        "CardFrameID",
+                        out object? frameValue) ||
+                    frameValue == null ||
+                    frameValue.GetType().FullName != "Shiny.Card.Enums.FrameStyle")
+                {
+                    return false;
+                }
+                string? frameName = Enum.GetName(frameValue.GetType(), frameValue);
+                if (frameName == null)
+                {
+                    return false;
+                }
+                if (string.Equals(
+                        frameName,
+                        "CLBInitiativeEmblem",
+                        StringComparison.Ordinal))
+                {
+                    count++;
+                }
+            }
             return true;
         }
 
