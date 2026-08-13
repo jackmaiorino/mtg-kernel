@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.12 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.13 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -136,10 +136,16 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|ActionType",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|IsDefault",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|Name",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ActionChoices",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|AltMenuAction",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|AttackVictimId",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|CanBePerformedLocally",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|GroupName",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsActivatedAbility",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsCastAction",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsManaAbility",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsSubmenuItem",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ModeChoiceMapping",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ModeOptions"
         };
 
@@ -264,7 +270,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.12 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.13 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -327,8 +333,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
             if (AllowedGetters.Length != 74 ||
                 AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 74 ||
-                PrivateVisibleActionJoinGetters.Length != 14 ||
-                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 14)
+                PrivateVisibleActionJoinGetters.Length != 20 ||
+                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 20)
             {
                 return false;
             }
@@ -789,12 +795,44 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     cardActionType,
                     "ModeOptions",
                     out object? modesValue) ||
-                !TryBoundedVisibleStringCollectionV1(modesValue, 64))
+                !TryBoundedVisibleStringCollectionV1(modesValue, 64) ||
+                !TryRequireBasicVisibleCardActionMenuShapeV1(action))
             {
                 return false;
             }
             return action.GetType().FullName != "Shiny.Play.Duel.GroupCardAction" ||
                 TryValidateVisibleGroupCardActionLabelsV1(action);
+        }
+
+        // MTGO's Card_View.ProcessMouseUp does not render the raw Actions
+        // collection one-for-one. It transforms alternate-menu, grouped,
+        // mode-choice, submenu, action-choice, and attack-hover entries. The
+        // current semantic slice models none of those transformations, so the
+        // corresponding private values are used only as one-way guards and
+        // are never serialized. Defaults describe the simple one-action-per-
+        // visible-label shape supported by V1.13.
+        private static bool TryRequireBasicVisibleCardActionMenuShapeV1(object action)
+        {
+            const string assembly = "WotC.MtGO.Client.Model.Reference";
+            const string cardAction = "WotC.MtGO.Client.Model.Play.ICardAction";
+            return TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "AltMenuAction", out object? altValue) &&
+                altValue is bool alt && !alt &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "GroupName", out object? groupValue) &&
+                (groupValue == null || groupValue is string group && group.Length == 0) &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ActionChoices", out object? choicesValue) &&
+                (choicesValue == null || choicesValue is string choices && choices.Length == 0) &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ModeChoiceMapping", out object? mappingValue) &&
+                (mappingValue == null || mappingValue is string mapping && mapping.Length == 0) &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "IsSubmenuItem", out object? submenuValue) &&
+                submenuValue is bool submenu && !submenu &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "AttackVictimId", out object? victimValue) &&
+                victimValue is int victim && victim == -1;
         }
 
         private static bool TryValidateVisibleGroupCardActionLabelsV1(object action)

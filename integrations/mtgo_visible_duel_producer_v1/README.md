@@ -7,15 +7,19 @@ direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.12 invokes only exact allowlisted getters for the player-visible game
+Version 1.13 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
-and basic two-seat consistency. It also performs fourteen exact private joins
+and basic two-seat consistency. It also performs twenty exact private joins
 from visible enabled prompt controls and the seated player's visible cards to
 the corresponding action objects. Those joins read only visible action labels,
 action type, locally-performable classification, cast, activated, and mana
-classification, visible mode labels, and the displayed mana color. The turn
+classification, visible mode labels, and the displayed mana color. Private
+alternate-menu, group, action-choice, mode-choice, submenu, and attack-hover
+values are used only as one-way guards. A non-default value forces a generic
+abstention until the corresponding visible menu shape is modeled exactly; the
+private value itself is never exported. The turn
 number is parsed only from the rendered `GameTurnText`, accepting the pinned
 English-client forms `Turn N` and `Turn N: active player`; other locales or
 formats abstain. Raw action objects, internal action identifiers, targets, timestamps,
@@ -77,7 +81,7 @@ selectors, trigger panels, wish flow, storm display, and temporary-zone
 windows also force abstention until their public contents and choices are
 represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
-abstention. Version 1.12 has not been loaded into MTGO.
+abstention. Version 1.13 has not been loaded into MTGO.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.
 The next tranche must confirm the exact client pass control, add later special

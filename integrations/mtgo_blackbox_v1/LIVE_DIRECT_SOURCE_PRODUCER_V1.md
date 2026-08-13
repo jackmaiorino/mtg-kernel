@@ -124,7 +124,7 @@ while the client was outside a duel. It returned only the fixed
 `duel_surface_unavailable` abstention, as required. This lobby-only check does
 not attest any data-bearing getter or success path. The synthetic Pass control
 has not yet been confirmed in a real duel, and later special visible
-game state remains incomplete. Version 1.12 adds the 74-getter visible
+game state remains incomplete. Version 1.13 includes the 74-getter visible
 Initiative candidate seam, derives the turn only from the rendered
 `GameTurnText`, preserves which rendered player-relative exile panel contains
 each visible exiled object, and rejects states with visible poison, energy,
@@ -134,6 +134,12 @@ represented. Visible pile and card selectors, trigger panels, wish flow,
 storm display, and temporary-zone windows likewise reject until represented.
 Commander and Planechase duel layouts, plus visible dungeon, Ring-temptation,
 and speed presentation, also reject with the same generic abstention.
+Static inspection of `Card_View.ProcessMouseUp` also confirms that alternate
+menus, groups, action choices, mode choices, submenus, and attack-hover entries
+transform the raw card action collection before it becomes a visible menu.
+Version 1.13 reads those private transformation values only as one-way guards
+and generically abstains on every non-default value. No private value is
+exported.
 It remains offline-only. This work
 does not implement a complete projection, admit a
 live decision, authorize event entry or spending, or send live MTGO input. Until the

@@ -1266,7 +1266,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, cardAction, "IsActivatedAbility", out object? activatedValue) || !(activatedValue is bool activated) ||
                 !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, cardAction, "IsCastAction", out object? castValue) || !(castValue is bool cast) ||
                 !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, cardAction, "ModeOptions", out object? modesValue) ||
-                (modesValue != null && (!TryBoundedCollectionV1(modesValue, 64, out List<object> modes) || modes.Count != 0)))
+                (modesValue != null && (!TryBoundedCollectionV1(modesValue, 64, out List<object> modes) || modes.Count != 0)) ||
+                !TryRequireBasicVisibleCardActionMenuShapeV1(action))
             {
                 return false;
             }

@@ -95,7 +95,7 @@ fn managed_producer_private_visible_action_join_allowlist_matches_audit() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 14);
+    assert_eq!(actual.len(), 20);
     assert_eq!(actual, expected);
     assert!(!source.contains("|WotC.MtGO.Client.Model.Play.IGame|CurrentTurn\""));
 }

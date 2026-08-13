@@ -52,10 +52,15 @@ namespace Shiny.Play.Duel
         }
         public ActionType ActionType => ActionType.CardAction;
         public bool IsDefault => false;
+        public string ActionChoices => string.Empty;
+        public bool AltMenuAction => false;
+        public int AttackVictimId => -1;
         public bool CanBePerformedLocally => true;
         public bool IsManaAbility => false;
         public bool IsActivatedAbility => true;
         public bool IsCastAction => false;
+        public bool IsSubmenuItem => false;
+        public string ModeChoiceMapping => string.Empty;
     }
 
     public static class VisibleActionMenuGetterProbeV1

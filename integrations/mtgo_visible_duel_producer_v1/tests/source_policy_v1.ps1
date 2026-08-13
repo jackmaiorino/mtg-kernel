@@ -14,7 +14,7 @@ $required = @(
     'DataContext',
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
     'AllowedGetters.Length != 74',
-    'PrivateVisibleActionJoinGetters.Length != 14',
+    'PrivateVisibleActionJoinGetters.Length != 20',
     'projection_incomplete',
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
     'MemoryMappedFile.OpenExisting',
@@ -44,6 +44,7 @@ $required = @(
     'AllowedGetters.Contains(exactKey, StringComparer.Ordinal)',
     'TryValidatePrivateVisibleCardActionJoinsV1',
     'TryValidatePrivateVisibleActionV1',
+    'TryRequireBasicVisibleCardActionMenuShapeV1',
     'TryReadExactPrivateVisibleActionPropertyV1',
     'PrivateVisibleActionJoinGetters.Contains(',
     'DispatchSelectedVisibleActionV1',
@@ -137,8 +138,8 @@ $privateGetterLines = [regex]::Matches(
     $privateGetterSource,
     '"(?:DuelScene|WotC\.MtGO\.Client\.Model\.Reference)\|[^"\r\n]+\|[^"\r\n]+"'
 )
-if ($privateGetterLines.Count -ne 14) {
-    throw 'producer source must contain exactly 14 private visible-action join getters'
+if ($privateGetterLines.Count -ne 20) {
+    throw 'producer source must contain exactly 20 private visible-action join getters'
 }
 
 if (-not $source.Contains('if (localPlayer)') -or

@@ -16,7 +16,7 @@ const ROOT_TYPE_V1: &str = "Shiny.Play.Duel.DuelScene";
 const ROOT_ACCESSOR_V1: &str = "FrameworkElement.DataContext";
 const ROOT_VIEWMODEL_TYPE_V1: &str = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
 const AUDIT_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-viewmodel-producer-audit-v1";
-const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 14;
+const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 20;
 const REFERENCE_ASSEMBLY_SHA256_V1: &str =
     "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 
@@ -438,7 +438,31 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
         (
             "WotC.MtGO.Client.Model.Reference.dll",
             "WotC.MtGO.Client.Model.Play.ICardAction",
+            "ActionChoices",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "AltMenuAction",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "AttackVictimId",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
             "CanBePerformedLocally",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "GroupName",
             BoundVisibleActionObject,
         ),
         (
@@ -457,6 +481,18 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
             "WotC.MtGO.Client.Model.Reference.dll",
             "WotC.MtGO.Client.Model.Play.ICardAction",
             "IsManaAbility",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "IsSubmenuItem",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "ModeChoiceMapping",
             BoundVisibleActionObject,
         ),
         (
@@ -518,13 +554,13 @@ mod tests {
             mtgo_visible_duel_viewmodel_producer_audit_v1(),
         )
         .unwrap();
-        assert_eq!(checked.allowed_property_count_v1(), 48);
+        assert_eq!(checked.allowed_property_count_v1(), 74);
         assert!(checked.visible_chrome_getter_layer_present_v1());
         assert_eq!(checked.visible_chrome_getter_count_v1(), 19);
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
         assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 25);
         assert!(checked.private_visible_action_join_layer_present_v1());
-        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 14);
+        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 20);
         assert!(checked.offline_sealed_action_dispatch_present_v1());
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());

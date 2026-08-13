@@ -350,6 +350,49 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     seated.Hand.CardItems[0].IsSpeedEmblemFixture = false;
 
+                    // Card_View.ProcessMouseUp transforms these private action
+                    // fields into distinct visible menu shapes. Until those
+                    // shapes are represented exactly, each non-default value
+                    // must force the same generic abstention.
+                    var simpleAction =
+                        (VisibleFixtureCardAction)localPermanent.ActionItems[0];
+                    simpleAction.AltMenuActionFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 41;
+                    }
+                    simpleAction.AltMenuActionFixture = false;
+                    simpleAction.GroupNameFixture = "fixture-visible-group";
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 42;
+                    }
+                    simpleAction.GroupNameFixture = string.Empty;
+                    simpleAction.ActionChoicesFixture = "fixture-visible-choice";
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 43;
+                    }
+                    simpleAction.ActionChoicesFixture = string.Empty;
+                    simpleAction.ModeChoiceMappingFixture = "fixture-visible-mode";
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 44;
+                    }
+                    simpleAction.ModeChoiceMappingFixture = string.Empty;
+                    simpleAction.IsSubmenuItemFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 45;
+                    }
+                    simpleAction.IsSubmenuItemFixture = false;
+                    simpleAction.AttackVictimIdFixture = 1;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 46;
+                    }
+                    simpleAction.AttackVictimIdFixture = -1;
+
                     // The semantic turn is derived only from the rendered
                     // GameTurnText. Non-canonical or non-opening visible text
                     // must fail closed before the first supported slice.
