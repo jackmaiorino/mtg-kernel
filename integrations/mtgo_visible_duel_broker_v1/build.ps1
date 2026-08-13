@@ -16,19 +16,26 @@ $bootstrapSource = Join-Path $root 'bootstrap\VisibleDuelBootstrapV1.cpp'
 $brokerSource = Join-Path $root 'broker\VisibleDuelBrokerV1.cpp'
 $bootstrapOut = Join-Path $build 'mtgo_visible_duel_bootstrap_v1.dll'
 $brokerOut = Join-Path $build 'mtgo_visible_duel_broker_v1.exe'
+$liveBrokerOut = Join-Path $build 'mtgo_visible_duel_live_broker_v1.exe'
 $bootstrapObject = Join-Path $build 'VisibleDuelBootstrapV1.obj'
 $bootstrapImport = Join-Path $build 'VisibleDuelBootstrapV1.lib'
 $brokerObject = Join-Path $build 'VisibleDuelBrokerV1.obj'
+$liveBrokerObject = Join-Path $build 'VisibleDuelLiveBrokerV1.obj'
 
-$bootstrapCommand = "call `"$vcvars`" >nul && cl /nologo /std:c++20 /permissive- /W4 /WX /EHsc /guard:cf /GS /DUNICODE /D_UNICODE /LD /Fo`"$bootstrapObject`" `"$bootstrapSource`" /I`"$netfxInclude`" /link /OUT:`"$bootstrapOut`" /IMPLIB:`"$bootstrapImport`" /LIBPATH:`"$netfxLib`" mscoree.lib"
+$bootstrapCommand = "call `"$vcvars`" >nul && cl /nologo /std:c++20 /permissive- /W4 /WX /EHsc /guard:cf /GS /ZH:SHA_256 /DUNICODE /D_UNICODE /LD /Fo`"$bootstrapObject`" `"$bootstrapSource`" /I`"$netfxInclude`" /link /Brepro /OUT:`"$bootstrapOut`" /IMPLIB:`"$bootstrapImport`" /LIBPATH:`"$netfxLib`" mscoree.lib"
 & cmd.exe /d /c $bootstrapCommand
 if ($LASTEXITCODE -ne 0) {
     throw "native bootstrap build failed"
 }
-$brokerCommand = "call `"$vcvars`" >nul && cl /nologo /std:c++20 /permissive- /W4 /WX /EHsc /guard:cf /GS /DUNICODE /D_UNICODE /Fo`"$brokerObject`" `"$brokerSource`" /link /OUT:`"$brokerOut`" bcrypt.lib"
+$brokerCommand = "call `"$vcvars`" >nul && cl /nologo /std:c++20 /permissive- /W4 /WX /EHsc /guard:cf /GS /ZH:SHA_256 /DUNICODE /D_UNICODE /Fo`"$brokerObject`" `"$brokerSource`" /link /Brepro /OUT:`"$brokerOut`" bcrypt.lib"
 & cmd.exe /d /c $brokerCommand
 if ($LASTEXITCODE -ne 0) {
     throw "native broker build failed"
+}
+$liveBrokerCommand = "call `"$vcvars`" >nul && cl /nologo /std:c++20 /permissive- /W4 /WX /EHsc /guard:cf /GS /ZH:SHA_256 /DUNICODE /D_UNICODE /DMTGO_LIVE_PINNED_V1 /Fo`"$liveBrokerObject`" `"$brokerSource`" /link /Brepro /OUT:`"$liveBrokerOut`" bcrypt.lib version.lib wintrust.lib"
+& cmd.exe /d /c $liveBrokerCommand
+if ($LASTEXITCODE -ne 0) {
+    throw "native live broker build failed"
 }
 
 dotnet build (Join-Path $root 'synthetic_host\SyntheticManagedHostV1.csproj') -c Release

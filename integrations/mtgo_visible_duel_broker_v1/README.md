@@ -21,3 +21,11 @@ The next live qualification must first bind the exact signed MTGO client and
 hashed deployment, bracket the call with unchanged visible frames, and use the
 still-abstention-only producer. No property getter may be invoked during that
 qualification.
+
+The separate `mtgo_visible_duel_live_broker_v1.exe` build is now compile-pinned
+to the exact MTGO 3.4.158.4691 executable, `DuelScene.dll`, `Card.dll`,
+bootstrap, and producer hashes. It requires one native x64 MTGO process, the
+exact file and product versions, a valid Authenticode signature, and unchanged
+process start time and file identities before and after invocation. Its output
+validator still accepts only the four fixed abstentions. This is the candidate
+for the first live abstention qualification, not an admitted semantic producer.

@@ -14,7 +14,18 @@ foreach ($required in @(
     'AllowedResultV1',
     'SecureZeroMemory',
     'synthetic_managed_host_v1.exe',
-    'target_not_synthetic_host'
+    'target_not_synthetic_host',
+    'MTGO_LIVE_PINNED_V1',
+    'bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92',
+    '72b99e1169f9f9445a510b2dae52f9212fb7300c2483b8bc8e02f5760f11904e',
+    '071338a98d845d5c8db6ebd2f3c847e38ad548f50ba11d2a36973438cdec2ea8',
+    '9c62e801dbcb3fd21647ba1fc7837e1d49663b902530d5b2fb5a6197c9f465d4',
+    '3898431b57758c803981a1b8c1a20c50a6cf04745ec2623735f2bd1cd6bae936',
+    'AuthenticodeValidV1',
+    'ExactPinnedVersionV1',
+    'ExactlyOneMtgoProcessV1',
+    'live_identity_pre',
+    'live_identity_post'
 )) {
     if (-not ($bootstrap.Contains($required) -or $broker.Contains($required))) {
         throw "required broker marker missing"

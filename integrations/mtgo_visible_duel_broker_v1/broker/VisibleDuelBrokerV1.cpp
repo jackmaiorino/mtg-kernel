@@ -1,6 +1,10 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <bcrypt.h>
+#ifdef MTGO_LIVE_PINNED_V1
+#include <softpub.h>
+#include <wintrust.h>
+#endif
 #include <tlhelp32.h>
 
 #include <array>
@@ -8,8 +12,15 @@
 #include <cstdio>
 #include <cwchar>
 #include <string>
+#ifdef MTGO_LIVE_PINNED_V1
+#include <vector>
+#endif
 
 #pragma comment(lib, "bcrypt.lib")
+#ifdef MTGO_LIVE_PINNED_V1
+#pragma comment(lib, "version.lib")
+#pragma comment(lib, "wintrust.lib")
+#endif
 
 namespace {
 constexpr std::uint32_t kParameterSchemaV1 = 1;
@@ -18,8 +29,22 @@ constexpr std::size_t kChannelCharacters = 128;
 constexpr DWORD kOutputBytes = 1048576;
 constexpr DWORD kWaitMilliseconds = 30000;
 constexpr wchar_t kChannelPrefix[] = L"Local\\mtgkernel_mtgo_visible_v1_";
+#ifndef MTGO_LIVE_PINNED_V1
 constexpr wchar_t kOnlyAdmittedTargetFileName[] =
     L"synthetic_managed_host_v1.exe";
+#else
+constexpr wchar_t kOnlyAdmittedTargetFileName[] = L"MTGO.exe";
+constexpr char kExpectedMtgoSha256[] =
+    "bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92";
+constexpr char kExpectedDuelSceneSha256[] =
+    "72b99e1169f9f9445a510b2dae52f9212fb7300c2483b8bc8e02f5760f11904e";
+constexpr char kExpectedCardSha256[] =
+    "071338a98d845d5c8db6ebd2f3c847e38ad548f50ba11d2a36973438cdec2ea8";
+constexpr char kExpectedBootstrapSha256[] =
+    "9c62e801dbcb3fd21647ba1fc7837e1d49663b902530d5b2fb5a6197c9f465d4";
+constexpr char kExpectedProducerSha256[] =
+    "3898431b57758c803981a1b8c1a20c50a6cf04745ec2623735f2bd1cd6bae936";
+#endif
 
 struct VisibleDuelBootstrapParametersV1 {
   std::uint32_t schema_version;
@@ -67,7 +92,7 @@ bool ExactCopyV1(wchar_t* destination, std::size_t capacity,
   return true;
 }
 
-bool IsExactSyntheticTargetV1(HANDLE process) {
+bool IsNativeX64TargetWithExactFileNameV1(HANDLE process) {
   wchar_t image_path[kMaximumPathCharacters] = {};
   DWORD length = static_cast<DWORD>(std::size(image_path));
   if (!QueryFullProcessImageNameW(process, 0, image_path, &length) ||
@@ -88,6 +113,216 @@ bool IsExactSyntheticTargetV1(HANDLE process) {
   return process_machine == IMAGE_FILE_MACHINE_UNKNOWN &&
          native_machine == IMAGE_FILE_MACHINE_AMD64;
 }
+
+#ifdef MTGO_LIVE_PINNED_V1
+std::uint64_t FileTimeU64V1(const FILETIME& value) {
+  return (static_cast<std::uint64_t>(value.dwHighDateTime) << 32) |
+         value.dwLowDateTime;
+}
+
+bool ProcessStartTimeV1(HANDLE process, std::uint64_t& output) {
+  FILETIME created{};
+  FILETIME exited{};
+  FILETIME kernel{};
+  FILETIME user{};
+  if (!GetProcessTimes(process, &created, &exited, &kernel, &user)) {
+    return false;
+  }
+  output = FileTimeU64V1(created);
+  return output != 0;
+}
+
+bool ExactlyOneMtgoProcessV1(DWORD expected_process_id) {
+  HandleV1 snapshot{
+      CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)};
+  if (snapshot.value == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+  PROCESSENTRY32W entry{};
+  entry.dwSize = sizeof(entry);
+  if (!Process32FirstW(snapshot.value, &entry)) {
+    return false;
+  }
+  DWORD count = 0;
+  DWORD observed_process_id = 0;
+  do {
+    if (_wcsicmp(entry.szExeFile, kOnlyAdmittedTargetFileName) == 0) {
+      ++count;
+      observed_process_id = entry.th32ProcessID;
+    }
+  } while (Process32NextW(snapshot.value, &entry));
+  return count == 1 && observed_process_id == expected_process_id;
+}
+
+bool Sha256FileV1(const wchar_t* path,
+                  std::array<unsigned char, 32>& output) {
+  HandleV1 file{CreateFileW(path, GENERIC_READ,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE |
+                                FILE_SHARE_DELETE,
+                            nullptr, OPEN_EXISTING,
+                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+                            nullptr)};
+  if (file.value == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+  BCRYPT_ALG_HANDLE algorithm = nullptr;
+  BCRYPT_HASH_HANDLE hash = nullptr;
+  DWORD object_bytes = 0;
+  DWORD returned = 0;
+  std::vector<unsigned char> hash_object;
+  std::array<unsigned char, 65536> buffer{};
+  bool ok = BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM,
+                                        nullptr, 0) == 0;
+  if (ok) {
+    ok = BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH,
+                           reinterpret_cast<unsigned char*>(&object_bytes),
+                           sizeof(object_bytes), &returned, 0) == 0 &&
+         returned == sizeof(object_bytes) && object_bytes > 0;
+  }
+  if (ok) {
+    hash_object.resize(object_bytes);
+    ok = BCryptCreateHash(algorithm, &hash, hash_object.data(), object_bytes,
+                          nullptr, 0, 0) == 0;
+  }
+  while (ok) {
+    DWORD read = 0;
+    if (!ReadFile(file.value, buffer.data(),
+                  static_cast<DWORD>(buffer.size()), &read, nullptr)) {
+      ok = false;
+      break;
+    }
+    if (read == 0) {
+      break;
+    }
+    ok = BCryptHashData(hash, buffer.data(), read, 0) == 0;
+  }
+  if (ok) {
+    ok = BCryptFinishHash(hash, output.data(),
+                          static_cast<ULONG>(output.size()), 0) == 0;
+  }
+  SecureZeroMemory(buffer.data(), buffer.size());
+  if (!hash_object.empty()) {
+    SecureZeroMemory(hash_object.data(), hash_object.size());
+  }
+  if (hash != nullptr) {
+    BCryptDestroyHash(hash);
+  }
+  if (algorithm != nullptr) {
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+  }
+  return ok;
+}
+
+bool HashMatchesV1(const wchar_t* path, const char* expected_lower_hex) {
+  if (expected_lower_hex == nullptr || strlen(expected_lower_hex) != 64) {
+    return false;
+  }
+  std::array<unsigned char, 32> digest{};
+  if (!Sha256FileV1(path, digest)) {
+    return false;
+  }
+  static constexpr char hex[] = "0123456789abcdef";
+  std::array<char, 65> observed{};
+  for (std::size_t index = 0; index < digest.size(); ++index) {
+    observed[index * 2] = hex[digest[index] >> 4];
+    observed[index * 2 + 1] = hex[digest[index] & 0x0f];
+  }
+  bool matches = memcmp(observed.data(), expected_lower_hex, 64) == 0;
+  SecureZeroMemory(digest.data(), digest.size());
+  SecureZeroMemory(observed.data(), observed.size());
+  return matches;
+}
+
+bool ExactPinnedVersionV1(const wchar_t* path) {
+  DWORD ignored = 0;
+  DWORD bytes = GetFileVersionInfoSizeW(path, &ignored);
+  if (bytes == 0 || bytes > 1048576) {
+    return false;
+  }
+  std::vector<unsigned char> buffer(bytes);
+  if (!GetFileVersionInfoW(path, 0, bytes, buffer.data())) {
+    return false;
+  }
+  VS_FIXEDFILEINFO* info = nullptr;
+  UINT info_bytes = 0;
+  if (!VerQueryValueW(buffer.data(), L"\\",
+                      reinterpret_cast<void**>(&info), &info_bytes) ||
+      info == nullptr || info_bytes != sizeof(VS_FIXEDFILEINFO) ||
+      info->dwSignature != VS_FFI_SIGNATURE) {
+    return false;
+  }
+  return HIWORD(info->dwFileVersionMS) == 3 &&
+         LOWORD(info->dwFileVersionMS) == 4 &&
+         HIWORD(info->dwFileVersionLS) == 158 &&
+         LOWORD(info->dwFileVersionLS) == 4691 &&
+         HIWORD(info->dwProductVersionMS) == 3 &&
+         LOWORD(info->dwProductVersionMS) == 4 &&
+         HIWORD(info->dwProductVersionLS) == 158 &&
+         LOWORD(info->dwProductVersionLS) == 4691;
+}
+
+bool AuthenticodeValidV1(const wchar_t* path) {
+  WINTRUST_FILE_INFO file_info{};
+  file_info.cbStruct = sizeof(file_info);
+  file_info.pcwszFilePath = path;
+  WINTRUST_DATA trust{};
+  trust.cbStruct = sizeof(trust);
+  trust.dwUIChoice = WTD_UI_NONE;
+  trust.fdwRevocationChecks = WTD_REVOKE_NONE;
+  trust.dwUnionChoice = WTD_CHOICE_FILE;
+  trust.pFile = &file_info;
+  trust.dwStateAction = WTD_STATEACTION_VERIFY;
+  trust.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;
+  trust.dwUIContext = WTD_UICONTEXT_EXECUTE;
+  GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+  LONG status = WinVerifyTrust(nullptr, &action, &trust);
+  trust.dwStateAction = WTD_STATEACTION_CLOSE;
+  LONG close_status = WinVerifyTrust(nullptr, &action, &trust);
+  return status == ERROR_SUCCESS && close_status == ERROR_SUCCESS;
+}
+
+bool JoinSiblingPathV1(const wchar_t* image_path, const wchar_t* file_name,
+                       std::wstring& output) {
+  const wchar_t* separator = wcsrchr(image_path, L'\\');
+  if (separator == nullptr || separator == image_path) {
+    return false;
+  }
+  output.assign(image_path,
+                static_cast<std::size_t>(separator - image_path) + 1);
+  output.append(file_name);
+  return output.size() < kMaximumPathCharacters &&
+         IsAbsoluteExistingFileV1(output.c_str());
+}
+
+bool ExactLiveMtgoIdentityV1(HANDLE process, DWORD process_id,
+                             const wchar_t* bootstrap_path,
+                             const wchar_t* producer_path,
+                             std::uint64_t& process_start_time) {
+  if (!ExactlyOneMtgoProcessV1(process_id) ||
+      !IsNativeX64TargetWithExactFileNameV1(process) ||
+      !ProcessStartTimeV1(process, process_start_time)) {
+    return false;
+  }
+  wchar_t image_path[kMaximumPathCharacters] = {};
+  DWORD length = static_cast<DWORD>(std::size(image_path));
+  if (!QueryFullProcessImageNameW(process, 0, image_path, &length) ||
+      length == 0 || length >= std::size(image_path) ||
+      !IsAbsoluteExistingFileV1(image_path) ||
+      !ExactPinnedVersionV1(image_path) ||
+      !AuthenticodeValidV1(image_path) ||
+      !HashMatchesV1(image_path, kExpectedMtgoSha256) ||
+      !HashMatchesV1(bootstrap_path, kExpectedBootstrapSha256) ||
+      !HashMatchesV1(producer_path, kExpectedProducerSha256)) {
+    return false;
+  }
+  std::wstring duel_scene;
+  std::wstring card;
+  return JoinSiblingPathV1(image_path, L"DuelScene.dll", duel_scene) &&
+         JoinSiblingPathV1(image_path, L"Card.dll", card) &&
+         HashMatchesV1(duel_scene.c_str(), kExpectedDuelSceneSha256) &&
+         HashMatchesV1(card.c_str(), kExpectedCardSha256);
+}
+#endif
 
 bool MakeChannelNameV1(std::wstring& output) {
   std::array<unsigned char, 32> random_bytes{};
@@ -233,10 +468,19 @@ int wmain(int argc, wchar_t** argv) {
     UnmapViewOfFile(channel_view);
     return FailV1("process_open");
   }
-  if (!IsExactSyntheticTargetV1(process.value)) {
+#ifndef MTGO_LIVE_PINNED_V1
+  if (!IsNativeX64TargetWithExactFileNameV1(process.value)) {
     UnmapViewOfFile(channel_view);
     return FailV1("target_not_synthetic_host");
   }
+#else
+  std::uint64_t pre_process_start_time = 0;
+  if (!ExactLiveMtgoIdentityV1(process.value, process_id, argv[4], argv[6],
+                               pre_process_start_time)) {
+    UnmapViewOfFile(channel_view);
+    return FailV1("live_identity_pre");
+  }
+#endif
 
   std::size_t bootstrap_path_bytes =
       (wcslen(argv[4]) + 1) * sizeof(wchar_t);
@@ -318,6 +562,17 @@ int wmain(int argc, wchar_t** argv) {
     UnmapViewOfFile(channel_view);
     return FailV1("producer_invoke");
   }
+
+#ifdef MTGO_LIVE_PINNED_V1
+  std::uint64_t post_process_start_time = 0;
+  if (!ExactLiveMtgoIdentityV1(process.value, process_id, argv[4], argv[6],
+                               post_process_start_time) ||
+      post_process_start_time != pre_process_start_time) {
+    SecureZeroMemory(channel_view, kOutputBytes);
+    UnmapViewOfFile(channel_view);
+    return FailV1("live_identity_post");
+  }
+#endif
 
   MemoryBarrier();
   const auto* header = static_cast<const std::uint32_t*>(channel_view);
