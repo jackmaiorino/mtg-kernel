@@ -2,7 +2,7 @@ use crate::actuator::{
     advance_competitive_direct_visible_gameplay_session_v1,
     advance_competitive_event_monitor_in_runtime_v1, advance_competitive_event_runtime_observed_v1,
     advance_competitive_player_visible_gameplay_session_v1,
-    attach_competitive_event_monitor_to_runtime_v1,
+    attach_competitive_event_monitor_to_runtime_v1, begin_competitive_gesture_game_session_v1,
     bind_competitive_duel_gesture_sequence_session_v1,
     bind_competitive_event_native_sideboard_request_v1,
     bind_competitive_event_pregame_native_request_v1,
@@ -21,6 +21,7 @@ use crate::actuator::{
     prepare_competitive_event_runtime_lifecycle_control_v1,
     prepare_fresh_competitive_event_pregame_action_v1,
     ratify_competitive_event_match_launch_with_visible_identity_attended_v1,
+    ratify_competitive_gesture_match_launch_attended_v1,
     release_confirmed_competitive_player_visible_gameplay_primitive_v1,
     release_confirmed_direct_visible_input_pending_v1,
     return_competitive_event_gameplay_session_v1,
@@ -40,7 +41,8 @@ use crate::actuator::{
     OpaqueMtgoPendingCompetitivePregameInputV1,
     OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1,
     OpaqueMtgoPreparedCompetitivePregameActionV1, OpaqueMtgoSessionBoundCompetitiveDuelGestureV1,
-    RatifiedMtgoCompetitiveMatchLaunchV1, RatifiedMtgoCompetitivePregameAuthorizationV1,
+    RatifiedMtgoCompetitiveDuelGestureAuthorizationV1, RatifiedMtgoCompetitiveMatchLaunchV1,
+    RatifiedMtgoCompetitivePregameAuthorizationV1,
 };
 use crate::competitive_auxiliary_action_resolution::{
     resolve_checked_untrusted_competitive_native_pregame_selection_v1,
@@ -65,8 +67,14 @@ use crate::competitive_pregame_policy::{
     operator_pregame_resource_commitments_v1, AdmittedMtgoCompetitivePregameHeuristicV1,
     MtgoCompetitiveOperatorPregameResourceCommitmentsV1,
 };
-use crate::competitive_visible_match_memory::MtgoCompetitiveExternalPublicHistoryConsumerV1;
 use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveCompletedMatchHistoryV1;
+use crate::competitive_visible_match_memory::{
+    append_competitive_completed_match_history_v1, begin_competitive_completed_match_history_v1,
+    bind_optional_match_scoped_competitive_player_visible_game_memory_v1,
+    visit_empty_external_completed_match_history_v1,
+    MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
+    MtgoCompetitiveExternalPublicHistoryConsumerV1,
+};
 use crate::probe::{
     advance_opaque_player_visible_duel_gesture_target_v1,
     begin_competitive_match_visible_game_log_action_baseline_v1,
@@ -84,6 +92,7 @@ use crate::probe::{
     prepare_opaque_player_visible_duel_gesture_pointer_v1,
     prepare_opaque_player_visible_gameplay_before_input_v1,
     rebind_opaque_player_visible_duel_gesture_target_v1,
+    refresh_competitive_match_visible_game_log_snapshot_v1,
     refresh_competitive_match_visible_game_log_v1,
     refresh_ratified_attested_direct_visible_selection_v1,
     require_ratified_direct_visible_source_qualification_v1,
@@ -559,6 +568,227 @@ impl OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
 pub enum MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1 {
     ReadyToDispatch(Box<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1>),
     Abstained(Box<OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1>),
+}
+
+/// Attended-game counterpart that retains every earlier completed game across
+/// either a ready current action or a sanitized observer abstention.
+pub enum MtgoCompetitiveOperatorAttendedDirectVisibleGameplaySelectionV1 {
+    ReadyToDispatch(Box<OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1>),
+    Abstained(Box<OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleAbstainedV1>),
+}
+
+pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1 {
+    direct: OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+}
+
+pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisiblePendingV1 {
+    pending: OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+}
+
+impl OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1 {
+    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        self.direct.selected_action_v1()
+    }
+
+    pub fn completed_game_count_v1(&self) -> usize {
+        self.completed_match_history.as_ref().map_or(
+            0,
+            OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1,
+        )
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+}
+
+pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleAbstainedV1 {
+    owner: OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+}
+
+impl OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleAbstainedV1 {
+    pub fn reason_v1(&self) -> mtgo_blackbox_v1::MtgoVisibleDuelViewModelBrokerAbstentionReasonV1 {
+        self.owner.reason_v1()
+    }
+
+    pub fn completed_game_count_v1(&self) -> usize {
+        self.completed_match_history.as_ref().map_or(
+            0,
+            OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1,
+        )
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Move-only attended result after the current game has one terminal visible
+/// winner and its gameplay lease has returned to the event operator. The
+/// complete best-of-three prefix stays joined for sideboarding and the next
+/// pregame.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1;
+/// let _forged = OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1 {};
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1 {
+    operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
+    completed_match_history: OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
+}
+
+pub struct OpaqueMtgoCompetitiveOperatorVisibleSideboardingV1 {
+    operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
+    completed_match_history: OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
+}
+
+/// Move-only terminal-match owner. It retains the exact event runtime and the
+/// visible history through the final game, but exposes neither that history
+/// nor any lifecycle or input primitive. A later terminal event-record seam
+/// may consume it.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1 {
+    operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
+    _completed_prior_games: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+    _final_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    _final_confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+}
+
+impl OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1 {
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub fn ready_for_terminal_lifecycle_observation_v1(&self) -> bool {
+        true
+    }
+}
+
+impl OpaqueMtgoCompetitiveOperatorVisibleSideboardingV1 {
+    pub fn completed_game_count_v1(&self) -> usize {
+        self.completed_match_history.completed_game_count_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+}
+
+impl OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1 {
+    pub fn completed_game_count_v1(&self) -> usize {
+        self.completed_match_history.completed_game_count_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Applies a strictly newer visible lifecycle result to game one or game two,
+/// then advances the retained Game Log lease into the exact next-game
+/// baseline. A 2-0 match result is rejected here and must use the separate
+/// terminal-match path.
+pub fn advance_competitive_operator_completed_visible_game_to_sideboard_v1(
+    value: OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1,
+    next: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorVisibleSideboardingV1, String> {
+    let OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1 {
+        operator,
+        completed_match_history,
+    } = value;
+    let completed_game_number = completed_match_history.completed_game_count_v1();
+    if !(1..=2).contains(&completed_game_number) {
+        return Err("sideboarding requires one or two completed visible games".to_owned());
+    }
+    let (acting_player_wins, opponent_wins) =
+        completed_match_history.player_relative_win_counts_v1()?;
+    validate_completed_visible_score_allows_sideboarding_v1(
+        completed_game_number,
+        acting_player_wins,
+        opponent_wins,
+    )?;
+    let OpaqueMtgoCompetitivePostEntryOperatorV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        visible_game_log_baseline,
+        commitments,
+    } = operator;
+    if visible_game_log_baseline.is_some() {
+        return Err(
+            "completed gameplay unexpectedly retained a next-game Game Log baseline".to_owned(),
+        );
+    }
+    let runtime = advance_competitive_event_runtime_observed_v1(
+        runtime,
+        MtgoObservedCompetitiveLifecycleAdvanceV1::GameEndedForSideboarding,
+        next,
+    )?;
+    let runtime_commitments = runtime.commitments_v1();
+    if runtime_commitments.current_phase != MtgoCompetitiveLifecyclePhaseV1::Sideboarding
+        || runtime_commitments.current_game_number != u8::try_from(completed_game_number).ok()
+    {
+        return Err("completed visible game did not enter its exact Sideboarding state".to_owned());
+    }
+    let latest = completed_match_history.latest_lineage_v1()?;
+    if latest.event_kind != runtime_commitments.event_kind
+        || latest.event_identity_sha256 != runtime_commitments.bound_event_identity_sha256
+        || runtime_commitments.current_match_identity_sha256.as_deref()
+            != Some(latest.match_identity_sha256)
+        || usize::from(latest.game_number) != completed_game_number
+    {
+        return Err(
+            "completed visible history changed event, match, or game at Sideboarding".to_owned(),
+        );
+    }
+    let (completed_match_history, next_baseline) =
+        completed_match_history.advance_next_game_log_baseline_v1(&runtime)?;
+    let operator = advance_operator_v1(
+        resources,
+        resource_commitments,
+        runtime,
+        Some(next_baseline),
+        commitments,
+    )?;
+    Ok(OpaqueMtgoCompetitiveOperatorVisibleSideboardingV1 {
+        operator,
+        completed_match_history,
+    })
+}
+
+pub fn checkout_competitive_operator_visible_native_sideboard_v1(
+    value: OpaqueMtgoCompetitiveOperatorVisibleSideboardingV1,
+    classifier_timeout_ms: u32,
+) -> Result<OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1, String> {
+    let OpaqueMtgoCompetitiveOperatorVisibleSideboardingV1 {
+        operator,
+        completed_match_history,
+    } = value;
+    checkout_competitive_post_entry_operator_native_sideboard_v1(
+        operator,
+        completed_match_history,
+        classifier_timeout_ms,
+    )
 }
 
 /// Move-only player-visible gameplay selection for one exact League or
@@ -1268,23 +1498,61 @@ impl OpaqueMtgoCompetitiveOperatorPregameCompletedV1 {
     pub fn visible_game_log_snapshot_commitment_sha256_v1(&self) -> &str {
         self.visible_game_log.snapshot_commitment_sha256_v1()
     }
+}
 
-    pub fn into_parts_v1(
-        self,
-    ) -> (
-        OpaqueMtgoCompetitivePostEntryOperatorV1,
-        RatifiedMtgoCompetitiveMatchLaunchV1,
-        OpaqueMtgoCompetitiveLaunchIdentityV1,
-        OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
-        Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
-    ) {
-        (
-            self.operator,
-            self.match_launch,
-            self.visible_identity,
-            self.visible_game_log,
-            self.completed_match_history,
+/// Move-only attended owner for the transition from a visibly completed
+/// pregame into one exact League or Challenge gameplay session. Earlier-game
+/// public history remains sealed inside the owner for game two or three and
+/// cannot be accidentally dropped while selecting current-game actions.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorAttendedGameplayV1;
+/// let _forged = OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorAttendedGameplayV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorAttendedGameplayV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+}
+
+impl OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+    pub fn game_number_v1(&self) -> u8 {
+        self.session.commitments_v1().game_number
+    }
+
+    pub fn completed_game_count_v1(&self) -> usize {
+        self.completed_match_history.as_ref().map_or(
+            0,
+            OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1,
         )
+    }
+
+    pub fn confirmed_action_count_v1(&self) -> usize {
+        self.confirmed_history.as_ref().map_or(
+            0,
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::decision_count_v1,
+        )
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
     }
 }
 
@@ -1478,6 +1746,7 @@ pub struct OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1 {
     resources: MtgoCompetitiveOperatorResourcesDuringSideboardV1,
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     request: OpaqueMtgoCompetitiveNativeSideboardRequestV1,
+    next_game_log_baseline: OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 }
 
@@ -1522,6 +1791,7 @@ pub struct OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
     resources: MtgoCompetitiveOperatorResourcesDuringSideboardV1,
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     scored_request: OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
+    next_game_log_baseline: OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 }
 
@@ -1547,6 +1817,7 @@ pub struct OpaqueMtgoResolvedCompetitiveOperatorNativeSideboardV1 {
     _resources: MtgoCompetitiveOperatorResourcesDuringSideboardV1,
     _resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     _scored_request: OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
+    _next_game_log_baseline: OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
     resolution: CheckedUntrustedMtgoCompetitiveSideboardSemanticResolutionV1,
     operator_resolution_commitment_sha256: String,
     _prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
@@ -2420,6 +2691,52 @@ pub fn complete_competitive_operator_attended_heuristic_pregame_v1(
     })
 }
 
+/// Extends the exact attended match launch to the reviewed all-family gesture
+/// authority, begins its move-only session, and checks the post-entry runtime
+/// into gameplay while retaining the source-bound launch, current visible
+/// Game Log, and every completed earlier game. The existing gesture extension
+/// performs its own interactive exact-game confirmation. This function sends
+/// no MTGO input.
+pub fn begin_competitive_operator_attended_gameplay_v1(
+    value: OpaqueMtgoCompetitiveOperatorPregameCompletedV1,
+    gesture_authorization: RatifiedMtgoCompetitiveDuelGestureAuthorizationV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedGameplayV1, String> {
+    let OpaqueMtgoCompetitiveOperatorPregameCompletedV1 {
+        operator,
+        match_launch,
+        visible_identity,
+        visible_game_log,
+        completed_match_history,
+    } = value;
+    let game_number = match_launch.game_number_v1();
+    validate_operator_completed_history_count_v1(
+        game_number,
+        completed_match_history
+            .as_ref()
+            .map(OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1),
+    )?;
+    let gesture_launch =
+        ratify_competitive_gesture_match_launch_attended_v1(gesture_authorization, match_launch)?;
+    let session = begin_competitive_gesture_game_session_v1(gesture_launch)?;
+    let (lease, session) = checkout_competitive_post_entry_operator_gameplay_v1(operator, session)?;
+    validate_operator_visible_game_log_lineage_v1(&lease, &visible_identity, &visible_game_log)?;
+    validate_operator_direct_visible_selection_owner_v1(
+        &lease,
+        &session,
+        &visible_identity,
+        &visible_game_log,
+        None,
+    )?;
+    Ok(OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        completed_match_history,
+        confirmed_history: None,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn validate_operator_attended_heuristic_pregame_owner_v1(
     resources: &MtgoCompetitiveOperatorResourceCommitmentsV1,
@@ -2809,7 +3126,7 @@ pub fn refresh_resolved_competitive_operator_attended_pregame_visible_game_log_v
 /// consumed here, but changed-sideboard drag authorization is deliberately not
 /// required before the model chooses a target. This parses retained visible
 /// pixels but performs no capture, scoring, drag, submission, or other input.
-pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
+pub(crate) fn checkout_competitive_post_entry_operator_native_sideboard_v1(
     operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
     completed_history: OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
     classifier_timeout_ms: u32,
@@ -2872,9 +3189,20 @@ pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
         resources,
         resource_commitments,
         runtime,
-        visible_game_log_baseline: _,
+        visible_game_log_baseline,
         commitments,
     } = operator;
+    let next_game_log_baseline = visible_game_log_baseline
+        .ok_or("competitive sideboard checkout lost its next-game Game Log baseline")?;
+    if next_game_log_baseline.next_game_number_v1()
+        != route_game_number
+            .checked_add(1)
+            .ok_or("competitive sideboard next game number overflow")?
+    {
+        return Err(
+            "competitive sideboard Game Log baseline targets the wrong next game".to_owned(),
+        );
+    }
     let (deck_manifest, sideboard_evaluation, resources) =
         resources.into_sideboard_model_parts_v1()?;
     let measurement = measure_competitive_event_runtime_sideboard_v1(
@@ -2894,6 +3222,7 @@ pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
         resources,
         resource_commitments,
         request,
+        next_game_log_baseline,
         prior_operator: commitments,
     })
 }
@@ -2928,6 +3257,7 @@ pub fn score_checked_untrusted_competitive_operator_native_sideboard_v1<
         resources,
         resource_commitments,
         request,
+        next_game_log_baseline,
         prior_operator,
     } = value;
     let scored_request = score_checked_untrusted_competitive_native_sideboard_request_v1(
@@ -2939,6 +3269,7 @@ pub fn score_checked_untrusted_competitive_operator_native_sideboard_v1<
         resources,
         resource_commitments,
         scored_request,
+        next_game_log_baseline,
         prior_operator,
     })
 }
@@ -2953,6 +3284,7 @@ pub fn resolve_checked_untrusted_competitive_operator_native_sideboard_v1(
         resources,
         resource_commitments,
         scored_request,
+        next_game_log_baseline,
         prior_operator,
     } = value;
     let source_request = scored_request.source_request_v1();
@@ -2983,6 +3315,7 @@ pub fn resolve_checked_untrusted_competitive_operator_native_sideboard_v1(
         _resources: resources,
         _resource_commitments: resource_commitments,
         _scored_request: scored_request,
+        _next_game_log_baseline: next_game_log_baseline,
         resolution,
         operator_resolution_commitment_sha256,
         _prior_operator: prior_operator,
@@ -3354,6 +3687,127 @@ where
     })
 }
 
+/// Runs one current-game direct visible selection while retaining every
+/// earlier completed game. The scorer receives the earlier best-of-three
+/// prefix first through its completed-history visitor and then the current
+/// game's two ordered visible streams through the ordinary history visitor.
+#[allow(clippy::too_many_arguments)]
+pub fn select_competitive_operator_attended_direct_visible_gameplay_action_v1<S>(
+    owner: OpaqueMtgoCompetitiveOperatorAttendedGameplayV1,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+    direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    reviewed_qualification_commitment_sha256: &str,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+    scorer: &mut S,
+) -> Result<MtgoCompetitiveOperatorAttendedDirectVisibleGameplaySelectionV1, String>
+where
+    S: MtgoPlayerVisibleDuelScorerV1
+        + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>
+        + MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1<Output = ()>,
+{
+    let OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        completed_match_history,
+        confirmed_history,
+    } = owner;
+    validate_operator_completed_history_count_v1(
+        session.commitments_v1().game_number,
+        completed_match_history
+            .as_ref()
+            .map(OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1),
+    )?;
+    match completed_match_history.as_ref() {
+        Some(history) => history
+            .visit_external_completed_match_history_v1(scorer)
+            .map_err(|error| format!("import earlier completed visible games: {error}"))?,
+        None => visit_empty_external_completed_match_history_v1(scorer)
+            .map_err(|error| format!("reset completed visible games for game one: {error}"))?,
+    };
+    let selected = select_competitive_post_entry_operator_direct_visible_gameplay_action_v1(
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        visible_game_log_capture_request,
+        direct_source_runtime,
+        reviewed_qualification_commitment_sha256,
+        capture_timeout_ms,
+        broker_timeout_ms,
+        scorer,
+    )?;
+    Ok(match selected {
+        MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1::ReadyToDispatch(direct) => {
+            MtgoCompetitiveOperatorAttendedDirectVisibleGameplaySelectionV1::ReadyToDispatch(
+                Box::new(
+                    OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1 {
+                        direct: *direct,
+                        completed_match_history,
+                    },
+                ),
+            )
+        }
+        MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1::Abstained(owner) => {
+            MtgoCompetitiveOperatorAttendedDirectVisibleGameplaySelectionV1::Abstained(Box::new(
+                OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleAbstainedV1 {
+                    owner: *owner,
+                    completed_match_history,
+                },
+            ))
+        }
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn retry_competitive_operator_attended_direct_visible_gameplay_action_v1<S>(
+    value: OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleAbstainedV1,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+    direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    reviewed_qualification_commitment_sha256: &str,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+    scorer: &mut S,
+) -> Result<MtgoCompetitiveOperatorAttendedDirectVisibleGameplaySelectionV1, String>
+where
+    S: MtgoPlayerVisibleDuelScorerV1
+        + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>
+        + MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1<Output = ()>,
+{
+    let OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleAbstainedV1 {
+        owner,
+        completed_match_history,
+    } = value;
+    let OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        _scored: _,
+        reason: _,
+    } = owner;
+    select_competitive_operator_attended_direct_visible_gameplay_action_v1(
+        OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+            lease,
+            session,
+            visible_identity,
+            visible_game_log,
+            completed_match_history,
+            confirmed_history,
+        },
+        visible_game_log_capture_request,
+        direct_source_runtime,
+        reviewed_qualification_commitment_sha256,
+        capture_timeout_ms,
+        broker_timeout_ms,
+        scorer,
+    )
+}
+
 /// Repeats a direct-source selection after a sanitized observer abstention.
 /// The exact attended-game owner is preserved and no action can occur unless
 /// a new complete decision passes the full score, refresh, and pixel join.
@@ -3635,6 +4089,32 @@ pub fn execute_competitive_post_entry_operator_direct_visible_action_v1(
     })
 }
 
+/// Attended owner-preserving wrapper for the separately ratified sealed
+/// direct dispatch. Earlier-game history never enters the producer or broker.
+pub fn execute_competitive_operator_attended_direct_visible_action_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1,
+    runtime: &OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
+    reviewed_dispatch_runtime_commitment_sha256: &str,
+    broker_timeout_ms: u32,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedDirectVisiblePendingV1, String> {
+    let OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1 {
+        direct,
+        completed_match_history,
+    } = value;
+    let pending = execute_competitive_post_entry_operator_direct_visible_action_v1(
+        direct,
+        runtime,
+        reviewed_dispatch_runtime_commitment_sha256,
+        broker_timeout_ms,
+    )?;
+    Ok(
+        OpaqueMtgoCompetitiveOperatorAttendedDirectVisiblePendingV1 {
+            pending,
+            completed_match_history,
+        },
+    )
+}
+
 /// Refreshes the visible Game Log and captures a strictly newer composed duel
 /// frame. Only after the fixed player-visible regions change does it advance
 /// the exact-game session, append sanitized visible history, and reopen the
@@ -3699,6 +4179,215 @@ pub fn confirm_competitive_post_entry_operator_direct_visible_action_v1(
             confirmation_commitment_sha256,
         },
     )
+}
+
+/// Confirms one exact direct action while carrying the complete earlier-game
+/// history into the next current-game selection owner.
+pub fn confirm_competitive_operator_attended_direct_visible_action_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedDirectVisiblePendingV1,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+    capture_timeout_ms: u32,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedGameplayV1, String> {
+    let OpaqueMtgoCompetitiveOperatorAttendedDirectVisiblePendingV1 {
+        pending,
+        completed_match_history,
+    } = value;
+    let confirmed = confirm_competitive_post_entry_operator_direct_visible_action_v1(
+        pending,
+        visible_game_log_capture_request,
+        capture_timeout_ms,
+    )?;
+    let OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayConfirmedV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        confirmation_commitment_sha256: _,
+    } = confirmed;
+    validate_operator_completed_history_count_v1(
+        session.commitments_v1().game_number,
+        completed_match_history
+            .as_ref()
+            .map(OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1),
+    )?;
+    Ok(OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        completed_match_history,
+        confirmed_history: Some(confirmed_history),
+    })
+}
+
+/// Refreshes only the current game's retained visible Game Log while keeping
+/// the gameplay lease, exact-game gesture session, earlier completed games,
+/// and confirmed model-decision history sealed in the same owner. It performs
+/// no scoring or input and is the required terminal observation path when the
+/// opponent or automatic game resolution acts after our last input.
+pub fn refresh_competitive_operator_attended_gameplay_visible_game_log_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedGameplayV1,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedGameplayV1, String> {
+    validate_operator_attended_gameplay_owner_v1(&value)?;
+    let OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        completed_match_history,
+        confirmed_history,
+    } = value;
+    validate_operator_completed_history_count_v1(
+        session.commitments_v1().game_number,
+        completed_match_history
+            .as_ref()
+            .map(OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1),
+    )?;
+    let visible_game_log = refresh_competitive_match_visible_game_log_snapshot_v1(
+        visible_game_log,
+        &visible_identity,
+        visible_game_log_capture_request,
+    )?;
+    validate_operator_visible_game_log_lineage_v1(&lease, &visible_identity, &visible_game_log)?;
+    Ok(OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        completed_match_history,
+        confirmed_history,
+    })
+}
+
+/// Closes exact game one or game two after its terminal visible winner is
+/// present, returns the gameplay session to the event operator, and appends
+/// the complete current public history for the following sideboard. Match
+/// terminal game three uses a distinct terminal-match seam.
+pub fn complete_competitive_operator_attended_visible_game_for_sideboard_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedGameplayV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1, String> {
+    validate_operator_attended_gameplay_owner_v1(&value)?;
+    let OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+        lease,
+        session,
+        visible_identity: _,
+        visible_game_log,
+        completed_match_history,
+        confirmed_history,
+    } = value;
+    let game_number = session.commitments_v1().game_number;
+    validate_operator_completed_history_count_v1(
+        game_number,
+        completed_match_history
+            .as_ref()
+            .map(OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1),
+    )?;
+    let policy_deployment_commitment_sha256 = session
+        .commitments_v1()
+        .policy_deployment_commitment_sha256
+        .ok_or("completed visible game lacks its exact model deployment")?;
+    let memory = bind_optional_match_scoped_competitive_player_visible_game_memory_v1(
+        visible_game_log,
+        confirmed_history,
+        &policy_deployment_commitment_sha256,
+    )?;
+    let outcome = memory.into_visible_game_outcome_v1()?;
+    let completed_match_history = match completed_match_history {
+        Some(history) => append_competitive_completed_match_history_v1(history, outcome)?,
+        None => begin_competitive_completed_match_history_v1(outcome)?,
+    };
+    if completed_match_history.completed_game_count_v1() != usize::from(game_number) {
+        return Err("completed visible game history lost exact game order".to_owned());
+    }
+    let operator = return_competitive_post_entry_operator_gameplay_v1(lease, session)?;
+    Ok(OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1 {
+        operator,
+        completed_match_history,
+    })
+}
+
+/// Closes a visibly terminal 2-0 or game-three match without converting its
+/// history to another sideboard prefix. The exact runtime can continue only
+/// through a later terminal lifecycle and event-record observer.
+pub fn complete_competitive_operator_attended_visible_match_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedGameplayV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1, String> {
+    validate_operator_attended_gameplay_owner_v1(&value)?;
+    let OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+        lease,
+        session,
+        visible_identity: _,
+        visible_game_log,
+        completed_match_history,
+        confirmed_history,
+    } = value;
+    let game_number = session.commitments_v1().game_number;
+    validate_operator_completed_history_count_v1(
+        game_number,
+        completed_match_history
+            .as_ref()
+            .map(OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1),
+    )?;
+    let prior_score = match completed_match_history.as_ref() {
+        Some(history) => history.player_relative_win_counts_v1()?,
+        None => (0, 0),
+    };
+    validate_terminal_visible_match_shape_v1(game_number, prior_score.0, prior_score.1)?;
+    let terminal_winner = validate_visible_match_terminal_events_v1(&visible_game_log)?;
+    validate_terminal_visible_match_winner_against_prefix_v1(
+        game_number,
+        prior_score.0,
+        prior_score.1,
+        terminal_winner,
+    )?;
+    let operator = return_competitive_post_entry_operator_gameplay_v1(lease, session)?;
+    Ok(OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1 {
+        operator,
+        _completed_prior_games: completed_match_history,
+        _final_game_log: visible_game_log,
+        _final_confirmed_history: confirmed_history,
+    })
+}
+
+/// Applies the strictly newer visible MatchEnded transition and returns the
+/// ordinary post-entry operator at MatchComplete. It still cannot press the
+/// continue button or enter another event.
+pub fn advance_competitive_operator_completed_visible_match_v1(
+    value: OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1,
+    next: OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+) -> Result<OpaqueMtgoCompetitivePostEntryOperatorV1, String> {
+    let OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1 {
+        operator,
+        _completed_prior_games: _,
+        _final_game_log: _,
+        _final_confirmed_history: _,
+    } = value;
+    let OpaqueMtgoCompetitivePostEntryOperatorV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        visible_game_log_baseline,
+        commitments,
+    } = operator;
+    if visible_game_log_baseline.is_some() {
+        return Err(
+            "completed match unexpectedly retained a next-game Game Log baseline".to_owned(),
+        );
+    }
+    let runtime = advance_competitive_event_runtime_observed_v1(
+        runtime,
+        MtgoObservedCompetitiveLifecycleAdvanceV1::MatchEnded,
+        next,
+    )?;
+    let current = runtime.commitments_v1();
+    if current.current_phase != MtgoCompetitiveLifecyclePhaseV1::MatchComplete
+        || current.current_game_number.is_some()
+    {
+        return Err("completed visible match did not enter MatchComplete".to_owned());
+    }
+    advance_operator_v1(resources, resource_commitments, runtime, None, commitments)
 }
 
 fn next_direct_visible_frame_sequence_v1(
@@ -4537,6 +5226,89 @@ fn validate_operator_direct_visible_selection_owner_v1(
     validate_operator_visible_game_log_lineage_v1(lease, visible_identity, visible_game_log)
 }
 
+fn validate_operator_attended_gameplay_owner_v1(
+    value: &OpaqueMtgoCompetitiveOperatorAttendedGameplayV1,
+) -> Result<(), String> {
+    let lease = value.lease.lease.commitments_v1();
+    let session = value.session.commitments_v1();
+    let launch = value.visible_identity.commitments_v1();
+    let session_policy = session
+        .policy_deployment_commitment_sha256
+        .as_deref()
+        .ok_or("attended gameplay owner lacks a session-bound deployment")?;
+    validate_operator_completed_history_count_v1(
+        session.game_number,
+        value
+            .completed_match_history
+            .as_ref()
+            .map(OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1),
+    )?;
+    if value
+        .completed_match_history
+        .as_ref()
+        .is_some_and(|history| {
+            history.policy_deployment_commitment_sha256_v1().ok() != Some(session_policy)
+        })
+    {
+        return Err(
+            "attended gameplay completed history changed the exact model deployment".to_owned(),
+        );
+    }
+    if value
+        .lease
+        .resource_commitments
+        .policy_deployment_commitment_sha256
+        != session_policy
+        || value
+            .lease
+            .resources
+            .checkpoint_deployment
+            .deployment_commitment_sha256()
+            != session_policy
+        || lease.policy_deployment_commitment_sha256 != session_policy
+        || lease.event_kind != session.event_kind
+        || lease.game_number != session.game_number
+        || launch.event_kind != lease.event_kind
+        || launch.game_number != lease.game_number
+        || value.visible_identity.event_identity_sha256_v1() != lease.event_identity_sha256
+        || value.visible_identity.match_identity_sha256_v1() != lease.match_identity_sha256
+    {
+        return Err(
+            "attended gameplay owner changed deployment, resources, event, match, or game"
+                .to_owned(),
+        );
+    }
+    match value.confirmed_history.as_ref() {
+        Some(history) => {
+            if history.policy_deployment_commitment_sha256_v1() != session_policy
+                || history.event_kind_v1() != session.event_kind
+                || history.event_identity_sha256_v1() != lease.event_identity_sha256
+                || history.match_identity_sha256_v1() != lease.match_identity_sha256
+                || history.game_number_v1() != session.game_number
+                || u64::try_from(history.decision_count_v1()).ok()
+                    != Some(session.confirmed_action_count)
+            {
+                return Err(
+                    "attended gameplay decision history changed the exact session lineage"
+                        .to_owned(),
+                );
+            }
+        }
+        None if session.confirmed_action_count == 0 => {}
+        None => {
+            return Err(
+                "attended gameplay has confirmed actions but no visible decision history"
+                    .to_owned(),
+            )
+        }
+    }
+    validate_operator_visible_game_log_lineage_v1(
+        &value.lease,
+        &value.visible_identity,
+        &value.visible_game_log,
+    )
+}
+
 fn validate_operator_direct_visible_observation_freshness_v1(
     visible_game_log: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     observation: &OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
@@ -4562,6 +5334,169 @@ fn validate_operator_direct_visible_observation_times_v1(
         );
     }
     Ok(())
+}
+
+fn validate_operator_completed_history_count_v1(
+    game_number: u8,
+    completed_game_count: Option<usize>,
+) -> Result<(), String> {
+    let expected = game_number
+        .checked_sub(1)
+        .map(usize::from)
+        .ok_or("attended gameplay requires game number one through three")?;
+    if !(1..=3).contains(&game_number) || completed_game_count.unwrap_or(0) != expected {
+        return Err(
+            "attended gameplay must retain every earlier completed game and no future game"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_completed_visible_score_allows_sideboarding_v1(
+    completed_game_count: usize,
+    acting_player_wins: u8,
+    opponent_wins: u8,
+) -> Result<(), String> {
+    let total_wins = usize::from(acting_player_wins)
+        .checked_add(usize::from(opponent_wins))
+        .ok_or("completed visible match score overflow")?;
+    if !(1..=2).contains(&completed_game_count)
+        || total_wins != completed_game_count
+        || acting_player_wins >= 2
+        || opponent_wins >= 2
+    {
+        return Err(
+            "a visibly decided or inconsistent match cannot advance to Sideboarding".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_terminal_visible_match_shape_v1(
+    game_number: u8,
+    acting_player_prior_wins: u8,
+    opponent_prior_wins: u8,
+) -> Result<(), String> {
+    let prior_total = acting_player_prior_wins
+        .checked_add(opponent_prior_wins)
+        .ok_or("terminal visible match score overflow")?;
+    let expected_prior = game_number
+        .checked_sub(1)
+        .ok_or("terminal visible match game number underflow")?;
+    let terminal_shape = match game_number {
+        2 => {
+            expected_prior == 1
+                && prior_total == 1
+                && (acting_player_prior_wins == 1 || opponent_prior_wins == 1)
+        }
+        3 => acting_player_prior_wins == 1 && opponent_prior_wins == 1,
+        _ => false,
+    };
+    if !terminal_shape {
+        return Err(
+            "terminal visible match requires a possible 2-0 or game-three prefix".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_terminal_visible_match_winner_against_prefix_v1(
+    game_number: u8,
+    acting_player_prior_wins: u8,
+    opponent_prior_wins: u8,
+    terminal_winner: mtgo_blackbox_v1::MtgoVisibleGameLogPlayerRoleV1,
+) -> Result<(), String> {
+    if game_number == 2 {
+        let required = if acting_player_prior_wins == 1 && opponent_prior_wins == 0 {
+            mtgo_blackbox_v1::MtgoVisibleGameLogPlayerRoleV1::ActingPlayer
+        } else if acting_player_prior_wins == 0 && opponent_prior_wins == 1 {
+            mtgo_blackbox_v1::MtgoVisibleGameLogPlayerRoleV1::Opponent
+        } else {
+            return Err("game-two terminal match has an impossible prior score".to_owned());
+        };
+        if terminal_winner != required {
+            return Err("game-two visible match winner contradicts the game-one winner".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn validate_visible_match_terminal_events_v1(
+    game_log: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+) -> Result<mtgo_blackbox_v1::MtgoVisibleGameLogPlayerRoleV1, String> {
+    validate_visible_match_terminal_event_sequence_v1(
+        game_log.game_number_v1(),
+        (0..game_log.event_count_v1()).map(|index| {
+            let event = game_log
+                .event_v1(index)
+                .expect("visible Game Log event count and lookup are consistent");
+            (
+                event.kind_v1(),
+                event.actor_role_v1(),
+                event.primary_count_v1(),
+                event.secondary_count_v1(),
+            )
+        }),
+    )
+}
+
+fn validate_visible_match_terminal_event_sequence_v1(
+    game_number: u8,
+    events: impl IntoIterator<
+        Item = (
+            mtgo_blackbox_v1::MtgoVisibleGameLogEventKindV1,
+            Option<mtgo_blackbox_v1::MtgoVisibleGameLogPlayerRoleV1>,
+            Option<u8>,
+            Option<u8>,
+        ),
+    >,
+) -> Result<mtgo_blackbox_v1::MtgoVisibleGameLogPlayerRoleV1, String> {
+    let expected_loser_score = match game_number {
+        2 => 0,
+        3 => 1,
+        _ => return Err("terminal visible Game Log requires game two or three".to_owned()),
+    };
+    let mut game_winner = None;
+    let mut match_winner = None;
+    let mut match_terminal_seen = false;
+    for (kind, actor, primary_count, secondary_count) in events {
+        if match_terminal_seen {
+            return Err("terminal visible Game Log has events after the match winner".to_owned());
+        }
+        match kind {
+            mtgo_blackbox_v1::MtgoVisibleGameLogEventKindV1::WonGame => {
+                let actor = actor.ok_or("terminal visible Game Log game winner has no role")?;
+                if game_winner.replace(actor).is_some() {
+                    return Err(
+                        "terminal visible Game Log has more than one game winner".to_owned()
+                    );
+                }
+            }
+            mtgo_blackbox_v1::MtgoVisibleGameLogEventKindV1::WonMatch => {
+                let actor = actor.ok_or("terminal visible Game Log match winner has no role")?;
+                if match_winner.replace(actor).is_some()
+                    || primary_count != Some(2)
+                    || secondary_count != Some(expected_loser_score)
+                {
+                    return Err(
+                        "terminal visible Game Log has an invalid match winner or score".to_owned(),
+                    );
+                }
+                match_terminal_seen = true;
+            }
+            mtgo_blackbox_v1::MtgoVisibleGameLogEventKindV1::ForcedComplete => {
+                return Err("forced-complete match requires a separate terminal policy".to_owned())
+            }
+            _ => {}
+        }
+    }
+    if game_winner.is_none() || game_winner != match_winner {
+        return Err(
+            "terminal visible Game Log lacks one consistent game and match winner".to_owned(),
+        );
+    }
+    match_winner.ok_or_else(|| "terminal visible Game Log lacks its match winner".to_owned())
 }
 
 fn player_visible_history_id_v1(
@@ -4707,8 +5642,10 @@ fn advance_operator_v1(
     let visible_game_log_baseline_commitment_sha256 = visible_game_log_baseline
         .as_ref()
         .map(OpaqueMtgoCompetitiveVisibleGameLogBaselineV1::baseline_commitment_sha256_v1);
+    let runtime_commitments = runtime.commitments_v1();
     validate_visible_game_log_baseline_transition_v1(
         prior.current_phase,
+        runtime_commitments.current_phase,
         prior.visible_game_log_baseline_commitment_sha256.as_deref(),
         visible_game_log_baseline_commitment_sha256,
     )?;
@@ -4716,7 +5653,6 @@ fn advance_operator_v1(
         .accepted_transition_count
         .checked_add(1)
         .ok_or("competitive post-entry operator transition count overflow")?;
-    let runtime_commitments = runtime.commitments_v1();
     let commitments = post_entry_operator_commitments_v1(
         &resource_commitments,
         &runtime_commitments,
@@ -4736,6 +5672,7 @@ fn advance_operator_v1(
 
 fn validate_visible_game_log_baseline_transition_v1(
     prior_phase: MtgoCompetitiveLifecyclePhaseV1,
+    next_phase: MtgoCompetitiveLifecyclePhaseV1,
     prior_baseline_commitment_sha256: Option<&str>,
     next_baseline_commitment_sha256: Option<&str>,
 ) -> Result<(), String> {
@@ -4750,10 +5687,17 @@ fn validate_visible_game_log_baseline_transition_v1(
         next_baseline_commitment_sha256,
     ) {
         (None, None) => Ok(()),
-        (None, Some(_)) if prior_phase == MtgoCompetitiveLifecyclePhaseV1::PairingReady => Ok(()),
+        (None, Some(_))
+            if (prior_phase == MtgoCompetitiveLifecyclePhaseV1::PairingReady
+                && next_phase == MtgoCompetitiveLifecyclePhaseV1::PairingReady)
+                || (prior_phase == MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+                    && next_phase == MtgoCompetitiveLifecyclePhaseV1::Sideboarding) =>
+        {
+            Ok(())
+        }
         (Some(prior), Some(next)) if prior == next => Ok(()),
         (None, Some(_)) => {
-            Err("visible Game Log baseline may begin only at the Pairing Ready boundary".to_owned())
+            Err("visible Game Log baseline may begin only at Pairing Ready or an exact Sideboarding transition".to_owned())
         }
         (Some(_), None) => {
             Err("visible Game Log baseline was dropped while advancing the operator".to_owned())
@@ -5729,23 +6673,27 @@ mod tests {
 
         assert!(validate_visible_game_log_baseline_transition_v1(
             MtgoCompetitiveLifecyclePhaseV1::PairingReady,
+            MtgoCompetitiveLifecyclePhaseV1::PairingReady,
             None,
             Some(&digest('1')),
         )
         .is_ok());
         assert!(validate_visible_game_log_baseline_transition_v1(
             MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
             Some(&digest('1')),
             Some(&digest('1')),
         )
         .is_ok());
         assert!(validate_visible_game_log_baseline_transition_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
             MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
             Some(&digest('1')),
             None,
         )
         .is_err());
         assert!(validate_visible_game_log_baseline_transition_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
             MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
             Some(&digest('1')),
             Some(&digest('2')),
@@ -5753,10 +6701,18 @@ mod tests {
         .is_err());
         assert!(validate_visible_game_log_baseline_transition_v1(
             MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
             None,
             Some(&digest('1')),
         )
         .is_err());
+        assert!(validate_visible_game_log_baseline_transition_v1(
+            MtgoCompetitiveLifecyclePhaseV1::MatchInProgress,
+            MtgoCompetitiveLifecyclePhaseV1::Sideboarding,
+            None,
+            Some(&digest('1')),
+        )
+        .is_ok());
     }
 
     fn checkpoint_capabilities_v1(
@@ -6091,6 +7047,154 @@ mod tests {
             let mut crossed = attended_heuristic_pregame_join_v1();
             mutate(&mut crossed);
             assert!(validate_operator_attended_heuristic_pregame_join_v1(&crossed).is_err());
+        }
+    }
+
+    #[test]
+    fn attended_gameplay_requires_the_exact_completed_game_prefix() {
+        for (game_number, completed_game_count) in [(1, None), (2, Some(1)), (3, Some(2))] {
+            validate_operator_completed_history_count_v1(game_number, completed_game_count)
+                .unwrap();
+        }
+        for (game_number, completed_game_count) in [
+            (0, None),
+            (1, Some(1)),
+            (2, None),
+            (2, Some(2)),
+            (3, Some(1)),
+            (3, Some(3)),
+            (4, Some(3)),
+        ] {
+            assert!(validate_operator_completed_history_count_v1(
+                game_number,
+                completed_game_count
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn only_an_undecided_consistent_best_of_three_can_enter_sideboarding() {
+        for score in [(1, 1, 0), (1, 0, 1), (2, 1, 1)] {
+            validate_completed_visible_score_allows_sideboarding_v1(score.0, score.1, score.2)
+                .unwrap();
+        }
+        for score in [
+            (0, 0, 0),
+            (1, 0, 0),
+            (1, 1, 1),
+            (2, 2, 0),
+            (2, 0, 2),
+            (2, 1, 0),
+            (3, 2, 1),
+        ] {
+            assert!(validate_completed_visible_score_allows_sideboarding_v1(
+                score.0, score.1, score.2
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn terminal_match_requires_a_possible_two_zero_or_game_three_prefix() {
+        for shape in [(2, 1, 0), (2, 0, 1), (3, 1, 1)] {
+            validate_terminal_visible_match_shape_v1(shape.0, shape.1, shape.2).unwrap();
+        }
+        for shape in [
+            (1, 0, 0),
+            (2, 0, 0),
+            (2, 1, 1),
+            (3, 2, 0),
+            (3, 0, 2),
+            (3, 1, 0),
+            (4, 2, 1),
+        ] {
+            assert!(validate_terminal_visible_match_shape_v1(shape.0, shape.1, shape.2).is_err());
+        }
+    }
+
+    #[test]
+    fn game_two_terminal_winner_must_repeat_the_game_one_winner() {
+        use mtgo_blackbox_v1::MtgoVisibleGameLogPlayerRoleV1::{ActingPlayer, Opponent};
+        validate_terminal_visible_match_winner_against_prefix_v1(2, 1, 0, ActingPlayer).unwrap();
+        validate_terminal_visible_match_winner_against_prefix_v1(2, 0, 1, Opponent).unwrap();
+        validate_terminal_visible_match_winner_against_prefix_v1(3, 1, 1, ActingPlayer).unwrap();
+        assert!(
+            validate_terminal_visible_match_winner_against_prefix_v1(2, 1, 0, Opponent).is_err()
+        );
+        assert!(
+            validate_terminal_visible_match_winner_against_prefix_v1(2, 0, 1, ActingPlayer)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn terminal_visible_events_require_one_consistent_winner_and_exact_score() {
+        use mtgo_blackbox_v1::MtgoVisibleGameLogEventKindV1::{
+            ForcedComplete, OpeningHand, WonGame, WonMatch,
+        };
+        use mtgo_blackbox_v1::MtgoVisibleGameLogPlayerRoleV1::{ActingPlayer, Opponent};
+
+        assert_eq!(
+            validate_visible_match_terminal_event_sequence_v1(
+                2,
+                [
+                    (OpeningHand, Some(ActingPlayer), None, None),
+                    (WonGame, Some(ActingPlayer), None, None),
+                    (WonMatch, Some(ActingPlayer), Some(2), Some(0)),
+                ],
+            )
+            .unwrap(),
+            ActingPlayer
+        );
+        assert_eq!(
+            validate_visible_match_terminal_event_sequence_v1(
+                3,
+                [
+                    (WonGame, Some(Opponent), None, None),
+                    (WonMatch, Some(Opponent), Some(2), Some(1)),
+                ],
+            )
+            .unwrap(),
+            Opponent
+        );
+
+        for (game_number, events) in [
+            (
+                2,
+                vec![
+                    (WonGame, Some(ActingPlayer), None, None),
+                    (WonMatch, Some(Opponent), Some(2), Some(0)),
+                ],
+            ),
+            (
+                2,
+                vec![
+                    (WonGame, Some(ActingPlayer), None, None),
+                    (WonMatch, Some(ActingPlayer), Some(2), Some(1)),
+                ],
+            ),
+            (
+                3,
+                vec![
+                    (WonGame, Some(ActingPlayer), None, None),
+                    (WonMatch, Some(ActingPlayer), Some(2), Some(0)),
+                ],
+            ),
+            (2, vec![(ForcedComplete, None, None, None)]),
+            (2, vec![(WonMatch, Some(ActingPlayer), Some(2), Some(0))]),
+            (
+                2,
+                vec![
+                    (WonGame, Some(ActingPlayer), None, None),
+                    (WonMatch, Some(ActingPlayer), Some(2), Some(0)),
+                    (OpeningHand, Some(ActingPlayer), None, None),
+                ],
+            ),
+        ] {
+            assert!(
+                validate_visible_match_terminal_event_sequence_v1(game_number, events).is_err()
+            );
         }
     }
 

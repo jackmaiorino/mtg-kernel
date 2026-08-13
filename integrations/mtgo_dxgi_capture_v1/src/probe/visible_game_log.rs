@@ -129,6 +129,7 @@ pub struct OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
     _before_frame: OpaqueMtgoDxgiFrameCandidateV3,
     _after_frame: OpaqueMtgoDxgiFrameCandidateV3,
     semantics: CheckedUntrustedMtgoVisibleGameLogSemanticProjectionV1,
+    visible_source_record_sha256s: Vec<String>,
     game_number: u8,
     current_game_event_start_index: usize,
     current_game_event_count: usize,
@@ -245,6 +246,10 @@ impl OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
         self._after_frame.commitments_v3().captured_at_unix_millis
     }
 
+    pub(crate) fn match_lease_v1(&self) -> &OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {
+        &self.lease
+    }
+
     pub fn into_match_lease_v1(self) -> OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {
         self.lease
     }
@@ -303,8 +308,8 @@ pub fn begin_competitive_visible_game_log_baseline_v1(
 /// private inventory for the next game. The observed local corpus provides no
 /// evidence of cross-game file reuse, so this preserves match lineage while
 /// requiring a newly created source for game two or three.
-pub fn advance_competitive_visible_game_log_baseline_v1(
-    lease: OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
+pub(crate) fn advance_competitive_visible_game_log_baseline_v1(
+    lease: &OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
     runtime: &crate::OpaqueMtgoCompetitiveEventRuntimeV1,
 ) -> Result<OpaqueMtgoCompetitiveVisibleGameLogBaselineV1, String> {
     let runtime_commitments = runtime.commitments_v1();
@@ -330,8 +335,8 @@ pub fn advance_competitive_visible_game_log_baseline_v1(
         runtime,
         next_game_number,
         &lease.lease_commitment_sha256,
-        Some(lease.acting_player_alias_sha256),
-        Some(lease.opponent_alias_sha256),
+        Some(lease.acting_player_alias_sha256.clone()),
+        Some(lease.opponent_alias_sha256.clone()),
     )?;
     if baseline.process_continuity_commitment_sha256
         != expected_process_continuity_commitment_sha256
@@ -656,6 +661,14 @@ pub fn refresh_competitive_match_visible_game_log_v1(
         return Err("retained Game Log lost its seated-player game-start event".to_owned());
     }
     require_exactly_one_acting_player_join_v1(&semantics)?;
+    let visible_source_record_sha256s = (0..projection.record_count_v1())
+        .map(|index| {
+            projection
+                .record_v1(index)
+                .map(|record| sha256_hex_v1(record.visible_text_v1().as_bytes()))
+                .ok_or("visible Game Log record count changed while committing its prefix")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let current_game_event_start_index = 0;
     let current_game_event_count = semantics.event_count_v1();
     let snapshot_commitment_sha256 = commitment_v1(
@@ -678,11 +691,52 @@ pub fn refresh_competitive_match_visible_game_log_v1(
         _before_frame: before_frame,
         _after_frame: after_frame,
         semantics,
+        visible_source_record_sha256s,
         game_number: launch_commitments.game_number,
         current_game_event_start_index,
         current_game_event_count,
         snapshot_commitment_sha256,
     })
+}
+
+/// Refreshes an already retained snapshot and proves that the complete
+/// rendered Game Log source is an append-only extension of the prior read.
+/// This is the refresh-only path needed when an opponent action or automatic
+/// resolution ends a game after the model's last confirmed input.
+pub(crate) fn refresh_competitive_match_visible_game_log_snapshot_v1(
+    snapshot: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    launch: &OpaqueMtgoCompetitiveLaunchIdentityV1,
+    request: MtgoDxgiCaptureRequestV3,
+) -> Result<OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1, String> {
+    let prior_visible_source_record_sha256s = snapshot.visible_source_record_sha256s.clone();
+    let prior_capture_unix_millis = snapshot.latest_capture_unix_millis_v1();
+    let refreshed = refresh_competitive_match_visible_game_log_v1(
+        snapshot.into_match_lease_v1(),
+        launch,
+        request,
+    )?;
+    validate_visible_game_log_append_only_refresh_v1(
+        &prior_visible_source_record_sha256s,
+        &refreshed.visible_source_record_sha256s,
+        prior_capture_unix_millis,
+        refreshed.latest_capture_unix_millis_v1(),
+    )?;
+    Ok(refreshed)
+}
+
+fn validate_visible_game_log_append_only_refresh_v1(
+    prior_visible_source_record_sha256s: &[String],
+    refreshed_visible_source_record_sha256s: &[String],
+    prior_capture_unix_millis: u128,
+    refreshed_capture_unix_millis: u128,
+) -> Result<(), String> {
+    if refreshed_capture_unix_millis <= prior_capture_unix_millis {
+        return Err("refreshed visible Game Log capture is not strictly newer".to_owned());
+    }
+    if !refreshed_visible_source_record_sha256s.starts_with(prior_visible_source_record_sha256s) {
+        return Err("refreshed visible Game Log rewrote its prior rendered prefix".to_owned());
+    }
+    Ok(())
 }
 
 /// One exact persisted Game Log projection bound to the sole file created by
@@ -1730,6 +1784,31 @@ mod tests {
         assert_ne!(
             private_path_inventory_commitment_v1(&left).unwrap(),
             private_path_inventory_commitment_v1(&different).unwrap()
+        );
+    }
+
+    #[test]
+    fn retained_visible_log_refresh_is_strictly_newer_and_append_only() {
+        let first = "1".repeat(64);
+        let second = "2".repeat(64);
+        let changed = "3".repeat(64);
+        assert!(validate_visible_game_log_append_only_refresh_v1(
+            std::slice::from_ref(&first),
+            &[first.clone(), second.clone()],
+            100,
+            101,
+        )
+        .is_ok());
+        assert!(validate_visible_game_log_append_only_refresh_v1(
+            std::slice::from_ref(&first),
+            &[first.clone(), second],
+            100,
+            100,
+        )
+        .is_err());
+        assert!(
+            validate_visible_game_log_append_only_refresh_v1(&[first], &[changed], 100, 101,)
+                .is_err()
         );
     }
 

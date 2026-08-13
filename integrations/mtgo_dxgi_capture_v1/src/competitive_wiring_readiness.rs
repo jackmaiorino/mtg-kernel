@@ -49,6 +49,12 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub ongoing_external_public_history_snapshot_replay_present: bool,
     pub first_gameplay_decision_zero_action_history_supported: bool,
     pub ongoing_public_history_to_player_visible_scorer_bridge_present: bool,
+    pub attended_gameplay_completed_history_owner_present: bool,
+    pub game_one_completed_history_reset_present: bool,
+    pub completed_game_to_sideboard_history_handoff_present: bool,
+    pub next_game_log_baseline_retained_through_sideboard_request: bool,
+    pub terminal_visible_match_owner_present: bool,
+    pub terminal_visible_match_lifecycle_handoff_present: bool,
     pub post_entry_operator_player_visible_gameplay_selection_present: bool,
     pub post_entry_operator_player_visible_gesture_ownership_present: bool,
     pub post_entry_operator_player_visible_target_ownership_present: bool,
@@ -188,6 +194,12 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             ongoing_external_public_history_snapshot_replay_present: true,
             first_gameplay_decision_zero_action_history_supported: true,
             ongoing_public_history_to_player_visible_scorer_bridge_present: true,
+            attended_gameplay_completed_history_owner_present: true,
+            game_one_completed_history_reset_present: true,
+            completed_game_to_sideboard_history_handoff_present: true,
+            next_game_log_baseline_retained_through_sideboard_request: true,
+            terminal_visible_match_owner_present: true,
+            terminal_visible_match_lifecycle_handoff_present: true,
             post_entry_operator_player_visible_gameplay_selection_present: true,
             post_entry_operator_player_visible_gesture_ownership_present: true,
             post_entry_operator_player_visible_target_ownership_present: true,
@@ -443,6 +455,36 @@ mod tests {
             report
                 .known_wiring_gaps
                 .ongoing_public_history_to_player_visible_scorer_bridge_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .attended_gameplay_completed_history_owner_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .game_one_completed_history_reset_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .completed_game_to_sideboard_history_handoff_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .next_game_log_baseline_retained_through_sideboard_request
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .terminal_visible_match_owner_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .terminal_visible_match_lifecycle_handoff_present
         );
         assert!(
             report

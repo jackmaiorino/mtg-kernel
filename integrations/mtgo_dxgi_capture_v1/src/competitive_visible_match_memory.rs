@@ -195,9 +195,12 @@ pub struct MtgoCompetitiveExternalCompletedGameHeaderV1 {
 }
 
 /// Kernel-owned consumer boundary for the ordered completed games in one
-/// match. Within each game, confirmed decisions and rendered Game Log facts
-/// remain separate ordered streams. No callback exposes event or match IDs,
-/// commitments, raw text, paths, pixels, coordinates, or input authority.
+/// match. `begin_completed_match_history_v1` is an authoritative replacement,
+/// including when its count is zero, so a scorer must discard any prefix from
+/// an earlier match. Within each game, confirmed decisions and rendered Game
+/// Log facts remain separate ordered streams. No callback exposes event or
+/// match IDs, commitments, raw text, paths, pixels, coordinates, or input
+/// authority.
 pub trait MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1 {
     type Output;
 
@@ -228,6 +231,23 @@ pub trait MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1 {
     fn finish_completed_game_v1(&mut self) -> Result<(), String>;
 
     fn finish_completed_match_history_v1(&mut self) -> Result<Self::Output, String>;
+}
+
+/// Explicitly replaces any previously imported completed-game prefix with an
+/// empty game-one prefix. Calling no completed-history callback at all would
+/// let a reused scorer accidentally retain an earlier match.
+pub(crate) fn visit_empty_external_completed_match_history_v1<C>(
+    consumer: &mut C,
+) -> Result<C::Output, String>
+where
+    C: MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
+{
+    consumer.begin_completed_match_history_v1(
+        MtgoCompetitiveExternalCompletedMatchHistoryHeaderV1 {
+            completed_game_count: 0,
+        },
+    )?;
+    consumer.finish_completed_match_history_v1()
 }
 
 /// Replays the complete current player-visible history snapshot for one
@@ -320,7 +340,8 @@ struct VisibleGameLineageRefV1<'a> {
 /// ```
 pub struct OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
     game_log: OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1,
-    confirmed_decisions: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    confirmed_decisions: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    policy_deployment_commitment_sha256: String,
     memory_commitment_sha256: String,
 }
 
@@ -373,6 +394,7 @@ pub(crate) struct MtgoCompetitiveVisibleGameOutcomeLineageV1<'a> {
     pub source_memory_commitment_sha256: &'a str,
     pub outcome_commitment_sha256: &'a str,
     pub winner: MtgoCompetitivePlayerRelativeGameWinnerV1,
+    policy_deployment_commitment_sha256: &'a str,
 }
 
 impl OpaqueMtgoCompetitiveVisibleGameOutcomeV1 {
@@ -406,6 +428,7 @@ impl OpaqueMtgoCompetitiveVisibleGameOutcomeV1 {
             source_memory_commitment_sha256: &self.memory.memory_commitment_sha256,
             outcome_commitment_sha256: &self.outcome_commitment_sha256,
             winner: self.winner,
+            policy_deployment_commitment_sha256: &self.memory.policy_deployment_commitment_sha256,
         }
     }
 
@@ -509,6 +532,65 @@ impl OpaqueMtgoCompetitiveCompletedMatchHistoryV1 {
     pub(crate) fn history_commitment_sha256_v1(&self) -> &str {
         &self.history_commitment_sha256
     }
+
+    pub(crate) fn policy_deployment_commitment_sha256_v1(&self) -> Result<&str, String> {
+        validate_completed_match_history_v1(&self.outcomes)?;
+        self.outcomes
+            .first()
+            .map(|outcome| outcome.memory.policy_deployment_commitment_sha256.as_str())
+            .ok_or_else(|| "completed-match history is empty".to_owned())
+    }
+
+    pub(crate) fn player_relative_win_counts_v1(&self) -> Result<(u8, u8), String> {
+        validate_completed_match_history_v1(&self.outcomes)?;
+        let mut acting_player_wins = 0_u8;
+        let mut opponent_wins = 0_u8;
+        for outcome in &self.outcomes {
+            match outcome.winner {
+                MtgoCompetitivePlayerRelativeGameWinnerV1::ActingPlayer => {
+                    acting_player_wins = acting_player_wins
+                        .checked_add(1)
+                        .ok_or("acting-player visible win count overflow")?;
+                }
+                MtgoCompetitivePlayerRelativeGameWinnerV1::Opponent => {
+                    opponent_wins = opponent_wins
+                        .checked_add(1)
+                        .ok_or("opponent visible win count overflow")?;
+                }
+            }
+        }
+        Ok((acting_player_wins, opponent_wins))
+    }
+
+    pub(crate) fn advance_next_game_log_baseline_v1(
+        self,
+        runtime: &crate::OpaqueMtgoCompetitiveEventRuntimeV1,
+    ) -> Result<
+        (
+            OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
+            crate::OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
+        ),
+        String,
+    > {
+        validate_completed_match_history_v1(&self.outcomes)?;
+        let latest = self
+            .outcomes
+            .last()
+            .ok_or("completed-match history is empty")?;
+        let snapshot = match &latest.memory.game_log {
+            OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::MatchScoped(snapshot) => snapshot,
+            OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::LegacyProcessEpoch(_) => {
+                return Err(
+                    "legacy process-epoch Game Log cannot advance a competitive match".to_owned(),
+                )
+            }
+        };
+        let baseline = crate::probe::advance_competitive_visible_game_log_baseline_v1(
+            snapshot.match_lease_v1(),
+            runtime,
+        )?;
+        Ok((self, baseline))
+    }
 }
 
 /// Starts a complete best-of-three public history from the visibly completed
@@ -579,6 +661,8 @@ fn validate_completed_match_history_lineages_v1(
             || lineage.event_identity_sha256 != first.event_identity_sha256
             || lineage.match_identity_sha256 != first.match_identity_sha256
             || lineage.game_number != expected_game
+            || lineage.policy_deployment_commitment_sha256
+                != first.policy_deployment_commitment_sha256
         {
             return Err(
                 "completed-match history changed event, match, or exact game order".to_owned(),
@@ -650,14 +734,19 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
     }
 
     pub fn confirmed_decision_count_v1(&self) -> usize {
-        self.confirmed_decisions.decision_count_v1()
+        self.confirmed_decisions.as_ref().map_or(
+            0,
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::decision_count_v1,
+        )
     }
 
     fn confirmed_decision_v1(
         &self,
         index: usize,
     ) -> Option<MtgoCompetitivePlayerVisibleDecisionViewV1<'_>> {
-        self.confirmed_decisions.decision_v1(index)
+        self.confirmed_decisions
+            .as_ref()
+            .and_then(|decisions| decisions.decision_v1(index))
     }
 
     pub fn game_number_v1(&self) -> u8 {
@@ -777,9 +866,12 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
         ),
         String,
     > {
+        let confirmed_decisions = self
+            .confirmed_decisions
+            .ok_or("zero-action visible game has no confirmed decision history to extract")?;
         match self.game_log {
             OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::MatchScoped(source) => {
-                Ok(((*source).into_match_lease_v1(), self.confirmed_decisions))
+                Ok(((*source).into_match_lease_v1(), confirmed_decisions))
             }
             OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::LegacyProcessEpoch(_) => Err(
                 "legacy process-epoch visible Game Log memory cannot advance a match".to_owned(),
@@ -798,7 +890,8 @@ pub fn bind_competitive_player_visible_game_memory_v1(
 ) -> Result<OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, String> {
     bind_competitive_player_visible_game_memory_source_v1(
         OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::LegacyProcessEpoch(Box::new(game_log)),
-        confirmed_decisions,
+        Some(confirmed_decisions),
+        None,
     )
 }
 
@@ -810,35 +903,56 @@ pub fn bind_match_scoped_competitive_player_visible_game_memory_v1(
 ) -> Result<OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, String> {
     bind_competitive_player_visible_game_memory_source_v1(
         OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::MatchScoped(Box::new(game_log)),
+        Some(confirmed_decisions),
+        None,
+    )
+}
+
+/// Joins a terminal match-scoped Game Log to zero or more confirmed model
+/// decisions. The explicit deployment commitment makes a zero-action game
+/// possible without fabricating a model decision, for example when the
+/// opponent concedes before the model receives priority.
+pub(crate) fn bind_optional_match_scoped_competitive_player_visible_game_memory_v1(
+    game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_decisions: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    policy_deployment_commitment_sha256: &str,
+) -> Result<OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, String> {
+    bind_competitive_player_visible_game_memory_source_v1(
+        OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1::MatchScoped(Box::new(game_log)),
         confirmed_decisions,
+        Some(policy_deployment_commitment_sha256),
     )
 }
 
 fn bind_competitive_player_visible_game_memory_source_v1(
     game_log: OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1,
-    confirmed_decisions: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    confirmed_decisions: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    explicit_policy_deployment_commitment_sha256: Option<&str>,
 ) -> Result<OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, String> {
     let game_log_lineage = game_log.lineage_v1();
-    validate_combined_visible_game_lineage_v1(
+    validate_optional_visible_decision_history_lineage_v1(
         game_log_lineage,
-        VisibleGameLineageRefV1 {
-            event_kind: confirmed_decisions.event_kind_v1(),
-            event_identity_sha256: confirmed_decisions.event_identity_sha256_v1(),
-            match_identity_sha256: confirmed_decisions.match_identity_sha256_v1(),
-            game_number: confirmed_decisions.game_number_v1(),
-        },
+        confirmed_decisions.as_ref(),
     )?;
+    let policy_deployment_commitment_sha256 = resolve_visible_game_policy_deployment_v1(
+        confirmed_decisions
+            .as_ref()
+            .map(CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::policy_deployment_commitment_sha256_v1),
+        explicit_policy_deployment_commitment_sha256,
+    )?;
+    let decision_history_commitment_sha256 = confirmed_decisions
+        .as_ref()
+        .map(
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::history_commitment_sha256_v1,
+        )
+        .unwrap_or("");
     let memory_commitment_sha256 = commitment_v1(&[
         game_log.source_commitment_sha256_v1().as_bytes(),
         game_log
             .semantic_projection_commitment_sha256_v1()
             .as_bytes(),
-        confirmed_decisions
-            .history_commitment_sha256_v1()
-            .as_bytes(),
-        confirmed_decisions
-            .policy_deployment_commitment_sha256_v1()
-            .as_bytes(),
+        decision_history_commitment_sha256.as_bytes(),
+        policy_deployment_commitment_sha256.as_bytes(),
         game_log_lineage.event_identity_sha256.as_bytes(),
         game_log_lineage.match_identity_sha256.as_bytes(),
         &[game_log_lineage.game_number],
@@ -847,8 +961,37 @@ fn bind_competitive_player_visible_game_memory_source_v1(
     Ok(OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
         game_log,
         confirmed_decisions,
+        policy_deployment_commitment_sha256,
         memory_commitment_sha256,
     })
+}
+
+fn resolve_visible_game_policy_deployment_v1(
+    confirmed_history_deployment_sha256: Option<&str>,
+    explicit_policy_deployment_commitment_sha256: Option<&str>,
+) -> Result<String, String> {
+    let deployment = match (
+        confirmed_history_deployment_sha256,
+        explicit_policy_deployment_commitment_sha256,
+    ) {
+        (Some(history), None) => history,
+        (Some(history), Some(explicit)) if history == explicit => explicit,
+        (None, Some(explicit)) => explicit,
+        (Some(_), Some(_)) => {
+            return Err("confirmed decisions changed the exact model deployment".to_owned())
+        }
+        (None, None) => {
+            return Err("zero-action visible game lacks its exact model deployment".to_owned())
+        }
+    };
+    if deployment.len() != 64
+        || !deployment
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    {
+        return Err("visible game has an invalid model deployment commitment".to_owned());
+    }
+    Ok(deployment.to_owned())
 }
 
 fn validate_combined_visible_game_lineage_v1(
@@ -954,6 +1097,87 @@ mod tests {
     use super::*;
     use mtgo_blackbox_v1::MtgoCompetitiveEventKindV1::{Challenge, League};
 
+    #[derive(Default)]
+    struct EmptyCompletedHistoryConsumerV1 {
+        began_with_count: Option<usize>,
+        finished: bool,
+    }
+
+    impl MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1 for EmptyCompletedHistoryConsumerV1 {
+        type Output = (usize, bool);
+
+        fn begin_completed_match_history_v1(
+            &mut self,
+            header: MtgoCompetitiveExternalCompletedMatchHistoryHeaderV1,
+        ) -> Result<(), String> {
+            self.began_with_count = Some(header.completed_game_count);
+            Ok(())
+        }
+
+        fn begin_completed_game_v1(
+            &mut self,
+            _header: MtgoCompetitiveExternalCompletedGameHeaderV1,
+        ) -> Result<(), String> {
+            Err("empty history unexpectedly began a game".to_owned())
+        }
+
+        fn consume_confirmed_decision_v1(
+            &mut self,
+            _decision: MtgoCompetitiveExternalConfirmedDecisionV1,
+        ) -> Result<(), String> {
+            Err("empty history unexpectedly emitted a decision".to_owned())
+        }
+
+        fn finish_confirmed_decision_stream_v1(&mut self) -> Result<(), String> {
+            Err("empty history unexpectedly finished a decision stream".to_owned())
+        }
+
+        fn consume_public_game_log_event_v1(
+            &mut self,
+            _event: MtgoCompetitiveExternalPublicGameLogEventV1<'_>,
+        ) -> Result<(), String> {
+            Err("empty history unexpectedly emitted a Game Log event".to_owned())
+        }
+
+        fn finish_public_game_log_stream_v1(&mut self) -> Result<(), String> {
+            Err("empty history unexpectedly finished a Game Log stream".to_owned())
+        }
+
+        fn finish_completed_game_v1(&mut self) -> Result<(), String> {
+            Err("empty history unexpectedly finished a game".to_owned())
+        }
+
+        fn finish_completed_match_history_v1(&mut self) -> Result<Self::Output, String> {
+            self.finished = true;
+            Ok((self.began_with_count.unwrap_or(usize::MAX), self.finished))
+        }
+    }
+
+    #[test]
+    fn game_one_completed_history_visit_explicitly_resets_a_reused_consumer() {
+        let mut consumer = EmptyCompletedHistoryConsumerV1::default();
+        assert_eq!(
+            visit_empty_external_completed_match_history_v1(&mut consumer).unwrap(),
+            (0, true)
+        );
+    }
+
+    #[test]
+    fn zero_action_visible_game_requires_exact_valid_deployment() {
+        let deployment = "a".repeat(64);
+        assert_eq!(
+            resolve_visible_game_policy_deployment_v1(None, Some(&deployment)).unwrap(),
+            deployment
+        );
+        assert!(resolve_visible_game_policy_deployment_v1(None, None).is_err());
+        assert!(resolve_visible_game_policy_deployment_v1(None, Some("not-a-digest")).is_err());
+        assert!(resolve_visible_game_policy_deployment_v1(
+            Some(&"a".repeat(64)),
+            Some(&"b".repeat(64)),
+        )
+        .is_err());
+    }
+
     #[test]
     fn combined_memory_requires_one_exact_event_match_and_game() {
         let event = "1".repeat(64);
@@ -1056,6 +1280,7 @@ mod tests {
         let other = "3".repeat(64);
         let memory = "4".repeat(64);
         let outcome = "5".repeat(64);
+        let deployment = "6".repeat(64);
         let lineage = |event_kind, event_id, match_id, game_number| {
             MtgoCompetitiveVisibleGameOutcomeLineageV1 {
                 event_kind,
@@ -1065,6 +1290,7 @@ mod tests {
                 source_memory_commitment_sha256: &memory,
                 outcome_commitment_sha256: &outcome,
                 winner: MtgoCompetitivePlayerRelativeGameWinnerV1::ActingPlayer,
+                policy_deployment_commitment_sha256: &deployment,
             }
         };
         validate_completed_match_history_lineages_v1(&[lineage(League, &event, &match_id, 1)])
@@ -1103,5 +1329,19 @@ mod tests {
         ] {
             assert!(validate_completed_match_history_lineages_v1(&invalid).is_err());
         }
+
+        let other_deployment = "7".repeat(64);
+        let first = lineage(League, &event, &match_id, 1);
+        let second = MtgoCompetitiveVisibleGameOutcomeLineageV1 {
+            event_kind: League,
+            event_identity_sha256: &event,
+            match_identity_sha256: &match_id,
+            game_number: 2,
+            source_memory_commitment_sha256: &memory,
+            outcome_commitment_sha256: &outcome,
+            winner: MtgoCompetitivePlayerRelativeGameWinnerV1::Opponent,
+            policy_deployment_commitment_sha256: &other_deployment,
+        };
+        assert!(validate_completed_match_history_lineages_v1(&[first, second]).is_err());
     }
 }
