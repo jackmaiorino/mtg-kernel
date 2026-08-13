@@ -106,6 +106,7 @@ pub struct OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {
     opponent_alias_sha256: String,
     acting_player_alias: String,
     acting_player_alias_sha256: String,
+    source_baseline_commitment_sha256: String,
     lease_commitment_sha256: String,
 }
 
@@ -169,6 +170,14 @@ impl OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1 {
         self.game_number
     }
 
+    pub(crate) fn event_identity_sha256_v1(&self) -> &str {
+        &self.event_identity_sha256
+    }
+
+    pub(crate) fn source_baseline_commitment_sha256_v1(&self) -> &str {
+        &self.source_baseline_commitment_sha256
+    }
+
     pub fn safe_for_model_scoring_v1(&self) -> bool {
         false
     }
@@ -222,6 +231,14 @@ impl OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
 
     pub fn snapshot_commitment_sha256_v1(&self) -> &str {
         &self.snapshot_commitment_sha256
+    }
+
+    pub(crate) fn lease_commitment_sha256_v1(&self) -> &str {
+        self.lease.lease_commitment_sha256_v1()
+    }
+
+    pub(crate) fn source_baseline_commitment_sha256_v1(&self) -> &str {
+        self.lease.source_baseline_commitment_sha256_v1()
     }
 
     pub(crate) fn latest_capture_unix_millis_v1(&self) -> u128 {
@@ -560,6 +577,7 @@ pub fn bind_competitive_match_visible_game_log_lease_v1(
         opponent_alias_sha256,
         acting_player_alias: acting_player_alias.to_owned(),
         acting_player_alias_sha256,
+        source_baseline_commitment_sha256: baseline.baseline_commitment_sha256,
         lease_commitment_sha256,
     })
 }

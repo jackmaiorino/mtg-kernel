@@ -2409,6 +2409,22 @@ impl OpaqueMtgoCompetitiveNativePregameRequestV1 {
         )
     }
 
+    pub(crate) fn pregame_session_commitments_v1(
+        &self,
+    ) -> MtgoCompetitiveEventPregameSessionCommitmentsV1 {
+        self._session.commitments_v1()
+    }
+
+    pub(crate) fn pregame_session_v1(&self) -> &OpaqueMtgoCompetitiveEventPregameSessionV1 {
+        &self._session
+    }
+
+    pub(crate) fn into_pregame_session_for_admitted_heuristic_v1(
+        self,
+    ) -> OpaqueMtgoCompetitiveEventPregameSessionV1 {
+        self._session
+    }
+
     pub fn visit_completed_match_history_v1<C>(&self, consumer: &mut C) -> Result<C::Output, String>
     where
         C: crate::MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
@@ -2634,7 +2650,8 @@ pub struct MtgoConfirmedCompetitivePregameActionCommitmentsV1 {
 /// was released only after the exact visible postcondition. The advanced
 /// move-only event pregame session is returned explicitly for the next step.
 pub struct OpaqueMtgoConfirmedCompetitivePregameActionV1 {
-    _authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
+    authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
+    heuristic: AdmittedMtgoCompetitivePregameHeuristicV1,
     session: OpaqueMtgoCompetitiveEventPregameSessionV1,
     commitments: MtgoConfirmedCompetitivePregameActionCommitmentsV1,
 }
@@ -2646,6 +2663,16 @@ impl OpaqueMtgoConfirmedCompetitivePregameActionV1 {
 
     pub fn into_pregame_session_v1(self) -> OpaqueMtgoCompetitiveEventPregameSessionV1 {
         self.session
+    }
+
+    pub(crate) fn into_loop_parts_v1(
+        self,
+    ) -> (
+        OpaqueMtgoCompetitiveEventPregameSessionV1,
+        AdmittedMtgoCompetitivePregameHeuristicV1,
+        RatifiedMtgoCompetitivePregameAuthorizationV1,
+    ) {
+        (self.session, self.heuristic, self.authorization)
     }
 
     pub fn safe_for_next_input_v1(&self) -> bool {
@@ -8346,11 +8373,9 @@ pub fn check_competitive_event_pregame_postcondition_dry_run_v1(
     })
 }
 
-/// Retains the legacy non-model pregame executor for internal validation only.
-/// It is deliberately not exported: League or Challenge pregame input must
-/// remain unavailable until a future opaque native model decision owns the
-/// selected action and its checkpoint provenance.
-#[allow(dead_code)]
+/// Emits one exact pregame click only for the operator-owned, reviewed
+/// deterministic stopgap. This low-level executor stays crate-private and the
+/// independent production heuristic and pregame-input roots remain empty.
 pub(crate) fn execute_prepared_competitive_pregame_action_v1(
     prepared: OpaqueMtgoPreparedCompetitivePregameActionV1,
     authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
@@ -8485,7 +8510,7 @@ pub fn confirm_pending_competitive_pregame_action_v1(
     } = prepared;
     let OpaqueMtgoCompetitivePregameActionPlanV1 {
         _session: session,
-        _heuristic: _,
+        _heuristic: heuristic,
         _selected_control: _,
         commitments: _,
     } = plan;
@@ -8626,7 +8651,8 @@ pub fn confirm_pending_competitive_pregame_action_v1(
         observed_postcondition: postcondition.observed_postcondition,
     };
     Ok(OpaqueMtgoConfirmedCompetitivePregameActionV1 {
-        _authorization: pending.authorization,
+        authorization: pending.authorization,
+        heuristic,
         session,
         commitments,
     })
@@ -14582,6 +14608,41 @@ fn validate_competitive_pregame_authorization_for_prepared_v1(
     authorization: &RatifiedMtgoCompetitivePregameAuthorizationV1,
     prepared: &OpaqueMtgoPreparedCompetitivePregameActionV1,
 ) -> Result<(), String> {
+    validate_competitive_pregame_authorization_for_session_and_heuristic_v1(
+        authorization,
+        &prepared._plan._session,
+        &prepared._plan._heuristic,
+    )?;
+    let reviewed = &authorization.commitments;
+    let launch = &prepared._plan._session.match_launch;
+    let plan = &prepared._plan.commitments;
+    if reviewed.event_kind != prepared.commitments.event_kind
+        || reviewed.heuristic_profile_commitment_sha256 != plan.heuristic_profile_commitment_sha256
+        || reviewed.heuristic_algorithm_commitment_sha256
+            != plan.heuristic_algorithm_commitment_sha256
+        || reviewed.heuristic_review_commitment_sha256 != plan.heuristic_review_commitment_sha256
+        || reviewed.heuristic_admission_commitment_sha256
+            != plan.heuristic_admission_commitment_sha256
+        || prepared.commitments.match_identity_sha256 != launch.authorization.match_identity_sha256
+        || prepared.commitments.game_number != launch.authorization.game_number
+    {
+        return Err(
+            "competitive pregame authority differs from the permission, heuristic, event, match, or game"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+/// Validates the complete exact-account permission and reviewed deterministic
+/// heuristic against the retained match launch before the operator accepts
+/// ownership of the live pregame loop. This sends no input.
+pub(crate) fn validate_competitive_pregame_authorization_for_session_and_heuristic_v1(
+    authorization: &RatifiedMtgoCompetitivePregameAuthorizationV1,
+    session: &OpaqueMtgoCompetitiveEventPregameSessionV1,
+    heuristic: &AdmittedMtgoCompetitivePregameHeuristicV1,
+) -> Result<(), String> {
+    validate_competitive_event_pregame_session_integrity_v1(session)?;
     let reviewed = &authorization.commitments;
     let mode_authorization_commitment_sha256 = validate_exact_competitive_mode_authorization_v1(
         &authorization.scope,
@@ -14604,8 +14665,9 @@ fn validate_competitive_pregame_authorization_for_prepared_v1(
             &reviewed.heuristic_admission_commitment_sha256,
         ),
     );
-    let launch = &prepared._plan._session.match_launch;
-    let plan = &prepared._plan.commitments;
+    let heuristic = heuristic.commitments_v1();
+    let launch = &session.match_launch;
+    let session_commitments = &session.commitments;
     if reviewed.ratification_commitment_sha256 != expected_ratification
         || reviewed.permission_review_commitment_sha256
             != authorization
@@ -14614,20 +14676,23 @@ fn validate_competitive_pregame_authorization_for_prepared_v1(
         || reviewed.account_alias_sha256 != authorization.scope.account_alias_sha256
         || reviewed.correspondence_sha256 != authorization.scope.written_permission_sha256
         || reviewed.mode_authorization_commitment_sha256 != mode_authorization_commitment_sha256
-        || reviewed.event_kind != prepared.commitments.event_kind
         || reviewed.event_kind != launch.authorization.event_kind
+        || reviewed.event_kind != session_commitments.event_kind
         || reviewed.account_alias_sha256 != launch.authorization.account_alias_sha256
+        || reviewed.account_alias_sha256 != session_commitments.approved_account_alias_sha256
         || reviewed.correspondence_sha256 != launch.authorization.written_permission_sha256
         || reviewed.mode_authorization_commitment_sha256
             != launch.mode_authorization_commitment_sha256
-        || reviewed.heuristic_profile_commitment_sha256 != plan.heuristic_profile_commitment_sha256
+        || reviewed.mode_authorization_commitment_sha256
+            != session_commitments.mode_authorization_commitment_sha256
+        || reviewed.heuristic_profile_commitment_sha256
+            != heuristic.heuristic_profile_commitment_sha256
         || reviewed.heuristic_algorithm_commitment_sha256
-            != plan.heuristic_algorithm_commitment_sha256
-        || reviewed.heuristic_review_commitment_sha256 != plan.heuristic_review_commitment_sha256
-        || reviewed.heuristic_admission_commitment_sha256
-            != plan.heuristic_admission_commitment_sha256
-        || prepared.commitments.match_identity_sha256 != launch.authorization.match_identity_sha256
-        || prepared.commitments.game_number != launch.authorization.game_number
+            != heuristic.heuristic_algorithm_commitment_sha256
+        || reviewed.heuristic_review_commitment_sha256 != heuristic.review_commitment_sha256
+        || reviewed.heuristic_admission_commitment_sha256 != heuristic.admission_commitment_sha256
+        || session_commitments.match_identity_sha256 != launch.authorization.match_identity_sha256
+        || session_commitments.game_number != launch.authorization.game_number
     {
         return Err(
             "competitive pregame authority differs from the permission, heuristic, event, match, or game"

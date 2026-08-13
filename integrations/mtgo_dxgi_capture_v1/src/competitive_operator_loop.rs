@@ -10,17 +10,23 @@ use crate::actuator::{
     bind_competitive_event_runtime_to_match_launch_identity_v1,
     checkout_competitive_event_gameplay_session_v1,
     competitive_gesture_game_session_action_authorities_v1,
+    complete_competitive_event_pregame_session_with_history_v2,
     confirm_pending_competitive_event_lifecycle_control_v1,
     confirm_pending_competitive_player_visible_gameplay_primitive_v1,
+    confirm_pending_competitive_pregame_action_v1,
     execute_prepared_competitive_event_lifecycle_control_v1,
     execute_prepared_competitive_player_visible_gameplay_primitive_v1,
-    measure_competitive_event_runtime_sideboard_v1, next_competitive_event_driver_directive_v1,
+    execute_prepared_competitive_pregame_action_v1, measure_competitive_event_runtime_sideboard_v1,
+    next_competitive_event_driver_directive_v1, plan_competitive_event_pregame_action_v1,
     prepare_competitive_event_runtime_lifecycle_control_v1,
+    prepare_fresh_competitive_event_pregame_action_v1,
     ratify_competitive_event_match_launch_with_visible_identity_attended_v1,
     release_confirmed_competitive_player_visible_gameplay_primitive_v1,
     release_confirmed_direct_visible_input_pending_v1,
-    return_competitive_event_gameplay_session_v1, MtgoCompetitiveEventDriverDirectiveV1,
-    MtgoCompetitiveEventDriverStepV1, MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
+    return_competitive_event_gameplay_session_v1,
+    validate_competitive_pregame_authorization_for_session_and_heuristic_v1,
+    MtgoCompetitiveEventDriverDirectiveV1, MtgoCompetitiveEventDriverStepV1,
+    MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
     MtgoCompetitiveEventMatchLaunchBindingCommitmentsV1, MtgoCompetitiveEventRuntimeCommitmentsV1,
     MtgoCompetitiveGestureGameSessionCommitmentsV1,
     MtgoPendingCompetitiveEventLifecycleControlCommitmentsV1,
@@ -28,10 +34,13 @@ use crate::actuator::{
     OpaqueMtgoCompetitiveEventGameplayLeaseV1, OpaqueMtgoCompetitiveEventMatchLaunchBindingV1,
     OpaqueMtgoCompetitiveEventRuntimeV1, OpaqueMtgoCompetitiveGestureGameSessionV1,
     OpaqueMtgoCompetitiveNativePregameRequestV1, OpaqueMtgoCompetitiveNativeSideboardRequestV1,
+    OpaqueMtgoConfirmedCompetitivePregameActionV1,
     OpaqueMtgoPendingCompetitiveEventLifecycleControlV1,
     OpaqueMtgoPendingCompetitivePlayerVisibleGameplayPrimitiveV1,
+    OpaqueMtgoPendingCompetitivePregameInputV1,
     OpaqueMtgoPreparedCompetitiveEventLifecycleControlV1,
-    OpaqueMtgoSessionBoundCompetitiveDuelGestureV1, RatifiedMtgoCompetitiveMatchLaunchV1,
+    OpaqueMtgoPreparedCompetitivePregameActionV1, OpaqueMtgoSessionBoundCompetitiveDuelGestureV1,
+    RatifiedMtgoCompetitiveMatchLaunchV1, RatifiedMtgoCompetitivePregameAuthorizationV1,
 };
 use crate::competitive_auxiliary_action_resolution::{
     resolve_checked_untrusted_competitive_native_pregame_selection_v1,
@@ -51,6 +60,10 @@ use crate::competitive_operator_bootstrap::{
     MtgoCompetitiveOperatorResourceCommitmentsV1,
     MtgoCompetitiveOperatorResourcesDuringSideboardV1, MtgoCompetitiveOperatorResourcesPartsV1,
     OpaqueMtgoCompetitiveOperatorResourcesV1,
+};
+use crate::competitive_pregame_policy::{
+    operator_pregame_resource_commitments_v1, AdmittedMtgoCompetitivePregameHeuristicV1,
+    MtgoCompetitiveOperatorPregameResourceCommitmentsV1,
 };
 use crate::competitive_visible_match_memory::MtgoCompetitiveExternalPublicHistoryConsumerV1;
 use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveCompletedMatchHistoryV1;
@@ -122,6 +135,8 @@ use sha2::{Digest, Sha256};
 const COMPETITIVE_POST_ENTRY_OPERATOR_DOMAIN_V1: &[u8] = b"mtgo-competitive-post-entry-operator-v1";
 const COMPETITIVE_POST_ENTRY_OPERATOR_ADVANCE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-post-entry-operator-advance-v1";
+const COMPETITIVE_POST_ENTRY_OPERATOR_PREGAME_COMPLETION_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-post-entry-operator-pregame-completion-v1";
 const COMPETITIVE_OPERATOR_PREGAME_RESOLUTION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-operator-pregame-resolution-v1";
 const COMPETITIVE_OPERATOR_SIDEBOARD_RESOLUTION_DOMAIN_V1: &[u8] =
@@ -1148,6 +1163,131 @@ pub struct OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
     visible_game_log_lease_commitment_sha256: String,
 }
 
+/// Attended deterministic pregame owner for one exact League or Challenge
+/// game. It retains the reviewed non-model heuristic, separately ratified
+/// pregame permission, visible launch identity, Game Log, and all post-entry
+/// resources across every Mulligan and London-bottoming click.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1;
+/// let _forged = OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1 {
+    resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    pregame_resource_commitments: MtgoCompetitiveOperatorPregameResourceCommitmentsV1,
+    session: crate::OpaqueMtgoCompetitiveEventPregameSessionV1,
+    heuristic: AdmittedMtgoCompetitivePregameHeuristicV1,
+    authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1,
+    visible_game_log_lease_commitment_sha256: String,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1 {
+    pub fn current_stage_v1(&self) -> crate::MtgoCompetitivePregameStageV1 {
+        self.session.current_stage_v1()
+    }
+
+    pub fn pregame_resource_commitments_v1(
+        &self,
+    ) -> MtgoCompetitiveOperatorPregameResourceCommitmentsV1 {
+        self.pregame_resource_commitments.clone()
+    }
+
+    pub fn visible_game_log_snapshot_present_v1(&self) -> bool {
+        matches!(
+            self.visible_game_log,
+            OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(_)
+        )
+    }
+
+    pub fn safe_for_next_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+pub struct OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregamePreparedV1 {
+    resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    pregame_resource_commitments: MtgoCompetitiveOperatorPregameResourceCommitmentsV1,
+    prepared: OpaqueMtgoPreparedCompetitivePregameActionV1,
+    authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1,
+    visible_game_log_lease_commitment_sha256: String,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+pub struct OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregamePendingV1 {
+    resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    pregame_resource_commitments: MtgoCompetitiveOperatorPregameResourceCommitmentsV1,
+    pending: OpaqueMtgoPendingCompetitivePregameInputV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1,
+    visible_game_log_lease_commitment_sha256: String,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+pub struct OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameConfirmedV1 {
+    resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    pregame_resource_commitments: MtgoCompetitiveOperatorPregameResourceCommitmentsV1,
+    confirmed: OpaqueMtgoConfirmedCompetitivePregameActionV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1,
+    visible_game_log_lease_commitment_sha256: String,
+    prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+pub struct OpaqueMtgoCompetitiveOperatorPregameCompletedV1 {
+    operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
+    match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+}
+
+impl OpaqueMtgoCompetitiveOperatorPregameCompletedV1 {
+    pub fn visible_game_log_snapshot_commitment_sha256_v1(&self) -> &str {
+        self.visible_game_log.snapshot_commitment_sha256_v1()
+    }
+
+    pub fn into_parts_v1(
+        self,
+    ) -> (
+        OpaqueMtgoCompetitivePostEntryOperatorV1,
+        RatifiedMtgoCompetitiveMatchLaunchV1,
+        OpaqueMtgoCompetitiveLaunchIdentityV1,
+        OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+        Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+    ) {
+        (
+            self.operator,
+            self.match_launch,
+            self.visible_identity,
+            self.visible_game_log,
+            self.completed_match_history,
+        )
+    }
+}
+
 enum OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1 {
     Lease(Box<OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1>),
     Snapshot(Box<OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1>),
@@ -2046,6 +2186,447 @@ pub fn refresh_competitive_post_entry_operator_attended_pregame_visible_game_log
             visible_game_log_lease_commitment_sha256,
         },
     )
+}
+
+/// Converts the already attended classifier-backed pregame request into the
+/// separately reviewed deterministic stopgap while preserving every live
+/// owner. The production heuristic and pregame-input roots are both empty, so
+/// production cannot currently construct this value.
+pub fn begin_competitive_operator_attended_heuristic_pregame_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1,
+    heuristic: AdmittedMtgoCompetitivePregameHeuristicV1,
+    authorization: RatifiedMtgoCompetitivePregameAuthorizationV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1, String> {
+    let OpaqueMtgoCompetitiveOperatorAttendedNativePregameRequestV1 {
+        request,
+        visible_identity,
+        visible_game_log,
+        visible_game_log_lease_commitment_sha256,
+    } = value;
+    let OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
+        resources,
+        resource_commitments,
+        request,
+        prior_operator,
+    } = request;
+    let heuristic_commitments = heuristic.commitments_v1();
+    let recomputed =
+        operator_pregame_resource_commitments_v1(&resource_commitments, &heuristic_commitments)?;
+    let pregame_session = request.pregame_session_commitments_v1();
+    validate_competitive_pregame_authorization_for_session_and_heuristic_v1(
+        &authorization,
+        request.pregame_session_v1(),
+        &heuristic,
+    )?;
+    validate_operator_attended_heuristic_pregame_owner_v1(
+        &resource_commitments,
+        &recomputed,
+        &prior_operator,
+        &pregame_session,
+        &visible_identity,
+        &visible_game_log,
+        &visible_game_log_lease_commitment_sha256,
+    )?;
+    if request.model_input_v1().game_number != pregame_session.game_number
+        || recomputed.operator_resource_bundle_commitment_sha256
+            != resource_commitments.resource_bundle_commitment_sha256
+        || recomputed.approved_account_alias_sha256 != pregame_session.approved_account_alias_sha256
+        || recomputed.deck_manifest_commitment_sha256 != pregame_session.deck_manifest_sha256
+        || recomputed.deck_format_sha256 != pregame_session.deck_format_sha256
+        || recomputed.gameplay_policy_deployment_commitment_sha256
+            != pregame_session.policy_deployment_commitment_sha256
+    {
+        return Err(
+            "attended heuristic pregame resources differ from event session or model input"
+                .to_owned(),
+        );
+    }
+    let session = request.into_pregame_session_for_admitted_heuristic_v1();
+    Ok(OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1 {
+        resources,
+        resource_commitments,
+        pregame_resource_commitments: recomputed,
+        session,
+        heuristic,
+        authorization,
+        visible_identity,
+        visible_game_log,
+        visible_game_log_lease_commitment_sha256,
+        prior_operator,
+    })
+}
+
+/// Selects the next visible pregame action and rechecks the exact control on
+/// one caller-supplied immediate classified recapture. No input occurs.
+pub fn prepare_competitive_operator_attended_heuristic_pregame_action_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1,
+    fresh: crate::OpaqueMtgoClassifiedCompetitivePregameFrameV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregamePreparedV1, String> {
+    let OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1 {
+        resources,
+        resource_commitments,
+        pregame_resource_commitments,
+        session,
+        heuristic,
+        authorization,
+        visible_identity,
+        visible_game_log,
+        visible_game_log_lease_commitment_sha256,
+        prior_operator,
+    } = value;
+    let plan = plan_competitive_event_pregame_action_v1(session, heuristic)?;
+    let prepared = prepare_fresh_competitive_event_pregame_action_v1(plan, fresh)?;
+    Ok(
+        OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregamePreparedV1 {
+            resources,
+            resource_commitments,
+            pregame_resource_commitments,
+            prepared,
+            authorization,
+            visible_identity,
+            visible_game_log,
+            visible_game_log_lease_commitment_sha256,
+            prior_operator,
+        },
+    )
+}
+
+/// Emits exactly one prepared visible pregame click. Production remains
+/// unreachable while the independent pregame-input ratification root is
+/// empty. Any possible attempt consumes ownership until confirmation.
+pub fn execute_competitive_operator_attended_heuristic_pregame_action_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregamePreparedV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregamePendingV1, String> {
+    let pending =
+        execute_prepared_competitive_pregame_action_v1(value.prepared, value.authorization)?;
+    Ok(
+        OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregamePendingV1 {
+            resources: value.resources,
+            resource_commitments: value.resource_commitments,
+            pregame_resource_commitments: value.pregame_resource_commitments,
+            pending,
+            visible_identity: value.visible_identity,
+            visible_game_log: value.visible_game_log,
+            visible_game_log_lease_commitment_sha256: value
+                .visible_game_log_lease_commitment_sha256,
+            prior_operator: value.prior_operator,
+        },
+    )
+}
+
+/// Confirms the one click only through its immediate action-specific visible
+/// successor, returning all retained owners for either another pregame step
+/// or completion.
+pub fn confirm_competitive_operator_attended_heuristic_pregame_action_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregamePendingV1,
+    after: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameConfirmedV1, String> {
+    let confirmed = confirm_pending_competitive_pregame_action_v1(value.pending, after)?;
+    Ok(
+        OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameConfirmedV1 {
+            resources: value.resources,
+            resource_commitments: value.resource_commitments,
+            pregame_resource_commitments: value.pregame_resource_commitments,
+            confirmed,
+            visible_identity: value.visible_identity,
+            visible_game_log: value.visible_game_log,
+            visible_game_log_lease_commitment_sha256: value
+                .visible_game_log_lease_commitment_sha256,
+            prior_operator: value.prior_operator,
+        },
+    )
+}
+
+/// Reopens the deterministic pregame loop after one confirmed non-terminal
+/// Mulligan or London-bottoming transition.
+pub fn continue_competitive_operator_attended_heuristic_pregame_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameConfirmedV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1, String> {
+    let (session, heuristic, authorization) = value.confirmed.into_loop_parts_v1();
+    if session.current_stage_v1() == crate::MtgoCompetitivePregameStageV1::GameplayReady {
+        return Err(
+            "GameplayReady pregame must complete instead of selecting another action".to_owned(),
+        );
+    }
+    Ok(OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameV1 {
+        resources: value.resources,
+        resource_commitments: value.resource_commitments,
+        pregame_resource_commitments: value.pregame_resource_commitments,
+        session,
+        heuristic,
+        authorization,
+        visible_identity: value.visible_identity,
+        visible_game_log: value.visible_game_log,
+        visible_game_log_lease_commitment_sha256: value.visible_game_log_lease_commitment_sha256,
+        prior_operator: value.prior_operator,
+    })
+}
+
+/// Completes a visibly GameplayReady pregame, refreshes the same match-scoped
+/// Game Log, and returns the advanced operator plus attended identity needed
+/// for gameplay checkout. It creates no gameplay session or input authority.
+pub fn complete_competitive_operator_attended_heuristic_pregame_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedHeuristicPregameConfirmedV1,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+) -> Result<OpaqueMtgoCompetitiveOperatorPregameCompletedV1, String> {
+    let (session, heuristic, authorization) = value.confirmed.into_loop_parts_v1();
+    if session.current_stage_v1() != crate::MtgoCompetitivePregameStageV1::GameplayReady {
+        return Err("competitive operator pregame cannot complete before GameplayReady".to_owned());
+    }
+    validate_competitive_pregame_authorization_for_session_and_heuristic_v1(
+        &authorization,
+        &session,
+        &heuristic,
+    )?;
+    let pregame_session = session.commitments_v1();
+    validate_operator_attended_heuristic_pregame_owner_v1(
+        &value.resource_commitments,
+        &value.pregame_resource_commitments,
+        &value.prior_operator,
+        &pregame_session,
+        &value.visible_identity,
+        &value.visible_game_log,
+        &value.visible_game_log_lease_commitment_sha256,
+    )?;
+    let (runtime, match_launch, completed_match_history) =
+        complete_competitive_event_pregame_session_with_history_v2(session)?;
+    let lease = match value.visible_game_log {
+        OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(lease) => *lease,
+        OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => {
+            (*snapshot).into_match_lease_v1()
+        }
+    };
+    if lease.lease_commitment_sha256_v1() != value.visible_game_log_lease_commitment_sha256 {
+        return Err("completed pregame changed visible Game Log lease lineage".to_owned());
+    }
+    let visible_game_log = refresh_competitive_match_visible_game_log_v1(
+        lease,
+        &value.visible_identity,
+        visible_game_log_capture_request,
+    )?;
+    let operator = advance_operator_after_attended_pregame_v1(
+        value.resources,
+        value.resource_commitments,
+        runtime,
+        &visible_game_log,
+        value.prior_operator,
+    )?;
+    Ok(OpaqueMtgoCompetitiveOperatorPregameCompletedV1 {
+        operator,
+        match_launch,
+        visible_identity: value.visible_identity,
+        visible_game_log,
+        completed_match_history,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_operator_attended_heuristic_pregame_owner_v1(
+    resources: &MtgoCompetitiveOperatorResourceCommitmentsV1,
+    pregame_resources: &MtgoCompetitiveOperatorPregameResourceCommitmentsV1,
+    operator: &MtgoCompetitivePostEntryOperatorCommitmentsV1,
+    session: &crate::MtgoCompetitiveEventPregameSessionCommitmentsV1,
+    visible_identity: &OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: &OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1,
+    retained_lease_commitment_sha256: &str,
+) -> Result<(), String> {
+    let launch = visible_identity.commitments_v1();
+    let (
+        game_log_event_kind,
+        game_log_event_identity_sha256,
+        game_log_match_identity_sha256,
+        game_log_game_number,
+        game_log_lease_commitment_sha256,
+        source_baseline_commitment_sha256,
+    ) = match visible_game_log {
+        OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Lease(lease) => (
+            lease.event_kind_v1(),
+            lease.event_identity_sha256_v1(),
+            lease.match_identity_sha256_v1(),
+            lease.game_number_v1(),
+            lease.lease_commitment_sha256_v1(),
+            lease.source_baseline_commitment_sha256_v1(),
+        ),
+        OpaqueMtgoCompetitiveOperatorVisibleGameLogStateV1::Snapshot(snapshot) => (
+            snapshot.event_kind_v1(),
+            snapshot.event_identity_sha256_v1(),
+            snapshot.match_identity_sha256_v1(),
+            snapshot.game_number_v1(),
+            snapshot.lease_commitment_sha256_v1(),
+            snapshot.source_baseline_commitment_sha256_v1(),
+        ),
+    };
+    validate_operator_attended_heuristic_pregame_join_v1(
+        &OperatorAttendedHeuristicPregameJoinIdentityV1 {
+            resource_bundle_commitment_sha256: resources.resource_bundle_commitment_sha256.clone(),
+            pregame_operator_resource_bundle_commitment_sha256: pregame_resources
+                .operator_resource_bundle_commitment_sha256
+                .clone(),
+            operator_resource_bundle_commitment_sha256: operator
+                .resource_bundle_commitment_sha256
+                .clone(),
+            pregame_account_alias_sha256: pregame_resources.approved_account_alias_sha256.clone(),
+            operator_account_alias_sha256: operator.approved_account_alias_sha256.clone(),
+            session_account_alias_sha256: session.approved_account_alias_sha256.clone(),
+            pregame_deck_manifest_sha256: pregame_resources.deck_manifest_commitment_sha256.clone(),
+            operator_deck_manifest_sha256: operator.deck_manifest_commitment_sha256.clone(),
+            session_deck_manifest_sha256: session.deck_manifest_sha256.clone(),
+            pregame_deck_format_sha256: pregame_resources.deck_format_sha256.clone(),
+            operator_deck_format_sha256: operator.deck_format_sha256.clone(),
+            session_deck_format_sha256: session.deck_format_sha256.clone(),
+            pregame_deployment_sha256: pregame_resources
+                .gameplay_policy_deployment_commitment_sha256
+                .clone(),
+            operator_deployment_sha256: operator.policy_deployment_commitment_sha256.clone(),
+            session_deployment_sha256: session.policy_deployment_commitment_sha256.clone(),
+            operator_runtime_sha256: operator.event_runtime_commitment_sha256.clone(),
+            session_runtime_sha256: session.event_runtime_commitment_sha256.clone(),
+            operator_event_kind: operator.event_kind,
+            session_event_kind: session.event_kind,
+            launch_event_kind: launch.event_kind,
+            game_log_event_kind,
+            session_event_identity_sha256: session.event_identity_sha256.clone(),
+            launch_event_identity_sha256: visible_identity.event_identity_sha256_v1().to_owned(),
+            game_log_event_identity_sha256: game_log_event_identity_sha256.to_owned(),
+            session_match_identity_sha256: session.match_identity_sha256.clone(),
+            launch_match_identity_sha256: visible_identity.match_identity_sha256_v1().to_owned(),
+            game_log_match_identity_sha256: game_log_match_identity_sha256.to_owned(),
+            session_process_continuity_sha256: session.process_continuity_commitment_sha256.clone(),
+            launch_process_continuity_sha256: launch.process_continuity_commitment_sha256,
+            session_game_number: session.game_number,
+            launch_game_number: launch.game_number,
+            game_log_game_number,
+            retained_lease_commitment_sha256: retained_lease_commitment_sha256.to_owned(),
+            game_log_lease_commitment_sha256: game_log_lease_commitment_sha256.to_owned(),
+            prior_baseline_commitment_sha256: operator
+                .visible_game_log_baseline_commitment_sha256
+                .clone(),
+            game_log_source_baseline_commitment_sha256: source_baseline_commitment_sha256
+                .to_owned(),
+        },
+    )
+}
+
+struct OperatorAttendedHeuristicPregameJoinIdentityV1 {
+    resource_bundle_commitment_sha256: String,
+    pregame_operator_resource_bundle_commitment_sha256: String,
+    operator_resource_bundle_commitment_sha256: String,
+    pregame_account_alias_sha256: String,
+    operator_account_alias_sha256: String,
+    session_account_alias_sha256: String,
+    pregame_deck_manifest_sha256: String,
+    operator_deck_manifest_sha256: String,
+    session_deck_manifest_sha256: String,
+    pregame_deck_format_sha256: String,
+    operator_deck_format_sha256: String,
+    session_deck_format_sha256: String,
+    pregame_deployment_sha256: String,
+    operator_deployment_sha256: String,
+    session_deployment_sha256: String,
+    operator_runtime_sha256: String,
+    session_runtime_sha256: String,
+    operator_event_kind: MtgoCompetitiveEventKindV1,
+    session_event_kind: MtgoCompetitiveEventKindV1,
+    launch_event_kind: MtgoCompetitiveEventKindV1,
+    game_log_event_kind: MtgoCompetitiveEventKindV1,
+    session_event_identity_sha256: String,
+    launch_event_identity_sha256: String,
+    game_log_event_identity_sha256: String,
+    session_match_identity_sha256: String,
+    launch_match_identity_sha256: String,
+    game_log_match_identity_sha256: String,
+    session_process_continuity_sha256: String,
+    launch_process_continuity_sha256: String,
+    session_game_number: u8,
+    launch_game_number: u8,
+    game_log_game_number: u8,
+    retained_lease_commitment_sha256: String,
+    game_log_lease_commitment_sha256: String,
+    prior_baseline_commitment_sha256: Option<String>,
+    game_log_source_baseline_commitment_sha256: String,
+}
+
+fn validate_operator_attended_heuristic_pregame_join_v1(
+    value: &OperatorAttendedHeuristicPregameJoinIdentityV1,
+) -> Result<(), String> {
+    if value.resource_bundle_commitment_sha256
+        != value.pregame_operator_resource_bundle_commitment_sha256
+        || value.resource_bundle_commitment_sha256
+            != value.operator_resource_bundle_commitment_sha256
+        || value.pregame_account_alias_sha256 != value.operator_account_alias_sha256
+        || value.pregame_account_alias_sha256 != value.session_account_alias_sha256
+        || value.pregame_deck_manifest_sha256 != value.operator_deck_manifest_sha256
+        || value.pregame_deck_manifest_sha256 != value.session_deck_manifest_sha256
+        || value.pregame_deck_format_sha256 != value.operator_deck_format_sha256
+        || value.pregame_deck_format_sha256 != value.session_deck_format_sha256
+        || value.pregame_deployment_sha256 != value.operator_deployment_sha256
+        || value.pregame_deployment_sha256 != value.session_deployment_sha256
+        || value.operator_runtime_sha256 != value.session_runtime_sha256
+        || value.operator_event_kind != value.session_event_kind
+        || value.session_event_kind != value.launch_event_kind
+        || value.session_event_kind != value.game_log_event_kind
+        || value.session_event_identity_sha256 != value.launch_event_identity_sha256
+        || value.session_event_identity_sha256 != value.game_log_event_identity_sha256
+        || value.session_match_identity_sha256 != value.launch_match_identity_sha256
+        || value.session_match_identity_sha256 != value.game_log_match_identity_sha256
+        || value.session_process_continuity_sha256 != value.launch_process_continuity_sha256
+        || value.session_game_number != value.launch_game_number
+        || value.session_game_number != value.game_log_game_number
+        || value.retained_lease_commitment_sha256 != value.game_log_lease_commitment_sha256
+        || value.prior_baseline_commitment_sha256.as_deref()
+            != Some(value.game_log_source_baseline_commitment_sha256.as_str())
+    {
+        return Err(
+            "attended heuristic pregame changed operator resources, account, event, match, game, launch, or visible Game Log lineage"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn advance_operator_after_attended_pregame_v1(
+    resources: MtgoCompetitiveOperatorResourcesPartsV1,
+    resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    visible_game_log: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    prior: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+) -> Result<OpaqueMtgoCompetitivePostEntryOperatorV1, String> {
+    let runtime_commitments = runtime.commitments_v1();
+    if resource_commitments.resource_bundle_commitment_sha256
+        != prior.resource_bundle_commitment_sha256
+        || prior.current_phase != MtgoCompetitiveLifecyclePhaseV1::MatchInProgress
+        || prior.visible_game_log_baseline_commitment_sha256.as_deref()
+            != Some(visible_game_log.source_baseline_commitment_sha256_v1())
+        || runtime_commitments.event_kind != visible_game_log.event_kind_v1()
+        || runtime_commitments.bound_event_identity_sha256
+            != visible_game_log.event_identity_sha256_v1()
+        || runtime_commitments.current_match_identity_sha256.as_deref()
+            != Some(visible_game_log.match_identity_sha256_v1())
+        || runtime_commitments.current_game_number != Some(visible_game_log.game_number_v1())
+    {
+        return Err(
+            "completed pregame changed resources or failed to consume the exact visible Game Log baseline into its match lease"
+                .to_owned(),
+        );
+    }
+    let commitments = post_entry_operator_commitments_v1(
+        &resource_commitments,
+        &runtime_commitments,
+        prior
+            .accepted_transition_count
+            .checked_add(1)
+            .ok_or("competitive pregame operator transition count overflow")?,
+        None,
+        Some(prior.operator_commitment_sha256.as_str()),
+        COMPETITIVE_POST_ENTRY_OPERATOR_PREGAME_COMPLETION_DOMAIN_V1,
+    )?;
+    Ok(OpaqueMtgoCompetitivePostEntryOperatorV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        visible_game_log_baseline: None,
+        commitments,
+    })
 }
 
 /// Runs the full post-entry ownership path through a checked-untrusted offline
@@ -5322,6 +5903,47 @@ mod tests {
         (resources, lease, session, gameplay_action_perception_v1())
     }
 
+    fn attended_heuristic_pregame_join_v1() -> OperatorAttendedHeuristicPregameJoinIdentityV1 {
+        OperatorAttendedHeuristicPregameJoinIdentityV1 {
+            resource_bundle_commitment_sha256: digest('1'),
+            pregame_operator_resource_bundle_commitment_sha256: digest('1'),
+            operator_resource_bundle_commitment_sha256: digest('1'),
+            pregame_account_alias_sha256: digest('2'),
+            operator_account_alias_sha256: digest('2'),
+            session_account_alias_sha256: digest('2'),
+            pregame_deck_manifest_sha256: digest('3'),
+            operator_deck_manifest_sha256: digest('3'),
+            session_deck_manifest_sha256: digest('3'),
+            pregame_deck_format_sha256: digest('4'),
+            operator_deck_format_sha256: digest('4'),
+            session_deck_format_sha256: digest('4'),
+            pregame_deployment_sha256: digest('5'),
+            operator_deployment_sha256: digest('5'),
+            session_deployment_sha256: digest('5'),
+            operator_runtime_sha256: digest('6'),
+            session_runtime_sha256: digest('6'),
+            operator_event_kind: MtgoCompetitiveEventKindV1::League,
+            session_event_kind: MtgoCompetitiveEventKindV1::League,
+            launch_event_kind: MtgoCompetitiveEventKindV1::League,
+            game_log_event_kind: MtgoCompetitiveEventKindV1::League,
+            session_event_identity_sha256: digest('7'),
+            launch_event_identity_sha256: digest('7'),
+            game_log_event_identity_sha256: digest('7'),
+            session_match_identity_sha256: digest('8'),
+            launch_match_identity_sha256: digest('8'),
+            game_log_match_identity_sha256: digest('8'),
+            session_process_continuity_sha256: digest('9'),
+            launch_process_continuity_sha256: digest('9'),
+            session_game_number: 1,
+            launch_game_number: 1,
+            game_log_game_number: 1,
+            retained_lease_commitment_sha256: digest('a'),
+            game_log_lease_commitment_sha256: digest('a'),
+            prior_baseline_commitment_sha256: Some(digest('b')),
+            game_log_source_baseline_commitment_sha256: digest('b'),
+        }
+    }
+
     fn direct_visible_join_v1() -> OperatorDirectVisibleJoinIdentityV1 {
         OperatorDirectVisibleJoinIdentityV1 {
             resource_deployment_commitment_sha256: digest('8'),
@@ -5407,6 +6029,68 @@ mod tests {
             prior_resource_bundle_commitment_sha256: digest('1'),
             request_deployment_commitment_sha256: digest('2'),
             loaded_checkpoint_deployment_commitment_sha256: digest('2'),
+        }
+    }
+
+    #[test]
+    fn attended_heuristic_pregame_accepts_both_modes_and_rejects_crossed_lineage() {
+        let league = attended_heuristic_pregame_join_v1();
+        validate_operator_attended_heuristic_pregame_join_v1(&league).unwrap();
+
+        let mut challenge = attended_heuristic_pregame_join_v1();
+        challenge.operator_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        challenge.session_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        challenge.launch_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        challenge.game_log_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        validate_operator_attended_heuristic_pregame_join_v1(&challenge).unwrap();
+
+        for mutate in [
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.operator_resource_bundle_commitment_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.session_account_alias_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.session_deck_manifest_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.session_deck_format_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.session_deployment_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.session_runtime_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.launch_event_kind = MtgoCompetitiveEventKindV1::Challenge
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.game_log_event_identity_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.launch_match_identity_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.launch_process_continuity_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.game_log_game_number = 2
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.game_log_lease_commitment_sha256 = digest('f')
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.prior_baseline_commitment_sha256 = None
+            },
+            |value: &mut OperatorAttendedHeuristicPregameJoinIdentityV1| {
+                value.game_log_source_baseline_commitment_sha256 = digest('f')
+            },
+        ] {
+            let mut crossed = attended_heuristic_pregame_join_v1();
+            mutate(&mut crossed);
+            assert!(validate_operator_attended_heuristic_pregame_join_v1(&crossed).is_err());
         }
     }
 

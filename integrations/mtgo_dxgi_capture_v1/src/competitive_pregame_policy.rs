@@ -394,7 +394,7 @@ fn review_commitment_v1(
     ))
 }
 
-fn operator_pregame_resource_commitments_v1(
+pub(crate) fn operator_pregame_resource_commitments_v1(
     operator: &crate::competitive_operator_bootstrap::MtgoCompetitiveOperatorResourceCommitmentsV1,
     pregame: &MtgoAdmittedCompetitivePregameHeuristicCommitmentsV1,
 ) -> Result<MtgoCompetitiveOperatorPregameResourceCommitmentsV1, String> {
