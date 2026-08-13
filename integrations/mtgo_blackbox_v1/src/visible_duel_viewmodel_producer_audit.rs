@@ -16,7 +16,7 @@ const ROOT_TYPE_V1: &str = "Shiny.Play.Duel.DuelScene";
 const ROOT_ACCESSOR_V1: &str = "FrameworkElement.DataContext";
 const ROOT_VIEWMODEL_TYPE_V1: &str = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
 const AUDIT_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-viewmodel-producer-audit-v1";
-const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 20;
+const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 31;
 const REFERENCE_ASSEMBLY_SHA256_V1: &str =
     "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 
@@ -462,7 +462,31 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
         (
             "WotC.MtGO.Client.Model.Reference.dll",
             "WotC.MtGO.Client.Model.Play.ICardAction",
+            "ConfirmBeforeTargetingOwnCard",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "ConfirmModeString",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
             "GroupName",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "HasXTarget",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "InSideboard",
             BoundVisibleActionObject,
         ),
         (
@@ -480,6 +504,12 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
         (
             "WotC.MtGO.Client.Model.Reference.dll",
             "WotC.MtGO.Client.Model.Play.ICardAction",
+            "IsFakeAction",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
             "IsManaAbility",
             BoundVisibleActionObject,
         ),
@@ -492,6 +522,18 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
         (
             "WotC.MtGO.Client.Model.Reference.dll",
             "WotC.MtGO.Client.Model.Play.ICardAction",
+            "ModeMaxChoices",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "ModeMinChoices",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
             "ModeChoiceMapping",
             BoundVisibleActionObject,
         ),
@@ -499,6 +541,30 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
             "WotC.MtGO.Client.Model.Reference.dll",
             "WotC.MtGO.Client.Model.Play.ICardAction",
             "ModeOptions",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "Targets",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "XDeterminedByTargetWithGreatestCMC",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "XIsAMinimum",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "XTargetDivisor",
             BoundVisibleActionObject,
         ),
     ]
@@ -560,7 +626,7 @@ mod tests {
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
         assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 25);
         assert!(checked.private_visible_action_join_layer_present_v1());
-        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 20);
+        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 31);
         assert!(checked.offline_sealed_action_dispatch_present_v1());
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());

@@ -393,6 +393,73 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     simpleAction.AttackVictimIdFixture = -1;
 
+                    simpleAction.TargetItems.Add(new object());
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 47;
+                    }
+                    simpleAction.TargetItems.Clear();
+                    simpleAction.HasXTargetFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 48;
+                    }
+                    simpleAction.HasXTargetFixture = false;
+                    simpleAction.InSideboardFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 49;
+                    }
+                    simpleAction.InSideboardFixture = false;
+                    simpleAction.ConfirmModeStringFixture = "fixture-visible-confirm";
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 50;
+                    }
+                    simpleAction.ConfirmModeStringFixture = null;
+                    simpleAction.ConfirmBeforeTargetingOwnCardFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 51;
+                    }
+                    simpleAction.ConfirmBeforeTargetingOwnCardFixture = false;
+                    simpleAction.IsFakeActionFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 52;
+                    }
+                    simpleAction.IsFakeActionFixture = false;
+                    simpleAction.ModeMinChoicesFixture = 1;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 53;
+                    }
+                    simpleAction.ModeMinChoicesFixture = 0;
+                    simpleAction.ModeMaxChoicesFixture = 1;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 54;
+                    }
+                    simpleAction.ModeMaxChoicesFixture = 0;
+                    simpleAction.XIsAMinimumFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 55;
+                    }
+                    simpleAction.XIsAMinimumFixture = false;
+                    simpleAction.XDeterminedByTargetWithGreatestCMCFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 56;
+                    }
+                    simpleAction.XDeterminedByTargetWithGreatestCMCFixture = false;
+                    simpleAction.XTargetDivisorFixture = 2;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 57;
+                    }
+                    simpleAction.XTargetDivisorFixture = 1;
+
                     // The semantic turn is derived only from the rendered
                     // GameTurnText. Non-canonical or non-opening visible text
                     // must fail closed before the first supported slice.

@@ -56,11 +56,22 @@ namespace Shiny.Play.Duel
         public bool AltMenuAction => false;
         public int AttackVictimId => -1;
         public bool CanBePerformedLocally => true;
+        public bool ConfirmBeforeTargetingOwnCard => false;
+        public string? ConfirmModeString => null;
+        public bool HasXTarget => false;
+        public bool InSideboard => false;
         public bool IsManaAbility => false;
         public bool IsActivatedAbility => true;
         public bool IsCastAction => false;
+        public bool IsFakeAction => false;
         public bool IsSubmenuItem => false;
+        public uint ModeMaxChoices => 0;
+        public uint ModeMinChoices => 0;
         public string ModeChoiceMapping => string.Empty;
+        public IList<object> Targets { get; } = new List<object>();
+        public bool XDeterminedByTargetWithGreatestCMC => false;
+        public bool XIsAMinimum => false;
+        public int XTargetDivisor => 1;
     }
 
     public static class VisibleActionMenuGetterProbeV1

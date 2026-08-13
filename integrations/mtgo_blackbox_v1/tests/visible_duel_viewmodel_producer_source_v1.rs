@@ -95,7 +95,7 @@ fn managed_producer_private_visible_action_join_allowlist_matches_audit() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 20);
+    assert_eq!(actual.len(), 31);
     assert_eq!(actual, expected);
     assert!(!source.contains("|WotC.MtGO.Client.Model.Play.IGame|CurrentTurn\""));
 }
@@ -147,6 +147,10 @@ fn managed_producer_has_bounded_output_and_no_unrelated_side_effect_api_markers(
     assert!(source.contains("private static bool TryRequireNoUnrepresentedVisibleModalSurfaceV1("));
     assert!(source.contains("private static bool TryRequireSupportedDuelVariantV1("));
     assert!(source.contains("private static bool TryRequireNoUnrepresentedVisibleCardStateV1("));
+    assert!(source.contains("private static bool TryRequireBasicVisibleCardActionMenuShapeV1("));
+    assert!(
+        source.contains("private static bool TryRequireNoUnrepresentedVisibleCardActionModalV1(")
+    );
     assert!(source.contains("private static bool TryValidateVisibleZonesAndCardsV1("));
     assert!(source.contains("private static bool TryValidateNeverEnumeratedZoneRootV1("));
     assert!(source.contains("private static bool TryValidatePrivateVisibleCardActionJoinsV1("));

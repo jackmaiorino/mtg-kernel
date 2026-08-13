@@ -43,13 +43,24 @@ namespace WotC.MtGO.Client.Model.Play
         bool AltMenuAction { get; }
         int AttackVictimId { get; }
         bool CanBePerformedLocally { get; }
+        bool ConfirmBeforeTargetingOwnCard { get; }
+        string? ConfirmModeString { get; }
         string GroupName { get; }
+        bool HasXTarget { get; }
+        bool InSideboard { get; }
         bool IsManaAbility { get; }
         bool IsActivatedAbility { get; }
         bool IsCastAction { get; }
+        bool IsFakeAction { get; }
         bool IsSubmenuItem { get; }
+        uint ModeMaxChoices { get; }
+        uint ModeMinChoices { get; }
         string ModeChoiceMapping { get; }
         string[] ModeOptions { get; }
+        System.Collections.Generic.IList<object> Targets { get; }
+        bool XDeterminedByTargetWithGreatestCMC { get; }
+        bool XIsAMinimum { get; }
+        int XTargetDivisor { get; }
     }
 
     public static class PrivateVisibleActionGetterProbeV1
@@ -73,13 +84,24 @@ namespace WotC.MtGO.Client.Model.Play
                 "CardAction.AltMenuAction",
                 "CardAction.AttackVictimId",
                 "CardAction.CanBePerformedLocally",
+                "CardAction.ConfirmBeforeTargetingOwnCard",
+                "CardAction.ConfirmModeString",
                 "CardAction.GroupName",
+                "CardAction.HasXTarget",
+                "CardAction.InSideboard",
                 "CardAction.IsManaAbility",
                 "CardAction.IsActivatedAbility",
                 "CardAction.IsCastAction",
+                "CardAction.IsFakeAction",
                 "CardAction.IsSubmenuItem",
+                "CardAction.ModeMaxChoices",
+                "CardAction.ModeMinChoices",
                 "CardAction.ModeChoiceMapping",
-                "CardAction.ModeOptions"
+                "CardAction.ModeOptions",
+                "CardAction.Targets",
+                "CardAction.XDeterminedByTargetWithGreatestCMC",
+                "CardAction.XIsAMinimum",
+                "CardAction.XTargetDivisor"
             };
             foreach (string name in expected)
             {
@@ -167,6 +189,43 @@ namespace WotC.MtGO.Client.Model.Play
             }
         }
 
+        public bool ConfirmBeforeTargetingOwnCard
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record(
+                    "CardAction.ConfirmBeforeTargetingOwnCard");
+                return ConfirmBeforeTargetingOwnCardFixture;
+            }
+        }
+
+        public string? ConfirmModeString
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("CardAction.ConfirmModeString");
+                return ConfirmModeStringFixture;
+            }
+        }
+
+        public bool HasXTarget
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("CardAction.HasXTarget");
+                return HasXTargetFixture;
+            }
+        }
+
+        public bool InSideboard
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("CardAction.InSideboard");
+                return InSideboardFixture;
+            }
+        }
+
         public bool IsManaAbility
         {
             get
@@ -204,6 +263,33 @@ namespace WotC.MtGO.Client.Model.Play
             }
         }
 
+        public bool IsFakeAction
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("CardAction.IsFakeAction");
+                return IsFakeActionFixture;
+            }
+        }
+
+        public uint ModeMaxChoices
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("CardAction.ModeMaxChoices");
+                return ModeMaxChoicesFixture;
+            }
+        }
+
+        public uint ModeMinChoices
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("CardAction.ModeMinChoices");
+                return ModeMinChoicesFixture;
+            }
+        }
+
         public string ModeChoiceMapping
         {
             get
@@ -222,17 +308,66 @@ namespace WotC.MtGO.Client.Model.Play
             }
         }
 
+        public System.Collections.Generic.IList<object> Targets
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("CardAction.Targets");
+                return TargetItems;
+            }
+        }
+
+        public bool XDeterminedByTargetWithGreatestCMC
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record(
+                    "CardAction.XDeterminedByTargetWithGreatestCMC");
+                return XDeterminedByTargetWithGreatestCMCFixture;
+            }
+        }
+
+        public bool XIsAMinimum
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("CardAction.XIsAMinimum");
+                return XIsAMinimumFixture;
+            }
+        }
+
+        public int XTargetDivisor
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("CardAction.XTargetDivisor");
+                return XTargetDivisorFixture;
+            }
+        }
+
         public string NameFixture { get; set; } = "fixture-visible-action";
         public string ActionChoicesFixture { get; set; } = string.Empty;
         public bool AltMenuActionFixture { get; set; }
         public int AttackVictimIdFixture { get; set; } = -1;
+        public bool ConfirmBeforeTargetingOwnCardFixture { get; set; }
+        public string? ConfirmModeStringFixture { get; set; }
         public string GroupNameFixture { get; set; } = string.Empty;
+        public bool HasXTargetFixture { get; set; }
+        public bool InSideboardFixture { get; set; }
         public bool ManaFixture { get; set; }
         public bool ActivatedFixture { get; set; }
         public bool CastFixture { get; set; } = true;
+        public bool IsFakeActionFixture { get; set; }
         public bool IsSubmenuItemFixture { get; set; }
+        public uint ModeMaxChoicesFixture { get; set; }
+        public uint ModeMinChoicesFixture { get; set; }
         public string ModeChoiceMappingFixture { get; set; } = string.Empty;
         public bool IsDefaultFixture { get; set; }
+        public System.Collections.Generic.IList<object> TargetItems { get; } =
+            new System.Collections.Generic.List<object>();
+        public bool XDeterminedByTargetWithGreatestCMCFixture { get; set; }
+        public bool XIsAMinimumFixture { get; set; }
+        public int XTargetDivisorFixture { get; set; } = 1;
     }
 }
 

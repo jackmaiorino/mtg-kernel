@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.13 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.14 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -140,13 +140,24 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|AltMenuAction",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|AttackVictimId",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|CanBePerformedLocally",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ConfirmBeforeTargetingOwnCard",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ConfirmModeString",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|GroupName",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|HasXTarget",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|InSideboard",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsActivatedAbility",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsCastAction",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsFakeAction",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsManaAbility",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsSubmenuItem",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ModeMaxChoices",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ModeMinChoices",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ModeChoiceMapping",
-            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ModeOptions"
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ModeOptions",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|Targets",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|XDeterminedByTargetWithGreatestCMC",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|XIsAMinimum",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|XTargetDivisor"
         };
 
         /// <summary>
@@ -270,7 +281,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.13 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.14 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -333,8 +344,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
             if (AllowedGetters.Length != 74 ||
                 AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 74 ||
-                PrivateVisibleActionJoinGetters.Length != 20 ||
-                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 20)
+                PrivateVisibleActionJoinGetters.Length != 31 ||
+                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 31)
             {
                 return false;
             }
@@ -796,7 +807,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     "ModeOptions",
                     out object? modesValue) ||
                 !TryBoundedVisibleStringCollectionV1(modesValue, 64) ||
-                !TryRequireBasicVisibleCardActionMenuShapeV1(action))
+                !TryRequireBasicVisibleCardActionMenuShapeV1(action) ||
+                !TryRequireNoUnrepresentedVisibleCardActionModalV1(action))
             {
                 return false;
             }
@@ -810,7 +822,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         // current semantic slice models none of those transformations, so the
         // corresponding private values are used only as one-way guards and
         // are never serialized. Defaults describe the simple one-action-per-
-        // visible-label shape supported by V1.13.
+        // visible-label shape supported by V1.14.
         private static bool TryRequireBasicVisibleCardActionMenuShapeV1(object action)
         {
             const string assembly = "WotC.MtGO.Client.Model.Reference";
@@ -833,6 +845,51 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 TryReadExactPrivateVisibleActionPropertyV1(
                     action, assembly, cardAction, "AttackVictimId", out object? victimValue) &&
                 victimValue is int victim && victim == -1;
+        }
+
+        // PromptBoxViewModel.Execute turns these private action properties into
+        // later player-visible target, X-value, or confirmation UI. The current
+        // semantic slice cannot continue those modals, so only their inert
+        // defaults are accepted. Values are inspected transiently as one-way
+        // guards and never serialized.
+        private static bool TryRequireNoUnrepresentedVisibleCardActionModalV1(
+            object action)
+        {
+            const string assembly = "WotC.MtGO.Client.Model.Reference";
+            const string cardAction = "WotC.MtGO.Client.Model.Play.ICardAction";
+            return TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "Targets", out object? targetsValue) &&
+                targetsValue is ICollection targets && targets.Count == 0 &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "HasXTarget", out object? hasXValue) &&
+                hasXValue is bool hasX && !hasX &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "InSideboard", out object? sideboardValue) &&
+                sideboardValue is bool sideboard && !sideboard &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ConfirmModeString", out object? confirmValue) &&
+                confirmValue == null &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ConfirmBeforeTargetingOwnCard", out object? ownConfirmValue) &&
+                ownConfirmValue is bool ownConfirm && !ownConfirm &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "IsFakeAction", out object? fakeValue) &&
+                fakeValue is bool fake && !fake &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ModeMinChoices", out object? modeMinValue) &&
+                modeMinValue is uint modeMin && modeMin == 0u &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ModeMaxChoices", out object? modeMaxValue) &&
+                modeMaxValue is uint modeMax && modeMax == 0u &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "XIsAMinimum", out object? xMinimumValue) &&
+                xMinimumValue is bool xMinimum && !xMinimum &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "XDeterminedByTargetWithGreatestCMC", out object? xTargetValue) &&
+                xTargetValue is bool xTarget && !xTarget &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "XTargetDivisor", out object? divisorValue) &&
+                divisorValue is int divisor && divisor == 1;
         }
 
         private static bool TryValidateVisibleGroupCardActionLabelsV1(object action)

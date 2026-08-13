@@ -9,7 +9,7 @@ set. The pinned MTGO client constructs the visible card menu from
 behavior using alternate-menu, grouping, mode-choice, submenu, action-choice,
 pile, attack-hover, drag-cast, and auto-mana rules.
 
-Producer version 1.13 therefore supports only the simple one-action-per-visible-
+Producer version 1.14 therefore supports only the simple one-action-per-visible-
 label subset. It reads the transformation fields transiently as one-way guards.
 If any guarded field is non-default, the producer emits only the fixed generic
 `projection_incomplete` abstention. None of the private field values, underlying
@@ -56,10 +56,9 @@ The inspected path was `Shiny.Play.Duel.Card_View.ProcessMouseUp` and the
 These findings mean action order and cardinality must be reconstructed from the
 presentation algorithm, not inferred from raw collection order alone.
 
-## Version 1.13 closure
+## Version 1.14 closure
 
-The direct producer has six additional exact private visible-source-bound join
-getters:
+Version 1.13 added six exact private visible-source-bound join getters:
 
 - `ActionChoices`
 - `AltMenuAction`
@@ -68,10 +67,33 @@ getters:
 - `IsSubmenuItem`
 - `ModeChoiceMapping`
 
-For the currently supported simple opening slice, all must be empty, false, or
+Version 1.14 adds eleven more one-way guard getters for the player-visible modal
+that follows action selection:
+
+- `Targets`
+- `HasXTarget`
+- `InSideboard`
+- `ConfirmModeString`
+- `ConfirmBeforeTargetingOwnCard`
+- `IsFakeAction`
+- `ModeMinChoices`
+- `ModeMaxChoices`
+- `XIsAMinimum`
+- `XDeterminedByTargetWithGreatestCMC`
+- `XTargetDivisor`
+
+For the currently supported simple opening slice, all guards must have inert
+defaults and the target collection must be empty. Static inspection of
+`PromptBoxViewModel.Execute` confirms nonempty targets enter the visible target
+selection interaction and a non-null confirmation string opens a visible
+confirmation dialog. The other values describe X, sideboard, fake-action, and
+mode-choice behavior that the current semantic slice cannot continue safely.
+
+All menu-shape fields must be empty, false, or
 `-1` as appropriate. The preexisting `ModeOptions` collection must also be
 empty at semantic mapping time. Synthetic tests independently set every new
-field to a non-default value and require the fixed generic abstention.
+field to a non-default value and require the fixed generic abstention. The
+private values themselves are never exported.
 
 This does not authorize or claim support for grouped actions, modal choices,
 targets, piles, attacks, blocks, drag-cast, automatic mana selection, or later

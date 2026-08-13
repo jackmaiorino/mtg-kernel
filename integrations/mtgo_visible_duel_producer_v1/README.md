@@ -7,11 +7,11 @@ direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.13 invokes only exact allowlisted getters for the player-visible game
+Version 1.14 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
-and basic two-seat consistency. It also performs twenty exact private joins
+and basic two-seat consistency. It also performs thirty-one exact private joins
 from visible enabled prompt controls and the seated player's visible cards to
 the corresponding action objects. Those joins read only visible action labels,
 action type, locally-performable classification, cast, activated, and mana
@@ -81,7 +81,10 @@ selectors, trigger panels, wish flow, storm display, and temporary-zone
 windows also force abstention until their public contents and choices are
 represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
-abstention. Version 1.13 has not been loaded into MTGO.
+abstention. Target-bearing, X-bearing, sideboard, fake, confirmation, and
+mode-count action state likewise forces abstention until its subsequent
+player-visible modal is represented. Version 1.14 has not been loaded into
+MTGO.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.
 The next tranche must confirm the exact client pass control, add later special
