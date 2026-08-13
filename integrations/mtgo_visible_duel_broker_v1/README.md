@@ -29,3 +29,11 @@ exact file and product versions, a valid Authenticode signature, and unchanged
 process start time and file identities before and after invocation. Its output
 validator still accepts only the four fixed abstentions. This is the candidate
 for the first live abstention qualification, not an admitted semantic producer.
+
+The first live qualification passed against the exact pinned client and
+returned only `duel_surface_unavailable`. The client remained responsive and
+the call did not focus, move, capture, click, type, score, or invoke any MTGO
+property getter. This attests only the identity-pinned load-and-invoke path.
+Because no duel root was present, it does not attest root discovery, visible
+projection, legal-action completeness, semantic evidence, model scoring, or
+input. The native bootstrap remains loaded until that MTGO process exits.

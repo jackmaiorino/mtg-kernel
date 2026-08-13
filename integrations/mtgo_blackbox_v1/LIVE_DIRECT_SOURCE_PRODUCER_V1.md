@@ -90,12 +90,14 @@ Log corroboration where available, and confirmed player-visible history.
 
 ## Nonclaims
 
-The first managed root seam now identifies the exact public WPF `DuelScene`,
+The first managed root seam identifies the exact public WPF `DuelScene`,
 requires its `DataContext` to be the exact duel view-model type, and checks the
-46-getter candidate surface. It deliberately invokes no MTGO getter and returns
-only a fixed abstention. This contract still does not attest producer loading,
-implement a complete projection, admit a live decision, authorize event entry
-or spending, or send input. Until the reviewed producer and corpus exist, DXGI
-remains the only candidate source for complete board and legal-control
-reconstruction; direct Game Log parsing remains a supplemental player-visible
-history source.
+46-getter candidate surface. The identity-pinned native broker has now loaded
+and invoked that producer once against the exact client, receiving only the
+fixed `duel_surface_unavailable` abstention while no duel was open. It
+deliberately invokes no MTGO getter. This attests the load-and-invoke route only;
+it does not implement a complete projection, attest a duel root, admit a live
+decision, authorize event entry or spending, or send input. Until the reviewed
+producer and corpus exist, DXGI remains the only candidate source for complete
+board and legal-control reconstruction; direct Game Log parsing remains a
+supplemental player-visible history source.

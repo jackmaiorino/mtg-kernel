@@ -30,6 +30,8 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub direct_source_visible_viewmodel_broker_protocol_present: bool,
     pub direct_source_managed_producer_root_seam_present: bool,
     pub direct_source_synthetic_loader_qualification_present: bool,
+    pub direct_source_identity_pinned_live_abstention_broker_present: bool,
+    pub direct_source_live_abstention_qualification_passed: bool,
     pub direct_source_audited_broker_runtime_present: bool,
     pub direct_source_live_producer_attestation_present: bool,
     pub visible_accessibility_requires_pixel_corroboration: bool,
@@ -100,6 +102,8 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         direct_source_visible_viewmodel_broker_protocol_present: true,
         direct_source_managed_producer_root_seam_present: true,
         direct_source_synthetic_loader_qualification_present: true,
+        direct_source_identity_pinned_live_abstention_broker_present: true,
+        direct_source_live_abstention_qualification_passed: true,
         direct_source_audited_broker_runtime_present: false,
         direct_source_live_producer_attestation_present: false,
         visible_accessibility_requires_pixel_corroboration: true,
@@ -174,6 +178,8 @@ mod tests {
         assert!(report.direct_source_visible_viewmodel_broker_protocol_present);
         assert!(report.direct_source_managed_producer_root_seam_present);
         assert!(report.direct_source_synthetic_loader_qualification_present);
+        assert!(report.direct_source_identity_pinned_live_abstention_broker_present);
+        assert!(report.direct_source_live_abstention_qualification_passed);
         assert!(!report.direct_source_audited_broker_runtime_present);
         assert!(!report.direct_source_live_producer_attestation_present);
         assert!(report.visible_accessibility_requires_pixel_corroboration);

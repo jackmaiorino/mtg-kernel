@@ -29,6 +29,8 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub direct_source_visible_viewmodel_broker_protocol_present: bool,
     pub direct_source_managed_producer_root_seam_present: bool,
     pub direct_source_synthetic_loader_qualification_present: bool,
+    pub direct_source_identity_pinned_live_abstention_broker_present: bool,
+    pub direct_source_live_abstention_qualification_passed: bool,
     pub direct_source_audited_broker_runtime_present: bool,
     pub direct_source_live_producer_attestation_present: bool,
     pub persisted_visible_game_log_parser_present: bool,
@@ -166,6 +168,8 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             direct_source_visible_viewmodel_broker_protocol_present: true,
             direct_source_managed_producer_root_seam_present: true,
             direct_source_synthetic_loader_qualification_present: true,
+            direct_source_identity_pinned_live_abstention_broker_present: true,
+            direct_source_live_abstention_qualification_passed: true,
             direct_source_audited_broker_runtime_present: false,
             direct_source_live_producer_attestation_present: false,
             persisted_visible_game_log_parser_present: true,
@@ -339,6 +343,16 @@ mod tests {
             report
                 .known_wiring_gaps
                 .direct_source_synthetic_loader_qualification_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .direct_source_identity_pinned_live_abstention_broker_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .direct_source_live_abstention_qualification_passed
         );
         assert!(
             !report
