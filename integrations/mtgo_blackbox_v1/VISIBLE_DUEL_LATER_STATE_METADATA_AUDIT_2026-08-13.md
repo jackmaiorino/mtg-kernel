@@ -121,3 +121,17 @@ only after exact comparison against composed UI frames, with adversarial
 fixtures proving hidden values cannot enter success output, errors, or receipts.
 This audit grants no semantic evidence, model, input, event-entry, or spending
 authority.
+
+The producer already runs the complete root discovery, getter checks,
+sanitization, action binding, serialization, and optional sealed execution on
+MTGO's WPF dispatcher at `DispatcherPriority.Send`. That prevents concurrent UI
+callbacks from interleaving two client presentation moments inside one
+producer call. It does not by itself prove pixel agreement. The live broker
+must bracket the call with retained composed frames and bind the accepted
+sanitized decision to the unchanged visible projection regions from that same
+transaction before the result may reach the scorer.
+
+Installed metadata names the no-stakes
+`ConstructedTournamentPractice` game channel. Use that visible client venue for
+the first attended live projection check. Do not infer or enter the channel from
+the backing enum alone; navigate through the visible MTGO interface after login.
