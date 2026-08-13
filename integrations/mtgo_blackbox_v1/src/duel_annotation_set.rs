@@ -247,7 +247,7 @@ pub fn check_untrusted_player_visible_duel_annotation_set_v1(
             ));
         }
         crate::validate_player_visible_expected_v2(&entry.expected)?;
-        validate_annotation_payload_v1(&entry.expected)?;
+        validate_player_visible_duel_decision_input_strict_v1(&entry.expected)?;
     }
 
     let canonical_manifest = serde_json::to_vec(&manifest).map_err(|error| {
@@ -269,7 +269,7 @@ pub fn check_untrusted_player_visible_duel_annotation_set_v1(
     })
 }
 
-fn validate_annotation_payload_v1(
+pub(crate) fn validate_player_visible_duel_decision_input_strict_v1(
     expected: &MtgoPlayerVisibleDuelDecisionInputV1,
 ) -> Result<(), MtgoContractErrorV1> {
     let state = &expected.current_state;

@@ -432,6 +432,14 @@ The local validator accepts the annotation JSON and the exact source artifact di
 cargo run --bin check_mtgo_player_visible_duel_annotations_v1 -- <corpus-id> <absolute-annotation-set.json> <absolute-artifact-directory> [absolute-artifact-directory ...]
 ```
 
+`check_untrusted_player_visible_direct_duel_projection_set_v1` defines an offline, transport-neutral measurement seam for a future direct client source. The raw client representation is producer-private. The first exported value must already be reduced to `MtgoPlayerVisibleDuelDecisionInputV1`, with hidden zones, future draws, RNG, private opponent state, process and protocol metadata, paths, card-database IDs, and internal object IDs discarded. Each prediction or explicit abstention is bound to one exact reviewed UI frame. `evaluate_untrusted_player_visible_direct_duel_projection_v1` then measures exact visible-state and ordered-visible-action agreement against the checked human annotations. The producer digest, discard assertions, and source-frame association remain caller declarations, so a passing report measures only the submitted corpus output. It does not attest producer execution or raw-input handling and grants no live evidence, scoring, or input authority.
+
+The local evaluator hashes its own binary and prints only commitments, counts, action families, and fixed false authority flags:
+
+```text
+cargo run --bin evaluate_mtgo_visible_direct_duel_projection_v1 -- <corpus-id> <absolute-annotation-set.json> <absolute-projection-set.json> <absolute-artifact-directory> [absolute-artifact-directory ...]
+```
+
 `evaluate_untrusted_player_visible_duel_perception_profile_v2` is the competitive evaluation path over that checked corpus. Its annotation is exactly `MtgoPlayerVisibleDuelDecisionInputV1`, whose type cannot represent a full kernel observation, kernel or MTGO object identity, card-database identity, capture lineage, or a hidden opponent zone. The spec must bind the canonical corpus-manifest hash, the profile format must equal the visible corpus format, and the case list must contain exactly one case per corpus sample in canonical order. Each case ID, source manifest commitment, and visible BGRA commitment must match the corresponding corpus sample before current visible state and ordered visible legal actions are compared. The older `evaluate_untrusted_duel_perception_profile_v1` remains available only for offline full-reconstruction diagnostics and its production ratification root is permanently empty. The v2 production root is also empty until a real player-visible corpus is labeled, evaluated, and separately reviewed.
 5. Validate per-leaf provenance, readiness, actor agreement, action bindings, and confidence through this crate.
 6. Score the validated observation and ordered legal actions through the exact native checkpoint external-observation scorer seam.

@@ -24,6 +24,9 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub player_visible_information_boundary_is_transport_independent: bool,
     pub pixels_only_transport_required: bool,
     pub hidden_client_state_permitted: bool,
+    pub direct_source_visible_projection_contract_present: bool,
+    pub direct_source_exact_reviewed_frame_evaluation_present: bool,
+    pub direct_source_live_producer_attestation_present: bool,
     pub visible_accessibility_requires_pixel_corroboration: bool,
     pub raw_accessibility_metadata_permitted_as_semantic_input: bool,
     pub persisted_visible_game_log_parser_present: bool,
@@ -80,6 +83,9 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         player_visible_information_boundary_is_transport_independent: true,
         pixels_only_transport_required: false,
         hidden_client_state_permitted: false,
+        direct_source_visible_projection_contract_present: true,
+        direct_source_exact_reviewed_frame_evaluation_present: true,
+        direct_source_live_producer_attestation_present: false,
         visible_accessibility_requires_pixel_corroboration: true,
         raw_accessibility_metadata_permitted_as_semantic_input: false,
         persisted_visible_game_log_parser_present: true,
@@ -140,6 +146,9 @@ mod tests {
         assert!(report.player_visible_information_boundary_is_transport_independent);
         assert!(!report.pixels_only_transport_required);
         assert!(!report.hidden_client_state_permitted);
+        assert!(report.direct_source_visible_projection_contract_present);
+        assert!(report.direct_source_exact_reviewed_frame_evaluation_present);
+        assert!(!report.direct_source_live_producer_attestation_present);
         assert!(report.visible_accessibility_requires_pixel_corroboration);
         assert!(!report.raw_accessibility_metadata_permitted_as_semantic_input);
         assert!(report.persisted_visible_game_log_parser_present);

@@ -23,6 +23,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub operator_resource_bootstrap_present: bool,
     pub checkpoint_bound_model_capability_commitment_present: bool,
     pub player_visible_information_boundary_is_transport_independent: bool,
+    pub direct_source_visible_projection_contract_present: bool,
+    pub direct_source_exact_reviewed_frame_evaluation_present: bool,
+    pub direct_source_live_producer_attestation_present: bool,
     pub persisted_visible_game_log_parser_present: bool,
     pub persisted_visible_game_log_local_corpus_passed: bool,
     pub post_entry_operator_pairing_ready_game_log_baseline_present: bool,
@@ -143,6 +146,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             operator_resource_bootstrap_present: true,
             checkpoint_bound_model_capability_commitment_present: true,
             player_visible_information_boundary_is_transport_independent: true,
+            direct_source_visible_projection_contract_present: true,
+            direct_source_exact_reviewed_frame_evaluation_present: true,
+            direct_source_live_producer_attestation_present: false,
             persisted_visible_game_log_parser_present: true,
             persisted_visible_game_log_local_corpus_passed: true,
             post_entry_operator_pairing_ready_game_log_baseline_present: true,
@@ -275,6 +281,21 @@ mod tests {
             report
                 .known_wiring_gaps
                 .player_visible_information_boundary_is_transport_independent
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .direct_source_visible_projection_contract_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .direct_source_exact_reviewed_frame_evaluation_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .direct_source_live_producer_attestation_present
         );
         assert!(
             report
