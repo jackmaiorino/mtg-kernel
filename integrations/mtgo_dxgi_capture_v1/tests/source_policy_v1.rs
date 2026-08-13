@@ -2859,6 +2859,16 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "resolve_opaque_profile_bound_duel_control_v1,",
         "OpaqueMtgoProfileBoundDuelModelSelectionV1,",
         "MtgoOpaqueDuelModelSelectionCommitmentsV1,",
+        "select_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
+        "select_next_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
+        "retry_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
+        "bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1,",
+        "execute_competitive_post_entry_operator_direct_visible_action_v1,",
+        "confirm_competitive_post_entry_operator_direct_visible_action_v1,",
+        "MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1,",
+        "OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1,",
+        "OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1,",
+        "OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1,",
     ] {
         assert!(
             !public_api.contains(forbidden_export),
@@ -2881,6 +2891,9 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "pub(crate) fn select_competitive_post_entry_operator_gameplay_action_v1(",
         "pub(crate) fn bind_competitive_post_entry_operator_gameplay_action_v1(",
         "pub(crate) struct OpaqueMtgoCompetitiveOperatorGameplaySelectionV1",
+        "pub(crate) fn select_competitive_post_entry_operator_direct_visible_gameplay_action_v1",
+        "pub(crate) enum MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1",
+        "pub(crate) struct OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1",
     ] {
         assert!(
             source.contains(required_private),
@@ -2922,11 +2935,6 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "OpaqueMtgoCompetitiveOperatorCompletedVisibleGameV1,",
         "OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1,",
         "OpaqueMtgoCompetitiveOperatorVisibleSideboardingV1,",
-        "select_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
-        "select_next_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
-        "retry_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
-        "MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1,",
-        "OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1,",
         "return_confirmed_competitive_post_entry_operator_player_visible_gameplay_v1,",
     ] {
         assert!(

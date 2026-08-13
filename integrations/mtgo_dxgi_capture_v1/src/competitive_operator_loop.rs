@@ -444,7 +444,7 @@ pub struct OpaqueMtgoCompetitiveOperatorGameplayLeaseV1 {
 ///     let _ = value.process_handle();
 /// }
 /// ```
-pub struct OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1 {
+pub(crate) struct OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1 {
     _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
     _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
@@ -452,60 +452,25 @@ pub struct OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1 {
     _confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
     _direct: OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1,
     selected_action: MtgoPlayerVisibleDuelActionV1,
-    operator_binding_commitment_sha256: String,
+    _operator_binding_commitment_sha256: String,
 }
 
 impl OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1 {
     pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
         &self.selected_action
     }
-
-    pub fn operator_binding_commitment_sha256_v1(&self) -> &str {
-        &self.operator_binding_commitment_sha256
-    }
-
-    pub fn safe_for_live_input_v1(&self) -> bool {
-        false
-    }
-
-    pub fn permits_event_entry_v1(&self) -> bool {
-        false
-    }
-
-    pub fn permits_spending_v1(&self) -> bool {
-        false
-    }
 }
 
 /// Operator ownership after the sealed client producer submitted one exact
 /// selected visible action. The process-wide input gate remains closed until
 /// a newer player-visible frame confirms the declared transition.
-pub struct OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1 {
+pub(crate) struct OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1 {
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
     visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
     visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
     pending: OpaqueMtgoPendingAttestedDirectVisibleDispatchV1,
-    selected_action: MtgoPlayerVisibleDuelActionV1,
-}
-
-impl OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1 {
-    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
-        &self.selected_action
-    }
-
-    pub fn safe_for_next_input_v1(&self) -> bool {
-        false
-    }
-
-    pub fn permits_event_entry_v1(&self) -> bool {
-        false
-    }
-
-    pub fn permits_spending_v1(&self) -> bool {
-        false
-    }
 }
 
 /// Retained attended-game ownership when the sealed direct observer cannot
@@ -527,7 +492,7 @@ impl OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1 {
 ///     value.dispatch();
 /// }
 /// ```
-pub struct OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
+pub(crate) struct OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
     visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
@@ -541,31 +506,12 @@ impl OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
     pub fn reason_v1(&self) -> mtgo_blackbox_v1::MtgoVisibleDuelViewModelBrokerAbstentionReasonV1 {
         self.reason
     }
-
-    pub fn prior_confirmed_action_count_v1(&self) -> usize {
-        self.confirmed_history
-            .as_ref()
-            .map(CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::decision_count_v1)
-            .unwrap_or(0)
-    }
-
-    pub fn safe_for_live_input_v1(&self) -> bool {
-        false
-    }
-
-    pub fn permits_event_entry_v1(&self) -> bool {
-        false
-    }
-
-    pub fn permits_spending_v1(&self) -> bool {
-        false
-    }
 }
 
 /// Result of one complete direct-source selection pass. A ready result is
 /// independently corroborated against current visible pixels and bound to the
 /// exact attended game. An abstention retains that game for a later retry.
-pub enum MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1 {
+pub(crate) enum MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1 {
     ReadyToDispatch(Box<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1>),
     Abstained(Box<OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1>),
 }
@@ -3587,7 +3533,7 @@ where
 /// authorization, or attach an unverified Game Log action baseline. No input
 /// occurs.
 #[allow(clippy::too_many_arguments)]
-pub fn select_competitive_post_entry_operator_direct_visible_gameplay_action_v1<S>(
+pub(crate) fn select_competitive_post_entry_operator_direct_visible_gameplay_action_v1<S>(
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
     visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
@@ -3808,110 +3754,6 @@ where
     )
 }
 
-/// Repeats a direct-source selection after a sanitized observer abstention.
-/// The exact attended-game owner is preserved and no action can occur unless
-/// a new complete decision passes the full score, refresh, and pixel join.
-#[allow(clippy::too_many_arguments)]
-pub fn retry_competitive_post_entry_operator_direct_visible_gameplay_action_v1<S>(
-    abstained: OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1,
-    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
-    direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
-    reviewed_qualification_commitment_sha256: &str,
-    capture_timeout_ms: u32,
-    broker_timeout_ms: u32,
-    scorer: &mut S,
-) -> Result<MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1, String>
-where
-    S: MtgoPlayerVisibleDuelScorerV1 + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>,
-{
-    let OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
-        lease,
-        session,
-        visible_identity,
-        visible_game_log,
-        confirmed_history,
-        _scored: _,
-        reason: _,
-    } = abstained;
-    select_competitive_post_entry_operator_direct_visible_gameplay_action_v1(
-        lease,
-        session,
-        visible_identity,
-        visible_game_log,
-        confirmed_history,
-        visible_game_log_capture_request,
-        direct_source_runtime,
-        reviewed_qualification_commitment_sha256,
-        capture_timeout_ms,
-        broker_timeout_ms,
-        scorer,
-    )
-}
-
-/// Selects the next direct-source action after one confirmed transition while
-/// retaining the exact game, public history, and loaded deployment.
-#[allow(clippy::too_many_arguments)]
-pub fn select_next_competitive_post_entry_operator_direct_visible_gameplay_action_v1<S>(
-    confirmed: OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayConfirmedV1,
-    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
-    direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
-    reviewed_qualification_commitment_sha256: &str,
-    capture_timeout_ms: u32,
-    broker_timeout_ms: u32,
-    scorer: &mut S,
-) -> Result<MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1, String>
-where
-    S: MtgoPlayerVisibleDuelScorerV1 + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>,
-{
-    let OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayConfirmedV1 {
-        lease,
-        session,
-        visible_identity,
-        visible_game_log,
-        confirmed_history,
-        confirmation_commitment_sha256: _,
-    } = confirmed;
-    select_competitive_post_entry_operator_direct_visible_gameplay_action_v1(
-        lease,
-        session,
-        visible_identity,
-        visible_game_log,
-        Some(confirmed_history),
-        visible_game_log_capture_request,
-        direct_source_runtime,
-        reviewed_qualification_commitment_sha256,
-        capture_timeout_ms,
-        broker_timeout_ms,
-        scorer,
-    )
-}
-
-/// Joins an already scored and re-observed direct selection to the exact
-/// attended competitive owner. Public callers cannot construct the refreshed
-/// selection. This function remains separately useful for ownership auditing.
-#[allow(clippy::too_many_arguments)]
-pub fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
-    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
-    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
-    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
-    visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
-    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
-    refreshed: OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,
-    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
-    timeout_ms: u32,
-) -> Result<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1, String> {
-    bind_competitive_post_entry_operator_direct_visible_before_dispatch_inner_v1(
-        lease,
-        session,
-        visible_identity,
-        visible_game_log,
-        confirmed_history,
-        refreshed,
-        Some(region_set),
-        timeout_ms,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_inner_v1(
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
@@ -4026,7 +3868,7 @@ fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_inner_v1(
         _confirmed_history: confirmed_history,
         _direct: direct,
         selected_action,
-        operator_binding_commitment_sha256,
+        _operator_binding_commitment_sha256: operator_binding_commitment_sha256,
     })
 }
 
@@ -4056,7 +3898,7 @@ fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_auto_v1(
 /// pinned dispatch runtime. The production dispatch ratification root is
 /// empty, so this currently returns before reserving the input gate or invoking
 /// the broker. Event entry and spending are never part of this function.
-pub fn execute_competitive_post_entry_operator_direct_visible_action_v1(
+pub(crate) fn execute_competitive_post_entry_operator_direct_visible_action_v1(
     value: OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1,
     runtime: &OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
     reviewed_dispatch_runtime_commitment_sha256: &str,
@@ -4069,8 +3911,8 @@ pub fn execute_competitive_post_entry_operator_direct_visible_action_v1(
         _visible_game_log: visible_game_log,
         _confirmed_history: confirmed_history,
         _direct: direct,
-        selected_action,
-        operator_binding_commitment_sha256: _,
+        selected_action: _,
+        _operator_binding_commitment_sha256: _,
     } = value;
     let pending = execute_attested_direct_visible_selection_v1(
         direct,
@@ -4085,7 +3927,6 @@ pub fn execute_competitive_post_entry_operator_direct_visible_action_v1(
         visible_game_log,
         confirmed_history,
         pending,
-        selected_action,
     })
 }
 
@@ -4119,7 +3960,7 @@ pub fn execute_competitive_operator_attended_direct_visible_action_v1(
 /// frame. Only after the fixed player-visible regions change does it advance
 /// the exact-game session, append sanitized visible history, and reopen the
 /// shared input gate.
-pub fn confirm_competitive_post_entry_operator_direct_visible_action_v1(
+pub(crate) fn confirm_competitive_post_entry_operator_direct_visible_action_v1(
     value: OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1,
     visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
     capture_timeout_ms: u32,
@@ -4131,7 +3972,6 @@ pub fn confirm_competitive_post_entry_operator_direct_visible_action_v1(
         visible_game_log,
         confirmed_history,
         pending,
-        selected_action: _,
     } = value;
     let receipt = pending.dispatch_receipt_commitment_sha256_v1().to_owned();
     let visible_game_log = refresh_competitive_match_visible_game_log_v1(
