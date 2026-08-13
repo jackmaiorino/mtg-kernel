@@ -40,10 +40,12 @@ constexpr char kExpectedDuelSceneSha256[] =
     "72b99e1169f9f9445a510b2dae52f9212fb7300c2483b8bc8e02f5760f11904e";
 constexpr char kExpectedCardSha256[] =
     "071338a98d845d5c8db6ebd2f3c847e38ad548f50ba11d2a36973438cdec2ea8";
+constexpr char kExpectedReferenceSha256[] =
+    "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 constexpr char kExpectedBootstrapSha256[] =
     "9c62e801dbcb3fd21647ba1fc7837e1d49663b902530d5b2fb5a6197c9f465d4";
 constexpr char kExpectedProducerSha256[] =
-    "3898431b57758c803981a1b8c1a20c50a6cf04745ec2623735f2bd1cd6bae936";
+    "6d157961b24ee7b5e22f29cb5e453bb0cca8bbc08107453b6e80c582edbb60a3";
 #endif
 
 struct VisibleDuelBootstrapParametersV1 {
@@ -317,10 +319,15 @@ bool ExactLiveMtgoIdentityV1(HANDLE process, DWORD process_id,
   }
   std::wstring duel_scene;
   std::wstring card;
+  std::wstring reference;
   return JoinSiblingPathV1(image_path, L"DuelScene.dll", duel_scene) &&
          JoinSiblingPathV1(image_path, L"Card.dll", card) &&
+         JoinSiblingPathV1(image_path,
+                           L"WotC.MtGO.Client.Model.Reference.dll",
+                           reference) &&
          HashMatchesV1(duel_scene.c_str(), kExpectedDuelSceneSha256) &&
-         HashMatchesV1(card.c_str(), kExpectedCardSha256);
+         HashMatchesV1(card.c_str(), kExpectedCardSha256) &&
+         HashMatchesV1(reference.c_str(), kExpectedReferenceSha256);
 }
 #endif
 

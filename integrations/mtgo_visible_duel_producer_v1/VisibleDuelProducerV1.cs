@@ -13,10 +13,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.2 invokes only exact allowlisted getters for visible chrome, player
-    /// panels, public zones, and card presentation, and can emit only fixed
-    /// abstentions. It proves a bounded player-visible route without heap
-    /// scanning or exporting client objects or values.
+    /// V1.3 invokes only exact allowlisted getters for visible chrome, player
+    /// panels, public zones, card presentation, and private action joins bound
+    /// to player-visible sources. It can emit only fixed abstentions and never
+    /// exports client objects or raw values.
     /// </summary>
     public static class VisibleDuelProducerV1
     {
@@ -91,6 +91,22 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.ZoneViewModel|Cards",
             "DuelScene|Shiny.Play.Duel.ViewModel.ZoneViewModel|Count",
             "DuelScene|Shiny.Play.Duel.ViewModel.ZoneViewModel|IsVisible"
+        };
+
+        // Private join-only getters. These backing objects may be inspected
+        // transiently only after their source visible control or seated-player
+        // card has been established. No value or client identity is exported.
+        private static readonly string[] PrivateVisibleActionJoinGetters =
+        {
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|Actions",
+            "DuelScene|Shiny.Play.Duel.ViewModel.OptionButton|Action",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|ActionType",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|Name",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|CanBePerformedLocally",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsActivatedAbility",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsCastAction",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsManaAbility",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|ModeOptions"
         };
 
         /// <summary>
@@ -182,9 +198,9 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.2 qualifies exact visible chrome, player-panel, public-zone,
-            // and card-presentation getter routes. The temporary values never
-            // leave this call, and the producer emits only projection_incomplete.
+            // V1.3 qualifies exact visible chrome, player-panel, public-zone,
+            // card-presentation, and visible-source-bound private action-join
+            // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
             {
                 return ProjectionIncomplete;
@@ -225,7 +241,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static bool ValidateExactGetterSurface()
         {
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-            if (AllowedGetters.Length != 46 || AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 46)
+            if (AllowedGetters.Length != 46 ||
+                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 46 ||
+                PrivateVisibleActionJoinGetters.Length != 9 ||
+                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 9)
             {
                 return false;
             }
@@ -260,6 +279,38 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy);
                 MethodInfo? getter = property?.GetGetMethod(false);
                 if (property == null || property.GetIndexParameters().Length != 0 || getter == null || !getter.IsPublic)
+                {
+                    return false;
+                }
+            }
+
+            foreach (string allowed in PrivateVisibleActionJoinGetters)
+            {
+                string[] parts = allowed.Split('|');
+                if (parts.Length != 3)
+                {
+                    return false;
+                }
+
+                Assembly[] assemblyMatches = loadedAssemblies
+                    .Where(assembly => string.Equals(
+                        assembly.GetName().Name,
+                        parts[0],
+                        StringComparison.Ordinal))
+                    .ToArray();
+                if (assemblyMatches.Length != 1)
+                {
+                    return false;
+                }
+
+                Type declaringType = assemblyMatches[0].GetType(parts[1], false, false);
+                PropertyInfo? property = declaringType?.GetProperty(
+                    parts[2],
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy);
+                MethodInfo? getter = property?.GetGetMethod(false);
+                if (declaringType == null || property == null ||
+                    property.GetIndexParameters().Length != 0 || getter == null ||
+                    !getter.IsPublic || getter.GetParameters().Length != 0)
                 {
                     return false;
                 }
@@ -348,6 +399,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         {
             var battlefieldCards = new List<object>();
             var attachmentTargets = new List<object>();
+            var seatedPlayerVisibleActionCards = new List<object>();
             foreach (object player in players)
             {
                 const string playerType = "Shiny.Play.Duel.ViewModel.PlayerViewModel";
@@ -378,6 +430,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                         return false;
                     }
                     battlefieldCards.Add(card);
+                    if (localPlayer)
+                    {
+                        seatedPlayerVisibleActionCards.Add(card);
+                    }
                     if (attachedTo != null)
                     {
                         attachmentTargets.Add(attachedTo);
@@ -422,6 +478,26 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 {
                     return false;
                 }
+                if (localPlayer &&
+                    (!TryAppendVisibleZoneCardsForPrivateActionJoinV1(
+                        handZone,
+                        true,
+                        seatedPlayerVisibleActionCards) ||
+                    !TryAppendVisibleZoneCardsForPrivateActionJoinV1(
+                        graveyardZone,
+                        true,
+                        seatedPlayerVisibleActionCards) ||
+                    !TryAppendVisibleZoneCardsForPrivateActionJoinV1(
+                        exileZone,
+                        true,
+                        seatedPlayerVisibleActionCards) ||
+                    !TryAppendVisibleZoneCardsForPrivateActionJoinV1(
+                        revealedZone,
+                        false,
+                        seatedPlayerVisibleActionCards)))
+                {
+                    return false;
+                }
             }
 
             foreach (object attachedTo in attachmentTargets)
@@ -440,6 +516,174 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     out object? stackZone) ||
                 stackZone == null ||
                 !TryValidateEnumeratedVisibleZoneV1(stackZone, false))
+            {
+                return false;
+            }
+            return TryValidatePrivateVisibleCardActionJoinsV1(
+                seatedPlayerVisibleActionCards);
+        }
+
+        private static bool TryAppendVisibleZoneCardsForPrivateActionJoinV1(
+            object zone,
+            bool requireEnumeration,
+            List<object> destination)
+        {
+            const string zoneType = "Shiny.Play.Duel.ViewModel.ZoneViewModel";
+            if (!requireEnumeration &&
+                (!TryReadExactPropertyV1(
+                    zone,
+                    "DuelScene",
+                    zoneType,
+                    "IsVisible",
+                    out object? visibleValue) ||
+                !(visibleValue is bool visible) ||
+                !visible))
+            {
+                return visibleValue is bool;
+            }
+            if (!TryReadExactPropertyV1(
+                    zone,
+                    "DuelScene",
+                    zoneType,
+                    "Cards",
+                    out object? cardsValue) ||
+                !TryBoundedCollectionV1(
+                    cardsValue,
+                    MaximumVisibleCollectionItems,
+                    out List<object> cards))
+            {
+                return false;
+            }
+            destination.AddRange(cards);
+            return destination.Count <= MaximumVisibleCollectionItems;
+        }
+
+        private static bool TryValidatePrivateVisibleCardActionJoinsV1(
+            List<object> seatedPlayerVisibleCards)
+        {
+            int actionCount = 0;
+            foreach (object card in seatedPlayerVisibleCards)
+            {
+                if (!TryReadExactPrivateVisibleActionPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "Actions",
+                        out object? actionsValue) ||
+                    !TryBoundedCollectionV1(actionsValue, 256, out List<object> actions))
+                {
+                    return false;
+                }
+                foreach (object action in actions)
+                {
+                    actionCount++;
+                    if (actionCount > 256 ||
+                        !TryValidatePrivateVisibleActionV1(action, true))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        private static bool TryValidatePrivateVisibleActionV1(
+            object action,
+            bool requireCardAction)
+        {
+            const string referenceAssembly = "WotC.MtGO.Client.Model.Reference";
+            const string gameActionType = "WotC.MtGO.Client.Model.Play.IGameAction";
+            const string cardActionType = "WotC.MtGO.Client.Model.Play.ICardAction";
+            if (!TryReadExactPrivateVisibleActionPropertyV1(
+                    action,
+                    referenceAssembly,
+                    gameActionType,
+                    "Name",
+                    out object? nameValue) ||
+                !(nameValue is string name) ||
+                !IsBoundedVisibleStringV1(name, 512, true) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    action,
+                    referenceAssembly,
+                    gameActionType,
+                    "ActionType",
+                    out object? actionTypeValue) ||
+                actionTypeValue == null ||
+                actionTypeValue.GetType().FullName !=
+                    "WotC.MtGO.Client.Model.Play.ActionType")
+            {
+                return false;
+            }
+            if (!requireCardAction)
+            {
+                return true;
+            }
+
+            if (!TryReadExactPrivateVisibleActionPropertyV1(
+                    action,
+                    referenceAssembly,
+                    cardActionType,
+                    "CanBePerformedLocally",
+                    out object? localValue) ||
+                !(localValue is bool local) || !local ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    action,
+                    referenceAssembly,
+                    cardActionType,
+                    "IsManaAbility",
+                    out object? manaValue) ||
+                !(manaValue is bool) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    action,
+                    referenceAssembly,
+                    cardActionType,
+                    "IsActivatedAbility",
+                    out object? activatedValue) ||
+                !(activatedValue is bool) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    action,
+                    referenceAssembly,
+                    cardActionType,
+                    "IsCastAction",
+                    out object? castValue) ||
+                !(castValue is bool) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    action,
+                    referenceAssembly,
+                    cardActionType,
+                    "ModeOptions",
+                    out object? modesValue) ||
+                !TryBoundedVisibleStringCollectionV1(modesValue, 64))
+            {
+                return false;
+            }
+            return action.GetType().FullName != "Shiny.Play.Duel.GroupCardAction" ||
+                TryValidateVisibleGroupCardActionLabelsV1(action);
+        }
+
+        private static bool TryValidateVisibleGroupCardActionLabelsV1(object action)
+        {
+            const string groupType = "Shiny.Play.Duel.GroupCardAction";
+            if (!TryReadExactPropertyV1(
+                    action, "DuelScene", groupType, "Name", out object? nameValue) ||
+                !(nameValue is string name) ||
+                !IsBoundedVisibleStringV1(name, 512, true) ||
+                !TryReadExactPropertyV1(
+                    action,
+                    "DuelScene",
+                    groupType,
+                    "GroupName",
+                    out object? groupValue) ||
+                (groupValue != null &&
+                    (!(groupValue is string groupName) ||
+                    !IsBoundedVisibleStringV1(groupName, 512, true))) ||
+                !TryReadExactPropertyV1(
+                    action,
+                    "DuelScene",
+                    groupType,
+                    "ModeOptions",
+                    out object? modesValue) ||
+                !TryBoundedVisibleStringCollectionV1(modesValue, 64))
             {
                 return false;
             }
@@ -717,12 +961,44 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     !(visibleValue is bool visible) ||
                     !TryReadExactPropertyV1(
                         button, "DuelScene", buttonType, "Enabled", out object? enabledValue) ||
-                    !(enabledValue is bool) ||
+                    !(enabledValue is bool enabled) ||
                     !TryReadExactPropertyV1(
                         button, "DuelScene", buttonType, "Name", out object? nameValue) ||
                     (visible && (!(nameValue is string name) ||
                         !IsBoundedVisibleStringV1(name, 256, true))) ||
-                    (!visible && nameValue != null && !(nameValue is string)))
+                    (!visible && nameValue != null && !(nameValue is string)) ||
+                    (visible && enabled &&
+                        (!TryReadExactPrivateVisibleActionPropertyV1(
+                            button,
+                            "DuelScene",
+                            buttonType,
+                            "Action",
+                            out object? action) ||
+                        action == null ||
+                        !TryValidatePrivateVisibleActionV1(action, false))))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool TryBoundedVisibleStringCollectionV1(
+            object? value,
+            int maximumItems)
+        {
+            if (value == null)
+            {
+                return true;
+            }
+            if (!TryBoundedCollectionV1(value, maximumItems, out List<object> items))
+            {
+                return false;
+            }
+            foreach (object item in items)
+            {
+                if (!(item is string text) ||
+                    !IsBoundedVisibleStringV1(text, 512, true))
                 {
                     return false;
                 }
@@ -740,6 +1016,52 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             value = null;
             string exactKey = assemblyName + "|" + declaringTypeName + "|" + propertyName;
             if (!AllowedGetters.Contains(exactKey, StringComparer.Ordinal))
+            {
+                return false;
+            }
+            Assembly[] matchingAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(assembly => string.Equals(
+                    assembly.GetName().Name,
+                    assemblyName,
+                    StringComparison.Ordinal))
+                .ToArray();
+            if (matchingAssemblies.Length != 1)
+            {
+                return false;
+            }
+            Type declaringType = matchingAssemblies[0].GetType(
+                declaringTypeName,
+                false,
+                false);
+            if (declaringType == null || !declaringType.IsInstanceOfType(target))
+            {
+                return false;
+            }
+            PropertyInfo? property = declaringType.GetProperty(
+                propertyName,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy);
+            MethodInfo? getter = property?.GetGetMethod(false);
+            if (property == null || property.GetIndexParameters().Length != 0 ||
+                getter == null || !getter.IsPublic || getter.GetParameters().Length != 0)
+            {
+                return false;
+            }
+            value = property.GetValue(target, null);
+            return true;
+        }
+
+        private static bool TryReadExactPrivateVisibleActionPropertyV1(
+            object target,
+            string assemblyName,
+            string declaringTypeName,
+            string propertyName,
+            out object? value)
+        {
+            value = null;
+            string exactKey = assemblyName + "|" + declaringTypeName + "|" + propertyName;
+            if (!PrivateVisibleActionJoinGetters.Contains(
+                    exactKey,
+                    StringComparer.Ordinal))
             {
                 return false;
             }

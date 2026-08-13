@@ -10,5 +10,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Card\Card.csproj" />
+    <ProjectReference Include="..\Reference\Reference.csproj" />
   </ItemGroup>
 </Project>

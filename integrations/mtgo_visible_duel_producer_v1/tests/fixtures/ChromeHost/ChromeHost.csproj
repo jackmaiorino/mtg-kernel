@@ -12,5 +12,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\MtgoVisibleDuelProducerV1.csproj" />
     <ProjectReference Include="..\DuelScene\DuelScene.csproj" />
+    <ProjectReference Include="..\Reference\Reference.csproj" />
   </ItemGroup>
 </Project>

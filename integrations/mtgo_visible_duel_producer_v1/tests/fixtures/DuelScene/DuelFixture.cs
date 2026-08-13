@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Windows.Controls;
 using Shiny.Card.ViewModels;
+using WotC.MtGO.Client.Model.Play;
 
 namespace WotC.MtGO.Client.Model.Play
 {
@@ -22,11 +23,57 @@ namespace Shiny.Play.Duel
     {
     }
 
-    public sealed class GroupCardAction
+    public sealed class GroupCardAction : ICardAction
     {
-        public string Name { get; set; } = "fixture-action";
-        public string GroupName { get; set; } = "fixture-group";
-        public string[] ModeOptions { get; set; } = new string[0];
+        public string Name
+        {
+            get
+            {
+                VisibleActionMenuGetterProbeV1.Record("Group.Name");
+                return "fixture-visible-group-action";
+            }
+        }
+        public string GroupName
+        {
+            get
+            {
+                VisibleActionMenuGetterProbeV1.Record("Group.GroupName");
+                return "fixture-visible-group";
+            }
+        }
+        public string[] ModeOptions
+        {
+            get
+            {
+                VisibleActionMenuGetterProbeV1.Record("Group.ModeOptions");
+                return new string[0];
+            }
+        }
+        public ActionType ActionType => ActionType.CardAction;
+        public bool CanBePerformedLocally => true;
+        public bool IsManaAbility => false;
+        public bool IsActivatedAbility => false;
+        public bool IsCastAction => true;
+    }
+
+    public static class VisibleActionMenuGetterProbeV1
+    {
+        private static readonly HashSet<string> Calls = new HashSet<string>();
+
+        public static void Record(string name)
+        {
+            Calls.Add(name);
+        }
+
+        public static bool SawEveryVisibleActionMenuGetterV1()
+        {
+            return Calls.SetEquals(new[]
+            {
+                "Group.Name",
+                "Group.GroupName",
+                "Group.ModeOptions"
+            });
+        }
     }
 }
 
@@ -388,6 +435,32 @@ namespace Shiny.Play.Duel.ViewModel
                 return true;
             }
         }
+
+        public IGameAction? Action
+        {
+            get
+            {
+                VisibleActionJoinGetterProbeV1.Record("Button.Action");
+                return ActionFixture;
+            }
+        }
+
+        public IGameAction? ActionFixture { get; set; }
+    }
+
+    public static class VisibleActionJoinGetterProbeV1
+    {
+        private static readonly HashSet<string> Calls = new HashSet<string>();
+
+        public static void Record(string name)
+        {
+            Calls.Add(name);
+        }
+
+        public static bool SawEveryPrivateJoinRootV1()
+        {
+            return Calls.SetEquals(new[] { "Button.Action", "DuelCard.Actions" });
+        }
     }
 
     public sealed class ZoneViewModel
@@ -461,10 +534,25 @@ namespace Shiny.Play.Duel.ViewModel
                 return CounterItems;
             }
         }
+        public IEnumerable<IGameAction> Actions
+        {
+            get
+            {
+                if (ThrowIfActionsReadFixture)
+                {
+                    throw new System.InvalidOperationException(
+                        "opponent visible-card action collection was inspected");
+                }
+                VisibleActionJoinGetterProbeV1.Record("DuelCard.Actions");
+                return ActionItems;
+            }
+        }
         public DuelSceneCardViewModel? CardAttachedToFixture { get; set; }
         public bool IsTokenFixture { get; set; }
         public IList<CardCounterViewModel> CounterItems { get; } =
             new List<CardCounterViewModel>();
+        public bool ThrowIfActionsReadFixture { get; set; }
+        public IList<IGameAction> ActionItems { get; } = new List<IGameAction>();
     }
 
     public sealed class CardCounterViewModel

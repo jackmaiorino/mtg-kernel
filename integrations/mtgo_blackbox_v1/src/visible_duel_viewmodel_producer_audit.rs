@@ -16,6 +16,9 @@ const ROOT_TYPE_V1: &str = "Shiny.Play.Duel.DuelScene";
 const ROOT_ACCESSOR_V1: &str = "FrameworkElement.DataContext";
 const ROOT_VIEWMODEL_TYPE_V1: &str = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
 const AUDIT_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-viewmodel-producer-audit-v1";
+const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 9;
+const REFERENCE_ASSEMBLY_SHA256_V1: &str =
+    "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -24,6 +27,23 @@ pub struct MtgoVisibleDuelViewModelProducerPropertyV1 {
     pub declaring_type: String,
     pub property_name: String,
     pub context: MtgoVisibleViewModelPropertyContextV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MtgoPrivateVisibleActionJoinBindingV1 {
+    VisibleEnabledPromptControl,
+    SeatedPlayerVisibleCard,
+    BoundVisibleActionObject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPrivateVisibleActionJoinGetterV1 {
+    pub assembly_file_name: String,
+    pub declaring_type: String,
+    pub property_name: String,
+    pub binding: MtgoPrivateVisibleActionJoinBindingV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +57,8 @@ pub struct MtgoVisibleDuelViewModelProducerAuditV1 {
     pub root_viewmodel_accessor: String,
     pub root_viewmodel_type: String,
     pub allowed_property_getters: Vec<MtgoVisibleDuelViewModelProducerPropertyV1>,
+    pub private_visible_action_join_getters: Vec<MtgoPrivateVisibleActionJoinGetterV1>,
+    pub private_visible_action_join_reference_assembly_sha256: String,
     pub first_exported_success_schema: String,
     pub emits_fixed_abstention_only_until_projection_complete: bool,
     pub unknown_types_reject: bool,
@@ -59,6 +81,12 @@ pub struct MtgoVisibleDuelViewModelProducerAuditV1 {
     pub visible_zone_and_card_getter_layer_present: bool,
     pub visible_zone_and_card_getter_count: u32,
     pub visible_zone_and_card_values_exported: bool,
+    pub private_visible_action_join_layer_present: bool,
+    pub private_visible_action_join_getter_count: u32,
+    pub private_action_objects_exported: bool,
+    pub private_action_identifiers_exported: bool,
+    pub opponent_action_collections_inspected: bool,
+    pub private_action_joins_bound_to_visible_sources: bool,
     pub action_execution_present: bool,
     pub producer_execution_attested: bool,
     pub full_projection_implemented: bool,
@@ -73,6 +101,7 @@ pub struct MtgoVisibleDuelViewModelProducerAuditV1 {
 pub struct CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
     commitment_sha256: String,
     allowed_property_count: usize,
+    private_visible_action_join_getter_count: usize,
 }
 
 impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
@@ -102,6 +131,14 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
 
     pub fn visible_zone_and_card_getter_count_v1(&self) -> u32 {
         23
+    }
+
+    pub fn private_visible_action_join_layer_present_v1(&self) -> bool {
+        true
+    }
+
+    pub fn private_visible_action_join_getter_count_v1(&self) -> usize {
+        self.private_visible_action_join_getter_count
     }
 
     pub fn full_projection_implemented_v1(&self) -> bool {
@@ -134,6 +171,8 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         })
         .collect::<Vec<_>>();
     allowed_property_getters.sort_by_key(property_key_v1);
+    let mut private_visible_action_join_getters = private_visible_action_join_getters_v1();
+    private_visible_action_join_getters.sort_by_key(private_action_join_key_v1);
     MtgoVisibleDuelViewModelProducerAuditV1 {
         schema_version: MTGO_VISIBLE_DUEL_VIEWMODEL_PRODUCER_AUDIT_SCHEMA_V1,
         audit_kind: AUDIT_KIND_V1.to_owned(),
@@ -144,6 +183,9 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         root_viewmodel_accessor: ROOT_ACCESSOR_V1.to_owned(),
         root_viewmodel_type: ROOT_VIEWMODEL_TYPE_V1.to_owned(),
         allowed_property_getters,
+        private_visible_action_join_getters,
+        private_visible_action_join_reference_assembly_sha256:
+            REFERENCE_ASSEMBLY_SHA256_V1.to_owned(),
         first_exported_success_schema: FIRST_EXPORTED_SUCCESS_SCHEMA_V1.to_owned(),
         emits_fixed_abstention_only_until_projection_complete: true,
         unknown_types_reject: true,
@@ -166,6 +208,12 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         visible_zone_and_card_getter_layer_present: true,
         visible_zone_and_card_getter_count: 23,
         visible_zone_and_card_values_exported: false,
+        private_visible_action_join_layer_present: true,
+        private_visible_action_join_getter_count: PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1,
+        private_action_objects_exported: false,
+        private_action_identifiers_exported: false,
+        opponent_action_collections_inspected: false,
+        private_action_joins_bound_to_visible_sources: true,
         action_execution_present: false,
         producer_execution_attested: false,
         full_projection_implemented: false,
@@ -186,6 +234,8 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.root_element_type != ROOT_TYPE_V1
         || audit.root_viewmodel_accessor != ROOT_ACCESSOR_V1
         || audit.root_viewmodel_type != ROOT_VIEWMODEL_TYPE_V1
+        || audit.private_visible_action_join_reference_assembly_sha256
+            != REFERENCE_ASSEMBLY_SHA256_V1
         || audit.first_exported_success_schema != FIRST_EXPORTED_SUCCESS_SCHEMA_V1
     {
         return Err(error_v1(
@@ -214,6 +264,13 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || !audit.visible_zone_and_card_getter_layer_present
         || audit.visible_zone_and_card_getter_count != 23
         || audit.visible_zone_and_card_values_exported
+        || !audit.private_visible_action_join_layer_present
+        || audit.private_visible_action_join_getter_count
+            != PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1
+        || audit.private_action_objects_exported
+        || audit.private_action_identifiers_exported
+        || audit.opponent_action_collections_inspected
+        || !audit.private_action_joins_bound_to_visible_sources
         || audit.action_execution_present
         || audit.producer_execution_attested
         || audit.full_projection_implemented
@@ -262,6 +319,42 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         }
     }
 
+    let expected_private = private_visible_action_join_getters_v1()
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let actual_private = audit
+        .private_visible_action_join_getters
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    if actual_private.len() != audit.private_visible_action_join_getters.len()
+        || actual_private != expected_private
+    {
+        return Err(error_v1(
+            "visible_duel_viewmodel_producer_audit_private_action_join_allowlist",
+            "private action join getters must exactly match the reviewed visible-source-bound surface",
+        ));
+    }
+
+    for (declaring_type, property_name) in [
+        (
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "Actions",
+        ),
+        ("Shiny.Play.Duel.ViewModel.OptionButton", "Action"),
+    ] {
+        if !surface.forbidden_properties.iter().any(|property| {
+            property.assembly_file_name == "DuelScene.dll"
+                && property.declaring_type == declaring_type
+                && property.property_name == property_name
+        }) {
+            return Err(error_v1(
+                "visible_duel_viewmodel_producer_audit_private_action_export_boundary",
+                "raw action roots must remain forbidden from the exported visible-property surface",
+            ));
+        }
+    }
+
     let canonical = serde_json::to_vec(&audit).map_err(|error| {
         error_v1(
             "visible_duel_viewmodel_producer_audit_serialization",
@@ -271,10 +364,93 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
     Ok(CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
         commitment_sha256: commitment_v1(AUDIT_DOMAIN_V1, &[&canonical]),
         allowed_property_count: audit.allowed_property_getters.len(),
+        private_visible_action_join_getter_count: audit.private_visible_action_join_getters.len(),
     })
 }
 
+fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinGetterV1> {
+    use MtgoPrivateVisibleActionJoinBindingV1::{
+        BoundVisibleActionObject, SeatedPlayerVisibleCard, VisibleEnabledPromptControl,
+    };
+
+    [
+        (
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "Actions",
+            SeatedPlayerVisibleCard,
+        ),
+        (
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.OptionButton",
+            "Action",
+            VisibleEnabledPromptControl,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.IGameAction",
+            "ActionType",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.IGameAction",
+            "Name",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "CanBePerformedLocally",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "IsActivatedAbility",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "IsCastAction",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "IsManaAbility",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.ICardAction",
+            "ModeOptions",
+            BoundVisibleActionObject,
+        ),
+    ]
+    .into_iter()
+    .map(
+        |(assembly_file_name, declaring_type, property_name, binding)| {
+            MtgoPrivateVisibleActionJoinGetterV1 {
+                assembly_file_name: assembly_file_name.to_owned(),
+                declaring_type: declaring_type.to_owned(),
+                property_name: property_name.to_owned(),
+                binding,
+            }
+        },
+    )
+    .collect()
+}
+
 fn property_key_v1(property: &MtgoVisibleDuelViewModelProducerPropertyV1) -> String {
+    format!(
+        "{}\0{}\0{}",
+        property.assembly_file_name, property.declaring_type, property.property_name
+    )
+}
+
+fn private_action_join_key_v1(property: &MtgoPrivateVisibleActionJoinGetterV1) -> String {
     format!(
         "{}\0{}\0{}",
         property.assembly_file_name, property.declaring_type, property.property_name
@@ -310,6 +486,8 @@ mod tests {
         assert_eq!(checked.visible_chrome_getter_count_v1(), 19);
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
         assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 23);
+        assert!(checked.private_visible_action_join_layer_present_v1());
+        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 9);
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());
         assert!(!checked.safe_for_live_semantic_evidence_v1());
@@ -345,6 +523,31 @@ mod tests {
         side_effect.file_write_access_present = true;
         assert_eq!(
             check_untrusted_visible_duel_viewmodel_producer_audit_v1(side_effect)
+                .err()
+                .unwrap()
+                .code(),
+            "visible_duel_viewmodel_producer_audit_boundary"
+        );
+    }
+
+    #[test]
+    fn private_action_join_allowlist_and_export_boundary_are_exact() {
+        let exact = mtgo_visible_duel_viewmodel_producer_audit_v1();
+
+        let mut unknown = exact.clone();
+        unknown.private_visible_action_join_getters[0].property_name = "GameCard".to_owned();
+        assert_eq!(
+            check_untrusted_visible_duel_viewmodel_producer_audit_v1(unknown)
+                .err()
+                .unwrap()
+                .code(),
+            "visible_duel_viewmodel_producer_audit_private_action_join_allowlist"
+        );
+
+        let mut exported = exact;
+        exported.private_action_objects_exported = true;
+        assert_eq!(
+            check_untrusted_visible_duel_viewmodel_producer_audit_v1(exported)
                 .err()
                 .unwrap()
                 .code(),

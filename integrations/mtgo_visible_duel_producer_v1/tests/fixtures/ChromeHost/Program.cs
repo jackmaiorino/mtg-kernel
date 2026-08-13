@@ -6,6 +6,7 @@ using MtgKernel.Mtgo.VisibleDuelProducer.V1;
 using Shiny.Card.ViewModels;
 using Shiny.Play.Duel;
 using Shiny.Play.Duel.ViewModel;
+using WotC.MtGO.Client.Model.Play;
 
 namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
 {
@@ -44,13 +45,16 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                 {
                     QuantityFixture = 1
                 });
+                localPermanent.ActionItems.Add(new GroupCardAction());
+                localPermanent.ActionItems.Add(new VisibleFixtureCardAction());
                 seated.Battlefield.Add(localPermanent);
                 opponent.Battlefield.Add(new DuelSceneCardViewModel
                 {
                     IsFaceDownFixture = true,
                     ThrowIfNameReadFixture = true,
                     PowerFixture = 2,
-                    ToughnessFixture = 2
+                    ToughnessFixture = 2,
+                    ThrowIfActionsReadFixture = true
                 });
                 seated.Hand.IsVisibleFixture = true;
                 seated.Hand.CardItems.Add(new DuelSceneCardViewModel
@@ -77,7 +81,10 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                 opponent.Revealed.ThrowIfCardsReadFixture = true;
                 viewModel.PlayerItems.Add(seated);
                 viewModel.PlayerItems.Add(opponent);
-                viewModel.Prompt.Buttons.Add(new OptionButton());
+                viewModel.Prompt.Buttons.Add(new OptionButton
+                {
+                    ActionFixture = new VisibleFixtureCardAction()
+                });
                 viewModel.Stack.CardItems.Add(new DuelSceneCardViewModel
                 {
                     NameFixture = "fixture-visible-stack-card"
@@ -115,12 +122,31 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     string observed = Encoding.UTF8.GetString(bytes);
                     const string expected =
                         "{\"result_kind\":\"abstained\",\"reason\":\"projection_incomplete\"}";
-                    if (!string.Equals(observed, expected, StringComparison.Ordinal) ||
-                        !VisibleGetterProbeV1.SawEveryVisibleChromeGetterV1() ||
-                        !VisibleZoneGetterProbeV1.SawEveryVisibleZoneAndCardGetterV1() ||
-                        !VisibleCardGetterProbeV1.SawEveryVisibleCardGetterV1())
+                    if (!string.Equals(observed, expected, StringComparison.Ordinal))
                     {
                         return 3;
+                    }
+                    if (!VisibleGetterProbeV1.SawEveryVisibleChromeGetterV1())
+                    {
+                        return 4;
+                    }
+                    if (!VisibleZoneGetterProbeV1.SawEveryVisibleZoneAndCardGetterV1() ||
+                        !VisibleCardGetterProbeV1.SawEveryVisibleCardGetterV1())
+                    {
+                        return 5;
+                    }
+                    if (!VisibleActionJoinGetterProbeV1.SawEveryPrivateJoinRootV1())
+                    {
+                        return 6;
+                    }
+                    if (!VisibleActionMenuGetterProbeV1.SawEveryVisibleActionMenuGetterV1())
+                    {
+                        return 7;
+                    }
+                    if (!PrivateVisibleActionGetterProbeV1
+                        .SawEveryPrivateVisibleActionGetterV1())
+                    {
+                        return 8;
                     }
                     return 0;
                 }

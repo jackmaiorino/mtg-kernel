@@ -24,7 +24,8 @@ qualification.
 
 The separate `mtgo_visible_duel_live_broker_v1.exe` build is now compile-pinned
 to the exact MTGO 3.4.158.4691 executable, `DuelScene.dll`, `Card.dll`,
-bootstrap, and producer hashes. It requires one native x64 MTGO process, the
+`WotC.MtGO.Client.Model.Reference.dll`, bootstrap, and producer hashes. It
+requires one native x64 MTGO process, the
 exact file and product versions, a valid Authenticode signature, and unchanged
 process start time and file identities before and after invocation. Its output
 validator still accepts only the four fixed abstentions. This is the candidate
