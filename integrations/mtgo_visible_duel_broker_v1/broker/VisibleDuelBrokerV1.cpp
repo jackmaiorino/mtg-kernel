@@ -551,7 +551,7 @@ int wmain(int argc, wchar_t** argv) {
     return FailV1("input_validation");
   }
   bool dispatch_requested = argc == 13;
-#ifdef MTGO_LIVE_PINNED_V1
+#if defined(MTGO_LIVE_PINNED_V1) && !defined(MTGO_LIVE_DISPATCH_ADMITTED_V1)
   if (dispatch_requested) {
     return FailV1("live_dispatch_not_admitted");
   }

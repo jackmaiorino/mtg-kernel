@@ -6,13 +6,20 @@ use super::{
     OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoAdmittedDuelVisibleFrameV1,
     OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
 };
+use crate::actuator::{
+    halt_before_direct_visible_input_attempt_v1, release_unattempted_direct_visible_input_gate_v1,
+    require_matching_direct_visible_input_pending_v1, reserve_direct_visible_input_gate_v1,
+    set_direct_visible_input_pending_v1,
+};
 use mtgo_blackbox_v1::{
     bind_refreshed_direct_visible_selection_to_competitive_match_v1,
+    complete_direct_visible_gameplay_postcondition_v1,
     parse_and_validate_visible_duel_producer_result_v1,
     prepare_direct_visible_gameplay_before_dispatch_v1,
     refresh_direct_visible_selection_before_dispatch_v1,
     score_and_select_strict_visible_duel_producer_result_v1, AdmittedMtgoDuelPerceptionProfileV1,
     CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
+    CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
     CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
     CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDirectVisibleCompetitiveObservationBracketV1,
@@ -35,6 +42,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const LIVE_BROKER_SHA256_V1: &str =
     "6b008edc7c261a3022729f0d7f8ea68eaa727ef86b9b90b2328830c4e121afd9";
+const LIVE_DISPATCH_BROKER_SHA256_V1: &str =
+    "918d99c4fc22d7ce3c0c6b080ca46a06bc1ab9922607dd46aa083bfa4da5eea7";
 const LIVE_BOOTSTRAP_SHA256_V1: &str =
     "1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b";
 const LIVE_PRODUCER_SHA256_V1: &str =
@@ -52,7 +61,10 @@ const DIRECT_VISIBLE_SOURCE_COMPETITIVE_BEFORE_DISPATCH_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-competitive-before-dispatch-v1";
 const DIRECT_VISIBLE_SOURCE_EQUIVALENT_REGIONS_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-equivalent-regions-v1";
+const DIRECT_VISIBLE_DISPATCH_RUNTIME_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-dispatch-runtime-v1";
+const DIRECT_VISIBLE_DISPATCH_RECEIPT_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-dispatch-receipt-v1";
 const RATIFIED_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
+const RATIFIED_DIRECT_VISIBLE_DISPATCH_RUNTIME_COMMITMENT_V1: Option<&str> = None;
 const PINNED_MTGO_EXECUTABLE_SHA256_V1: &str =
     "bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92";
 const PINNED_MTGO_SIGNER_THUMBPRINT_V1: &str = "e9d9e2b989f90555b04c506fddf889c7aba7ac30";
@@ -97,6 +109,45 @@ pub struct OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1 {
     producer_path: PathBuf,
     validator_path: PathBuf,
     commitments: MtgoVerifiedDirectVisibleSourceRuntimeCommitmentsV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoVerifiedDirectVisibleDispatchRuntimeCommitmentsV1 {
+    pub dispatch_runtime_identity_commitment_sha256: String,
+    pub dispatch_broker_binary_sha256: String,
+    pub bootstrap_binary_sha256: String,
+    pub producer_binary_sha256: String,
+    pub strict_validator_binary_sha256: String,
+}
+
+/// Exact dispatch-capable native artifacts. This value is not input authority:
+/// production dispatch additionally requires the separately compiled
+/// ratification root, an attended match lease, a fresh source-attested visible
+/// decision, the process-wide input gate, and a newer visible postcondition.
+pub struct OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1 {
+    broker_path: PathBuf,
+    bootstrap_path: PathBuf,
+    producer_path: PathBuf,
+    validator_path: PathBuf,
+    commitments: MtgoVerifiedDirectVisibleDispatchRuntimeCommitmentsV1,
+}
+
+impl OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1 {
+    pub fn commitments_v1(&self) -> MtgoVerifiedDirectVisibleDispatchRuntimeCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
 }
 
 impl OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1 {
@@ -340,6 +391,19 @@ impl OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1 {
 
     pub(crate) fn checked_v1(&self) -> &CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1 {
         &self.checked
+    }
+}
+
+pub(crate) struct OpaqueMtgoPendingAttestedDirectVisibleDispatchV1 {
+    before_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    before: CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
+    dispatch_receipt_commitment_sha256: String,
+    dispatch_submitted_at_unix_millis: u128,
+}
+
+impl OpaqueMtgoPendingAttestedDirectVisibleDispatchV1 {
+    pub(crate) fn dispatch_receipt_commitment_sha256_v1(&self) -> &str {
+        &self.dispatch_receipt_commitment_sha256
     }
 }
 
@@ -1181,6 +1245,273 @@ pub fn verify_direct_visible_source_runtime_v1(
     })
 }
 
+/// Verifies the separately named dispatch-capable broker and the same exact
+/// bootstrap, producer, and strict validator used by the qualified observer.
+/// Verification is read-only and cannot satisfy the empty production
+/// ratification root.
+pub fn verify_direct_visible_dispatch_runtime_v1(
+    broker_path: &Path,
+    bootstrap_path: &Path,
+    producer_path: &Path,
+    validator_path: &Path,
+) -> Result<OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1, String> {
+    let broker_path = verify_exact_artifact_v1(
+        broker_path,
+        "mtgo_visible_duel_live_dispatch_broker_v1.exe",
+        LIVE_DISPATCH_BROKER_SHA256_V1,
+        "live direct-visible dispatch broker",
+    )?;
+    let bootstrap_path = verify_exact_artifact_v1(
+        bootstrap_path,
+        "mtgo_visible_duel_bootstrap_v1.dll",
+        LIVE_BOOTSTRAP_SHA256_V1,
+        "live direct-visible dispatch bootstrap",
+    )?;
+    let producer_path = verify_exact_artifact_v1(
+        producer_path,
+        "mtgo_visible_duel_producer_v1.dll",
+        LIVE_PRODUCER_SHA256_V1,
+        "live direct-visible dispatch producer",
+    )?;
+    let validator_path = verify_exact_artifact_v1(
+        validator_path,
+        "check_mtgo_visible_duel_producer_result_v1.exe",
+        LIVE_VALIDATOR_SHA256_V1,
+        "live direct-visible dispatch validator",
+    )?;
+    let dispatch_runtime_identity_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_DISPATCH_RUNTIME_DOMAIN_V1,
+        &[
+            LIVE_DISPATCH_BROKER_SHA256_V1.as_bytes(),
+            LIVE_BOOTSTRAP_SHA256_V1.as_bytes(),
+            LIVE_PRODUCER_SHA256_V1.as_bytes(),
+            LIVE_VALIDATOR_SHA256_V1.as_bytes(),
+            b"separate_dispatch_binary_no_authority_without_compiled_ratification",
+        ],
+    );
+    Ok(OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1 {
+        broker_path,
+        bootstrap_path,
+        producer_path,
+        validator_path,
+        commitments: MtgoVerifiedDirectVisibleDispatchRuntimeCommitmentsV1 {
+            dispatch_runtime_identity_commitment_sha256,
+            dispatch_broker_binary_sha256: LIVE_DISPATCH_BROKER_SHA256_V1.to_owned(),
+            bootstrap_binary_sha256: LIVE_BOOTSTRAP_SHA256_V1.to_owned(),
+            producer_binary_sha256: LIVE_PRODUCER_SHA256_V1.to_owned(),
+            strict_validator_binary_sha256: LIVE_VALIDATOR_SHA256_V1.to_owned(),
+        },
+    })
+}
+
+pub(crate) fn execute_attested_direct_visible_selection_v1(
+    before: OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1,
+    runtime: &OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
+    reviewed_dispatch_runtime_commitment_sha256: &str,
+    broker_timeout_ms: u32,
+) -> Result<OpaqueMtgoPendingAttestedDirectVisibleDispatchV1, String> {
+    if !(100..=30_000).contains(&broker_timeout_ms) {
+        return Err("direct-visible dispatch timeout is outside the supported range".to_owned());
+    }
+    require_ratified_direct_visible_dispatch_runtime_v1(
+        reviewed_dispatch_runtime_commitment_sha256,
+    )?;
+    if reviewed_dispatch_runtime_commitment_sha256
+        != runtime
+            .commitments
+            .dispatch_runtime_identity_commitment_sha256
+    {
+        return Err(
+            "the ratified direct-visible dispatch commitment and verified runtime differ"
+                .to_owned(),
+        );
+    }
+    verify_dispatch_runtime_identity_now_v1(runtime)?;
+    let OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1 {
+        _initial_observation,
+        _refreshed_observation,
+        _corroborating_perception: before_perception,
+        checked,
+        commitments: _,
+    } = before;
+    let (
+        decision_sha256,
+        selected_index,
+        before_dispatch_commitment_sha256,
+        source_captured_at_unix_millis,
+    ) = {
+        let dispatch = checked.dispatch_commitments_v1();
+        if dispatch.producer_binary_sha256_v1() != runtime.commitments.producer_binary_sha256 {
+            return Err("direct observer and dispatch producer identities differ".to_owned());
+        }
+        (
+            dispatch.exact_producer_result_sha256_v1().to_owned(),
+            dispatch.selected_index_v1(),
+            dispatch.before_dispatch_commitment_sha256_v1().to_owned(),
+            dispatch.source_captured_at_unix_millis_v1(),
+        )
+    };
+    let now = unix_millis_now_v1()?;
+    require_fresh_source_v1(source_captured_at_unix_millis, now)?;
+    let process_id = before_perception
+        .source_frame
+        .source_frame
+        .manifest
+        .pre
+        .process_id;
+    if process_id == 0 {
+        return Err("direct-visible dispatch source has no MTGO process identity".to_owned());
+    }
+    reserve_direct_visible_input_gate_v1()?;
+    let attempt_started_at = match unix_millis_now_v1() {
+        Ok(value) => value,
+        Err(error) => {
+            release_unattempted_direct_visible_input_gate_v1()?;
+            return Err(error);
+        }
+    };
+    if let Err(error) = require_fresh_source_v1(
+        checked.source_captured_at_unix_millis_v1(),
+        attempt_started_at,
+    ) {
+        release_unattempted_direct_visible_input_gate_v1()?;
+        return Err(error);
+    }
+    halt_before_direct_visible_input_attempt_v1()?;
+    let receipt = invoke_dispatch_broker_v1(
+        runtime,
+        process_id,
+        &decision_sha256,
+        selected_index,
+        Duration::from_millis(u64::from(broker_timeout_ms)),
+    )?;
+    verify_dispatch_runtime_identity_now_v1(runtime)?;
+    const SUBMITTED_RECEIPT_V1: &[u8] =
+        b"{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"submitted\"}";
+    if receipt.0 != SUBMITTED_RECEIPT_V1 {
+        return Err(
+            "the sealed direct-visible producer did not submit the selected action".to_owned(),
+        );
+    }
+    let dispatch_submitted_at_unix_millis = unix_millis_now_v1()?;
+    if dispatch_submitted_at_unix_millis < attempt_started_at {
+        return Err("system clock moved backwards during direct-visible dispatch".to_owned());
+    }
+    let dispatch_receipt_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_DISPATCH_RECEIPT_DOMAIN_V1,
+        &[
+            runtime
+                .commitments
+                .dispatch_runtime_identity_commitment_sha256
+                .as_bytes(),
+            before_dispatch_commitment_sha256.as_bytes(),
+            decision_sha256.as_bytes(),
+            selected_index.to_be_bytes().as_slice(),
+            &attempt_started_at.to_be_bytes(),
+            &dispatch_submitted_at_unix_millis.to_be_bytes(),
+            &receipt.0,
+            b"sealed_exact_visible_decision_submitted_once_pending_newer_visible_result",
+        ],
+    );
+    set_direct_visible_input_pending_v1(&dispatch_receipt_commitment_sha256)?;
+    Ok(OpaqueMtgoPendingAttestedDirectVisibleDispatchV1 {
+        before_perception,
+        before: checked,
+        dispatch_receipt_commitment_sha256,
+        dispatch_submitted_at_unix_millis,
+    })
+}
+
+pub(crate) fn confirm_attested_direct_visible_dispatch_v1(
+    pending: OpaqueMtgoPendingAttestedDirectVisibleDispatchV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    capture_timeout_ms: u32,
+    not_before_unix_millis: u128,
+) -> Result<CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1, String> {
+    if !(100..=10_000).contains(&capture_timeout_ms) {
+        return Err(
+            "direct-visible confirmation timeout is outside the supported range".to_owned(),
+        );
+    }
+    require_matching_direct_visible_input_pending_v1(&pending.dispatch_receipt_commitment_sha256)?;
+    let before_sequence = pending
+        .before
+        .dispatch_commitments_v1()
+        .source_frame_sequence_v1();
+    let after_sequence = before_sequence
+        .checked_add(1)
+        .ok_or("direct-visible after-frame sequence overflow")?;
+    let deadline = Instant::now() + Duration::from_millis(u64::from(capture_timeout_ms));
+    let after = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining < Duration::from_millis(100) {
+            return Err(
+                "direct-visible confirmation timed out before every fixed visible region changed"
+                    .to_owned(),
+            );
+        }
+        let candidate_timeout_ms = remaining.as_millis().min(1_000) as u32;
+        let after_frame =
+            capture_admitted_mtgo_duel_visible_frame_v1(profile, candidate_timeout_ms)?;
+        validate_same_duel_observation_lineage_v1(
+            &pending.before_perception.source_frame,
+            &after_frame,
+        )?;
+        let after_commitments = after_frame.commitments_v1();
+        if after_commitments.source_capture.captured_at_unix_millis
+            <= pending
+                .dispatch_submitted_at_unix_millis
+                .max(not_before_unix_millis)
+        {
+            continue;
+        }
+        let size = MtgoSizePxV1 {
+            width: after_commitments.source_capture.canonical_width,
+            height: after_commitments.source_capture.canonical_height,
+        };
+        let mut region_hashes = Vec::new();
+        for rect in pending.before.fixed_region_rects_v1() {
+            region_hashes.push(
+                mtgo_blackbox_v1::visible_frame_region_content_sha256_v1(
+                    &after_frame.source_frame.canonical_bgra8,
+                    &size,
+                    &rect,
+                )
+                .map_err(|error| format!("rehash direct-visible after region: {error}"))?,
+            );
+        }
+        if !pending
+            .before
+            .candidate_changes_every_fixed_region_v1(&region_hashes)
+            .map_err(|error| format!("check direct-visible after regions: {error}"))?
+        {
+            continue;
+        }
+        let after_frame_id = frame_id_from_capture_commitment_v1(
+            &after_commitments.source_capture.capture_commitment_sha256,
+            pending.before_perception.validated_decision.frame_id(),
+        )?;
+        break pending
+            .before
+            .after_frame_record_v1(
+                after_frame_id,
+                after_sequence,
+                after_commitments.source_capture.captured_at_unix_millis,
+                after_commitments.source_capture.canonical_bgra8_sha256,
+                region_hashes,
+            )
+            .map_err(|error| format!("bind direct-visible after frame: {error}"))?;
+    };
+    complete_direct_visible_gameplay_postcondition_v1(
+        pending.before,
+        &pending.dispatch_receipt_commitment_sha256,
+        pending.dispatch_submitted_at_unix_millis,
+        after,
+        None,
+    )
+    .map_err(|error| format!("confirm direct-visible gameplay result: {error}"))
+}
+
 /// Invokes only the release-pinned observer against the same client process as
 /// a fresh admitted acting-player duel frame, then immediately captures a
 /// second frame. The broker output is bounded, parsed as one strict sanitized
@@ -1434,6 +1765,55 @@ fn verify_runtime_identity_now_v1(
     Ok(())
 }
 
+fn require_ratified_direct_visible_dispatch_runtime_v1(
+    reviewed_dispatch_runtime_commitment_sha256: &str,
+) -> Result<(), String> {
+    let Some(ratified) = RATIFIED_DIRECT_VISIBLE_DISPATCH_RUNTIME_COMMITMENT_V1 else {
+        return Err("the production direct-visible dispatch ratification root is empty".to_owned());
+    };
+    if reviewed_dispatch_runtime_commitment_sha256 != ratified {
+        return Err("the reviewed direct-visible dispatch runtime is not ratified".to_owned());
+    }
+    Ok(())
+}
+
+fn verify_dispatch_runtime_identity_now_v1(
+    runtime: &OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
+) -> Result<(), String> {
+    for (path, file_name, digest, label) in [
+        (
+            runtime.broker_path.as_path(),
+            "mtgo_visible_duel_live_dispatch_broker_v1.exe",
+            LIVE_DISPATCH_BROKER_SHA256_V1,
+            "live direct-visible dispatch broker",
+        ),
+        (
+            runtime.bootstrap_path.as_path(),
+            "mtgo_visible_duel_bootstrap_v1.dll",
+            LIVE_BOOTSTRAP_SHA256_V1,
+            "live direct-visible dispatch bootstrap",
+        ),
+        (
+            runtime.producer_path.as_path(),
+            "mtgo_visible_duel_producer_v1.dll",
+            LIVE_PRODUCER_SHA256_V1,
+            "live direct-visible dispatch producer",
+        ),
+        (
+            runtime.validator_path.as_path(),
+            "check_mtgo_visible_duel_producer_result_v1.exe",
+            LIVE_VALIDATOR_SHA256_V1,
+            "live direct-visible dispatch validator",
+        ),
+    ] {
+        let observed = verify_exact_artifact_v1(path, file_name, digest, label)?;
+        if observed != path {
+            return Err(format!("{label} canonical path changed"));
+        }
+    }
+    Ok(())
+}
+
 fn invoke_observe_only_broker_v1(
     runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
     process_id: u32,
@@ -1495,6 +1875,88 @@ fn invoke_observe_only_broker_v1(
         let (stderr, stderr_truncated) = stderr_reader
             .join()
             .map_err(|_| "direct-source broker stderr reader panicked".to_owned())??;
+        drop(stderr);
+        Ok::<_, String>((status, stdout, stdout_truncated, stderr_truncated))
+    })?;
+    validate_broker_process_result_v1(status, stdout, stdout_truncated, stderr_truncated)
+}
+
+fn invoke_dispatch_broker_v1(
+    runtime: &OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
+    process_id: u32,
+    decision_sha256: &str,
+    selected_index: usize,
+    timeout: Duration,
+) -> Result<ZeroingVecV1, String> {
+    if process_id == 0
+        || selected_index >= 64
+        || decision_sha256.len() != 64
+        || !decision_sha256
+            .bytes()
+            .all(|value| value.is_ascii_digit() || (b'a'..=b'f').contains(&value))
+    {
+        return Err("direct-visible dispatch arguments are invalid".to_owned());
+    }
+    let mut child = Command::new(&runtime.broker_path)
+        .arg("--pid")
+        .arg(process_id.to_string())
+        .arg("--bootstrap")
+        .arg(&runtime.bootstrap_path)
+        .arg("--producer")
+        .arg(&runtime.producer_path)
+        .arg("--validator")
+        .arg(&runtime.validator_path)
+        .arg("--decision-sha256")
+        .arg(decision_sha256)
+        .arg("--selected-index")
+        .arg(selected_index.to_string())
+        .current_dir(
+            runtime
+                .broker_path
+                .parent()
+                .ok_or("direct-visible dispatch broker has no parent directory")?,
+        )
+        .env_clear()
+        .creation_flags(CREATE_NO_WINDOW_V1)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| "release-pinned direct-visible dispatch broker could not start".to_owned())?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or("release-pinned direct-visible dispatch broker has no stdout")?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or("release-pinned direct-visible dispatch broker has no stderr")?;
+    let started = Instant::now();
+    let (status, stdout, stdout_truncated, stderr_truncated) = thread::scope(|scope| {
+        let stdout_reader =
+            scope.spawn(|| read_bounded_and_drain_v1(&mut stdout, MAX_BROKER_STDOUT_BYTES_V1));
+        let stderr_reader =
+            scope.spawn(|| read_bounded_and_drain_v1(&mut stderr, MAX_BROKER_STDERR_BYTES_V1));
+        let status = loop {
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|_| "poll release-pinned direct-visible dispatch broker".to_owned())?
+            {
+                break status;
+            }
+            if started.elapsed() >= timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("release-pinned direct-visible dispatch broker timed out".to_owned());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let (stdout, stdout_truncated) = stdout_reader
+            .join()
+            .map_err(|_| "direct-visible dispatch stdout reader panicked".to_owned())??;
+        let (stderr, stderr_truncated) = stderr_reader
+            .join()
+            .map_err(|_| "direct-visible dispatch stderr reader panicked".to_owned())??;
         drop(stderr);
         Ok::<_, String>((status, stdout, stdout_truncated, stderr_truncated))
     })?;
@@ -1751,11 +2213,41 @@ mod tests {
             verify_direct_visible_source_runtime_v1(relative, relative, relative, relative,)
                 .is_err()
         );
+        assert!(
+            verify_direct_visible_dispatch_runtime_v1(relative, relative, relative, relative,)
+                .is_err()
+        );
     }
 
     #[test]
     fn production_scoring_ratification_root_is_empty() {
         assert!(require_ratified_direct_visible_source_qualification_v1(&"a".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn production_dispatch_ratification_root_is_empty() {
+        assert!(require_ratified_direct_visible_dispatch_runtime_v1(&"a".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn dispatch_runtime_commitment_is_domain_separated_and_complete() {
+        let dispatch = commitment_v1(
+            DIRECT_VISIBLE_DISPATCH_RUNTIME_DOMAIN_V1,
+            &[b"broker", b"bootstrap", b"producer", b"validator"],
+        );
+        let source = commitment_v1(
+            DIRECT_VISIBLE_SOURCE_RUNTIME_DOMAIN_V1,
+            &[b"broker", b"bootstrap", b"producer", b"validator"],
+        );
+        assert_eq!(dispatch.len(), 64);
+        assert_ne!(dispatch, source);
+        assert_ne!(
+            dispatch,
+            commitment_v1(
+                DIRECT_VISIBLE_DISPATCH_RUNTIME_DOMAIN_V1,
+                &[b"changed", b"bootstrap", b"producer", b"validator"],
+            )
+        );
     }
 
     #[test]

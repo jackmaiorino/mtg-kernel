@@ -90,6 +90,7 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
     CheckedUntrustedMtgoCompetitiveSideboardReadyV1,
+    CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
     CheckedUntrustedMtgoPlayerVisibleGameLogActionCorroborationV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveDeckConfigurationV1, MtgoCompetitiveDeckPartitionV1,
     MtgoCompetitiveEntryAuthorizationV1, MtgoCompetitiveEntryResourceV1,
@@ -15740,6 +15741,51 @@ pub(crate) fn advance_competitive_player_visible_gameplay_session_v1(
     Ok(session)
 }
 
+pub(crate) fn advance_competitive_direct_visible_gameplay_session_v1(
+    mut session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible: &CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
+) -> Result<OpaqueMtgoCompetitiveGestureGameSessionV1, String> {
+    if visible.event_kind_v1() != session.launch.pass_match_launch.authorization.event_kind
+        || visible.game_number_v1() != session.launch.pass_match_launch.authorization.game_number
+        || visible.after_frame_sequence_v1() <= session.last_confirmed_frame_sequence
+        || visible.after_frame_sequence_v1()
+            > session
+                .launch
+                .pass_match_launch
+                .authorization
+                .valid_through_frame_sequence
+        || !is_sha256_v2(visible.dispatch_receipt_commitment_sha256_v1())
+        || !is_sha256_v2(visible.confirmation_commitment_sha256_v1())
+    {
+        return Err(
+            "confirmed direct visible transition is outside the competitive game session lifetime"
+                .to_owned(),
+        );
+    }
+    let next_count = session
+        .confirmed_action_count
+        .checked_add(1)
+        .ok_or("competitive direct visible game session action count overflow")?;
+    let family_json = serde_json::to_vec(&visible.action_family_v1())
+        .map_err(|error| format!("serialize direct visible gameplay family: {error}"))?;
+    session.session_commitment_sha256 = hash_parts_v2(
+        b"mtgo-competitive-direct-visible-gameplay-session-advance-v1",
+        &[
+            session.session_commitment_sha256.as_bytes(),
+            visible.dispatch_receipt_commitment_sha256_v1().as_bytes(),
+            visible.confirmation_commitment_sha256_v1().as_bytes(),
+            &family_json,
+            visible.after_frame_id_v1().to_be_bytes().as_slice(),
+            visible.after_frame_sequence_v1().to_be_bytes().as_slice(),
+            next_count.to_be_bytes().as_slice(),
+            b"direct_visible_session_returned_only_after_newer_player_visible_postcondition",
+        ],
+    );
+    session.last_confirmed_frame_sequence = visible.after_frame_sequence_v1();
+    session.confirmed_action_count = next_count;
+    Ok(session)
+}
+
 fn advance_competitive_game_session_v1(
     mut session: OpaqueMtgoCompetitiveGameSessionV1,
     visible: &MtgoOpaqueCompetitiveDuelPassConfirmationCommitmentsV1,
@@ -16125,6 +16171,10 @@ fn reserve_input_gate_v3() -> Result<(), String> {
     }
 }
 
+pub(crate) fn reserve_direct_visible_input_gate_v1() -> Result<(), String> {
+    reserve_input_gate_v3()
+}
+
 fn release_unattempted_reservation_v3() -> Result<(), String> {
     let mut gate = input_gate_v3()
         .lock()
@@ -16137,6 +16187,10 @@ fn release_unattempted_reservation_v3() -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn release_unattempted_direct_visible_input_gate_v1() -> Result<(), String> {
+    release_unattempted_reservation_v3()
+}
+
 fn halt_before_input_attempt_v3() -> Result<(), String> {
     let mut gate = input_gate_v3()
         .lock()
@@ -16147,6 +16201,10 @@ fn halt_before_input_attempt_v3() -> Result<(), String> {
     }
     *gate = PregameInputGateStateV3::Halted;
     Ok(())
+}
+
+pub(crate) fn halt_before_direct_visible_input_attempt_v1() -> Result<(), String> {
+    halt_before_input_attempt_v3()
 }
 
 fn set_pending_v3(receipt_sha256: &str) -> Result<(), String> {
@@ -16163,6 +16221,10 @@ fn set_pending_v3(receipt_sha256: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn set_direct_visible_input_pending_v1(receipt_sha256: &str) -> Result<(), String> {
+    set_pending_v3(receipt_sha256)
+}
+
 fn require_matching_pending_v3(receipt_sha256: &str) -> Result<(), String> {
     let gate = input_gate_v3()
         .lock()
@@ -16176,6 +16238,12 @@ fn require_matching_pending_v3(receipt_sha256: &str) -> Result<(), String> {
         }
         _ => Err("the process gate is not awaiting this postcondition".to_owned()),
     }
+}
+
+pub(crate) fn require_matching_direct_visible_input_pending_v1(
+    receipt_sha256: &str,
+) -> Result<(), String> {
+    require_matching_pending_v3(receipt_sha256)
 }
 
 fn release_confirmed_pending_v3(receipt_sha256: &str) -> Result<(), String> {
@@ -16194,6 +16262,12 @@ fn release_confirmed_pending_v3(receipt_sha256: &str) -> Result<(), String> {
             Err("the confirmed input receipt does not match the process gate".to_owned())
         }
     }
+}
+
+pub(crate) fn release_confirmed_direct_visible_input_pending_v1(
+    receipt_sha256: &str,
+) -> Result<(), String> {
+    release_confirmed_pending_v3(receipt_sha256)
 }
 
 fn halt_gate_v3() -> Result<(), String> {

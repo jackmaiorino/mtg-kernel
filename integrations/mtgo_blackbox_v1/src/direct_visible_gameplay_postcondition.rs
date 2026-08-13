@@ -235,6 +235,81 @@ impl CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1 {
         &self.before_dispatch_commitment_sha256
     }
 
+    #[doc(hidden)]
+    pub fn after_frame_record_v1(
+        &self,
+        after_frame_id: u64,
+        after_frame_sequence: u64,
+        captured_at_unix_millis: u128,
+        after_frame_sha256: String,
+        after_region_sha256: Vec<String>,
+    ) -> Result<MtgoDirectVisibleGameplayAfterDispatchFrameV1, MtgoContractErrorV1> {
+        if after_region_sha256.len() != self.record.regions.len() {
+            return Err(error_v1(
+                "direct_visible_after_dispatch_region_count",
+                "the trusted after-frame owner must rehash every fixed before region",
+            ));
+        }
+        let regions = self
+            .record
+            .regions
+            .iter()
+            .zip(after_region_sha256)
+            .map(
+                |(before, after_bgra8_sha256)| MtgoDirectVisibleGameplayAfterRegionV1 {
+                    kind: before.kind,
+                    rect_client_px: before.rect_client_px.clone(),
+                    after_bgra8_sha256,
+                },
+            )
+            .collect();
+        Ok(MtgoDirectVisibleGameplayAfterDispatchFrameV1 {
+            schema_version: MTGO_DIRECT_VISIBLE_GAMEPLAY_AFTER_DISPATCH_SCHEMA_V1,
+            after_frame_id,
+            after_frame_sequence,
+            captured_at_unix_millis,
+            after_frame_sha256,
+            client_size_px: self.record.client_size_px.clone(),
+            regions,
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn fixed_region_rects_v1(&self) -> Vec<MtgoRectPxV1> {
+        self.record
+            .regions
+            .iter()
+            .map(|region| region.rect_client_px.clone())
+            .collect()
+    }
+
+    #[doc(hidden)]
+    pub fn candidate_changes_every_fixed_region_v1(
+        &self,
+        after_region_sha256: &[String],
+    ) -> Result<bool, MtgoContractErrorV1> {
+        if after_region_sha256.len() != self.record.regions.len() {
+            return Err(error_v1(
+                "direct_visible_after_dispatch_region_count",
+                "the trusted after-frame owner must rehash every fixed before region",
+            ));
+        }
+        for digest in after_region_sha256 {
+            require_sha256_v1(digest, "direct_visible_postcondition_after_region_hash")?;
+        }
+        Ok(self
+            .record
+            .regions
+            .iter()
+            .zip(after_region_sha256)
+            .all(|(before, after)| before.before_bgra8_sha256 != *after))
+    }
+
+    #[doc(hidden)]
+    pub fn source_captured_at_unix_millis_v1(&self) -> u128 {
+        self.record.source_captured_at_unix_millis
+    }
+
     pub fn safe_for_live_input_v1(&self) -> bool {
         false
     }
@@ -346,11 +421,13 @@ impl CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1 {
         &self.source_frame_sha256
     }
 
-    pub(crate) fn after_frame_id_v1(&self) -> u64 {
+    #[doc(hidden)]
+    pub fn after_frame_id_v1(&self) -> u64 {
         self.after_frame_id
     }
 
-    pub(crate) fn after_frame_sequence_v1(&self) -> u64 {
+    #[doc(hidden)]
+    pub fn after_frame_sequence_v1(&self) -> u64 {
         self.after_frame_sequence
     }
 }
@@ -904,6 +981,26 @@ mod tests {
                 .code(),
             "direct_visible_before_dispatch_source"
         );
+    }
+
+    #[test]
+    fn trusted_after_frame_polling_requires_every_fixed_region_to_change() {
+        let prepared = prepared_v1();
+        assert!(prepared
+            .candidate_changes_every_fixed_region_v1(&[digest_v1('a'), digest_v1('b')])
+            .unwrap());
+        assert!(!prepared
+            .candidate_changes_every_fixed_region_v1(&[digest_v1('c'), digest_v1('b')])
+            .unwrap());
+        assert!(prepared
+            .candidate_changes_every_fixed_region_v1(&[digest_v1('a')])
+            .is_err());
+        assert!(prepared
+            .candidate_changes_every_fixed_region_v1(&[
+                "not-a-digest".to_owned(),
+                digest_v1('b'),
+            ])
+            .is_err());
     }
 
     #[test]

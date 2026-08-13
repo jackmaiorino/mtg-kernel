@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $bootstrap = [IO.File]::ReadAllText((Join-Path $root 'bootstrap\VisibleDuelBootstrapV1.cpp'))
 $broker = [IO.File]::ReadAllText((Join-Path $root 'broker\VisibleDuelBrokerV1.cpp'))
+$buildScript = [IO.File]::ReadAllText((Join-Path $root 'build.ps1'))
 
 foreach ($required in @(
     'ExecuteInDefaultAppDomain',
@@ -18,6 +19,7 @@ foreach ($required in @(
     'synthetic_managed_host_v1.exe',
     'target_not_synthetic_host',
     'MTGO_LIVE_PINNED_V1',
+    'MTGO_LIVE_DISPATCH_ADMITTED_V1',
     'bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92',
     '72b99e1169f9f9445a510b2dae52f9212fb7300c2483b8bc8e02f5760f11904e',
     '071338a98d845d5c8db6ebd2f3c847e38ad548f50ba11d2a36973438cdec2ea8',
@@ -36,6 +38,19 @@ foreach ($required in @(
     if (-not ($bootstrap.Contains($required) -or $broker.Contains($required))) {
         throw "required broker marker missing"
     }
+}
+foreach ($requiredBuild in @(
+    'mtgo_visible_duel_live_dispatch_broker_v1.exe',
+    '/DMTGO_LIVE_PINNED_V1 /DMTGO_LIVE_DISPATCH_ADMITTED_V1',
+    '918d99c4fc22d7ce3c0c6b080ca46a06bc1ab9922607dd46aa083bfa4da5eea7',
+    'native live observe-only broker differs from its release pin'
+)) {
+    if (-not $buildScript.Contains($requiredBuild)) {
+        throw "required dispatch build marker missing"
+    }
+}
+if (-not $broker.Contains('#if defined(MTGO_LIVE_PINNED_V1) && !defined(MTGO_LIVE_DISPATCH_ADMITTED_V1)')) {
+    throw "observe-only live dispatch rejection is not compile-separated"
 }
 foreach ($forbidden in @(
     'ReadProcessMemory',
