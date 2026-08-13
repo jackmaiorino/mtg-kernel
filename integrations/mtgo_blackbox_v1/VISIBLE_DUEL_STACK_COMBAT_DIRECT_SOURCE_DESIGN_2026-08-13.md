@@ -98,7 +98,34 @@ private victim ID is not model input. It may only join an action to the visible
 player or permanent highlighted by that menu path, after which it is replaced
 with a relative player role or visible object ordinal.
 
-The first attack-selection slice should be binary and sequential:
+MTGO and the trained kernel expose different interaction shapes here. MTGO
+presents independently toggled attackers plus a visible `Done` control. The
+kernel policy surface asks a sequential binary include-or-exclude question for
+each eligible attacker. Treating `Done` as priority `Pass`, or presenting the
+whole MTGO menu directly to the current checkpoint, would change the model's
+trained action semantics.
+
+The adapter bridge must therefore complete model deliberation before it sends
+any input to MTGO:
+
+1. capture the complete ordered candidate list from visible battlefield order,
+   each card's rendered attack-selection state, the uniquely visible action
+   that would toggle it, and exactly one visible enabled `Done` control;
+2. ask the model, in that same order, the two choices `include: false` then
+   `include: true`, retaining only its earlier local choices;
+3. compare the completed desired set with the captured visible selection and
+   form a coordinate-free list containing only the toggles that differ;
+4. reobserve before every later client action, bind the next difference to the
+   exact current visible toggle, require its visible postcondition, then
+   reobserve and bind `Done` separately.
+
+The local candidate index, selected-before-current list, and remaining
+candidates are deterministic deliberation context derived from visible order
+and the model's own earlier choices. They are not MTGO rules facts or hidden
+client state. The kernel external scorer must encode that explicit local
+context for combat rather than substituting simulator-only bookkeeping.
+
+The first attack-selection model slice is binary and sequential:
 
 - `ChooseAttackerInclusion { attacker, include: true }` for the exact visible
   `Attack ...` action;
@@ -106,11 +133,13 @@ The first attack-selection slice should be binary and sequential:
   `Don't attack` action; and
 - a separately visible completion control before advancing the phase.
 
-The producer must return the complete ordered visible choice set for the
-current selection moment. It must abstain on exert variants, multiple attack
-victims without a qualified visible target join, grouped multi-card actions,
-missing completion controls, attack requirements, costs, confirmation modals,
-or any action-menu transformation not represented by the semantic schema.
+The producer must return the complete ordered visible candidate set for the
+current selection moment. It must distinguish a combat `Done` control from a
+priority `Pass`. It must abstain on exert variants, multiple attack victims
+without a qualified visible target join, grouped multi-card actions, missing
+or duplicated completion controls, attack requirements, costs, confirmation
+modals, or any action-menu transformation not represented by the semantic
+schema.
 
 Blocking should remain closed in the first combat tranche. It requires an
 exact visible candidate set for each attacker, a sequential inclusion mapping,

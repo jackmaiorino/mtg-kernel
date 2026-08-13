@@ -13,6 +13,7 @@ namespace WotC.MtGO.Client.Model.Play
         Draw = 3,
         PreCombatMain = 4,
         BeginCombat = 5,
+        DeclareAttackers = 6,
         PostCombatMain = 10,
         EndOfTurn = 11
     }
@@ -778,12 +779,12 @@ namespace Shiny.Play.Duel.ViewModel
 
         public NumberEntryData NumberEntryFixture { get; } = new NumberEntryData();
 
-        public OptionButton OkPromptButton
+        public OptionButton? OkPromptButton
         {
             get
             {
                 VisibleActionJoinGetterProbeV1.Record("Prompt.OkPromptButton");
-                return OkPromptButtonFixture;
+                return ShowOkPromptButtonFixture ? OkPromptButtonFixture : null;
             }
         }
 
@@ -792,11 +793,13 @@ namespace Shiny.Play.Duel.ViewModel
             get
             {
                 VisibleActionJoinGetterProbeV1.Record("Prompt.DoneButton");
-                return null;
+                return DoneButtonFixture;
             }
         }
 
-        private OptionButton OkPromptButtonFixture { get; }
+        public bool ShowOkPromptButtonFixture { get; set; } = true;
+        public OptionButton OkPromptButtonFixture { get; }
+        public OptionButton? DoneButtonFixture { get; set; }
     }
 
     public sealed class OptionButton

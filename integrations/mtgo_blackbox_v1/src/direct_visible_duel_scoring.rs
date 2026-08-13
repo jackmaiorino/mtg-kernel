@@ -242,6 +242,10 @@ pub fn score_and_select_strict_visible_duel_producer_result_v1<S: MtgoPlayerVisi
             .map(Box::new)
             .map(CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Selected)
         }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. } => Err(error_v1(
+            "direct_visible_attacker_scorer_missing",
+            "attacker selection requires the separate sequential player-visible deliberation scorer",
+        )),
     }
 }
 

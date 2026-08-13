@@ -7,7 +7,7 @@ direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.17 invokes only exact allowlisted getters for the player-visible game
+Version 1.18 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
@@ -51,6 +51,18 @@ prompts, and modal choices remain closed. Raw association objects never leave
 the producer. Its supported actions are source-bound cast, play-land,
 activated-ability, and mana-ability actions plus the one visible priority Pass.
 
+Version 1.18 also emits a separate coordinate-free attacker-selection result
+for the narrow direct-opponent declare-attackers case. It contains the current
+visible public state, the battlefield-order attacker candidates, each
+candidate's visible selected state, and the fact that one enabled visible
+`Done` control is present. Private action objects, attack-victim identifiers,
+and player backing objects are used only inside the producer to require an
+exact visible `Attack <opponent name>` or `Don't attack` join. They are never
+serialized. The result carries no executable action binding. The Rust adapter
+turns it into the checkpoint's sequential include/exclude deliberation without
+touching the client. Exert, grouped attacks, alternate victims, modals,
+nonempty stack, and ambiguous or incomplete controls still abstain.
+
 The observation method writes that bounded result to an exact broker-created
 local memory channel and returns only a fixed transport status code. A second
 offline-qualified method accepts only the SHA-256 of that exact serialized
@@ -74,6 +86,9 @@ battlefield, graveyard, exile, and stack zones. The native
 offline broker test
 observes the synthetic decision, dispatches its Pass index, and proves neither
 that dispatch nor another index for the same decision can be replayed.
+The fixture also validates one selected and one unselected direct-opponent
+attacker, rejects exert, alternate-victim, and missing-`Done` variants, and
+proves the legacy selected-index dispatcher cannot execute the new result.
 
 Version 1.5 was loaded into a clean MTGO 3.4.158.4691 process and invoked
 while no duel was open. It returned only the fixed
@@ -99,10 +114,11 @@ represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
 abstention. Target-bearing, X-bearing, sideboard, fake, confirmation, and
 mode-count action state likewise forces abstention until its subsequent
-player-visible modal is represented. Version 1.17 has not been loaded into
-MTGO. The deterministic Release build tested outside the client is at
-`D:\mtgo-visible-duel-producer-v1.17-codex` with DLL SHA-256
-`af2c52f5f677dd9fabd746e5c67d28e8e2619c949171a45abe64d2fec0846459`.
+player-visible modal is represented. Version 1.18 has not been loaded into
+MTGO. Version 1.17 remains loaded in the current broker process; no attempt was
+made to replace its locked assembly. A separate deterministic Release build of
+the v1.18 source succeeded outside the client with zero warnings and zero
+errors. It has not been live-qualified.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.
 The next tranche must confirm the exact client pass control, add later special

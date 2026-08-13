@@ -1,6 +1,8 @@
 use crate::{
+    begin_player_visible_attacker_deliberation_v1,
     validate_player_visible_duel_decision_input_strict_v1, validate_player_visible_expected_v2,
-    MtgoContractErrorV1, MtgoPlayerVisibleDuelDecisionInputV1,
+    MtgoContractErrorV1, MtgoPlayerVisibleAttackerSelectionInputV1,
+    MtgoPlayerVisibleDuelDecisionInputV1,
     MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1,
 };
 use serde::{Deserialize, Serialize};
@@ -54,6 +56,9 @@ pub enum MtgoVisibleDuelViewModelBrokerResultV1 {
     VisibleDecision {
         decision: Box<MtgoPlayerVisibleDuelDecisionInputV1>,
     },
+    VisibleAttackerSelection {
+        selection: Box<MtgoPlayerVisibleAttackerSelectionInputV1>,
+    },
     Abstained {
         reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1,
     },
@@ -73,9 +78,15 @@ pub fn parse_and_validate_visible_duel_producer_result_v1(
     }
     let result: MtgoVisibleDuelViewModelBrokerResultV1 = serde_json::from_slice(bytes)
         .map_err(|error| error_v1("visible_duel_producer_result_json", error.to_string()))?;
-    if let MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { decision } = &result {
-        validate_player_visible_expected_v2(decision)?;
-        validate_player_visible_duel_decision_input_strict_v1(decision)?;
+    match &result {
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { decision } => {
+            validate_player_visible_expected_v2(decision)?;
+            validate_player_visible_duel_decision_input_strict_v1(decision)?;
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { selection } => {
+            let _ = begin_player_visible_attacker_deliberation_v1((**selection).clone())?;
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => {}
     }
     Ok(result)
 }
@@ -146,7 +157,8 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelBrokerResponseV1 {
     pub fn abstention_reason_v1(&self) -> Option<MtgoVisibleDuelViewModelBrokerAbstentionReasonV1> {
         match self.response.result {
             MtgoVisibleDuelViewModelBrokerResultV1::Abstained { reason } => Some(reason),
-            MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. } => None,
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. } => None,
         }
     }
 
@@ -157,7 +169,8 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelBrokerResponseV1 {
             MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { decision } => {
                 decision.commitment_sha256_v1().map(Some)
             }
-            MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => Ok(None),
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => Ok(None),
         }
     }
 
@@ -301,9 +314,15 @@ pub fn check_untrusted_visible_duel_viewmodel_broker_response_v1(
             "raw values, identifiers, free-form diagnostics, and live authority must all be absent",
         ));
     }
-    if let MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { decision } = &response.result {
-        validate_player_visible_expected_v2(decision)?;
-        validate_player_visible_duel_decision_input_strict_v1(decision)?;
+    match &response.result {
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { decision } => {
+            validate_player_visible_expected_v2(decision)?;
+            validate_player_visible_duel_decision_input_strict_v1(decision)?;
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { selection } => {
+            let _ = begin_player_visible_attacker_deliberation_v1((**selection).clone())?;
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => {}
     }
     if response.response_commitment_sha256
         != mtgo_visible_duel_viewmodel_broker_response_commitment_v1(&response)?
@@ -349,8 +368,10 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 mod tests {
     use super::*;
     use crate::{
-        MtgoPlayerRelativeRoleV1, MtgoPlayerVisibleCombatStateV1, MtgoPlayerVisibleDuelActionV1,
-        MtgoPlayerVisibleDuelStateV1, MtgoPlayerVisibleExileCardV1,
+        MtgoPlayerRelativeRoleV1, MtgoPlayerVisibleAttackerCandidateV1,
+        MtgoPlayerVisibleAttackerSelectionInputV1, MtgoPlayerVisibleBattlefieldCardV1,
+        MtgoPlayerVisibleCombatStateV1, MtgoPlayerVisibleCounterStateV1,
+        MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelStateV1, MtgoPlayerVisibleExileCardV1,
         MtgoPlayerVisibleObjectRefV1, ZoneIndependentStepV1,
     };
 
@@ -412,6 +433,37 @@ mod tests {
         }
     }
 
+    fn attacker_selection_v1() -> MtgoPlayerVisibleAttackerSelectionInputV1 {
+        let mut current_state = decision_v1().current_state;
+        current_state.phase = ZoneIndependentStepV1::DeclareAttackers;
+        current_state.battlefield[0].push(MtgoPlayerVisibleBattlefieldCardV1 {
+            object_ref: MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 0 },
+            card_name: "Grizzly Bears".to_owned(),
+            tapped: false,
+            marked_damage: 0,
+            counters: MtgoPlayerVisibleCounterStateV1 {
+                plus_one_plus_one: 0,
+                minus_one_minus_one: 0,
+                minus_zero_minus_one: 0,
+                stun: 0,
+                lore: 0,
+            },
+            is_token: false,
+            visible_effective_power: Some(2),
+            visible_effective_toughness: Some(2),
+        });
+        MtgoPlayerVisibleAttackerSelectionInputV1 {
+            current_state,
+            ordered_candidates: vec![MtgoPlayerVisibleAttackerCandidateV1 {
+                attacker: MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 0 },
+                currently_attacking: false,
+                attack_opponent_action_visible: true,
+                dont_attack_action_visible: false,
+            }],
+            unique_visible_enabled_done_control: true,
+        }
+    }
+
     #[test]
     fn strict_producer_result_parser_accepts_visible_decision_and_fixed_abstention() {
         let visible = MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
@@ -432,13 +484,45 @@ mod tests {
     }
 
     #[test]
+    fn strict_producer_result_parser_accepts_visible_attacker_selection_only() {
+        let result = MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection {
+            selection: Box::new(attacker_selection_v1()),
+        };
+        let bytes = serde_json::to_vec(&result).unwrap();
+        assert!(matches!(
+            parse_and_validate_visible_duel_producer_result_v1(&bytes).unwrap(),
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
+        ));
+
+        let mut leaked = serde_json::to_value(&result).unwrap();
+        leaked["selection"]["ordered_candidates"][0]["attack_victim_id"] = serde_json::json!(7);
+        assert!(parse_and_validate_visible_duel_producer_result_v1(
+            &serde_json::to_vec(&leaked).unwrap()
+        )
+        .is_err());
+
+        let mut no_done = attacker_selection_v1();
+        no_done.unique_visible_enabled_done_control = false;
+        let no_done = MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection {
+            selection: Box::new(no_done),
+        };
+        assert!(parse_and_validate_visible_duel_producer_result_v1(
+            &serde_json::to_vec(&no_done).unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
     fn strict_producer_result_parser_requires_visible_exile_panel_owner() {
         let mut decision = decision_v1();
-        decision.current_state.exile.push(MtgoPlayerVisibleExileCardV1 {
-            object_ref: MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 0 },
-            zone_owner: MtgoPlayerRelativeRoleV1::Opponent,
-            visible_card_name: Some("Lightning Bolt".to_owned()),
-        });
+        decision
+            .current_state
+            .exile
+            .push(MtgoPlayerVisibleExileCardV1 {
+                object_ref: MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 0 },
+                zone_owner: MtgoPlayerRelativeRoleV1::Opponent,
+                visible_card_name: Some("Lightning Bolt".to_owned()),
+            });
         let visible = MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
             decision: Box::new(decision),
         };

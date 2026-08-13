@@ -389,7 +389,7 @@ namespace WotC.MtGO.Client.Model.Play
             get
             {
                 PrivateVisibleActionGetterProbeV1.Record("Action.Name");
-                return "OK";
+                return NameFixture;
             }
         }
 
@@ -421,6 +421,7 @@ namespace WotC.MtGO.Client.Model.Play
         }
 
         public uint ActionFlagsFixture { get; set; } = 1u;
+        public string NameFixture { get; set; } = "OK";
     }
 }
 

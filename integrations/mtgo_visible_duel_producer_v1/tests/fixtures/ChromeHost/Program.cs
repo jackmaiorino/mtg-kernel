@@ -32,6 +32,7 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                 var viewModel = new DuelSceneViewModel();
                 var seated = new PlayerViewModel
                 {
+                    Name = "fixture-visible-local",
                     IsLocalFixture = true,
                     IsActiveFixture = true,
                     IsPriorityFixture = true,
@@ -40,6 +41,7 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                 seated.ManaItems.Add(new ManaPoolItemViewModel());
                 var opponent = new PlayerViewModel
                 {
+                    Name = "fixture-visible-opponent",
                     HandTotalFixture = 7
                 };
                 opponent.ManaItems.Add(new ManaPoolItemViewModel());
@@ -130,7 +132,7 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         seated.Battlefield.Clear();
                         opponent.Battlefield.Clear();
                         viewModel.GameFixture.ExpectedAction =
-                            viewModel.Prompt.OkPromptButton.ActionFixture!;
+                            viewModel.Prompt.OkPromptButtonFixture.ActionFixture!;
                         var timeout = new DispatcherTimer
                         {
                             Interval = TimeSpan.FromMinutes(2)
@@ -333,20 +335,20 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     viewModel.Prompt.Buttons.RemoveAt(
                         viewModel.Prompt.Buttons.Count - 1);
-                    viewModel.Prompt.OkPromptButton.NameFixture =
+                    viewModel.Prompt.OkPromptButtonFixture.NameFixture =
                         "fixture-visible-choice";
                     if (!ExportsProjectionIncompleteV1(channelName, view))
                     {
                         return 61;
                     }
-                    viewModel.Prompt.OkPromptButton.NameFixture = "OK";
-                    ((VisibleFixturePromptAction)viewModel.Prompt.OkPromptButton
+                    viewModel.Prompt.OkPromptButtonFixture.NameFixture = "OK";
+                    ((VisibleFixturePromptAction)viewModel.Prompt.OkPromptButtonFixture
                         .ActionFixture!).ActionFlagsFixture = 0x4000u;
                     if (!ExportsProjectionIncompleteV1(channelName, view))
                     {
                         return 62;
                     }
-                    ((VisibleFixturePromptAction)viewModel.Prompt.OkPromptButton
+                    ((VisibleFixturePromptAction)viewModel.Prompt.OkPromptButtonFixture
                         .ActionFixture!).ActionFlagsFixture = 1u;
                     viewModel.Prompt.NumberEntryFixture.EnabledFixture = true;
                     if (!ExportsProjectionIncompleteV1(channelName, view))
@@ -565,6 +567,138 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         return 61;
                     }
 
+                    // MTGO exposes declare attackers as independently
+                    // toggled visible cards plus one Done control. The
+                    // producer exports that complete visible selection moment
+                    // as a distinct non-dispatchable result kind.
+                    var firstAttacker = new DuelSceneCardViewModel
+                    {
+                        NameFixture = "fixture-visible-first-attacker",
+                        PowerFixture = 2,
+                        ToughnessFixture = 2
+                    };
+                    var firstAttackAction = new VisibleFixtureCardAction
+                    {
+                        NameFixture = "Attack fixture-visible-opponent",
+                        CastFixture = false,
+                        AttackVictimIdFixture = 7
+                    };
+                    firstAttacker.ActionItems.Add(firstAttackAction);
+                    var secondAttacker = new DuelSceneCardViewModel
+                    {
+                        NameFixture = "fixture-visible-second-attacker",
+                        PowerFixture = 3,
+                        ToughnessFixture = 3,
+                        IsAttackingFixture = true
+                    };
+                    var secondDontAttackAction = new VisibleFixtureCardAction
+                    {
+                        NameFixture = "Don't attack",
+                        CastFixture = false,
+                        AttackVictimIdFixture = -1
+                    };
+                    secondAttacker.ActionItems.Add(secondDontAttackAction);
+                    seated.Battlefield.Add(firstAttacker);
+                    seated.Battlefield.Add(secondAttacker);
+                    viewModel.CurrentPhaseFixture = GamePhase.DeclareAttackers;
+                    viewModel.Prompt.ShowOkPromptButtonFixture = false;
+                    viewModel.Prompt.Buttons.Remove(
+                        viewModel.Prompt.OkPromptButtonFixture);
+                    var doneButton = new OptionButton
+                    {
+                        NameFixture = "Done",
+                        VisibleFixture = true,
+                        EnabledFixture = true,
+                        ActionFixture = new VisibleFixturePromptAction
+                        {
+                            NameFixture = "Done"
+                        }
+                    };
+                    viewModel.Prompt.DoneButtonFixture = doneButton;
+                    viewModel.Prompt.Buttons.Add(doneButton);
+
+                    int attackersStatus =
+                        VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+                    int attackersLength = view.ReadInt32(0);
+                    byte[] attackersBytes = new byte[attackersLength];
+                    view.ReadArray(8, attackersBytes, 0, attackersBytes.Length);
+                    string visibleAttackers = Encoding.UTF8.GetString(attackersBytes);
+                    if (attackersStatus != 0 ||
+                        !visibleAttackers.StartsWith(
+                            "{\"result_kind\":\"visible_attacker_selection\",\"selection\":",
+                            StringComparison.Ordinal) ||
+                        !visibleAttackers.Contains("\"phase\":\"declare_attackers\"") ||
+                        !visibleAttackers.Contains("\"ordered_attackers\":[{\"visible_ordinal\":1}]") ||
+                        !visibleAttackers.Contains("\"currently_attacking\":false") ||
+                        !visibleAttackers.Contains("\"currently_attacking\":true") ||
+                        !visibleAttackers.Contains("\"attack_opponent_action_visible\":true") ||
+                        !visibleAttackers.Contains("\"dont_attack_action_visible\":true") ||
+                        !visibleAttackers.Contains("\"unique_visible_enabled_done_control\":true") ||
+                        visibleAttackers.Contains("fixture-visible-opponent") ||
+                        visibleAttackers.Contains("attack_victim"))
+                    {
+                        return 71;
+                    }
+
+                    string attackersSha;
+                    using (SHA256 sha256 = SHA256.Create())
+                    {
+                        attackersSha = string.Concat(sha256.ComputeHash(attackersBytes).Select(
+                            value => value.ToString("x2")));
+                    }
+                    byte[] attackersCommand = Encoding.ASCII.GetBytes(
+                        "execute_visible_action_v1|" + attackersSha + "|0");
+                    view.Write(0, attackersCommand.Length);
+                    view.Write(4, 2);
+                    view.WriteArray(8, attackersCommand, 0, attackersCommand.Length);
+                    view.Flush();
+                    int attackersDispatchStatus =
+                        VisibleDuelProducerV1.DispatchSelectedVisibleActionV1(channelName);
+                    int attackersReceiptLength = view.ReadInt32(0);
+                    byte[] attackersReceipt = new byte[attackersReceiptLength];
+                    view.ReadArray(8, attackersReceipt, 0, attackersReceipt.Length);
+                    if (attackersDispatchStatus != 0 ||
+                        Encoding.UTF8.GetString(attackersReceipt) !=
+                            "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"rejected\"}" ||
+                        viewModel.GameFixture.ExecutionCount != 0)
+                    {
+                        return 75;
+                    }
+
+                    firstAttackAction.NameFixture =
+                        "Attack fixture-visible-opponent and exert";
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 72;
+                    }
+                    firstAttackAction.NameFixture = "Attack fixture-visible-opponent";
+                    var secondVictim = new VisibleFixtureCardAction
+                    {
+                        NameFixture = "Attack fixture-visible-planeswalker",
+                        CastFixture = false,
+                        AttackVictimIdFixture = 9
+                    };
+                    firstAttacker.ActionItems.Add(secondVictim);
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 73;
+                    }
+                    firstAttacker.ActionItems.Remove(secondVictim);
+                    viewModel.Prompt.DoneButtonFixture = null;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 74;
+                    }
+
+                    viewModel.Prompt.Buttons.Remove(doneButton);
+                    viewModel.Prompt.DoneButtonFixture = null;
+                    viewModel.Prompt.ShowOkPromptButtonFixture = true;
+                    viewModel.Prompt.Buttons.Insert(
+                        0,
+                        viewModel.Prompt.OkPromptButtonFixture);
+                    seated.Battlefield.Clear();
+                    viewModel.CurrentPhaseFixture = GamePhase.Upkeep;
+
                     // The first nonempty-stack slice is intentionally narrow:
                     // one or more face-up, non-copy spells controlled by the
                     // seated player, with no rendered association targets.
@@ -736,7 +870,7 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         return 7;
                     }
                     viewModel.GameFixture.ExpectedAction =
-                        viewModel.Prompt.OkPromptButton.ActionFixture!;
+                        viewModel.Prompt.OkPromptButtonFixture.ActionFixture!;
                     string sha;
                     using (SHA256 sha256 = SHA256.Create())
                     {

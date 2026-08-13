@@ -462,6 +462,19 @@ The sibling `integrations/mtgo_visible_duel_producer_v1` assembly supplies the i
 
 `VISIBLE_DUEL_STACK_COMBAT_DIRECT_SOURCE_DESIGN_2026-08-13.md` turns the approved transport-neutral information boundary into the next implementation contract. It records the installed-client proof for rendered stack order, stack kind and controller presentation, hover-visible target associations, visual attacker and blocker state, and attack-selection menu construction. It permits backing identities only as transaction-local reference-equality joins between already visible objects. Raw client objects and IDs can never leave the producer. Targeted stack items and attack selection remain closed until synthetic adversarial fixtures and attended rendered-frame comparisons prove the exact visible mappings; blockers remain a later tranche.
 
+`begin_player_visible_attacker_deliberation_v1` implements the pure bridge
+between MTGO's visible attacker toggles plus `Done` and the checkpoint's
+sequential include-or-exclude surface. It validates seated-player battlefield
+order, the current visible attack lane, exactly one opposite-state toggle per
+candidate, an uncomplicated declare-attackers state, and a unique visible
+enabled completion control. Each model subdecision exposes exactly `false`
+then `true` and only local context derived from visible order and earlier model
+choices. No MTGO input occurs during the scan. Completion returns a
+coordinate-free desired set and only the toggles that differ from the captured
+visible selection; it remains unsafe for input, event entry, and spending.
+The live producer and sealed execution binding are still required to reobserve
+and qualify each toggle and `Done` before any client action.
+
 The isolated `integrations/mtgo_visible_duel_broker_v1` prototype supplies a bounded local-memory output channel plus native load and CLR-invocation path. Its end-to-end qualification targets only a disposable synthetic .NET Framework process; that build explicitly rejects MTGO before process mutation. This proves the loader mechanism without creating a live broker identity or runtime attestation. Exact signed-client and deployment pins, before and after visible-frame bracketing, and live abstention qualification remain required before a separate MTGO-targeting broker can exist.
 
 The local evaluator hashes its own binary and prints only commitments, counts, action families, and fixed false authority flags:

@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.17 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.18 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -289,7 +289,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.17 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.18 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -307,6 +307,13 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             if (dispatchRequest == null)
             {
                 return visibleDecision;
+            }
+            if (boundClientActions.Count == 0)
+            {
+                // Attacker-selection output is model-deliberation input, not
+                // an ordinary one-index decision. Its later toggle and Done
+                // protocol requires its own fresh-observation executor.
+                return VisibleActionRejected;
             }
             return TryExecuteSealedVisibleActionV1(
                 viewModel,
@@ -815,7 +822,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     "ModeOptions",
                     out object? modesValue) ||
                 !TryBoundedVisibleStringCollectionV1(modesValue, 64) ||
-                !TryRequireBasicVisibleCardActionMenuShapeV1(action) ||
+                (!TryRequireBasicVisibleCardActionMenuShapeV1(action) &&
+                    !((name.StartsWith("Attack ", StringComparison.Ordinal) ||
+                        string.Equals(name, "Don't attack", StringComparison.Ordinal)) &&
+                        TryRequireSimpleVisibleAttackerToggleActionV1(action, name))) ||
                 !TryRequireNoUnrepresentedVisibleCardActionModalV1(action))
             {
                 return false;
@@ -1443,7 +1453,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !ReferenceEquals(value, OutputValidationFailed) &&
                 !ReferenceEquals(value, VisibleActionSubmitted) &&
                 !ReferenceEquals(value, VisibleActionRejected) &&
-                !IsSanitizedVisibleDecisionResultV1(value))
+                !IsSanitizedVisibleDecisionResultV1(value) &&
+                !IsSanitizedVisibleAttackerSelectionResultV1(value))
             {
                 value = OutputValidationFailed;
             }
@@ -1480,6 +1491,25 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         {
             byte[] prefix = Encoding.UTF8.GetBytes(
                 "{\"result_kind\":\"visible_decision\",\"decision\":");
+            if (value == null || value.Length <= prefix.Length ||
+                value.Length > MaximumOutputBytes - OutputPayloadOffset)
+            {
+                return false;
+            }
+            for (int index = 0; index < prefix.Length; index++)
+            {
+                if (value[index] != prefix[index])
+                {
+                    return false;
+                }
+            }
+            return value[value.Length - 1] == (byte)'}';
+        }
+
+        private static bool IsSanitizedVisibleAttackerSelectionResultV1(byte[] value)
+        {
+            byte[] prefix = Encoding.UTF8.GetBytes(
+                "{\"result_kind\":\"visible_attacker_selection\",\"selection\":");
             if (value == null || value.Length <= prefix.Length ||
                 value.Length > MaximumOutputBytes - OutputPayloadOffset)
             {
