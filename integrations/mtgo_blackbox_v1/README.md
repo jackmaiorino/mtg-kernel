@@ -440,6 +440,8 @@ cargo run --bin check_mtgo_player_visible_duel_annotations_v1 -- <corpus-id> <ab
 
 `LIVE_DIRECT_SOURCE_PRODUCER_V1.md` specifies the later production trust boundary. An audited broker, not the experimental parser, owns acquisition and supplies only composed pixels, on-screen pixel-corroborated accessibility values, the sanitized rendered Game Log projection, or another separately reviewed UI-equivalent source. The producer exports only the visible decision schema or abstains, and a second unchanged admitted frame closes the bracket. Process memory, intercepted protocol, private object reflection, unrendered caches, and hidden/internal fields remain ineligible.
 
+`VISIBLE_DUEL_VIEWMODEL_AUDIT_2026-08-12.md` records a metadata-only audit of the installed MTGO 3.4.158.4691 WPF presentation layer. It identifies a plausible direct player-visible projection surface and the co-located backing-model properties that make unrestricted reflection ineligible. The proposed route is an exact compile-time property allowlist whose first exported value is the visible duel decision schema, with composed pixels and the narrow on-screen UI Automation probe retained as qualification and drift checks. The audit accessed no live objects or game state and grants no runtime authority.
+
 The local evaluator hashes its own binary and prints only commitments, counts, action families, and fixed false authority flags:
 
 ```text
