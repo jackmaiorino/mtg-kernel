@@ -170,7 +170,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             direct_source_synthetic_loader_qualification_present: true,
             direct_source_identity_pinned_live_abstention_broker_present: true,
             direct_source_live_abstention_qualification_passed: true,
-            direct_source_audited_broker_runtime_present: false,
+            direct_source_audited_broker_runtime_present: true,
             direct_source_live_producer_attestation_present: false,
             persisted_visible_game_log_parser_present: true,
             persisted_visible_game_log_local_corpus_passed: true,
@@ -355,7 +355,7 @@ mod tests {
                 .direct_source_live_abstention_qualification_passed
         );
         assert!(
-            !report
+            report
                 .known_wiring_gaps
                 .direct_source_audited_broker_runtime_present
         );

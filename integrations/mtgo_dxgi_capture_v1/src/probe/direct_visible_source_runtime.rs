@@ -4,7 +4,9 @@ use super::{
     OpaqueMtgoAdmittedDuelVisibleFrameV1, OpaqueMtgoDxgiFrameCandidateV3,
 };
 use mtgo_blackbox_v1::{
-    parse_and_validate_visible_duel_producer_result_v1, AdmittedMtgoDuelPerceptionProfileV1,
+    parse_and_validate_visible_duel_producer_result_v1,
+    score_and_select_strict_visible_duel_producer_result_v1, AdmittedMtgoDuelPerceptionProfileV1,
+    CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1, MtgoPlayerVisibleDuelScorerV1,
     MtgoVisibleDuelViewModelBrokerAbstentionReasonV1, MtgoVisibleDuelViewModelBrokerResultV1,
 };
 use sha2::{Digest, Sha256};
@@ -29,6 +31,7 @@ const DIRECT_VISIBLE_SOURCE_OBSERVATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-observation-v1";
 const DIRECT_VISIBLE_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-no-stakes-qualification-v1";
+const RATIFIED_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
 const PINNED_MTGO_EXECUTABLE_SHA256_V1: &str =
     "bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92";
 const PINNED_MTGO_SIGNER_THUMBPRINT_V1: &str = "e9d9e2b989f90555b04c506fddf889c7aba7ac30";
@@ -145,8 +148,121 @@ pub struct MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1 {
 pub struct OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
     _before_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1,
     _after_frame: OpaqueMtgoAdmittedDuelVisibleFrameV1,
+    exact_result_bytes: ZeroingVecV1,
     result: MtgoVisibleDuelViewModelBrokerResultV1,
     commitments: MtgoAttestedDirectVisibleSourceObservationCommitmentsV1,
+}
+
+/// A player-visible-only scoring outcome that retains the exact admitted live
+/// observation that produced it. The outcome is move-only and has no generic
+/// checked-untrusted selection extractor.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1;
+/// fn cannot_extract_or_act(value: OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1) {
+///     let _ = value.generic_selection();
+///     value.dispatch();
+/// }
+/// ```
+pub struct OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
+    _observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    outcome: CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
+}
+
+impl OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
+    pub fn abstention_reason_v1(&self) -> Option<MtgoVisibleDuelViewModelBrokerAbstentionReasonV1> {
+        match &self.outcome {
+            CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Abstained { reason } => {
+                Some(*reason)
+            }
+            CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Selected(_) => None,
+        }
+    }
+
+    pub fn selected_index_v1(&self) -> Option<usize> {
+        match &self.outcome {
+            CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Abstained { .. } => None,
+            CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Selected(selection) => {
+                Some(selection.selected_index_v1())
+            }
+        }
+    }
+
+    pub fn selected_action_v1(&self) -> Option<&mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1> {
+        match &self.outcome {
+            CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Abstained { .. } => None,
+            CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Selected(selection) => {
+                Some(selection.selected_action_v1())
+            }
+        }
+    }
+
+    pub fn model_scoring_completed_v1(&self) -> bool {
+        true
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Consumes one profile-admitted, execution-attested observation into the
+/// player-visible-only scorer only after the exact no-stakes producer
+/// qualification commitment has been pinned in this build. The production
+/// ratification root is currently empty, so the scorer cannot yet be called.
+/// The qualification-only observation type has no corresponding scoring path.
+pub fn score_ratified_attested_direct_visible_source_observation_v1<
+    S: MtgoPlayerVisibleDuelScorerV1,
+>(
+    observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    reviewed_qualification_commitment_sha256: &str,
+    deployment_commitment_sha256: &str,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1, String> {
+    require_ratified_direct_visible_source_qualification_v1(
+        reviewed_qualification_commitment_sha256,
+    )?;
+    let outcome = score_and_select_strict_visible_duel_producer_result_v1(
+        &observation.exact_result_bytes.0,
+        deployment_commitment_sha256,
+        scorer,
+    )
+    .map_err(|error| format!("score attested direct visible observation: {error}"))?;
+    Ok(OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
+        _observation: observation,
+        outcome,
+    })
+}
+
+fn require_ratified_direct_visible_source_qualification_v1(
+    reviewed_qualification_commitment_sha256: &str,
+) -> Result<(), String> {
+    let Some(ratified) = RATIFIED_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1 else {
+        return Err(
+            "the production no-stakes direct-source qualification root is empty".to_owned(),
+        );
+    };
+    if reviewed_qualification_commitment_sha256 != ratified {
+        return Err(
+            "the reviewed no-stakes direct-source qualification commitment is not ratified"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 impl OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
@@ -360,11 +476,7 @@ pub fn observe_attested_direct_visible_source_v1(
     let result = parse_and_validate_visible_duel_producer_result_v1(&output.0)
         .map_err(|_| "direct-source broker did not return one sanitized visible result".to_owned());
     let result = result?;
-    let result_json = ZeroingVecV1(
-        serde_json::to_vec(&result)
-            .map_err(|error| format!("serialize sanitized direct-source result: {error}"))?,
-    );
-    let sanitized_result_sha256 = sha256_hex_v1(&result_json.0);
+    let sanitized_result_sha256 = sha256_hex_v1(&output.0);
     let after_commitments = after_frame.commitments_v1();
     let observation_commitment_sha256 = commitment_v1(
         DIRECT_VISIBLE_SOURCE_OBSERVATION_DOMAIN_V1,
@@ -390,6 +502,7 @@ pub fn observe_attested_direct_visible_source_v1(
     Ok(OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
         _before_frame: before_frame,
         _after_frame: after_frame,
+        exact_result_bytes: output,
         result,
         commitments: MtgoAttestedDirectVisibleSourceObservationCommitmentsV1 {
             runtime_identity_commitment_sha256: runtime
@@ -465,11 +578,7 @@ pub fn qualify_attested_direct_visible_source_current_duel_v1(
     let result = parse_and_validate_visible_duel_producer_result_v1(&output.0).map_err(|_| {
         "direct-source broker did not return one sanitized visible result".to_owned()
     })?;
-    let result_json = ZeroingVecV1(
-        serde_json::to_vec(&result)
-            .map_err(|error| format!("serialize sanitized direct-source result: {error}"))?,
-    );
-    let sanitized_result_sha256 = sha256_hex_v1(&result_json.0);
+    let sanitized_result_sha256 = sha256_hex_v1(&output.0);
     let after_commitments = after_frame.commitments_v3();
     let qualification_commitment_sha256 = commitment_v1(
         DIRECT_VISIBLE_SOURCE_QUALIFICATION_DOMAIN_V1,
@@ -871,5 +980,10 @@ mod tests {
             verify_direct_visible_source_runtime_v1(relative, relative, relative, relative,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn production_scoring_ratification_root_is_empty() {
+        assert!(require_ratified_direct_visible_source_qualification_v1(&"a".repeat(64)).is_err());
     }
 }
