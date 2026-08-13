@@ -50,18 +50,21 @@ native offline broker test observes the opening, dispatches its Pass index,
 and proves neither that dispatch nor another index for the same decision can be
 replayed.
 
-The fixture does not attest execution of version 1.5 inside MTGO, a complete
-visible projection, model scoring, live input, event entry, or spending. In
-particular, the synthetic slice has not yet confirmed its priority-pass control
-against a real duel. Its untouched-opening restriction makes a null Initiative
-complete before any game action has occurred, but later states remain
-unsupported. The slice is therefore not live-authorized. The
+Version 1.5 has been loaded into a clean MTGO 3.4.158.4691 process and invoked
+while no duel was open. It returned only the fixed
+`duel_surface_unavailable` abstention. That lobby-only result does not attest a
+data-bearing getter, a complete visible projection, model scoring, live input,
+event entry, or spending. In particular, the synthetic slice has not yet
+confirmed its priority-pass control against a real duel. Its untouched-opening
+restriction makes a null Initiative complete before any game action has
+occurred, but later states remain unsupported. The slice is therefore not
+live-authorized. The
 live broker build explicitly rejects the dispatch command until it is joined to
-the attended competitive authorization and confirmed-postcondition chain. A
-clean MTGO client restart is required before observing with the new binary.
+the attended competitive authorization and confirmed-postcondition chain.
 The next tranche must confirm the exact client pass control, add later special
 visible game state, and validate the producer result inside the live broker
-transaction.
+transaction. The broker's `LIVE_QUALIFICATION_2026-08-13.md` records the
+lobby-only load and identity pins.
 
 The v1 replay key is deliberately conservative: a byte-identical visible
 decision later in the same game also rejects. A production broker must replace

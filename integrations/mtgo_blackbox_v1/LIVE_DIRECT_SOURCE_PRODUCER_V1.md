@@ -107,8 +107,11 @@ call. The live broker
 compile-disables dispatch until the authorization and confirmed-postcondition
 chain is joined. It never enumerates either library or an opponent's hidden
 hand or action collection, and it never reads a face-down exiled card name.
-Version 1.5 has not been loaded into MTGO. The synthetic Pass
-control has not yet been confirmed in a real duel, and later special visible
+Version 1.5 has been loaded into a clean 3.4.158.4691 MTGO process and invoked
+while the client was outside a duel. It returned only the fixed
+`duel_surface_unavailable` abstention, as required. This lobby-only check does
+not attest any data-bearing getter or success path. The synthetic Pass control
+has not yet been confirmed in a real duel, and later special visible
 game state remains incomplete. This work
 does not implement a complete projection, admit a
 live decision, authorize event entry or spending, or send live MTGO input. Until the
