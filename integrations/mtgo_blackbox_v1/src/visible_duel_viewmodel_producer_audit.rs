@@ -50,6 +50,9 @@ pub struct MtgoVisibleDuelViewModelProducerAuditV1 {
     pub network_access_present: bool,
     pub child_process_access_present: bool,
     pub file_write_access_present: bool,
+    pub broker_created_bounded_local_memory_output_present: bool,
+    pub maximum_output_bytes: u32,
+    pub output_transport_status_contains_game_information: bool,
     pub action_execution_present: bool,
     pub producer_execution_attested: bool,
     pub full_projection_implemented: bool,
@@ -132,6 +135,9 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         network_access_present: false,
         child_process_access_present: false,
         file_write_access_present: false,
+        broker_created_bounded_local_memory_output_present: true,
+        maximum_output_bytes: 1_048_576,
+        output_transport_status_contains_game_information: false,
         action_execution_present: false,
         producer_execution_attested: false,
         full_projection_implemented: false,
@@ -171,6 +177,9 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.network_access_present
         || audit.child_process_access_present
         || audit.file_write_access_present
+        || !audit.broker_created_bounded_local_memory_output_present
+        || audit.maximum_output_bytes != 1_048_576
+        || audit.output_transport_status_contains_game_information
         || audit.action_execution_present
         || audit.producer_execution_attested
         || audit.full_projection_implemented

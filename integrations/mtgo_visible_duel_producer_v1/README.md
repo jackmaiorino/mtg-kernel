@@ -8,8 +8,10 @@ compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
 The current producer does not invoke any MTGO property getter. Its only output
-is a fixed `MtgoVisibleDuelViewModelBrokerResultV1::Abstained` JSON value. It
-has no logger, file access, network access, child-process access, action call,
+is a fixed `MtgoVisibleDuelViewModelBrokerResultV1::Abstained` JSON value. The
+one public method writes that bounded result to an exact broker-created local
+memory channel and returns only a fixed transport status code. It has no
+logger, file access, network access, child-process access, action call,
 raw-value serializer, free-form error, model scorer, or input surface. A duel
 surface that passes the root and metadata checks returns
 `projection_incomplete`; every other condition returns one fixed abstention.

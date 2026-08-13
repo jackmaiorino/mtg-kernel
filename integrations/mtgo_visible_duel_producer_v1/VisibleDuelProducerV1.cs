@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -19,8 +20,11 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
     {
         private const string DuelRootType = "Shiny.Play.Duel.DuelScene";
         private const string DuelViewModelType = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
+        private const string ChannelPrefix = "Local\\mtgkernel_mtgo_visible_v1_";
         private const int MaximumVisualNodes = 200000;
         private const int MaximumVisualDepth = 256;
+        private const int MaximumOutputBytes = 1048576;
+        private const int OutputPayloadOffset = 8;
 
         private static readonly byte[] DuelSurfaceUnavailable = Encoding.UTF8.GetBytes(
             "{\"result_kind\":\"abstained\",\"reason\":\"duel_surface_unavailable\"}");
@@ -86,37 +90,49 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         };
 
         /// <summary>
-        /// Returns one bounded broker-result JSON value. This method never
-        /// returns raw property values, paths, identifiers, or diagnostics.
+        /// Writes one bounded broker-result JSON value to the broker-created
+        /// local memory channel. The integer result is a fixed transport code
+        /// and carries no client or game information.
         /// </summary>
-        public static byte[] ExportVisibleDecisionOrAbstainV1()
+        public static int ExportVisibleDecisionOrAbstainV1(string channelName)
         {
+            if (!IsExactChannelName(channelName))
+            {
+                return 2;
+            }
+
+            byte[] result;
             try
             {
                 Application application = Application.Current;
                 if (application == null || application.Dispatcher == null)
                 {
-                    return Clone(DuelSurfaceUnavailable);
+                    result = DuelSurfaceUnavailable;
+                    return WriteBrokerResult(channelName, result) ? 0 : 4;
                 }
 
                 Dispatcher dispatcher = application.Dispatcher;
                 if (dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished)
                 {
-                    return Clone(DuelSurfaceUnavailable);
+                    result = DuelSurfaceUnavailable;
                 }
-
-                if (dispatcher.CheckAccess())
+                else if (dispatcher.CheckAccess())
                 {
-                    return ExportOnUiThread(application);
+                    result = ExportOnUiThread(application);
                 }
-                return (byte[])dispatcher.Invoke(
-                    DispatcherPriority.Send,
-                    new Func<byte[]>(() => ExportOnUiThread(application)));
+                else
+                {
+                    result = (byte[])dispatcher.Invoke(
+                        DispatcherPriority.Send,
+                        new Func<byte[]>(() => ExportOnUiThread(application)));
+                }
             }
             catch
             {
-                return Clone(OutputValidationFailed);
+                result = OutputValidationFailed;
             }
+
+            return WriteBrokerResult(channelName, result) ? 0 : 4;
         }
 
         private static byte[] ExportOnUiThread(Application application)
@@ -132,34 +148,34 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 
                 if (!CollectExactDuelRoots(window, 0, ref visited, roots))
                 {
-                    return Clone(SurfaceShapeMismatch);
+                    return SurfaceShapeMismatch;
                 }
                 if (roots.Count > 1)
                 {
-                    return Clone(SurfaceShapeMismatch);
+                    return SurfaceShapeMismatch;
                 }
             }
 
             if (roots.Count != 1)
             {
-                return Clone(DuelSurfaceUnavailable);
+                return DuelSurfaceUnavailable;
             }
 
             FrameworkElement root = roots[0];
             if (!root.IsLoaded || !root.IsVisible || root.ActualWidth <= 0 || root.ActualHeight <= 0)
             {
-                return Clone(DuelSurfaceUnavailable);
+                return DuelSurfaceUnavailable;
             }
 
             object viewModel = root.DataContext;
             if (viewModel == null || viewModel.GetType().FullName != DuelViewModelType)
             {
-                return Clone(SurfaceShapeMismatch);
+                return SurfaceShapeMismatch;
             }
 
             return ValidateExactGetterSurface()
-                ? Clone(ProjectionIncomplete)
-                : Clone(SurfaceShapeMismatch);
+                ? ProjectionIncomplete
+                : SurfaceShapeMismatch;
         }
 
         private static bool CollectExactDuelRoots(
@@ -237,9 +253,61 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             return true;
         }
 
-        private static byte[] Clone(byte[] value)
+        private static bool IsExactChannelName(string value)
         {
-            return (byte[])value.Clone();
+            if (value == null || value.Length != ChannelPrefix.Length + 64 ||
+                !value.StartsWith(ChannelPrefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+            for (int index = ChannelPrefix.Length; index < value.Length; index++)
+            {
+                char character = value[index];
+                if (!((character >= '0' && character <= '9') ||
+                    (character >= 'a' && character <= 'f')))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool WriteBrokerResult(string channelName, byte[] value)
+        {
+            if (!ReferenceEquals(value, DuelSurfaceUnavailable) &&
+                !ReferenceEquals(value, SurfaceShapeMismatch) &&
+                !ReferenceEquals(value, ProjectionIncomplete) &&
+                !ReferenceEquals(value, OutputValidationFailed))
+            {
+                value = OutputValidationFailed;
+            }
+            if (value.Length <= 0 || value.Length > MaximumOutputBytes - OutputPayloadOffset)
+            {
+                return false;
+            }
+
+            try
+            {
+                using (MemoryMappedFile channel = MemoryMappedFile.OpenExisting(
+                    channelName,
+                    MemoryMappedFileRights.ReadWrite))
+                using (MemoryMappedViewAccessor view = channel.CreateViewAccessor(
+                    0,
+                    MaximumOutputBytes,
+                    MemoryMappedFileAccess.ReadWrite))
+                {
+                    view.Write(0, 0);
+                    view.Write(4, 1);
+                    view.WriteArray(OutputPayloadOffset, value, 0, value.Length);
+                    view.Write(0, value.Length);
+                    view.Flush();
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
         }
     }
 }

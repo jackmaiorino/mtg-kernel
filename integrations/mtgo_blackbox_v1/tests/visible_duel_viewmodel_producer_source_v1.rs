@@ -68,7 +68,11 @@ fn managed_producer_has_no_raw_output_or_side_effect_api_markers() {
         "VirtualAllocEx",
         "HttpClient",
         "WebRequest",
-        "System.IO",
+        "System.IO.File",
+        "System.IO.Directory",
+        "FileStream",
+        "StreamReader",
+        "StreamWriter",
         "System.Net",
         "System.Diagnostics",
         "Console.",
@@ -87,5 +91,7 @@ fn managed_producer_has_no_raw_output_or_side_effect_api_markers() {
     }
     assert!(source.contains("private static readonly string[] AllowedGetters"));
     assert!(source.contains("private static bool ValidateExactGetterSurface()"));
-    assert!(source.contains("? Clone(ProjectionIncomplete)"));
+    assert!(source.contains("MemoryMappedFile.OpenExisting"));
+    assert!(source.contains("private static bool IsExactChannelName"));
+    assert!(source.contains("? ProjectionIncomplete"));
 }

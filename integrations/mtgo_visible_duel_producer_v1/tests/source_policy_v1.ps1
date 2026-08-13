@@ -10,7 +10,10 @@ $required = @(
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
     'AllowedGetters.Length != 46',
     'projection_incomplete',
-    'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy'
+    'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
+    'MemoryMappedFile.OpenExisting',
+    'MaximumOutputBytes',
+    'IsExactChannelName'
 )
 foreach ($marker in $required) {
     if (-not $source.Contains($marker)) {
@@ -26,8 +29,11 @@ $forbidden = @(
     'Socket',
     'HttpClient',
     'WebRequest',
-    'File.',
-    'Directory.',
+    'System.IO.File',
+    'System.IO.Directory',
+    'FileStream',
+    'StreamReader',
+    'StreamWriter',
     'Process.',
     'Console.',
     'Debug.',

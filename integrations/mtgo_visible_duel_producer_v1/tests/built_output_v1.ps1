@@ -29,19 +29,41 @@ $publicMethods = @(
 )
 if ($publicMethods.Count -ne 1 -or
     $publicMethods[0].Name -ne 'ExportVisibleDecisionOrAbstainV1' -or
-    $publicMethods[0].GetParameters().Count -ne 0 -or
-    $publicMethods[0].ReturnType -ne [byte[]]) {
-    throw 'producer must expose exactly one parameterless byte-array method'
+    $publicMethods[0].GetParameters().Count -ne 1 -or
+    $publicMethods[0].GetParameters()[0].ParameterType -ne [string] -or
+    $publicMethods[0].ReturnType -ne [int]) {
+    throw 'producer must expose exactly one string-to-integer broker method'
 }
 
-$result = [byte[]]$publicMethods[0].Invoke($null, @())
-$observed = [Text.Encoding]::UTF8.GetString($result)
-$expected = '{"result_kind":"abstained","reason":"duel_surface_unavailable"}'
-if ($observed -ne $expected) {
-    throw "offline producer emitted unexpected output: $observed"
+$invalidStatus = [int]$publicMethods[0].Invoke($null, @('invalid'))
+if ($invalidStatus -ne 2) {
+    throw 'invalid broker channel name was not rejected'
 }
-if ($result.Length -gt 128) {
-    throw 'producer abstention output exceeded the fixed bound'
+
+$channelName = 'Local\mtgkernel_mtgo_visible_v1_' + ('a' * 64)
+$capacity = 1048576
+$channel = [IO.MemoryMappedFiles.MemoryMappedFile]::CreateNew($channelName, $capacity)
+$view = $channel.CreateViewAccessor(0, $capacity, [IO.MemoryMappedFiles.MemoryMappedFileAccess]::ReadWrite)
+try {
+    $status = [int]$publicMethods[0].Invoke($null, @($channelName))
+    if ($status -ne 0) {
+        throw "offline producer returned transport status $status"
+    }
+    $length = $view.ReadInt32(0)
+    $schema = $view.ReadInt32(4)
+    if ($schema -ne 1 -or $length -le 0 -or $length -gt 128) {
+        throw "producer output header was invalid: schema=$schema length=$length"
+    }
+    $result = New-Object byte[] $length
+    [void]$view.ReadArray(8, $result, 0, $length)
+    $observed = [Text.Encoding]::UTF8.GetString($result)
+    $expected = '{"result_kind":"abstained","reason":"duel_surface_unavailable"}'
+    if ($observed -ne $expected) {
+        throw "offline producer emitted unexpected output: $observed"
+    }
+} finally {
+    $view.Dispose()
+    $channel.Dispose()
 }
 
 Write-Output 'MTGO_VISIBLE_DUEL_PRODUCER_BUILT_OUTPUT_V1:PASS'
