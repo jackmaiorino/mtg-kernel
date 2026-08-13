@@ -452,6 +452,8 @@ The corresponding broker protocol accepts only immutable producer, client, and v
 
 The sibling `integrations/mtgo_visible_duel_producer_v1` assembly now supplies the first in-process producer seam without reading any live MTGO property value. It locates exactly one public WPF `DuelScene`, requires its `DataContext` to be the exact duel view-model type, verifies the complete 46-getter compile-time allowlist against the pinned loaded presentation assemblies, and emits only a fixed broker abstention. It contains no unrestricted property enumeration, recursive object reflection, raw-value output, logging, files, network, child processes, client action invocation, model scoring, or input. `mtgo_visible_duel_viewmodel_producer_audit_v1` binds that root and getter surface to the existing candidate-surface commitment. Both components remain non-authorizing and declare the full player-visible projection and execution attestation absent.
 
+The isolated `integrations/mtgo_visible_duel_broker_v1` prototype supplies a bounded local-memory output channel plus native load and CLR-invocation path. Its end-to-end qualification targets only a disposable synthetic .NET Framework process; that build explicitly rejects MTGO before process mutation. This proves the loader mechanism without creating a live broker identity or runtime attestation. Exact signed-client and deployment pins, before and after visible-frame bracketing, and live abstention qualification remain required before a separate MTGO-targeting broker can exist.
+
 The local evaluator hashes its own binary and prints only commitments, counts, action families, and fixed false authority flags:
 
 ```text
