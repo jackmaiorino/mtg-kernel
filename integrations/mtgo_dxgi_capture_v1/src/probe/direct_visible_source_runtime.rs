@@ -461,7 +461,7 @@ pub fn score_ratified_attested_direct_visible_source_observation_v1<
     })
 }
 
-fn require_ratified_direct_visible_source_qualification_v1(
+pub(crate) fn require_ratified_direct_visible_source_qualification_v1(
     reviewed_qualification_commitment_sha256: &str,
 ) -> Result<(), String> {
     let Some(ratified) = RATIFIED_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1 else {
@@ -1097,6 +1097,20 @@ impl OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
             MtgoVisibleDuelViewModelBrokerResultV1::Abstained { reason } => Some(reason),
             MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. } => None,
         }
+    }
+
+    pub(crate) fn before_captured_at_unix_millis_v1(&self) -> u128 {
+        self._before_frame
+            .commitments_v1()
+            .source_capture
+            .captured_at_unix_millis
+    }
+
+    pub(crate) fn after_captured_at_unix_millis_v1(&self) -> u128 {
+        self._after_frame
+            .commitments_v1()
+            .source_capture
+            .captured_at_unix_millis
     }
 
     pub fn producer_execution_attested_v1(&self) -> bool {

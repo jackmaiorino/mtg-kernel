@@ -2900,6 +2900,11 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayConfirmedV1,",
         "MtgoCompetitiveOperatorPlayerVisibleGameplayConfirmationV1,",
         "select_next_competitive_post_entry_operator_player_visible_gameplay_action_v1,",
+        "select_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
+        "select_next_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
+        "retry_competitive_post_entry_operator_direct_visible_gameplay_action_v1,",
+        "MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1,",
+        "OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1,",
         "return_confirmed_competitive_post_entry_operator_player_visible_gameplay_v1,",
     ] {
         assert!(

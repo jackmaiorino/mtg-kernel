@@ -71,14 +71,19 @@ use crate::probe::{
     prepare_opaque_player_visible_duel_gesture_pointer_v1,
     prepare_opaque_player_visible_gameplay_before_input_v1,
     rebind_opaque_player_visible_duel_gesture_target_v1,
-    refresh_competitive_match_visible_game_log_v1, resolve_opaque_profile_bound_duel_control_v1,
+    refresh_competitive_match_visible_game_log_v1,
+    refresh_ratified_attested_direct_visible_selection_v1,
+    require_ratified_direct_visible_source_qualification_v1,
+    resolve_opaque_profile_bound_duel_control_v1,
     score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
+    score_ratified_attested_direct_visible_source_observation_v1,
     score_select_and_resolve_opaque_player_visible_duel_perception_with_ongoing_history_v1,
     AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,
     AdmittedMtgoPlayerVisibleGameplayPostconditionProtocolV1,
     MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1, MtgoDuelPerceptionFrameIdentityV1,
     MtgoDxgiCaptureRequestV3, MtgoPrivatePlayerVisibleGameplayBeforeInputContextV1,
     OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1,
+    OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
     OpaqueMtgoClassifiedCompetitiveEventRecordV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoClassifiedCompetitivePregameModelContextV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
     OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
@@ -90,8 +95,10 @@ use crate::probe::{
     OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1,
     OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1,
     OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1,
     OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,
     OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
+    OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
 };
 use mtgo_blackbox_v1::{
     append_checked_untrusted_competitive_player_visible_game_history_from_direct_visible_postcondition_v1,
@@ -475,6 +482,68 @@ impl OpaqueMtgoCompetitiveOperatorDirectVisiblePendingV1 {
     pub fn permits_spending_v1(&self) -> bool {
         false
     }
+}
+
+/// Retained attended-game ownership when the sealed direct observer cannot
+/// produce one complete player-visible decision. The reason is sanitized by
+/// the fixed broker protocol. No raw client object, hidden game fact, pixels,
+/// model input, or action authority can be extracted from this value.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1;
+/// fn cannot_extract(value: OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1) {
+///     let _ = value.raw_client_object();
+///     let _ = value.model_input();
+///     value.dispatch();
+/// }
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
+    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    _scored: OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1,
+    reason: mtgo_blackbox_v1::MtgoVisibleDuelViewModelBrokerAbstentionReasonV1,
+}
+
+impl OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
+    pub fn reason_v1(&self) -> mtgo_blackbox_v1::MtgoVisibleDuelViewModelBrokerAbstentionReasonV1 {
+        self.reason
+    }
+
+    pub fn prior_confirmed_action_count_v1(&self) -> usize {
+        self.confirmed_history
+            .as_ref()
+            .map(CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::decision_count_v1)
+            .unwrap_or(0)
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// Result of one complete direct-source selection pass. A ready result is
+/// independently corroborated against current visible pixels and bound to the
+/// exact attended game. An abstention retains that game for a later retry.
+pub enum MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1 {
+    ReadyToDispatch(Box<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1>),
+    Abstained(Box<OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1>),
 }
 
 /// Move-only player-visible gameplay selection for one exact League or
@@ -2604,6 +2673,194 @@ where
 /// authorization, or attach an unverified Game Log action baseline. No input
 /// occurs.
 #[allow(clippy::too_many_arguments)]
+pub fn select_competitive_post_entry_operator_direct_visible_gameplay_action_v1<S>(
+    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+    direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    reviewed_qualification_commitment_sha256: &str,
+    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+    scorer: &mut S,
+) -> Result<MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1, String>
+where
+    S: MtgoPlayerVisibleDuelScorerV1 + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>,
+{
+    require_ratified_direct_visible_source_qualification_v1(
+        reviewed_qualification_commitment_sha256,
+    )?;
+    let visible_game_log = refresh_competitive_match_visible_game_log_v1(
+        visible_game_log.into_match_lease_v1(),
+        &visible_identity,
+        visible_game_log_capture_request,
+    )?;
+    validate_operator_visible_game_log_lineage_v1(&lease, &visible_identity, &visible_game_log)?;
+    validate_operator_direct_visible_selection_owner_v1(
+        &lease,
+        &session,
+        &visible_identity,
+        &visible_game_log,
+        confirmed_history.as_ref(),
+    )?;
+    let frame = capture_admitted_mtgo_duel_visible_frame_v1(
+        &lease.resources.duel_perception_profile,
+        capture_timeout_ms,
+    )?;
+    let observation = crate::probe::observe_attested_direct_visible_source_v1(
+        frame,
+        &lease.resources.duel_perception_profile,
+        direct_source_runtime,
+        capture_timeout_ms,
+        broker_timeout_ms,
+    )?;
+    validate_operator_direct_visible_observation_freshness_v1(&visible_game_log, &observation)?;
+    let abstention = observation.abstention_reason_v1();
+    if abstention.is_none() {
+        visible_game_log
+            .visit_ongoing_external_public_history_v1(confirmed_history.as_ref(), scorer)
+            .map_err(|error| format!("import direct-source player-visible history: {error}"))?;
+    }
+    let deployment_commitment_sha256 = lease
+        .resources
+        .checkpoint_deployment
+        .deployment_commitment_sha256()
+        .to_owned();
+    let scored = score_ratified_attested_direct_visible_source_observation_v1(
+        observation,
+        reviewed_qualification_commitment_sha256,
+        &deployment_commitment_sha256,
+        scorer,
+    )?;
+    if let Some(reason) = scored.abstention_reason_v1() {
+        if Some(reason) != abstention {
+            return Err("direct-source abstention changed during scoring".to_owned());
+        }
+        return Ok(
+            MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1::Abstained(Box::new(
+                OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
+                    lease,
+                    session,
+                    visible_identity,
+                    visible_game_log,
+                    confirmed_history,
+                    _scored: scored,
+                    reason,
+                },
+            )),
+        );
+    }
+    let refreshed = refresh_ratified_attested_direct_visible_selection_v1(
+        scored,
+        &lease.resources.duel_perception_profile,
+        direct_source_runtime,
+        capture_timeout_ms,
+        broker_timeout_ms,
+    )?;
+    bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        refreshed,
+        region_set,
+        capture_timeout_ms,
+    )
+    .map(|ready| {
+        MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1::ReadyToDispatch(Box::new(ready))
+    })
+}
+
+/// Repeats a direct-source selection after a sanitized observer abstention.
+/// The exact attended-game owner is preserved and no action can occur unless
+/// a new complete decision passes the full score, refresh, and pixel join.
+#[allow(clippy::too_many_arguments)]
+pub fn retry_competitive_post_entry_operator_direct_visible_gameplay_action_v1<S>(
+    abstained: OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+    direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    reviewed_qualification_commitment_sha256: &str,
+    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+    scorer: &mut S,
+) -> Result<MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1, String>
+where
+    S: MtgoPlayerVisibleDuelScorerV1 + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>,
+{
+    let OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        _scored: _,
+        reason: _,
+    } = abstained;
+    select_competitive_post_entry_operator_direct_visible_gameplay_action_v1(
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        visible_game_log_capture_request,
+        direct_source_runtime,
+        reviewed_qualification_commitment_sha256,
+        region_set,
+        capture_timeout_ms,
+        broker_timeout_ms,
+        scorer,
+    )
+}
+
+/// Selects the next direct-source action after one confirmed transition while
+/// retaining the exact game, public history, and loaded deployment.
+#[allow(clippy::too_many_arguments)]
+pub fn select_next_competitive_post_entry_operator_direct_visible_gameplay_action_v1<S>(
+    confirmed: OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayConfirmedV1,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+    direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    reviewed_qualification_commitment_sha256: &str,
+    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+    scorer: &mut S,
+) -> Result<MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1, String>
+where
+    S: MtgoPlayerVisibleDuelScorerV1 + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>,
+{
+    let OpaqueMtgoCompetitiveOperatorPlayerVisibleGameplayConfirmedV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        confirmation_commitment_sha256: _,
+    } = confirmed;
+    select_competitive_post_entry_operator_direct_visible_gameplay_action_v1(
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        Some(confirmed_history),
+        visible_game_log_capture_request,
+        direct_source_runtime,
+        reviewed_qualification_commitment_sha256,
+        region_set,
+        capture_timeout_ms,
+        broker_timeout_ms,
+        scorer,
+    )
+}
+
+/// Joins an already scored and re-observed direct selection to the exact
+/// attended competitive owner. Public callers cannot construct the refreshed
+/// selection. This function remains separately useful for ownership auditing.
+#[allow(clippy::too_many_arguments)]
 pub fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
@@ -3572,6 +3829,116 @@ fn validate_operator_visible_game_log_lineage_v1(
     {
         return Err(
             "after-input visible Game Log changed the exact event, match, or game".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_operator_direct_visible_selection_owner_v1(
+    lease: &OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: &OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible_identity: &OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<&CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+) -> Result<(), String> {
+    let lease_commitments = lease.lease.commitments_v1();
+    let session_commitments = session.commitments_v1();
+    let launch_commitments = visible_identity.commitments_v1();
+    let session_policy = session_commitments
+        .policy_deployment_commitment_sha256
+        .as_deref()
+        .ok_or("direct gameplay selection lacks a session-bound deployment")?;
+    if lease
+        .resource_commitments
+        .policy_deployment_commitment_sha256
+        != session_policy
+        || lease
+            .resources
+            .checkpoint_deployment
+            .deployment_commitment_sha256()
+            != session_policy
+        || lease_commitments.policy_deployment_commitment_sha256 != session_policy
+        || lease
+            .resource_commitments
+            .duel_perception_profile_commitment_sha256
+            != lease
+                .resources
+                .duel_perception_profile
+                .perception_profile_commitment_sha256()
+        || lease
+            .resource_commitments
+            .duel_perception_profile_admission_commitment_sha256
+            != lease
+                .resources
+                .duel_perception_profile
+                .admission_commitment_sha256()
+        || lease
+            .resource_commitments
+            .duel_gesture_evaluation_commitment_sha256
+            != session_commitments.gesture_evaluation_commitment_sha256
+        || lease
+            .resource_commitments
+            .duel_gesture_profile_admission_commitment_sha256
+            != session_commitments.gesture_profile_admission_commitment_sha256
+        || lease_commitments.event_kind != session_commitments.event_kind
+        || lease_commitments.game_number != session_commitments.game_number
+        || launch_commitments.event_kind != lease_commitments.event_kind
+        || launch_commitments.game_number != lease_commitments.game_number
+        || visible_identity.event_identity_sha256_v1() != lease_commitments.event_identity_sha256
+        || visible_identity.match_identity_sha256_v1() != lease_commitments.match_identity_sha256
+    {
+        return Err(
+            "direct gameplay selection changed the exact deployment, resources, event, match, or game"
+                .to_owned(),
+        );
+    }
+    let next_frame_sequence = next_direct_visible_frame_sequence_v1(
+        session_commitments.valid_from_frame_sequence,
+        session_commitments.valid_through_frame_sequence,
+        session_commitments.last_confirmed_frame_sequence,
+        launch_commitments.frame_sequence,
+    )?;
+    match confirmed_history {
+        Some(history) => validate_competitive_player_visible_game_history_for_session_v1(
+            history,
+            session_policy,
+            session_commitments.confirmed_action_count,
+            session_commitments.last_confirmed_frame_sequence,
+            next_frame_sequence,
+        )
+        .map_err(|error| format!("validate direct selection visible history: {error}"))?,
+        None if session_commitments.confirmed_action_count == 0 => {}
+        None => {
+            return Err(
+                "direct gameplay selection has confirmed actions but no visible history".to_owned(),
+            )
+        }
+    }
+    validate_operator_visible_game_log_lineage_v1(lease, visible_identity, visible_game_log)
+}
+
+fn validate_operator_direct_visible_observation_freshness_v1(
+    visible_game_log: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    observation: &OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+) -> Result<(), String> {
+    validate_operator_direct_visible_observation_times_v1(
+        visible_game_log.latest_capture_unix_millis_v1(),
+        observation.before_captured_at_unix_millis_v1(),
+        observation.after_captured_at_unix_millis_v1(),
+    )
+}
+
+fn validate_operator_direct_visible_observation_times_v1(
+    game_log_captured_at_unix_millis: u128,
+    before_captured_at_unix_millis: u128,
+    after_captured_at_unix_millis: u128,
+) -> Result<(), String> {
+    if before_captured_at_unix_millis <= game_log_captured_at_unix_millis
+        || after_captured_at_unix_millis <= before_captured_at_unix_millis
+    {
+        return Err(
+            "direct-source observation is not newer than the bound visible Game Log refresh"
+                .to_owned(),
         );
     }
     Ok(())
@@ -5477,6 +5844,22 @@ mod tests {
         assert!(next_direct_visible_frame_sequence_v1(10, 20, 20, 10).is_err());
         assert!(next_direct_visible_frame_sequence_v1(10, 20, 19, 20).is_err());
         assert!(next_direct_visible_frame_sequence_v1(1, u64::MAX, 0, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn direct_visible_observation_must_follow_game_log_and_be_strictly_bracketed() {
+        validate_operator_direct_visible_observation_times_v1(100, 101, 102).unwrap();
+        for (game_log, before, after) in [
+            (100, 100, 101),
+            (100, 99, 101),
+            (100, 101, 101),
+            (100, 102, 101),
+        ] {
+            assert!(
+                validate_operator_direct_visible_observation_times_v1(game_log, before, after)
+                    .is_err()
+            );
+        }
     }
 
     #[test]
