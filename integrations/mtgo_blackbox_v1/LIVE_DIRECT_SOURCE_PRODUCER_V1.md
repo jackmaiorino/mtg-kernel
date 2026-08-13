@@ -5,10 +5,13 @@
 Direct parsing is eligible for MTGO League and Challenge wiring under the
 reported Daybreak permission. The constraint is on information, not transport:
 neither the model nor an operator-facing artifact may receive a fact that the
-seated player could not obtain from the UI. A direct source is useful only when
-it produces the same `MtgoPlayerVisibleDuelDecisionInputV1` as the reviewed UI
-frame, with hidden and transport-only data discarded before the adapter
-boundary.
+seated player could not obtain from the UI. The sealed in-process producer may
+inspect client presentation or backing objects transiently, including values
+used only to join visible controls to visible semantics, provided no raw value,
+hidden fact, internal identifier, transport detail, or unrestricted object can
+leave that boundary. A direct source is useful only when its first exported
+success value is the same `MtgoPlayerVisibleDuelDecisionInputV1` as the reviewed
+UI frame.
 
 Commit `26ae16e` supplies the offline output-measurement gate. It does not yet
 attest a live producer.
@@ -23,24 +26,31 @@ V1 admits only sources whose connection to the seated player's UI is explicit:
 3. the persisted Game Log representation, after the existing parser retains
    only text and card names rendered by MTGO and discards UUIDs, timestamps,
    flags, markup, numeric identifiers, paths, and process metadata;
-4. a later documented or reviewed client export only after every retained field
-   has a demonstrated UI counterpart.
+4. exact client presentation or backing-model access inside a sealed producer,
+   provided every exported field has a demonstrated UI counterpart and all
+   non-visible values are discarded before the first exported value.
 
-V1 does not admit process memory, debugger or injection access, intercepted
-network protocol, private object-model reflection, caches containing unrendered
-facts, replay-only facts, hidden cards, RNG state, future draws, or internal
-identifiers. Discovering that a field exists does not establish that it is
-eligible.
+The permission is transport-neutral, so process attachment, in-process loading,
+reflection, or another direct route is not rejected merely because of its
+mechanism. Those mechanisms are eligible only inside the sealed producer. Raw
+objects and values must never be serialized, logged, diagnosed, retained, or
+returned. Replay-only facts, hidden cards, RNG state, future draws, private
+opponent state, and internal identifiers are never eligible outputs.
+Discovering that a field exists does not establish that it has a UI-equivalent
+meaning.
 
 ## Trusted-broker boundary
 
-The live producer must not receive an unrestricted client-state object. A
-small audited Windows broker owns the acquisition channel and passes only one
-of the eligible source forms above to a pinned producer. For every decision:
+The live producer may temporarily receive or locate client objects, but no raw
+representation may cross its first exported boundary. A small audited Windows
+broker owns loading, identity checks, invocation, and output validation. For
+every decision:
 
 1. capture an admitted acting-player UI frame and retain it privately;
-2. collect only eligible visible UIA or rendered Game Log values;
-3. invoke the exact hashed producer with bounded private input and output;
+2. invoke the exact hashed producer, which uses only audited access paths and
+   discards all non-visible values before returning;
+3. require the producer's first returned value to be bounded visible-schema
+   JSON or a fixed abstention;
 4. accept only a complete `MtgoPlayerVisibleDuelDecisionInputV1` or an explicit
    abstention;
 5. capture a second admitted frame and reject window, process, game, geometry,
@@ -50,11 +60,12 @@ of the eligible source forms above to a pinned producer. For every decision:
 7. retain raw acquisition values only inside the opaque transaction and erase
    temporary buffers on every return path.
 
-The producer stdout is the visible schema only. Stderr is bounded and must not
-be forwarded to the model, operator diagnostics, logs, or training. The broker
-must reject unexpected files, child processes, network access, debug privilege,
-MTGO process handles, extra output fields, unknown action variants, incomplete
-legal actions, and any attempt to persist raw input.
+The producer output is the visible schema only. It has no raw diagnostic or
+free-form error channel. The broker must reject unexpected files, child
+processes, network access, extra output fields, unknown action variants,
+incomplete legal actions, and any attempt to persist raw input. Process access
+needed to load or invoke the reviewed producer is held by the broker and never
+becomes model or operator data.
 
 ## Trust root and qualification
 
@@ -79,8 +90,12 @@ Log corroboration where available, and confirmed player-visible history.
 
 ## Nonclaims
 
-This contract does not identify an additional clean MTGO source, attest a
-producer, admit a live decision, authorize event entry or spending, or send
-input. Until the reviewed producer and corpus exist, DXGI remains the only
-candidate source for complete board and legal-control reconstruction; direct
-Game Log parsing remains a supplemental player-visible history source.
+The first managed root seam now identifies the exact public WPF `DuelScene`,
+requires its `DataContext` to be the exact duel view-model type, and checks the
+46-getter candidate surface. It deliberately invokes no MTGO getter and returns
+only a fixed abstention. This contract still does not attest producer loading,
+implement a complete projection, admit a live decision, authorize event entry
+or spending, or send input. Until the reviewed producer and corpus exist, DXGI
+remains the only candidate source for complete board and legal-control
+reconstruction; direct Game Log parsing remains a supplemental player-visible
+history source.

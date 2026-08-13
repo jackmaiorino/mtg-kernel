@@ -28,6 +28,7 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub direct_source_exact_reviewed_frame_evaluation_present: bool,
     pub direct_source_visible_viewmodel_candidate_surface_present: bool,
     pub direct_source_visible_viewmodel_broker_protocol_present: bool,
+    pub direct_source_managed_producer_root_seam_present: bool,
     pub direct_source_audited_broker_runtime_present: bool,
     pub direct_source_live_producer_attestation_present: bool,
     pub visible_accessibility_requires_pixel_corroboration: bool,
@@ -96,6 +97,7 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         direct_source_exact_reviewed_frame_evaluation_present: true,
         direct_source_visible_viewmodel_candidate_surface_present: true,
         direct_source_visible_viewmodel_broker_protocol_present: true,
+        direct_source_managed_producer_root_seam_present: true,
         direct_source_audited_broker_runtime_present: false,
         direct_source_live_producer_attestation_present: false,
         visible_accessibility_requires_pixel_corroboration: true,
@@ -168,6 +170,7 @@ mod tests {
         assert!(report.direct_source_exact_reviewed_frame_evaluation_present);
         assert!(report.direct_source_visible_viewmodel_candidate_surface_present);
         assert!(report.direct_source_visible_viewmodel_broker_protocol_present);
+        assert!(report.direct_source_managed_producer_root_seam_present);
         assert!(!report.direct_source_audited_broker_runtime_present);
         assert!(!report.direct_source_live_producer_attestation_present);
         assert!(report.visible_accessibility_requires_pixel_corroboration);
