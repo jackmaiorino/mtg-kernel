@@ -302,7 +302,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         {
             result = new VisibleDecisionResultV1();
             boundClientActions = new List<object>();
-            if (!TryReadExactPropertyV1(
+            if (!TryRequireSupportedDuelVariantV1(viewModel) ||
+                !TryReadExactPropertyV1(
                     viewModel,
                     "DuelScene",
                     DuelViewModelType,
@@ -497,6 +498,24 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 OrderedLegalActions = actions
             };
             boundClientActions = actionBindings;
+            return true;
+        }
+
+        private static bool TryRequireSupportedDuelVariantV1(object viewModel)
+        {
+            foreach (string propertyName in new[] { "IsCommander", "IsPlanechase" })
+            {
+                if (!TryReadExactPropertyV1(
+                        viewModel,
+                        "DuelScene",
+                        DuelViewModelType,
+                        propertyName,
+                        out object? value) ||
+                    !(value is bool enabled) || enabled)
+                {
+                    return false;
+                }
+            }
             return true;
         }
 

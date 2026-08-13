@@ -309,6 +309,47 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     viewModel.TemporaryZoneItems.Clear();
 
+                    viewModel.IsCommanderFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 35;
+                    }
+                    viewModel.IsCommanderFixture = false;
+                    viewModel.IsPlanechaseFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 36;
+                    }
+                    viewModel.IsPlanechaseFixture = false;
+
+                    // These are public card-presentation mechanics, but the
+                    // current decision schema has no corresponding fields.
+                    // Any non-default value must therefore abstain.
+                    seated.Hand.CardItems[0].CurrentDungeonRoomFixture = 0;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 37;
+                    }
+                    seated.Hand.CardItems[0].CurrentDungeonRoomFixture = -1;
+                    seated.Hand.CardItems[0].RingTemptationCounterFixture = 1;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 38;
+                    }
+                    seated.Hand.CardItems[0].RingTemptationCounterFixture = 0;
+                    seated.Hand.CardItems[0].SpeedCounterFixture = 1;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 39;
+                    }
+                    seated.Hand.CardItems[0].SpeedCounterFixture = 0;
+                    seated.Hand.CardItems[0].IsSpeedEmblemFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 40;
+                    }
+                    seated.Hand.CardItems[0].IsSpeedEmblemFixture = false;
+
                     // The semantic turn is derived only from the rendered
                     // GameTurnText. Non-canonical or non-opening visible text
                     // must fail closed before the first supported slice.

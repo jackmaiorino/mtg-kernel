@@ -96,10 +96,12 @@ namespace Shiny.Play.Duel.ViewModel
             {
                 "Duel.CurrentPhase",
                 "Duel.GameTurnText",
+                "Duel.IsCommander",
                 "Duel.CardSelection",
                 "Duel.CardSelectorDialog",
                 "Duel.CardSelectors",
                 "Duel.IsPileZoneActive",
+                "Duel.IsPlanechase",
                 "Duel.IsWishingFromSideboard",
                 "Duel.LocalTriggersPanelEnabled",
                 "Duel.OpponentTriggersPanelEnabled",
@@ -170,7 +172,10 @@ namespace Shiny.Play.Duel.ViewModel
                 "Zone.Count",
                 "Zone.Cards",
                 "DuelCard.CardAttachedTo",
+                "DuelCard.IsSpeedEmblem",
                 "DuelCard.IsToken",
+                "DuelCard.RingTemptationCounter",
+                "DuelCard.SpeedCounter",
                 "DuelCard.VisibleCounters",
                 "Counter.Quantity",
                 "Counter.Type"
@@ -233,12 +238,30 @@ namespace Shiny.Play.Duel.ViewModel
             }
         }
 
+        public bool IsCommander
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.IsCommander");
+                return IsCommanderFixture;
+            }
+        }
+
         public bool IsPileZoneActive
         {
             get
             {
                 VisibleGetterProbeV1.Record("Duel.IsPileZoneActive");
                 return IsPileZoneActiveFixture;
+            }
+        }
+
+        public bool IsPlanechase
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.IsPlanechase");
+                return IsPlanechaseFixture;
             }
         }
 
@@ -350,6 +373,8 @@ namespace Shiny.Play.Duel.ViewModel
         public CardSelectorManager CardSelectorsFixture { get; } =
             new CardSelectorManager();
         public bool IsPileZoneActiveFixture { get; set; }
+        public bool IsCommanderFixture { get; set; }
+        public bool IsPlanechaseFixture { get; set; }
         public bool IsWishingFromSideboardFixture { get; set; }
         public bool LocalTriggersPanelEnabledFixture { get; set; }
         public bool OpponentTriggersPanelEnabledFixture { get; set; }
@@ -860,6 +885,30 @@ namespace Shiny.Play.Duel.ViewModel
                 return IsTokenFixture;
             }
         }
+        public bool IsSpeedEmblem
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.IsSpeedEmblem");
+                return IsSpeedEmblemFixture;
+            }
+        }
+        public int RingTemptationCounter
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.RingTemptationCounter");
+                return RingTemptationCounterFixture;
+            }
+        }
+        public int SpeedCounter
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.SpeedCounter");
+                return SpeedCounterFixture;
+            }
+        }
         public IList<CardCounterViewModel> VisibleCounters
         {
             get
@@ -882,6 +931,9 @@ namespace Shiny.Play.Duel.ViewModel
             }
         }
         public DuelSceneCardViewModel? CardAttachedToFixture { get; set; }
+        public bool IsSpeedEmblemFixture { get; set; }
+        public int RingTemptationCounterFixture { get; set; }
+        public int SpeedCounterFixture { get; set; }
         public bool IsTokenFixture { get; set; }
         public IList<CardCounterViewModel> CounterItems { get; } =
             new List<CardCounterViewModel>();

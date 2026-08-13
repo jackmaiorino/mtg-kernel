@@ -17,6 +17,7 @@ namespace Shiny.Card.ViewModels
             string[] expected =
             {
                 "Card.CardFrameID",
+                "Card.CurrentDungeonRoom",
                 "Card.CurrentDamage",
                 "Card.IsAttacking",
                 "Card.IsBlocking",
@@ -54,6 +55,15 @@ namespace Shiny.Card.ViewModels
             {
                 VisibleCardGetterProbeV1.Record("Card.CurrentDamage");
                 return CurrentDamageFixture;
+            }
+        }
+
+        public int CurrentDungeonRoom
+        {
+            get
+            {
+                VisibleCardGetterProbeV1.Record("Card.CurrentDungeonRoom");
+                return CurrentDungeonRoomFixture;
             }
         }
 
@@ -125,6 +135,7 @@ namespace Shiny.Card.ViewModels
         }
 
         public int CurrentDamageFixture { get; set; }
+        public int CurrentDungeonRoomFixture { get; set; } = -1;
         public Shiny.Card.Enums.FrameStyle CardFrameIDFixture { get; set; }
         public bool IsAttackingFixture { get; set; }
         public bool IsBlockingFixture { get; set; }

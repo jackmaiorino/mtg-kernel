@@ -13,7 +13,7 @@ $required = @(
     'FrameworkElement',
     'DataContext',
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
-    'AllowedGetters.Length != 68',
+    'AllowedGetters.Length != 74',
     'PrivateVisibleActionJoinGetters.Length != 14',
     'projection_incomplete',
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
@@ -25,6 +25,8 @@ $required = @(
     'TryRequireNoUnrepresentedVisiblePlayerCountersV1',
     'TryRequireNoVisibleCompanionPanelV1',
     'TryRequireNoUnrepresentedVisibleModalSurfaceV1',
+    'TryRequireSupportedDuelVariantV1',
+    'TryRequireNoUnrepresentedVisibleCardStateV1',
     'TryReadExactPropertyV1',
     'property.GetValue(target, null)',
     'MaximumVisibleTextCharacters',
@@ -122,8 +124,8 @@ if ($publicStart -lt 0 -or $privateStart -le $publicStart) {
 }
 $publicGetterSource = $source.Substring($publicStart, $privateStart - $publicStart)
 $getterLines = [regex]::Matches($publicGetterSource, '"(?:Card|DuelScene)\|[^"\r\n]+\|[^"\r\n]+"')
-if ($getterLines.Count -ne 68) {
-    throw "producer source must contain exactly 68 compile-time getter entries"
+if ($getterLines.Count -ne 74) {
+    throw "producer source must contain exactly 74 compile-time getter entries"
 }
 
 $privateEnd = $source.IndexOf('};', $privateStart)

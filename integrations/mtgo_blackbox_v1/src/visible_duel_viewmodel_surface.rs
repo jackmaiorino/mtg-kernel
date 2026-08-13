@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_SURFACE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1: &str =
-    "e0483b296747eaabfc42d47bbf1c3bb664dc77b6424097c7ac408e0661c5d1be";
+    "7d3ce84b73538fa66d4c755ec21740e5b95680630a15ec5caba8c2ab181851bc";
 
 const SURFACE_KIND_V1: &str = "mtgo_visible_duel_viewmodel_candidate_surface_v1";
 const INFORMATION_BOUNDARY_V1: &str = "seated_player_visible_ui_equivalent_only_v1";
@@ -141,6 +141,15 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
 ) -> MtgoVisibleDuelViewModelCandidateSurfaceV1 {
     let mut candidates = vec![
         candidate(
+            "Card.dll",
+            "Shiny.Card.ViewModels.CardViewModel",
+            "CurrentDungeonRoom",
+            "Int32",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered dungeon-room highlight, used only to reject an unrepresented state",
+            &[],
+        ),
+        candidate(
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
             "CardSelection",
@@ -188,10 +197,28 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
         candidate(
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "IsCommander",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::AlwaysVisibleDuelChrome,
+            "commander duel layout, used only to reject an unsupported duel variant",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
             "IsPileZoneActive",
             "Boolean",
             MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
             "visible pile-choice surface, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "IsPlanechase",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::AlwaysVisibleDuelChrome,
+            "planechase duel layout, used only to reject an unsupported duel variant",
             &[],
         ),
         candidate(
@@ -636,11 +663,38 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
         candidate(
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "IsSpeedEmblem",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered speed emblem, used only to reject an unrepresented state",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
             "IsToken",
             "Boolean",
             MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
             "visible token presentation",
             &["current_state.battlefield.is_token"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "RingTemptationCounter",
+            "Int32",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered Ring temptation level, used only to reject an unrepresented state",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "SpeedCounter",
+            "Int32",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered speed level, used only to reject an unrepresented state",
+            &[],
         ),
         candidate(
             "DuelScene.dll",
@@ -1133,7 +1187,7 @@ mod tests {
         let checked = check_untrusted_visible_duel_viewmodel_candidate_surface_v1(manifest)
             .expect("compiled metadata candidate surface");
         assert_eq!(checked.product_version_v1(), "3.4.158.4691");
-        assert_eq!(checked.candidate_property_count_v1(), 68);
+        assert_eq!(checked.candidate_property_count_v1(), 74);
         assert_eq!(checked.forbidden_property_count_v1(), 28);
         assert_eq!(
             checked.commitment_sha256_v1(),

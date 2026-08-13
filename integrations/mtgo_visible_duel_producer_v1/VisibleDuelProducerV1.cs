@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.11 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.12 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -47,6 +47,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static readonly string[] AllowedGetters =
         {
             "Card|Shiny.Card.ViewModels.CardViewModel|CardFrameID",
+            "Card|Shiny.Card.ViewModels.CardViewModel|CurrentDungeonRoom",
             "Card|Shiny.Card.ViewModels.CardViewModel|CurrentDamage",
             "Card|Shiny.Card.ViewModels.CardViewModel|IsAttacking",
             "Card|Shiny.Card.ViewModels.CardViewModel|IsBlocking",
@@ -64,14 +65,19 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.CardCounterViewModel|Quantity",
             "DuelScene|Shiny.Play.Duel.ViewModel.CardCounterViewModel|Type",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|CardAttachedTo",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsSpeedEmblem",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsToken",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|RingTemptationCounter",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|SpeedCounter",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|VisibleCounters",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelection",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelectorDialog",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelectors",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CurrentPhase",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|GameTurnText",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|IsCommander",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|IsPileZoneActive",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|IsPlanechase",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|IsWishingFromSideboard",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|LocalTriggersPanelEnabled",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|OpponentTriggersPanelEnabled",
@@ -258,7 +264,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.11 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.12 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -319,8 +325,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static bool ValidateExactGetterSurface()
         {
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-            if (AllowedGetters.Length != 68 ||
-                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 68 ||
+            if (AllowedGetters.Length != 74 ||
+                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 74 ||
                 PrivateVisibleActionJoinGetters.Length != 14 ||
                 PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 14)
             {
@@ -398,7 +404,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 
         private static bool TryValidateVisibleChromeProjectionV1(object viewModel)
         {
-            if (!TryReadExactPropertyV1(
+            if (!TryRequireSupportedDuelVariantV1(viewModel) ||
+                !TryReadExactPropertyV1(
                     viewModel,
                     "DuelScene",
                     DuelViewModelType,
@@ -639,7 +646,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             }
             foreach (object card in cards)
             {
-                if (!TryReadExactPropertyV1(
+                if (!TryRequireNoUnrepresentedVisibleCardStateV1(card) ||
+                    !TryReadExactPropertyV1(
                         card, "Card", cardType, "CardFrameID", out object? frameValue) ||
                     frameValue == null ||
                     frameValue.GetType().FullName != "Shiny.Card.Enums.FrameStyle" ||
@@ -835,6 +843,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             if (!TryReadExactPropertyV1(
                     card, cardAssembly, cardType, "IsFaceDown", out object? faceDownValue) ||
                 !(faceDownValue is bool faceDown) ||
+                (!faceDown && !TryRequireNoUnrepresentedVisibleCardStateV1(card)) ||
                 (!faceDown &&
                     (!TryReadExactPropertyV1(
                         card, cardAssembly, cardType, "Name", out object? nameValue) ||
@@ -981,10 +990,46 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             {
                 return true;
             }
-            return TryReadExactPropertyV1(
+            return TryRequireNoUnrepresentedVisibleCardStateV1(card) &&
+                TryReadExactPropertyV1(
                     card, "Card", cardType, "Name", out object? nameValue) &&
                 nameValue is string name &&
                 IsBoundedVisibleStringV1(name, 512, true);
+        }
+
+        private static bool TryRequireNoUnrepresentedVisibleCardStateV1(object card)
+        {
+            const string cardType = "Shiny.Card.ViewModels.CardViewModel";
+            const string duelCardType =
+                "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel";
+            return TryReadExactPropertyV1(
+                    card,
+                    "Card",
+                    cardType,
+                    "CurrentDungeonRoom",
+                    out object? dungeonRoomValue) &&
+                dungeonRoomValue is int dungeonRoom && dungeonRoom == -1 &&
+                TryReadExactPropertyV1(
+                    card,
+                    "DuelScene",
+                    duelCardType,
+                    "RingTemptationCounter",
+                    out object? ringValue) &&
+                ringValue is int ring && ring == 0 &&
+                TryReadExactPropertyV1(
+                    card,
+                    "DuelScene",
+                    duelCardType,
+                    "SpeedCounter",
+                    out object? speedValue) &&
+                speedValue is int speed && speed == 0 &&
+                TryReadExactPropertyV1(
+                    card,
+                    "DuelScene",
+                    duelCardType,
+                    "IsSpeedEmblem",
+                    out object? speedEmblemValue) &&
+                speedEmblemValue is bool speedEmblem && !speedEmblem;
         }
 
         private static bool TryValidateVisiblePlayerPanelV1(
