@@ -144,6 +144,7 @@ namespace Shiny.Play.Duel.ViewModel
             {
                 "Duel.StackZone",
                 "Player.BattlefieldCards",
+                "Player.CompanionZone",
                 "Player.HandZone",
                 "Player.LibraryZone",
                 "Player.GraveyardZone",
@@ -348,6 +349,14 @@ namespace Shiny.Play.Duel.ViewModel
                 return Hand;
             }
         }
+        public ZoneViewModel CompanionZone
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Player.CompanionZone");
+                return Companion;
+            }
+        }
         public ZoneViewModel LibraryZone
         {
             get
@@ -408,6 +417,7 @@ namespace Shiny.Play.Duel.ViewModel
         public int HandTotalFixture { get; set; }
         public int DeckTotalFixture { get; set; } = 53;
         public ZoneViewModel Hand { get; } = new ZoneViewModel();
+        public ZoneViewModel Companion { get; } = new ZoneViewModel();
         public ZoneViewModel Library { get; } = new ZoneViewModel();
         public ZoneViewModel Graveyard { get; } = new ZoneViewModel
         {

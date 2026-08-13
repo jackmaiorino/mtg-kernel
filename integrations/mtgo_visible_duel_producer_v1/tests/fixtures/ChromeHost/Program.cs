@@ -257,6 +257,18 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         }
                         setVisibleCounter(false);
                     }
+                    seated.Companion.IsVisibleFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 30;
+                    }
+                    seated.Companion.IsVisibleFixture = false;
+                    opponent.Companion.IsVisibleFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 31;
+                    }
+                    opponent.Companion.IsVisibleFixture = false;
 
                     // The semantic turn is derived only from the rendered
                     // GameTurnText. Non-canonical or non-opening visible text

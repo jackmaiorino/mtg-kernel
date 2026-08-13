@@ -72,7 +72,7 @@ fn managed_producer_getter_allowlist_exactly_matches_reviewed_surface() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 52);
+    assert_eq!(actual.len(), 53);
     assert_eq!(actual, expected);
 }
 
@@ -143,6 +143,7 @@ fn managed_producer_has_bounded_output_and_no_unrelated_side_effect_api_markers(
     assert!(source.contains(
         "private static bool TryRequireNoUnrepresentedVisiblePlayerCountersV1("
     ));
+    assert!(source.contains("private static bool TryRequireNoVisibleCompanionPanelV1("));
     assert!(source.contains("private static bool TryValidateVisibleZonesAndCardsV1("));
     assert!(source.contains("private static bool TryValidateNeverEnumeratedZoneRootV1("));
     assert!(source.contains("private static bool TryValidatePrivateVisibleCardActionJoinsV1("));
@@ -177,6 +178,7 @@ fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
         "\"HasExperienceCounters\"",
         "\"HasPoisonCounters\"",
         "\"HasRadCounters\"",
+        "\"CompanionZone\"",
         "\"HandTotal\"",
         "\"DeckTotal\"",
         "\"ManaPoolItems\"",

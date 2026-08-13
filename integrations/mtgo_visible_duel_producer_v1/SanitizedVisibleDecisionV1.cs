@@ -510,6 +510,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "MatActive", out object? priorityValue) || !(priorityValue is bool priority) ||
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "Health", out object? lifeValue) || !(lifeValue is int life) || life < -1000000 || life > 1000000 ||
                 !TryRequireNoUnrepresentedVisiblePlayerCountersV1(player) ||
+                !TryRequireNoVisibleCompanionPanelV1(player) ||
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "HandTotal", out object? handCountValue) || !(handCountValue is int handCount) || handCount < 0 || handCount > 10000 ||
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "DeckTotal", out object? deckCountValue) || !(deckCountValue is int deckCount) || deckCount < 0 || deckCount > 10000 ||
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "ManaPoolItems", out object? manaItemsValue) ||
@@ -540,6 +541,26 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             snapshot.Revealed = revealed;
             snapshot.Shields = shields;
             return true;
+        }
+
+        private static bool TryRequireNoVisibleCompanionPanelV1(object player)
+        {
+            const string playerType = "Shiny.Play.Duel.ViewModel.PlayerViewModel";
+            const string zoneType = "Shiny.Play.Duel.ViewModel.ZoneViewModel";
+            return TryReadExactPropertyV1(
+                    player,
+                    "DuelScene",
+                    playerType,
+                    "CompanionZone",
+                    out object? zone) &&
+                zone != null &&
+                TryReadExactPropertyV1(
+                    zone,
+                    "DuelScene",
+                    zoneType,
+                    "IsVisible",
+                    out object? visibleValue) &&
+                visibleValue is bool visible && !visible;
         }
 
         private static bool TryRequireNoUnrepresentedVisiblePlayerCountersV1(

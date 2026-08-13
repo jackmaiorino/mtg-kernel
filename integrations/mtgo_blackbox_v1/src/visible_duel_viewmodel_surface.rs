@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_SURFACE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1: &str =
-    "a2721fab153f923f548fa122d5f8daa204476e5baf3c9a1fdcbab6b15672cc3c";
+    "ff1d7749e07fe462eb2414bedcb5322521edc031d7b4b41a7cc7a80fd7997ac6";
 
 const SURFACE_KIND_V1: &str = "mtgo_visible_duel_viewmodel_candidate_surface_v1";
 const INFORMATION_BOUNDARY_V1: &str = "seated_player_visible_ui_equivalent_only_v1";
@@ -283,6 +283,15 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             MtgoVisibleViewModelPropertyContextV1::VisiblePlayerPanel,
             "visible library count",
             &["current_state.library_counts"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.PlayerViewModel",
+            "CompanionZone",
+            "ZoneViewModel",
+            MtgoVisibleViewModelPropertyContextV1::TransientTraversalOnly,
+            "visible companion panel, used only to reject an unrepresented state",
+            &[],
         ),
         candidate(
             "DuelScene.dll",
@@ -989,7 +998,7 @@ mod tests {
         let checked = check_untrusted_visible_duel_viewmodel_candidate_surface_v1(manifest)
             .expect("compiled metadata candidate surface");
         assert_eq!(checked.product_version_v1(), "3.4.158.4691");
-        assert_eq!(checked.candidate_property_count_v1(), 52);
+        assert_eq!(checked.candidate_property_count_v1(), 53);
         assert_eq!(checked.forbidden_property_count_v1(), 28);
         assert_eq!(
             checked.commitment_sha256_v1(),
