@@ -557,6 +557,21 @@ input authority. A direct parser and a pixel-based observer can therefore use
 the same model boundary as long as each emits only the same player-visible
 schema.
 
+`prepare_player_visible_combat_execution_step_v1` and
+`confirm_player_visible_combat_execution_transition_v1` close the
+transport-neutral step-confirmation half of that bridge. The first function
+reconciles the retained model plan against one exact fresh sanitized result and
+produces only the coordinate-free fields already accepted by the sealed native
+combat broker. The second accepts a different fresh sanitized result only when
+the exact intended visible attacker toggle, blocker prompt, blocker assignment,
+or combat completion is present. An unrelated repaint, a wrong card, an extra
+assignment, a changed unrelated visible fact, or an unchanged result rejects.
+Intermediate attacker and single-blocker steps may resume only by consuming the
+confirmed continuation owner. Multi-attacker blocker steps require a fresh
+model decision after each visible prompt or assignment. These checked values
+still contain no process, coordinate, input method, event entry, spending, or
+live authority.
+
 The adapter now defines the coordinate-free half of step 6. `MtgoExternalScoringRequestV1` binds one validated decision commitment, the exact `ObservationV5`, the complete ordered `ActionSemanticV1` vector, action count, and an expected checkpoint deployment commitment. The deployment identity includes the run, checkpoint manifest, checkpoint payload, train-state, model-parameter, generation, and scorer-contract identities exposed by the native checkpoint handle.
 
 `MtgoExternalModelScoreResponseV1` returns exact f32 policy-logit and value bits bound to that request. Validation requires one finite logit per legal action and a finite value, then uses the kernel scorer's deterministic `total_cmp` argmax with lower-index ties. The resulting opaque selection can create only an offline intent for the exact source decision. It has no coordinates or live-input authority.

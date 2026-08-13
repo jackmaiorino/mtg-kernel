@@ -462,3 +462,262 @@ fn incomplete_sequential_model_scoring_returns_no_execution_plan() {
     assert_eq!(error.code(), "visible_attacker_scorer_failed");
     assert_eq!(scorer.calls, 2);
 }
+
+fn attacker_state_bytes_v1(attacking: &[u32]) -> Vec<u8> {
+    let mut selection: MtgoPlayerVisibleAttackerSelectionInputV1 =
+        match parse_and_validate_visible_duel_producer_result_v1(&attacker_bytes_v1()).unwrap() {
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { selection } => {
+                *selection
+            }
+            _ => unreachable!(),
+        };
+    for candidate in &mut selection.ordered_candidates {
+        candidate.currently_attacking = attacking.contains(&candidate.attacker.visible_ordinal);
+        candidate.attack_opponent_action_visible = !candidate.currently_attacking;
+        candidate.dont_attack_action_visible = candidate.currently_attacking;
+    }
+    selection.current_state.combat.ordered_attackers =
+        attacking.iter().copied().map(object_v1).collect();
+    serde_json::to_vec(
+        &MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection {
+            selection: Box::new(selection),
+        },
+    )
+    .unwrap()
+}
+
+fn state_result_bytes_v1(state: MtgoPlayerVisibleDuelStateV1) -> Vec<u8> {
+    serde_json::to_vec(&MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
+        decision: Box::new(MtgoPlayerVisibleDuelDecisionInputV1 {
+            current_state: state,
+            ordered_legal_actions: vec![MtgoPlayerVisibleDuelActionV1::Pass {
+                actor: MtgoPlayerRelativeRoleV1::SeatedPlayer,
+            }],
+        }),
+    })
+    .unwrap()
+}
+
+#[test]
+fn attacker_plan_requires_each_exact_visible_toggle_before_done() {
+    let initial = attacker_bytes_v1();
+    let prepared = prepared_v1(
+        &initial,
+        &mut ScriptedCombatScorerV1::new(&[1, 0], &[], &[]),
+    );
+    let first = prepare_player_visible_combat_execution_step_v1(prepared, &initial).unwrap();
+    assert_eq!(
+        first.operation_v1(),
+        MtgoPlayerVisibleCombatSubmittedOperationV1::ToggleAttacker {
+            attacker: object_v1(0),
+            select_for_attack: true,
+        }
+    );
+    let selected = attacker_state_bytes_v1(&[0]);
+    let confirmed =
+        confirm_player_visible_combat_execution_transition_v1(first, &selected).unwrap();
+    assert_eq!(
+        confirmed.progress_v1(),
+        MtgoPlayerVisibleCombatTransitionProgressV1::ContinueSamePlan
+    );
+    assert_ne!(
+        confirmed.before_selection_sha256_v1(),
+        confirmed.after_selection_sha256_v1()
+    );
+    let prepared = confirmed.into_prepared_continuation_v1().unwrap();
+    let done = prepare_player_visible_combat_execution_step_v1(prepared, &selected).unwrap();
+    assert_eq!(
+        done.operation_v1(),
+        MtgoPlayerVisibleCombatSubmittedOperationV1::FinishAttackers
+    );
+    let mut after_state = state_v1(ZoneIndependentStepV1::DeclareBlockers);
+    after_state.combat.ordered_attackers = vec![object_v1(0)];
+    after_state.combat.attackers_declared = true;
+    let complete = confirm_player_visible_combat_execution_transition_v1(
+        done,
+        &state_result_bytes_v1(after_state),
+    )
+    .unwrap();
+    assert_eq!(
+        complete.progress_v1(),
+        MtgoPlayerVisibleCombatTransitionProgressV1::CombatDeclarationComplete
+    );
+    assert_eq!(complete.confirmation_commitment_sha256_v1().len(), 64);
+}
+
+#[test]
+fn attacker_transition_rejects_repaint_wrong_toggle_and_unrelated_change() {
+    let initial = attacker_bytes_v1();
+    let prepared = prepared_v1(
+        &initial,
+        &mut ScriptedCombatScorerV1::new(&[1, 0], &[], &[]),
+    );
+    let first = prepare_player_visible_combat_execution_step_v1(prepared, &initial).unwrap();
+    let error = match confirm_player_visible_combat_execution_transition_v1(first, &initial) {
+        Ok(_) => panic!("an unchanged result cannot confirm a toggle"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "visible_combat_transition_stale");
+
+    let prepared = prepared_v1(
+        &initial,
+        &mut ScriptedCombatScorerV1::new(&[1, 0], &[], &[]),
+    );
+    let wrong = prepare_player_visible_combat_execution_step_v1(prepared, &initial).unwrap();
+    let wrong_bytes = attacker_state_bytes_v1(&[1]);
+    let error = match confirm_player_visible_combat_execution_transition_v1(wrong, &wrong_bytes) {
+        Ok(_) => panic!("the wrong attacker cannot confirm the selected toggle"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "visible_combat_transition_attacker");
+
+    let prepared = prepared_v1(
+        &initial,
+        &mut ScriptedCombatScorerV1::new(&[1, 0], &[], &[]),
+    );
+    let changed = prepare_player_visible_combat_execution_step_v1(prepared, &initial).unwrap();
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&attacker_state_bytes_v1(&[0])).unwrap();
+    value["selection"]["current_state"]["life_totals"][0] = serde_json::json!(19);
+    let error = match confirm_player_visible_combat_execution_transition_v1(
+        changed,
+        &serde_json::to_vec(&value).unwrap(),
+    ) {
+        Ok(_) => panic!("an unrelated visible-state change cannot confirm the toggle"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "visible_combat_transition_attacker_state");
+}
+
+#[test]
+fn single_attacker_blockers_advance_monotonically_and_confirm_done() {
+    let initial = single_blocker_bytes_v1();
+    let prepared = prepared_v1(
+        &initial,
+        &mut ScriptedCombatScorerV1::new(&[], &[1, 1], &[]),
+    );
+    let first = prepare_player_visible_combat_execution_step_v1(prepared, &initial).unwrap();
+    assert_eq!(
+        first.operation_v1(),
+        MtgoPlayerVisibleCombatSubmittedOperationV1::AddSingleAttackerBlocker {
+            blocker: object_v1(0)
+        }
+    );
+    let one = serde_json::to_vec(
+        &MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+            selection: Box::new(single_blocker_selection_v1(&[0])),
+        },
+    )
+    .unwrap();
+    let first = confirm_player_visible_combat_execution_transition_v1(first, &one).unwrap();
+    let prepared = first.into_prepared_continuation_v1().unwrap();
+    let second = prepare_player_visible_combat_execution_step_v1(prepared, &one).unwrap();
+    assert_eq!(
+        second.operation_v1(),
+        MtgoPlayerVisibleCombatSubmittedOperationV1::AddSingleAttackerBlocker {
+            blocker: object_v1(1)
+        }
+    );
+    let two_selection = single_blocker_selection_v1(&[0, 1]);
+    let two = serde_json::to_vec(
+        &MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+            selection: Box::new(two_selection.clone()),
+        },
+    )
+    .unwrap();
+    let second = confirm_player_visible_combat_execution_transition_v1(second, &two).unwrap();
+    let prepared = second.into_prepared_continuation_v1().unwrap();
+    let done = prepare_player_visible_combat_execution_step_v1(prepared, &two).unwrap();
+    let mut after_state = two_selection.current_state;
+    after_state.combat.blockers_declared = true;
+    let complete = confirm_player_visible_combat_execution_transition_v1(
+        done,
+        &state_result_bytes_v1(after_state),
+    )
+    .unwrap();
+    assert_eq!(
+        complete.progress_v1(),
+        MtgoPlayerVisibleCombatTransitionProgressV1::CombatDeclarationComplete
+    );
+}
+
+#[test]
+fn single_attacker_blocker_rejects_an_extra_visible_assignment() {
+    let initial = single_blocker_bytes_v1();
+    let prepared = prepared_v1(
+        &initial,
+        &mut ScriptedCombatScorerV1::new(&[], &[1, 0], &[]),
+    );
+    let step = prepare_player_visible_combat_execution_step_v1(prepared, &initial).unwrap();
+    let both = serde_json::to_vec(
+        &MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+            selection: Box::new(single_blocker_selection_v1(&[0, 1])),
+        },
+    )
+    .unwrap();
+    let error = match confirm_player_visible_combat_execution_transition_v1(step, &both) {
+        Ok(_) => panic!("one input cannot confirm two new blocker assignments"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error.code(),
+        "visible_combat_transition_single_blocker_extra"
+    );
+}
+
+#[test]
+fn multi_attacker_blocker_requires_prompt_then_exact_assignment() {
+    let before = multi_blocker_bytes_v1();
+    let prepared = prepared_v1(&before, &mut ScriptedCombatScorerV1::new(&[], &[], &[1]));
+    let choose = prepare_player_visible_combat_execution_step_v1(prepared, &before).unwrap();
+    let target = blocker_target_bytes_v1();
+    let prompt = confirm_player_visible_combat_execution_transition_v1(choose, &target).unwrap();
+    assert_eq!(
+        prompt.progress_v1(),
+        MtgoPlayerVisibleCombatTransitionProgressV1::AwaitFreshCombatModelDecision
+    );
+
+    let prepared = prepared_v1(&target, &mut ScriptedCombatScorerV1::new(&[], &[], &[1]));
+    let target_step = prepare_player_visible_combat_execution_step_v1(prepared, &target).unwrap();
+    let mut after_selection = match parse_and_validate_visible_duel_producer_result_v1(
+        &multi_blocker_bytes_v1(),
+    )
+    .unwrap()
+    {
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
+            selection,
+        } => *selection,
+        _ => unreachable!(),
+    };
+    after_selection.current_state.combat.blocker_assignments =
+        vec![MtgoPlayerVisibleBlockerAssignmentV1 {
+            attacker: object_v1(3),
+            ordered_blockers: vec![object_v1(0)],
+        }];
+    after_selection.ordered_available_blockers = vec![object_v1(1)];
+    let assigned = serde_json::to_vec(
+        &MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
+            selection: Box::new(after_selection),
+        },
+    )
+    .unwrap();
+    let confirmed =
+        confirm_player_visible_combat_execution_transition_v1(target_step, &assigned).unwrap();
+    assert_eq!(
+        confirmed.progress_v1(),
+        MtgoPlayerVisibleCombatTransitionProgressV1::AwaitFreshCombatModelDecision
+    );
+}
+
+#[test]
+fn multi_attacker_target_rejects_wrong_or_extra_assignment() {
+    let target = blocker_target_bytes_v1();
+    let prepared = prepared_v1(&target, &mut ScriptedCombatScorerV1::new(&[], &[], &[1]));
+    let step = prepare_player_visible_combat_execution_step_v1(prepared, &target).unwrap();
+    let wrong = multi_blocker_bytes_v1();
+    let error = match confirm_player_visible_combat_execution_transition_v1(step, &wrong) {
+        Ok(_) => panic!("a missing blocker assignment cannot confirm target selection"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "visible_combat_transition_blocker_assignment");
+}
