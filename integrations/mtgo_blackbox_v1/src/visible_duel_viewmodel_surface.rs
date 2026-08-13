@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_SURFACE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1: &str =
-    "ff1d7749e07fe462eb2414bedcb5322521edc031d7b4b41a7cc7a80fd7997ac6";
+    "e0483b296747eaabfc42d47bbf1c3bb664dc77b6424097c7ac408e0661c5d1be";
 
 const SURFACE_KIND_V1: &str = "mtgo_visible_duel_viewmodel_candidate_surface_v1";
 const INFORMATION_BOUNDARY_V1: &str = "seated_player_visible_ui_equivalent_only_v1";
@@ -143,6 +143,33 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
         candidate(
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "CardSelection",
+            "CardSelectionViewModel",
+            MtgoVisibleViewModelPropertyContextV1::TransientTraversalOnly,
+            "visible select-from-list surface, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "CardSelectorDialog",
+            "CardSelectorDialogViewModel",
+            MtgoVisibleViewModelPropertyContextV1::TransientTraversalOnly,
+            "visible card-selector dialog, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "CardSelectors",
+            "CardSelectorManager",
+            MtgoVisibleViewModelPropertyContextV1::TransientTraversalOnly,
+            "visible card-selector collection, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
             "CurrentPhase",
             "WotC.MtGO.Client.Model.Play.GamePhase",
             MtgoVisibleViewModelPropertyContextV1::AlwaysVisibleDuelChrome,
@@ -161,6 +188,42 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
         candidate(
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "IsPileZoneActive",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "visible pile-choice surface, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "IsWishingFromSideboard",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "visible wish-from-sideboard flow, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "LocalTriggersPanelEnabled",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "visible seated-player trigger panel, used only to reject unrepresented ordering",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "OpponentTriggersPanelEnabled",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "visible opponent trigger panel, used only to reject unrepresented ordering",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
             "Players",
             "ObservableCollection<PlayerViewModel>",
             MtgoVisibleViewModelPropertyContextV1::TransientTraversalOnly,
@@ -174,6 +237,78 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             "PromptBoxViewModel",
             MtgoVisibleViewModelPropertyContextV1::TransientTraversalOnly,
             "visible prompt box",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "StormCounterVisible",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::AlwaysVisibleDuelChrome,
+            "visible storm counter, used only to reject an unrepresented state",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "TemporaryZones",
+            "ObservableCollection<TemporaryZoneViewModel>",
+            MtgoVisibleViewModelPropertyContextV1::TransientTraversalOnly,
+            "temporary public-zone windows, used only to reject unrepresented visible surfaces",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "ThreePilePanelEnabled",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "visible three-pile chooser, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "TwoPilePanelEnabled",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "visible two-pile chooser, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.CardSelectionViewModel",
+            "Visible",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "select-from-list surface visibility",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.CardSelectorDialogViewModel",
+            "Visible",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "card-selector dialog visibility",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.CardSelectorManager",
+            "Collection",
+            "ObservableCollection<CardSelectorViewModel>",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "rendered card-selector controls",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.TemporaryZoneViewModel",
+            "IsVisible",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::SeatedPlayerOrPublicOrExplicitlyVisibleZone,
+            "temporary zone window visibility",
             &[],
         ),
         candidate(
@@ -998,7 +1133,7 @@ mod tests {
         let checked = check_untrusted_visible_duel_viewmodel_candidate_surface_v1(manifest)
             .expect("compiled metadata candidate surface");
         assert_eq!(checked.product_version_v1(), "3.4.158.4691");
-        assert_eq!(checked.candidate_property_count_v1(), 53);
+        assert_eq!(checked.candidate_property_count_v1(), 68);
         assert_eq!(checked.forbidden_property_count_v1(), 28);
         assert_eq!(
             checked.commitment_sha256_v1(),

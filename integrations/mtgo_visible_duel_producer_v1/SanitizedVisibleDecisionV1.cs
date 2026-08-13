@@ -373,6 +373,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     player.Graveyard.Count != 0 || player.Exile.Count != 0) ||
                 seated.Revealed.Count != 0 || opponent.Revealed.Count != 0 ||
                 (opponent.Hand.Count != 0 && opponent.Hand.Count != opponent.HandCount) ||
+                !TryRequireNoUnrepresentedVisibleModalSurfaceV1(viewModel) ||
                 !TryRequireNoVisiblePromptChoiceV1(viewModel))
             {
                 return false;
@@ -496,6 +497,104 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 OrderedLegalActions = actions
             };
             boundClientActions = actionBindings;
+            return true;
+        }
+
+        private static bool TryRequireNoUnrepresentedVisibleModalSurfaceV1(
+            object viewModel)
+        {
+            foreach (string propertyName in new[]
+            {
+                "IsPileZoneActive",
+                "IsWishingFromSideboard",
+                "LocalTriggersPanelEnabled",
+                "OpponentTriggersPanelEnabled",
+                "StormCounterVisible",
+                "ThreePilePanelEnabled",
+                "TwoPilePanelEnabled"
+            })
+            {
+                if (!TryReadExactPropertyV1(
+                        viewModel,
+                        "DuelScene",
+                        DuelViewModelType,
+                        propertyName,
+                        out object? value) ||
+                    !(value is bool visible) || visible)
+                {
+                    return false;
+                }
+            }
+
+            if (!TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "CardSelection",
+                    out object? cardSelection) ||
+                cardSelection == null ||
+                !TryReadExactPropertyV1(
+                    cardSelection,
+                    "DuelScene",
+                    "Shiny.Play.Duel.ViewModel.CardSelectionViewModel",
+                    "Visible",
+                    out object? selectionVisible) ||
+                !(selectionVisible is bool selectionIsVisible) || selectionIsVisible ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "CardSelectorDialog",
+                    out object? cardSelectorDialog) ||
+                cardSelectorDialog == null ||
+                !TryReadExactPropertyV1(
+                    cardSelectorDialog,
+                    "DuelScene",
+                    "Shiny.Play.Duel.ViewModel.CardSelectorDialogViewModel",
+                    "Visible",
+                    out object? dialogVisible) ||
+                !(dialogVisible is bool dialogIsVisible) || dialogIsVisible ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "CardSelectors",
+                    out object? cardSelectors) ||
+                cardSelectors == null ||
+                !TryReadExactPropertyV1(
+                    cardSelectors,
+                    "DuelScene",
+                    "Shiny.Play.Duel.ViewModel.CardSelectorManager",
+                    "Collection",
+                    out object? selectorCollection) ||
+                !TryBoundedCollectionV1(selectorCollection, 64, out List<object> selectors) ||
+                selectors.Count != 0 ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "TemporaryZones",
+                    out object? temporaryZonesValue) ||
+                !TryBoundedCollectionV1(
+                    temporaryZonesValue,
+                    MaximumVisibleCollectionItems,
+                    out List<object> temporaryZones))
+            {
+                return false;
+            }
+            foreach (object temporaryZone in temporaryZones)
+            {
+                if (!TryReadExactPropertyV1(
+                        temporaryZone,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.TemporaryZoneViewModel",
+                        "IsVisible",
+                        out object? visibleValue) ||
+                    !(visibleValue is bool visible) || visible)
+                {
+                    return false;
+                }
+            }
             return true;
         }
 

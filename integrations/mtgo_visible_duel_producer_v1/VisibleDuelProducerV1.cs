@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.10 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.11 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -58,16 +58,30 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.GroupCardAction|GroupName",
             "DuelScene|Shiny.Play.Duel.GroupCardAction|ModeOptions",
             "DuelScene|Shiny.Play.Duel.GroupCardAction|Name",
+            "DuelScene|Shiny.Play.Duel.ViewModel.CardSelectionViewModel|Visible",
+            "DuelScene|Shiny.Play.Duel.ViewModel.CardSelectorDialogViewModel|Visible",
+            "DuelScene|Shiny.Play.Duel.ViewModel.CardSelectorManager|Collection",
             "DuelScene|Shiny.Play.Duel.ViewModel.CardCounterViewModel|Quantity",
             "DuelScene|Shiny.Play.Duel.ViewModel.CardCounterViewModel|Type",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|CardAttachedTo",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsToken",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|VisibleCounters",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelection",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelectorDialog",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelectors",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CurrentPhase",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|GameTurnText",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|IsPileZoneActive",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|IsWishingFromSideboard",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|LocalTriggersPanelEnabled",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|OpponentTriggersPanelEnabled",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|Players",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|PromptBox",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|StackZone",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|StormCounterVisible",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|TemporaryZones",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|ThreePilePanelEnabled",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|TwoPilePanelEnabled",
             "DuelScene|Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel|ColorString",
             "DuelScene|Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel|Count",
             "DuelScene|Shiny.Play.Duel.ViewModel.OptionButton|Enabled",
@@ -96,6 +110,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|IsPromptBoxActive",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|StandardButtons",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|Text",
+            "DuelScene|Shiny.Play.Duel.ViewModel.TemporaryZoneViewModel|IsVisible",
             "DuelScene|Shiny.Play.Duel.ViewModel.ZoneViewModel|Cards",
             "DuelScene|Shiny.Play.Duel.ViewModel.ZoneViewModel|Count",
             "DuelScene|Shiny.Play.Duel.ViewModel.ZoneViewModel|IsVisible"
@@ -243,7 +258,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.10 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.11 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -304,8 +319,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static bool ValidateExactGetterSurface()
         {
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-            if (AllowedGetters.Length != 53 ||
-                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 53 ||
+            if (AllowedGetters.Length != 68 ||
+                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 68 ||
                 PrivateVisibleActionJoinGetters.Length != 14 ||
                 PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 14)
             {

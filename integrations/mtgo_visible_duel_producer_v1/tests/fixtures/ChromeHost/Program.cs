@@ -270,6 +270,45 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     opponent.Companion.IsVisibleFixture = false;
 
+                    // Every currently known visible modal or auxiliary duel
+                    // surface that is absent from the semantic schema must
+                    // force a fixed abstention.
+                    foreach (Action<bool> setVisibleModal in new Action<bool>[]
+                    {
+                        value => viewModel.IsPileZoneActiveFixture = value,
+                        value => viewModel.IsWishingFromSideboardFixture = value,
+                        value => viewModel.LocalTriggersPanelEnabledFixture = value,
+                        value => viewModel.OpponentTriggersPanelEnabledFixture = value,
+                        value => viewModel.StormCounterVisibleFixture = value,
+                        value => viewModel.ThreePilePanelEnabledFixture = value,
+                        value => viewModel.TwoPilePanelEnabledFixture = value,
+                        value => viewModel.CardSelectionFixture.VisibleFixture = value,
+                        value => viewModel.CardSelectorDialogFixture.VisibleFixture = value
+                    })
+                    {
+                        setVisibleModal(true);
+                        if (!ExportsProjectionIncompleteV1(channelName, view))
+                        {
+                            return 32;
+                        }
+                        setVisibleModal(false);
+                    }
+                    viewModel.CardSelectorsFixture.Items.Add(new object());
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 33;
+                    }
+                    viewModel.CardSelectorsFixture.Items.Clear();
+                    viewModel.TemporaryZoneItems.Add(new TemporaryZoneViewModel
+                    {
+                        IsVisibleFixture = true
+                    });
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 34;
+                    }
+                    viewModel.TemporaryZoneItems.Clear();
+
                     // The semantic turn is derived only from the rendered
                     // GameTurnText. Non-canonical or non-opening visible text
                     // must fail closed before the first supported slice.

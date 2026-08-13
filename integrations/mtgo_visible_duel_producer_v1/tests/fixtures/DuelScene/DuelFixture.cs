@@ -96,8 +96,21 @@ namespace Shiny.Play.Duel.ViewModel
             {
                 "Duel.CurrentPhase",
                 "Duel.GameTurnText",
+                "Duel.CardSelection",
+                "Duel.CardSelectorDialog",
+                "Duel.CardSelectors",
+                "Duel.IsPileZoneActive",
+                "Duel.IsWishingFromSideboard",
+                "Duel.LocalTriggersPanelEnabled",
+                "Duel.OpponentTriggersPanelEnabled",
                 "Duel.Players",
                 "Duel.PromptBox",
+                "Duel.StormCounterVisible",
+                "Duel.ThreePilePanelEnabled",
+                "Duel.TwoPilePanelEnabled",
+                "CardSelection.Visible",
+                "CardSelectorDialog.Visible",
+                "CardSelectors.Collection",
                 "Player.LocalPlayer",
                 "Player.Active",
                 "Player.MatActive",
@@ -143,6 +156,8 @@ namespace Shiny.Play.Duel.ViewModel
             string[] expected =
             {
                 "Duel.StackZone",
+                "Duel.TemporaryZones",
+                "TemporaryZone.IsVisible",
                 "Player.BattlefieldCards",
                 "Player.CompanionZone",
                 "Player.HandZone",
@@ -173,6 +188,33 @@ namespace Shiny.Play.Duel.ViewModel
 
     public sealed class DuelSceneViewModel
     {
+        public CardSelectionViewModel CardSelection
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.CardSelection");
+                return CardSelectionFixture;
+            }
+        }
+
+        public CardSelectorDialogViewModel CardSelectorDialog
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.CardSelectorDialog");
+                return CardSelectorDialogFixture;
+            }
+        }
+
+        public CardSelectorManager CardSelectors
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.CardSelectors");
+                return CardSelectorsFixture;
+            }
+        }
+
         public WotC.MtGO.Client.Model.Play.GamePhase CurrentPhase
         {
             get
@@ -188,6 +230,42 @@ namespace Shiny.Play.Duel.ViewModel
             {
                 VisibleGetterProbeV1.Record("Duel.GameTurnText");
                 return GameTurnTextFixture;
+            }
+        }
+
+        public bool IsPileZoneActive
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.IsPileZoneActive");
+                return IsPileZoneActiveFixture;
+            }
+        }
+
+        public bool IsWishingFromSideboard
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.IsWishingFromSideboard");
+                return IsWishingFromSideboardFixture;
+            }
+        }
+
+        public bool LocalTriggersPanelEnabled
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.LocalTriggersPanelEnabled");
+                return LocalTriggersPanelEnabledFixture;
+            }
+        }
+
+        public bool OpponentTriggersPanelEnabled
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.OpponentTriggersPanelEnabled");
+                return OpponentTriggersPanelEnabledFixture;
             }
         }
 
@@ -218,6 +296,42 @@ namespace Shiny.Play.Duel.ViewModel
             }
         }
 
+        public bool StormCounterVisible
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.StormCounterVisible");
+                return StormCounterVisibleFixture;
+            }
+        }
+
+        public ObservableCollection<TemporaryZoneViewModel> TemporaryZones
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("Duel.TemporaryZones");
+                return TemporaryZoneItems;
+            }
+        }
+
+        public bool ThreePilePanelEnabled
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.ThreePilePanelEnabled");
+                return ThreePilePanelEnabledFixture;
+            }
+        }
+
+        public bool TwoPilePanelEnabled
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.TwoPilePanelEnabled");
+                return TwoPilePanelEnabledFixture;
+            }
+        }
+
         public IGame Game
         {
             get
@@ -229,6 +343,21 @@ namespace Shiny.Play.Duel.ViewModel
 
         public ObservableCollection<PlayerViewModel> PlayerItems { get; } =
             new ObservableCollection<PlayerViewModel>();
+        public CardSelectionViewModel CardSelectionFixture { get; } =
+            new CardSelectionViewModel();
+        public CardSelectorDialogViewModel CardSelectorDialogFixture { get; } =
+            new CardSelectorDialogViewModel();
+        public CardSelectorManager CardSelectorsFixture { get; } =
+            new CardSelectorManager();
+        public bool IsPileZoneActiveFixture { get; set; }
+        public bool IsWishingFromSideboardFixture { get; set; }
+        public bool LocalTriggersPanelEnabledFixture { get; set; }
+        public bool OpponentTriggersPanelEnabledFixture { get; set; }
+        public bool StormCounterVisibleFixture { get; set; }
+        public bool ThreePilePanelEnabledFixture { get; set; }
+        public bool TwoPilePanelEnabledFixture { get; set; }
+        public ObservableCollection<TemporaryZoneViewModel> TemporaryZoneItems { get; } =
+            new ObservableCollection<TemporaryZoneViewModel>();
         public string GameTurnTextFixture { get; set; } =
             "Turn 1: fixture-visible-local-player";
         public PromptBoxViewModel Prompt { get; } = new PromptBoxViewModel();
@@ -237,6 +366,63 @@ namespace Shiny.Play.Duel.ViewModel
             IsVisibleFixture = true
         };
         public VisibleFixtureGame GameFixture { get; } = new VisibleFixtureGame();
+    }
+
+    public sealed class CardSelectionViewModel
+    {
+        public bool Visible
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("CardSelection.Visible");
+                return VisibleFixture;
+            }
+        }
+
+        public bool VisibleFixture { get; set; }
+    }
+
+    public sealed class CardSelectorDialogViewModel
+    {
+        public bool Visible
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("CardSelectorDialog.Visible");
+                return VisibleFixture;
+            }
+        }
+
+        public bool VisibleFixture { get; set; }
+    }
+
+    public sealed class CardSelectorManager
+    {
+        public ObservableCollection<object> Collection
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("CardSelectors.Collection");
+                return Items;
+            }
+        }
+
+        public ObservableCollection<object> Items { get; } =
+            new ObservableCollection<object>();
+    }
+
+    public sealed class TemporaryZoneViewModel
+    {
+        public bool IsVisible
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("TemporaryZone.IsVisible");
+                return IsVisibleFixture;
+            }
+        }
+
+        public bool IsVisibleFixture { get; set; }
     }
 
     public sealed class PlayerViewModel
