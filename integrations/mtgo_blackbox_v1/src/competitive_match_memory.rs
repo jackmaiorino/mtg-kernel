@@ -1,5 +1,6 @@
 use crate::{
     CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
+    CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
     CheckedUntrustedMtgoPlayerVisibleGameplayPostconditionV1, MtgoCompetitiveEventKindV1,
     MtgoContractErrorV1, MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoPlayerVisibleDuelActionV1,
 };
@@ -331,6 +332,99 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_from_pla
     finish_v1(history.record)
 }
 
+/// Starts the same player-visible history from a direct client action that was
+/// confirmed by a newer composed-frame transition. The history records only
+/// the selected visible action and observed visible result, never the client
+/// object or dispatch mechanism.
+pub fn begin_checked_untrusted_competitive_player_visible_game_history_from_direct_visible_postcondition_v1(
+    history_id: &str,
+    confirmed: CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
+) -> Result<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, MtgoContractErrorV1> {
+    validate_identifier_v1(history_id)?;
+    let record = MtgoCompetitivePlayerVisibleGameHistoryRecordV1 {
+        schema_version: MTGO_COMPETITIVE_PLAYER_VISIBLE_GAME_HISTORY_SCHEMA_V1,
+        history_id: history_id.to_owned(),
+        event_kind: confirmed.event_kind_v1(),
+        event_identity_sha256: confirmed.event_identity_sha256_v1().to_owned(),
+        match_identity_sha256: confirmed.match_identity_sha256_v1().to_owned(),
+        game_number: confirmed.game_number_v1(),
+        policy_deployment_commitment_sha256: confirmed.deployment_commitment_sha256_v1().to_owned(),
+        decisions: vec![direct_visible_postcondition_decision_record_v1(
+            1, &confirmed,
+        )?],
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    };
+    finish_v1(record)
+}
+
+/// Appends one direct client action only after its newer player-visible result
+/// has been confirmed, while retaining the exact event, match, game,
+/// deployment, and visible-frame lineage.
+pub fn append_checked_untrusted_competitive_player_visible_game_history_from_direct_visible_postcondition_v1(
+    mut history: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    confirmed: CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
+) -> Result<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, MtgoContractErrorV1> {
+    if history.record.decisions.len() >= MAX_PLAYER_VISIBLE_GAME_DECISIONS_V1 {
+        return Err(error_v1(
+            "competitive_player_visible_history_limit",
+            "the per-game visible decision history reached its fixed bound",
+        ));
+    }
+    if history.record.event_kind != confirmed.event_kind_v1()
+        || history.record.event_identity_sha256 != confirmed.event_identity_sha256_v1()
+        || history.record.match_identity_sha256 != confirmed.match_identity_sha256_v1()
+        || history.record.game_number != confirmed.game_number_v1()
+        || history.record.policy_deployment_commitment_sha256
+            != confirmed.deployment_commitment_sha256_v1()
+    {
+        return Err(error_v1(
+            "competitive_player_visible_history_lineage",
+            "confirmed gameplay must retain the exact event, match, game, and deployment",
+        ));
+    }
+    let prior = history
+        .record
+        .decisions
+        .last()
+        .expect("validated history is nonempty");
+    if confirmed.source_frame_sequence_v1() < prior.after_frame_sequence
+        || confirmed.source_frame_sequence_v1() <= prior.source_frame_sequence
+        || confirmed.after_frame_sequence_v1() <= prior.after_frame_sequence
+    {
+        return Err(error_v1(
+            "competitive_player_visible_history_order",
+            "confirmed gameplay decisions must form one monotonic visible frame lineage",
+        ));
+    }
+    if history.record.decisions.iter().any(|decision| {
+        decision.decision_commitment_sha256 == confirmed.decision_commitment_sha256_v1()
+            || decision.selection_commitment_sha256 == confirmed.selection_commitment_sha256_v1()
+            || decision.visible_postcondition_commitment_sha256
+                == confirmed.confirmation_commitment_sha256_v1()
+    }) {
+        return Err(error_v1(
+            "competitive_player_visible_history_duplicate",
+            "a decision, selection, or visible postcondition cannot be appended twice",
+        ));
+    }
+    let sequence = u64::try_from(history.record.decisions.len() + 1).map_err(|_| {
+        error_v1(
+            "competitive_player_visible_history_sequence",
+            "decision sequence overflow",
+        )
+    })?;
+    history
+        .record
+        .decisions
+        .push(direct_visible_postcondition_decision_record_v1(
+            sequence, &confirmed,
+        )?);
+    finish_v1(history.record)
+}
+
 /// Checks private deployment and visible-frame continuity before an existing
 /// history is replayed into a scorer. The underlying frame sequence remains
 /// sealed; callers receive only success or one non-sensitive failure reason.
@@ -433,6 +527,53 @@ fn decision_record_v1(
 fn player_visible_postcondition_decision_record_v1(
     sequence: u64,
     confirmed: &CheckedUntrustedMtgoPlayerVisibleGameplayPostconditionV1,
+) -> Result<MtgoCompetitivePlayerVisibleDecisionRecordV1, MtgoContractErrorV1> {
+    if confirmed.source_frame_id_v1() == 0
+        || confirmed.after_frame_id_v1() == 0
+        || confirmed.source_frame_id_v1() == confirmed.after_frame_id_v1()
+        || confirmed.source_frame_sequence_v1() == 0
+        || confirmed.after_frame_sequence_v1() <= confirmed.source_frame_sequence_v1()
+        || confirmed
+            .player_visible_decision_v1()
+            .current_state
+            .acting_player
+            != player_visible_action_actor_v1(
+                &confirmed.player_visible_decision_v1().selected_action,
+            )
+    {
+        return Err(error_v1(
+            "competitive_player_visible_history_source",
+            "confirmed gameplay source and after-frame identities are inconsistent",
+        ));
+    }
+    for digest in [
+        confirmed.source_frame_sha256_v1(),
+        confirmed.decision_commitment_sha256_v1(),
+        confirmed.selection_commitment_sha256_v1(),
+        confirmed.deployment_commitment_sha256_v1(),
+        confirmed.confirmation_commitment_sha256_v1(),
+    ] {
+        require_sha256_v1(digest)?;
+    }
+    Ok(MtgoCompetitivePlayerVisibleDecisionRecordV1 {
+        sequence,
+        source_frame_id: confirmed.source_frame_id_v1(),
+        source_frame_sequence: confirmed.source_frame_sequence_v1(),
+        source_frame_sha256: confirmed.source_frame_sha256_v1().to_owned(),
+        after_frame_id: confirmed.after_frame_id_v1(),
+        after_frame_sequence: confirmed.after_frame_sequence_v1(),
+        player_visible_decision: confirmed.player_visible_decision_v1().clone(),
+        decision_commitment_sha256: confirmed.decision_commitment_sha256_v1().to_owned(),
+        selection_commitment_sha256: confirmed.selection_commitment_sha256_v1().to_owned(),
+        visible_postcondition_commitment_sha256: confirmed
+            .confirmation_commitment_sha256_v1()
+            .to_owned(),
+    })
+}
+
+fn direct_visible_postcondition_decision_record_v1(
+    sequence: u64,
+    confirmed: &CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
 ) -> Result<MtgoCompetitivePlayerVisibleDecisionRecordV1, MtgoContractErrorV1> {
     if confirmed.source_frame_id_v1() == 0
         || confirmed.after_frame_id_v1() == 0

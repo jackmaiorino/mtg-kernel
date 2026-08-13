@@ -31,9 +31,11 @@ pub struct MtgoDirectVisibleCompetitiveObservationBracketV1 {
     pub capture_role: String,
     pub before_frame_id: u64,
     pub before_frame_sequence: u64,
+    pub before_captured_at_unix_millis: u128,
     pub before_frame_sha256: String,
     pub after_frame_id: u64,
     pub after_frame_sequence: u64,
+    pub after_captured_at_unix_millis: u128,
     pub after_frame_sha256: String,
     pub client_size_px: MtgoSizePxV1,
     pub before_decision_regions_sha256: String,
@@ -67,6 +69,7 @@ pub struct MtgoDirectVisibleCompetitiveObservationBracketV1 {
 pub struct CheckedUntrustedMtgoDirectVisibleCompetitiveActionPlanV1 {
     _selection: CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1,
     _lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    observation_bracket: MtgoDirectVisibleCompetitiveObservationBracketV1,
     event_kind: MtgoCompetitiveEventKindV1,
     game_number: u8,
     selected_index: usize,
@@ -115,6 +118,66 @@ impl CheckedUntrustedMtgoDirectVisibleCompetitiveActionPlanV1 {
 
     pub fn direct_competitive_scope_commitment_sha256_v1(&self) -> &str {
         &self.direct_competitive_scope_commitment_sha256
+    }
+
+    pub(crate) fn event_identity_sha256_v1(&self) -> &str {
+        self._lifecycle
+            .event_identity_sha256_v1()
+            .expect("validated match-in-progress lifecycle has an event identity")
+    }
+
+    pub(crate) fn match_identity_sha256_v1(&self) -> &str {
+        self._lifecycle
+            .match_identity_sha256_v1()
+            .expect("validated match-in-progress lifecycle has a match identity")
+    }
+
+    pub(crate) fn deployment_commitment_sha256_v1(&self) -> &str {
+        self._selection.deployment_commitment_sha256_v1()
+    }
+
+    pub(crate) fn decision_commitment_sha256_v1(&self) -> &str {
+        self._selection.model_input_commitment_sha256_v1()
+    }
+
+    pub(crate) fn selection_commitment_sha256_v1(&self) -> &str {
+        self._selection.selection_commitment_sha256_v1()
+    }
+
+    pub(crate) fn refresh_commitment_sha256_v1(&self) -> &str {
+        self._selection.refresh_commitment_sha256_v1()
+    }
+
+    pub(crate) fn exact_producer_result_sha256_v1(&self) -> &str {
+        self._selection.exact_producer_result_sha256_v1()
+    }
+
+    pub(crate) fn source_frame_id_v1(&self) -> u64 {
+        self.observation_bracket.after_frame_id
+    }
+
+    pub(crate) fn source_frame_sequence_v1(&self) -> u64 {
+        self.observation_bracket.after_frame_sequence
+    }
+
+    pub(crate) fn source_captured_at_unix_millis_v1(&self) -> u128 {
+        self.observation_bracket.after_captured_at_unix_millis
+    }
+
+    pub(crate) fn source_frame_sha256_v1(&self) -> &str {
+        &self.observation_bracket.after_frame_sha256
+    }
+
+    pub(crate) fn client_size_px_v1(&self) -> &MtgoSizePxV1 {
+        &self.observation_bracket.client_size_px
+    }
+
+    pub(crate) fn broker_binary_sha256_v1(&self) -> &str {
+        &self.observation_bracket.broker_binary_sha256
+    }
+
+    pub(crate) fn producer_binary_sha256_v1(&self) -> &str {
+        &self.observation_bracket.producer_binary_sha256
     }
 
     pub fn safe_for_live_input_v1(&self) -> bool {
@@ -190,6 +253,7 @@ pub fn bind_refreshed_direct_visible_selection_to_competitive_match_v1(
     Ok(CheckedUntrustedMtgoDirectVisibleCompetitiveActionPlanV1 {
         _selection: selection,
         _lifecycle: lifecycle,
+        observation_bracket: bracket,
         event_kind,
         game_number,
         selected_index,
@@ -238,6 +302,8 @@ fn validate_bracket_v1(
         || bracket.before_frame_id == bracket.after_frame_id
         || bracket.before_frame_sequence == 0
         || bracket.after_frame_sequence <= bracket.before_frame_sequence
+        || bracket.before_captured_at_unix_millis == 0
+        || bracket.after_captured_at_unix_millis < bracket.before_captured_at_unix_millis
         || bracket.before_frame_sha256 == bracket.after_frame_sha256
         || bracket.before_decision_regions_sha256 != bracket.after_decision_regions_sha256
     {
@@ -292,7 +358,7 @@ fn error_v1(code: &'static str, detail: impl Into<String>) -> MtgoContractErrorV
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::{
         refresh_direct_visible_selection_before_dispatch_v1,
@@ -449,9 +515,11 @@ mod tests {
             capture_role: CAPTURE_ROLE_V1.to_owned(),
             before_frame_id: 101,
             before_frame_sequence: 201,
+            before_captured_at_unix_millis: 1_000,
             before_frame_sha256: digest_v1('1'),
             after_frame_id: 102,
             after_frame_sequence: 202,
+            after_captured_at_unix_millis: 1_001,
             after_frame_sha256: digest_v1('2'),
             client_size_px: MtgoSizePxV1 {
                 width: 1_240,
@@ -501,6 +569,20 @@ mod tests {
             exact_match_gameplay_authorized: true,
             valid_through_frame_sequence: 250,
         }
+    }
+
+    pub(crate) fn competitive_plan_v1(
+        event_kind: MtgoCompetitiveEventKindV1,
+    ) -> CheckedUntrustedMtgoDirectVisibleCompetitiveActionPlanV1 {
+        let bytes = visible_result_v1();
+        bind_refreshed_direct_visible_selection_to_competitive_match_v1(
+            refreshed_selection_v1(&bytes),
+            bracket_v1(),
+            lifecycle_v1(event_kind),
+            &mode_v1(event_kind),
+            &gameplay_authorization_v1(event_kind),
+        )
+        .unwrap()
     }
 
     #[test]
