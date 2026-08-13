@@ -5,8 +5,10 @@ use super::{
 };
 use mtgo_blackbox_v1::{
     parse_and_validate_visible_duel_producer_result_v1,
+    refresh_direct_visible_selection_before_dispatch_v1,
     score_and_select_strict_visible_duel_producer_result_v1, AdmittedMtgoDuelPerceptionProfileV1,
-    CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1, MtgoPlayerVisibleDuelScorerV1,
+    CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
+    CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1, MtgoPlayerVisibleDuelScorerV1,
     MtgoVisibleDuelViewModelBrokerAbstentionReasonV1, MtgoVisibleDuelViewModelBrokerResultV1,
 };
 use sha2::{Digest, Sha256};
@@ -31,6 +33,8 @@ const DIRECT_VISIBLE_SOURCE_OBSERVATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-observation-v1";
 const DIRECT_VISIBLE_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-no-stakes-qualification-v1";
+const DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-source-scored-refresh-v1";
 const RATIFIED_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
 const PINNED_MTGO_EXECUTABLE_SHA256_V1: &str =
     "bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92";
@@ -124,6 +128,16 @@ pub struct MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1 {
     pub after_capture_commitment_sha256: String,
     pub sanitized_result_sha256: String,
     pub qualification_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoRefreshedAttestedDirectVisibleSelectionCommitmentsV1 {
+    pub runtime_identity_commitment_sha256: String,
+    pub initial_observation_commitment_sha256: String,
+    pub refreshed_observation_commitment_sha256: String,
+    pub selection_commitment_sha256: String,
+    pub refresh_commitment_sha256: String,
+    pub scored_refresh_commitment_sha256: String,
 }
 
 /// One exact release-pinned producer execution. Both composed frames and the
@@ -220,6 +234,57 @@ impl OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
     }
 }
 
+/// One selected player-visible action re-observed after scoring through the
+/// exact release-pinned producer. It retains both attested observations and
+/// the generic refreshed selection privately. There is no generic selection,
+/// dispatch, process, event-entry, or spending extractor.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1;
+/// fn cannot_extract_or_act(value: OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1) {
+///     let _ = value.generic_selection();
+///     value.dispatch();
+/// }
+/// ```
+pub struct OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
+    _initial_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    _refreshed_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    selection: CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1,
+    commitments: MtgoRefreshedAttestedDirectVisibleSelectionCommitmentsV1,
+}
+
+impl OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
+    pub fn selected_index_v1(&self) -> usize {
+        self.selection.selected_index_v1()
+    }
+
+    pub fn selected_action_v1(&self) -> &mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1 {
+        self.selection.selected_action_v1()
+    }
+
+    pub fn commitments_v1(&self) -> MtgoRefreshedAttestedDirectVisibleSelectionCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
 /// Consumes one profile-admitted, execution-attested observation into the
 /// player-visible-only scorer only after the exact no-stakes producer
 /// qualification commitment has been pinned in this build. The production
@@ -263,6 +328,101 @@ fn require_ratified_direct_visible_source_qualification_v1(
         );
     }
     Ok(())
+}
+
+/// Re-observes a ratified scored selection through the exact pinned live
+/// producer. A changed visible decision, action order, runtime, profile,
+/// process, window, output, or geometry rejects. The production qualification
+/// root is still empty, so this path remains dormant until live review.
+pub fn refresh_ratified_attested_direct_visible_selection_v1(
+    scored: OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+) -> Result<OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1, String> {
+    let OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
+        _observation: initial_observation,
+        outcome,
+    } = scored;
+    let CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Selected(selection) = outcome else {
+        return Err(
+            "an abstained direct-source observation has no selection to refresh".to_owned(),
+        );
+    };
+    let initial_commitments = initial_observation.commitments_v1();
+    if initial_commitments.runtime_identity_commitment_sha256
+        != runtime.commitments.runtime_identity_commitment_sha256
+        || initial_commitments.broker_binary_sha256 != runtime.commitments.broker_binary_sha256
+        || initial_commitments.producer_binary_sha256 != runtime.commitments.producer_binary_sha256
+    {
+        return Err("scored direct-source observation and refreshed runtime differ".to_owned());
+    }
+    let before_frame = capture_admitted_mtgo_duel_visible_frame_v1(profile, capture_timeout_ms)?;
+    let refreshed_observation = observe_attested_direct_visible_source_v1(
+        before_frame,
+        profile,
+        runtime,
+        capture_timeout_ms,
+        broker_timeout_ms,
+    )?;
+    let refreshed_commitments = refreshed_observation.commitments_v1();
+    validate_same_duel_observation_lineage_v1(
+        &initial_observation._after_frame,
+        &refreshed_observation._before_frame,
+    )?;
+    if refreshed_commitments.runtime_identity_commitment_sha256
+        != initial_commitments.runtime_identity_commitment_sha256
+        || refreshed_commitments.broker_binary_sha256 != initial_commitments.broker_binary_sha256
+        || refreshed_commitments.producer_binary_sha256
+            != initial_commitments.producer_binary_sha256
+        || refreshed_observation
+            ._after_frame
+            .source_frame
+            .manifest
+            .captured_at_unix_millis
+            <= initial_observation
+                ._after_frame
+                .source_frame
+                .manifest
+                .captured_at_unix_millis
+    {
+        return Err(
+            "refreshed direct-source observation is not a newer identical runtime".to_owned(),
+        );
+    }
+    let selection = refresh_direct_visible_selection_before_dispatch_v1(
+        *selection,
+        &refreshed_observation.exact_result_bytes.0,
+    )
+    .map_err(|error| format!("refresh attested direct visible selection: {error}"))?;
+    let scored_refresh_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1,
+        &[
+            initial_commitments.observation_commitment_sha256.as_bytes(),
+            refreshed_commitments
+                .observation_commitment_sha256
+                .as_bytes(),
+            selection.selection_commitment_sha256_v1().as_bytes(),
+            selection.refresh_commitment_sha256_v1().as_bytes(),
+            b"exact_visible_result_reobserved_after_score_no_input_authority",
+        ],
+    );
+    let commitments = MtgoRefreshedAttestedDirectVisibleSelectionCommitmentsV1 {
+        runtime_identity_commitment_sha256: initial_commitments.runtime_identity_commitment_sha256,
+        initial_observation_commitment_sha256: initial_commitments.observation_commitment_sha256,
+        refreshed_observation_commitment_sha256: refreshed_commitments
+            .observation_commitment_sha256,
+        selection_commitment_sha256: selection.selection_commitment_sha256_v1().to_owned(),
+        refresh_commitment_sha256: selection.refresh_commitment_sha256_v1().to_owned(),
+        scored_refresh_commitment_sha256,
+    };
+    Ok(OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
+        _initial_observation: initial_observation,
+        _refreshed_observation: refreshed_observation,
+        selection,
+        commitments,
+    })
 }
 
 impl OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
@@ -969,6 +1129,19 @@ mod tests {
             commitment_v1(
                 DIRECT_VISIBLE_SOURCE_QUALIFICATION_DOMAIN_V1,
                 &[runtime.as_bytes(), b"before", b"after", b"changed-result"],
+            )
+        );
+        let scored_refresh = commitment_v1(
+            DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1,
+            &[b"initial", b"refreshed", b"selection", b"refresh"],
+        );
+        assert_eq!(scored_refresh.len(), 64);
+        assert_ne!(scored_refresh, qualification);
+        assert_ne!(
+            scored_refresh,
+            commitment_v1(
+                DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1,
+                &[b"initial", b"refreshed", b"selection", b"changed"],
             )
         );
     }
