@@ -7,11 +7,11 @@ direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.21 invokes only exact allowlisted getters for the player-visible game
+Version 1.22 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
-and basic two-seat consistency. It also performs thirty-four exact private joins
+and basic two-seat consistency. It also performs thirty-five exact private joins
 from visible enabled prompt controls and the seated player's visible cards to
 the corresponding action objects. Those joins read only visible action labels,
 action type, locally-performable classification, cast, activated, and mana
@@ -73,7 +73,7 @@ combat state only. It carries no client target, action object, input method, or
 dispatch authority. The ordinary selected-index dispatcher explicitly rejects
 this result.
 
-For multiple visible attackers, version 1.21 emits two separate staged results.
+For multiple visible attackers, version 1.22 emits two separate staged results.
 The first presents only the rendered current assignments, unassigned visible
 blockers, visible attacker order, and `Done`. After one blocker is chosen and
 MTGO opens its target prompt, the second presents only the one visibly targeting
@@ -87,13 +87,26 @@ abstains.
 Version 1.21 retains the sealed attacker-step dispatcher for that result. The
 adapter commits the exact source selection, candidate count, and desired
 attacker bit set. On every call the producer completely rebuilds the current
-visible selection, requires the same candidate objects in the same visible
+visible selection, requires the same visible candidate ordinals in the same
 order and the exact visible postcondition expected from the prior step, then
 submits at most the first still-required toggle. It submits `Done` only after
 all candidates visibly match the committed set. A missing, stale,
 contradictory, reordered, or changed selection rejects without input. Plan
-commitments and source-selection hashes are single-use per game. The only
+commitments and source-selection hashes are globally single-use within the
+loaded producer. The only
 outward response is the existing fixed submitted or rejected receipt.
+
+Version 1.22 adds a sealed dispatcher for the staged multi-attacker blocker
+results. A checked first-stage choice can submit exactly one matching visible
+`Block` action or `Done`. After a blocker action, only a fresh target-stage
+observation for the same visible blocker is accepted. The selected attacker is
+then passed through MTGO's own `LeftClickDuringSelectTargets` path using the
+unique loaded visible `Card_View` already bound to that visible target. The
+adapter never reads or exports the target-set candidate list. It accepts no
+later blocker action until a fresh outward observation contains the selected
+blocker under the selected attacker. Between calls the ledger retains only
+visible ordinals, turn, hashes, and one-use commitments. Client objects are
+transaction-local and discarded before the call returns.
 
 The observation method writes that bounded result to an exact broker-created
 local memory channel and returns only a fixed transport status code. A second
@@ -101,9 +114,10 @@ offline-qualified method accepts only the SHA-256 of that exact serialized
 visible decision plus one selected visible action index. It rebuilds the same
 sanitized decision, requires an exact hash match, resolves the same current
 private action binding, and calls the public `IGame.ExecuteAction` method once.
-The same game object rejects every later index for the same exact decision, and
-the decision is marked consumed before the client call. Only a fixed submitted or
-rejected receipt leaves the producer. The client action object never leaves.
+The same exact decision rejects every later index within the loaded producer,
+and the decision is marked consumed before the client call. Only a fixed
+submitted or rejected receipt leaves the producer. The client action object
+never leaves.
 
 The synthetic WPF fixture verifies all intended chrome, zone, card, and private
 visible-action join getters, then passes the serialized result through the
@@ -127,6 +141,9 @@ flags, and proves the ordinary dispatcher performs zero actions for the blocker
 result. It also validates two attackers and two blockers, an existing rendered
 assignment, and the intermediate visible target prompt. The fixture proves the
 backing target-set candidates never enter the serialized result.
+The fixture also runs the full blocker action, target click, visible assignment,
+and `Done` sequence, and proves replay and out-of-stage attempts cannot add a
+client action.
 
 Version 1.5 was loaded into a clean MTGO 3.4.158.4691 process and invoked
 while no duel was open. It returned only the fixed
@@ -152,10 +169,10 @@ represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
 abstention. Target-bearing, X-bearing, sideboard, fake, confirmation, and
 mode-count action state likewise forces abstention until its subsequent
-player-visible modal is represented. Version 1.21 has not been loaded into
+player-visible modal is represented. Version 1.22 has not been loaded into
 MTGO. Version 1.17 remains loaded in the current broker process; no attempt was
 made to replace its locked assembly. A separate deterministic Release build of
-the v1.21 source succeeded outside the client with zero warnings and zero
+the v1.22 source succeeded outside the client with zero warnings and zero
 errors. It has not been live-qualified.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.
@@ -165,6 +182,6 @@ transaction. The broker's `LIVE_QUALIFICATION_2026-08-13.md` records the
 lobby-only load and identity pins.
 
 The v1 replay key is deliberately conservative: a byte-identical visible
-decision later in the same game also rejects. A production broker must replace
-that limitation with a private observation-generation token, without exposing
-the token to the model or operator, before live dispatch is enabled.
+decision later in the loaded producer also rejects. A production broker must
+replace that limitation with a private observation-generation token, without
+exposing the token to the model or operator, before live dispatch is enabled.

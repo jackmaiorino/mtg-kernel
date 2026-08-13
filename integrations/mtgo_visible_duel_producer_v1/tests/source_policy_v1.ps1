@@ -14,8 +14,9 @@ $required = @(
     'DataContext',
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
     'AllowedGetters.Length != 89',
-    'PrivateVisibleActionJoinGetters.Length != 34',
+    'PrivateVisibleActionJoinGetters.Length != 35',
     'PrivateVisibleCombatJoinFields.Length != 2',
+    'PrivateVisibleInteractionMethods.Length != 1',
     'projection_incomplete',
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
     'MemoryMappedFile.OpenExisting',
@@ -57,10 +58,19 @@ $required = @(
     'execute_visible_action_v1|',
     'DispatchVisibleAttackerStepV1',
     'execute_visible_attacker_step_v1|',
+    'DispatchVisibleBlockerStepV1',
+    'execute_visible_blocker_step_v1|',
+    'LeftClickDuringSelectTargets',
+    'AwaitingVisibleAssignment',
+    'SealedVisibleBlockerAssignmentV1',
+    'TryRequireExactCurrentVisibleBlockActionSourceV1',
+    'UsedModelSelectionCommitments',
+    'UsedStepCommitments',
     'AttackerPlanCommitmentSha256V1',
     'UsedSourceSelectionHashes',
     'CompletedVisibleUniverseHashes',
     'ExpectedCurrentSelection',
+    'CandidateVisibleOrdinals',
     'TryBuildSanitizedVisibleAttackerSelectionAndBindingsV1',
     'TryBuildSanitizedVisibleSingleAttackerBlockerSelectionV1',
     'TryBuildSanitizedVisibleMultiAttackerBlockerSelectionV1',
@@ -68,9 +78,8 @@ $required = @(
     'TryReadExactPrivateVisibleCombatFieldV1',
     'ExpectedDecisionSha256',
     'ExecuteAction',
-    'ConditionalWeakTable<object, HashSet<string>>',
-    'DispatchedVisibleDecisionsByGameV1',
-    '!dispatched.Add(request.ExpectedDecisionSha256)'
+    'DispatchedVisibleDecisionsV1',
+    '!DispatchedVisibleDecisionsV1.Add(request.ExpectedDecisionSha256)'
 )
 foreach ($marker in $required) {
     if (-not $completeSource.Contains($marker)) {
@@ -125,7 +134,10 @@ $forbidden = @(
     'ModeIDs',
     'HiddenActions',
     'GlobalActions',
-    'CurrentTurn'
+    'CurrentTurn',
+    'ConditionalWeakTable',
+    'WeakReference',
+    'CandidateCards'
 )
 foreach ($marker in $forbidden) {
     if ($completeSource.Contains($marker)) {
@@ -158,8 +170,8 @@ $privateGetterLines = [regex]::Matches(
     $privateGetterSource,
     '"(?:DuelScene|WotC\.MtGO\.Client\.Model\.Reference)\|[^"\r\n]+\|[^"\r\n]+"'
 )
-if ($privateGetterLines.Count -ne 34) {
-    throw 'producer source must contain exactly 34 private visible-source join getters'
+if ($privateGetterLines.Count -ne 35) {
+    throw 'producer source must contain exactly 35 private visible-source join getters'
 }
 
 $combatStart = $source.IndexOf('private static readonly string[] PrivateVisibleCombatJoinFields')

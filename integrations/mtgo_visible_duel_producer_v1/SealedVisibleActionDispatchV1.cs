@@ -4,9 +4,10 @@ using System.Globalization;
 using System.IO.MemoryMappedFiles;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Windows;
+using System.Windows.Media;
 
 namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
@@ -14,27 +15,34 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
     {
         private const int OrdinaryDispatchCommandSchemaV1 = 2;
         private const int AttackerDispatchCommandSchemaV1 = 3;
-        private const int MaximumDispatchCommandBytesV1 = 256;
+        private const int BlockerDispatchCommandSchemaV1 = 4;
+        private const int MaximumDispatchCommandBytesV1 = 384;
         private const string DispatchCommandPrefixV1 = "execute_visible_action_v1|";
         private const string AttackerDispatchCommandPrefixV1 =
             "execute_visible_attacker_step_v1|";
+        private const string BlockerDispatchCommandPrefixV1 =
+            "execute_visible_blocker_step_v1|";
         private const string AttackerPlanCommitmentDomainV1 =
             "mtgo-visible-attacker-execution-plan-v1";
+        private const string BlockerStepCommitmentDomainV1 =
+            "mtgo-visible-multi-attacker-blocker-execution-step-v1";
         private static readonly byte[] VisibleActionSubmitted = Encoding.UTF8.GetBytes(
             "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"submitted\"}");
         private static readonly byte[] VisibleActionRejected = Encoding.UTF8.GetBytes(
             "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"rejected\"}");
-        private static readonly ConditionalWeakTable<object, HashSet<string>>
-            DispatchedVisibleDecisionsByGameV1 =
-                new ConditionalWeakTable<object, HashSet<string>>();
-        private static readonly object VisibleAttackerPlanLedgerLockV1 = new object();
-        private static readonly List<SealedVisibleAttackerPlanLedgerV1>
-            VisibleAttackerPlanLedgersV1 = new List<SealedVisibleAttackerPlanLedgerV1>();
+        private static readonly object DispatchedVisibleDecisionLockV1 = new object();
+        private static readonly HashSet<string> DispatchedVisibleDecisionsV1 =
+            new HashSet<string>(StringComparer.Ordinal);
+        private static readonly SealedVisibleAttackerPlanLedgerV1
+            VisibleAttackerPlanLedgerV1 = new SealedVisibleAttackerPlanLedgerV1();
+        private static readonly SealedVisibleBlockerPlanLedgerV1
+            VisibleBlockerPlanLedgerV1 = new SealedVisibleBlockerPlanLedgerV1();
 
         internal enum SealedVisibleDispatchKindV1
         {
             OrdinaryAction,
-            AttackerStep
+            AttackerStep,
+            BlockerStep
         }
 
         internal sealed class SealedVisibleAttackerBindingV1
@@ -43,6 +51,25 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             internal uint VisibleOrdinal;
             internal bool CurrentlyAttacking;
             internal object ToggleAction = new object();
+        }
+
+        internal sealed class SealedVisibleBlockerBindingV1
+        {
+            internal object BlockerCard = new object();
+            internal uint BlockerVisibleOrdinal;
+            internal object BlockAction = new object();
+        }
+
+        internal sealed class SealedVisibleBlockerTargetBindingV1
+        {
+            internal object AttackerCard = new object();
+            internal uint AttackerVisibleOrdinal;
+        }
+
+        internal sealed class SealedVisibleBlockerAssignmentV1
+        {
+            internal uint AttackerVisibleOrdinal;
+            internal List<uint> OrderedBlockerVisibleOrdinals = new List<uint>();
         }
 
         internal sealed class SealedVisibleActionDispatchRequestV1
@@ -54,6 +81,11 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             internal ulong DesiredAttackerMask;
             internal string DesiredAttackerMaskHex = string.Empty;
             internal string AttackerPlanCommitmentSha256 = string.Empty;
+            internal char BlockerOperationKind;
+            internal uint BlockerVisibleOrdinal;
+            internal uint AttackerVisibleOrdinal;
+            internal string ModelSelectionCommitmentSha256 = string.Empty;
+            internal string BlockerStepCommitmentSha256 = string.Empty;
         }
 
         private sealed class SealedVisibleAttackerPlanStateV1
@@ -63,17 +95,44 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             internal ulong DesiredMask;
             internal uint Turn;
             internal string VisibleUniverseSha256 = string.Empty;
-            internal List<object> CandidateCards = new List<object>();
+            internal uint[] CandidateVisibleOrdinals = Array.Empty<uint>();
             internal bool[] ExpectedCurrentSelection = Array.Empty<bool>();
         }
 
         private sealed class SealedVisibleAttackerPlanLedgerV1
         {
-            internal WeakReference Game = new WeakReference(new object());
             internal SealedVisibleAttackerPlanStateV1? ActivePlan;
             internal HashSet<string> UsedPlanCommitments =
                 new HashSet<string>(StringComparer.Ordinal);
             internal HashSet<string> UsedSourceSelectionHashes =
+                new HashSet<string>(StringComparer.Ordinal);
+            internal HashSet<string> CompletedVisibleUniverseHashes =
+                new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        private enum SealedVisibleBlockerPlanPhaseV1
+        {
+            AwaitingTargetPrompt,
+            AwaitingVisibleAssignment
+        }
+
+        private sealed class SealedVisibleBlockerPlanStateV1
+        {
+            internal SealedVisibleBlockerPlanPhaseV1 Phase;
+            internal uint BlockerVisibleOrdinal;
+            internal uint AttackerVisibleOrdinal;
+            internal uint Turn;
+            internal string VisibleUniverseSha256 = string.Empty;
+        }
+
+        private sealed class SealedVisibleBlockerPlanLedgerV1
+        {
+            internal SealedVisibleBlockerPlanStateV1? ActivePlan;
+            internal HashSet<string> UsedSourceSelectionHashes =
+                new HashSet<string>(StringComparer.Ordinal);
+            internal HashSet<string> UsedModelSelectionCommitments =
+                new HashSet<string>(StringComparer.Ordinal);
+            internal HashSet<string> UsedStepCommitments =
                 new HashSet<string>(StringComparer.Ordinal);
             internal HashSet<string> CompletedVisibleUniverseHashes =
                 new HashSet<string>(StringComparer.Ordinal);
@@ -103,7 +162,9 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     }
                     int expectedSchema = expectedKind == SealedVisibleDispatchKindV1.OrdinaryAction
                         ? OrdinaryDispatchCommandSchemaV1
-                        : AttackerDispatchCommandSchemaV1;
+                        : expectedKind == SealedVisibleDispatchKindV1.AttackerStep
+                            ? AttackerDispatchCommandSchemaV1
+                            : BlockerDispatchCommandSchemaV1;
                     if (schema != expectedSchema || length <= 0 ||
                         length > MaximumDispatchCommandBytesV1)
                     {
@@ -135,7 +196,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                             SelectedIndex = index
                         };
                     }
-                    else
+                    else if (expectedKind == SealedVisibleDispatchKindV1.AttackerStep)
                     {
                         if (parts.Length != 5 ||
                             !string.Equals(parts[0], AttackerDispatchCommandPrefixV1.TrimEnd('|'), StringComparison.Ordinal) ||
@@ -161,6 +222,34 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                             AttackerPlanCommitmentSha256 = parts[4]
                         };
                     }
+                    else
+                    {
+                        if (parts.Length != 8 ||
+                            !string.Equals(parts[0], BlockerDispatchCommandPrefixV1.TrimEnd('|'), StringComparison.Ordinal) ||
+                            !IsLowerSha256V1(parts[1]) ||
+                            !int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out int selectedIndex) ||
+                            selectedIndex < 0 || selectedIndex >= 64 ||
+                            !string.Equals(parts[2], selectedIndex.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal) ||
+                            parts[3].Length != 1 || "fbt".IndexOf(parts[3][0]) < 0 ||
+                            !TryParseVisibleOrdinalOrSentinelV1(parts[4], parts[3][0] != 'f', out uint blockerOrdinal) ||
+                            !TryParseVisibleOrdinalOrSentinelV1(parts[5], parts[3][0] == 't', out uint attackerOrdinal) ||
+                            !IsLowerSha256V1(parts[6]) ||
+                            !IsLowerSha256V1(parts[7]))
+                        {
+                            return false;
+                        }
+                        request = new SealedVisibleActionDispatchRequestV1
+                        {
+                            Kind = expectedKind,
+                            ExpectedDecisionSha256 = parts[1],
+                            SelectedIndex = selectedIndex,
+                            BlockerOperationKind = parts[3][0],
+                            BlockerVisibleOrdinal = blockerOrdinal,
+                            AttackerVisibleOrdinal = attackerOrdinal,
+                            ModelSelectionCommitmentSha256 = parts[6],
+                            BlockerStepCommitmentSha256 = parts[7]
+                        };
+                    }
                     Array.Clear(bytes, 0, bytes.Length);
                     return true;
                 }
@@ -170,6 +259,27 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 request = null;
                 return false;
             }
+        }
+
+        private static bool TryParseVisibleOrdinalOrSentinelV1(
+            string value,
+            bool required,
+            out uint ordinal)
+        {
+            ordinal = 0;
+            if (!required)
+            {
+                return string.Equals(value, "-", StringComparison.Ordinal);
+            }
+            return uint.TryParse(
+                    value,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out ordinal) &&
+                string.Equals(
+                    value,
+                    ordinal.ToString(CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal);
         }
 
         private static bool TryExecuteSealedVisibleActionV1(
@@ -196,18 +306,15 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             {
                 return false;
             }
-            HashSet<string> dispatched = DispatchedVisibleDecisionsByGameV1.GetValue(
-                game,
-                _ => new HashSet<string>(StringComparer.Ordinal));
-            // One exact visible decision authorizes at most one client call,
-            // regardless of which index a later request supplies. This is a
-            // deliberately fail-closed v1 key: a byte-identical state later in
-            // the same game remains unavailable until the broker owns a
-            // private observation-generation token.
-            if (dispatched.Count >= 4096 ||
-                !dispatched.Add(request.ExpectedDecisionSha256))
+            // One exact visible decision authorizes at most one client call.
+            // The guard retains only a sanitized hash, never the game object.
+            lock (DispatchedVisibleDecisionLockV1)
             {
-                return false;
+                if (DispatchedVisibleDecisionsV1.Count >= 4096 ||
+                    !DispatchedVisibleDecisionsV1.Add(request.ExpectedDecisionSha256))
+                {
+                    return false;
+                }
             }
             // Consumption precedes the client call. If dispatch throws after
             // an unknown amount of work, the same visible decision cannot be
@@ -243,8 +350,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return false;
             }
 
-            SealedVisibleAttackerPlanLedgerV1 ledger =
-                GetVisibleAttackerPlanLedgerV1(game);
+            SealedVisibleAttackerPlanLedgerV1 ledger = VisibleAttackerPlanLedgerV1;
             lock (ledger)
             {
                 SealedVisibleAttackerPlanStateV1? state = ledger.ActivePlan;
@@ -273,7 +379,9 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                         DesiredMask = request.DesiredAttackerMask,
                         Turn = turn,
                         VisibleUniverseSha256 = visibleUniverseSha256,
-                        CandidateCards = bindings.Select(binding => binding.Card).ToList(),
+                        CandidateVisibleOrdinals = bindings
+                            .Select(binding => binding.VisibleOrdinal)
+                            .ToArray(),
                         ExpectedCurrentSelection = bindings.Select(binding => binding.CurrentlyAttacking).ToArray()
                     };
                     ledger.ActivePlan = state;
@@ -294,14 +402,14 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     return false;
                 }
 
-                if (state.CandidateCards.Count != bindings.Count ||
+                if (state.CandidateVisibleOrdinals.Length != bindings.Count ||
                     state.ExpectedCurrentSelection.Length != bindings.Count)
                 {
                     return false;
                 }
                 for (int index = 0; index < bindings.Count; index++)
                 {
-                    if (!ReferenceEquals(state.CandidateCards[index], bindings[index].Card) ||
+                    if (state.CandidateVisibleOrdinals[index] != bindings[index].VisibleOrdinal ||
                         state.ExpectedCurrentSelection[index] != bindings[index].CurrentlyAttacking)
                     {
                         // A missing or contradictory visible postcondition
@@ -358,29 +466,367 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             }
         }
 
-        private static SealedVisibleAttackerPlanLedgerV1 GetVisibleAttackerPlanLedgerV1(
-            object game)
+        private static bool TryExecuteSealedVisibleBlockerStepV1(
+            FrameworkElement duelRoot,
+            object viewModel,
+            byte[] currentSanitizedSelection,
+            List<SealedVisibleBlockerBindingV1>? blockerBindings,
+            List<SealedVisibleBlockerAssignmentV1>? visibleAssignments,
+            object? doneAction,
+            object? targetingBlockerCard,
+            uint targetingBlockerVisibleOrdinal,
+            List<SealedVisibleBlockerTargetBindingV1>? targetBindings,
+            uint turn,
+            string visibleUniverseSha256,
+            SealedVisibleActionDispatchRequestV1 request)
         {
-            lock (VisibleAttackerPlanLedgerLockV1)
+            string currentSha256 = LowerSha256V1(currentSanitizedSelection);
+            if (request.Kind != SealedVisibleDispatchKindV1.BlockerStep ||
+                !string.Equals(currentSha256, request.ExpectedDecisionSha256, StringComparison.Ordinal) ||
+                !IsLowerSha256V1(visibleUniverseSha256) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "Game",
+                    out object? game) || game == null)
             {
-                for (int index = VisibleAttackerPlanLedgersV1.Count - 1; index >= 0; index--)
+                return false;
+            }
+
+            SealedVisibleBlockerPlanLedgerV1 ledger = VisibleBlockerPlanLedgerV1;
+            lock (ledger)
+            {
+                if (request.BlockerOperationKind != 't' && ledger.ActivePlan != null)
                 {
-                    object? target = VisibleAttackerPlanLedgersV1[index].Game.Target;
-                    if (target == null)
+                    SealedVisibleBlockerPlanStateV1 pending = ledger.ActivePlan;
+                    if (pending.Turn != turn ||
+                        !string.Equals(
+                            pending.VisibleUniverseSha256,
+                            visibleUniverseSha256,
+                            StringComparison.Ordinal))
                     {
-                        VisibleAttackerPlanLedgersV1.RemoveAt(index);
+                        // A visibly different game/turn/universe retires the
+                        // stale transaction but never authorizes this call.
+                        ledger.ActivePlan = null;
+                        return false;
                     }
-                    else if (ReferenceEquals(target, game))
+                    if (pending.Phase != SealedVisibleBlockerPlanPhaseV1.AwaitingVisibleAssignment ||
+                        blockerBindings == null || visibleAssignments == null ||
+                        !visibleAssignments.Any(assignment =>
+                            assignment.AttackerVisibleOrdinal == pending.AttackerVisibleOrdinal &&
+                            assignment.OrderedBlockerVisibleOrdinals.Count(
+                                blocker => blocker == pending.BlockerVisibleOrdinal) == 1))
                     {
-                        return VisibleAttackerPlanLedgersV1[index];
+                        return false;
                     }
+                    ledger.ActivePlan = null;
                 }
-                var ledger = new SealedVisibleAttackerPlanLedgerV1
+
+                if (!TryValidateAndConsumeVisibleBlockerStepCommitmentsV1(
+                        ledger,
+                        currentSha256,
+                        request))
                 {
-                    Game = new WeakReference(game)
-                };
-                VisibleAttackerPlanLedgersV1.Add(ledger);
-                return ledger;
+                    return false;
+                }
+
+                if (request.BlockerOperationKind == 'f')
+                {
+                    if (ledger.ActivePlan != null || blockerBindings == null ||
+                        doneAction == null || request.SelectedIndex != 0 ||
+                        !TryResolveExactGameActionExecutorV1(
+                            viewModel,
+                            doneAction,
+                            out object? resolvedGame,
+                            out MethodInfo? execute) ||
+                        resolvedGame == null || execute == null ||
+                        !ReferenceEquals(game, resolvedGame) ||
+                        ledger.CompletedVisibleUniverseHashes.Count >= 4096 ||
+                        !ledger.CompletedVisibleUniverseHashes.Add(visibleUniverseSha256))
+                    {
+                        return false;
+                    }
+                    execute.Invoke(game, new[] { doneAction });
+                    return true;
+                }
+
+                if (request.BlockerOperationKind == 'b')
+                {
+                    if (ledger.ActivePlan != null || blockerBindings == null ||
+                        request.SelectedIndex <= 0 || request.SelectedIndex > blockerBindings.Count)
+                    {
+                        return false;
+                    }
+                    SealedVisibleBlockerBindingV1 binding =
+                        blockerBindings[request.SelectedIndex - 1];
+                    if (binding.BlockerVisibleOrdinal != request.BlockerVisibleOrdinal ||
+                        !TryResolveExactGameActionExecutorV1(
+                            viewModel,
+                            binding.BlockAction,
+                            out object? resolvedGame,
+                            out MethodInfo? execute) ||
+                        resolvedGame == null || execute == null ||
+                        !ReferenceEquals(game, resolvedGame) ||
+                        ledger.CompletedVisibleUniverseHashes.Contains(visibleUniverseSha256))
+                    {
+                        return false;
+                    }
+                    ledger.ActivePlan = new SealedVisibleBlockerPlanStateV1
+                    {
+                        Phase = SealedVisibleBlockerPlanPhaseV1.AwaitingTargetPrompt,
+                        BlockerVisibleOrdinal = binding.BlockerVisibleOrdinal,
+                        Turn = turn,
+                        VisibleUniverseSha256 = visibleUniverseSha256
+                    };
+                    execute.Invoke(game, new[] { binding.BlockAction });
+                    return true;
+                }
+
+                if (request.BlockerOperationKind != 't' ||
+                    ledger.ActivePlan == null || targetBindings == null ||
+                    targetingBlockerCard == null || request.SelectedIndex < 0 ||
+                    request.SelectedIndex >= targetBindings.Count)
+                {
+                    return false;
+                }
+                SealedVisibleBlockerPlanStateV1 state = ledger.ActivePlan;
+                SealedVisibleBlockerTargetBindingV1 target =
+                    targetBindings[request.SelectedIndex];
+                if (state.Turn != turn ||
+                    !string.Equals(state.VisibleUniverseSha256, visibleUniverseSha256, StringComparison.Ordinal))
+                {
+                    ledger.ActivePlan = null;
+                    return false;
+                }
+                if (state.Phase != SealedVisibleBlockerPlanPhaseV1.AwaitingTargetPrompt ||
+                    state.BlockerVisibleOrdinal != targetingBlockerVisibleOrdinal ||
+                    state.BlockerVisibleOrdinal != request.BlockerVisibleOrdinal ||
+                    target.AttackerVisibleOrdinal != request.AttackerVisibleOrdinal ||
+                    !TryRequireExactCurrentVisibleBlockActionSourceV1(
+                        viewModel,
+                        targetingBlockerCard) ||
+                    !TryResolveExactVisibleCardClickV1(
+                        duelRoot,
+                        viewModel,
+                        target.AttackerCard,
+                        out object? cardView,
+                        out MethodInfo? leftClick) ||
+                    cardView == null || leftClick == null)
+                {
+                    return false;
+                }
+                state.Phase = SealedVisibleBlockerPlanPhaseV1.AwaitingVisibleAssignment;
+                state.AttackerVisibleOrdinal = target.AttackerVisibleOrdinal;
+                leftClick.Invoke(viewModel, new[] { cardView, cardView });
+                return true;
+            }
+        }
+
+        private static bool TryRequireExactCurrentVisibleBlockActionSourceV1(
+            object viewModel,
+            object blockerCard)
+        {
+            if (!TryReadExactPrivateVisibleActionPropertyV1(
+                    blockerCard,
+                    "DuelScene",
+                    "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                    "Actions",
+                    out object? actionsValue) ||
+                !TryBoundedCollectionV1(actionsValue, 64, out List<object> actions) ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "InteractionState",
+                    out object? interactionState) || interactionState == null ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    interactionState,
+                    "DuelScene",
+                    "Shiny.Play.Duel.Utility.InteractionState",
+                    "Source",
+                    out object? source) || source == null)
+            {
+                return false;
+            }
+            var matches = new List<object>();
+            foreach (object action in actions)
+            {
+                if (!TryReadExactPrivateVisibleActionPropertyV1(
+                        action,
+                        "WotC.MtGO.Client.Model.Reference",
+                        "WotC.MtGO.Client.Model.Play.IGameAction",
+                        "Name",
+                        out object? nameValue) || !(nameValue is string name) ||
+                    !IsBoundedVisibleStringV1(name, 512, true))
+                {
+                    return false;
+                }
+                if (string.Equals(name, "Block", StringComparison.Ordinal))
+                {
+                    if (!TryRequireSimpleVisibleMultiAttackerBlockerActionV1(action))
+                    {
+                        return false;
+                    }
+                    matches.Add(action);
+                }
+            }
+            return matches.Count == 1 && ReferenceEquals(matches[0], source);
+        }
+
+        private static bool TryValidateAndConsumeVisibleBlockerStepCommitmentsV1(
+            SealedVisibleBlockerPlanLedgerV1 ledger,
+            string sourceSelectionSha256,
+            SealedVisibleActionDispatchRequestV1 request)
+        {
+            string blocker = request.BlockerOperationKind == 'f'
+                ? "-"
+                : request.BlockerVisibleOrdinal.ToString(CultureInfo.InvariantCulture);
+            string attacker = request.BlockerOperationKind == 't'
+                ? request.AttackerVisibleOrdinal.ToString(CultureInfo.InvariantCulture)
+                : "-";
+            string expected = BlockerStepCommitmentSha256V1(
+                sourceSelectionSha256,
+                request.SelectedIndex,
+                request.BlockerOperationKind.ToString(),
+                blocker,
+                attacker,
+                request.ModelSelectionCommitmentSha256);
+            if (!string.Equals(expected, request.BlockerStepCommitmentSha256, StringComparison.Ordinal) ||
+                ledger.UsedSourceSelectionHashes.Count >= 4096 ||
+                ledger.UsedModelSelectionCommitments.Count >= 4096 ||
+                ledger.UsedStepCommitments.Count >= 4096 ||
+                !ledger.UsedSourceSelectionHashes.Add(sourceSelectionSha256) ||
+                !ledger.UsedModelSelectionCommitments.Add(request.ModelSelectionCommitmentSha256) ||
+                !ledger.UsedStepCommitments.Add(request.BlockerStepCommitmentSha256))
+            {
+                return false;
+            }
+            return true;
+        }
+
+        private static bool TryResolveExactVisibleCardClickV1(
+            FrameworkElement duelRoot,
+            object viewModel,
+            object targetCard,
+            out object? cardView,
+            out MethodInfo? leftClick)
+        {
+            cardView = null;
+            leftClick = null;
+            var matches = new List<FrameworkElement>(2);
+            int visited = 0;
+            if (!CollectExactVisibleCardViewsForDataContextV1(
+                    duelRoot,
+                    targetCard,
+                    0,
+                    ref visited,
+                    matches) || matches.Count != 1)
+            {
+                return false;
+            }
+            FrameworkElement match = matches[0];
+            Type viewModelType = viewModel.GetType();
+            MethodInfo[] methods = viewModelType.GetMethods(
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            MethodInfo? method = methods.SingleOrDefault(candidate =>
+            {
+                ParameterInfo[] parameters = candidate.GetParameters();
+                return string.Equals(candidate.Name, "LeftClickDuringSelectTargets", StringComparison.Ordinal) &&
+                    candidate.ReturnType == typeof(void) && parameters.Length == 2 &&
+                    parameters[0].ParameterType.FullName == "Shiny.Play.Duel.Interfaces.IInteractableItem" &&
+                    parameters[1].ParameterType.FullName == "Shiny.Play.Duel.Card_View" &&
+                    parameters[0].ParameterType.IsInstanceOfType(match) &&
+                    parameters[1].ParameterType.IsInstanceOfType(match);
+            });
+            if (method == null)
+            {
+                return false;
+            }
+            cardView = match;
+            leftClick = method;
+            return true;
+        }
+
+        private static bool CollectExactVisibleCardViewsForDataContextV1(
+            DependencyObject node,
+            object targetCard,
+            int depth,
+            ref int visited,
+            List<FrameworkElement> matches)
+        {
+            if (depth > MaximumVisualDepth || visited >= MaximumVisualNodes)
+            {
+                return false;
+            }
+            visited++;
+            if (node is FrameworkElement element &&
+                element.GetType().FullName == "Shiny.Play.Duel.Card_View" &&
+                ReferenceEquals(element.DataContext, targetCard))
+            {
+                if (!element.IsLoaded || !element.IsVisible ||
+                    element.ActualWidth <= 0 || element.ActualHeight <= 0)
+                {
+                    return false;
+                }
+                matches.Add(element);
+                if (matches.Count > 1)
+                {
+                    return false;
+                }
+            }
+            int childCount = VisualTreeHelper.GetChildrenCount(node);
+            for (int index = 0; index < childCount; index++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(node, index);
+                if (child == null || !CollectExactVisibleCardViewsForDataContextV1(
+                        child,
+                        targetCard,
+                        depth + 1,
+                        ref visited,
+                        matches))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static string BlockerStepCommitmentSha256V1(
+            string sourceSelectionSha256,
+            int selectedIndex,
+            string operationKind,
+            string blocker,
+            string attacker,
+            string modelSelectionCommitmentSha256)
+        {
+            using (SHA256 sha256 = SHA256.Create())
+            {
+                var committed = new List<byte>(384);
+                committed.AddRange(Encoding.ASCII.GetBytes(BlockerStepCommitmentDomainV1));
+                foreach (string part in new[]
+                {
+                    sourceSelectionSha256,
+                    selectedIndex.ToString(CultureInfo.InvariantCulture),
+                    operationKind,
+                    blocker,
+                    attacker,
+                    modelSelectionCommitmentSha256
+                })
+                {
+                    byte[] bytes = Encoding.ASCII.GetBytes(part);
+                    var length = new byte[8];
+                    ulong count = (ulong)bytes.Length;
+                    for (int index = 7; index >= 0; index--)
+                    {
+                        length[index] = (byte)(count & 0xff);
+                        count >>= 8;
+                    }
+                    committed.AddRange(length);
+                    committed.AddRange(bytes);
+                }
+                return string.Concat(sha256.ComputeHash(committed.ToArray()).Select(
+                    item => item.ToString("x2", CultureInfo.InvariantCulture)));
             }
         }
 

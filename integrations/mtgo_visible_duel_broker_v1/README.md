@@ -64,6 +64,15 @@ the unchanged selection is rejected. The observe-only live build rejects this
 command at the same compile-separated gate as ordinary dispatch. No live
 attacker input has been attempted or authorized.
 
+The broker now also carries the dormant blocker-step command. Its payload is
+limited to the exact sanitized source hash, selected visible index, blocker
+stage and visible ordinals, model-selection commitment, and execution-step
+commitment. It contains no client object, target-set content, coordinate, or
+input primitive. The native broker compiles this route with warnings as errors;
+the producer's synthetic WPF fixture covers its staged semantics. The running
+MTGO process still has the older producer loaded, so this new path has not been
+loaded into or invoked against the live client.
+
 The producer v1.5 lobby-only clean-restart result and exact binary manifest are
 recorded in `LIVE_QUALIFICATION_2026-08-13.md`. It returned the expected fixed
 duel-surface abstention. A successful no-stakes duel projection remains open.

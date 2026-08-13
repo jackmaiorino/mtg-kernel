@@ -95,7 +95,7 @@ fn managed_producer_private_visible_action_join_allowlist_matches_audit() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 34);
+    assert_eq!(actual.len(), 35);
     assert_eq!(actual, expected);
     assert!(!source.contains("|WotC.MtGO.Client.Model.Play.IGame|CurrentTurn\""));
 }
@@ -189,9 +189,12 @@ fn managed_producer_has_bounded_output_and_no_unrelated_side_effect_api_markers(
     assert!(source.contains("execute_visible_action_v1|"));
     assert!(source.contains("ExpectedDecisionSha256"));
     assert!(source.contains("ExecuteAction"));
-    assert!(source.contains("ConditionalWeakTable<object, HashSet<string>>"));
-    assert!(source.contains("DispatchedVisibleDecisionsByGameV1"));
-    assert!(source.contains("!dispatched.Add(request.ExpectedDecisionSha256)"));
+    assert!(source.contains("HashSet<string> DispatchedVisibleDecisionsV1"));
+    assert!(source.contains("!DispatchedVisibleDecisionsV1.Add(request.ExpectedDecisionSha256)"));
+    assert!(source.contains("CandidateVisibleOrdinals"));
+    assert!(!source.contains("ConditionalWeakTable<object, HashSet<string>>"));
+    assert!(!source.contains("WeakReference"));
+    assert!(!source.contains("CandidateCards"));
 }
 
 #[test]

@@ -1,7 +1,11 @@
 $ErrorActionPreference = 'Stop'
 
 $root = $PSScriptRoot
-$build = Join-Path $root 'build'
+$build = if ([string]::IsNullOrWhiteSpace($env:MTGO_VISIBLE_DUEL_BROKER_BUILD_DIR)) {
+    Join-Path $root 'build'
+} else {
+    [IO.Path]::GetFullPath($env:MTGO_VISIBLE_DUEL_BROKER_BUILD_DIR)
+}
 $vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
 $netfxInclude = 'C:\Program Files (x86)\Windows Kits\NETFXSDK\4.8\Include\um'
 $netfxLib = 'C:\Program Files (x86)\Windows Kits\NETFXSDK\4.8\Lib\um\x64'
@@ -44,8 +48,8 @@ $liveDispatchBrokerCommand = "call `"$vcvars`" >nul && cl /nologo /std:c++20 /pe
 if ($LASTEXITCODE -ne 0) {
     throw "native live dispatch broker build failed"
 }
-$expectedLiveBrokerSha256 = '040134aab464860a2c46e0f1bd118e80f77b0d66462bb803d9ee68f24b7ce6bb'
-$expectedLiveDispatchBrokerSha256 = 'a02262a54f1b38c449a8e2f450a39955326aab20573d40d313a88f025b9ab099'
+$expectedLiveBrokerSha256 = '513d3ad29fa7767c39eed1bf83c89d3a124e53af04e47310c92a9af1b53781a6'
+$expectedLiveDispatchBrokerSha256 = 'ea299fb49927731eedc033096d359db219fb15bdbbdaa7d9b1b8a57f72d23d87'
 $observedLiveBrokerSha256 = (Get-FileHash -LiteralPath $liveBrokerOut -Algorithm SHA256).Hash.ToLowerInvariant()
 $observedLiveDispatchBrokerSha256 = (Get-FileHash -LiteralPath $liveDispatchBrokerOut -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($observedLiveBrokerSha256 -ne $expectedLiveBrokerSha256) {

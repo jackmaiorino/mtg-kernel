@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.21 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.22 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -146,6 +146,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|Actions",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|GameCard",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|Game",
+            "DuelScene|Shiny.Play.Duel.Utility.InteractionState|Source",
             "DuelScene|Shiny.Play.Duel.ViewModel.OptionButton|Action",
             "DuelScene|Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel|Color",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|DoneButton",
@@ -188,6 +189,15 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.OrderedCombatParticipant|Target"
         };
 
+        // One exact MTGO-owned interaction method. The adapter invokes it
+        // only for the unique rendered Card_View bound to a card already
+        // exported as visibly targetable. MTGO may perform its ordinary
+        // internal legality work, but no target-set value returns to us.
+        private static readonly string[] PrivateVisibleInteractionMethods =
+        {
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|LeftClickDuringSelectTargets|Shiny.Play.Duel.Interfaces.IInteractableItem|Shiny.Play.Duel.Card_View"
+        };
+
         /// <summary>
         /// Writes one bounded broker-result JSON value to the broker-created
         /// local memory channel. The integer result is a fixed transport code
@@ -222,6 +232,19 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             return RunVisibleDecisionTransactionV1(
                 channelName,
                 SealedVisibleDispatchKindV1.AttackerStep);
+        }
+
+        /// <summary>
+        /// Executes one checked staged multi-attacker blocker choice. A
+        /// blocker action must visibly open its matching target prompt, and a
+        /// target click must later produce the matching rendered assignment,
+        /// before another blocker input is accepted.
+        /// </summary>
+        public static int DispatchVisibleBlockerStepV1(string channelName)
+        {
+            return RunVisibleDecisionTransactionV1(
+                channelName,
+                SealedVisibleDispatchKindV1.BlockerStep);
         }
 
         private static int RunVisibleDecisionTransactionV1(
@@ -326,7 +349,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.21 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.22 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -352,6 +375,68 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     currentSelection,
                     attackerBindings,
                     doneAction,
+                    turn,
+                    visibleUniverseSha256,
+                    dispatchRequest)
+                        ? VisibleActionSubmitted
+                        : VisibleActionRejected;
+            }
+            if (dispatchRequest != null &&
+                dispatchRequest.Kind == SealedVisibleDispatchKindV1.BlockerStep)
+            {
+                byte[] currentSelection;
+                uint turn;
+                string visibleUniverseSha256;
+                if (dispatchRequest.BlockerOperationKind == 't')
+                {
+                    if (!TryBuildSanitizedVisibleBlockerTargetSelectionAndBindingsV1(
+                            viewModel,
+                            out currentSelection,
+                            out object? blockerCard,
+                            out uint blockerVisibleOrdinal,
+                            out List<SealedVisibleBlockerTargetBindingV1> targetBindings,
+                            out turn,
+                            out visibleUniverseSha256))
+                    {
+                        return VisibleActionRejected;
+                    }
+                    return TryExecuteSealedVisibleBlockerStepV1(
+                        root,
+                        viewModel,
+                        currentSelection,
+                        null,
+                        null,
+                        null,
+                        blockerCard,
+                        blockerVisibleOrdinal,
+                        targetBindings,
+                        turn,
+                        visibleUniverseSha256,
+                        dispatchRequest)
+                            ? VisibleActionSubmitted
+                            : VisibleActionRejected;
+                }
+                if (!TryBuildSanitizedVisibleMultiAttackerBlockerSelectionAndBindingsV1(
+                        viewModel,
+                        out currentSelection,
+                        out List<SealedVisibleBlockerBindingV1> blockerBindings,
+                        out List<SealedVisibleBlockerAssignmentV1> visibleAssignments,
+                        out object? blockerDoneAction,
+                        out turn,
+                        out visibleUniverseSha256))
+                {
+                    return VisibleActionRejected;
+                }
+                return TryExecuteSealedVisibleBlockerStepV1(
+                    root,
+                    viewModel,
+                    currentSelection,
+                    blockerBindings,
+                    visibleAssignments,
+                    blockerDoneAction,
+                    null,
+                    0,
+                    null,
                     turn,
                     visibleUniverseSha256,
                     dispatchRequest)
@@ -422,10 +507,12 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
             if (AllowedGetters.Length != 89 ||
                 AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 89 ||
-                PrivateVisibleActionJoinGetters.Length != 34 ||
-                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 34 ||
+                PrivateVisibleActionJoinGetters.Length != 35 ||
+                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 35 ||
                 PrivateVisibleCombatJoinFields.Length != 2 ||
-                PrivateVisibleCombatJoinFields.Distinct(StringComparer.Ordinal).Count() != 2)
+                PrivateVisibleCombatJoinFields.Distinct(StringComparer.Ordinal).Count() != 2 ||
+                PrivateVisibleInteractionMethods.Length != 1 ||
+                PrivateVisibleInteractionMethods.Distinct(StringComparer.Ordinal).Count() != 1)
             {
                 return false;
             }
@@ -518,6 +605,40 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     parts[2],
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
                 if (declaringType == null || field == null || field.IsStatic || !field.IsPublic)
+                {
+                    return false;
+                }
+            }
+
+            foreach (string allowed in PrivateVisibleInteractionMethods)
+            {
+                string[] parts = allowed.Split('|');
+                if (parts.Length != 5)
+                {
+                    return false;
+                }
+                Assembly[] assemblies = loadedAssemblies.Where(candidate =>
+                    string.Equals(candidate.GetName().Name, parts[0], StringComparison.Ordinal))
+                    .ToArray();
+                Type? declaringType = assemblies.Length == 1
+                    ? assemblies[0].GetType(parts[1], false, false)
+                    : null;
+                MethodInfo[] methods = declaringType == null
+                    ? Array.Empty<MethodInfo>()
+                    : declaringType.GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
+                        .Where(candidate => string.Equals(
+                            candidate.Name,
+                            parts[2],
+                            StringComparison.Ordinal))
+                        .ToArray();
+                if (methods.Length != 1 || methods[0].ReturnType != typeof(void))
+                {
+                    return false;
+                }
+                ParameterInfo[] parameters = methods[0].GetParameters();
+                if (parameters.Length != 2 ||
+                    parameters[0].ParameterType.FullName != parts[3] ||
+                    parameters[1].ParameterType.FullName != parts[4])
                 {
                     return false;
                 }

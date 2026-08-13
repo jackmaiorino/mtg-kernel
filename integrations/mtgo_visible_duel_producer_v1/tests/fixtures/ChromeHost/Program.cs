@@ -189,6 +189,67 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         application.Run(window);
                         return 0;
                     }
+                    if (args.Length == 1 && string.Equals(
+                            args[0],
+                            "--wait-for-blocker-broker",
+                            StringComparison.Ordinal))
+                    {
+                        seated.Battlefield.Clear();
+                        opponent.Battlefield.Clear();
+                        seated.IsActiveFixture = false;
+                        opponent.IsActiveFixture = true;
+                        var blocker = new DuelSceneCardViewModel
+                        {
+                            NameFixture = "fixture-visible-broker-blocker",
+                            PowerFixture = 2,
+                            ToughnessFixture = 2
+                        };
+                        var blockAction = new VisibleFixtureCardAction
+                        {
+                            NameFixture = "Block",
+                            CastFixture = false
+                        };
+                        blockAction.TargetItems.Add(new VisibleFixtureTargetSet());
+                        blocker.ActionItems.Add(blockAction);
+                        seated.Battlefield.Add(blocker);
+                        opponent.Battlefield.Add(new DuelSceneCardViewModel
+                        {
+                            NameFixture = "fixture-visible-broker-attacker-a",
+                            VisuallyAttackingFixture = true,
+                            ThrowIfActionsReadFixture = true
+                        });
+                        opponent.Battlefield.Add(new DuelSceneCardViewModel
+                        {
+                            NameFixture = "fixture-visible-broker-attacker-b",
+                            VisuallyAttackingFixture = true,
+                            ThrowIfActionsReadFixture = true
+                        });
+                        viewModel.CurrentPhaseFixture = GamePhase.DeclareBlockers;
+                        viewModel.Prompt.ShowOkPromptButtonFixture = false;
+                        viewModel.Prompt.Buttons.Remove(
+                            viewModel.Prompt.OkPromptButtonFixture);
+                        var brokerDoneButton = new OptionButton
+                        {
+                            NameFixture = "Done",
+                            VisibleFixture = true,
+                            EnabledFixture = true,
+                            ActionFixture = new VisibleFixturePromptAction
+                            {
+                                NameFixture = "Done"
+                            }
+                        };
+                        viewModel.Prompt.DoneButtonFixture = brokerDoneButton;
+                        viewModel.Prompt.Buttons.Add(brokerDoneButton);
+                        viewModel.GameFixture.ExpectedAction = blockAction;
+                        var timeout = new DispatcherTimer
+                        {
+                            Interval = TimeSpan.FromMinutes(2)
+                        };
+                        timeout.Tick += (_, __) => window.Close();
+                        timeout.Start();
+                        application.Run(window);
+                        return 0;
+                    }
                     // First exercise the full battlefield and counter getter
                     // surface while an unsupported combat state must abstain.
                     localPermanent.IsAttackingFixture = true;
@@ -929,10 +990,29 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     opponent.Battlefield.Add(secondVisibleAttacker);
                     firstBlockAction.TargetItems.Add(new VisibleFixtureTargetSet());
                     secondBlockAction.TargetItems.Add(new VisibleFixtureTargetSet());
+                    var firstAttackerCardView = new Card_View
+                    {
+                        DataContext = singleVisibleAttacker,
+                        Width = 80,
+                        Height = 112
+                    };
+                    var secondAttackerCardView = new Card_View
+                    {
+                        DataContext = secondVisibleAttacker,
+                        Width = 80,
+                        Height = 112
+                    };
+                    root.Children.Add(firstAttackerCardView);
+                    root.Children.Add(secondAttackerCardView);
+                    window.Dispatcher.Invoke(
+                        DispatcherPriority.Loaded,
+                        new Action(() => { }));
+                    root.UpdateLayout();
                     int multiBlockersStatus =
                         VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+                    byte[] multiBlockersBytes = ReadPayloadFixtureV1(view);
                     string visibleMultiBlockers = Encoding.UTF8.GetString(
-                        ReadPayloadFixtureV1(view));
+                        multiBlockersBytes);
                     if (multiBlockersStatus != 0 ||
                         !visibleMultiBlockers.StartsWith(
                             "{\"result_kind\":\"visible_multi_attacker_blocker_selection\",\"selection\":",
@@ -951,11 +1031,55 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         return 83;
                     }
 
+                    string multiBlockersSha = LowerSha256FixtureV1(multiBlockersBytes);
+                    string chooseBlockerModelCommitment = new string('4', 64);
+                    string chooseBlockerStepCommitment = BlockerStepCommitmentFixtureV1(
+                        multiBlockersSha,
+                        1,
+                        "b",
+                        "0",
+                        "-",
+                        chooseBlockerModelCommitment);
+                    viewModel.GameFixture.ExpectedAction = firstBlockAction;
+                    if (!DispatchBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            multiBlockersSha,
+                            1,
+                            "b",
+                            "0",
+                            "-",
+                            chooseBlockerModelCommitment,
+                            chooseBlockerStepCommitment,
+                            true) ||
+                        viewModel.GameFixture.ExecutionCount != 1 ||
+                        !DispatchBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            multiBlockersSha,
+                            2,
+                            "b",
+                            "1",
+                            "-",
+                            new string('5', 64),
+                            BlockerStepCommitmentFixtureV1(
+                                multiBlockersSha,
+                                2,
+                                "b",
+                                "1",
+                                "-",
+                                new string('5', 64)),
+                            false) || viewModel.GameFixture.ExecutionCount != 1)
+                    {
+                        return 86;
+                    }
+
                     firstBlocker.IsTargetingFixture = true;
                     singleVisibleAttacker.IsTargetableFixture = true;
                     secondVisibleAttacker.IsTargetableFixture = true;
                     viewModel.InteractionStateFixture.ModeFixture =
                         Shiny.Play.Duel.Utility.InteractMode.SelectTargets;
+                    viewModel.InteractionStateFixture.SourceFixture = firstBlockAction;
                     int targetStatus =
                         VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
                     string visibleTargets = Encoding.UTF8.GetString(
@@ -974,37 +1098,102 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         return 84;
                     }
 
-                    firstBlocker.IsTargetingFixture = false;
-                    singleVisibleAttacker.IsTargetableFixture = false;
-                    secondVisibleAttacker.IsTargetableFixture = false;
-                    viewModel.InteractionStateFixture.ModeFixture =
-                        Shiny.Play.Duel.Utility.InteractMode.None;
-                    firstBlocker.VisuallyBlockingFixture = true;
-                    firstBlocker.VisualBlockingOrderItems.Add(
-                        new OrderedCombatParticipant
-                        {
-                            Order = 1,
-                            Target = singleVisibleAttacker.GameCardFixture
-                        });
+                    byte[] targetBytes = ReadPayloadFixtureV1(view);
+                    string targetSha = LowerSha256FixtureV1(targetBytes);
+                    string targetModelCommitment = new string('6', 64);
+                    string targetStepCommitment = BlockerStepCommitmentFixtureV1(
+                        targetSha,
+                        1,
+                        "t",
+                        "0",
+                        "3",
+                        targetModelCommitment);
+                    viewModel.TargetClickBlockerFixture = firstBlocker;
+                    viewModel.TargetClickAttackerFixture = secondVisibleAttacker;
+                    viewModel.TargetClickOtherAttackersFixture.Add(singleVisibleAttacker);
+                    viewModel.TargetClickActionFixture = firstBlockAction;
+                    viewModel.GameFixture.ExpectedAction = firstBlockAction;
+                    if (!DispatchBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            targetSha,
+                            1,
+                            "t",
+                            "0",
+                            "3",
+                            targetModelCommitment,
+                            targetStepCommitment,
+                            true))
+                    {
+                        return 87;
+                    }
+                    if (viewModel.GameFixture.ExecutionCount != 2)
+                    {
+                        return 89;
+                    }
+                    if (viewModel.TargetClickCountFixture != 1)
+                    {
+                        return 90;
+                    }
+
                     int assignedStatus =
                         VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+                    byte[] assignedBytes = ReadPayloadFixtureV1(view);
                     string visibleAssignedBlockers = Encoding.UTF8.GetString(
-                        ReadPayloadFixtureV1(view));
+                        assignedBytes);
                     if (assignedStatus != 0 ||
                         !visibleAssignedBlockers.StartsWith(
                             "{\"result_kind\":\"visible_multi_attacker_blocker_selection\",\"selection\":",
                             StringComparison.Ordinal) ||
                         !visibleAssignedBlockers.Contains(
-                            "\"blocker_assignments\":[{\"attacker\":{\"visible_ordinal\":2},\"ordered_blockers\":[{\"visible_ordinal\":0}]}]") ||
+                            "\"blocker_assignments\":[{\"attacker\":{\"visible_ordinal\":3},\"ordered_blockers\":[{\"visible_ordinal\":0}]}]") ||
                         !visibleAssignedBlockers.Contains(
                             "\"ordered_available_blockers\":[{\"visible_ordinal\":1}]") ||
                         visibleAssignedBlockers.Contains("GameCard"))
                     {
                         return 85;
                     }
+                    string assignedSha = LowerSha256FixtureV1(assignedBytes);
+                    string finishModelCommitment = new string('7', 64);
+                    string finishStepCommitment = BlockerStepCommitmentFixtureV1(
+                        assignedSha,
+                        0,
+                        "f",
+                        "-",
+                        "-",
+                        finishModelCommitment);
+                    viewModel.GameFixture.ExpectedAction = doneButton.ActionFixture;
+                    if (!DispatchBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            assignedSha,
+                            0,
+                            "f",
+                            "-",
+                            "-",
+                            finishModelCommitment,
+                            finishStepCommitment,
+                            true) ||
+                        viewModel.GameFixture.ExecutionCount != 3 ||
+                        !DispatchBlockerStepFixtureV1(
+                            channelName,
+                            view,
+                            assignedSha,
+                            0,
+                            "f",
+                            "-",
+                            "-",
+                            finishModelCommitment,
+                            finishStepCommitment,
+                            false) || viewModel.GameFixture.ExecutionCount != 3)
+                    {
+                        return 88;
+                    }
                     firstBlocker.VisualBlockingOrderItems.Clear();
                     firstBlocker.VisuallyBlockingFixture = false;
+                    viewModel.InteractionStateFixture.SourceFixture = null;
                     opponent.Battlefield.Remove(secondVisibleAttacker);
+                    viewModel.GameFixture.ResetExecutionFixture();
 
                     viewModel.Prompt.Buttons.Remove(doneButton);
                     viewModel.Prompt.DoneButtonFixture = null;
@@ -1334,6 +1523,41 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
             return string.Equals(Encoding.UTF8.GetString(receipt), expected, StringComparison.Ordinal);
         }
 
+        private static bool DispatchBlockerStepFixtureV1(
+            string channelName,
+            MemoryMappedViewAccessor view,
+            string currentSelectionSha256,
+            int selectedIndex,
+            string operationKind,
+            string blockerOrdinal,
+            string attackerOrdinal,
+            string modelSelectionCommitmentSha256,
+            string stepCommitmentSha256,
+            bool expectSubmitted)
+        {
+            byte[] command = Encoding.ASCII.GetBytes(
+                "execute_visible_blocker_step_v1|" + currentSelectionSha256 + "|" +
+                selectedIndex.ToString() + "|" + operationKind + "|" +
+                blockerOrdinal + "|" + attackerOrdinal + "|" +
+                modelSelectionCommitmentSha256 + "|" + stepCommitmentSha256);
+            view.Write(0, command.Length);
+            view.Write(4, 4);
+            view.WriteArray(8, command, 0, command.Length);
+            view.Flush();
+            int status = VisibleDuelProducerV1.DispatchVisibleBlockerStepV1(channelName);
+            int length = view.ReadInt32(0);
+            if (status != 0 || length <= 0 || length > Capacity - 8)
+            {
+                return false;
+            }
+            var receipt = new byte[length];
+            view.ReadArray(8, receipt, 0, receipt.Length);
+            string expected = expectSubmitted
+                ? "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"submitted\"}"
+                : "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"rejected\"}";
+            return string.Equals(Encoding.UTF8.GetString(receipt), expected, StringComparison.Ordinal);
+        }
+
         private static string LowerSha256FixtureV1(byte[] bytes)
         {
             using (SHA256 sha256 = SHA256.Create())
@@ -1368,6 +1592,41 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                 sourceSelectionSha256,
                 candidateCount.ToString(),
                 desiredMaskHex
+            })
+            {
+                byte[] bytes = Encoding.ASCII.GetBytes(part);
+                ulong count = (ulong)bytes.Length;
+                var length = new byte[8];
+                for (int index = 7; index >= 0; index--)
+                {
+                    length[index] = (byte)(count & 0xff);
+                    count >>= 8;
+                }
+                committed.AddRange(length);
+                committed.AddRange(bytes);
+            }
+            return LowerSha256FixtureV1(committed.ToArray());
+        }
+
+        private static string BlockerStepCommitmentFixtureV1(
+            string sourceSelectionSha256,
+            int selectedIndex,
+            string operationKind,
+            string blockerOrdinal,
+            string attackerOrdinal,
+            string modelSelectionCommitmentSha256)
+        {
+            var committed = new System.Collections.Generic.List<byte>();
+            committed.AddRange(Encoding.ASCII.GetBytes(
+                "mtgo-visible-multi-attacker-blocker-execution-step-v1"));
+            foreach (string part in new[]
+            {
+                sourceSelectionSha256,
+                selectedIndex.ToString(),
+                operationKind,
+                blockerOrdinal,
+                attackerOrdinal,
+                modelSelectionCommitmentSha256
             })
             {
                 byte[] bytes = Encoding.ASCII.GetBytes(part);

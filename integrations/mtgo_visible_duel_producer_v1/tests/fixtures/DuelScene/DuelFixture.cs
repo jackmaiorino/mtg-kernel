@@ -28,7 +28,11 @@ namespace WotC.MtGO.Client.Model.Play
 
 namespace Shiny.Play.Duel
 {
-    public sealed class DuelScene : UserControl
+    public sealed class DuelScene : Grid
+    {
+    }
+
+    public sealed class Card_View : Control, Shiny.Play.Duel.Interfaces.IInteractableItem
     {
     }
 
@@ -127,6 +131,23 @@ namespace Shiny.Play.Duel.Utility
         }
 
         public InteractMode ModeFixture { get; set; }
+        public object? Source
+        {
+            get
+            {
+                Shiny.Play.Duel.ViewModel.VisibleActionJoinGetterProbeV1.Record(
+                    "InteractionState.Source");
+                return SourceFixture;
+            }
+        }
+        public object? SourceFixture { get; set; }
+    }
+}
+
+namespace Shiny.Play.Duel.Interfaces
+{
+    public interface IInteractableItem
+    {
     }
 }
 
@@ -469,6 +490,44 @@ namespace Shiny.Play.Duel.ViewModel
             IsVisibleFixture = true
         };
         public VisibleFixtureGame GameFixture { get; } = new VisibleFixtureGame();
+        public DuelSceneCardViewModel? TargetClickBlockerFixture { get; set; }
+        public DuelSceneCardViewModel? TargetClickAttackerFixture { get; set; }
+        public IList<DuelSceneCardViewModel> TargetClickOtherAttackersFixture { get; } =
+            new List<DuelSceneCardViewModel>();
+        public IGameAction? TargetClickActionFixture { get; set; }
+        public int TargetClickCountFixture { get; private set; }
+
+        private void LeftClickDuringSelectTargets(
+            Shiny.Play.Duel.Interfaces.IInteractableItem item,
+            Shiny.Play.Duel.Card_View cardView)
+        {
+            TargetClickCountFixture++;
+            if (!object.ReferenceEquals(item, cardView) ||
+                TargetClickBlockerFixture == null ||
+                TargetClickAttackerFixture == null ||
+                TargetClickActionFixture == null ||
+                !object.ReferenceEquals(cardView.DataContext, TargetClickAttackerFixture))
+            {
+                throw new System.InvalidOperationException(
+                    "unexpected visible target click binding");
+            }
+            TargetClickBlockerFixture.IsTargetingFixture = false;
+            TargetClickAttackerFixture.IsTargetableFixture = false;
+            foreach (DuelSceneCardViewModel other in TargetClickOtherAttackersFixture)
+            {
+                other.IsTargetableFixture = false;
+            }
+            TargetClickBlockerFixture.VisuallyBlockingFixture = true;
+            TargetClickBlockerFixture.VisualBlockingOrderItems.Add(
+                new OrderedCombatParticipant
+                {
+                    Order = 1,
+                    Target = TargetClickAttackerFixture.GameCardFixture
+                });
+            InteractionStateFixture.ModeFixture =
+                Shiny.Play.Duel.Utility.InteractMode.None;
+            GameFixture.ExecuteAction(TargetClickActionFixture);
+        }
     }
 
     public sealed class CardSelectionViewModel
@@ -939,6 +998,7 @@ namespace Shiny.Play.Duel.ViewModel
             string[] required =
             {
                 "Duel.Game",
+                "InteractionState.Source",
                 "DuelCard.Associations",
                 "DuelCard.Actions",
                 "DuelCard.GameCard",

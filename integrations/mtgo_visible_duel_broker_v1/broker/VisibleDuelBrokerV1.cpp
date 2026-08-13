@@ -34,6 +34,8 @@ constexpr wchar_t kProducerDispatchMethodV1[] =
     L"DispatchSelectedVisibleActionV1";
 constexpr wchar_t kProducerAttackerDispatchMethodV1[] =
     L"DispatchVisibleAttackerStepV1";
+constexpr wchar_t kProducerBlockerDispatchMethodV1[] =
+    L"DispatchVisibleBlockerStepV1";
 #ifndef MTGO_LIVE_PINNED_V1
 constexpr wchar_t kOnlyAdmittedTargetFileName[] =
     L"synthetic_managed_host_v1.exe";
@@ -52,9 +54,9 @@ constexpr char kExpectedReferenceSha256[] =
 constexpr char kExpectedBootstrapSha256[] =
     "1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b";
 constexpr char kExpectedProducerSha256[] =
-    "aac76ba607b8026346d3bf84787b687270b099c0ef6c7a483980b5250a3356da";
+    "3a8eab519d053c151ac081eb214a9c0845ee9302ff323c208b83d4c4373e98cd";
 constexpr char kExpectedValidatorSha256[] =
-    "d3236104719a9c064e392bf1061caae407a502fe3b880725e32568999ed590ec";
+    "e95e60bdf3ff6b4e2347609e79b6b9950152912d92cb6105ccef9dc95085fd16";
 #endif
 
 struct VisibleDuelBootstrapParametersV1 {
@@ -535,7 +537,7 @@ int FailV1(const char* code) {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
-  if ((argc != 9 && argc != 13 && argc != 17) ||
+  if ((argc != 9 && argc != 13 && argc != 17 && argc != 23) ||
       wcscmp(argv[1], L"--pid") != 0 ||
       wcscmp(argv[3], L"--bootstrap") != 0 ||
       wcscmp(argv[5], L"--producer") != 0 ||
@@ -547,7 +549,15 @@ int wmain(int argc, wchar_t** argv) {
        (wcscmp(argv[9], L"--attacker-selection-sha256") != 0 ||
         wcscmp(argv[11], L"--candidate-count") != 0 ||
         wcscmp(argv[13], L"--desired-mask") != 0 ||
-        wcscmp(argv[15], L"--plan-sha256") != 0))) {
+        wcscmp(argv[15], L"--plan-sha256") != 0)) ||
+      (argc == 23 &&
+       (wcscmp(argv[9], L"--blocker-selection-sha256") != 0 ||
+        wcscmp(argv[11], L"--selected-index") != 0 ||
+        wcscmp(argv[13], L"--blocker-operation") != 0 ||
+        wcscmp(argv[15], L"--blocker-ordinal") != 0 ||
+        wcscmp(argv[17], L"--attacker-ordinal") != 0 ||
+        wcscmp(argv[19], L"--model-selection-sha256") != 0 ||
+        wcscmp(argv[21], L"--step-sha256") != 0))) {
     return FailV1("arguments");
   }
   wchar_t* pid_end = nullptr;
@@ -560,8 +570,10 @@ int wmain(int argc, wchar_t** argv) {
   }
   bool ordinary_dispatch_requested = argc == 13;
   bool attacker_dispatch_requested = argc == 17;
+  bool blocker_dispatch_requested = argc == 23;
   bool dispatch_requested = ordinary_dispatch_requested ||
-                            attacker_dispatch_requested;
+                            attacker_dispatch_requested ||
+                            blocker_dispatch_requested;
 #if defined(MTGO_LIVE_PINNED_V1) && !defined(MTGO_LIVE_DISPATCH_ADMITTED_V1)
   if (dispatch_requested) {
     return FailV1("live_dispatch_not_admitted");
@@ -613,6 +625,45 @@ int wmain(int argc, wchar_t** argv) {
     dispatch_command.append(argv[14]);
     dispatch_command.push_back(L'|');
     dispatch_command.append(argv[16]);
+  } else if (blocker_dispatch_requested) {
+    auto lower_sha256 = [](const wchar_t* value) {
+      return wcslen(value) == 64 &&
+             std::all_of(value, value + 64, [](wchar_t character) {
+               return (character >= L'0' && character <= L'9') ||
+                      (character >= L'a' && character <= L'f');
+             });
+    };
+    auto canonical_u32_or_sentinel = [](const wchar_t* value, bool required) {
+      if (!required) {
+        return wcscmp(value, L"-") == 0;
+      }
+      wchar_t* end = nullptr;
+      unsigned long parsed = wcstoul(value, &end, 10);
+      return end != nullptr && *end == L'\0' &&
+             parsed <= 0xffffffffUL &&
+             wcscmp(value, std::to_wstring(parsed).c_str()) == 0;
+    };
+    wchar_t* index_end = nullptr;
+    unsigned long selected_index = wcstoul(argv[12], &index_end, 10);
+    bool finish = wcscmp(argv[14], L"f") == 0;
+    bool choose_blocker = wcscmp(argv[14], L"b") == 0;
+    bool choose_target = wcscmp(argv[14], L"t") == 0;
+    if (!lower_sha256(argv[10]) || selected_index >= 64 ||
+        index_end == nullptr || *index_end != L'\0' ||
+        wcscmp(argv[12], std::to_wstring(selected_index).c_str()) != 0 ||
+        (!finish && !choose_blocker && !choose_target) ||
+        !canonical_u32_or_sentinel(argv[16], !finish) ||
+        !canonical_u32_or_sentinel(argv[18], choose_target) ||
+        !lower_sha256(argv[20]) || !lower_sha256(argv[22])) {
+      return FailV1("input_validation");
+    }
+    dispatch_command = L"execute_visible_blocker_step_v1|";
+    for (int index : {10, 12, 14, 16, 18, 20, 22}) {
+      dispatch_command.append(argv[index]);
+      if (index != 22) {
+        dispatch_command.push_back(L'|');
+      }
+    }
   }
   DWORD process_id = static_cast<DWORD>(parsed_pid);
 
@@ -636,7 +687,9 @@ int wmain(int argc, wchar_t** argv) {
   if (dispatch_requested) {
     auto* header = static_cast<std::uint32_t*>(channel_view);
     header[0] = static_cast<std::uint32_t>(dispatch_command.size());
-    header[1] = attacker_dispatch_requested ? 3 : 2;
+    header[1] = blocker_dispatch_requested
+                    ? 4
+                    : (attacker_dispatch_requested ? 3 : 2);
     char* command_bytes = static_cast<char*>(channel_view) + 8;
     for (std::size_t index = 0; index < dispatch_command.size(); ++index) {
       command_bytes[index] = static_cast<char>(dispatch_command[index]);
@@ -721,11 +774,13 @@ int wmain(int argc, wchar_t** argv) {
                    std::size(parameters.channel_name), channel_name.c_str()) ||
       !ExactCopyV1(parameters.producer_method,
                    std::size(parameters.producer_method),
-                    attacker_dispatch_requested
-                        ? kProducerAttackerDispatchMethodV1
-                        : (ordinary_dispatch_requested
-                               ? kProducerDispatchMethodV1
-                               : kProducerObserveMethodV1))) {
+                    blocker_dispatch_requested
+                        ? kProducerBlockerDispatchMethodV1
+                        : (attacker_dispatch_requested
+                               ? kProducerAttackerDispatchMethodV1
+                               : (ordinary_dispatch_requested
+                                      ? kProducerDispatchMethodV1
+                                      : kProducerObserveMethodV1)))) {
     UnmapViewOfFile(channel_view);
     return FailV1("parameter_copy");
   }
