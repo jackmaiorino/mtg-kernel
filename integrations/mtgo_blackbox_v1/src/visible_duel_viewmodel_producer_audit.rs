@@ -53,6 +53,9 @@ pub struct MtgoVisibleDuelViewModelProducerAuditV1 {
     pub broker_created_bounded_local_memory_output_present: bool,
     pub maximum_output_bytes: u32,
     pub output_transport_status_contains_game_information: bool,
+    pub visible_chrome_getter_layer_present: bool,
+    pub visible_chrome_getter_count: u32,
+    pub visible_chrome_values_exported: bool,
     pub action_execution_present: bool,
     pub producer_execution_attested: bool,
     pub full_projection_implemented: bool,
@@ -80,6 +83,14 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
 
     pub fn producer_execution_attested_v1(&self) -> bool {
         false
+    }
+
+    pub fn visible_chrome_getter_layer_present_v1(&self) -> bool {
+        true
+    }
+
+    pub fn visible_chrome_getter_count_v1(&self) -> u32 {
+        19
     }
 
     pub fn full_projection_implemented_v1(&self) -> bool {
@@ -138,6 +149,9 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         broker_created_bounded_local_memory_output_present: true,
         maximum_output_bytes: 1_048_576,
         output_transport_status_contains_game_information: false,
+        visible_chrome_getter_layer_present: true,
+        visible_chrome_getter_count: 19,
+        visible_chrome_values_exported: false,
         action_execution_present: false,
         producer_execution_attested: false,
         full_projection_implemented: false,
@@ -180,6 +194,9 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || !audit.broker_created_bounded_local_memory_output_present
         || audit.maximum_output_bytes != 1_048_576
         || audit.output_transport_status_contains_game_information
+        || !audit.visible_chrome_getter_layer_present
+        || audit.visible_chrome_getter_count != 19
+        || audit.visible_chrome_values_exported
         || audit.action_execution_present
         || audit.producer_execution_attested
         || audit.full_projection_implemented
@@ -272,6 +289,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(checked.allowed_property_count_v1(), 46);
+        assert!(checked.visible_chrome_getter_layer_present_v1());
+        assert_eq!(checked.visible_chrome_getter_count_v1(), 19);
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());
         assert!(!checked.safe_for_live_semantic_evidence_v1());

@@ -80,7 +80,6 @@ fn managed_producer_has_no_raw_output_or_side_effect_api_markers() {
         "GetMembers(",
         "GetProperties(",
         "InvokeMember(",
-        "GetValue(",
         "SetValue(",
         "ExecuteAction",
     ] {
@@ -93,5 +92,44 @@ fn managed_producer_has_no_raw_output_or_side_effect_api_markers() {
     assert!(source.contains("private static bool ValidateExactGetterSurface()"));
     assert!(source.contains("MemoryMappedFile.OpenExisting"));
     assert!(source.contains("private static bool IsExactChannelName"));
-    assert!(source.contains("? ProjectionIncomplete"));
+    assert_eq!(source.matches("property.GetValue(target, null)").count(), 1);
+    assert!(source.contains("private static bool TryReadExactPropertyV1("));
+    assert!(source.contains("private static bool TryValidateVisibleChromeProjectionV1("));
+    assert!(source.contains("private const int MaximumVisibleTextCharacters = 4096;"));
+    assert!(source.contains("private const int MaximumVisibleCollectionItems = 1024;"));
+    assert!(source.matches("return ProjectionIncomplete;").count() >= 2);
+}
+
+#[test]
+fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
+    let source = producer_source_v1();
+    for marker in [
+        "\"CurrentPhase\"",
+        "\"GameTurnText\"",
+        "\"Players\"",
+        "\"PromptBox\"",
+        "\"LocalPlayer\"",
+        "\"Active\"",
+        "\"MatActive\"",
+        "\"Health\"",
+        "\"HandTotal\"",
+        "\"DeckTotal\"",
+        "\"ManaPoolItems\"",
+        "\"ColorString\"",
+        "\"Count\"",
+        "\"IsPromptBoxActive\"",
+        "\"Text\"",
+        "\"StandardButtons\"",
+        "\"Visible\"",
+        "\"Enabled\"",
+        "\"Name\"",
+    ] {
+        assert!(
+            source.contains(marker),
+            "missing exact visible getter: {marker}"
+        );
+    }
+    assert!(source.contains("return ProjectionIncomplete;"));
+    assert!(!source.contains("JsonSerializer"));
+    assert!(!source.contains("JavaScriptSerializer"));
 }

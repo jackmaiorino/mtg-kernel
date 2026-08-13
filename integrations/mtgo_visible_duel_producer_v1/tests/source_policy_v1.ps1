@@ -13,12 +13,21 @@ $required = @(
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
     'MemoryMappedFile.OpenExisting',
     'MaximumOutputBytes',
-    'IsExactChannelName'
+    'IsExactChannelName',
+    'TryValidateVisibleChromeProjectionV1',
+    'TryReadExactPropertyV1',
+    'property.GetValue(target, null)',
+    'MaximumVisibleTextCharacters',
+    'MaximumVisibleCollectionItems'
 )
 foreach ($marker in $required) {
     if (-not $source.Contains($marker)) {
         throw "required visible-producer marker missing: $marker"
     }
+}
+
+if ([regex]::Matches($source, [regex]::Escape('property.GetValue(target, null)')).Count -ne 1) {
+    throw 'producer source must contain exactly one exact allowlisted getter invocation'
 }
 
 $forbidden = @(

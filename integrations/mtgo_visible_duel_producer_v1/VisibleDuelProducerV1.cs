@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO.MemoryMappedFiles;
 using System.Linq;
@@ -12,9 +13,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1 deliberately calls no MTGO property getter and can emit only one
-    /// fixed abstention. It proves the exact WPF root and compile-time getter
-    /// allowlist can be located without heap scanning or unrestricted state.
+    /// V1.1 invokes only the exact allowlisted visible chrome and player-panel
+    /// getters and can emit only fixed abstentions. It proves the exact WPF
+    /// root and bounded public-value route without heap scanning or exporting
+    /// client objects or values.
     /// </summary>
     public static class VisibleDuelProducerV1
     {
@@ -25,6 +27,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private const int MaximumVisualDepth = 256;
         private const int MaximumOutputBytes = 1048576;
         private const int OutputPayloadOffset = 8;
+        private const int MaximumVisibleTextCharacters = 4096;
+        private const int MaximumVisibleCollectionItems = 1024;
 
         private static readonly byte[] DuelSurfaceUnavailable = Encoding.UTF8.GetBytes(
             "{\"result_kind\":\"abstained\",\"reason\":\"duel_surface_unavailable\"}");
@@ -173,9 +177,19 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            return ValidateExactGetterSurface()
-                ? ProjectionIncomplete
-                : SurfaceShapeMismatch;
+            if (!ValidateExactGetterSurface())
+            {
+                return SurfaceShapeMismatch;
+            }
+
+            // V1.1 qualifies the exact visible chrome and player-panel getter
+            // route. The temporary values never leave this call, and the
+            // producer still emits only projection_incomplete.
+            if (!TryValidateVisibleChromeProjectionV1(viewModel))
+            {
+                return ProjectionIncomplete;
+            }
+            return ProjectionIncomplete;
         }
 
         private static bool CollectExactDuelRoots(
@@ -246,6 +260,279 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy);
                 MethodInfo? getter = property?.GetGetMethod(false);
                 if (property == null || property.GetIndexParameters().Length != 0 || getter == null || !getter.IsPublic)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool TryValidateVisibleChromeProjectionV1(object viewModel)
+        {
+            if (!TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "CurrentPhase",
+                    out object? currentPhase) ||
+                currentPhase == null ||
+                currentPhase.GetType().FullName != "WotC.MtGO.Client.Model.Play.GamePhase" ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "GameTurnText",
+                    out object? turnTextValue) ||
+                !(turnTextValue is string turnText) ||
+                !IsBoundedVisibleStringV1(turnText, 128, false) ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "Players",
+                    out object? playersValue) ||
+                !TryBoundedCollectionV1(playersValue, 2, out List<object> players) ||
+                players.Count != 2)
+            {
+                return false;
+            }
+
+            int localPlayers = 0;
+            int activePlayers = 0;
+            int priorityPlayers = 0;
+            foreach (object player in players)
+            {
+                if (!TryValidateVisiblePlayerPanelV1(
+                        player,
+                        out bool localPlayer,
+                        out bool activePlayer,
+                        out bool priorityPlayer))
+                {
+                    return false;
+                }
+                if (localPlayer)
+                {
+                    localPlayers++;
+                }
+                if (activePlayer)
+                {
+                    activePlayers++;
+                }
+                if (priorityPlayer)
+                {
+                    priorityPlayers++;
+                }
+            }
+            if (localPlayers != 1 || activePlayers > 1 || priorityPlayers > 1)
+            {
+                return false;
+            }
+
+            if (!TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "PromptBox",
+                    out object? promptBox) ||
+                promptBox == null ||
+                !TryValidateVisiblePromptV1(promptBox))
+            {
+                return false;
+            }
+            return true;
+        }
+
+        private static bool TryValidateVisiblePlayerPanelV1(
+            object player,
+            out bool localPlayer,
+            out bool activePlayer,
+            out bool priorityPlayer)
+        {
+            localPlayer = false;
+            activePlayer = false;
+            priorityPlayer = false;
+            const string typeName = "Shiny.Play.Duel.ViewModel.PlayerViewModel";
+            if (!TryReadExactPropertyV1(
+                    player, "DuelScene", typeName, "LocalPlayer", out object? localValue) ||
+                !(localValue is bool local) ||
+                !TryReadExactPropertyV1(
+                    player, "DuelScene", typeName, "Active", out object? activeValue) ||
+                !(activeValue is bool active) ||
+                !TryReadExactPropertyV1(
+                    player, "DuelScene", typeName, "MatActive", out object? priorityValue) ||
+                !(priorityValue is bool priority) ||
+                !TryReadExactPropertyV1(
+                    player, "DuelScene", typeName, "Health", out object? lifeValue) ||
+                !(lifeValue is int) ||
+                !TryReadExactPropertyV1(
+                    player, "DuelScene", typeName, "HandTotal", out object? handValue) ||
+                !(handValue is int handCount) || handCount < 0 || handCount > 1000000 ||
+                !TryReadExactPropertyV1(
+                    player, "DuelScene", typeName, "DeckTotal", out object? deckValue) ||
+                !(deckValue is int deckCount) || deckCount < 0 || deckCount > 1000000 ||
+                !TryReadExactPropertyV1(
+                    player,
+                    "DuelScene",
+                    typeName,
+                    "ManaPoolItems",
+                    out object? manaItemsValue) ||
+                !TryBoundedCollectionV1(manaItemsValue, 16, out List<object> manaItems))
+            {
+                return false;
+            }
+
+            foreach (object manaItem in manaItems)
+            {
+                const string manaType = "Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel";
+                if (!TryReadExactPropertyV1(
+                        manaItem,
+                        "DuelScene",
+                        manaType,
+                        "ColorString",
+                        out object? colorValue) ||
+                    !(colorValue is string color) ||
+                    !IsBoundedVisibleStringV1(color, 32, false) ||
+                    !TryReadExactPropertyV1(
+                        manaItem,
+                        "DuelScene",
+                        manaType,
+                        "Count",
+                        out object? countValue) ||
+                    !(countValue is int count) || count < 0 || count > 1000000)
+                {
+                    return false;
+                }
+            }
+
+            localPlayer = local;
+            activePlayer = active;
+            priorityPlayer = priority;
+            return true;
+        }
+
+        private static bool TryValidateVisiblePromptV1(object promptBox)
+        {
+            const string typeName = "Shiny.Play.Duel.ViewModel.PromptBoxViewModel";
+            if (!TryReadExactPropertyV1(
+                    promptBox,
+                    "DuelScene",
+                    typeName,
+                    "IsPromptBoxActive",
+                    out object? activeValue) ||
+                !(activeValue is bool active) ||
+                !TryReadExactPropertyV1(
+                    promptBox, "DuelScene", typeName, "Text", out object? textValue) ||
+                (active && (!(textValue is string text) ||
+                    !IsBoundedVisibleStringV1(text, MaximumVisibleTextCharacters, true))) ||
+                (!active && textValue != null && !(textValue is string)) ||
+                !TryReadExactPropertyV1(
+                    promptBox,
+                    "DuelScene",
+                    typeName,
+                    "StandardButtons",
+                    out object? buttonsValue) ||
+                !TryBoundedCollectionV1(buttonsValue, 64, out List<object> buttons))
+            {
+                return false;
+            }
+
+            foreach (object button in buttons)
+            {
+                const string buttonType = "Shiny.Play.Duel.ViewModel.OptionButton";
+                if (!TryReadExactPropertyV1(
+                        button, "DuelScene", buttonType, "Visible", out object? visibleValue) ||
+                    !(visibleValue is bool visible) ||
+                    !TryReadExactPropertyV1(
+                        button, "DuelScene", buttonType, "Enabled", out object? enabledValue) ||
+                    !(enabledValue is bool) ||
+                    !TryReadExactPropertyV1(
+                        button, "DuelScene", buttonType, "Name", out object? nameValue) ||
+                    (visible && (!(nameValue is string name) ||
+                        !IsBoundedVisibleStringV1(name, 256, true))) ||
+                    (!visible && nameValue != null && !(nameValue is string)))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static bool TryReadExactPropertyV1(
+            object target,
+            string assemblyName,
+            string declaringTypeName,
+            string propertyName,
+            out object? value)
+        {
+            value = null;
+            Assembly[] matchingAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(assembly => string.Equals(
+                    assembly.GetName().Name,
+                    assemblyName,
+                    StringComparison.Ordinal))
+                .ToArray();
+            if (matchingAssemblies.Length != 1)
+            {
+                return false;
+            }
+            Type declaringType = matchingAssemblies[0].GetType(
+                declaringTypeName,
+                false,
+                false);
+            if (declaringType == null || !declaringType.IsInstanceOfType(target))
+            {
+                return false;
+            }
+            PropertyInfo? property = declaringType.GetProperty(
+                propertyName,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy);
+            MethodInfo? getter = property?.GetGetMethod(false);
+            if (property == null || property.GetIndexParameters().Length != 0 ||
+                getter == null || !getter.IsPublic || getter.GetParameters().Length != 0)
+            {
+                return false;
+            }
+            value = property.GetValue(target, null);
+            return true;
+        }
+
+        private static bool TryBoundedCollectionV1(
+            object? value,
+            int maximumItems,
+            out List<object> items)
+        {
+            items = new List<object>();
+            if (value == null || value is string || !(value is IEnumerable enumerable) ||
+                maximumItems < 0 || maximumItems > MaximumVisibleCollectionItems)
+            {
+                return false;
+            }
+            foreach (object? item in enumerable)
+            {
+                if (item == null || items.Count >= maximumItems)
+                {
+                    return false;
+                }
+                items.Add(item);
+            }
+            return true;
+        }
+
+        private static bool IsBoundedVisibleStringV1(
+            string value,
+            int maximumCharacters,
+            bool allowLineBreaks)
+        {
+            if (value.Length == 0 || value.Length > maximumCharacters)
+            {
+                return false;
+            }
+            foreach (char character in value)
+            {
+                if (character == '\0' ||
+                    (char.IsControl(character) &&
+                        !(allowLineBreaks &&
+                            (character == '\r' || character == '\n' || character == '\t'))))
                 {
                     return false;
                 }

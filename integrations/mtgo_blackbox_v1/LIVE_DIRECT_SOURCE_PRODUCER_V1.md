@@ -95,9 +95,12 @@ requires its `DataContext` to be the exact duel view-model type, and checks the
 46-getter candidate surface. The identity-pinned native broker has now loaded
 and invoked that producer once against the exact client, receiving only the
 fixed `duel_surface_unavailable` abstention while no duel was open. It
-deliberately invokes no MTGO getter. This attests the load-and-invoke route only;
-it does not implement a complete projection, attest a duel root, admit a live
-decision, authorize event entry or spending, or send input. Until the reviewed
-producer and corpus exist, DXGI remains the only candidate source for complete
-board and legal-control reconstruction; direct Game Log parsing remains a
+deliberately invoked no MTGO getter in that qualified version. Version 1.1 now
+has an offline-qualified layer that invokes 19 exact getters for player-visible
+chrome and player panels, bounds and type checks their values, discards the
+values, and still emits only `projection_incomplete`. Version 1.1 has not been
+loaded into MTGO. This work does not implement a complete projection, admit a
+live decision, authorize event entry or spending, or send input. Until the
+reviewed complete producer and corpus exist, DXGI remains a candidate source
+for board and legal-control reconstruction; direct Game Log parsing remains a
 supplemental player-visible history source.
