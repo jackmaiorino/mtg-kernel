@@ -442,6 +442,12 @@ cargo run --bin check_mtgo_player_visible_duel_annotations_v1 -- <corpus-id> <ab
 
 `VISIBLE_DUEL_VIEWMODEL_AUDIT_2026-08-12.md` records a metadata-only audit of the installed MTGO 3.4.158.4691 WPF presentation layer. It identifies a plausible direct player-visible projection surface and the co-located backing-model properties that make unrestricted reflection ineligible. The proposed route is an exact compile-time property allowlist whose first exported value is the visible duel decision schema, with composed pixels and the narrow on-screen UI Automation probe retained as qualification and drift checks. The audit accessed no live objects or game state and grants no runtime authority.
 
+`mtgo_visible_duel_viewmodel_candidate_surface_v1` freezes that first metadata candidate list in code. It binds the signed `MTGO.exe`, ClickOnce manifests, `DuelScene.dll`, and `Card.dll` for client 3.4.158.4691; lists each candidate getter with its player-visible context and intended projection fields; and lists backing game, player, zone, card, target, action, identifier, timestamp, account, and card-database properties that are forbidden. Every candidate remains subject to exact reviewed-frame qualification. The checked wrapper has no live-value accessor and every authority flag is false. Print the deterministic review artifact without touching the running client with:
+
+```text
+cargo run --bin print_mtgo_visible_duel_viewmodel_candidate_surface_v1
+```
+
 The local evaluator hashes its own binary and prints only commitments, counts, action families, and fixed false authority flags:
 
 ```text

@@ -111,6 +111,27 @@ broker and producer binaries, and an explicit ratification commitment. This
 audit grants no live evidence, model-scoring, input, event-entry, or spending
 authority.
 
+## Frozen candidate surface
+
+The first version-pinned candidate surface is now encoded in
+`src/visible_duel_viewmodel_surface.rs`. For MTGO 3.4.158.4691 it binds the
+signed executable, ClickOnce manifests, `DuelScene.dll`, and `Card.dll`; lists
+46 UI-facing property candidates with their required visibility context; and
+lists 28 forbidden backing properties. Its deterministic commitment is
+`19f25384a934c7673b2c1e22ad8dfc7bc2cdb35b2d714dd012de954bbe22a1fe`.
+
+The candidate set includes visible phase, player-panel totals and highlights,
+public or explicitly open zones, inherited card presentation values, rendered
+counters, prompt text and controls, and visible action-menu labels. Context is
+part of eligibility. For example, zone cards are eligible only for the seated
+player's hand, a public zone, or a zone the UI explicitly reveals. A face-down
+card cannot export a name merely because the presentation object carries one.
+
+The frozen list remains a metadata audit artifact. It does not demonstrate a
+complete duel projection, attest a live producer, or allow any property value
+to reach the model. Every candidate still requires exact UI-corpus
+qualification, and every authority flag remains false.
+
 ## Accessibility comparison
 
 The existing Windows UI Automation probe is a useful corroborating source, not
