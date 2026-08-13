@@ -132,6 +132,23 @@ complete duel projection, attest a live producer, or allow any property value
 to reach the model. Every candidate still requires exact UI-corpus
 qualification, and every authority flag remains false.
 
+## Narrow broker protocol
+
+`src/visible_duel_viewmodel_broker_protocol.rs` defines the data boundary for
+a future audited producer. A request contains only the pinned candidate
+surface, broker and producer binary digests, client identity, a nonce, and an
+admitted before-frame commitment. A response must bind those exact values, a
+strictly newer after-frame, and an unchanged commitment to the qualified
+visible projection regions.
+
+The only data-bearing success variant is
+`MtgoPlayerVisibleDuelDecisionInputV1`. Failure is one fixed abstention enum.
+Unknown response fields, free-form diagnostics, raw source values, internal
+identifiers, crossed identities, stale frames, changed visible regions, and
+authority claims reject. The protocol wrapper remains structurally untrusted
+and cannot score the model or send input until a separately audited live
+producer and capture owner attest the transaction.
+
 ## Accessibility comparison
 
 The existing Windows UI Automation probe is a useful corroborating source, not

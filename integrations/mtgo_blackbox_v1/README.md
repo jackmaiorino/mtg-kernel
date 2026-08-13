@@ -448,6 +448,8 @@ cargo run --bin check_mtgo_player_visible_duel_annotations_v1 -- <corpus-id> <ab
 cargo run --bin print_mtgo_visible_duel_viewmodel_candidate_surface_v1
 ```
 
+The corresponding broker protocol accepts only immutable producer, client, and visible-frame commitments. Its response can contain only a strictly validated `MtgoPlayerVisibleDuelDecisionInputV1` or a fixed abstention reason. The before and after frames must retain the same commitment to all qualified visible projection regions. The schema cannot represent raw view-model objects, internal IDs, paths, or free-form diagnostics, and its checked wrapper remains non-authorizing until a separate audited live producer exists.
+
 The local evaluator hashes its own binary and prints only commitments, counts, action families, and fixed false authority flags:
 
 ```text
