@@ -2400,12 +2400,22 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         "source.query_results.len() != catalog.len()",
         "pixel-corroborated catalog query identity changed",
         "VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_REPORT_DOMAIN_V1",
+        "evaluate_untrusted_visible_accessibility_catalog_case_v1",
+        "A future corpus evaluator must own any production root",
+        "_source: OpaqueMtgoVisibleAccessibilityPixelCorroborationV1",
+        "visible_absence_reviewed_when_match_count_is_zero",
+        "every_matched_region_visibly_contains_exact_catalog_label",
+        "production_evaluation_ratified_v1(&self) -> bool",
     ] {
         assert!(
             source.contains(required),
             "visible accessibility pixel catalog is missing: {required}"
         );
     }
+    assert!(
+        !source.contains("RATIFIED_VISIBLE_ACCESSIBILITY_CATALOG_EVALUATION_COMMITMENT_V1"),
+        "a single catalog case must not own a production ratification root"
+    );
     for forbidden in ["--query", "CurrentName", "GetCurrentPattern", "SendInput"] {
         assert!(
             !binary.contains(forbidden) && !pixel_binary.contains(forbidden),

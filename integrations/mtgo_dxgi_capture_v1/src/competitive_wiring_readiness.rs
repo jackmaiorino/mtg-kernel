@@ -104,6 +104,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub visible_accessibility_same_frame_pixel_corroboration_present: bool,
     pub visible_accessibility_fixed_known_label_catalog_present: bool,
     pub visible_accessibility_fixed_known_label_pixel_corroboration_present: bool,
+    pub visible_accessibility_catalog_case_evaluation_contract_present: bool,
     pub visible_accessibility_catalog_semantic_evaluation_present: bool,
     pub terminal_outcome_trained_pregame_head_present: bool,
     pub non_model_pregame_scorer_present: bool,
@@ -236,6 +237,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             visible_accessibility_same_frame_pixel_corroboration_present: true,
             visible_accessibility_fixed_known_label_catalog_present: true,
             visible_accessibility_fixed_known_label_pixel_corroboration_present: true,
+            visible_accessibility_catalog_case_evaluation_contract_present: true,
             visible_accessibility_catalog_semantic_evaluation_present: false,
             terminal_outcome_trained_pregame_head_present: false,
             non_model_pregame_scorer_present: true,
@@ -632,6 +634,11 @@ mod tests {
             report
                 .known_wiring_gaps
                 .visible_accessibility_fixed_known_label_pixel_corroboration_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .visible_accessibility_catalog_case_evaluation_contract_present
         );
         assert!(
             !report

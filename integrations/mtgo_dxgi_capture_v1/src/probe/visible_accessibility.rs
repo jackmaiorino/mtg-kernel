@@ -12,6 +12,8 @@ pub const MTGO_VISIBLE_ACCESSIBILITY_PROBE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CORROBORATION_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_ACCESSIBILITY_CATALOG_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_SCHEMA_V1: u32 = 1;
+pub const MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_SCHEMA_V1: u32 = 1;
+pub const MTGO_VISIBLE_ACCESSIBILITY_CATALOG_CASE_EVALUATION_SCHEMA_V1: u32 = 1;
 
 const MAX_VISIBLE_ACCESSIBILITY_QUERIES_V1: usize = 64;
 const MAX_VISIBLE_ACCESSIBILITY_ELEMENTS_V1: i32 = 4_096;
@@ -30,6 +32,10 @@ const VISIBLE_ACCESSIBILITY_CATALOG_REPORT_DOMAIN_V1: &[u8] =
     b"mtgo-visible-accessibility-known-label-catalog-report-v1";
 const VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_REPORT_DOMAIN_V1: &[u8] =
     b"mtgo-visible-accessibility-known-label-pixel-catalog-report-v1";
+const VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-accessibility-known-label-review-v1";
+const VISIBLE_ACCESSIBILITY_CATALOG_CASE_EVALUATION_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-accessibility-known-label-case-evaluation-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,6 +115,91 @@ pub struct MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1 {
     pub safe_for_policy_scoring: bool,
     pub safe_for_input: bool,
     pub report_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityCatalogReviewEntryV1 {
+    pub query_id: String,
+    pub slice: MtgoVisibleAccessibilityCatalogSliceV1,
+    pub expected_visible_text_sha256: String,
+    pub reviewed_exact_visible_match_count: u32,
+    pub reviewed_control_type_ids: Vec<i32>,
+    pub reviewed_private_pixel_match_set_commitment_sha256: String,
+    pub every_matched_region_visibly_contains_exact_catalog_label: bool,
+    pub visible_absence_reviewed_when_match_count_is_zero: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityCatalogReviewV1 {
+    pub schema_version: u32,
+    pub catalog_commitment_sha256: String,
+    pub source_pixel_report_commitment_sha256: String,
+    pub source_window_identity_commitment_sha256: String,
+    pub before_frame_sha256: String,
+    pub after_frame_sha256: String,
+    pub reviewer_alias_sha256: String,
+    pub client_only_and_unobscured_confirmed: bool,
+    pub exact_frame_pair_identity_confirmed: bool,
+    pub entries: Vec<MtgoVisibleAccessibilityCatalogReviewEntryV1>,
+    pub review_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityCatalogCaseEvaluationSummaryV1 {
+    pub schema_version: u32,
+    pub catalog_commitment_sha256: String,
+    pub source_pixel_report_commitment_sha256: String,
+    pub source_window_identity_commitment_sha256: String,
+    pub review_commitment_sha256: String,
+    pub evaluated_entry_count: u32,
+    pub positive_entry_count: u32,
+    pub total_exact_visible_match_count: u32,
+    pub covered_slices: Vec<MtgoVisibleAccessibilityCatalogSliceV1>,
+    pub exact_review_agreement: bool,
+    pub ratification_candidate_commitment_sha256: String,
+    pub production_evaluation_ratified: bool,
+    pub safe_for_semantic_evidence: bool,
+    pub safe_for_policy_scoring: bool,
+    pub safe_for_input: bool,
+}
+
+/// Move-only evaluation of one exact fixed-catalog pixel bracket. It retains
+/// the opaque source so application code cannot replace a real captured case
+/// with copied report hashes. The review is caller-authored and the result is
+/// therefore only a non-authorizing ratification candidate.
+pub struct CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1 {
+    _source: OpaqueMtgoVisibleAccessibilityPixelCorroborationV1,
+    _review: MtgoVisibleAccessibilityCatalogReviewV1,
+    summary: MtgoVisibleAccessibilityCatalogCaseEvaluationSummaryV1,
+}
+
+impl CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1 {
+    pub fn summary_v1(&self) -> MtgoVisibleAccessibilityCatalogCaseEvaluationSummaryV1 {
+        self.summary.clone()
+    }
+
+    pub fn ratification_candidate_commitment_sha256_v1(&self) -> &str {
+        &self.summary.ratification_candidate_commitment_sha256
+    }
+
+    pub fn production_evaluation_ratified_v1(&self) -> bool {
+        self.summary.production_evaluation_ratified
+    }
+
+    pub fn safe_for_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -787,6 +878,17 @@ pub fn probe_mtgo_visible_accessibility_known_label_catalog_with_pixel_corrobora
     build_known_label_pixel_catalog_summary_v1(&catalog, catalog_commitment_sha256, source)
 }
 
+pub fn probe_mtgo_visible_accessibility_known_label_catalog_evaluation_source_v1(
+    window_request: MtgoDxgiCaptureRequestV3,
+) -> Result<OpaqueMtgoVisibleAccessibilityPixelCorroborationV1, String> {
+    let catalog = known_label_catalog_v1();
+    validate_known_label_catalog_v1(&catalog)?;
+    probe_mtgo_visible_accessibility_exact_text_with_pixel_corroboration_v1(
+        window_request,
+        known_label_queries_v1(&catalog),
+    )
+}
+
 pub fn run_visible_accessibility_known_label_catalog_pixel_corroboration_cli_v1(
 ) -> Result<MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1, String> {
     let window_request = parse_catalog_cli_v1()?;
@@ -986,6 +1088,194 @@ fn known_label_pixel_catalog_report_commitment_v1(
         VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_REPORT_DOMAIN_V1,
         &[&bytes],
     ))
+}
+
+pub fn mtgo_visible_accessibility_catalog_review_commitment_v1(
+    review: &MtgoVisibleAccessibilityCatalogReviewV1,
+) -> Result<String, String> {
+    let mut record = review.clone();
+    record.review_commitment_sha256.clear();
+    let bytes = serde_json::to_vec(&record)
+        .map_err(|error| format!("serialize visible accessibility catalog review: {error}"))?;
+    Ok(commitment_v1(
+        VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_DOMAIN_V1,
+        &[&bytes],
+    ))
+}
+
+pub fn evaluate_untrusted_visible_accessibility_catalog_case_v1(
+    source: OpaqueMtgoVisibleAccessibilityPixelCorroborationV1,
+    review: MtgoVisibleAccessibilityCatalogReviewV1,
+) -> Result<CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1, String> {
+    let catalog = known_label_catalog_v1();
+    validate_known_label_catalog_v1(&catalog)?;
+    if source._accessibility_probe._queries != known_label_queries_v1(&catalog) {
+        return Err(
+            "accessibility evaluation source did not use the exact fixed catalog".to_owned(),
+        );
+    }
+    let source_summary = source.summary_v1();
+    if source_summary.report_commitment_sha256 != pixel_summary_commitment_v1(&source_summary)? {
+        return Err("accessibility evaluation source report commitment changed".to_owned());
+    }
+    let catalog_commitment = known_label_catalog_commitment_v1(&catalog)?;
+    let catalog_summary = build_known_label_pixel_catalog_summary_v1(
+        &catalog,
+        catalog_commitment.clone(),
+        source_summary,
+    )?;
+    let summary =
+        evaluate_visible_accessibility_catalog_case_summary_v1(&catalog_summary, &review)?;
+
+    Ok(
+        CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1 {
+            _source: source,
+            _review: review,
+            summary,
+        },
+    )
+}
+
+fn evaluate_visible_accessibility_catalog_case_summary_v1(
+    catalog_summary: &MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
+    review: &MtgoVisibleAccessibilityCatalogReviewV1,
+) -> Result<MtgoVisibleAccessibilityCatalogCaseEvaluationSummaryV1, String> {
+    validate_visible_accessibility_catalog_review_v1(catalog_summary, review)?;
+
+    let positive_entry_count = u32::try_from(
+        catalog_summary
+            .entries
+            .iter()
+            .filter(|entry| entry.exact_visible_match_count != 0)
+            .count(),
+    )
+    .map_err(|_| "accessibility evaluation positive entry count overflow")?;
+    let covered_slices = covered_catalog_slices_v1(&catalog_summary.entries);
+    let ratification_candidate_commitment_sha256 = commitment_v1(
+        VISIBLE_ACCESSIBILITY_CATALOG_CASE_EVALUATION_DOMAIN_V1,
+        &[
+            catalog_summary.report_commitment_sha256.as_bytes(),
+            review.review_commitment_sha256.as_bytes(),
+            b"exact_review_agreement=true",
+            b"safe_for_semantic_evidence=false",
+            b"safe_for_policy_scoring=false",
+            b"safe_for_input=false",
+        ],
+    );
+    Ok(MtgoVisibleAccessibilityCatalogCaseEvaluationSummaryV1 {
+        schema_version: MTGO_VISIBLE_ACCESSIBILITY_CATALOG_CASE_EVALUATION_SCHEMA_V1,
+        catalog_commitment_sha256: catalog_summary.catalog_commitment_sha256.clone(),
+        source_pixel_report_commitment_sha256: catalog_summary
+            .source_pixel_report_commitment_sha256
+            .clone(),
+        source_window_identity_commitment_sha256: catalog_summary
+            .source_window_identity_commitment_sha256
+            .clone(),
+        review_commitment_sha256: review.review_commitment_sha256.clone(),
+        evaluated_entry_count: u32::try_from(catalog_summary.entries.len())
+            .map_err(|_| "accessibility evaluation entry count overflow")?,
+        positive_entry_count,
+        total_exact_visible_match_count: catalog_summary.total_pixel_corroborated_match_count,
+        covered_slices,
+        exact_review_agreement: true,
+        ratification_candidate_commitment_sha256,
+        // A single reviewed case is deliberately incapable of ratifying the
+        // catalog. A future corpus evaluator must own any production root.
+        production_evaluation_ratified: false,
+        safe_for_semantic_evidence: false,
+        safe_for_policy_scoring: false,
+        safe_for_input: false,
+    })
+}
+
+fn validate_visible_accessibility_catalog_review_v1(
+    source: &MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
+    review: &MtgoVisibleAccessibilityCatalogReviewV1,
+) -> Result<(), String> {
+    if review.schema_version != MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_SCHEMA_V1
+        || review.catalog_commitment_sha256 != source.catalog_commitment_sha256
+        || review.source_pixel_report_commitment_sha256
+            != source.source_pixel_report_commitment_sha256
+        || review.source_window_identity_commitment_sha256
+            != source.source_window_identity_commitment_sha256
+        || review.before_frame_sha256 != source.before_frame_sha256
+        || review.after_frame_sha256 != source.after_frame_sha256
+        || !review.client_only_and_unobscured_confirmed
+        || !review.exact_frame_pair_identity_confirmed
+        || review.entries.len() != source.entries.len()
+    {
+        return Err("accessibility catalog review does not bind the exact source case".to_owned());
+    }
+    validate_sha256_text_v1(&review.reviewer_alias_sha256)?;
+    for (expected, observed) in source.entries.iter().zip(&review.entries) {
+        if observed.query_id != expected.query_id
+            || observed.slice != expected.slice
+            || observed.expected_visible_text_sha256 != expected.expected_visible_text_sha256
+            || observed.reviewed_exact_visible_match_count != expected.exact_visible_match_count
+            || observed.reviewed_control_type_ids != expected.observed_control_type_ids
+            || observed.reviewed_private_pixel_match_set_commitment_sha256
+                != expected.private_pixel_match_set_commitment_sha256
+        {
+            return Err(
+                "accessibility catalog review entry does not match the exact source".into(),
+            );
+        }
+        if expected.exact_visible_match_count == 0 {
+            if observed.every_matched_region_visibly_contains_exact_catalog_label
+                || !observed.visible_absence_reviewed_when_match_count_is_zero
+            {
+                return Err(
+                    "zero-match catalog entry requires an explicit visible-absence review"
+                        .to_owned(),
+                );
+            }
+        } else if !observed.every_matched_region_visibly_contains_exact_catalog_label
+            || observed.visible_absence_reviewed_when_match_count_is_zero
+        {
+            return Err(
+                "positive catalog entry requires exact visible-label review for every match"
+                    .to_owned(),
+            );
+        }
+    }
+    validate_sha256_text_v1(&review.review_commitment_sha256)?;
+    if review.review_commitment_sha256
+        != mtgo_visible_accessibility_catalog_review_commitment_v1(review)?
+    {
+        return Err("accessibility catalog review commitment changed".to_owned());
+    }
+    Ok(())
+}
+
+fn covered_catalog_slices_v1(
+    entries: &[MtgoVisibleAccessibilityPixelCatalogEntrySummaryV1],
+) -> Vec<MtgoVisibleAccessibilityCatalogSliceV1> {
+    let mut covered = Vec::new();
+    for slice in [
+        MtgoVisibleAccessibilityCatalogSliceV1::Pregame,
+        MtgoVisibleAccessibilityCatalogSliceV1::Gameplay,
+        MtgoVisibleAccessibilityCatalogSliceV1::Bottoming,
+        MtgoVisibleAccessibilityCatalogSliceV1::Sideboard,
+    ] {
+        if entries
+            .iter()
+            .any(|entry| entry.slice == slice && entry.exact_visible_match_count != 0)
+        {
+            covered.push(slice);
+        }
+    }
+    covered
+}
+
+fn validate_sha256_text_v1(value: &str) -> Result<(), String> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("accessibility catalog review digest must be lowercase SHA-256".to_owned());
+    }
+    Ok(())
 }
 
 fn validate_queries_v1(queries: &[MtgoVisibleAccessibilityExactTextQueryV1]) -> Result<(), String> {
@@ -1386,6 +1676,96 @@ mod tests {
         ]
     }
 
+    fn reviewed_pixel_catalog_source_v1() -> MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1 {
+        let catalog = known_label_catalog_v1();
+        let query_results = catalog
+            .iter()
+            .enumerate()
+            .map(
+                |(index, entry)| MtgoVisibleAccessibilityPixelQueryResultV1 {
+                    query_id: entry.query_id.to_owned(),
+                    expected_visible_text_sha256: sha256_hex_v1(
+                        entry.expected_visible_text.as_bytes(),
+                    ),
+                    exact_visible_match_count: u32::from(index == 0),
+                    observed_control_type_ids: if index == 0 { vec![50_000] } else { Vec::new() },
+                    private_pixel_match_set_commitment_sha256: format!("{index:064x}"),
+                },
+            )
+            .collect();
+        let mut source = MtgoVisibleAccessibilityPixelCorroborationSummaryV1 {
+            schema_version: MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CORROBORATION_SCHEMA_V1,
+            before_capture_commitment_sha256: "b".repeat(64),
+            after_capture_commitment_sha256: "c".repeat(64),
+            before_frame_sha256: "d".repeat(64),
+            after_frame_sha256: "e".repeat(64),
+            accessibility_report_commitment_sha256: "f".repeat(64),
+            source_window_identity_commitment_sha256: "1".repeat(64),
+            query_results,
+            total_pixel_corroborated_match_count: 1,
+            has_pixel_corroborated_match: true,
+            capture_bracket_identity_confirmed: true,
+            matched_regions_pixel_stable_across_bracket: true,
+            raw_visible_text_exposed: false,
+            private_match_rectangles_exposed: false,
+            safe_for_semantic_evidence: false,
+            safe_for_policy_scoring: false,
+            safe_for_input: false,
+            report_commitment_sha256: String::new(),
+        };
+        source.report_commitment_sha256 = pixel_summary_commitment_v1(&source).unwrap();
+        build_known_label_pixel_catalog_summary_v1(
+            &catalog,
+            known_label_catalog_commitment_v1(&catalog).unwrap(),
+            source,
+        )
+        .unwrap()
+    }
+
+    fn exact_catalog_review_v1(
+        source: &MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
+    ) -> MtgoVisibleAccessibilityCatalogReviewV1 {
+        let entries = source
+            .entries
+            .iter()
+            .map(|entry| MtgoVisibleAccessibilityCatalogReviewEntryV1 {
+                query_id: entry.query_id.clone(),
+                slice: entry.slice,
+                expected_visible_text_sha256: entry.expected_visible_text_sha256.clone(),
+                reviewed_exact_visible_match_count: entry.exact_visible_match_count,
+                reviewed_control_type_ids: entry.observed_control_type_ids.clone(),
+                reviewed_private_pixel_match_set_commitment_sha256: entry
+                    .private_pixel_match_set_commitment_sha256
+                    .clone(),
+                every_matched_region_visibly_contains_exact_catalog_label: entry
+                    .exact_visible_match_count
+                    != 0,
+                visible_absence_reviewed_when_match_count_is_zero: entry.exact_visible_match_count
+                    == 0,
+            })
+            .collect();
+        let mut review = MtgoVisibleAccessibilityCatalogReviewV1 {
+            schema_version: MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_SCHEMA_V1,
+            catalog_commitment_sha256: source.catalog_commitment_sha256.clone(),
+            source_pixel_report_commitment_sha256: source
+                .source_pixel_report_commitment_sha256
+                .clone(),
+            source_window_identity_commitment_sha256: source
+                .source_window_identity_commitment_sha256
+                .clone(),
+            before_frame_sha256: source.before_frame_sha256.clone(),
+            after_frame_sha256: source.after_frame_sha256.clone(),
+            reviewer_alias_sha256: "9".repeat(64),
+            client_only_and_unobscured_confirmed: true,
+            exact_frame_pair_identity_confirmed: true,
+            entries,
+            review_commitment_sha256: String::new(),
+        };
+        review.review_commitment_sha256 =
+            mtgo_visible_accessibility_catalog_review_commitment_v1(&review).unwrap();
+        review
+    }
+
     #[test]
     fn exact_queries_are_canonical_and_private_results_are_commitment_only() {
         let queries = queries_v1();
@@ -1545,6 +1925,56 @@ mod tests {
             build_known_label_pixel_catalog_summary_v1(&catalog, catalog_commitment, source)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn catalog_review_is_exact_case_bound_and_fail_closed() {
+        let source = reviewed_pixel_catalog_source_v1();
+        let review = exact_catalog_review_v1(&source);
+        validate_visible_accessibility_catalog_review_v1(&source, &review).unwrap();
+        let evaluation =
+            evaluate_visible_accessibility_catalog_case_summary_v1(&source, &review).unwrap();
+        assert!(evaluation.exact_review_agreement);
+        assert_eq!(evaluation.evaluated_entry_count, 5);
+        assert_eq!(evaluation.positive_entry_count, 1);
+        assert_eq!(evaluation.total_exact_visible_match_count, 1);
+        assert!(!evaluation.production_evaluation_ratified);
+        assert!(!evaluation.safe_for_semantic_evidence);
+        assert!(!evaluation.safe_for_policy_scoring);
+        assert!(!evaluation.safe_for_input);
+        assert_eq!(
+            covered_catalog_slices_v1(&source.entries),
+            vec![MtgoVisibleAccessibilityCatalogSliceV1::Bottoming]
+        );
+
+        let mut mutations = Vec::new();
+        let mut crossed_frame = review.clone();
+        crossed_frame.before_frame_sha256 = "8".repeat(64);
+        mutations.push(crossed_frame);
+        let mut changed_count = review.clone();
+        changed_count.entries[0].reviewed_exact_visible_match_count = 2;
+        mutations.push(changed_count);
+        let mut changed_type = review.clone();
+        changed_type.entries[0].reviewed_control_type_ids[0] += 1;
+        mutations.push(changed_type);
+        let mut missing_positive_review = review.clone();
+        missing_positive_review.entries[0]
+            .every_matched_region_visibly_contains_exact_catalog_label = false;
+        mutations.push(missing_positive_review);
+        let mut false_zero_claim = review.clone();
+        false_zero_claim.entries[1].every_matched_region_visibly_contains_exact_catalog_label =
+            true;
+        mutations.push(false_zero_claim);
+        let mut missing_zero_review = review.clone();
+        missing_zero_review.entries[1].visible_absence_reviewed_when_match_count_is_zero = false;
+        mutations.push(missing_zero_review);
+        let mut forged_commitment = review.clone();
+        forged_commitment.review_commitment_sha256 = "7".repeat(64);
+        mutations.push(forged_commitment);
+
+        for mutation in mutations {
+            assert!(validate_visible_accessibility_catalog_review_v1(&source, &mutation).is_err());
+        }
     }
 
     #[test]
