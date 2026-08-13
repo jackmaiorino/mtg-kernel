@@ -62,7 +62,9 @@ use crate::probe::{
     bind_opaque_player_visible_duel_source_gesture_target_v1,
     capture_admitted_mtgo_duel_visible_frame_v1,
     corroborate_competitive_match_visible_game_log_action_v1, frame_id_from_capture_commitment_v1,
-    perceive_admitted_duel_frame_v1, prepare_opaque_competitive_duel_action_plan_v1,
+    perceive_admitted_duel_frame_v1,
+    prepare_attested_direct_visible_competitive_before_dispatch_v1,
+    prepare_opaque_competitive_duel_action_plan_v1,
     prepare_opaque_player_visible_duel_gesture_pointer_v1,
     prepare_opaque_player_visible_gameplay_before_input_v1,
     rebind_opaque_player_visible_duel_gesture_target_v1,
@@ -70,10 +72,11 @@ use crate::probe::{
     score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
     score_select_and_resolve_opaque_player_visible_duel_perception_with_ongoing_history_v1,
     AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,
-    AdmittedMtgoPlayerVisibleGameplayPostconditionProtocolV1, MtgoDuelPerceptionFrameIdentityV1,
+    AdmittedMtgoPlayerVisibleGameplayPostconditionProtocolV1,
+    MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1, MtgoDuelPerceptionFrameIdentityV1,
     MtgoDxgiCaptureRequestV3, MtgoPrivatePlayerVisibleGameplayBeforeInputContextV1,
-    OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoClassifiedCompetitiveEventRecordV1,
-    OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
+    OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1,
+    OpaqueMtgoClassifiedCompetitiveEventRecordV1, OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoClassifiedCompetitivePregameModelContextV1, OpaqueMtgoCompetitiveLaunchIdentityV1,
     OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
     OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
@@ -83,6 +86,7 @@ use crate::probe::{
     OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1,
     OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1,
     OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,
 };
 use mtgo_blackbox_v1::{
     append_checked_untrusted_competitive_player_visible_game_history_from_player_visible_postcondition_v1,
@@ -90,7 +94,6 @@ use mtgo_blackbox_v1::{
     validate_competitive_player_visible_game_history_for_session_v1,
     validate_native_checkpoint_competitive_capabilities_v1,
     CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
-    CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
     CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1,
     CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1, MtgoDuelGestureStageV1,
@@ -409,7 +412,7 @@ pub struct OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1 {
     _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
     _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     _confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
-    _direct: CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
+    _direct: OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1,
     selected_action: MtgoPlayerVisibleDuelActionV1,
     operator_binding_commitment_sha256: String,
 }
@@ -2556,22 +2559,47 @@ where
     )
 }
 
-/// Joins one structurally checked direct-source selection to the exact opaque
-/// competitive operator ownership. No source attestation or input occurs.
-/// A later live producer must consume this value after proving the exact
-/// broker, producer, source frame, and visible decision bracket in process.
+/// Captures and joins one source-attested direct selection to exact competitive
+/// operator ownership. The next logical frame sequence is derived from the
+/// owned game session and attended launch. Both authorization records also
+/// come from that opaque session. The caller cannot assign freshness, swap
+/// authorization, or attach an unverified Game Log action baseline. No input
+/// occurs.
+#[allow(clippy::too_many_arguments)]
 pub fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
     lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
     visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
     visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
-    direct: CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
+    refreshed: OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,
+    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
+    timeout_ms: u32,
 ) -> Result<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1, String> {
     let lease_commitments = lease.lease.commitments_v1();
     let session_commitments = session.commitments_v1();
     let launch_commitments = visible_identity.commitments_v1();
-    let direct_commitments = direct.dispatch_commitments_v1();
+    let corroborating_frame_sequence = next_direct_visible_frame_sequence_v1(
+        session_commitments.valid_from_frame_sequence,
+        session_commitments.valid_through_frame_sequence,
+        session_commitments.last_confirmed_frame_sequence,
+        launch_commitments.frame_sequence,
+    )?;
+    let (mode_authorization, gameplay_authorization) =
+        competitive_gesture_game_session_action_authorities_v1(&session);
+    let direct = prepare_attested_direct_visible_competitive_before_dispatch_v1(
+        refreshed,
+        &lease.resources.duel_perception_profile,
+        &lease.resources.duel_perception_runtime,
+        corroborating_frame_sequence,
+        region_set,
+        &mode_authorization,
+        &gameplay_authorization,
+        timeout_ms,
+    )?;
+    let source_attestation_binding_commitment_sha256 =
+        direct.binding_commitment_sha256_v1().to_owned();
+    let direct_commitments = direct.checked_v1().dispatch_commitments_v1();
     validate_operator_direct_visible_before_dispatch_v1(
         &lease.resource_commitments,
         &lease_commitments,
@@ -2622,6 +2650,7 @@ pub fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
                 .as_bytes(),
             direct_commitments.broker_binary_sha256_v1().as_bytes(),
             direct_commitments.producer_binary_sha256_v1().as_bytes(),
+            source_attestation_binding_commitment_sha256.as_bytes(),
             &selected_action_json,
             direct_commitments
                 .selected_index_v1()
@@ -2652,6 +2681,31 @@ pub fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
         selected_action,
         operator_binding_commitment_sha256,
     })
+}
+
+fn next_direct_visible_frame_sequence_v1(
+    valid_from_frame_sequence: u64,
+    valid_through_frame_sequence: u64,
+    last_confirmed_frame_sequence: u64,
+    launch_frame_sequence: u64,
+) -> Result<u64, String> {
+    if valid_from_frame_sequence == 0
+        || valid_from_frame_sequence > valid_through_frame_sequence
+        || last_confirmed_frame_sequence >= valid_through_frame_sequence
+    {
+        return Err("direct visible gameplay has no valid next frame lifetime".to_owned());
+    }
+    let predecessor = last_confirmed_frame_sequence
+        .max(launch_frame_sequence)
+        .max(valid_from_frame_sequence - 1)
+        .max(1);
+    let next = predecessor
+        .checked_add(1)
+        .ok_or("direct visible next frame sequence overflow")?;
+    if next > valid_through_frame_sequence {
+        return Err("direct visible next frame exceeds the game session lifetime".to_owned());
+    }
+    Ok(next)
 }
 
 /// Joins the exact operator-owned player-visible selection to a validated
@@ -5252,6 +5306,36 @@ mod tests {
         challenge.game_log_event_kind = MtgoCompetitiveEventKindV1::Challenge;
         challenge.direct_event_kind = MtgoCompetitiveEventKindV1::Challenge;
         validate_operator_direct_visible_join_identity_v1(&challenge).unwrap();
+    }
+
+    #[test]
+    fn direct_visible_next_frame_is_derived_from_owned_session_and_launch() {
+        assert_eq!(
+            next_direct_visible_frame_sequence_v1(10, 300, 199, 100).unwrap(),
+            200
+        );
+        assert_eq!(
+            next_direct_visible_frame_sequence_v1(10, 300, 9, 150).unwrap(),
+            151
+        );
+        assert_eq!(
+            next_direct_visible_frame_sequence_v1(10, 300, 9, 5).unwrap(),
+            10
+        );
+        assert_eq!(
+            next_direct_visible_frame_sequence_v1(1, 2, 0, 0).unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn direct_visible_next_frame_rejects_invalid_or_exhausted_lifetime() {
+        assert!(next_direct_visible_frame_sequence_v1(0, 300, 0, 0).is_err());
+        assert!(next_direct_visible_frame_sequence_v1(20, 10, 9, 9).is_err());
+        assert!(next_direct_visible_frame_sequence_v1(1, 1, 0, 0).is_err());
+        assert!(next_direct_visible_frame_sequence_v1(10, 20, 20, 10).is_err());
+        assert!(next_direct_visible_frame_sequence_v1(10, 20, 19, 20).is_err());
+        assert!(next_direct_visible_frame_sequence_v1(1, u64::MAX, 0, u64::MAX).is_err());
     }
 
     #[test]

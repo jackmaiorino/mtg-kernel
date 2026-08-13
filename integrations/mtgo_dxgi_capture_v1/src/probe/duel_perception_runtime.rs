@@ -853,7 +853,7 @@ pub struct OpaqueMtgoAdmittedDuelPerceptionV1 {
     source_candidate: Option<CheckedUntrustedMtgoDxgiObservedDecisionCandidateV1>,
     pub(super) decision_record: MtgoObservedDecisionV1,
     pub(super) visible_controls: MtgoVisibleActionControlSetV1,
-    competitive_lifecycle: Option<CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1>,
+    pub(super) competitive_lifecycle: Option<CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1>,
     runtime_identity_commitment_sha256: String,
     request_commitment_sha256: String,
     perception_result_commitment_sha256: String,

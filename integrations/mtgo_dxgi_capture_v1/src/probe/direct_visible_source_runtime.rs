@@ -1,17 +1,30 @@
 use super::{
     capture_admitted_mtgo_duel_visible_frame_v1, capture_mtgo_dxgi_frame_candidate_v3,
-    sha256_hex_v1, CaptureWindowModeV2, MtgoDxgiCaptureRequestV3,
-    OpaqueMtgoAdmittedDuelVisibleFrameV1, OpaqueMtgoDxgiFrameCandidateV3,
+    competitive_entry_window_continuity_commitment_for_frame_v1,
+    frame_id_from_capture_commitment_v1, perceive_admitted_duel_frame_v1, sha256_hex_v1,
+    CaptureWindowModeV2, MtgoDuelPerceptionFrameIdentityV1, MtgoDxgiCaptureRequestV3,
+    OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoAdmittedDuelVisibleFrameV1,
+    OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
 };
 use mtgo_blackbox_v1::{
+    bind_refreshed_direct_visible_selection_to_competitive_match_v1,
     parse_and_validate_visible_duel_producer_result_v1,
+    prepare_direct_visible_gameplay_before_dispatch_v1,
     refresh_direct_visible_selection_before_dispatch_v1,
     score_and_select_strict_visible_duel_producer_result_v1, AdmittedMtgoDuelPerceptionProfileV1,
+    CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
     CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
-    CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1, MtgoPlayerVisibleDuelScorerV1,
+    CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1, MtgoAuthorizationScopeV1,
+    MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDirectVisibleCompetitiveObservationBracketV1,
+    MtgoDirectVisibleGameplayBeforeDispatchRecordV1, MtgoDirectVisibleGameplayBeforeRegionV1,
+    MtgoEvidenceSourceV1, MtgoPlayerVisibleDuelScorerV1,
+    MtgoPlayerVisibleGameplayPostconditionKindV1, MtgoRectPxV1, MtgoSizePxV1,
     MtgoVisibleDuelViewModelBrokerAbstentionReasonV1, MtgoVisibleDuelViewModelBrokerResultV1,
+    MTGO_DIRECT_VISIBLE_COMPETITIVE_OBSERVATION_BRACKET_SCHEMA_V1,
+    MTGO_DIRECT_VISIBLE_GAMEPLAY_BEFORE_DISPATCH_SCHEMA_V1,
 };
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::os::windows::process::CommandExt;
@@ -35,6 +48,10 @@ const DIRECT_VISIBLE_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-no-stakes-qualification-v1";
 const DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-scored-refresh-v1";
+const DIRECT_VISIBLE_SOURCE_COMPETITIVE_BEFORE_DISPATCH_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-source-competitive-before-dispatch-v1";
+const DIRECT_VISIBLE_SOURCE_EQUIVALENT_REGIONS_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-source-equivalent-regions-v1";
 const RATIFIED_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
 const PINNED_MTGO_EXECUTABLE_SHA256_V1: &str =
     "bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92";
@@ -138,6 +155,33 @@ pub struct MtgoRefreshedAttestedDirectVisibleSelectionCommitmentsV1 {
     pub selection_commitment_sha256: String,
     pub refresh_commitment_sha256: String,
     pub scored_refresh_commitment_sha256: String,
+}
+
+/// One player-visible change category to freeze for the action-specific
+/// postcondition. The caller supplies no rectangle, evidence ID, or frame
+/// identity. The capture owner derives the complete corresponding region from
+/// the fresh classifier provenance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoAttestedDirectVisibleBeforeDispatchRegionSpecV1 {
+    pub kind: MtgoPlayerVisibleGameplayPostconditionKindV1,
+}
+
+/// Complete action-specific region declaration. A partial declaration cannot
+/// be promoted into the opaque competitive pre-dispatch owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1 {
+    pub candidate_set_complete: bool,
+    pub regions: Vec<MtgoAttestedDirectVisibleBeforeDispatchRegionSpecV1>,
+}
+
+struct MtgoAttestedDirectVisibleCompetitiveBeforeDispatchCommitmentsV1 {
+    _scored_refresh_commitment_sha256: String,
+    _corroborating_perception_result_commitment_sha256: String,
+    _corroborating_lifecycle_snapshot_commitment_sha256: String,
+    _equivalent_visible_regions_commitment_sha256: String,
+    _direct_competitive_scope_commitment_sha256: String,
+    _before_dispatch_commitment_sha256: String,
+    _binding_commitment_sha256: String,
 }
 
 /// One exact release-pinned producer execution. Both composed frames and the
@@ -257,6 +301,46 @@ pub struct OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
     _refreshed_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
     selection: CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1,
     commitments: MtgoRefreshedAttestedDirectVisibleSelectionCommitmentsV1,
+}
+
+/// Direct-source selection retained with an independent same-decision pixel
+/// perception, exact competitive lifecycle, and pixel-derived before-dispatch
+/// regions. Internal client objects never enter this value. It is move-only
+/// and cannot expose pixels, rectangles, input, entry, or spending authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1;
+/// fn cannot_act(value: OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1) {
+///     let _ = value.coordinates();
+///     value.dispatch();
+/// }
+/// ```
+pub(crate) struct OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1 {
+    _initial_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    _refreshed_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    _corroborating_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
+    checked: CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
+    commitments: MtgoAttestedDirectVisibleCompetitiveBeforeDispatchCommitmentsV1,
+}
+
+impl OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1 {
+    pub(crate) fn selected_action_v1(&self) -> &mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1 {
+        self.checked.selected_action_v1()
+    }
+
+    pub(crate) fn binding_commitment_sha256_v1(&self) -> &str {
+        &self.commitments._binding_commitment_sha256
+    }
+
+    pub(crate) fn checked_v1(&self) -> &CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1 {
+        &self.checked
+    }
 }
 
 impl OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
@@ -423,6 +507,520 @@ pub fn refresh_ratified_attested_direct_visible_selection_v1(
         selection,
         commitments,
     })
+}
+
+/// Corroborates the refreshed direct result with the independent, reviewed
+/// visible-pixel perception path on a strictly newer composed frame, then
+/// constructs the match scope and before-dispatch region plan from retained
+/// pixels. The complete player-visible decision must be byte-for-byte equal at
+/// the semantic boundary, and every current-frame evidence region must be
+/// pixel-identical across the direct and corroborating frames.
+///
+/// This performs capture and classification only. It sends no input and does
+/// not create event-entry or spending authority.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn prepare_attested_direct_visible_competitive_before_dispatch_v1(
+    refreshed: OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    perception_runtime: &OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
+    corroborating_frame_sequence: u64,
+    region_set: MtgoAttestedDirectVisibleBeforeDispatchRegionSetV1,
+    mode_authorization: &MtgoAuthorizationScopeV1,
+    gameplay_authorization: &MtgoCompetitiveMatchGameplayAuthorizationV1,
+    timeout_ms: u32,
+) -> Result<OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1, String> {
+    if corroborating_frame_sequence < 2 {
+        return Err("corroborating direct-source frame sequence must be at least two".to_owned());
+    }
+    if !region_set.candidate_set_complete {
+        return Err("direct-source before-dispatch region set is incomplete".to_owned());
+    }
+    validate_requested_postcondition_categories_v1(&region_set.regions)?;
+    let OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
+        _initial_observation: initial_observation,
+        _refreshed_observation: refreshed_observation,
+        selection,
+        commitments: refresh_commitments,
+    } = refreshed;
+    let direct_decision = match &refreshed_observation.result {
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { decision } => decision.as_ref(),
+        MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => {
+            return Err("refreshed direct-source observation abstained".to_owned())
+        }
+    };
+
+    let corroborating_frame = capture_admitted_mtgo_duel_visible_frame_v1(profile, timeout_ms)?;
+    validate_same_duel_observation_lineage_v1(
+        &refreshed_observation._after_frame,
+        &corroborating_frame,
+    )?;
+    let corroborating_capture = corroborating_frame.commitments_v1();
+    let corroborating_frame_id = frame_id_from_capture_commitment_v1(
+        &corroborating_capture
+            .source_capture
+            .capture_commitment_sha256,
+        0,
+    )?;
+    let mut corroborating_perception = perceive_admitted_duel_frame_v1(
+        corroborating_frame,
+        profile,
+        perception_runtime,
+        MtgoDuelPerceptionFrameIdentityV1 {
+            frame_id: corroborating_frame_id,
+            frame_sequence: corroborating_frame_sequence,
+        },
+        timeout_ms,
+    )?;
+    let pixel_decision = corroborating_perception
+        .player_visible_duel_decision_input_v1()
+        .map_err(|error| format!("project corroborating player-visible decision: {error}"))?;
+    if &pixel_decision != direct_decision
+        || pixel_decision
+            .ordered_legal_actions
+            .get(selection.selected_index_v1())
+            != Some(selection.selected_action_v1())
+    {
+        return Err(
+            "direct parsing and visible-pixel perception disagree on the complete decision"
+                .to_owned(),
+        );
+    }
+
+    let equivalent_visible_regions_commitment_sha256 =
+        exact_equivalent_visible_regions_commitment_v1(
+            &refreshed_observation._after_frame,
+            &corroborating_perception,
+        )?;
+    let before_source = &refreshed_observation._after_frame.source_frame;
+    let after_source = &corroborating_perception.source_frame.source_frame;
+    let before_capture = refreshed_observation._after_frame.commitments_v1();
+    let after_perception_commitments = corroborating_perception.commitments_v1();
+    let before_frame_id = frame_id_from_capture_commitment_v1(
+        &before_capture.source_capture.capture_commitment_sha256,
+        corroborating_frame_id,
+    )?;
+    let before_frame_sequence = corroborating_frame_sequence - 1;
+    let before_client_identity =
+        competitive_entry_window_continuity_commitment_for_frame_v1(before_source)?;
+    let after_client_identity =
+        competitive_entry_window_continuity_commitment_for_frame_v1(after_source)?;
+    if before_client_identity != after_client_identity {
+        return Err("direct-source corroboration changed client identity".to_owned());
+    }
+    let lifecycle_commitment = after_perception_commitments
+        .competitive_lifecycle_snapshot_commitment_sha256
+        .clone()
+        .ok_or("direct-source competitive corroboration lacks visible lifecycle")?;
+    let lifecycle = corroborating_perception
+        .competitive_lifecycle
+        .take()
+        .ok_or("direct-source competitive corroboration lost visible lifecycle")?;
+    let source_size = MtgoSizePxV1 {
+        width: after_source.manifest.frame.canonical_width,
+        height: after_source.manifest.frame.canonical_height,
+    };
+    let observation = refreshed_observation.commitments_v1();
+    let bracket = MtgoDirectVisibleCompetitiveObservationBracketV1 {
+        schema_version: MTGO_DIRECT_VISIBLE_COMPETITIVE_OBSERVATION_BRACKET_SCHEMA_V1,
+        information_boundary: "seated_player_visible_ui_equivalent_only_v1".to_owned(),
+        capture_role: "acting_player_duel".to_owned(),
+        before_frame_id,
+        before_frame_sequence,
+        before_captured_at_unix_millis: before_capture.source_capture.captured_at_unix_millis,
+        before_frame_sha256: before_capture.source_capture.canonical_bgra8_sha256,
+        after_frame_id: corroborating_frame_id,
+        after_frame_sequence: corroborating_frame_sequence,
+        after_captured_at_unix_millis: corroborating_capture.source_capture.captured_at_unix_millis,
+        after_frame_sha256: corroborating_capture
+            .source_capture
+            .canonical_bgra8_sha256
+            .clone(),
+        client_size_px: source_size.clone(),
+        before_decision_regions_sha256: equivalent_visible_regions_commitment_sha256.clone(),
+        after_decision_regions_sha256: equivalent_visible_regions_commitment_sha256.clone(),
+        client_identity_commitment_sha256: after_client_identity,
+        broker_binary_sha256: observation.broker_binary_sha256,
+        producer_binary_sha256: observation.producer_binary_sha256,
+        visible_equivalence_profile_commitment_sha256: profile
+            .perception_profile_commitment_sha256()
+            .to_owned(),
+        producer_first_export_is_player_visible_schema: true,
+        raw_source_values_emitted: false,
+        internal_identifiers_emitted: false,
+        bracket_complete: true,
+    };
+    let selected_index = selection.selected_index_v1();
+    let plan = bind_refreshed_direct_visible_selection_to_competitive_match_v1(
+        selection,
+        bracket,
+        lifecycle,
+        mode_authorization,
+        gameplay_authorization,
+    )
+    .map_err(|error| format!("bind attested direct source to competitive match: {error}"))?;
+    let direct_competitive_scope_commitment_sha256 = plan
+        .direct_competitive_scope_commitment_sha256_v1()
+        .to_owned();
+    let mut before_regions = Vec::with_capacity(region_set.regions.len());
+    for spec in region_set.regions {
+        let rect_client_px = direct_postcondition_region_from_perception_v1(
+            &corroborating_perception,
+            selected_index,
+            spec.kind,
+        )?;
+        let before_bgra8_sha256 = mtgo_blackbox_v1::visible_frame_region_content_sha256_v1(
+            &after_source.canonical_bgra8,
+            &source_size,
+            &rect_client_px,
+        )
+        .map_err(|error| format!("rehash direct before-dispatch visible region: {error}"))?;
+        before_regions.push(MtgoDirectVisibleGameplayBeforeRegionV1 {
+            kind: spec.kind,
+            rect_client_px,
+            before_bgra8_sha256,
+        });
+    }
+    let record = MtgoDirectVisibleGameplayBeforeDispatchRecordV1 {
+        schema_version: MTGO_DIRECT_VISIBLE_GAMEPLAY_BEFORE_DISPATCH_SCHEMA_V1,
+        direct_competitive_scope_commitment_sha256: direct_competitive_scope_commitment_sha256
+            .clone(),
+        source_frame_id: corroborating_frame_id,
+        source_frame_sequence: corroborating_frame_sequence,
+        source_captured_at_unix_millis: corroborating_capture
+            .source_capture
+            .captured_at_unix_millis,
+        source_frame_sha256: corroborating_capture.source_capture.canonical_bgra8_sha256,
+        client_size_px: source_size,
+        region_set_complete: true,
+        regions: before_regions,
+        expected_game_log_baseline_commitment_sha256: None,
+    };
+    let checked = prepare_direct_visible_gameplay_before_dispatch_v1(plan, record)
+        .map_err(|error| format!("prepare attested direct before-dispatch plan: {error}"))?;
+    let before_dispatch_commitment_sha256 =
+        checked.before_dispatch_commitment_sha256_v1().to_owned();
+    let binding_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_SOURCE_COMPETITIVE_BEFORE_DISPATCH_DOMAIN_V1,
+        &[
+            refresh_commitments
+                .scored_refresh_commitment_sha256
+                .as_bytes(),
+            after_perception_commitments
+                .perception_result_commitment_sha256
+                .as_bytes(),
+            lifecycle_commitment.as_bytes(),
+            equivalent_visible_regions_commitment_sha256.as_bytes(),
+            direct_competitive_scope_commitment_sha256.as_bytes(),
+            before_dispatch_commitment_sha256.as_bytes(),
+            b"same_visible_decision_and_pixels_no_input_entry_or_spending_authority",
+        ],
+    );
+    let commitments = MtgoAttestedDirectVisibleCompetitiveBeforeDispatchCommitmentsV1 {
+        _scored_refresh_commitment_sha256: refresh_commitments.scored_refresh_commitment_sha256,
+        _corroborating_perception_result_commitment_sha256: after_perception_commitments
+            .perception_result_commitment_sha256,
+        _corroborating_lifecycle_snapshot_commitment_sha256: lifecycle_commitment,
+        _equivalent_visible_regions_commitment_sha256: equivalent_visible_regions_commitment_sha256,
+        _direct_competitive_scope_commitment_sha256: direct_competitive_scope_commitment_sha256,
+        _before_dispatch_commitment_sha256: before_dispatch_commitment_sha256,
+        _binding_commitment_sha256: binding_commitment_sha256,
+    };
+    Ok(OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1 {
+        _initial_observation: initial_observation,
+        _refreshed_observation: refreshed_observation,
+        _corroborating_perception: corroborating_perception,
+        checked,
+        commitments,
+    })
+}
+
+fn direct_postcondition_region_from_perception_v1(
+    perception: &OpaqueMtgoAdmittedDuelPerceptionV1,
+    selected_index: usize,
+    kind: MtgoPlayerVisibleGameplayPostconditionKindV1,
+) -> Result<MtgoRectPxV1, String> {
+    let frame_id = perception.validated_decision.frame_id();
+    let exact_evidence_id = match kind {
+        MtgoPlayerVisibleGameplayPostconditionKindV1::SelectedControlChanged => {
+            let selected_semantic = perception
+                .validated_decision
+                .legal_actions()
+                .get(selected_index)
+                .ok_or("direct selected action index exceeds corroborating legal actions")?;
+            let matches = perception
+                .visible_controls
+                .controls
+                .iter()
+                .filter(|control| control.semantic == *selected_semantic && control.visibly_enabled)
+                .collect::<Vec<_>>();
+            if matches.len() != 1 {
+                return Err(
+                    "direct selected action lacks one unique visible control region".to_owned(),
+                );
+            }
+            Some(matches[0].frame_region_evidence_id)
+        }
+        MtgoPlayerVisibleGameplayPostconditionKindV1::PromptChanged => {
+            if !perception.visible_controls.prompt_reconciled {
+                return Err("direct prompt is not visibly reconciled".to_owned());
+            }
+            Some(perception.visible_controls.prompt_frame_region_evidence_id)
+        }
+        _ => None,
+    };
+    if let Some(evidence_id) = exact_evidence_id {
+        return current_frame_region_v1(
+            &perception.decision_record.evidence,
+            frame_id,
+            evidence_id,
+        );
+    }
+
+    let mut supported_rects = BTreeMap::<(u32, u32, u32, u32), MtgoRectPxV1>::new();
+    for leaf in perception
+        .decision_record
+        .provenance
+        .iter()
+        .filter(|leaf| visible_pointer_supports_postcondition_kind_v1(&leaf.json_pointer, kind))
+    {
+        for candidate in &perception.decision_record.evidence {
+            let MtgoEvidenceSourceV1::FrameRegion {
+                frame_id: candidate_frame_id,
+                rect,
+                ..
+            } = &candidate.source
+            else {
+                continue;
+            };
+            if *candidate_frame_id == frame_id
+                && leaf.evidence_ids.iter().any(|source_id| {
+                    evidence_reaches_frame_region_v1(
+                        &perception.decision_record.evidence,
+                        *source_id,
+                        candidate.evidence_id,
+                        &mut HashSet::new(),
+                    )
+                })
+            {
+                supported_rects.insert((rect.x, rect.y, rect.width, rect.height), rect.clone());
+            }
+        }
+    }
+    bounding_visible_rect_v1(supported_rects.values())
+        .ok_or("direct before-dispatch category lacks current visible provenance".to_owned())
+}
+
+fn validate_requested_postcondition_categories_v1(
+    specs: &[MtgoAttestedDirectVisibleBeforeDispatchRegionSpecV1],
+) -> Result<(), String> {
+    let mut requested_kinds = HashSet::new();
+    if specs.is_empty()
+        || specs.len() > 16
+        || specs.iter().any(|spec| !requested_kinds.insert(spec.kind))
+    {
+        return Err(
+            "direct-source before-dispatch categories must be nonempty and unique".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn current_frame_region_v1(
+    evidence: &[mtgo_blackbox_v1::MtgoVisibleEvidenceV1],
+    frame_id: u64,
+    evidence_id: u64,
+) -> Result<MtgoRectPxV1, String> {
+    let source = evidence
+        .iter()
+        .find(|candidate| candidate.evidence_id == evidence_id)
+        .ok_or("direct before-dispatch classifier evidence is absent")?;
+    let MtgoEvidenceSourceV1::FrameRegion {
+        frame_id: source_frame_id,
+        rect,
+        ..
+    } = &source.source
+    else {
+        return Err("direct before-dispatch classifier evidence is not a pixel region".to_owned());
+    };
+    if *source_frame_id != frame_id {
+        return Err("direct before-dispatch classifier evidence is stale".to_owned());
+    }
+    Ok(rect.clone())
+}
+
+fn bounding_visible_rect_v1<'a>(
+    mut rects: impl Iterator<Item = &'a MtgoRectPxV1>,
+) -> Option<MtgoRectPxV1> {
+    let first = rects.next()?;
+    let mut left = first.x;
+    let mut top = first.y;
+    let mut right = first.x.checked_add(first.width)?;
+    let mut bottom = first.y.checked_add(first.height)?;
+    for rect in rects {
+        left = left.min(rect.x);
+        top = top.min(rect.y);
+        right = right.max(rect.x.checked_add(rect.width)?);
+        bottom = bottom.max(rect.y.checked_add(rect.height)?);
+    }
+    Some(MtgoRectPxV1 {
+        x: left,
+        y: top,
+        width: right.checked_sub(left)?,
+        height: bottom.checked_sub(top)?,
+    })
+}
+
+fn evidence_reaches_frame_region_v1(
+    evidence: &[mtgo_blackbox_v1::MtgoVisibleEvidenceV1],
+    current_evidence_id: u64,
+    target_frame_region_evidence_id: u64,
+    visited: &mut HashSet<u64>,
+) -> bool {
+    if !visited.insert(current_evidence_id) {
+        return false;
+    }
+    if current_evidence_id == target_frame_region_evidence_id {
+        return true;
+    }
+    let Some(current) = evidence
+        .iter()
+        .find(|candidate| candidate.evidence_id == current_evidence_id)
+    else {
+        return false;
+    };
+    match &current.source {
+        MtgoEvidenceSourceV1::VisibleGameLogText {
+            frame_region_evidence_id,
+            ..
+        }
+        | MtgoEvidenceSourceV1::VisibleAccessibilityText {
+            frame_region_evidence_id,
+            ..
+        }
+        | MtgoEvidenceSourceV1::ManualVisibleAnnotation {
+            frame_region_evidence_id,
+            ..
+        } => evidence_reaches_frame_region_v1(
+            evidence,
+            *frame_region_evidence_id,
+            target_frame_region_evidence_id,
+            visited,
+        ),
+        MtgoEvidenceSourceV1::DerivedPublicFact {
+            parent_evidence_ids,
+            ..
+        } => parent_evidence_ids.iter().any(|parent| {
+            let mut branch_visited = visited.clone();
+            evidence_reaches_frame_region_v1(
+                evidence,
+                *parent,
+                target_frame_region_evidence_id,
+                &mut branch_visited,
+            )
+        }),
+        MtgoEvidenceSourceV1::FrameRegion { .. } => false,
+    }
+}
+
+fn visible_pointer_supports_postcondition_kind_v1(
+    pointer: &str,
+    kind: MtgoPlayerVisibleGameplayPostconditionKindV1,
+) -> bool {
+    use MtgoPlayerVisibleGameplayPostconditionKindV1 as K;
+    match kind {
+        K::SelectedControlChanged | K::PromptChanged => false,
+        K::PhaseBarChanged => {
+            pointer.contains("/phase")
+                || pointer.contains("/active_player")
+                || pointer.contains("/priority_player")
+        }
+        K::PlayerCountsChanged => {
+            pointer.contains("/life_totals")
+                || pointer.contains("/hand_counts")
+                || pointer.contains("/library_counts")
+        }
+        K::BattlefieldChanged => pointer.contains("/battlefield"),
+        K::HandChanged => {
+            pointer.contains("/own_hand")
+                || pointer.contains("/known_hand_cards")
+                || pointer.contains("/hand_counts")
+        }
+        K::GraveyardChanged => pointer.contains("/graveyards"),
+        K::LibraryChanged => {
+            pointer.contains("/library_counts") || pointer.contains("/known_library_cards")
+        }
+        K::ExileChanged => pointer.contains("/exile"),
+        K::ManaPoolChanged => pointer.contains("/mana_pools"),
+        K::StackChanged => pointer.contains("/stack"),
+        K::CombatChanged => pointer.contains("/combat"),
+        K::ChoiceSurfaceChanged => pointer.starts_with("/legal_actions/"),
+    }
+}
+
+fn exact_equivalent_visible_regions_commitment_v1(
+    before: &OpaqueMtgoAdmittedDuelVisibleFrameV1,
+    after: &OpaqueMtgoAdmittedDuelPerceptionV1,
+) -> Result<String, String> {
+    let after_frame_id = after.validated_decision.frame_id();
+    let mut rectangles = BTreeMap::<(u32, u32, u32, u32), MtgoRectPxV1>::new();
+    for evidence in &after.decision_record.evidence {
+        if let MtgoEvidenceSourceV1::FrameRegion { frame_id, rect, .. } = &evidence.source {
+            if *frame_id == after_frame_id {
+                rectangles.insert((rect.x, rect.y, rect.width, rect.height), rect.clone());
+            }
+        }
+    }
+    if let Some(lifecycle) = after.competitive_lifecycle.as_ref() {
+        for fact in lifecycle.visible_facts_v1() {
+            let rect = &fact.rect_client_px;
+            rectangles.insert((rect.x, rect.y, rect.width, rect.height), rect.clone());
+        }
+    }
+    if rectangles.is_empty() {
+        return Err("corroborating visible decision has no current-frame pixel regions".to_owned());
+    }
+    let before_source = &before.source_frame;
+    let after_source = &after.source_frame.source_frame;
+    let before_size = MtgoSizePxV1 {
+        width: before_source.manifest.frame.canonical_width,
+        height: before_source.manifest.frame.canonical_height,
+    };
+    let after_size = MtgoSizePxV1 {
+        width: after_source.manifest.frame.canonical_width,
+        height: after_source.manifest.frame.canonical_height,
+    };
+    if before_size != after_size {
+        return Err("direct-source corroboration changed visible client size".to_owned());
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(DIRECT_VISIBLE_SOURCE_EQUIVALENT_REGIONS_DOMAIN_V1);
+    hasher.update((rectangles.len() as u64).to_be_bytes());
+    for rect in rectangles.values() {
+        let before_sha256 = mtgo_blackbox_v1::visible_frame_region_content_sha256_v1(
+            &before_source.canonical_bgra8,
+            &before_size,
+            rect,
+        )
+        .map_err(|error| format!("rehash direct corroboration before region: {error}"))?;
+        let after_sha256 = mtgo_blackbox_v1::visible_frame_region_content_sha256_v1(
+            &after_source.canonical_bgra8,
+            &after_size,
+            rect,
+        )
+        .map_err(|error| format!("rehash direct corroboration after region: {error}"))?;
+        if before_sha256 != after_sha256 {
+            return Err(
+                "decision-relevant visible pixels changed during direct-source corroboration"
+                    .to_owned(),
+            );
+        }
+        hasher.update(rect.x.to_be_bytes());
+        hasher.update(rect.y.to_be_bytes());
+        hasher.update(rect.width.to_be_bytes());
+        hasher.update(rect.height.to_be_bytes());
+        hasher.update(before_sha256.as_bytes());
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 impl OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
@@ -1158,5 +1756,151 @@ mod tests {
     #[test]
     fn production_scoring_ratification_root_is_empty() {
         assert!(require_ratified_direct_visible_source_qualification_v1(&"a".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn visible_postcondition_categories_accept_only_corresponding_provenance_paths() {
+        use MtgoPlayerVisibleGameplayPostconditionKindV1 as K;
+        assert!(visible_pointer_supports_postcondition_kind_v1(
+            "/observation/projection/surface/phase",
+            K::PhaseBarChanged,
+        ));
+        assert!(visible_pointer_supports_postcondition_kind_v1(
+            "/observation/projection/surface/battlefield/0/0/card_name",
+            K::BattlefieldChanged,
+        ));
+        assert!(visible_pointer_supports_postcondition_kind_v1(
+            "/observation/own_hand/0/card_name",
+            K::HandChanged,
+        ));
+        assert!(visible_pointer_supports_postcondition_kind_v1(
+            "/legal_actions/0/action_kind",
+            K::ChoiceSurfaceChanged,
+        ));
+        assert!(!visible_pointer_supports_postcondition_kind_v1(
+            "/observation/projection/surface/life_totals/0",
+            K::BattlefieldChanged,
+        ));
+        assert!(!visible_pointer_supports_postcondition_kind_v1(
+            "/observation/projection/surface/stack/0/source",
+            K::PromptChanged,
+        ));
+    }
+
+    #[test]
+    fn visible_postcondition_category_requests_must_be_nonempty_and_unique() {
+        use MtgoPlayerVisibleGameplayPostconditionKindV1 as K;
+        assert!(validate_requested_postcondition_categories_v1(&[]).is_err());
+        assert!(validate_requested_postcondition_categories_v1(&[
+            MtgoAttestedDirectVisibleBeforeDispatchRegionSpecV1 {
+                kind: K::BattlefieldChanged,
+            },
+            MtgoAttestedDirectVisibleBeforeDispatchRegionSpecV1 {
+                kind: K::BattlefieldChanged,
+            },
+        ])
+        .is_err());
+        validate_requested_postcondition_categories_v1(&[
+            MtgoAttestedDirectVisibleBeforeDispatchRegionSpecV1 {
+                kind: K::BattlefieldChanged,
+            },
+            MtgoAttestedDirectVisibleBeforeDispatchRegionSpecV1 {
+                kind: K::HandChanged,
+            },
+        ])
+        .unwrap();
+    }
+
+    #[test]
+    fn visible_region_bounding_is_checked_and_order_independent() {
+        let left = MtgoRectPxV1 {
+            x: 10,
+            y: 20,
+            width: 30,
+            height: 40,
+        };
+        let right = MtgoRectPxV1 {
+            x: 100,
+            y: 5,
+            width: 20,
+            height: 10,
+        };
+        let expected = MtgoRectPxV1 {
+            x: 10,
+            y: 5,
+            width: 110,
+            height: 55,
+        };
+        assert_eq!(
+            bounding_visible_rect_v1([&left, &right].into_iter()),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            bounding_visible_rect_v1([&right, &left].into_iter()),
+            Some(expected)
+        );
+        assert!(bounding_visible_rect_v1([].into_iter()).is_none());
+        let overflow = MtgoRectPxV1 {
+            x: u32::MAX,
+            y: 0,
+            width: 1,
+            height: 1,
+        };
+        assert!(bounding_visible_rect_v1([&overflow].into_iter()).is_none());
+    }
+
+    #[test]
+    fn evidence_reachability_is_exact_and_cycle_safe() {
+        let rect = MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 4,
+        };
+        let evidence = vec![
+            mtgo_blackbox_v1::MtgoVisibleEvidenceV1 {
+                evidence_id: 1,
+                sequence: 1,
+                source: MtgoEvidenceSourceV1::FrameRegion {
+                    frame_id: 7,
+                    rect,
+                    content_sha256: "a".repeat(64),
+                },
+            },
+            mtgo_blackbox_v1::MtgoVisibleEvidenceV1 {
+                evidence_id: 2,
+                sequence: 2,
+                source: MtgoEvidenceSourceV1::DerivedPublicFact {
+                    parent_evidence_ids: vec![1],
+                    derivation: mtgo_blackbox_v1::MtgoPublicDerivationV1::PublicStateProjection,
+                },
+            },
+            mtgo_blackbox_v1::MtgoVisibleEvidenceV1 {
+                evidence_id: 3,
+                sequence: 3,
+                source: MtgoEvidenceSourceV1::DerivedPublicFact {
+                    parent_evidence_ids: vec![2, 3],
+                    derivation: mtgo_blackbox_v1::MtgoPublicDerivationV1::PublicStateProjection,
+                },
+            },
+        ];
+        assert!(evidence_reaches_frame_region_v1(
+            &evidence,
+            2,
+            1,
+            &mut HashSet::new(),
+        ));
+        assert!(evidence_reaches_frame_region_v1(
+            &evidence,
+            3,
+            1,
+            &mut HashSet::new(),
+        ));
+        assert!(!evidence_reaches_frame_region_v1(
+            &evidence,
+            3,
+            99,
+            &mut HashSet::new(),
+        ));
     }
 }
