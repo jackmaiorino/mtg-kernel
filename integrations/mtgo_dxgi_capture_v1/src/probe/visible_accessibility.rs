@@ -10,6 +10,7 @@ use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, TreeScope_
 
 pub const MTGO_VISIBLE_ACCESSIBILITY_PROBE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CORROBORATION_SCHEMA_V1: u32 = 1;
+pub const MTGO_VISIBLE_ACCESSIBILITY_CATALOG_SCHEMA_V1: u32 = 1;
 
 const MAX_VISIBLE_ACCESSIBILITY_QUERIES_V1: usize = 64;
 const MAX_VISIBLE_ACCESSIBILITY_ELEMENTS_V1: i32 = 4_096;
@@ -22,6 +23,60 @@ const VISIBLE_ACCESSIBILITY_PIXEL_MATCH_SET_DOMAIN_V1: &[u8] =
     b"mtgo-visible-accessibility-pixel-match-set-v1";
 const VISIBLE_ACCESSIBILITY_PIXEL_REPORT_DOMAIN_V1: &[u8] =
     b"mtgo-visible-accessibility-pixel-report-v1";
+const VISIBLE_ACCESSIBILITY_CATALOG_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-accessibility-known-label-catalog-v1";
+const VISIBLE_ACCESSIBILITY_CATALOG_REPORT_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-accessibility-known-label-catalog-report-v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MtgoVisibleAccessibilityCatalogSliceV1 {
+    Pregame,
+    Gameplay,
+    Bottoming,
+    Sideboard,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityCatalogEntrySummaryV1 {
+    pub query_id: String,
+    pub slice: MtgoVisibleAccessibilityCatalogSliceV1,
+    pub expected_visible_text_sha256: String,
+    pub exact_visible_match_count: u32,
+    pub observed_control_type_ids: Vec<i32>,
+    pub private_match_set_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityCatalogProbeSummaryV1 {
+    pub schema_version: u32,
+    pub catalog_commitment_sha256: String,
+    pub source_probe_commitment_sha256: String,
+    pub source_window_identity_commitment_sha256: String,
+    pub report_commitment_sha256: String,
+    pub eligible_visible_element_count: u32,
+    pub visible_named_element_count: u32,
+    pub catalog_entry_count: u32,
+    pub matched_catalog_entry_count: u32,
+    pub total_exact_visible_match_count: u32,
+    pub entries: Vec<MtgoVisibleAccessibilityCatalogEntrySummaryV1>,
+    pub raw_visible_text_exposed: bool,
+    pub caller_selected_text_queries_enabled: bool,
+    pub unmatched_visible_text_retained: bool,
+    pub requires_same_frame_pixel_corroboration: bool,
+    pub safe_for_semantic_evidence: bool,
+    pub safe_for_policy_scoring: bool,
+    pub safe_for_input: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct PrivateVisibleAccessibilityCatalogEntryV1 {
+    query_id: &'static str,
+    slice: MtgoVisibleAccessibilityCatalogSliceV1,
+    expected_visible_text: &'static str,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -583,6 +638,195 @@ pub fn run_visible_accessibility_pixel_corroboration_cli_v1(
     )
 }
 
+/// Probes only a compile-time catalog of exact labels previously observed in
+/// retained player-visible MTGO frames. The function does not return or persist
+/// arbitrary accessibility text: it matches only the compile-time exact label
+/// catalog. Raw catalog strings and rectangles remain private; the summary
+/// contains hashes, counts, control types, and commitments only. Matches remain
+/// diagnostic pending same-frame pixels and a reviewed semantic profile.
+pub fn probe_mtgo_visible_accessibility_known_label_catalog_v1(
+    window_request: MtgoDxgiCaptureRequestV3,
+) -> Result<MtgoVisibleAccessibilityCatalogProbeSummaryV1, String> {
+    let catalog = known_label_catalog_v1();
+    validate_known_label_catalog_v1(&catalog)?;
+    let catalog_commitment_sha256 = known_label_catalog_commitment_v1(&catalog)?;
+    let queries = catalog
+        .iter()
+        .map(|entry| MtgoVisibleAccessibilityExactTextQueryV1 {
+            query_id: entry.query_id.to_owned(),
+            expected_visible_text: entry.expected_visible_text.to_owned(),
+        })
+        .collect::<Vec<_>>();
+    let source =
+        probe_mtgo_visible_accessibility_exact_text_v1(window_request, queries)?.summary_v1();
+    let entries = catalog
+        .iter()
+        .zip(&source.query_results)
+        .map(
+            |(entry, result)| MtgoVisibleAccessibilityCatalogEntrySummaryV1 {
+                query_id: entry.query_id.to_owned(),
+                slice: entry.slice,
+                expected_visible_text_sha256: result.expected_visible_text_sha256.clone(),
+                exact_visible_match_count: result.exact_visible_match_count,
+                observed_control_type_ids: result.observed_control_type_ids.clone(),
+                private_match_set_commitment_sha256: result
+                    .private_match_set_commitment_sha256
+                    .clone(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let matched_catalog_entry_count = u32::try_from(
+        entries
+            .iter()
+            .filter(|entry| entry.exact_visible_match_count > 0)
+            .count(),
+    )
+    .map_err(|_| "visible accessibility matched catalog count overflow")?;
+    let total_exact_visible_match_count = entries.iter().try_fold(0_u32, |total, entry| {
+        total
+            .checked_add(entry.exact_visible_match_count)
+            .ok_or("visible accessibility total catalog match count overflow")
+    })?;
+    let catalog_entry_count =
+        u32::try_from(entries.len()).map_err(|_| "visible accessibility catalog count overflow")?;
+    let report_commitment_sha256 = known_label_catalog_report_commitment_v1(
+        &catalog_commitment_sha256,
+        &source.report_commitment_sha256,
+        &source.source_window_identity_commitment_sha256,
+        source.eligible_visible_element_count,
+        source.visible_named_element_count,
+        catalog_entry_count,
+        matched_catalog_entry_count,
+        total_exact_visible_match_count,
+        &entries,
+    )?;
+    Ok(MtgoVisibleAccessibilityCatalogProbeSummaryV1 {
+        schema_version: MTGO_VISIBLE_ACCESSIBILITY_CATALOG_SCHEMA_V1,
+        catalog_commitment_sha256,
+        source_probe_commitment_sha256: source.report_commitment_sha256,
+        source_window_identity_commitment_sha256: source.source_window_identity_commitment_sha256,
+        report_commitment_sha256,
+        eligible_visible_element_count: source.eligible_visible_element_count,
+        visible_named_element_count: source.visible_named_element_count,
+        catalog_entry_count,
+        matched_catalog_entry_count,
+        total_exact_visible_match_count,
+        entries,
+        raw_visible_text_exposed: false,
+        caller_selected_text_queries_enabled: false,
+        unmatched_visible_text_retained: false,
+        requires_same_frame_pixel_corroboration: true,
+        safe_for_semantic_evidence: false,
+        safe_for_policy_scoring: false,
+        safe_for_input: false,
+    })
+}
+
+pub fn run_visible_accessibility_known_label_catalog_cli_v1(
+) -> Result<MtgoVisibleAccessibilityCatalogProbeSummaryV1, String> {
+    let window_request = parse_catalog_cli_v1()?;
+    probe_mtgo_visible_accessibility_known_label_catalog_v1(window_request)
+}
+
+fn known_label_catalog_v1() -> Vec<PrivateVisibleAccessibilityCatalogEntryV1> {
+    vec![
+        PrivateVisibleAccessibilityCatalogEntryV1 {
+            query_id: "bottoming.cancel",
+            slice: MtgoVisibleAccessibilityCatalogSliceV1::Bottoming,
+            expected_visible_text: "Cancel",
+        },
+        PrivateVisibleAccessibilityCatalogEntryV1 {
+            query_id: "gameplay.combat",
+            slice: MtgoVisibleAccessibilityCatalogSliceV1::Gameplay,
+            expected_visible_text: "Combat",
+        },
+        PrivateVisibleAccessibilityCatalogEntryV1 {
+            query_id: "pregame.keep",
+            slice: MtgoVisibleAccessibilityCatalogSliceV1::Pregame,
+            expected_visible_text: "Keep",
+        },
+        PrivateVisibleAccessibilityCatalogEntryV1 {
+            query_id: "pregame.mulligan",
+            slice: MtgoVisibleAccessibilityCatalogSliceV1::Pregame,
+            expected_visible_text: "Mulligan",
+        },
+        PrivateVisibleAccessibilityCatalogEntryV1 {
+            query_id: "sideboard.submit_deck",
+            slice: MtgoVisibleAccessibilityCatalogSliceV1::Sideboard,
+            expected_visible_text: "Submit Deck",
+        },
+    ]
+}
+
+fn validate_known_label_catalog_v1(
+    catalog: &[PrivateVisibleAccessibilityCatalogEntryV1],
+) -> Result<(), String> {
+    let queries = catalog
+        .iter()
+        .map(|entry| MtgoVisibleAccessibilityExactTextQueryV1 {
+            query_id: entry.query_id.to_owned(),
+            expected_visible_text: entry.expected_visible_text.to_owned(),
+        })
+        .collect::<Vec<_>>();
+    validate_queries_v1(&queries)
+}
+
+fn known_label_catalog_commitment_v1(
+    catalog: &[PrivateVisibleAccessibilityCatalogEntryV1],
+) -> Result<String, String> {
+    let bytes = serde_json::to_vec(catalog)
+        .map_err(|error| format!("serialize visible accessibility catalog: {error}"))?;
+    Ok(commitment_v1(
+        VISIBLE_ACCESSIBILITY_CATALOG_DOMAIN_V1,
+        &[&bytes],
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn known_label_catalog_report_commitment_v1(
+    catalog_commitment_sha256: &str,
+    source_probe_commitment_sha256: &str,
+    source_window_identity_commitment_sha256: &str,
+    eligible_visible_element_count: u32,
+    visible_named_element_count: u32,
+    catalog_entry_count: u32,
+    matched_catalog_entry_count: u32,
+    total_exact_visible_match_count: u32,
+    entries: &[MtgoVisibleAccessibilityCatalogEntrySummaryV1],
+) -> Result<String, String> {
+    let counts = [
+        eligible_visible_element_count,
+        visible_named_element_count,
+        catalog_entry_count,
+        matched_catalog_entry_count,
+        total_exact_visible_match_count,
+    ];
+    let count_bytes = counts
+        .into_iter()
+        .flat_map(u32::to_le_bytes)
+        .collect::<Vec<_>>();
+    let entry_bytes = serde_json::to_vec(entries)
+        .map_err(|error| format!("serialize visible accessibility catalog report: {error}"))?;
+    Ok(commitment_v1(
+        VISIBLE_ACCESSIBILITY_CATALOG_REPORT_DOMAIN_V1,
+        &[
+            &MTGO_VISIBLE_ACCESSIBILITY_CATALOG_SCHEMA_V1.to_le_bytes(),
+            catalog_commitment_sha256.as_bytes(),
+            source_probe_commitment_sha256.as_bytes(),
+            source_window_identity_commitment_sha256.as_bytes(),
+            &count_bytes,
+            &entry_bytes,
+            b"raw_visible_text_exposed=false",
+            b"caller_selected_text_queries_enabled=false",
+            b"unmatched_visible_text_retained=false",
+            b"requires_same_frame_pixel_corroboration=true",
+            b"safe_for_semantic_evidence=false",
+            b"safe_for_policy_scoring=false",
+            b"safe_for_input=false",
+        ],
+    ))
+}
+
 fn validate_queries_v1(queries: &[MtgoVisibleAccessibilityExactTextQueryV1]) -> Result<(), String> {
     if queries.is_empty() || queries.len() > MAX_VISIBLE_ACCESSIBILITY_QUERIES_V1 {
         return Err("visible accessibility query count must be between 1 and 64".to_owned());
@@ -857,6 +1101,75 @@ fn parse_cli_v1() -> Result<
     ))
 }
 
+fn parse_catalog_cli_v1() -> Result<MtgoDxgiCaptureRequestV3, String> {
+    let mut args = std::env::args().skip(1);
+    let mut expected_executable_sha256 = None;
+    let mut expected_signer_thumbprint = None;
+    let mut expected_signer_subject_sha256 = None;
+    let mut window_mode = CaptureWindowModeV2::DuelGame;
+    let mut expected_game_format = None;
+    let mut expected_title_contains = None;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--expected-exe-sha256" => {
+                expected_executable_sha256 = Some(
+                    args.next()
+                        .ok_or("missing value for --expected-exe-sha256")?,
+                )
+            }
+            "--expected-signer-thumbprint" => {
+                expected_signer_thumbprint = Some(
+                    args.next()
+                        .ok_or("missing value for --expected-signer-thumbprint")?,
+                )
+            }
+            "--expected-signer-subject-sha256" => {
+                expected_signer_subject_sha256 = Some(
+                    args.next()
+                        .ok_or("missing value for --expected-signer-subject-sha256")?,
+                )
+            }
+            "--window-mode" => {
+                let value = args.next().ok_or("missing value for --window-mode")?;
+                window_mode = match value.as_str() {
+                    "solitaire_game" => CaptureWindowModeV2::SolitaireGame,
+                    "duel_game" => CaptureWindowModeV2::DuelGame,
+                    _ => {
+                        return Err(
+                            "catalog window mode must be solitaire_game or duel_game".to_owned()
+                        )
+                    }
+                };
+            }
+            "--expected-game-format" => {
+                expected_game_format = Some(
+                    args.next()
+                        .ok_or("missing value for --expected-game-format")?,
+                )
+            }
+            "--expected-title-contains" => {
+                expected_title_contains = Some(
+                    args.next()
+                        .ok_or("missing value for --expected-title-contains")?,
+                )
+            }
+            _ => return Err(format!("unknown catalog argument {argument}")),
+        }
+    }
+    Ok(MtgoDxgiCaptureRequestV3 {
+        expected_executable_sha256: expected_executable_sha256
+            .ok_or("--expected-exe-sha256 is required")?,
+        expected_signer_thumbprint: expected_signer_thumbprint
+            .ok_or("--expected-signer-thumbprint is required")?,
+        expected_signer_subject_sha256: expected_signer_subject_sha256
+            .ok_or("--expected-signer-subject-sha256 is required")?,
+        window_mode,
+        expected_game_format,
+        expected_title_contains,
+        timeout_ms: 1_500,
+    })
+}
+
 fn valid_safe_identifier_v1(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 96
@@ -961,6 +1274,55 @@ mod tests {
         let mut unsafe_text = queries_v1();
         unsafe_text[0].expected_visible_text.push('\n');
         assert!(validate_queries_v1(&unsafe_text).is_err());
+    }
+
+    #[test]
+    fn known_label_catalog_is_canonical_and_hash_only_at_the_public_boundary() {
+        let catalog = known_label_catalog_v1();
+        validate_known_label_catalog_v1(&catalog).unwrap();
+        assert_eq!(catalog.len(), 5);
+        assert_eq!(catalog[0].query_id, "bottoming.cancel");
+        assert_eq!(catalog[4].query_id, "sideboard.submit_deck");
+        let commitment = known_label_catalog_commitment_v1(&catalog).unwrap();
+        assert_eq!(commitment.len(), 64);
+
+        let entries = catalog
+            .iter()
+            .map(|entry| MtgoVisibleAccessibilityCatalogEntrySummaryV1 {
+                query_id: entry.query_id.to_owned(),
+                slice: entry.slice,
+                expected_visible_text_sha256: sha256_hex_v1(entry.expected_visible_text.as_bytes()),
+                exact_visible_match_count: 0,
+                observed_control_type_ids: Vec::new(),
+                private_match_set_commitment_sha256: "a".repeat(64),
+            })
+            .collect::<Vec<_>>();
+        let summary = MtgoVisibleAccessibilityCatalogProbeSummaryV1 {
+            schema_version: MTGO_VISIBLE_ACCESSIBILITY_CATALOG_SCHEMA_V1,
+            catalog_commitment_sha256: commitment,
+            source_probe_commitment_sha256: "b".repeat(64),
+            source_window_identity_commitment_sha256: "c".repeat(64),
+            report_commitment_sha256: "d".repeat(64),
+            eligible_visible_element_count: 0,
+            visible_named_element_count: 0,
+            catalog_entry_count: 5,
+            matched_catalog_entry_count: 0,
+            total_exact_visible_match_count: 0,
+            entries,
+            raw_visible_text_exposed: false,
+            caller_selected_text_queries_enabled: false,
+            unmatched_visible_text_retained: false,
+            requires_same_frame_pixel_corroboration: true,
+            safe_for_semantic_evidence: false,
+            safe_for_policy_scoring: false,
+            safe_for_input: false,
+        };
+        let json = serde_json::to_string(&summary).unwrap();
+        for raw_label in ["Cancel", "Combat", "Keep", "Mulligan", "Submit Deck"] {
+            assert!(!json.contains(raw_label));
+        }
+        assert!(json.contains("bottoming.cancel"));
+        assert!(json.contains("sideboard.submit_deck"));
     }
 
     #[test]

@@ -2362,6 +2362,43 @@ fn visible_accessibility_probe_is_read_only_private_and_requires_pixel_corrobora
 }
 
 #[test]
+fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
+    let source = include_str!("../src/probe/visible_accessibility.rs");
+    let binary = include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_v1.rs");
+
+    for required in [
+        "fn known_label_catalog_v1()",
+        "expected_visible_text: \"Keep\"",
+        "expected_visible_text: \"Mulligan\"",
+        "expected_visible_text: \"Combat\"",
+        "expected_visible_text: \"Cancel\"",
+        "expected_visible_text: \"Submit Deck\"",
+        "caller_selected_text_queries_enabled: false",
+        "unmatched_visible_text_retained: false",
+        "raw_visible_text_exposed: false",
+        "requires_same_frame_pixel_corroboration: true",
+        "safe_for_semantic_evidence: false",
+        "safe_for_policy_scoring: false",
+        "safe_for_input: false",
+        "VISIBLE_ACCESSIBILITY_CATALOG_REPORT_DOMAIN_V1",
+        "report_commitment_sha256",
+    ] {
+        assert!(
+            source.contains(required),
+            "visible accessibility catalog is missing: {required}"
+        );
+    }
+    assert!(binary.contains("run_visible_accessibility_known_label_catalog_cli_v1"));
+    for forbidden in ["--query", "CurrentName", "GetCurrentPattern", "SendInput"] {
+        assert!(
+            !binary.contains(forbidden),
+            "visible accessibility catalog binary exposes forbidden capability: {forbidden}"
+        );
+    }
+    assert!(!source.contains("pub fn known_label_catalog_v1"));
+}
+
+#[test]
 fn visible_accessibility_pixel_corroboration_is_capture_bracketed_and_non_actionable() {
     let source = include_str!("../src/probe/visible_accessibility.rs");
     let binary = include_str!("../src/bin/probe_mtgo_visible_accessibility_pixels_v1.rs");
