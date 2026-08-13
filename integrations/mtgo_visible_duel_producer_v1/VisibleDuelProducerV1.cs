@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.6 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.7 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -107,7 +107,6 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel|Color",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|DoneButton",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|OkPromptButton",
-            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGame|CurrentTurn",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|ActionType",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|IsDefault",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|Name",
@@ -239,7 +238,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.6 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.7 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -302,8 +301,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
             if (AllowedGetters.Length != 48 ||
                 AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 48 ||
-                PrivateVisibleActionJoinGetters.Length != 15 ||
-                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 15)
+                PrivateVisibleActionJoinGetters.Length != 14 ||
+                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 14)
             {
                 return false;
             }

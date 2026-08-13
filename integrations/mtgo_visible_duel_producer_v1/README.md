@@ -7,16 +7,18 @@ direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.6 invokes only exact allowlisted getters for the player-visible game
+Version 1.7 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
-and basic two-seat consistency. It also performs fifteen exact private joins
+and basic two-seat consistency. It also performs fourteen exact private joins
 from visible enabled prompt controls and the seated player's visible cards to
 the corresponding action objects. Those joins read only visible action labels,
 action type, locally-performable classification, cast, activated, and mana
-classification, visible mode labels, the current turn, and the displayed mana
-color. Raw action objects, internal action identifiers, targets, timestamps,
+classification, visible mode labels, and the displayed mana color. The turn
+number is parsed only from the rendered `GameTurnText`, accepting the pinned
+English-client forms `Turn N` and `Turn N: active player`; other locales or
+formats abstain. Raw action objects, internal action identifiers, targets, timestamps,
 flags, and card or player backing objects are never exported.
 
 It never enumerates either library. It enumerates the seated player's hand,
@@ -63,7 +65,7 @@ producer now also reduces the rendered per-player Shields zone and each
 rendered card's public frame style to an Initiative-holder candidate. A
 non-null or ambiguous holder still forces abstention until an exact live UI
 corpus qualifies the per-player placement. No shield card, client object, or
-internal identifier is exported. Version 1.6 has not been
+internal identifier is exported. Version 1.7 has not been
 loaded into MTGO.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.

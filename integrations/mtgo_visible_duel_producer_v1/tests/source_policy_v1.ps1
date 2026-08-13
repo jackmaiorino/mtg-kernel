@@ -14,13 +14,14 @@ $required = @(
     'DataContext',
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
     'AllowedGetters.Length != 48',
-    'PrivateVisibleActionJoinGetters.Length != 15',
+    'PrivateVisibleActionJoinGetters.Length != 14',
     'projection_incomplete',
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
     'MemoryMappedFile.OpenExisting',
     'MaximumOutputBytes',
     'IsExactChannelName',
     'TryValidateVisibleChromeProjectionV1',
+    'TryParseVisibleTurnV1',
     'TryReadExactPropertyV1',
     'property.GetValue(target, null)',
     'MaximumVisibleTextCharacters',
@@ -102,7 +103,8 @@ $forbidden = @(
     'ModeIDs',
     'ActionFlags',
     'HiddenActions',
-    'GlobalActions'
+    'GlobalActions',
+    'CurrentTurn'
 )
 foreach ($marker in $forbidden) {
     if ($completeSource.Contains($marker)) {
@@ -130,8 +132,8 @@ $privateGetterLines = [regex]::Matches(
     $privateGetterSource,
     '"(?:DuelScene|WotC\.MtGO\.Client\.Model\.Reference)\|[^"\r\n]+\|[^"\r\n]+"'
 )
-if ($privateGetterLines.Count -ne 15) {
-    throw 'producer source must contain exactly 15 private visible-action join getters'
+if ($privateGetterLines.Count -ne 14) {
+    throw 'producer source must contain exactly 14 private visible-action join getters'
 }
 
 if (-not $source.Contains('if (localPlayer)') -or

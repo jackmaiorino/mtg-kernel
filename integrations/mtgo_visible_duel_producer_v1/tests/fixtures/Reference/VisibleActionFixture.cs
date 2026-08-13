@@ -16,7 +16,6 @@ namespace WotC.MtGO.Client.Model.Play
 
     public interface IGame
     {
-        int CurrentTurn { get; }
         void ExecuteAction(IGameAction action);
     }
 
@@ -25,15 +24,6 @@ namespace WotC.MtGO.Client.Model.Play
         public IGameAction? ExpectedAction { get; set; }
         public bool ExecutionObserved { get; private set; }
         public int ExecutionCount { get; private set; }
-
-        public int CurrentTurn
-        {
-            get
-            {
-                PrivateVisibleActionGetterProbeV1.Record("Game.CurrentTurn");
-                return 1;
-            }
-        }
 
         public void ExecuteAction(IGameAction action)
         {
@@ -77,8 +67,7 @@ namespace WotC.MtGO.Client.Model.Play
                 "CardAction.IsManaAbility",
                 "CardAction.IsActivatedAbility",
                 "CardAction.IsCastAction",
-                "CardAction.ModeOptions",
-                "Game.CurrentTurn"
+                "CardAction.ModeOptions"
             };
             foreach (string name in expected)
             {

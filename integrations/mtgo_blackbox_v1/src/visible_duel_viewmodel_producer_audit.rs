@@ -16,7 +16,7 @@ const ROOT_TYPE_V1: &str = "Shiny.Play.Duel.DuelScene";
 const ROOT_ACCESSOR_V1: &str = "FrameworkElement.DataContext";
 const ROOT_VIEWMODEL_TYPE_V1: &str = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
 const AUDIT_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-viewmodel-producer-audit-v1";
-const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 15;
+const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 14;
 const REFERENCE_ASSEMBLY_SHA256_V1: &str =
     "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 
@@ -419,12 +419,6 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
         ),
         (
             "WotC.MtGO.Client.Model.Reference.dll",
-            "WotC.MtGO.Client.Model.Play.IGame",
-            "CurrentTurn",
-            BoundVisibleActionObject,
-        ),
-        (
-            "WotC.MtGO.Client.Model.Reference.dll",
             "WotC.MtGO.Client.Model.Play.IGameAction",
             "ActionType",
             BoundVisibleActionObject,
@@ -530,7 +524,7 @@ mod tests {
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
         assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 25);
         assert!(checked.private_visible_action_join_layer_present_v1());
-        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 15);
+        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 14);
         assert!(checked.offline_sealed_action_dispatch_present_v1());
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());

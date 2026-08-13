@@ -110,6 +110,18 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                 window.Show();
                 try
                 {
+                    if (!TryParseVisibleTurnFixtureV1("Turn 1", out uint turnOne) ||
+                        turnOne != 1 ||
+                        !TryParseVisibleTurnFixtureV1(
+                            "Turn 42: fixture-visible-player",
+                            out uint turnFortyTwo) ||
+                        turnFortyTwo != 42 ||
+                        TryParseVisibleTurnFixtureV1("Turn 01", out _) ||
+                        TryParseVisibleTurnFixtureV1("Turn 1: ", out _) ||
+                        TryParseVisibleTurnFixtureV1("Tour 1", out _))
+                    {
+                        return 28;
+                    }
                     if (args.Length == 1 && string.Equals(
                             args[0],
                             "--wait-for-broker",
@@ -222,6 +234,22 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     seated.Shields.CardItems.Clear();
 
+                    // The semantic turn is derived only from the rendered
+                    // GameTurnText. Non-canonical or non-opening visible text
+                    // must fail closed before the first supported slice.
+                    viewModel.GameTurnTextFixture = "Turn 01";
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 26;
+                    }
+                    viewModel.GameTurnTextFixture = "Turn 2";
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 27;
+                    }
+                    viewModel.GameTurnTextFixture =
+                        "Turn 1: fixture-visible-local-player";
+
                     int status = VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(
                         channelName);
                     int length = view.ReadInt32(0);
@@ -251,10 +279,6 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         !VisibleCardGetterProbeV1.SawEveryVisibleCardGetterV1())
                     {
                         return 5;
-                    }
-                    if (!VisibleActionJoinGetterProbeV1.SawEveryPrivateJoinRootV1())
-                    {
-                        return 6;
                     }
                     if (!PrivateVisibleActionGetterProbeV1
                         .SawEveryPrivateVisibleActionGetterV1())
@@ -292,6 +316,10 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         viewModel.GameFixture.ExecutionCount != 1)
                     {
                         return 10;
+                    }
+                    if (!VisibleActionJoinGetterProbeV1.SawEveryPrivateJoinRootV1())
+                    {
+                        return 6;
                     }
                     string receiptText = Encoding.UTF8.GetString(receipt);
                     if (receiptText ==
@@ -394,6 +422,28 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                 return false;
             }
             holder = holderArguments[2] as string;
+            return true;
+        }
+
+        private static bool TryParseVisibleTurnFixtureV1(
+            string text,
+            out uint turn)
+        {
+            turn = 0;
+            MethodInfo? method = typeof(VisibleDuelProducerV1).GetMethod(
+                "TryParseVisibleTurnV1",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            if (method == null)
+            {
+                return false;
+            }
+            object?[] arguments = { text, null };
+            if (!(method.Invoke(null, arguments) is bool parsed) ||
+                !parsed || !(arguments[1] is uint parsedTurn))
+            {
+                return false;
+            }
+            turn = parsedTurn;
             return true;
         }
     }

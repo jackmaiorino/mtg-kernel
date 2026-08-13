@@ -182,7 +182,7 @@ namespace Shiny.Play.Duel.ViewModel
             get
             {
                 VisibleGetterProbeV1.Record("Duel.GameTurnText");
-                return "fixture-turn";
+                return GameTurnTextFixture;
             }
         }
 
@@ -224,6 +224,8 @@ namespace Shiny.Play.Duel.ViewModel
 
         public ObservableCollection<PlayerViewModel> PlayerItems { get; } =
             new ObservableCollection<PlayerViewModel>();
+        public string GameTurnTextFixture { get; set; } =
+            "Turn 1: fixture-visible-local-player";
         public PromptBoxViewModel Prompt { get; } = new PromptBoxViewModel();
         public ZoneViewModel Stack { get; } = new ZoneViewModel
         {

@@ -306,20 +306,13 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     "CurrentPhase",
                     out object? phaseValue) ||
                 !TryMapVisiblePhaseV1(phaseValue, out string phase) ||
-                !TryReadExactPrivateVisibleActionPropertyV1(
+                !TryReadExactPropertyV1(
                     viewModel,
                     "DuelScene",
                     DuelViewModelType,
-                    "Game",
-                    out object? game) ||
-                game == null ||
-                !TryReadExactPrivateVisibleActionPropertyV1(
-                    game,
-                    "WotC.MtGO.Client.Model.Reference",
-                    "WotC.MtGO.Client.Model.Play.IGame",
-                    "CurrentTurn",
-                    out object? turnValue) ||
-                !(turnValue is int turn) || turn != 1 ||
+                    "GameTurnText",
+                    out object? turnTextValue) ||
+                !TryParseVisibleTurnV1(turnTextValue, out uint turn) || turn != 1 ||
                 !TryReadExactPropertyV1(
                     viewModel,
                     "DuelScene",
@@ -471,7 +464,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 
             var state = new VisibleStateV1
             {
-                Turn = checked((uint)turn),
+                Turn = turn,
                 Phase = phase,
                 ActivePlayer = seated.Active ? "seated_player" : "opponent",
                 PriorityPlayer = "seated_player",
@@ -714,6 +707,47 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 default: return false;
             }
             return true;
+        }
+
+        private static bool TryParseVisibleTurnV1(object? value, out uint turn)
+        {
+            turn = 0;
+            const string prefix = "Turn ";
+            if (!(value is string text) ||
+                !IsBoundedVisibleStringV1(text, 128, false) ||
+                !text.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            int digitStart = prefix.Length;
+            int cursor = digitStart;
+            while (cursor < text.Length &&
+                text[cursor] >= '0' && text[cursor] <= '9')
+            {
+                cursor++;
+            }
+            int digitCount = cursor - digitStart;
+            if (digitCount == 0 || digitCount > 10 ||
+                (digitCount > 1 && text[digitStart] == '0'))
+            {
+                return false;
+            }
+            if (cursor < text.Length &&
+                (cursor + 2 >= text.Length ||
+                    text[cursor] != ':' || text[cursor + 1] != ' ' ||
+                    !text.Substring(cursor + 2).Any(
+                        character => !char.IsWhiteSpace(character))))
+            {
+                return false;
+            }
+
+            return uint.TryParse(
+                    text.Substring(digitStart, digitCount),
+                    System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out turn) &&
+                turn >= 1 && turn <= 1000000;
         }
 
         private static bool TryMapManaPoolV1(List<object> items, out int[] manaPool)
