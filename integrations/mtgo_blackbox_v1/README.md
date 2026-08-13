@@ -544,6 +544,19 @@ stages reject incomplete, reordered, duplicated, or nonfinite inputs, and lower
 visible order wins exact score ties. A kernel-owned scorer implementation and a
 sealed blocker dispatcher remain separate work.
 
+`score_and_prepare_strict_visible_combat_producer_result_v1` is the shared
+transport-neutral bridge for those three combat shapes. It strictly parses the
+producer's exact outward bytes, calls only the player-visible combat scorer
+methods, completes sequential attacker or single-attacker blocker scans, and
+binds every model-selection commitment plus the deployment identity to the
+coordinate-free execution plan or multi-attacker execution step. Ordinary
+decisions remain on the ordinary scorer, and a mid-execution blocker state
+cannot start a second deliberation. The checked result exposes no raw client
+object, hidden identifier, process, command, event-entry, spending, or live
+input authority. A direct parser and a pixel-based observer can therefore use
+the same model boundary as long as each emits only the same player-visible
+schema.
+
 The adapter now defines the coordinate-free half of step 6. `MtgoExternalScoringRequestV1` binds one validated decision commitment, the exact `ObservationV5`, the complete ordered `ActionSemanticV1` vector, action count, and an expected checkpoint deployment commitment. The deployment identity includes the run, checkpoint manifest, checkpoint payload, train-state, model-parameter, generation, and scorer-contract identities exposed by the native checkpoint handle.
 
 `MtgoExternalModelScoreResponseV1` returns exact f32 policy-logit and value bits bound to that request. Validation requires one finite logit per legal action and a finite value, then uses the kernel scorer's deterministic `total_cmp` argmax with lower-index ties. The resulting opaque selection can create only an offline intent for the exact source decision. It has no coordinates or live-input authority.
