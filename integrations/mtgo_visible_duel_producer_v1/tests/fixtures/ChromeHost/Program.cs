@@ -1,5 +1,7 @@
 using System;
 using System.IO.MemoryMappedFiles;
+using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Windows;
 using System.Windows.Threading;
@@ -114,6 +116,8 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     {
                         seated.Battlefield.Clear();
                         opponent.Battlefield.Clear();
+                        viewModel.GameFixture.ExpectedAction =
+                            viewModel.Prompt.OkPromptButton.ActionFixture!;
                         var timeout = new DispatcherTimer
                         {
                             Interval = TimeSpan.FromMinutes(2)
@@ -177,6 +181,75 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         .SawEveryPrivateVisibleActionGetterV1())
                     {
                         return 7;
+                    }
+                    viewModel.GameFixture.ExpectedAction =
+                        viewModel.Prompt.OkPromptButton.ActionFixture!;
+                    string sha;
+                    using (SHA256 sha256 = SHA256.Create())
+                    {
+                        sha = string.Concat(sha256.ComputeHash(bytes).Select(
+                            value => value.ToString("x2")));
+                    }
+                    byte[] command = Encoding.ASCII.GetBytes(
+                        "execute_visible_action_v1|" + sha + "|1");
+                    view.Write(0, command.Length);
+                    view.Write(4, 2);
+                    view.WriteArray(8, command, 0, command.Length);
+                    view.Flush();
+                    if (view.ReadInt32(0) != command.Length || view.ReadInt32(4) != 2)
+                    {
+                        return 16;
+                    }
+                    int dispatchStatus =
+                        VisibleDuelProducerV1.DispatchSelectedVisibleActionV1(channelName);
+                    if (dispatchStatus != 0)
+                    {
+                        return 17;
+                    }
+                    int receiptLength = view.ReadInt32(0);
+                    byte[] receipt = new byte[receiptLength];
+                    view.ReadArray(8, receipt, 0, receipt.Length);
+                    if (dispatchStatus != 0 || !viewModel.GameFixture.ExecutionObserved ||
+                        viewModel.GameFixture.ExecutionCount != 1)
+                    {
+                        return 10;
+                    }
+                    string receiptText = Encoding.UTF8.GetString(receipt);
+                    if (receiptText ==
+                        "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"rejected\"}")
+                    {
+                        return 11;
+                    }
+                    if (receiptText !=
+                        "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"submitted\"}")
+                    {
+                        if (receiptText.Contains("output_validation_failed"))
+                        {
+                            return 13;
+                        }
+                        if (receiptText.Contains("projection_incomplete"))
+                        {
+                            return 14;
+                        }
+                        return 12;
+                    }
+                    byte[] secondCommand = Encoding.ASCII.GetBytes(
+                        "execute_visible_action_v1|" + sha + "|0");
+                    view.Write(0, secondCommand.Length);
+                    view.Write(4, 2);
+                    view.WriteArray(8, secondCommand, 0, secondCommand.Length);
+                    view.Flush();
+                    int secondDispatchStatus =
+                        VisibleDuelProducerV1.DispatchSelectedVisibleActionV1(channelName);
+                    int secondReceiptLength = view.ReadInt32(0);
+                    byte[] secondReceipt = new byte[secondReceiptLength];
+                    view.ReadArray(8, secondReceipt, 0, secondReceipt.Length);
+                    if (secondDispatchStatus != 0 ||
+                        Encoding.UTF8.GetString(secondReceipt) !=
+                            "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"rejected\"}" ||
+                        viewModel.GameFixture.ExecutionCount != 1)
+                    {
+                        return 18;
                     }
                     Console.WriteLine(Convert.ToBase64String(bytes));
                     return 0;

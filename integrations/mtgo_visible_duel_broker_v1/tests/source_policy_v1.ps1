@@ -22,15 +22,16 @@ foreach ($required in @(
     '72b99e1169f9f9445a510b2dae52f9212fb7300c2483b8bc8e02f5760f11904e',
     '071338a98d845d5c8db6ebd2f3c847e38ad548f50ba11d2a36973438cdec2ea8',
     'f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8',
-    '9c62e801dbcb3fd21647ba1fc7837e1d49663b902530d5b2fb5a6197c9f465d4',
-    '05246fa77af3f6cd4e30654fbe28388ecc07425587ab1a9606f438a9aaabb82b',
+    '1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b',
+    'a99751da026d9e9e0b023c090cb24e06b8399a52bb745f9bea1b1f9be22e53e9',
     'e95e60bdf3ff6b4e2347609e79b6b9950152912d92cb6105ccef9dc95085fd16',
     'WotC.MtGO.Client.Model.Reference.dll',
     'AuthenticodeValidV1',
     'ExactPinnedVersionV1',
     'ExactlyOneMtgoProcessV1',
     'live_identity_pre',
-    'live_identity_post'
+    'live_identity_post',
+    'live_dispatch_not_admitted'
 )) {
     if (-not ($bootstrap.Contains($required) -or $broker.Contains($required))) {
         throw "required broker marker missing"

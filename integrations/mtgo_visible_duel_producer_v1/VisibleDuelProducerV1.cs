@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.4 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.5 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -123,9 +123,39 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         /// </summary>
         public static int ExportVisibleDecisionOrAbstainV1(string channelName)
         {
+            return RunVisibleDecisionTransactionV1(channelName, false);
+        }
+
+        /// <summary>
+        /// Executes one selected player-visible action only after rebuilding
+        /// the exact sanitized decision and matching its SHA-256 and index.
+        /// The channel receives only a fixed submitted or rejected receipt.
+        /// </summary>
+        public static int DispatchSelectedVisibleActionV1(string channelName)
+        {
+            return RunVisibleDecisionTransactionV1(channelName, true);
+        }
+
+        private static int RunVisibleDecisionTransactionV1(
+            string channelName,
+            bool dispatchRequested)
+        {
             if (!IsExactChannelName(channelName))
             {
                 return 2;
+            }
+
+            SealedVisibleActionDispatchRequestV1? dispatchRequest = null;
+            if (dispatchRequested &&
+                !TryReadSealedVisibleActionDispatchRequestV1(
+                    channelName,
+                    out dispatchRequest))
+            {
+                return WriteBrokerResult(channelName, VisibleActionRejected) ? 0 : 4;
+            }
+            if (dispatchRequested != (dispatchRequest != null))
+            {
+                return WriteBrokerResult(channelName, OutputValidationFailed) ? 0 : 4;
             }
 
             byte[] result;
@@ -145,24 +175,26 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 }
                 else if (dispatcher.CheckAccess())
                 {
-                    result = ExportOnUiThread(application);
+                    result = ExportOnUiThread(application, dispatchRequest);
                 }
                 else
                 {
                     result = (byte[])dispatcher.Invoke(
                         DispatcherPriority.Send,
-                        new Func<byte[]>(() => ExportOnUiThread(application)));
+                        new Func<byte[]>(() => ExportOnUiThread(application, dispatchRequest)));
                 }
             }
             catch
             {
-                result = OutputValidationFailed;
+                result = dispatchRequested ? VisibleActionRejected : OutputValidationFailed;
             }
 
             return WriteBrokerResult(channelName, result) ? 0 : 4;
         }
 
-        private static byte[] ExportOnUiThread(Application application)
+        private static byte[] ExportOnUiThread(
+            Application application,
+            SealedVisibleActionDispatchRequestV1? dispatchRequest)
         {
             var roots = new List<FrameworkElement>(2);
             int visited = 0;
@@ -205,17 +237,32 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.4 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.5 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
             {
                 return ProjectionIncomplete;
             }
-            bool built = TryBuildFirstSanitizedVisibleDecisionV1(
+            bool built = TryBuildSanitizedVisibleDecisionAndActionBindingsV1(
                 viewModel,
-                out byte[] visibleDecision);
-            return built ? visibleDecision : ProjectionIncomplete;
+                out byte[] visibleDecision,
+                out List<object> boundClientActions);
+            if (!built)
+            {
+                return ProjectionIncomplete;
+            }
+            if (dispatchRequest == null)
+            {
+                return visibleDecision;
+            }
+            return TryExecuteSealedVisibleActionV1(
+                viewModel,
+                visibleDecision,
+                boundClientActions,
+                dispatchRequest)
+                ? VisibleActionSubmitted
+                : VisibleActionRejected;
         }
 
         private static bool CollectExactDuelRoots(
@@ -1175,6 +1222,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !ReferenceEquals(value, SurfaceShapeMismatch) &&
                 !ReferenceEquals(value, ProjectionIncomplete) &&
                 !ReferenceEquals(value, OutputValidationFailed) &&
+                !ReferenceEquals(value, VisibleActionSubmitted) &&
+                !ReferenceEquals(value, VisibleActionRejected) &&
                 !IsSanitizedVisibleDecisionResultV1(value))
             {
                 value = OutputValidationFailed;

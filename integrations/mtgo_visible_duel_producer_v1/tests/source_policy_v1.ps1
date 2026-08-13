@@ -3,7 +3,10 @@ $ErrorActionPreference = 'Stop'
 $sourcePath = Join-Path $PSScriptRoot '..\VisibleDuelProducerV1.cs'
 $source = [IO.File]::ReadAllText((Resolve-Path $sourcePath))
 $sanitizerPath = Join-Path $PSScriptRoot '..\SanitizedVisibleDecisionV1.cs'
-$completeSource = $source + "`n" + [IO.File]::ReadAllText((Resolve-Path $sanitizerPath))
+$dispatchPath = Join-Path $PSScriptRoot '..\SealedVisibleActionDispatchV1.cs'
+$completeSource = $source + "`n" +
+    [IO.File]::ReadAllText((Resolve-Path $sanitizerPath)) + "`n" +
+    [IO.File]::ReadAllText((Resolve-Path $dispatchPath))
 
 $required = @(
     'Shiny.Play.Duel.DuelScene',
@@ -31,10 +34,17 @@ $required = @(
     'TryValidatePrivateVisibleCardActionJoinsV1',
     'TryValidatePrivateVisibleActionV1',
     'TryReadExactPrivateVisibleActionPropertyV1',
-    'PrivateVisibleActionJoinGetters.Contains('
+    'PrivateVisibleActionJoinGetters.Contains(',
+    'DispatchSelectedVisibleActionV1',
+    'execute_visible_action_v1|',
+    'ExpectedDecisionSha256',
+    'ExecuteAction',
+    'ConditionalWeakTable<object, HashSet<string>>',
+    'DispatchedVisibleDecisionsByGameV1',
+    '!dispatched.Add(request.ExpectedDecisionSha256)'
 )
 foreach ($marker in $required) {
-    if (-not $source.Contains($marker)) {
+    if (-not $completeSource.Contains($marker)) {
         throw "required visible-producer marker missing: $marker"
     }
 }
@@ -85,7 +95,9 @@ $forbidden = @(
     'CurrentTargetList',
     'PendingTargets',
     'ModeIDs',
-    'ActionFlags'
+    'ActionFlags',
+    'HiddenActions',
+    'GlobalActions'
 )
 foreach ($marker in $forbidden) {
     if ($completeSource.Contains($marker)) {

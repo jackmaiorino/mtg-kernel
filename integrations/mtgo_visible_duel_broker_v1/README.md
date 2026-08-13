@@ -2,8 +2,8 @@
 
 This isolated native broker supplies the first load-and-invoke path for the
 managed visible-duel producer. It creates a fixed-size local memory channel,
-loads the bootstrap into one explicitly named process, invokes the one managed
-producer method through the process's already-loaded CLR v4 runtime, validates
+loads the bootstrap into one explicitly named process, invokes the exact
+selected managed producer method through the process's already-loaded CLR v4 runtime, validates
 fixed abstentions in-process, sends a data-bearing candidate only to the strict
 Rust schema validator through an anonymous pipe, erases temporary buffers, and
 prints only the exact accepted copy.
@@ -42,3 +42,10 @@ projection, legal-action completeness, semantic evidence, model scoring, or
 input. The old native bootstrap remains loaded until that MTGO process exits.
 A clean client restart is required before qualifying the new producer and
 validator.
+
+The offline broker also proves a sealed synthetic action call. It binds one
+selected index to the SHA-256 of the exact strictly validated visible decision,
+returns only a fixed submitted or rejected receipt, and rejects every later
+index for the consumed decision. The live broker compile-disables that command.
+Live dispatch remains unavailable until the scorer, attended authorization,
+fresh-state, and newer visible-postcondition checks are joined in one runtime.

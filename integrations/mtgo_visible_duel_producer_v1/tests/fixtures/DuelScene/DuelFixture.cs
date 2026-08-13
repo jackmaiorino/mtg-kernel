@@ -228,7 +228,7 @@ namespace Shiny.Play.Duel.ViewModel
         {
             IsVisibleFixture = true
         };
-        public IGame GameFixture { get; } = new VisibleFixtureGame();
+        public VisibleFixtureGame GameFixture { get; } = new VisibleFixtureGame();
     }
 
     public sealed class PlayerViewModel

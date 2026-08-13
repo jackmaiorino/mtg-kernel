@@ -17,7 +17,11 @@ fn producer_source_v1() -> String {
 }
 
 fn complete_producer_source_v1() -> String {
-    ["VisibleDuelProducerV1.cs", "SanitizedVisibleDecisionV1.cs"]
+    [
+        "VisibleDuelProducerV1.cs",
+        "SanitizedVisibleDecisionV1.cs",
+        "SealedVisibleActionDispatchV1.cs",
+    ]
         .into_iter()
         .map(|name| {
             fs::read_to_string(producer_root_v1().join(name)).expect("read producer source")
@@ -98,7 +102,7 @@ fn managed_producer_private_visible_action_join_allowlist_matches_audit() {
 }
 
 #[test]
-fn managed_producer_has_no_raw_output_or_side_effect_api_markers() {
+fn managed_producer_has_bounded_output_and_no_unrelated_side_effect_api_markers() {
     let source = complete_producer_source_v1();
     for forbidden in [
         "ReadProcessMemory",
@@ -120,7 +124,8 @@ fn managed_producer_has_no_raw_output_or_side_effect_api_markers() {
         "GetProperties(",
         "InvokeMember(",
         "SetValue(",
-        "ExecuteAction",
+        "HiddenActions",
+        "GlobalActions",
     ] {
         assert!(
             !source.contains(forbidden),
@@ -143,12 +148,19 @@ fn managed_producer_has_no_raw_output_or_side_effect_api_markers() {
     assert!(source.contains("AllowedGetters.Contains(exactKey, StringComparer.Ordinal)"));
     assert!(source.contains("private const int MaximumVisibleTextCharacters = 4096;"));
     assert!(source.contains("private const int MaximumVisibleCollectionItems = 1024;"));
-    assert!(source.contains("return built ? visibleDecision : ProjectionIncomplete;"));
+    assert!(source.contains("return ProjectionIncomplete;"));
+    assert!(source.contains("DispatchSelectedVisibleActionV1"));
+    assert!(source.contains("execute_visible_action_v1|"));
+    assert!(source.contains("ExpectedDecisionSha256"));
+    assert!(source.contains("ExecuteAction"));
+    assert!(source.contains("ConditionalWeakTable<object, HashSet<string>>"));
+    assert!(source.contains("DispatchedVisibleDecisionsByGameV1"));
+    assert!(source.contains("!dispatched.Add(request.ExpectedDecisionSha256)"));
 }
 
 #[test]
 fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
-    let source = producer_source_v1();
+    let source = complete_producer_source_v1();
     for marker in [
         "\"CurrentPhase\"",
         "\"GameTurnText\"",
@@ -176,7 +188,7 @@ fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
         );
     }
     assert!(source.contains("TryBuildFirstSanitizedVisibleDecisionV1("));
-    assert!(source.contains("return built ? visibleDecision : ProjectionIncomplete;"));
+    assert!(source.contains("return ProjectionIncomplete;"));
     assert!(!source.contains("JavaScriptSerializer"));
 }
 

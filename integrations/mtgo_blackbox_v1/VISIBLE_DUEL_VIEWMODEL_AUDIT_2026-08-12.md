@@ -56,7 +56,7 @@ Every such property remains untrusted until a reviewed UI corpus demonstrates
 exact agreement with what the seated player can see. Property names alone are
 not evidence of visibility.
 
-## Forbidden backing properties
+## Non-exportable backing properties
 
 The public metadata also named backing or potentially non-rendered properties,
 including:
@@ -75,11 +75,13 @@ including:
 - replay and server-waiting state
 - window settings and render geometry
 
-The broker must never traverse, serialize, hash into model features, log, or
-return these properties. The prohibition applies even when a backing object
-also contains facts that are visible elsewhere. Eligible facts must be read
-only through an allowlisted UI-facing property with a reviewed visible
-counterpart.
+These values must never be serialized, hashed into model features, logged, or
+returned. Under the later transport-neutral permission, the sealed producer may
+transiently traverse an exact audited backing route only to join a visible UI
+control or seated-player-visible card to its corresponding action object. The
+object and every internal-only field remain inside the producer and are
+discarded before its first outward value. An unrestricted backing traversal is
+still forbidden.
 
 ## Smallest safe broker
 
@@ -90,20 +92,22 @@ returns only a versioned visible projection. It should:
 1. bind the exact client version, signed MTGO executable, ClickOnce deployment,
    hashed presentation assemblies, visible duel window, seated account, event,
    match, and game;
-2. enumerate only compile-time allowlisted UI-facing types and properties;
+2. enumerate only compile-time allowlisted UI-facing properties and exact
+   private join routes whose sources are already player-visible;
 3. reject any unexpected type, property, collection element, or nullability
    shape rather than reflecting recursively;
 4. map players to seated-player or opponent roles and objects to
    decision-local visible ordinals;
-5. convert visible card definitions to visible card names and discard all
+5. convert visible card definitions to visible card names, retain action
+   objects only long enough for a sealed selected-action call, and discard all
    client identifiers;
 6. produce `MtgoPlayerVisibleDuelDecisionInputV1` or an explicit abstention as
    its first exported value;
 7. corroborate the UI-facing property set against composed pixels during
    qualification and around each live transaction until the exporter itself
    is formally reviewed by Daybreak;
-8. retain no raw objects or values and expose no debug or error formatter that
-   can print them.
+8. retain no raw objects or values outside the live transaction and expose no
+   debug or error formatter that can print them.
 
 Production admission still requires the complete reviewed-frame corpus,
 adversarial hidden-field fixtures, exact action-family coverage, reproducible
@@ -127,7 +131,9 @@ part of eligibility. For example, zone cards are eligible only for the seated
 player's hand, a public zone, or a zone the UI explicitly reveals. A face-down
 card cannot export a name merely because the presentation object carries one.
 
-The frozen list remains a metadata audit artifact. It does not demonstrate a
+The frozen public list remains a metadata audit artifact. A later reviewed
+producer adds a separate 15-property private join allowlist for visible-source
+action binding. Neither list demonstrates a
 complete duel projection, attest a live producer, or allow any property value
 to reach the model. Every candidate still requires exact UI-corpus
 qualification, and every authority flag remains false.

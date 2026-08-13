@@ -17,10 +17,15 @@ namespace WotC.MtGO.Client.Model.Play
     public interface IGame
     {
         int CurrentTurn { get; }
+        void ExecuteAction(IGameAction action);
     }
 
     public sealed class VisibleFixtureGame : IGame
     {
+        public IGameAction? ExpectedAction { get; set; }
+        public bool ExecutionObserved { get; private set; }
+        public int ExecutionCount { get; private set; }
+
         public int CurrentTurn
         {
             get
@@ -28,6 +33,17 @@ namespace WotC.MtGO.Client.Model.Play
                 PrivateVisibleActionGetterProbeV1.Record("Game.CurrentTurn");
                 return 1;
             }
+        }
+
+        public void ExecuteAction(IGameAction action)
+        {
+            ExecutionCount++;
+            if (!object.ReferenceEquals(action, ExpectedAction))
+            {
+                throw new System.InvalidOperationException(
+                    "unexpected private visible action binding");
+            }
+            ExecutionObserved = true;
         }
     }
 

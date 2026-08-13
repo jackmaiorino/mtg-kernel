@@ -28,17 +28,27 @@ $publicMethods = @(
     $type.GetMethods([Reflection.BindingFlags]'Public,Static,DeclaredOnly') |
         Where-Object { -not $_.IsSpecialName }
 )
-if ($publicMethods.Count -ne 1 -or
-    $publicMethods[0].Name -ne 'ExportVisibleDecisionOrAbstainV1' -or
-    $publicMethods[0].GetParameters().Count -ne 1 -or
-    $publicMethods[0].GetParameters()[0].ParameterType -ne [string] -or
-    $publicMethods[0].ReturnType -ne [int]) {
-    throw 'producer must expose exactly one string-to-integer broker method'
+if ($publicMethods.Count -ne 2 -or
+    (Compare-Object @(
+        'DispatchSelectedVisibleActionV1',
+        'ExportVisibleDecisionOrAbstainV1'
+    ) @($publicMethods.Name | Sort-Object)) -or
+    @($publicMethods | Where-Object {
+        $_.GetParameters().Count -ne 1 -or
+        $_.GetParameters()[0].ParameterType -ne [string] -or
+        $_.ReturnType -ne [int]
+    }).Count -ne 0) {
+    throw 'producer must expose exactly two string-to-integer broker methods'
 }
 
-$invalidStatus = [int]$publicMethods[0].Invoke($null, @('invalid'))
+$exportMethod = $publicMethods | Where-Object Name -eq 'ExportVisibleDecisionOrAbstainV1'
+$dispatchMethod = $publicMethods | Where-Object Name -eq 'DispatchSelectedVisibleActionV1'
+$invalidStatus = [int]$exportMethod.Invoke($null, @('invalid'))
 if ($invalidStatus -ne 2) {
     throw 'invalid broker channel name was not rejected'
+}
+if ([int]$dispatchMethod.Invoke($null, @('invalid')) -ne 2) {
+    throw 'invalid dispatch channel name was not rejected'
 }
 
 $channelName = 'Local\mtgkernel_mtgo_visible_v1_' + ('a' * 64)
@@ -46,7 +56,7 @@ $capacity = 1048576
 $channel = [IO.MemoryMappedFiles.MemoryMappedFile]::CreateNew($channelName, $capacity)
 $view = $channel.CreateViewAccessor(0, $capacity, [IO.MemoryMappedFiles.MemoryMappedFileAccess]::ReadWrite)
 try {
-    $status = [int]$publicMethods[0].Invoke($null, @($channelName))
+    $status = [int]$exportMethod.Invoke($null, @($channelName))
     if ($status -ne 0) {
         throw "offline producer returned transport status $status"
     }

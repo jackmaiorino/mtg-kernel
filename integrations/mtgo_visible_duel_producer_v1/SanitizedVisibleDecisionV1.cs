@@ -237,12 +237,25 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             object viewModel,
             out byte[] result)
         {
+            return TryBuildSanitizedVisibleDecisionAndActionBindingsV1(
+                viewModel,
+                out result,
+                out _);
+        }
+
+        internal static bool TryBuildSanitizedVisibleDecisionAndActionBindingsV1(
+            object viewModel,
+            out byte[] result,
+            out List<object> boundClientActions)
+        {
             result = Array.Empty<byte>();
+            boundClientActions = new List<object>();
             try
             {
                 if (!TryBuildFirstSanitizedVisibleDecisionCoreV1(
                         viewModel,
-                        out VisibleDecisionResultV1 payload))
+                        out VisibleDecisionResultV1 payload,
+                        out boundClientActions))
                 {
                     return false;
                 }
@@ -273,15 +286,18 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             catch
             {
                 result = Array.Empty<byte>();
+                boundClientActions = new List<object>();
                 return false;
             }
         }
 
         private static bool TryBuildFirstSanitizedVisibleDecisionCoreV1(
             object viewModel,
-            out VisibleDecisionResultV1 result)
+            out VisibleDecisionResultV1 result,
+            out List<object> boundClientActions)
         {
             result = new VisibleDecisionResultV1();
+            boundClientActions = new List<object>();
             if (!TryReadExactPropertyV1(
                     viewModel,
                     "DuelScene",
@@ -422,15 +438,20 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     visibleCardsForActions,
                     seated.Hand,
                     objectRefs,
-                    out List<Dictionary<string, object?>> actions))
+                    out List<Dictionary<string, object?>> actions,
+                    out List<object> actionBindings))
             {
                 return false;
             }
-            if (!TryMapVisiblePriorityPassControlV1(viewModel, out Dictionary<string, object?> pass))
+            if (!TryMapVisiblePriorityPassControlV1(
+                    viewModel,
+                    out Dictionary<string, object?> pass,
+                    out object passAction))
             {
                 return false;
             }
             actions.Add(pass);
+            actionBindings.Add(passAction);
             if (actions.Count > 64)
             {
                 return false;
@@ -466,6 +487,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 CurrentState = state,
                 OrderedLegalActions = actions
             };
+            boundClientActions = actionBindings;
             return true;
         }
 
@@ -792,12 +814,14 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             List<object> visibleCards,
             List<object> handCards,
             Dictionary<object, VisibleObjectRefV1> refs,
-            out List<Dictionary<string, object?>> actions)
+            out List<Dictionary<string, object?>> actions,
+            out List<object> boundClientActions)
         {
             // Card actions come only from the visible-source-bound client
             // collection. Priority Pass is joined separately from the one
             // visible and enabled default OK or Done control.
             actions = new List<Dictionary<string, object?>>();
+            boundClientActions = new List<object>();
             var hand = new HashSet<object>(handCards, ReferenceIdentityComparerV1.Instance);
             foreach (object card in visibleCards.Distinct(ReferenceIdentityComparerV1.Instance))
             {
@@ -824,6 +848,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                         return false;
                     }
                     actions.Add(mapped);
+                    boundClientActions.Add(action);
                     if (actions.Count > 1024)
                     {
                         return false;
@@ -837,9 +862,11 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 
         private static bool TryMapVisiblePriorityPassControlV1(
             object viewModel,
-            out Dictionary<string, object?> pass)
+            out Dictionary<string, object?> pass,
+            out object boundClientAction)
         {
             pass = new Dictionary<string, object?>();
+            boundClientAction = new object();
             const string promptType = "Shiny.Play.Duel.ViewModel.PromptBoxViewModel";
             if (!TryReadExactPropertyV1(
                     viewModel,
@@ -859,22 +886,25 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     promptType,
                     "DoneButton",
                     out object? doneButton) ||
-                !TryReadVisiblePriorityControlV1(okButton, out bool okEligible) ||
-                !TryReadVisiblePriorityControlV1(doneButton, out bool doneEligible) ||
+                !TryReadVisiblePriorityControlV1(okButton, out bool okEligible, out object? okAction) ||
+                !TryReadVisiblePriorityControlV1(doneButton, out bool doneEligible, out object? doneAction) ||
                 (okEligible ? 1 : 0) + (doneEligible ? 1 : 0) != 1)
             {
                 return false;
             }
             pass["action_kind"] = "pass";
             pass["actor"] = "seated_player";
+            boundClientAction = okEligible ? okAction! : doneAction!;
             return true;
         }
 
         private static bool TryReadVisiblePriorityControlV1(
             object? control,
-            out bool eligible)
+            out bool eligible,
+            out object? boundClientAction)
         {
             eligible = false;
+            boundClientAction = null;
             if (control == null)
             {
                 return true;
@@ -922,6 +952,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return false;
             }
             eligible = true;
+            boundClientAction = action;
             return true;
         }
 

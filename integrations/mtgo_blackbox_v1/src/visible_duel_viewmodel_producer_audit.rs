@@ -142,6 +142,10 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
         self.private_visible_action_join_getter_count
     }
 
+    pub fn offline_sealed_action_dispatch_present_v1(&self) -> bool {
+        true
+    }
+
     pub fn full_projection_implemented_v1(&self) -> bool {
         false
     }
@@ -216,7 +220,7 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         private_action_identifiers_exported: false,
         opponent_action_collections_inspected: false,
         private_action_joins_bound_to_visible_sources: true,
-        action_execution_present: false,
+        action_execution_present: true,
         producer_execution_attested: false,
         full_projection_implemented: false,
         safe_for_live_semantic_evidence: false,
@@ -274,7 +278,7 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.private_action_identifiers_exported
         || audit.opponent_action_collections_inspected
         || !audit.private_action_joins_bound_to_visible_sources
-        || audit.action_execution_present
+        || !audit.action_execution_present
         || audit.producer_execution_attested
         || audit.full_projection_implemented
         || audit.safe_for_live_semantic_evidence
@@ -283,7 +287,7 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
     {
         return Err(error_v1(
             "visible_duel_viewmodel_producer_audit_boundary",
-            "untrusted producer audit must reject unknown input and grant no unrestricted traversal, raw output, side effect, execution, model, or input authority",
+            "untrusted producer audit must require the exact bounded dispatch seam, reject unknown input, and grant no unrestricted traversal, raw output, execution, model, or live-input authority",
         ));
     }
 
@@ -527,6 +531,7 @@ mod tests {
         assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 23);
         assert!(checked.private_visible_action_join_layer_present_v1());
         assert_eq!(checked.private_visible_action_join_getter_count_v1(), 15);
+        assert!(checked.offline_sealed_action_dispatch_present_v1());
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());
         assert!(!checked.safe_for_live_semantic_evidence_v1());
@@ -566,6 +571,13 @@ mod tests {
                 .unwrap()
                 .code(),
             "visible_duel_viewmodel_producer_audit_boundary"
+        );
+
+        let mut missing_dispatch = mtgo_visible_duel_viewmodel_producer_audit_v1();
+        missing_dispatch.action_execution_present = false;
+        assert!(
+            check_untrusted_visible_duel_viewmodel_producer_audit_v1(missing_dispatch)
+                .is_err()
         );
     }
 

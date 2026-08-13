@@ -8,6 +8,7 @@
 #include <tlhelp32.h>
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cwchar>
@@ -27,6 +28,10 @@ constexpr std::size_t kChannelCharacters = 128;
 constexpr DWORD kOutputBytes = 1048576;
 constexpr DWORD kWaitMilliseconds = 30000;
 constexpr wchar_t kChannelPrefix[] = L"Local\\mtgkernel_mtgo_visible_v1_";
+constexpr wchar_t kProducerObserveMethodV1[] =
+    L"ExportVisibleDecisionOrAbstainV1";
+constexpr wchar_t kProducerDispatchMethodV1[] =
+    L"DispatchSelectedVisibleActionV1";
 #ifndef MTGO_LIVE_PINNED_V1
 constexpr wchar_t kOnlyAdmittedTargetFileName[] =
     L"synthetic_managed_host_v1.exe";
@@ -43,9 +48,9 @@ constexpr char kExpectedCardSha256[] =
 constexpr char kExpectedReferenceSha256[] =
     "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 constexpr char kExpectedBootstrapSha256[] =
-    "9c62e801dbcb3fd21647ba1fc7837e1d49663b902530d5b2fb5a6197c9f465d4";
+    "1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b";
 constexpr char kExpectedProducerSha256[] =
-    "05246fa77af3f6cd4e30654fbe28388ecc07425587ab1a9606f438a9aaabb82b";
+    "a99751da026d9e9e0b023c090cb24e06b8399a52bb745f9bea1b1f9be22e53e9";
 constexpr char kExpectedValidatorSha256[] =
     "e95e60bdf3ff6b4e2347609e79b6b9950152912d92cb6105ccef9dc95085fd16";
 #endif
@@ -55,6 +60,7 @@ struct VisibleDuelBootstrapParametersV1 {
   std::uint32_t structure_bytes;
   wchar_t producer_path[kMaximumPathCharacters];
   wchar_t channel_name[kChannelCharacters];
+  wchar_t producer_method[kChannelCharacters];
 };
 
 struct HandleV1 {
@@ -436,6 +442,21 @@ bool AllowedResultV1(const char* bytes, DWORD length) {
   return false;
 }
 
+bool AllowedDispatchResultV1(const char* bytes, DWORD length) {
+  constexpr const char* kReceipts[] = {
+      "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"submitted\"}",
+      "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"rejected\"}",
+  };
+  for (const char* candidate : kReceipts) {
+    std::size_t candidate_length = strlen(candidate);
+    if (candidate_length == length &&
+        memcmp(candidate, bytes, length) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool StrictValidatorAcceptsV1(const wchar_t* validator_path,
                               const char* bytes, DWORD length) {
   if (!IsAbsoluteExistingFileV1(validator_path) || bytes == nullptr ||
@@ -512,10 +533,13 @@ int FailV1(const char* code) {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
-  if (argc != 9 || wcscmp(argv[1], L"--pid") != 0 ||
+  if ((argc != 9 && argc != 13) || wcscmp(argv[1], L"--pid") != 0 ||
       wcscmp(argv[3], L"--bootstrap") != 0 ||
       wcscmp(argv[5], L"--producer") != 0 ||
-      wcscmp(argv[7], L"--validator") != 0) {
+      wcscmp(argv[7], L"--validator") != 0 ||
+      (argc == 13 &&
+       (wcscmp(argv[9], L"--decision-sha256") != 0 ||
+        wcscmp(argv[11], L"--selected-index") != 0))) {
     return FailV1("arguments");
   }
   wchar_t* pid_end = nullptr;
@@ -525,6 +549,30 @@ int wmain(int argc, wchar_t** argv) {
       !IsAbsoluteExistingFileV1(argv[6]) ||
       !IsAbsoluteExistingFileV1(argv[8])) {
     return FailV1("input_validation");
+  }
+  bool dispatch_requested = argc == 13;
+#ifdef MTGO_LIVE_PINNED_V1
+  if (dispatch_requested) {
+    return FailV1("live_dispatch_not_admitted");
+  }
+#endif
+  std::wstring dispatch_command;
+  if (dispatch_requested) {
+    wchar_t* index_end = nullptr;
+    unsigned long selected_index = wcstoul(argv[12], &index_end, 10);
+    if (wcslen(argv[10]) != 64 ||
+        !std::all_of(argv[10], argv[10] + 64, [](wchar_t value) {
+          return (value >= L'0' && value <= L'9') ||
+                 (value >= L'a' && value <= L'f');
+        }) ||
+        selected_index >= 64 || index_end == nullptr || *index_end != L'\0' ||
+        wcscmp(argv[12], std::to_wstring(selected_index).c_str()) != 0) {
+      return FailV1("input_validation");
+    }
+    dispatch_command = L"execute_visible_action_v1|";
+    dispatch_command.append(argv[10]);
+    dispatch_command.push_back(L'|');
+    dispatch_command.append(argv[12]);
   }
   DWORD process_id = static_cast<DWORD>(parsed_pid);
 
@@ -545,6 +593,15 @@ int wmain(int argc, wchar_t** argv) {
     return FailV1("channel_map");
   }
   SecureZeroMemory(channel_view, kOutputBytes);
+  if (dispatch_requested) {
+    auto* header = static_cast<std::uint32_t*>(channel_view);
+    header[0] = static_cast<std::uint32_t>(dispatch_command.size());
+    header[1] = 2;
+    char* command_bytes = static_cast<char*>(channel_view) + 8;
+    for (std::size_t index = 0; index < dispatch_command.size(); ++index) {
+      command_bytes[index] = static_cast<char>(dispatch_command[index]);
+    }
+  }
 
   HandleV1 process{OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
                                    PROCESS_QUERY_LIMITED_INFORMATION |
@@ -621,7 +678,11 @@ int wmain(int argc, wchar_t** argv) {
   if (!ExactCopyV1(parameters.producer_path,
                    std::size(parameters.producer_path), argv[6]) ||
       !ExactCopyV1(parameters.channel_name,
-                   std::size(parameters.channel_name), channel_name.c_str())) {
+                   std::size(parameters.channel_name), channel_name.c_str()) ||
+      !ExactCopyV1(parameters.producer_method,
+                   std::size(parameters.producer_method),
+                   dispatch_requested ? kProducerDispatchMethodV1
+                                      : kProducerObserveMethodV1)) {
     UnmapViewOfFile(channel_view);
     return FailV1("parameter_copy");
   }
@@ -664,8 +725,12 @@ int wmain(int argc, wchar_t** argv) {
   SecureZeroMemory(channel_view, kOutputBytes);
   UnmapViewOfFile(channel_view);
 
-  if (!AllowedResultV1(candidate.data(), length) &&
-      !StrictValidatorAcceptsV1(argv[8], candidate.data(), length)) {
+  bool output_accepted = dispatch_requested
+                             ? AllowedDispatchResultV1(candidate.data(), length)
+                             : (AllowedResultV1(candidate.data(), length) ||
+                                StrictValidatorAcceptsV1(
+                                    argv[8], candidate.data(), length));
+  if (!output_accepted) {
     SecureZeroMemory(candidate.data(), candidate.size());
     return FailV1("output_validation");
   }

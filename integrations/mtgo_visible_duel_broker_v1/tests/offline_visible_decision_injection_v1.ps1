@@ -22,6 +22,59 @@ try {
         throw 'native broker did not release the strict validated visible decision'
     }
 
+    $decisionBytes = [Text.Encoding]::UTF8.GetBytes(($output -join "`n"))
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $decisionSha256 = -join ($sha256.ComputeHash($decisionBytes) | ForEach-Object { $_.ToString('x2') })
+    } finally {
+        $sha256.Dispose()
+    }
+    $passIndex = -1
+    for ($index = 0; $index -lt $result.decision.ordered_legal_actions.Count; $index++) {
+        if ($result.decision.ordered_legal_actions[$index].action_kind -eq 'pass') {
+            $passIndex = $index
+            break
+        }
+    }
+    if ($passIndex -lt 0) {
+        throw 'strict visible decision has no pass index'
+    }
+    $dispatchOutput = & $brokerPath --pid $hostProcess.Id --bootstrap $bootstrapPath --producer $producerPath --validator $validatorPath --decision-sha256 $decisionSha256 --selected-index $passIndex
+    if ($LASTEXITCODE -ne 0) {
+        throw 'sealed visible-action dispatch failed'
+    }
+    $dispatchReceipt = ($dispatchOutput -join "`n") | ConvertFrom-Json
+    if ($dispatchReceipt.result_kind -ne 'action_dispatch_receipt' -or
+        $dispatchReceipt.status -ne 'submitted') {
+        throw 'sealed visible-action dispatch did not return the fixed submitted receipt'
+    }
+
+    $priorErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $staleOutput = & $brokerPath --pid $hostProcess.Id --bootstrap $bootstrapPath --producer $producerPath --validator $validatorPath --decision-sha256 $decisionSha256 --selected-index $passIndex 2>$null
+        $staleExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $priorErrorActionPreference
+    }
+    if ($staleExitCode -ne 0) {
+        throw 'stale sealed dispatch must return a fixed rejected receipt'
+    }
+    $staleReceipt = ($staleOutput -join "`n") | ConvertFrom-Json
+    if ($staleReceipt.status -ne 'rejected') {
+        throw 'stale sealed dispatch did not fail closed'
+    }
+
+    $differentIndex = if ($passIndex -eq 0) { 1 } else { 0 }
+    $differentOutput = & $brokerPath --pid $hostProcess.Id --bootstrap $bootstrapPath --producer $producerPath --validator $validatorPath --decision-sha256 $decisionSha256 --selected-index $differentIndex
+    if ($LASTEXITCODE -ne 0) {
+        throw 'second-index sealed dispatch must return a fixed rejected receipt'
+    }
+    $differentReceipt = ($differentOutput -join "`n") | ConvertFrom-Json
+    if ($differentReceipt.status -ne 'rejected') {
+        throw 'one visible decision authorized more than one selected index'
+    }
+
     $invalidValidatorPath = (Resolve-Path (Join-Path $root 'README.md')).Path
     $priorErrorActionPreference = $ErrorActionPreference
     try {

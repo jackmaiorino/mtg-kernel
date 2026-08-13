@@ -13,7 +13,6 @@ constexpr std::uint32_t kParameterSchemaV1 = 1;
 constexpr wchar_t kRuntimeVersion[] = L"v4.0.30319";
 constexpr wchar_t kProducerType[] =
     L"MtgKernel.Mtgo.VisibleDuelProducer.V1.VisibleDuelProducerV1";
-constexpr wchar_t kProducerMethod[] = L"ExportVisibleDecisionOrAbstainV1";
 constexpr std::size_t kMaximumPathCharacters = 32768;
 constexpr std::size_t kChannelCharacters = 128;
 
@@ -22,6 +21,7 @@ struct VisibleDuelBootstrapParametersV1 {
   std::uint32_t structure_bytes;
   wchar_t producer_path[kMaximumPathCharacters];
   wchar_t channel_name[kChannelCharacters];
+  wchar_t producer_method[kChannelCharacters];
 };
 
 bool IsTerminatedWithinV1(const wchar_t* value, std::size_t capacity) {
@@ -48,7 +48,9 @@ extern "C" __declspec(dllexport) DWORD WINAPI RunVisibleDuelProducerV1(
       parameters->structure_bytes != sizeof(VisibleDuelBootstrapParametersV1) ||
       !IsTerminatedWithinV1(parameters->producer_path,
                             kMaximumPathCharacters) ||
-      !IsTerminatedWithinV1(parameters->channel_name, kChannelCharacters)) {
+      !IsTerminatedWithinV1(parameters->channel_name, kChannelCharacters) ||
+      !IsTerminatedWithinV1(parameters->producer_method,
+                            kChannelCharacters)) {
     return 11;
   }
 
@@ -79,7 +81,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI RunVisibleDuelProducerV1(
   }
   if (SUCCEEDED(result)) {
     result = runtime_host->ExecuteInDefaultAppDomain(
-        parameters->producer_path, kProducerType, kProducerMethod,
+        parameters->producer_path, kProducerType, parameters->producer_method,
         parameters->channel_name, &managed_status);
   }
 
