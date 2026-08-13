@@ -3390,7 +3390,7 @@ pub fn observe_competitive_post_entry_operator_event_record_v1(
     )
 }
 
-pub fn checkout_competitive_post_entry_operator_gameplay_v1(
+pub(crate) fn checkout_competitive_post_entry_operator_gameplay_v1(
     operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
     session: OpaqueMtgoCompetitiveGestureGameSessionV1,
 ) -> Result<

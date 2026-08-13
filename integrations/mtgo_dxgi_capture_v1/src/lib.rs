@@ -272,7 +272,6 @@ pub use competitive_operator_loop::{
     bind_competitive_post_entry_operator_player_visible_gameplay_source_target_v1,
     checkout_competitive_operator_visible_native_sideboard_v1,
     checkout_competitive_post_entry_operator_attended_native_pregame_v1,
-    checkout_competitive_post_entry_operator_gameplay_v1,
     checkout_competitive_post_entry_operator_native_pregame_v1,
     checkout_competitive_post_entry_operator_native_pregame_with_completed_history_v2,
     complete_competitive_operator_attended_heuristic_pregame_v1,
