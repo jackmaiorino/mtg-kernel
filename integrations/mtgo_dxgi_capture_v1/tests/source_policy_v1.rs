@@ -2404,7 +2404,7 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         "pixel-corroborated catalog query identity changed",
         "VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_REPORT_DOMAIN_V1",
         "evaluate_untrusted_visible_accessibility_catalog_case_v1",
-        "A future corpus evaluator must own any production root",
+        "The corpus contract has no production ratification root",
         "_source: OpaqueMtgoVisibleAccessibilityPixelCorroborationV1",
         "visible_absence_reviewed_when_match_count_is_zero",
         "every_matched_region_visibly_contains_exact_catalog_label",
@@ -2418,6 +2418,11 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         "pixel_coordinates_exposed: false",
         "accessibility_metadata_exposed: false",
         "process_or_window_metadata_exposed: false",
+        "evaluate_untrusted_visible_accessibility_catalog_corpus_v1",
+        "CheckedUntrustedMtgoVisibleAccessibilityCatalogCorpusEvaluationV1",
+        "presence_and_absence_coverage_complete",
+        "exact_frame_pairs_are_distinct_across_cases",
+        "production_evaluation_ratified: false",
     ] {
         assert!(
             source.contains(required),
@@ -2427,6 +2432,10 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
     assert!(
         !source.contains("RATIFIED_VISIBLE_ACCESSIBILITY_CATALOG_EVALUATION_COMMITMENT_V1"),
         "a single catalog case must not own a production ratification root"
+    );
+    assert!(
+        !source.contains("RATIFIED_VISIBLE_ACCESSIBILITY_CATALOG_CORPUS_EVALUATION_COMMITMENT_V1"),
+        "the corpus contract must not self-ratify without reviewed production data"
     );
     for forbidden_public_metadata in [
         "pub observed_control_type_ids",

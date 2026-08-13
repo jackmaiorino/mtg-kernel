@@ -18,10 +18,12 @@ pub const MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_ACCESSIBILITY_CATALOG_CASE_EVALUATION_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_ARTIFACT_SCHEMA_V1: u32 = 1;
+pub const MTGO_VISIBLE_ACCESSIBILITY_CATALOG_CORPUS_EVALUATION_SCHEMA_V1: u32 = 1;
 
 const MAX_VISIBLE_ACCESSIBILITY_QUERIES_V1: usize = 64;
 const MAX_VISIBLE_ACCESSIBILITY_ELEMENTS_V1: i32 = 4_096;
 const MAX_MATCHES_PER_QUERY_V1: usize = 64;
+const MAX_VISIBLE_ACCESSIBILITY_CORPUS_CASES_V1: usize = 64;
 const MAX_VISIBLE_ACCESSIBILITY_CAPTURE_BRACKET_MILLIS_V1: u128 = 5_000;
 const VISIBLE_ACCESSIBILITY_REPORT_DOMAIN_V1: &[u8] = b"mtgo-visible-accessibility-report-v1";
 const VISIBLE_ACCESSIBILITY_PIXEL_MATCH_SET_DOMAIN_V1: &[u8] =
@@ -40,6 +42,8 @@ const VISIBLE_ACCESSIBILITY_CATALOG_CASE_EVALUATION_DOMAIN_V1: &[u8] =
     b"mtgo-visible-accessibility-known-label-case-evaluation-v1";
 const VISIBLE_ACCESSIBILITY_CATALOG_REVIEW_ARTIFACT_DOMAIN_V1: &[u8] =
     b"mtgo-visible-accessibility-known-label-review-artifact-v1";
+const VISIBLE_ACCESSIBILITY_CATALOG_CORPUS_EVALUATION_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-accessibility-known-label-corpus-evaluation-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -159,6 +163,35 @@ pub struct MtgoVisibleAccessibilityCatalogCaseEvaluationSummaryV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityCatalogCorpusEntrySummaryV1 {
+    pub query_id: String,
+    pub slice: MtgoVisibleAccessibilityCatalogSliceV1,
+    pub expected_visible_text_sha256: String,
+    pub reviewed_positive_case_count: u32,
+    pub reviewed_zero_case_count: u32,
+    pub total_reviewed_exact_visible_match_count: u32,
+    pub presence_and_absence_coverage_complete: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityCatalogCorpusEvaluationSummaryV1 {
+    pub schema_version: u32,
+    pub catalog_commitment_sha256: String,
+    pub reviewed_case_count: u32,
+    pub distinct_visible_frame_pair_count: u32,
+    pub entries: Vec<MtgoVisibleAccessibilityCatalogCorpusEntrySummaryV1>,
+    pub every_catalog_entry_has_reviewed_presence_and_absence: bool,
+    pub exact_frame_pairs_are_distinct_across_cases: bool,
+    pub corpus_candidate_commitment_sha256: String,
+    pub production_evaluation_ratified: bool,
+    pub safe_for_semantic_evidence: bool,
+    pub safe_for_policy_scoring: bool,
+    pub safe_for_input: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MtgoVisibleAccessibilityCatalogReviewArtifactReceiptV1 {
     pub schema_version: u32,
     pub artifact_commitment_sha256: String,
@@ -246,6 +279,56 @@ impl CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1 {
 
     pub fn production_evaluation_ratified_v1(&self) -> bool {
         self.summary.production_evaluation_ratified
+    }
+
+    pub fn safe_for_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_policy_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Clone)]
+struct PrivateVisibleAccessibilityCatalogCorpusCaseV1 {
+    catalog_commitment_sha256: String,
+    before_frame_sha256: String,
+    after_frame_sha256: String,
+    case_candidate_commitment_sha256: String,
+    entries: Vec<MtgoVisibleAccessibilityPixelCatalogEntrySummaryV1>,
+}
+
+/// Move-only aggregate of separately reviewed fixed-catalog cases. The
+/// aggregate requires both a positive and a zero-match case for every fixed
+/// label and rejects repeated visible frame pairs. It remains a candidate only;
+/// no production ratification root or semantic conversion exists.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::CheckedUntrustedMtgoVisibleAccessibilityCatalogCorpusEvaluationV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<CheckedUntrustedMtgoVisibleAccessibilityCatalogCorpusEvaluationV1>();
+/// ```
+pub struct CheckedUntrustedMtgoVisibleAccessibilityCatalogCorpusEvaluationV1 {
+    _cases: Vec<CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1>,
+    summary: MtgoVisibleAccessibilityCatalogCorpusEvaluationSummaryV1,
+}
+
+impl CheckedUntrustedMtgoVisibleAccessibilityCatalogCorpusEvaluationV1 {
+    pub fn summary_v1(&self) -> MtgoVisibleAccessibilityCatalogCorpusEvaluationSummaryV1 {
+        self.summary.clone()
+    }
+
+    pub fn corpus_candidate_commitment_sha256_v1(&self) -> &str {
+        &self.summary.corpus_candidate_commitment_sha256
+    }
+
+    pub fn production_evaluation_ratified_v1(&self) -> bool {
+        false
     }
 
     pub fn safe_for_semantic_evidence_v1(&self) -> bool {
@@ -1514,6 +1597,174 @@ pub fn evaluate_untrusted_visible_accessibility_catalog_case_v1(
     )
 }
 
+pub fn evaluate_untrusted_visible_accessibility_catalog_corpus_v1(
+    cases: Vec<CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1>,
+) -> Result<CheckedUntrustedMtgoVisibleAccessibilityCatalogCorpusEvaluationV1, String> {
+    if cases.is_empty() || cases.len() > MAX_VISIBLE_ACCESSIBILITY_CORPUS_CASES_V1 {
+        return Err("accessibility catalog corpus must contain between 1 and 64 cases".to_owned());
+    }
+    let private_cases = cases
+        .iter()
+        .map(private_catalog_corpus_case_v1)
+        .collect::<Result<Vec<_>, _>>()?;
+    let summary = evaluate_visible_accessibility_catalog_corpus_summary_v1(&private_cases)?;
+    Ok(
+        CheckedUntrustedMtgoVisibleAccessibilityCatalogCorpusEvaluationV1 {
+            _cases: cases,
+            summary,
+        },
+    )
+}
+
+fn private_catalog_corpus_case_v1(
+    case: &CheckedUntrustedMtgoVisibleAccessibilityCatalogCaseEvaluationV1,
+) -> Result<PrivateVisibleAccessibilityCatalogCorpusCaseV1, String> {
+    let catalog = known_label_catalog_v1();
+    let source_summary = case._source.summary_v1();
+    let catalog_summary = build_known_label_pixel_catalog_summary_v1(
+        &catalog,
+        known_label_catalog_commitment_v1(&catalog)?,
+        source_summary,
+    )?;
+    let expected =
+        evaluate_visible_accessibility_catalog_case_summary_v1(&catalog_summary, &case._review)?;
+    if expected != case.summary {
+        return Err("accessibility catalog corpus case summary changed".to_owned());
+    }
+    Ok(PrivateVisibleAccessibilityCatalogCorpusCaseV1 {
+        catalog_commitment_sha256: expected.catalog_commitment_sha256,
+        before_frame_sha256: catalog_summary.before_frame_sha256,
+        after_frame_sha256: catalog_summary.after_frame_sha256,
+        case_candidate_commitment_sha256: expected.ratification_candidate_commitment_sha256,
+        entries: catalog_summary.entries,
+    })
+}
+
+fn evaluate_visible_accessibility_catalog_corpus_summary_v1(
+    cases: &[PrivateVisibleAccessibilityCatalogCorpusCaseV1],
+) -> Result<MtgoVisibleAccessibilityCatalogCorpusEvaluationSummaryV1, String> {
+    if cases.is_empty() || cases.len() > MAX_VISIBLE_ACCESSIBILITY_CORPUS_CASES_V1 {
+        return Err("accessibility catalog corpus must contain between 1 and 64 cases".to_owned());
+    }
+    let catalog = known_label_catalog_v1();
+    let catalog_commitment_sha256 = known_label_catalog_commitment_v1(&catalog)?;
+    let mut frame_pairs = HashSet::new();
+    for case in cases {
+        if case.catalog_commitment_sha256 != catalog_commitment_sha256
+            || case.entries.len() != catalog.len()
+            || !frame_pairs.insert((
+                case.before_frame_sha256.as_str(),
+                case.after_frame_sha256.as_str(),
+            ))
+        {
+            return Err(
+                "catalog corpus requires one exact catalog and distinct visible frame pairs"
+                    .to_owned(),
+            );
+        }
+    }
+    let entries = catalog
+        .iter()
+        .enumerate()
+        .map(|(index, expected)| {
+            let observed = cases
+                .iter()
+                .map(|case| &case.entries[index])
+                .collect::<Vec<_>>();
+            if observed.iter().any(|entry| {
+                entry.query_id != expected.query_id
+                    || entry.slice != expected.slice
+                    || entry.expected_visible_text_sha256
+                        != sha256_hex_v1(expected.expected_visible_text.as_bytes())
+            }) {
+                return Err("catalog corpus entry identity changed".to_owned());
+            }
+            let reviewed_positive_case_count = u32::try_from(
+                observed
+                    .iter()
+                    .filter(|entry| entry.exact_visible_match_count != 0)
+                    .count(),
+            )
+            .map_err(|_| "catalog corpus positive case count overflow")?;
+            let reviewed_zero_case_count = u32::try_from(
+                observed
+                    .iter()
+                    .filter(|entry| entry.exact_visible_match_count == 0)
+                    .count(),
+            )
+            .map_err(|_| "catalog corpus zero case count overflow")?;
+            let total_reviewed_exact_visible_match_count =
+                observed.iter().try_fold(0_u32, |total, entry| {
+                    total
+                        .checked_add(entry.exact_visible_match_count)
+                        .ok_or("catalog corpus match count overflow")
+                })?;
+            Ok(MtgoVisibleAccessibilityCatalogCorpusEntrySummaryV1 {
+                query_id: expected.query_id.to_owned(),
+                slice: expected.slice,
+                expected_visible_text_sha256: sha256_hex_v1(
+                    expected.expected_visible_text.as_bytes(),
+                ),
+                reviewed_positive_case_count,
+                reviewed_zero_case_count,
+                total_reviewed_exact_visible_match_count,
+                presence_and_absence_coverage_complete: reviewed_positive_case_count != 0
+                    && reviewed_zero_case_count != 0,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if entries
+        .iter()
+        .any(|entry| !entry.presence_and_absence_coverage_complete)
+    {
+        return Err(
+            "catalog corpus requires reviewed presence and absence for every fixed label"
+                .to_owned(),
+        );
+    }
+    let mut case_commitments = cases
+        .iter()
+        .map(|case| case.case_candidate_commitment_sha256.as_str())
+        .collect::<Vec<_>>();
+    case_commitments.sort_unstable();
+    let case_bytes = serde_json::to_vec(&case_commitments)
+        .map_err(|error| format!("serialize catalog corpus case commitments: {error}"))?;
+    let entry_bytes = serde_json::to_vec(&entries)
+        .map_err(|error| format!("serialize catalog corpus entries: {error}"))?;
+    let reviewed_case_count =
+        u32::try_from(cases.len()).map_err(|_| "catalog corpus case count overflow")?;
+    let corpus_candidate_commitment_sha256 = commitment_v1(
+        VISIBLE_ACCESSIBILITY_CATALOG_CORPUS_EVALUATION_DOMAIN_V1,
+        &[
+            &MTGO_VISIBLE_ACCESSIBILITY_CATALOG_CORPUS_EVALUATION_SCHEMA_V1.to_le_bytes(),
+            catalog_commitment_sha256.as_bytes(),
+            &reviewed_case_count.to_le_bytes(),
+            &case_bytes,
+            &entry_bytes,
+            b"every_catalog_entry_has_reviewed_presence_and_absence=true",
+            b"exact_frame_pairs_are_distinct_across_cases=true",
+            b"production_evaluation_ratified=false",
+            b"safe_for_semantic_evidence=false",
+            b"safe_for_policy_scoring=false",
+            b"safe_for_input=false",
+        ],
+    );
+    Ok(MtgoVisibleAccessibilityCatalogCorpusEvaluationSummaryV1 {
+        schema_version: MTGO_VISIBLE_ACCESSIBILITY_CATALOG_CORPUS_EVALUATION_SCHEMA_V1,
+        catalog_commitment_sha256,
+        reviewed_case_count,
+        distinct_visible_frame_pair_count: reviewed_case_count,
+        entries,
+        every_catalog_entry_has_reviewed_presence_and_absence: true,
+        exact_frame_pairs_are_distinct_across_cases: true,
+        corpus_candidate_commitment_sha256,
+        production_evaluation_ratified: false,
+        safe_for_semantic_evidence: false,
+        safe_for_policy_scoring: false,
+        safe_for_input: false,
+    })
+}
+
 fn evaluate_visible_accessibility_catalog_case_summary_v1(
     catalog_summary: &MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
     review: &MtgoVisibleAccessibilityCatalogReviewV1,
@@ -1555,7 +1806,7 @@ fn evaluate_visible_accessibility_catalog_case_summary_v1(
         exact_review_agreement: true,
         ratification_candidate_commitment_sha256,
         // A single reviewed case is deliberately incapable of ratifying the
-        // catalog. A future corpus evaluator must own any production root.
+        // catalog. The corpus contract has no production ratification root.
         production_evaluation_ratified: false,
         safe_for_semantic_evidence: false,
         safe_for_policy_scoring: false,
@@ -2108,6 +2359,39 @@ mod tests {
         .unwrap()
     }
 
+    fn private_corpus_case_v1(
+        seed: u8,
+        positive_query_indices: &[usize],
+    ) -> PrivateVisibleAccessibilityCatalogCorpusCaseV1 {
+        let catalog = known_label_catalog_v1();
+        PrivateVisibleAccessibilityCatalogCorpusCaseV1 {
+            catalog_commitment_sha256: known_label_catalog_commitment_v1(&catalog).unwrap(),
+            before_frame_sha256: format!("{seed:064x}"),
+            after_frame_sha256: format!("{:064x}", seed + 64),
+            case_candidate_commitment_sha256: format!("{:064x}", seed + 128),
+            entries: catalog
+                .iter()
+                .enumerate()
+                .map(
+                    |(index, entry)| MtgoVisibleAccessibilityPixelCatalogEntrySummaryV1 {
+                        query_id: entry.query_id.to_owned(),
+                        slice: entry.slice,
+                        expected_visible_text_sha256: sha256_hex_v1(
+                            entry.expected_visible_text.as_bytes(),
+                        ),
+                        exact_visible_match_count: u32::from(
+                            positive_query_indices.contains(&index),
+                        ),
+                        visible_pixel_match_set_commitment_sha256: format!(
+                            "{:064x}",
+                            usize::from(seed) * 16 + index
+                        ),
+                    },
+                )
+                .collect(),
+        }
+    }
+
     fn exact_catalog_review_v1(
         source: &MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
     ) -> MtgoVisibleAccessibilityCatalogReviewV1 {
@@ -2429,6 +2713,105 @@ mod tests {
         for mutation in mutations {
             assert!(validate_visible_accessibility_catalog_review_v1(&source, &mutation).is_err());
         }
+    }
+
+    #[test]
+    fn corpus_evaluation_requires_reviewed_presence_and_absence_for_every_label() {
+        let cases = vec![
+            private_corpus_case_v1(1, &[0, 1, 2]),
+            private_corpus_case_v1(2, &[3, 4]),
+        ];
+        let summary = evaluate_visible_accessibility_catalog_corpus_summary_v1(&cases).unwrap();
+        assert_eq!(summary.reviewed_case_count, 2);
+        assert_eq!(summary.distinct_visible_frame_pair_count, 2);
+        assert_eq!(summary.entries.len(), 5);
+        assert!(summary
+            .entries
+            .iter()
+            .all(|entry| entry.reviewed_positive_case_count == 1
+                && entry.reviewed_zero_case_count == 1
+                && entry.presence_and_absence_coverage_complete));
+        assert!(summary.every_catalog_entry_has_reviewed_presence_and_absence);
+        assert!(summary.exact_frame_pairs_are_distinct_across_cases);
+        assert!(!summary.production_evaluation_ratified);
+        assert!(!summary.safe_for_semantic_evidence);
+        assert!(!summary.safe_for_policy_scoring);
+        assert!(!summary.safe_for_input);
+
+        let json = serde_json::to_string(&summary).unwrap();
+        for raw_label in ["Cancel", "Combat", "Keep", "Mulligan", "Submit Deck"] {
+            assert!(!json.contains(raw_label));
+        }
+        for forbidden in ["frame_sha256", "process", "window", "control_type", "rect"] {
+            assert!(!json.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn corpus_evaluation_rejects_missing_coverage_duplicate_frames_and_identity_drift() {
+        let all_positive = private_corpus_case_v1(1, &[0, 1, 2, 3, 4]);
+        assert!(
+            evaluate_visible_accessibility_catalog_corpus_summary_v1(std::slice::from_ref(
+                &all_positive
+            ))
+            .is_err()
+        );
+
+        let all_zero = private_corpus_case_v1(2, &[]);
+        let mut duplicate_pair = all_zero.clone();
+        duplicate_pair.before_frame_sha256 = all_positive.before_frame_sha256.clone();
+        duplicate_pair.after_frame_sha256 = all_positive.after_frame_sha256.clone();
+        assert!(evaluate_visible_accessibility_catalog_corpus_summary_v1(&[
+            all_positive.clone(),
+            duplicate_pair,
+        ])
+        .is_err());
+
+        let mut wrong_catalog = all_zero.clone();
+        wrong_catalog.catalog_commitment_sha256 = "f".repeat(64);
+        assert!(evaluate_visible_accessibility_catalog_corpus_summary_v1(&[
+            all_positive.clone(),
+            wrong_catalog,
+        ])
+        .is_err());
+
+        let mut wrong_entry = all_zero;
+        wrong_entry.entries[2].query_id = "changed.query".to_owned();
+        assert!(evaluate_visible_accessibility_catalog_corpus_summary_v1(&[
+            all_positive,
+            wrong_entry,
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn corpus_candidate_commitment_is_order_independent_but_case_bound() {
+        let first = private_corpus_case_v1(1, &[0, 1, 2]);
+        let second = private_corpus_case_v1(2, &[3, 4]);
+        let expected = evaluate_visible_accessibility_catalog_corpus_summary_v1(&[
+            first.clone(),
+            second.clone(),
+        ])
+        .unwrap();
+        let reordered =
+            evaluate_visible_accessibility_catalog_corpus_summary_v1(&[second.clone(), first])
+                .unwrap();
+        assert_eq!(
+            expected.corpus_candidate_commitment_sha256,
+            reordered.corpus_candidate_commitment_sha256
+        );
+
+        let mut changed = second;
+        changed.case_candidate_commitment_sha256 = "f".repeat(64);
+        let changed = evaluate_visible_accessibility_catalog_corpus_summary_v1(&[
+            private_corpus_case_v1(1, &[0, 1, 2]),
+            changed,
+        ])
+        .unwrap();
+        assert_ne!(
+            expected.corpus_candidate_commitment_sha256,
+            changed.corpus_candidate_commitment_sha256
+        );
     }
 
     #[test]

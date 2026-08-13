@@ -34,6 +34,7 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub visible_accessibility_fixed_known_label_catalog_present: bool,
     pub visible_accessibility_fixed_known_label_pixel_corroboration_present: bool,
     pub visible_accessibility_catalog_case_evaluation_contract_present: bool,
+    pub visible_accessibility_catalog_corpus_evaluation_contract_present: bool,
     pub visible_accessibility_catalog_semantic_evaluation_present: bool,
     pub raw_accessibility_metadata_permitted_as_semantic_input: bool,
     pub persisted_visible_game_log_parser_present: bool,
@@ -100,6 +101,7 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         visible_accessibility_fixed_known_label_catalog_present: true,
         visible_accessibility_fixed_known_label_pixel_corroboration_present: true,
         visible_accessibility_catalog_case_evaluation_contract_present: true,
+        visible_accessibility_catalog_corpus_evaluation_contract_present: true,
         visible_accessibility_catalog_semantic_evaluation_present: false,
         raw_accessibility_metadata_permitted_as_semantic_input: false,
         persisted_visible_game_log_parser_present: true,
@@ -170,6 +172,7 @@ mod tests {
         assert!(report.visible_accessibility_fixed_known_label_catalog_present);
         assert!(report.visible_accessibility_fixed_known_label_pixel_corroboration_present);
         assert!(report.visible_accessibility_catalog_case_evaluation_contract_present);
+        assert!(report.visible_accessibility_catalog_corpus_evaluation_contract_present);
         assert!(!report.visible_accessibility_catalog_semantic_evaluation_present);
         assert!(!report.raw_accessibility_metadata_permitted_as_semantic_input);
         assert!(report.persisted_visible_game_log_parser_present);
