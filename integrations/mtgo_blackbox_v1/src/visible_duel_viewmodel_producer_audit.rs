@@ -132,7 +132,7 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
     }
 
     pub fn visible_zone_and_card_getter_count_v1(&self) -> u32 {
-        28
+        31
     }
 
     pub fn private_visible_action_join_layer_present_v1(&self) -> bool {
@@ -213,7 +213,7 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         visible_chrome_getter_count: 22,
         visible_chrome_values_exported: true,
         visible_zone_and_card_getter_layer_present: true,
-        visible_zone_and_card_getter_count: 28,
+        visible_zone_and_card_getter_count: 31,
         visible_zone_and_card_values_exported: true,
         private_visible_action_join_layer_present: true,
         private_visible_action_join_getter_count: PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1,
@@ -270,7 +270,7 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.visible_chrome_getter_count != 22
         || !audit.visible_chrome_values_exported
         || !audit.visible_zone_and_card_getter_layer_present
-        || audit.visible_zone_and_card_getter_count != 28
+        || audit.visible_zone_and_card_getter_count != 31
         || !audit.visible_zone_and_card_values_exported
         || !audit.private_visible_action_join_layer_present
         || audit.private_visible_action_join_getter_count
@@ -634,11 +634,11 @@ mod tests {
             mtgo_visible_duel_viewmodel_producer_audit_v1(),
         )
         .unwrap();
-        assert_eq!(checked.allowed_property_count_v1(), 80);
+        assert_eq!(checked.allowed_property_count_v1(), 83);
         assert!(checked.visible_chrome_getter_layer_present_v1());
         assert_eq!(checked.visible_chrome_getter_count_v1(), 22);
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
-        assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 28);
+        assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 31);
         assert!(checked.private_visible_action_join_layer_present_v1());
         assert_eq!(checked.private_visible_action_join_getter_count_v1(), 33);
         assert!(checked.offline_sealed_action_dispatch_present_v1());

@@ -13,7 +13,7 @@ $required = @(
     'FrameworkElement',
     'DataContext',
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
-    'AllowedGetters.Length != 80',
+    'AllowedGetters.Length != 83',
     'PrivateVisibleActionJoinGetters.Length != 33',
     'projection_incomplete',
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
@@ -61,6 +61,7 @@ $required = @(
     'CompletedVisibleUniverseHashes',
     'ExpectedCurrentSelection',
     'TryBuildSanitizedVisibleAttackerSelectionAndBindingsV1',
+    'TryBuildSanitizedVisibleSingleAttackerBlockerSelectionV1',
     'ExpectedDecisionSha256',
     'ExecuteAction',
     'ConditionalWeakTable<object, HashSet<string>>',
@@ -141,8 +142,8 @@ if ($publicStart -lt 0 -or $privateStart -le $publicStart) {
 }
 $publicGetterSource = $source.Substring($publicStart, $privateStart - $publicStart)
 $getterLines = [regex]::Matches($publicGetterSource, '"(?:Card|DuelScene)\|[^"\r\n]+\|[^"\r\n]+"')
-if ($getterLines.Count -ne 80) {
-    throw "producer source must contain exactly 80 compile-time getter entries"
+if ($getterLines.Count -ne 83) {
+    throw "producer source must contain exactly 83 compile-time getter entries"
 }
 
 $privateEnd = $source.IndexOf('};', $privateStart)

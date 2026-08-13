@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.19 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.20 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -66,12 +66,15 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.CardCounterViewModel|Quantity",
             "DuelScene|Shiny.Play.Duel.ViewModel.CardCounterViewModel|Type",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|CardAttachedTo",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|HasNoBlockingAction",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsAbilityOnTheStack",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsController",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsSpeedEmblem",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsToken",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|RingTemptationCounter",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|SpeedCounter",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|VisuallyAttacking",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|VisuallyBlocking",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|VisibleCounters",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelection",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelectorDialog",
@@ -306,7 +309,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.19 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.20 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -400,8 +403,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static bool ValidateExactGetterSurface()
         {
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-            if (AllowedGetters.Length != 80 ||
-                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 80 ||
+            if (AllowedGetters.Length != 83 ||
+                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 83 ||
                 PrivateVisibleActionJoinGetters.Length != 33 ||
                 PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 33)
             {
@@ -1497,7 +1500,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !ReferenceEquals(value, VisibleActionSubmitted) &&
                 !ReferenceEquals(value, VisibleActionRejected) &&
                 !IsSanitizedVisibleDecisionResultV1(value) &&
-                !IsSanitizedVisibleAttackerSelectionResultV1(value))
+                !IsSanitizedVisibleAttackerSelectionResultV1(value) &&
+                !IsSanitizedVisibleSingleAttackerBlockerSelectionResultV1(value))
             {
                 value = OutputValidationFailed;
             }
@@ -1553,6 +1557,26 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         {
             byte[] prefix = Encoding.UTF8.GetBytes(
                 "{\"result_kind\":\"visible_attacker_selection\",\"selection\":");
+            if (value == null || value.Length <= prefix.Length ||
+                value.Length > MaximumOutputBytes - OutputPayloadOffset)
+            {
+                return false;
+            }
+            for (int index = 0; index < prefix.Length; index++)
+            {
+                if (value[index] != prefix[index])
+                {
+                    return false;
+                }
+            }
+            return value[value.Length - 1] == (byte)'}';
+        }
+
+        private static bool IsSanitizedVisibleSingleAttackerBlockerSelectionResultV1(
+            byte[] value)
+        {
+            byte[] prefix = Encoding.UTF8.GetBytes(
+                "{\"result_kind\":\"visible_single_attacker_blocker_selection\",\"selection\":");
             if (value == null || value.Length <= prefix.Length ||
                 value.Length > MaximumOutputBytes - OutputPayloadOffset)
             {

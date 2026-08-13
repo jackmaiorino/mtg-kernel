@@ -1,8 +1,9 @@
 use crate::{
     begin_player_visible_attacker_deliberation_v1,
+    begin_player_visible_single_attacker_blocker_deliberation_v1,
     validate_player_visible_duel_decision_input_strict_v1, validate_player_visible_expected_v2,
     MtgoContractErrorV1, MtgoPlayerVisibleAttackerSelectionInputV1,
-    MtgoPlayerVisibleDuelDecisionInputV1,
+    MtgoPlayerVisibleDuelDecisionInputV1, MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1,
     MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1,
 };
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,9 @@ pub enum MtgoVisibleDuelViewModelBrokerResultV1 {
     VisibleAttackerSelection {
         selection: Box<MtgoPlayerVisibleAttackerSelectionInputV1>,
     },
+    VisibleSingleAttackerBlockerSelection {
+        selection: Box<MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1>,
+    },
     Abstained {
         reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1,
     },
@@ -85,6 +89,13 @@ pub fn parse_and_validate_visible_duel_producer_result_v1(
         }
         MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { selection } => {
             let _ = begin_player_visible_attacker_deliberation_v1((**selection).clone())?;
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+            selection,
+        } => {
+            let _ = begin_player_visible_single_attacker_blocker_deliberation_v1(
+                (**selection).clone(),
+            )?;
         }
         MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => {}
     }
@@ -158,7 +169,10 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelBrokerResponseV1 {
         match self.response.result {
             MtgoVisibleDuelViewModelBrokerResultV1::Abstained { reason } => Some(reason),
             MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. }
-            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. } => None,
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+                ..
+            } => None,
         }
     }
 
@@ -170,6 +184,9 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelBrokerResponseV1 {
                 decision.commitment_sha256_v1().map(Some)
             }
             MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+                ..
+            }
             | MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => Ok(None),
         }
     }
@@ -322,6 +339,13 @@ pub fn check_untrusted_visible_duel_viewmodel_broker_response_v1(
         MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { selection } => {
             let _ = begin_player_visible_attacker_deliberation_v1((**selection).clone())?;
         }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+            selection,
+        } => {
+            let _ = begin_player_visible_single_attacker_blocker_deliberation_v1(
+                (**selection).clone(),
+            )?;
+        }
         MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => {}
     }
     if response.response_commitment_sha256
@@ -372,7 +396,8 @@ mod tests {
         MtgoPlayerVisibleAttackerSelectionInputV1, MtgoPlayerVisibleBattlefieldCardV1,
         MtgoPlayerVisibleCombatStateV1, MtgoPlayerVisibleCounterStateV1,
         MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelStateV1, MtgoPlayerVisibleExileCardV1,
-        MtgoPlayerVisibleObjectRefV1, ZoneIndependentStepV1,
+        MtgoPlayerVisibleObjectRefV1, MtgoPlayerVisibleSingleAttackerBlockerCandidateV1,
+        MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1, ZoneIndependentStepV1,
     };
 
     fn request_v1() -> MtgoVisibleDuelViewModelBrokerRequestV1 {
@@ -464,6 +489,46 @@ mod tests {
         }
     }
 
+    fn blocker_selection_v1() -> MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1 {
+        let mut current_state = decision_v1().current_state;
+        current_state.phase = ZoneIndependentStepV1::DeclareBlockers;
+        current_state.active_player = MtgoPlayerRelativeRoleV1::Opponent;
+        let visible_card = |visible_ordinal, card_name: &str| MtgoPlayerVisibleBattlefieldCardV1 {
+            object_ref: MtgoPlayerVisibleObjectRefV1 { visible_ordinal },
+            card_name: card_name.to_owned(),
+            tapped: false,
+            marked_damage: 0,
+            counters: MtgoPlayerVisibleCounterStateV1 {
+                plus_one_plus_one: 0,
+                minus_one_minus_one: 0,
+                minus_zero_minus_one: 0,
+                stun: 0,
+                lore: 0,
+            },
+            is_token: false,
+            visible_effective_power: Some(2),
+            visible_effective_toughness: Some(2),
+        };
+        current_state.battlefield[0].push(visible_card(0, "Blocker"));
+        current_state.battlefield[1].push(visible_card(1, "Attacker"));
+        current_state.combat = MtgoPlayerVisibleCombatStateV1 {
+            attackers_declared: true,
+            blockers_declared: false,
+            ordered_attackers: vec![MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 1 }],
+            blocker_assignments: Vec::new(),
+        };
+        MtgoPlayerVisibleSingleAttackerBlockerSelectionInputV1 {
+            current_state,
+            attacker: MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 1 },
+            ordered_candidates: vec![MtgoPlayerVisibleSingleAttackerBlockerCandidateV1 {
+                blocker: MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 0 },
+                currently_blocking: false,
+                block_action_visible: true,
+            }],
+            unique_visible_enabled_done_control: true,
+        }
+    }
+
     #[test]
     fn strict_producer_result_parser_accepts_visible_decision_and_fixed_abstention() {
         let visible = MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
@@ -508,6 +573,41 @@ mod tests {
         };
         assert!(parse_and_validate_visible_duel_producer_result_v1(
             &serde_json::to_vec(&no_done).unwrap()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn strict_producer_result_parser_accepts_single_attacker_blocker_selection_only() {
+        let result =
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+                selection: Box::new(blocker_selection_v1()),
+            };
+        let bytes = serde_json::to_vec(&result).unwrap();
+        assert!(matches!(
+            parse_and_validate_visible_duel_producer_result_v1(&bytes).unwrap(),
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection { .. }
+        ));
+
+        let mut leaked = serde_json::to_value(&result).unwrap();
+        leaked["selection"]["ordered_candidates"][0]["target_id"] = serde_json::json!(17);
+        assert!(parse_and_validate_visible_duel_producer_result_v1(
+            &serde_json::to_vec(&leaked).unwrap()
+        )
+        .is_err());
+
+        let mut ambiguous = blocker_selection_v1();
+        ambiguous
+            .current_state
+            .combat
+            .ordered_attackers
+            .push(MtgoPlayerVisibleObjectRefV1 { visible_ordinal: 2 });
+        let ambiguous =
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+                selection: Box::new(ambiguous),
+            };
+        assert!(parse_and_validate_visible_duel_producer_result_v1(
+            &serde_json::to_vec(&ambiguous).unwrap()
         )
         .is_err());
     }

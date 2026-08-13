@@ -40,7 +40,8 @@ The kernel encoder constructs the private Flat V2 packet directly. It must not r
 
 The following unavailable simulator features must have one documented fixed neutral encoding and may never be inferred from MTGO internals: priority-pass bookkeeping; stack or mana activity flags; last internal activator; harness and simulator policy stage bookkeeping; internal pending and private context; zone-change generations; arena IDs; face indices not visibly distinguished; internal ability-use counters; entered-turn markers; hidden summoning-sickness state; skip-untap flags; hidden goad expiry; continuous-effect records not reconstructed from the UI; internal play-permission records; completed-dungeon IDs not visibly reconstructed; internal stack copy, cast-method, mode, kicked, flashback, and X fields not visibly reconstructed. Neutral values carry no match information and must be constant across fixtures.
 
-Declare-attackers compatibility is the one explicit local-deliberation case.
+Declare-attackers and the single-attacker declare-blockers slice are the two
+explicit local-deliberation cases.
 MTGO presents visible attacker toggles plus `Done`, while the trained policy
 expects a sequential false-or-true scan. The adapter supplies only the ordered
 visible candidate ordinals, current candidate index, selected earlier model
@@ -51,6 +52,13 @@ attacker-inclusion stage. It must not substitute simulator pending context or
 inspect client metadata. Model deliberation completes before any MTGO input;
 the adapter then executes only the visible toggles whose desired states differ
 and binds the visible `Done` control separately.
+
+For the single-attacker blocker slice, the adapter supplies the one visible
+attacker ordinal, ordered visible blocker candidates, the current candidate,
+earlier model choices in the same scan, and exact `false` then `true` choices.
+It must not pass an MTGO target identifier or infer a target from hidden state.
+This compatibility input is scoring-only until a separately qualified visible
+block postcondition and sealed dispatcher exist.
 
 If a legal visible action cannot be encoded without one of those hidden values, the scorer must abstain. It must not inspect the client, accept a numeric substitute, or call the complete-observation scorer.
 
@@ -99,6 +107,9 @@ For the existing non-recurrent checkpoint, `replace_public_history_v1` validates
 11. Attacker inclusion preserves visible battlefield order, always presents
     `false` then `true`, uses only explicit local deliberation context, and
     produces no client action while the scan is pending.
+12. Single-attacker blocker inclusion preserves visible battlefield order,
+    rejects a second attacker or preexisting assignment, always presents
+    `false` then `true`, and has no client target or input conversion.
 
 ## Readiness rule
 

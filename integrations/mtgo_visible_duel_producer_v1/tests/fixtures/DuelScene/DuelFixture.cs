@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Windows.Controls;
 using Shiny.Card.ViewModels;
 using WotC.MtGO.Client.Model.Play;
@@ -14,6 +15,7 @@ namespace WotC.MtGO.Client.Model.Play
         PreCombatMain = 4,
         BeginCombat = 5,
         DeclareAttackers = 6,
+        DeclareBlockers = 7,
         PostCombatMain = 10,
         EndOfTurn = 11
     }
@@ -200,10 +202,13 @@ namespace Shiny.Play.Duel.ViewModel
                 "DuelCard.IsAbilityOnTheStack",
                 "DuelCard.IsController",
                 "DuelCard.CardAttachedTo",
+                "DuelCard.HasNoBlockingAction",
                 "DuelCard.IsSpeedEmblem",
                 "DuelCard.IsToken",
                 "DuelCard.RingTemptationCounter",
                 "DuelCard.SpeedCounter",
+                "DuelCard.VisuallyAttacking",
+                "DuelCard.VisuallyBlocking",
                 "DuelCard.VisibleCounters",
                 "Counter.Quantity",
                 "Counter.Type"
@@ -976,12 +981,36 @@ namespace Shiny.Play.Duel.ViewModel
                 return CardAttachedToFixture;
             }
         }
+        public bool HasNoBlockingAction
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.HasNoBlockingAction");
+                return !ActionItems.Any(action => action.Name == "Block");
+            }
+        }
         public bool IsToken
         {
             get
             {
                 VisibleZoneGetterProbeV1.Record("DuelCard.IsToken");
                 return IsTokenFixture;
+            }
+        }
+        public bool VisuallyAttacking
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.VisuallyAttacking");
+                return VisuallyAttackingFixture;
+            }
+        }
+        public bool VisuallyBlocking
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.VisuallyBlocking");
+                return VisuallyBlockingFixture;
             }
         }
         public bool IsSpeedEmblem
@@ -1037,6 +1066,8 @@ namespace Shiny.Play.Duel.ViewModel
         public int RingTemptationCounterFixture { get; set; }
         public int SpeedCounterFixture { get; set; }
         public bool IsTokenFixture { get; set; }
+        public bool VisuallyAttackingFixture { get; set; }
+        public bool VisuallyBlockingFixture { get; set; }
         public IList<CardCounterViewModel> CounterItems { get; } =
             new List<CardCounterViewModel>();
         public bool ThrowIfActionsReadFixture { get; set; }

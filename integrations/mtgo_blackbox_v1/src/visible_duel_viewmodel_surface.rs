@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_SURFACE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1: &str =
-    "dfc54ae4b71062da23584f96f38e348d57945c8c7e7c0e6e1385a4f76baa31a3";
+    "a45916c8929cc36a5936d69f4f88933b21349580878bf0f9c0accd081463fa82";
 
 const SURFACE_KIND_V1: &str = "mtgo_visible_duel_viewmodel_candidate_surface_v1";
 const INFORMATION_BOUNDARY_V1: &str = "seated_player_visible_ui_equivalent_only_v1";
@@ -672,6 +672,15 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
         candidate(
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "HasNoBlockingAction",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisibleActionMenuOnly,
+            "whether the rendered card interaction offers Block",
+            &["blocker_selection.ordered_candidates.block_action_visible"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
             "IsSpeedEmblem",
             "Boolean",
             MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
@@ -704,6 +713,24 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
             "rendered speed level, used only to reject an unrepresented state",
             &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "VisuallyAttacking",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "card rendered in the attack lane",
+            &["blocker_selection.current_state.combat.ordered_attackers"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "VisuallyBlocking",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "card rendered in a blocker association",
+            &["blocker_selection.ordered_candidates.currently_blocking"],
         ),
         candidate(
             "DuelScene.dll",
@@ -1247,7 +1274,7 @@ mod tests {
         let checked = check_untrusted_visible_duel_viewmodel_candidate_surface_v1(manifest)
             .expect("compiled metadata candidate surface");
         assert_eq!(checked.product_version_v1(), "3.4.158.4691");
-        assert_eq!(checked.candidate_property_count_v1(), 80);
+        assert_eq!(checked.candidate_property_count_v1(), 83);
         assert_eq!(checked.forbidden_property_count_v1(), 29);
         assert_eq!(
             checked.commitment_sha256_v1(),

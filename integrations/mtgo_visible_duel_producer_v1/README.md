@@ -3,11 +3,11 @@
 This isolated .NET Framework 4.7.2 assembly is the in-process root seam for a
 direct player-visible MTGO projection. It locates exactly one visible
 `Shiny.Play.Duel.DuelScene` through the WPF visual tree, requires its public
-`DataContext` to be the exact duel view-model type, and checks that all 80
+`DataContext` to be the exact duel view-model type, and checks that all 83
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.19 invokes only exact allowlisted getters for the player-visible game
+Version 1.20 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
@@ -51,7 +51,7 @@ prompts, and modal choices remain closed. Raw association objects never leave
 the producer. Its supported actions are source-bound cast, play-land,
 activated-ability, and mana-ability actions plus the one visible priority Pass.
 
-Version 1.19 also emits a separate coordinate-free attacker-selection result
+Version 1.20 also emits a separate coordinate-free attacker-selection result
 for the narrow direct-opponent declare-attackers case. It contains the current
 visible public state, the battlefield-order attacker candidates, each
 candidate's visible selected state, and the fact that one enabled visible
@@ -63,7 +63,16 @@ turns it into the checkpoint's sequential include/exclude deliberation without
 touching the client. Exert, grouped attacks, alternate victims, modals,
 nonempty stack, and ambiguous or incomplete controls still abstain.
 
-Version 1.19 adds a sealed attacker-step dispatcher for that result. The
+Version 1.20 also emits an observation-only blocker-selection result for the
+narrow case with exactly one visibly attacking opposing creature, an initially
+empty block lane, simple visible `Block` actions, and one enabled visible
+`Done` control. The result contains visible battlefield ordinals and rendered
+combat state only. It carries no client target, action object, input method, or
+dispatch authority. Multiple attackers, existing assignments, complicated
+menus, and incomplete controls abstain. The ordinary selected-index dispatcher
+explicitly rejects this result.
+
+Version 1.20 adds a sealed attacker-step dispatcher for that result. The
 adapter commits the exact source selection, candidate count, and desired
 attacker bit set. On every call the producer completely rebuilds the current
 visible selection, requires the same candidate objects in the same visible
@@ -100,6 +109,10 @@ that dispatch nor another index for the same decision can be replayed.
 The fixture also validates one selected and one unselected direct-opponent
 attacker, rejects exert, alternate-victim, and missing-`Done` variants, and
 proves the legacy selected-index dispatcher cannot execute the new result.
+It separately validates the single-attacker blocker observation, proves that
+rendered attacking and blocking state wins over contradictory backing fixture
+flags, rejects multiple attackers, and proves the ordinary dispatcher performs
+zero actions for the blocker result.
 
 Version 1.5 was loaded into a clean MTGO 3.4.158.4691 process and invoked
 while no duel was open. It returned only the fixed
@@ -125,10 +138,10 @@ represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
 abstention. Target-bearing, X-bearing, sideboard, fake, confirmation, and
 mode-count action state likewise forces abstention until its subsequent
-player-visible modal is represented. Version 1.19 has not been loaded into
+player-visible modal is represented. Version 1.20 has not been loaded into
 MTGO. Version 1.17 remains loaded in the current broker process; no attempt was
 made to replace its locked assembly. A separate deterministic Release build of
-the v1.19 source succeeded outside the client with zero warnings and zero
+the v1.20 source succeeded outside the client with zero warnings and zero
 errors. It has not been live-qualified.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.

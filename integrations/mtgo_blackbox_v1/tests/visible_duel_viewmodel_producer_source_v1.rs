@@ -72,7 +72,7 @@ fn managed_producer_getter_allowlist_exactly_matches_reviewed_surface() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 80);
+    assert_eq!(actual.len(), 83);
     assert_eq!(actual, expected);
 }
 
