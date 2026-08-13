@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.16 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.17 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -51,6 +51,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "Card|Shiny.Card.ViewModels.CardViewModel|CurrentDamage",
             "Card|Shiny.Card.ViewModels.CardViewModel|IsAttacking",
             "Card|Shiny.Card.ViewModels.CardViewModel|IsBlocking",
+            "Card|Shiny.Card.ViewModels.CardViewModel|IsClone",
             "Card|Shiny.Card.ViewModels.CardViewModel|IsFaceDown",
             "Card|Shiny.Card.ViewModels.CardViewModel|IsTapped",
             "Card|Shiny.Card.ViewModels.CardViewModel|Name",
@@ -65,6 +66,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.CardCounterViewModel|Quantity",
             "DuelScene|Shiny.Play.Duel.ViewModel.CardCounterViewModel|Type",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|CardAttachedTo",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsAbilityOnTheStack",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsController",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsSpeedEmblem",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsToken",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|RingTemptationCounter",
@@ -130,6 +133,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         // card has been established. No value or client identity is exported.
         private static readonly string[] PrivateVisibleActionJoinGetters =
         {
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|Associations",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|Actions",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|Game",
             "DuelScene|Shiny.Play.Duel.ViewModel.OptionButton|Action",
@@ -285,7 +289,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.16 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.17 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -346,10 +350,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static bool ValidateExactGetterSurface()
         {
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-            if (AllowedGetters.Length != 77 ||
-                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 77 ||
-                PrivateVisibleActionJoinGetters.Length != 32 ||
-                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 32)
+            if (AllowedGetters.Length != 80 ||
+                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 80 ||
+                PrivateVisibleActionJoinGetters.Length != 33 ||
+                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 33)
             {
                 return false;
             }

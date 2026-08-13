@@ -21,6 +21,7 @@ namespace Shiny.Card.ViewModels
                 "Card.CurrentDamage",
                 "Card.IsAttacking",
                 "Card.IsBlocking",
+                "Card.IsClone",
                 "Card.IsFaceDown",
                 "Card.IsTapped",
                 "Card.Name",
@@ -94,6 +95,15 @@ namespace Shiny.Card.ViewModels
             }
         }
 
+        public bool IsClone
+        {
+            get
+            {
+                VisibleCardGetterProbeV1.Record("Card.IsClone");
+                return IsCloneFixture;
+            }
+        }
+
         public bool IsTapped
         {
             get
@@ -140,6 +150,7 @@ namespace Shiny.Card.ViewModels
         public bool IsAttackingFixture { get; set; }
         public bool IsBlockingFixture { get; set; }
         public bool IsFaceDownFixture { get; set; }
+        public bool IsCloneFixture { get; set; }
         public bool IsTappedFixture { get; set; }
         public bool ThrowIfNameReadFixture { get; set; }
         public string NameFixture { get; set; } = "fixture-card";
@@ -154,6 +165,7 @@ namespace Shiny.Card.Enums
     {
         Normal = 0,
         CLBInitiativeEmblem = 1,
-        OtherVisibleEmblem = 2
+        OtherVisibleEmblem = 2,
+        AbilityOrEffect = 3
     }
 }

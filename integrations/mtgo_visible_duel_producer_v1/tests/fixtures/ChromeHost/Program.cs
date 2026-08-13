@@ -565,6 +565,81 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         return 61;
                     }
 
+                    // The first nonempty-stack slice is intentionally narrow:
+                    // one or more face-up, non-copy spells controlled by the
+                    // seated player, with no rendered association targets.
+                    // Collection order is exported directly and the last item
+                    // remains the client-rendered top of stack.
+                    viewModel.CurrentPhaseFixture = GamePhase.Upkeep;
+                    var lowerStackSpell = new DuelSceneCardViewModel
+                    {
+                        NameFixture = "fixture-visible-lower-stack-spell"
+                    };
+                    var topStackSpell = new DuelSceneCardViewModel
+                    {
+                        NameFixture = "fixture-visible-top-stack-spell"
+                    };
+                    viewModel.Stack.CardItems.Add(lowerStackSpell);
+                    viewModel.Stack.CardItems.Add(topStackSpell);
+                    int stackStatus =
+                        VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+                    int stackLength = view.ReadInt32(0);
+                    byte[] stackBytes = new byte[stackLength];
+                    view.ReadArray(8, stackBytes, 0, stackBytes.Length);
+                    string visibleStack = Encoding.UTF8.GetString(stackBytes);
+                    int lowerIndex = visibleStack.IndexOf(
+                        "fixture-visible-lower-stack-spell",
+                        StringComparison.Ordinal);
+                    int topIndex = visibleStack.IndexOf(
+                        "fixture-visible-top-stack-spell",
+                        StringComparison.Ordinal);
+                    if (stackStatus != 0 || lowerIndex < 0 || topIndex <= lowerIndex ||
+                        !visibleStack.Contains("\"visible_stack_position\":0") ||
+                        !visibleStack.Contains("\"visible_stack_position\":1") ||
+                        !visibleStack.Contains("\"controller\":\"seated_player\"") ||
+                        !visibleStack.Contains("\"visible_targets\":[]") ||
+                        !visibleStack.Contains("\"item_kind\":\"spell\""))
+                    {
+                        return 65;
+                    }
+                    topStackSpell.AssociationItems.Add(new object());
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 66;
+                    }
+                    topStackSpell.AssociationItems.Clear();
+                    topStackSpell.IsAbilityOnTheStackFixture = true;
+                    topStackSpell.CardFrameIDFixture =
+                        Shiny.Card.Enums.FrameStyle.AbilityOrEffect;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 67;
+                    }
+                    topStackSpell.IsAbilityOnTheStackFixture = false;
+                    topStackSpell.CardFrameIDFixture =
+                        Shiny.Card.Enums.FrameStyle.Normal;
+                    topStackSpell.IsControllerFixture = false;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 68;
+                    }
+                    topStackSpell.IsControllerFixture = true;
+                    topStackSpell.IsCloneFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 69;
+                    }
+                    topStackSpell.IsCloneFixture = false;
+                    topStackSpell.IsFaceDownFixture = true;
+                    topStackSpell.ThrowIfNameReadFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 70;
+                    }
+                    topStackSpell.ThrowIfNameReadFixture = false;
+                    topStackSpell.IsFaceDownFixture = false;
+                    viewModel.Stack.CardItems.Clear();
+
                     // Exercise the general noncombat priority slice with
                     // visibly changed game values and populated public zones.
                     viewModel.CurrentPhaseFixture = GamePhase.PostCombatMain;
@@ -608,6 +683,7 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         NameFixture = "fixture-visible-opponent-exile",
                         ThrowIfActionsReadFixture = true
                     });
+                    viewModel.Stack.CardItems.Add(lowerStackSpell);
 
                     int status = VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(
                         channelName);
@@ -637,6 +713,9 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         !observed.Contains("fixture-visible-opponent-graveyard") ||
                         !observed.Contains("fixture-visible-seated-exile") ||
                         !observed.Contains("fixture-visible-opponent-exile") ||
+                        !observed.Contains("fixture-visible-lower-stack-spell") ||
+                        !observed.Contains("\"item_kind\":\"spell\"") ||
+                        !observed.Contains("\"visible_targets\":[]") ||
                         observed.Contains("fixture-player") ||
                         observed.Contains("fixture-prompt"))
                     {

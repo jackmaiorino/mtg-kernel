@@ -16,7 +16,7 @@ const ROOT_TYPE_V1: &str = "Shiny.Play.Duel.DuelScene";
 const ROOT_ACCESSOR_V1: &str = "FrameworkElement.DataContext";
 const ROOT_VIEWMODEL_TYPE_V1: &str = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
 const AUDIT_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-viewmodel-producer-audit-v1";
-const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 32;
+const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 33;
 const REFERENCE_ASSEMBLY_SHA256_V1: &str =
     "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 
@@ -34,6 +34,7 @@ pub struct MtgoVisibleDuelViewModelProducerPropertyV1 {
 pub enum MtgoPrivateVisibleActionJoinBindingV1 {
     VisibleEnabledPromptControl,
     SeatedPlayerVisibleCard,
+    VisibleStackCard,
     BoundVisibleActionObject,
 }
 
@@ -131,7 +132,7 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
     }
 
     pub fn visible_zone_and_card_getter_count_v1(&self) -> u32 {
-        25
+        28
     }
 
     pub fn private_visible_action_join_layer_present_v1(&self) -> bool {
@@ -212,7 +213,7 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         visible_chrome_getter_count: 22,
         visible_chrome_values_exported: true,
         visible_zone_and_card_getter_layer_present: true,
-        visible_zone_and_card_getter_count: 25,
+        visible_zone_and_card_getter_count: 28,
         visible_zone_and_card_values_exported: true,
         private_visible_action_join_layer_present: true,
         private_visible_action_join_getter_count: PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1,
@@ -269,7 +270,7 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.visible_chrome_getter_count != 22
         || !audit.visible_chrome_values_exported
         || !audit.visible_zone_and_card_getter_layer_present
-        || audit.visible_zone_and_card_getter_count != 25
+        || audit.visible_zone_and_card_getter_count != 28
         || !audit.visible_zone_and_card_values_exported
         || !audit.private_visible_action_join_layer_present
         || audit.private_visible_action_join_getter_count
@@ -378,9 +379,16 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
 fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinGetterV1> {
     use MtgoPrivateVisibleActionJoinBindingV1::{
         BoundVisibleActionObject, SeatedPlayerVisibleCard, VisibleEnabledPromptControl,
+        VisibleStackCard,
     };
 
     [
+        (
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "Associations",
+            VisibleStackCard,
+        ),
         (
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
@@ -626,13 +634,13 @@ mod tests {
             mtgo_visible_duel_viewmodel_producer_audit_v1(),
         )
         .unwrap();
-        assert_eq!(checked.allowed_property_count_v1(), 77);
+        assert_eq!(checked.allowed_property_count_v1(), 80);
         assert!(checked.visible_chrome_getter_layer_present_v1());
         assert_eq!(checked.visible_chrome_getter_count_v1(), 22);
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
-        assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 25);
+        assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 28);
         assert!(checked.private_visible_action_join_layer_present_v1());
-        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 32);
+        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 33);
         assert!(checked.offline_sealed_action_dispatch_present_v1());
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());

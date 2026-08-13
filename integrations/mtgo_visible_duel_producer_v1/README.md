@@ -3,15 +3,15 @@
 This isolated .NET Framework 4.7.2 assembly is the in-process root seam for a
 direct player-visible MTGO projection. It locates exactly one visible
 `Shiny.Play.Duel.DuelScene` through the WPF visual tree, requires its public
-`DataContext` to be the exact duel view-model type, and checks that all 77
+`DataContext` to be the exact duel view-model type, and checks that all 80
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.16 invokes only exact allowlisted getters for the player-visible game
+Version 1.17 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
-and basic two-seat consistency. It also performs thirty-two exact private joins
+and basic two-seat consistency. It also performs thirty-three exact private joins
 from visible enabled prompt controls and the seated player's visible cards to
 the corresponding action objects. Those joins read only visible action labels,
 action type, locally-performable classification, cast, activated, and mana
@@ -38,12 +38,17 @@ remain local and are discarded. The producer can serialize a bounded
 player-visible values, or return one of the fixed abstentions. The slice is
 explicit about which player-relative rendered exile panel contains each
 visible exiled object, so later positions cannot collapse the two UI panels.
-The slice supports empty-stack noncombat priority decisions during upkeep,
-draw, Main 1, Main 2, and the end step on any bounded turn.
+The slice supports noncombat priority decisions during upkeep, draw, Main 1,
+Main 2, and the end step on any bounded turn. The stack may be empty or contain
+only face-up, non-copy spells controlled by the seated player whose rendered
+association set is empty.
 It maps visible life, mana, hand and library counts, battlefield, graveyards,
-exile, attachments, and the seated player's visible hand. Stack items, combat,
-revealed-zone windows, Initiative, choice prompts, and modal choices remain
-closed. Its supported actions are source-bound cast, play-land,
+exile, attachments, the seated player's visible hand, and that narrow rendered
+stack slice in client collection order. The last collection item is the
+rendered top of stack. Opponent-controlled spells, targeted items, abilities,
+copies, face-down items, combat, revealed-zone windows, Initiative, choice
+prompts, and modal choices remain closed. Raw association objects never leave
+the producer. Its supported actions are source-bound cast, play-land,
 activated-ability, and mana-ability actions plus the one visible priority Pass.
 
 The observation method writes that bounded result to an exact broker-created
@@ -63,8 +68,9 @@ enumeration, opponent hidden-hand enumeration, closed revealed-zone
 enumeration, opponent card-action collection inspection, and face-down name
 reads. It also verifies that no hidden fixture value enters the output. The
 fixture validates the original untouched opening, upkeep, draw, and end-step
-priority, plus a Turn 4 Main 2 state with changed life, mana, hand and library
-counts and populated battlefield, graveyard, and exile zones. The native
+priority, a two-spell rendered stack and its fail-closed variants, plus a Turn
+4 Main 2 state with changed life, mana, hand and library counts and populated
+battlefield, graveyard, exile, and stack zones. The native
 offline broker test
 observes the synthetic decision, dispatches its Pass index, and proves neither
 that dispatch nor another index for the same decision can be replayed.
@@ -75,7 +81,8 @@ while no duel was open. It returned only the fixed
 data-bearing getter, a complete visible projection, model scoring, live input,
 event entry, or spending. In particular, the synthetic slice has not yet
 confirmed its priority-pass control against a real duel. Initiative-bearing,
-combat, stack, revealed, and modal states remain unsupported. The slice is
+combat, general stack, revealed, and modal states remain unsupported. The
+narrow stack mapping is synthetic-only. The slice is
 therefore not live-authorized. The
 producer now also reduces the rendered per-player Shields zone and each
 rendered card's public frame style to an Initiative-holder candidate. A
@@ -92,11 +99,10 @@ represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
 abstention. Target-bearing, X-bearing, sideboard, fake, confirmation, and
 mode-count action state likewise forces abstention until its subsequent
-player-visible modal is represented. Version 1.16 has not been loaded into
-MTGO.
-The deterministic Release build tested outside the client is at
-`D:\mtgo-visible-duel-producer-v1.16-codex` with DLL SHA-256
-`6caf04df1d8cb462a306680b4a3a0ef26878fae95f60cc1898c84d0598308885`.
+player-visible modal is represented. Version 1.17 has not been loaded into
+MTGO. The deterministic Release build tested outside the client is at
+`D:\mtgo-visible-duel-producer-v1.17-codex` with DLL SHA-256
+`af2c52f5f677dd9fabd746e5c67d28e8e2619c949171a45abe64d2fec0846459`.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.
 The next tranche must confirm the exact client pass control, add later special

@@ -134,6 +134,29 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         }
 
         [DataContract]
+        private sealed class VisibleStackItemV1
+        {
+            [DataMember(Name = "visible_stack_position", Order = 1)]
+            public uint VisibleStackPosition { get; set; }
+
+            [DataMember(Name = "source_object_ref", Order = 2)]
+            public VisibleObjectRefV1 SourceObjectRef { get; set; } =
+                new VisibleObjectRefV1();
+
+            [DataMember(Name = "visible_source_name", Order = 3)]
+            public string VisibleSourceName { get; set; } = string.Empty;
+
+            [DataMember(Name = "controller", Order = 4)]
+            public string Controller { get; set; } = "seated_player";
+
+            [DataMember(Name = "visible_targets", Order = 5)]
+            public List<object> VisibleTargets { get; set; } = new List<object>();
+
+            [DataMember(Name = "item_kind", Order = 6)]
+            public string ItemKind { get; set; } = "spell";
+        }
+
+        [DataContract]
         private sealed class VisibleStateV1
         {
             [DataMember(Name = "acting_player", Order = 1)]
@@ -178,7 +201,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             public List<VisibleExileCardV1> Exile { get; set; } = new List<VisibleExileCardV1>();
 
             [DataMember(Name = "stack", Order = 14)]
-            public List<object> Stack { get; set; } = new List<object>();
+            public List<VisibleStackItemV1> Stack { get; set; } =
+                new List<VisibleStackItemV1>();
 
             [DataMember(Name = "combat", Order = 15)]
             public VisibleCombatStateV1 Combat { get; set; } = new VisibleCombatStateV1();
@@ -360,12 +384,13 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             // This emitted slice deliberately excludes temporary revealed
             // zones. Until every revealed-zone presentation can be assigned to
             // the exact public state field, omitting one would be incomplete.
-            // V1.16 admits ordinary noncombat priority decisions during
+            // V1.17 admits ordinary noncombat priority decisions during
             // upkeep, draw, either main phase, and the end step with an empty
             // stack and no visible modal. Life, mana, hand and library counts,
             // battlefield, graveyard, and exile are mapped from their rendered
-            // presentation values. Combat, stack items, revealed windows, and
-            // Initiative still abstain until represented fully.
+            // presentation values. One narrow seated-player, target-free,
+            // non-copy spell stack slice is represented. Combat, other stack
+            // items, revealed windows, and Initiative still abstain.
             if (!seated.Priority ||
                 !IsSupportedNoncombatPriorityPhaseV1(phase) ||
                 seated.Revealed.Count != 0 || opponent.Revealed.Count != 0 ||
@@ -389,7 +414,19 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     "Shiny.Play.Duel.ViewModel.ZoneViewModel",
                     "Count",
                     out object? stackCountValue) ||
-                !(stackCountValue is int stackCount) || stackCount != 0)
+                !(stackCountValue is int stackCount) || stackCount < 0 ||
+                stackCount > MaximumVisibleCollectionItems ||
+                !TryReadExactPropertyV1(
+                    stackZone,
+                    "DuelScene",
+                    "Shiny.Play.Duel.ViewModel.ZoneViewModel",
+                    "Cards",
+                    out object? stackCardsValue) ||
+                !TryBoundedCollectionV1(
+                    stackCardsValue,
+                    MaximumVisibleCollectionItems,
+                    out List<object> stackCards) ||
+                stackCards.Count != stackCount)
             {
                 return false;
             }
@@ -413,6 +450,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             foreach (object card in opponent.Graveyard) register(card);
             foreach (object card in seated.Exile) register(card);
             foreach (object card in opponent.Exile) register(card);
+            foreach (object card in stackCards) register(card);
             foreach (object card in seated.Hand) register(card);
             foreach (object card in opponent.Hand) register(card);
 
@@ -422,6 +460,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !TryMapNamedCardsV1(opponent.Graveyard, objectRefs, out List<VisibleNamedCardV1> opponentGraveyard) ||
                 !TryMapExileV1(seated.Exile, "seated_player", objectRefs, out List<VisibleExileCardV1> seatedExile) ||
                 !TryMapExileV1(opponent.Exile, "opponent", objectRefs, out List<VisibleExileCardV1> opponentExile) ||
+                !TryMapNarrowVisibleStackV1(stackCards, objectRefs, out List<VisibleStackItemV1> visibleStack) ||
                 !TryMapNamedCardsV1(seated.Hand, objectRefs, out List<VisibleNamedCardV1> ownHand) ||
                 !TryMapNamedCardsV1(opponent.Hand, objectRefs, out List<VisibleNamedCardV1> opponentKnownHand))
             {
@@ -477,7 +516,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 Battlefield = new[] { seatedBattlefield, opponentBattlefield },
                 Graveyards = new[] { seatedGraveyard, opponentGraveyard },
                 Exile = seatedExile,
-                Stack = new List<object>(),
+                Stack = visibleStack,
                 Combat = new VisibleCombatStateV1(),
                 VisibleObjectRelations = relations,
                 OwnHand = ownHand,
@@ -1100,6 +1139,46 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     case "Lore": state.Lore = value; break;
                     default: return false;
                 }
+            }
+            return true;
+        }
+
+        private static bool TryMapNarrowVisibleStackV1(
+            List<object> cards,
+            Dictionary<object, VisibleObjectRefV1> refs,
+            out List<VisibleStackItemV1> mapped)
+        {
+            mapped = new List<VisibleStackItemV1>();
+            for (int index = 0; index < cards.Count; index++)
+            {
+                object card = cards[index];
+                if (!refs.TryGetValue(card, out VisibleObjectRefV1? source) ||
+                    !TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "IsFaceDown", out object? faceDownValue) ||
+                    !(faceDownValue is bool faceDown) || faceDown ||
+                    !TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "IsClone", out object? cloneValue) ||
+                    !(cloneValue is bool clone) || clone ||
+                    !TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "CardFrameID", out object? frameValue) ||
+                    frameValue == null || frameValue.GetType().FullName != "Shiny.Card.Enums.FrameStyle" ||
+                    Enum.GetName(frameValue.GetType(), frameValue) == null ||
+                    string.Equals(Enum.GetName(frameValue.GetType(), frameValue), "AbilityOrEffect", StringComparison.Ordinal) ||
+                    !TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "Name", out object? nameValue) ||
+                    !(nameValue is string name) || !IsBoundedVisibleStringV1(name, 256, true) ||
+                    !TryReadExactPropertyV1(card, "DuelScene", "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel", "IsAbilityOnTheStack", out object? abilityValue) ||
+                    !(abilityValue is bool ability) || ability ||
+                    !TryReadExactPropertyV1(card, "DuelScene", "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel", "IsController", out object? controllerValue) ||
+                    !(controllerValue is bool controller) || !controller ||
+                    !TryReadExactPrivateVisibleActionPropertyV1(card, "DuelScene", "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel", "Associations", out object? associationsValue) ||
+                    !TryBoundedCollectionV1(associationsValue, 128, out List<object> associations) ||
+                    associations.Count != 0)
+                {
+                    return false;
+                }
+                mapped.Add(new VisibleStackItemV1
+                {
+                    VisibleStackPosition = checked((uint)index),
+                    SourceObjectRef = source,
+                    VisibleSourceName = name
+                });
             }
             return true;
         }

@@ -196,6 +196,8 @@ namespace Shiny.Play.Duel.ViewModel
                 "Zone.IsVisible",
                 "Zone.Count",
                 "Zone.Cards",
+                "DuelCard.IsAbilityOnTheStack",
+                "DuelCard.IsController",
                 "DuelCard.CardAttachedTo",
                 "DuelCard.IsSpeedEmblem",
                 "DuelCard.IsToken",
@@ -875,6 +877,7 @@ namespace Shiny.Play.Duel.ViewModel
             string[] required =
             {
                 "Duel.Game",
+                "DuelCard.Associations",
                 "DuelCard.Actions",
                 "Mana.Color",
                 "Prompt.DoneButton",
@@ -938,6 +941,30 @@ namespace Shiny.Play.Duel.ViewModel
 
     public sealed class DuelSceneCardViewModel : CardViewModel
     {
+        public IList<object> Associations
+        {
+            get
+            {
+                VisibleActionJoinGetterProbeV1.Record("DuelCard.Associations");
+                return AssociationItems;
+            }
+        }
+        public bool IsAbilityOnTheStack
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.IsAbilityOnTheStack");
+                return IsAbilityOnTheStackFixture;
+            }
+        }
+        public bool IsController
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.IsController");
+                return IsControllerFixture;
+            }
+        }
         public DuelSceneCardViewModel? CardAttachedTo
         {
             get
@@ -1000,6 +1027,9 @@ namespace Shiny.Play.Duel.ViewModel
             }
         }
         public DuelSceneCardViewModel? CardAttachedToFixture { get; set; }
+        public IList<object> AssociationItems { get; } = new List<object>();
+        public bool IsAbilityOnTheStackFixture { get; set; }
+        public bool IsControllerFixture { get; set; } = true;
         public bool IsSpeedEmblemFixture { get; set; }
         public int RingTemptationCounterFixture { get; set; }
         public int SpeedCounterFixture { get; set; }

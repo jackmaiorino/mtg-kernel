@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_SURFACE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1: &str =
-    "6a4a5e65fdb84dabd1ea57090ce001bf1d357aa56e1724483b96b48aafa1d3fb";
+    "dfc54ae4b71062da23584f96f38e348d57945c8c7e7c0e6e1385a4f76baa31a3";
 
 const SURFACE_KIND_V1: &str = "mtgo_visible_duel_viewmodel_candidate_surface_v1";
 const INFORMATION_BOUNDARY_V1: &str = "seated_player_visible_ui_equivalent_only_v1";
@@ -600,6 +600,15 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
         candidate(
             "Card.dll",
             "Shiny.Card.ViewModels.CardViewModel",
+            "IsClone",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered copy presentation, used only to reject an unrepresented stack copy",
+            &[],
+        ),
+        candidate(
+            "Card.dll",
+            "Shiny.Card.ViewModels.CardViewModel",
             "Name",
             "String",
             MtgoVisibleViewModelPropertyContextV1::FaceVisibleCardOnly,
@@ -731,6 +740,24 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
             "visible attachment grouping",
             &["current_state.visible_object_relations"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "IsAbilityOnTheStack",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered ability or effect stack frame, used to keep the first stack slice spell-only",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "IsController",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "client-reduced seated-player controller presentation",
+            &["current_state.stack.controller"],
         ),
         candidate(
             "DuelScene.dll",
@@ -891,6 +918,12 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             "Shiny.Play.Duel.ViewModel.ZoneViewModel",
             "ModelZone",
             "unrestricted backing zone object",
+        ),
+        forbidden(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "Associations",
+            "raw association collection, permitted only as an empty bounded guard on a rendered stack card",
         ),
         forbidden(
             "DuelScene.dll",
@@ -1214,8 +1247,8 @@ mod tests {
         let checked = check_untrusted_visible_duel_viewmodel_candidate_surface_v1(manifest)
             .expect("compiled metadata candidate surface");
         assert_eq!(checked.product_version_v1(), "3.4.158.4691");
-        assert_eq!(checked.candidate_property_count_v1(), 77);
-        assert_eq!(checked.forbidden_property_count_v1(), 28);
+        assert_eq!(checked.candidate_property_count_v1(), 80);
+        assert_eq!(checked.forbidden_property_count_v1(), 29);
         assert_eq!(
             checked.commitment_sha256_v1(),
             MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1

@@ -13,8 +13,8 @@ $required = @(
     'FrameworkElement',
     'DataContext',
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
-    'AllowedGetters.Length != 77',
-    'PrivateVisibleActionJoinGetters.Length != 32',
+    'AllowedGetters.Length != 80',
+    'PrivateVisibleActionJoinGetters.Length != 33',
     'projection_incomplete',
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
     'MemoryMappedFile.OpenExisting',
@@ -134,8 +134,8 @@ if ($publicStart -lt 0 -or $privateStart -le $publicStart) {
 }
 $publicGetterSource = $source.Substring($publicStart, $privateStart - $publicStart)
 $getterLines = [regex]::Matches($publicGetterSource, '"(?:Card|DuelScene)\|[^"\r\n]+\|[^"\r\n]+"')
-if ($getterLines.Count -ne 77) {
-    throw "producer source must contain exactly 77 compile-time getter entries"
+if ($getterLines.Count -ne 80) {
+    throw "producer source must contain exactly 80 compile-time getter entries"
 }
 
 $privateEnd = $source.IndexOf('};', $privateStart)
@@ -147,8 +147,8 @@ $privateGetterLines = [regex]::Matches(
     $privateGetterSource,
     '"(?:DuelScene|WotC\.MtGO\.Client\.Model\.Reference)\|[^"\r\n]+\|[^"\r\n]+"'
 )
-if ($privateGetterLines.Count -ne 32) {
-    throw 'producer source must contain exactly 32 private visible-action join getters'
+if ($privateGetterLines.Count -ne 33) {
+    throw 'producer source must contain exactly 33 private visible-source join getters'
 }
 
 if (-not $source.Contains('if (localPlayer)') -or
