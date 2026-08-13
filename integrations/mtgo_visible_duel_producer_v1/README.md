@@ -7,7 +7,7 @@ direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.18 invokes only exact allowlisted getters for the player-visible game
+Version 1.19 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
@@ -51,7 +51,7 @@ prompts, and modal choices remain closed. Raw association objects never leave
 the producer. Its supported actions are source-bound cast, play-land,
 activated-ability, and mana-ability actions plus the one visible priority Pass.
 
-Version 1.18 also emits a separate coordinate-free attacker-selection result
+Version 1.19 also emits a separate coordinate-free attacker-selection result
 for the narrow direct-opponent declare-attackers case. It contains the current
 visible public state, the battlefield-order attacker candidates, each
 candidate's visible selected state, and the fact that one enabled visible
@@ -62,6 +62,17 @@ serialized. The result carries no executable action binding. The Rust adapter
 turns it into the checkpoint's sequential include/exclude deliberation without
 touching the client. Exert, grouped attacks, alternate victims, modals,
 nonempty stack, and ambiguous or incomplete controls still abstain.
+
+Version 1.19 adds a sealed attacker-step dispatcher for that result. The
+adapter commits the exact source selection, candidate count, and desired
+attacker bit set. On every call the producer completely rebuilds the current
+visible selection, requires the same candidate objects in the same visible
+order and the exact visible postcondition expected from the prior step, then
+submits at most the first still-required toggle. It submits `Done` only after
+all candidates visibly match the committed set. A missing, stale,
+contradictory, reordered, or changed selection rejects without input. Plan
+commitments and source-selection hashes are single-use per game. The only
+outward response is the existing fixed submitted or rejected receipt.
 
 The observation method writes that bounded result to an exact broker-created
 local memory channel and returns only a fixed transport status code. A second
@@ -114,10 +125,10 @@ represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
 abstention. Target-bearing, X-bearing, sideboard, fake, confirmation, and
 mode-count action state likewise forces abstention until its subsequent
-player-visible modal is represented. Version 1.18 has not been loaded into
+player-visible modal is represented. Version 1.19 has not been loaded into
 MTGO. Version 1.17 remains loaded in the current broker process; no attempt was
 made to replace its locked assembly. A separate deterministic Release build of
-the v1.18 source succeeded outside the client with zero warnings and zero
+the v1.19 source succeeded outside the client with zero warnings and zero
 errors. It has not been live-qualified.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.

@@ -71,11 +71,16 @@ pub struct MtgoPlayerVisibleAttackerToggleV1 {
 /// method, coordinate, process object, event entry, or spending authority.
 #[derive(Debug, PartialEq, Eq)]
 pub struct MtgoPlayerVisibleAttackerPlanV1 {
+    source_selection: MtgoPlayerVisibleAttackerSelectionInputV1,
     desired_attackers: Vec<MtgoPlayerVisibleObjectRefV1>,
     required_toggles: Vec<MtgoPlayerVisibleAttackerToggleV1>,
 }
 
 impl MtgoPlayerVisibleAttackerPlanV1 {
+    pub(crate) fn source_selection_v1(&self) -> &MtgoPlayerVisibleAttackerSelectionInputV1 {
+        &self.source_selection
+    }
+
     pub fn desired_attackers_v1(&self) -> &[MtgoPlayerVisibleObjectRefV1] {
         &self.desired_attackers
     }
@@ -308,6 +313,7 @@ fn finish_plan_v1(
         })
         .collect();
     MtgoPlayerVisibleAttackerPlanV1 {
+        source_selection: input,
         desired_attackers,
         required_toggles,
     }

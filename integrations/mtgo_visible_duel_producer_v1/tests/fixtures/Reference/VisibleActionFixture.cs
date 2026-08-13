@@ -36,6 +36,13 @@ namespace WotC.MtGO.Client.Model.Play
             }
             ExecutionObserved = true;
         }
+
+        public void ResetExecutionFixture()
+        {
+            ExpectedAction = null;
+            ExecutionObserved = false;
+            ExecutionCount = 0;
+        }
     }
 
     public interface ICardAction : IGameAction

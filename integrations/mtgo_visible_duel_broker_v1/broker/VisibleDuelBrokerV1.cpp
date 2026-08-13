@@ -32,6 +32,8 @@ constexpr wchar_t kProducerObserveMethodV1[] =
     L"ExportVisibleDecisionOrAbstainV1";
 constexpr wchar_t kProducerDispatchMethodV1[] =
     L"DispatchSelectedVisibleActionV1";
+constexpr wchar_t kProducerAttackerDispatchMethodV1[] =
+    L"DispatchVisibleAttackerStepV1";
 #ifndef MTGO_LIVE_PINNED_V1
 constexpr wchar_t kOnlyAdmittedTargetFileName[] =
     L"synthetic_managed_host_v1.exe";
@@ -50,9 +52,9 @@ constexpr char kExpectedReferenceSha256[] =
 constexpr char kExpectedBootstrapSha256[] =
     "1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b";
 constexpr char kExpectedProducerSha256[] =
-    "a99751da026d9e9e0b023c090cb24e06b8399a52bb745f9bea1b1f9be22e53e9";
+    "aac76ba607b8026346d3bf84787b687270b099c0ef6c7a483980b5250a3356da";
 constexpr char kExpectedValidatorSha256[] =
-    "e95e60bdf3ff6b4e2347609e79b6b9950152912d92cb6105ccef9dc95085fd16";
+    "d3236104719a9c064e392bf1061caae407a502fe3b880725e32568999ed590ec";
 #endif
 
 struct VisibleDuelBootstrapParametersV1 {
@@ -533,13 +535,19 @@ int FailV1(const char* code) {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
-  if ((argc != 9 && argc != 13) || wcscmp(argv[1], L"--pid") != 0 ||
+  if ((argc != 9 && argc != 13 && argc != 17) ||
+      wcscmp(argv[1], L"--pid") != 0 ||
       wcscmp(argv[3], L"--bootstrap") != 0 ||
       wcscmp(argv[5], L"--producer") != 0 ||
       wcscmp(argv[7], L"--validator") != 0 ||
       (argc == 13 &&
        (wcscmp(argv[9], L"--decision-sha256") != 0 ||
-        wcscmp(argv[11], L"--selected-index") != 0))) {
+         wcscmp(argv[11], L"--selected-index") != 0)) ||
+      (argc == 17 &&
+       (wcscmp(argv[9], L"--attacker-selection-sha256") != 0 ||
+        wcscmp(argv[11], L"--candidate-count") != 0 ||
+        wcscmp(argv[13], L"--desired-mask") != 0 ||
+        wcscmp(argv[15], L"--plan-sha256") != 0))) {
     return FailV1("arguments");
   }
   wchar_t* pid_end = nullptr;
@@ -550,14 +558,17 @@ int wmain(int argc, wchar_t** argv) {
       !IsAbsoluteExistingFileV1(argv[8])) {
     return FailV1("input_validation");
   }
-  bool dispatch_requested = argc == 13;
+  bool ordinary_dispatch_requested = argc == 13;
+  bool attacker_dispatch_requested = argc == 17;
+  bool dispatch_requested = ordinary_dispatch_requested ||
+                            attacker_dispatch_requested;
 #if defined(MTGO_LIVE_PINNED_V1) && !defined(MTGO_LIVE_DISPATCH_ADMITTED_V1)
   if (dispatch_requested) {
     return FailV1("live_dispatch_not_admitted");
   }
 #endif
   std::wstring dispatch_command;
-  if (dispatch_requested) {
+  if (ordinary_dispatch_requested) {
     wchar_t* index_end = nullptr;
     unsigned long selected_index = wcstoul(argv[12], &index_end, 10);
     if (wcslen(argv[10]) != 64 ||
@@ -573,6 +584,35 @@ int wmain(int argc, wchar_t** argv) {
     dispatch_command.append(argv[10]);
     dispatch_command.push_back(L'|');
     dispatch_command.append(argv[12]);
+  } else if (attacker_dispatch_requested) {
+    wchar_t* count_end = nullptr;
+    unsigned long candidate_count = wcstoul(argv[12], &count_end, 10);
+    auto lower_sha256 = [](const wchar_t* value) {
+      return wcslen(value) == 64 &&
+             std::all_of(value, value + 64, [](wchar_t character) {
+               return (character >= L'0' && character <= L'9') ||
+                      (character >= L'a' && character <= L'f');
+             });
+    };
+    if (!lower_sha256(argv[10]) || candidate_count > 64 ||
+        count_end == nullptr || *count_end != L'\0' ||
+        wcscmp(argv[12], std::to_wstring(candidate_count).c_str()) != 0 ||
+        wcslen(argv[14]) != 16 ||
+        !std::all_of(argv[14], argv[14] + 16, [](wchar_t character) {
+          return (character >= L'0' && character <= L'9') ||
+                 (character >= L'a' && character <= L'f');
+        }) ||
+        !lower_sha256(argv[16])) {
+      return FailV1("input_validation");
+    }
+    dispatch_command = L"execute_visible_attacker_step_v1|";
+    dispatch_command.append(argv[10]);
+    dispatch_command.push_back(L'|');
+    dispatch_command.append(argv[12]);
+    dispatch_command.push_back(L'|');
+    dispatch_command.append(argv[14]);
+    dispatch_command.push_back(L'|');
+    dispatch_command.append(argv[16]);
   }
   DWORD process_id = static_cast<DWORD>(parsed_pid);
 
@@ -596,7 +636,7 @@ int wmain(int argc, wchar_t** argv) {
   if (dispatch_requested) {
     auto* header = static_cast<std::uint32_t*>(channel_view);
     header[0] = static_cast<std::uint32_t>(dispatch_command.size());
-    header[1] = 2;
+    header[1] = attacker_dispatch_requested ? 3 : 2;
     char* command_bytes = static_cast<char*>(channel_view) + 8;
     for (std::size_t index = 0; index < dispatch_command.size(); ++index) {
       command_bytes[index] = static_cast<char>(dispatch_command[index]);
@@ -681,8 +721,11 @@ int wmain(int argc, wchar_t** argv) {
                    std::size(parameters.channel_name), channel_name.c_str()) ||
       !ExactCopyV1(parameters.producer_method,
                    std::size(parameters.producer_method),
-                   dispatch_requested ? kProducerDispatchMethodV1
-                                      : kProducerObserveMethodV1)) {
+                    attacker_dispatch_requested
+                        ? kProducerAttackerDispatchMethodV1
+                        : (ordinary_dispatch_requested
+                               ? kProducerDispatchMethodV1
+                               : kProducerObserveMethodV1))) {
     UnmapViewOfFile(channel_view);
     return FailV1("parameter_copy");
   }

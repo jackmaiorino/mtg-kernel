@@ -54,6 +54,16 @@ The Rust runtime's independent ratification root remains empty until the scorer,
 attended authorization, fresh-state, and newer visible-postcondition checks are
 joined and qualified together.
 
+The offline broker also accepts the separately typed attacker transaction. Its
+command carries only the exact current sanitized selection hash, candidate
+count, desired-mask commitment, and model-plan commitment. It invokes the
+producer's attacker-step method, which rebuilds the complete visible state and
+submits at most one toggle or a fully reconciled `Done`. The adversarial WPF
+test proves the native observe plus sealed-step path and proves that replaying
+the unchanged selection is rejected. The observe-only live build rejects this
+command at the same compile-separated gate as ordinary dispatch. No live
+attacker input has been attempted or authorized.
+
 The producer v1.5 lobby-only clean-restart result and exact binary manifest are
 recorded in `LIVE_QUALIFICATION_2026-08-13.md`. It returned the expected fixed
 duel-surface abstention. A successful no-stakes duel projection remains open.

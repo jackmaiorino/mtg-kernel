@@ -142,6 +142,53 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         application.Run(window);
                         return 0;
                     }
+                    if (args.Length == 1 && string.Equals(
+                            args[0],
+                            "--wait-for-attacker-broker",
+                            StringComparison.Ordinal))
+                    {
+                        seated.Battlefield.Clear();
+                        opponent.Battlefield.Clear();
+                        var attacker = new DuelSceneCardViewModel
+                        {
+                            NameFixture = "fixture-visible-broker-attacker",
+                            PowerFixture = 2,
+                            ToughnessFixture = 2
+                        };
+                        var attackAction = new VisibleFixtureCardAction
+                        {
+                            NameFixture = "Attack fixture-visible-opponent",
+                            CastFixture = false,
+                            AttackVictimIdFixture = 7
+                        };
+                        attacker.ActionItems.Add(attackAction);
+                        seated.Battlefield.Add(attacker);
+                        viewModel.CurrentPhaseFixture = GamePhase.DeclareAttackers;
+                        viewModel.Prompt.ShowOkPromptButtonFixture = false;
+                        viewModel.Prompt.Buttons.Remove(
+                            viewModel.Prompt.OkPromptButtonFixture);
+                        var brokerDoneButton = new OptionButton
+                        {
+                            NameFixture = "Done",
+                            VisibleFixture = true,
+                            EnabledFixture = true,
+                            ActionFixture = new VisibleFixturePromptAction
+                            {
+                                NameFixture = "Done"
+                            }
+                        };
+                        viewModel.Prompt.DoneButtonFixture = brokerDoneButton;
+                        viewModel.Prompt.Buttons.Add(brokerDoneButton);
+                        viewModel.GameFixture.ExpectedAction = attackAction;
+                        var timeout = new DispatcherTimer
+                        {
+                            Interval = TimeSpan.FromMinutes(2)
+                        };
+                        timeout.Tick += (_, __) => window.Close();
+                        timeout.Start();
+                        application.Run(window);
+                        return 0;
+                    }
                     // First exercise the full battlefield and counter getter
                     // surface while an unsupported combat state must abstain.
                     localPermanent.IsAttackingFixture = true;
@@ -570,7 +617,7 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     // MTGO exposes declare attackers as independently
                     // toggled visible cards plus one Done control. The
                     // producer exports that complete visible selection moment
-                    // as a distinct non-dispatchable result kind.
+                    // as a distinct multi-step result kind.
                     var firstAttacker = new DuelSceneCardViewModel
                     {
                         NameFixture = "fixture-visible-first-attacker",
@@ -664,6 +711,98 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     {
                         return 75;
                     }
+
+                    // A plan selects the first candidate and deselects the
+                    // second. Every producer call rebuilds and hashes the
+                    // current visible selection. The client objects stay
+                    // private, and the only output is a fixed receipt.
+                    const string desiredMaskHex = "0000000000000001";
+                    string planCommitment = AttackerPlanCommitmentFixtureV1(
+                        attackersSha,
+                        2,
+                        desiredMaskHex);
+                    viewModel.GameFixture.ExpectedAction = firstAttackAction;
+                    if (!DispatchAttackerStepFixtureV1(
+                            channelName,
+                            view,
+                            attackersSha,
+                            2,
+                            desiredMaskHex,
+                            planCommitment,
+                            true) ||
+                        viewModel.GameFixture.ExecutionCount != 1)
+                    {
+                        return 76;
+                    }
+
+                    var firstDontAttackAction = new VisibleFixtureCardAction
+                    {
+                        NameFixture = "Don't attack",
+                        CastFixture = false,
+                        AttackVictimIdFixture = -1
+                    };
+                    firstAttacker.IsAttackingFixture = true;
+                    firstAttacker.ActionItems.Clear();
+                    firstAttacker.ActionItems.Add(firstDontAttackAction);
+                    byte[] afterFirstBytes = ExportVisibleBytesFixtureV1(channelName, view);
+                    string afterFirstSha = LowerSha256FixtureV1(afterFirstBytes);
+                    viewModel.GameFixture.ExpectedAction = secondDontAttackAction;
+                    if (!DispatchAttackerStepFixtureV1(
+                            channelName,
+                            view,
+                            afterFirstSha,
+                            2,
+                            desiredMaskHex,
+                            planCommitment,
+                            true) ||
+                        viewModel.GameFixture.ExecutionCount != 2)
+                    {
+                        return 78;
+                    }
+
+                    var secondAttackAction = new VisibleFixtureCardAction
+                    {
+                        NameFixture = "Attack fixture-visible-opponent",
+                        CastFixture = false,
+                        AttackVictimIdFixture = 7
+                    };
+                    secondAttacker.IsAttackingFixture = false;
+                    secondAttacker.ActionItems.Clear();
+                    secondAttacker.ActionItems.Add(secondAttackAction);
+                    byte[] completedBytes = ExportVisibleBytesFixtureV1(channelName, view);
+                    string completedSha = LowerSha256FixtureV1(completedBytes);
+                    viewModel.GameFixture.ExpectedAction = doneButton.ActionFixture;
+                    if (!DispatchAttackerStepFixtureV1(
+                            channelName,
+                            view,
+                            completedSha,
+                            2,
+                            desiredMaskHex,
+                            planCommitment,
+                            true) ||
+                        viewModel.GameFixture.ExecutionCount != 3)
+                    {
+                        return 79;
+                    }
+                    if (!DispatchAttackerStepFixtureV1(
+                            channelName,
+                            view,
+                            completedSha,
+                            2,
+                            desiredMaskHex,
+                            planCommitment,
+                            false) ||
+                        viewModel.GameFixture.ExecutionCount != 3)
+                    {
+                        return 80;
+                    }
+                    viewModel.GameFixture.ResetExecutionFixture();
+                    firstAttacker.IsAttackingFixture = false;
+                    firstAttacker.ActionItems.Clear();
+                    firstAttacker.ActionItems.Add(firstAttackAction);
+                    secondAttacker.IsAttackingFixture = true;
+                    secondAttacker.ActionItems.Clear();
+                    secondAttacker.ActionItems.Add(secondDontAttackAction);
 
                     firstAttackAction.NameFixture =
                         "Attack fixture-visible-opponent and exert";
@@ -967,6 +1106,90 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
             view.ReadArray(8, bytes, 0, bytes.Length);
             return Encoding.UTF8.GetString(bytes) ==
                 "{\"result_kind\":\"abstained\",\"reason\":\"projection_incomplete\"}";
+        }
+
+        private static byte[] ExportVisibleBytesFixtureV1(
+            string channelName,
+            MemoryMappedViewAccessor view)
+        {
+            int status = VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+            int length = view.ReadInt32(0);
+            if (status != 0 || length <= 0 || length > Capacity - 8)
+            {
+                return Array.Empty<byte>();
+            }
+            var bytes = new byte[length];
+            view.ReadArray(8, bytes, 0, bytes.Length);
+            return bytes;
+        }
+
+        private static bool DispatchAttackerStepFixtureV1(
+            string channelName,
+            MemoryMappedViewAccessor view,
+            string currentSelectionSha256,
+            int candidateCount,
+            string desiredMaskHex,
+            string planCommitmentSha256,
+            bool expectSubmitted)
+        {
+            byte[] command = Encoding.ASCII.GetBytes(
+                "execute_visible_attacker_step_v1|" + currentSelectionSha256 + "|" +
+                candidateCount.ToString() + "|" + desiredMaskHex + "|" +
+                planCommitmentSha256);
+            view.Write(0, command.Length);
+            view.Write(4, 3);
+            view.WriteArray(8, command, 0, command.Length);
+            view.Flush();
+            int status = VisibleDuelProducerV1.DispatchVisibleAttackerStepV1(channelName);
+            int length = view.ReadInt32(0);
+            if (status != 0 || length <= 0 || length > Capacity - 8)
+            {
+                return false;
+            }
+            var receipt = new byte[length];
+            view.ReadArray(8, receipt, 0, receipt.Length);
+            string expected = expectSubmitted
+                ? "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"submitted\"}"
+                : "{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"rejected\"}";
+            return string.Equals(Encoding.UTF8.GetString(receipt), expected, StringComparison.Ordinal);
+        }
+
+        private static string LowerSha256FixtureV1(byte[] bytes)
+        {
+            using (SHA256 sha256 = SHA256.Create())
+            {
+                return string.Concat(sha256.ComputeHash(bytes).Select(
+                    value => value.ToString("x2")));
+            }
+        }
+
+        private static string AttackerPlanCommitmentFixtureV1(
+            string sourceSelectionSha256,
+            int candidateCount,
+            string desiredMaskHex)
+        {
+            var committed = new System.Collections.Generic.List<byte>();
+            committed.AddRange(Encoding.ASCII.GetBytes(
+                "mtgo-visible-attacker-execution-plan-v1"));
+            foreach (string part in new[]
+            {
+                sourceSelectionSha256,
+                candidateCount.ToString(),
+                desiredMaskHex
+            })
+            {
+                byte[] bytes = Encoding.ASCII.GetBytes(part);
+                ulong count = (ulong)bytes.Length;
+                var length = new byte[8];
+                for (int index = 7; index >= 0; index--)
+                {
+                    length[index] = (byte)(count & 0xff);
+                    count >>= 8;
+                }
+                committed.AddRange(length);
+                committed.AddRange(bytes);
+            }
+            return LowerSha256FixtureV1(committed.ToArray());
         }
 
         private static bool ExportsVisiblePhaseV1(

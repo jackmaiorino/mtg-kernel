@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.18 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.19 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -175,7 +175,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         /// </summary>
         public static int ExportVisibleDecisionOrAbstainV1(string channelName)
         {
-            return RunVisibleDecisionTransactionV1(channelName, false);
+            return RunVisibleDecisionTransactionV1(channelName, null);
         }
 
         /// <summary>
@@ -185,12 +185,28 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         /// </summary>
         public static int DispatchSelectedVisibleActionV1(string channelName)
         {
-            return RunVisibleDecisionTransactionV1(channelName, true);
+            return RunVisibleDecisionTransactionV1(
+                channelName,
+                SealedVisibleDispatchKindV1.OrdinaryAction);
+        }
+
+        /// <summary>
+        /// Rebuilds the exact current visible attacker-selection result and
+        /// submits at most one next toggle, or Done only after every desired
+        /// visible attacker is already selected. Each call requires a fresh
+        /// exact visible-selection hash. The producer retains client objects
+        /// only inside this transaction and emits only a fixed receipt.
+        /// </summary>
+        public static int DispatchVisibleAttackerStepV1(string channelName)
+        {
+            return RunVisibleDecisionTransactionV1(
+                channelName,
+                SealedVisibleDispatchKindV1.AttackerStep);
         }
 
         private static int RunVisibleDecisionTransactionV1(
             string channelName,
-            bool dispatchRequested)
+            SealedVisibleDispatchKindV1? dispatchKind)
         {
             if (!IsExactChannelName(channelName))
             {
@@ -198,14 +214,15 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             }
 
             SealedVisibleActionDispatchRequestV1? dispatchRequest = null;
-            if (dispatchRequested &&
+            if (dispatchKind.HasValue &&
                 !TryReadSealedVisibleActionDispatchRequestV1(
                     channelName,
+                    dispatchKind.Value,
                     out dispatchRequest))
             {
                 return WriteBrokerResult(channelName, VisibleActionRejected) ? 0 : 4;
             }
-            if (dispatchRequested != (dispatchRequest != null))
+            if (dispatchKind.HasValue != (dispatchRequest != null))
             {
                 return WriteBrokerResult(channelName, OutputValidationFailed) ? 0 : 4;
             }
@@ -238,7 +255,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             }
             catch
             {
-                result = dispatchRequested ? VisibleActionRejected : OutputValidationFailed;
+                result = dispatchKind.HasValue ? VisibleActionRejected : OutputValidationFailed;
             }
 
             return WriteBrokerResult(channelName, result) ? 0 : 4;
@@ -289,13 +306,39 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.18 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.19 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
             {
                 return ProjectionIncomplete;
             }
+            if (dispatchRequest != null &&
+                dispatchRequest.Kind == SealedVisibleDispatchKindV1.AttackerStep)
+            {
+                if (!TryBuildSanitizedVisibleAttackerSelectionAndBindingsV1(
+                        viewModel,
+                        out byte[] currentSelection,
+                        out List<SealedVisibleAttackerBindingV1> attackerBindings,
+                        out object? doneAction,
+                        out uint turn,
+                        out string visibleUniverseSha256) ||
+                    doneAction == null)
+                {
+                    return VisibleActionRejected;
+                }
+                return TryExecuteSealedVisibleAttackerStepV1(
+                    viewModel,
+                    currentSelection,
+                    attackerBindings,
+                    doneAction,
+                    turn,
+                    visibleUniverseSha256,
+                    dispatchRequest)
+                        ? VisibleActionSubmitted
+                        : VisibleActionRejected;
+            }
+
             bool built = TryBuildSanitizedVisibleDecisionAndActionBindingsV1(
                 viewModel,
                 out byte[] visibleDecision,

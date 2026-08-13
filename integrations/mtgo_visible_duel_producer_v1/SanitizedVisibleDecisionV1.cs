@@ -284,6 +284,17 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 new VisibleAttackerSelectionV1();
         }
 
+        [DataContract]
+        private sealed class VisibleAttackerExecutionUniverseV1
+        {
+            [DataMember(Name = "current_state", Order = 1)]
+            public VisibleStateV1 CurrentState { get; set; } = new VisibleStateV1();
+
+            [DataMember(Name = "ordered_candidate_attackers", Order = 2)]
+            public List<VisibleObjectRefV1> OrderedCandidateAttackers { get; set; } =
+                new List<VisibleObjectRefV1>();
+        }
+
         private sealed class PlayerSnapshotV1
         {
             internal object Player = new object();
@@ -372,12 +383,42 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             object viewModel,
             out byte[] result)
         {
+            return TryBuildSanitizedVisibleAttackerSelectionAndBindingsV1(
+                viewModel,
+                out result,
+                out _,
+                out _,
+                out _,
+                out _);
+        }
+
+        internal static bool TryBuildSanitizedVisibleAttackerSelectionAndBindingsV1(
+            object viewModel,
+            out byte[] result,
+            out List<SealedVisibleAttackerBindingV1> bindings,
+            out object? doneAction,
+            out uint turn,
+            out string visibleUniverseSha256)
+        {
             result = Array.Empty<byte>();
+            bindings = new List<SealedVisibleAttackerBindingV1>();
+            doneAction = null;
+            turn = 0;
+            visibleUniverseSha256 = string.Empty;
             try
             {
                 if (!TryBuildSanitizedVisibleAttackerSelectionCoreV1(
                         viewModel,
-                        out VisibleAttackerSelectionResultV1 payload))
+                        out VisibleAttackerSelectionResultV1 payload,
+                        out bindings,
+                        out doneAction,
+                        out turn))
+                {
+                    return false;
+                }
+                if (!TryComputeVisibleAttackerUniverseSha256V1(
+                        payload.Selection,
+                        out visibleUniverseSha256))
                 {
                     return false;
                 }
@@ -404,7 +445,48 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             catch
             {
                 result = Array.Empty<byte>();
+                bindings = new List<SealedVisibleAttackerBindingV1>();
+                doneAction = null;
+                turn = 0;
+                visibleUniverseSha256 = string.Empty;
                 return false;
+            }
+        }
+
+        private static bool TryComputeVisibleAttackerUniverseSha256V1(
+            VisibleAttackerSelectionV1 selection,
+            out string visibleUniverseSha256)
+        {
+            visibleUniverseSha256 = string.Empty;
+            VisibleCombatStateV1 originalCombat = selection.CurrentState.Combat;
+            try
+            {
+                selection.CurrentState.Combat = new VisibleCombatStateV1();
+                var universe = new VisibleAttackerExecutionUniverseV1
+                {
+                    CurrentState = selection.CurrentState,
+                    OrderedCandidateAttackers = selection.OrderedCandidates
+                        .Select(candidate => candidate.Attacker)
+                        .ToList()
+                };
+                var serializer = new DataContractJsonSerializer(
+                    typeof(VisibleAttackerExecutionUniverseV1),
+                    new DataContractJsonSerializerSettings
+                    {
+                        UseSimpleDictionaryFormat = true,
+                        KnownTypes = new[] { typeof(VisibleObjectRefV1) },
+                        EmitTypeInformation = EmitTypeInformation.Never
+                    });
+                using (var stream = new MemoryStream())
+                {
+                    serializer.WriteObject(stream, universe);
+                    visibleUniverseSha256 = LowerSha256V1(stream.ToArray());
+                }
+                return IsLowerSha256V1(visibleUniverseSha256);
+            }
+            finally
+            {
+                selection.CurrentState.Combat = originalCombat;
             }
         }
 
@@ -473,7 +555,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             // This emitted slice deliberately excludes temporary revealed
             // zones. Until every revealed-zone presentation can be assigned to
             // the exact public state field, omitting one would be incomplete.
-            // V1.18 admits ordinary noncombat priority decisions during
+            // V1.19 admits ordinary noncombat priority decisions during
             // upkeep, draw, either main phase, and the end step with an empty
             // stack and no visible modal. Life, mana, hand and library counts,
             // battlefield, graveyard, and exile are mapped from their rendered
@@ -627,9 +709,15 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 
         private static bool TryBuildSanitizedVisibleAttackerSelectionCoreV1(
             object viewModel,
-            out VisibleAttackerSelectionResultV1 result)
+            out VisibleAttackerSelectionResultV1 result,
+            out List<SealedVisibleAttackerBindingV1> bindings,
+            out object? doneAction,
+            out uint observedTurn)
         {
             result = new VisibleAttackerSelectionResultV1();
+            bindings = new List<SealedVisibleAttackerBindingV1>();
+            doneAction = null;
+            observedTurn = 0;
             if (!TryRequireSupportedDuelVariantV1(viewModel) ||
                 !TryReadExactPropertyV1(
                     viewModel,
@@ -684,7 +772,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     out string? visibleInitiative) ||
                 visibleInitiative != null ||
                 !TryRequireNoUnrepresentedVisibleModalSurfaceV1(viewModel) ||
-                !TryRequireVisibleAttackerDoneControlV1(viewModel))
+                !TryRequireVisibleAttackerDoneControlV1(viewModel, out doneAction))
             {
                 return false;
             }
@@ -777,7 +865,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     seated.Battlefield,
                     opponent.VisibleName,
                     objectRefs,
-                    out List<VisibleAttackerCandidateV1> candidates))
+                    out List<VisibleAttackerCandidateV1> candidates,
+                    out bindings))
             {
                 return false;
             }
@@ -824,6 +913,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 OrderedCandidates = candidates,
                 UniqueVisibleEnabledDoneControl = true
             };
+            observedTurn = turn;
             return true;
         }
 
@@ -1203,8 +1293,11 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             return visibleEnabledButtonCount == 1;
         }
 
-        private static bool TryRequireVisibleAttackerDoneControlV1(object viewModel)
+        private static bool TryRequireVisibleAttackerDoneControlV1(
+            object viewModel,
+            out object? selectedDoneAction)
         {
+            selectedDoneAction = null;
             const string promptType = "Shiny.Play.Duel.ViewModel.PromptBoxViewModel";
             const string buttonType = "Shiny.Play.Duel.ViewModel.OptionButton";
             if (!TryReadExactPropertyV1(viewModel, "DuelScene", DuelViewModelType, "PromptBox", out object? promptBox) || promptBox == null ||
@@ -1244,7 +1337,12 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     }
                 }
             }
-            return visibleEnabledCount == 1;
+            if (visibleEnabledCount != 1)
+            {
+                return false;
+            }
+            selectedDoneAction = doneAction;
+            return true;
         }
 
         private static bool TryReadZoneCardsForSnapshotV1(
@@ -1516,9 +1614,11 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             List<object> seatedBattlefield,
             string visibleOpponentName,
             Dictionary<object, VisibleObjectRefV1> refs,
-            out List<VisibleAttackerCandidateV1> candidates)
+            out List<VisibleAttackerCandidateV1> candidates,
+            out List<SealedVisibleAttackerBindingV1> bindings)
         {
             candidates = new List<VisibleAttackerCandidateV1>();
+            bindings = new List<SealedVisibleAttackerBindingV1>();
             if (!IsBoundedVisibleStringV1(visibleOpponentName, 256, true))
             {
                 return false;
@@ -1600,8 +1700,17 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     AttackOpponentActionVisible = attackActions.Count == 1,
                     DontAttackActionVisible = dontAttackActions.Count == 1
                 });
+                bindings.Add(new SealedVisibleAttackerBindingV1
+                {
+                    Card = card,
+                    VisibleOrdinal = attacker.VisibleOrdinal,
+                    CurrentlyAttacking = currentlyAttacking,
+                    ToggleAction = currentlyAttacking
+                        ? dontAttackActions.Single()
+                        : attackActions.Single()
+                });
             }
-            return candidates.Count <= 64;
+            return candidates.Count <= 64 && bindings.Count == candidates.Count;
         }
 
         private static bool TryRequireSimpleVisibleAttackerToggleActionV1(
