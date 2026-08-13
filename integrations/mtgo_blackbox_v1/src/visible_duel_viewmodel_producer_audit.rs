@@ -16,7 +16,7 @@ const ROOT_TYPE_V1: &str = "Shiny.Play.Duel.DuelScene";
 const ROOT_ACCESSOR_V1: &str = "FrameworkElement.DataContext";
 const ROOT_VIEWMODEL_TYPE_V1: &str = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
 const AUDIT_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-viewmodel-producer-audit-v1";
-const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 31;
+const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 32;
 const REFERENCE_ASSEMBLY_SHA256_V1: &str =
     "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 
@@ -123,7 +123,7 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
     }
 
     pub fn visible_chrome_getter_count_v1(&self) -> u32 {
-        19
+        22
     }
 
     pub fn visible_zone_and_card_getter_layer_present_v1(&self) -> bool {
@@ -209,7 +209,7 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         maximum_output_bytes: 1_048_576,
         output_transport_status_contains_game_information: false,
         visible_chrome_getter_layer_present: true,
-        visible_chrome_getter_count: 19,
+        visible_chrome_getter_count: 22,
         visible_chrome_values_exported: true,
         visible_zone_and_card_getter_layer_present: true,
         visible_zone_and_card_getter_count: 25,
@@ -266,7 +266,7 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.maximum_output_bytes != 1_048_576
         || audit.output_transport_status_contains_game_information
         || !audit.visible_chrome_getter_layer_present
-        || audit.visible_chrome_getter_count != 19
+        || audit.visible_chrome_getter_count != 22
         || !audit.visible_chrome_values_exported
         || !audit.visible_zone_and_card_getter_layer_present
         || audit.visible_zone_and_card_getter_count != 25
@@ -416,6 +416,12 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
             "Shiny.Play.Duel.ViewModel.PromptBoxViewModel",
             "OkPromptButton",
             VisibleEnabledPromptControl,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.IGameAction",
+            "ActionFlags",
+            BoundVisibleActionObject,
         ),
         (
             "WotC.MtGO.Client.Model.Reference.dll",
@@ -620,13 +626,13 @@ mod tests {
             mtgo_visible_duel_viewmodel_producer_audit_v1(),
         )
         .unwrap();
-        assert_eq!(checked.allowed_property_count_v1(), 74);
+        assert_eq!(checked.allowed_property_count_v1(), 77);
         assert!(checked.visible_chrome_getter_layer_present_v1());
-        assert_eq!(checked.visible_chrome_getter_count_v1(), 19);
+        assert_eq!(checked.visible_chrome_getter_count_v1(), 22);
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
         assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 25);
         assert!(checked.private_visible_action_join_layer_present_v1());
-        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 31);
+        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 32);
         assert!(checked.offline_sealed_action_dispatch_present_v1());
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());

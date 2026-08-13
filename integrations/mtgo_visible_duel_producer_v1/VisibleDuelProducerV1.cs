@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.14 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.15 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -113,7 +113,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|Name",
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|RevealedZone",
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|ShieldsZone",
+            "DuelScene|Shiny.Play.Duel.ViewModel.NumberEntryData|Enabled",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|IsPromptBoxActive",
+            "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|ManaButtons",
+            "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|NumberEntry",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|StandardButtons",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|Text",
             "DuelScene|Shiny.Play.Duel.ViewModel.TemporaryZoneViewModel|IsVisible",
@@ -133,6 +136,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel|Color",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|DoneButton",
             "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|OkPromptButton",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|ActionFlags",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|ActionType",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|IsDefault",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|Name",
@@ -281,7 +285,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.14 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.15 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -342,10 +346,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static bool ValidateExactGetterSurface()
         {
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-            if (AllowedGetters.Length != 74 ||
-                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 74 ||
-                PrivateVisibleActionJoinGetters.Length != 31 ||
-                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 31)
+            if (AllowedGetters.Length != 77 ||
+                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 77 ||
+                PrivateVisibleActionJoinGetters.Length != 32 ||
+                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 32)
             {
                 return false;
             }

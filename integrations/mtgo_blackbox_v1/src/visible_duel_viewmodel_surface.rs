@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_SURFACE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1: &str =
-    "7d3ce84b73538fa66d4c755ec21740e5b95680630a15ec5caba8c2ab181851bc";
+    "6a4a5e65fdb84dabd1ea57090ce001bf1d357aa56e1724483b96b48aafa1d3fb";
 
 const SURFACE_KIND_V1: &str = "mtgo_visible_duel_viewmodel_candidate_surface_v1";
 const INFORMATION_BOUNDARY_V1: &str = "seated_player_visible_ui_equivalent_only_v1";
@@ -734,6 +734,15 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
         ),
         candidate(
             "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.NumberEntryData",
+            "Enabled",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "rendered numeric-entry prompt enabled state, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.PromptBoxViewModel",
             "IsPromptBoxActive",
             "Boolean",
@@ -748,6 +757,24 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             "String",
             MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
             "rendered prompt text",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.PromptBoxViewModel",
+            "ManaButtons",
+            "IExtendedObservableCollection<OptionButtonMana>",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "rendered mana-payment prompt controls, used only to reject an unrepresented choice",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.PromptBoxViewModel",
+            "NumberEntry",
+            "NumberEntryData",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "rendered numeric-entry prompt",
             &[],
         ),
         candidate(
@@ -1187,7 +1214,7 @@ mod tests {
         let checked = check_untrusted_visible_duel_viewmodel_candidate_surface_v1(manifest)
             .expect("compiled metadata candidate surface");
         assert_eq!(checked.product_version_v1(), "3.4.158.4691");
-        assert_eq!(checked.candidate_property_count_v1(), 74);
+        assert_eq!(checked.candidate_property_count_v1(), 77);
         assert_eq!(checked.forbidden_property_count_v1(), 28);
         assert_eq!(
             checked.commitment_sha256_v1(),

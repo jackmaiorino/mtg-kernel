@@ -11,6 +11,7 @@ namespace WotC.MtGO.Client.Model.Play
     {
         string Name { get; }
         ActionType ActionType { get; }
+        uint ActionFlags { get; }
         bool IsDefault { get; }
     }
 
@@ -79,6 +80,7 @@ namespace WotC.MtGO.Client.Model.Play
             {
                 "Action.Name",
                 "Action.ActionType",
+                "Action.ActionFlags",
                 "Action.IsDefault",
                 "CardAction.ActionChoices",
                 "CardAction.AltMenuAction",
@@ -131,6 +133,15 @@ namespace WotC.MtGO.Client.Model.Play
             {
                 PrivateVisibleActionGetterProbeV1.Record("Action.ActionType");
                 return ActionType.CardAction;
+            }
+        }
+
+        public uint ActionFlags
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("Action.ActionFlags");
+                return ActionFlagsFixture;
             }
         }
 
@@ -363,11 +374,53 @@ namespace WotC.MtGO.Client.Model.Play
         public uint ModeMinChoicesFixture { get; set; }
         public string ModeChoiceMappingFixture { get; set; } = string.Empty;
         public bool IsDefaultFixture { get; set; }
+        public uint ActionFlagsFixture { get; set; }
         public System.Collections.Generic.IList<object> TargetItems { get; } =
             new System.Collections.Generic.List<object>();
         public bool XDeterminedByTargetWithGreatestCMCFixture { get; set; }
         public bool XIsAMinimumFixture { get; set; }
         public int XTargetDivisorFixture { get; set; } = 1;
+    }
+
+    public sealed class VisibleFixturePromptAction : IGameAction
+    {
+        public string Name
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("Action.Name");
+                return "OK";
+            }
+        }
+
+        public ActionType ActionType
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("Action.ActionType");
+                return ActionType.ChooseOption;
+            }
+        }
+
+        public uint ActionFlags
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("Action.ActionFlags");
+                return ActionFlagsFixture;
+            }
+        }
+
+        public bool IsDefault
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("Action.IsDefault");
+                return true;
+            }
+        }
+
+        public uint ActionFlagsFixture { get; set; } = 1u;
     }
 }
 

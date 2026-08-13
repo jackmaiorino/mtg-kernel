@@ -237,7 +237,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             internal List<object> Shields = new List<object>();
         }
 
-        private static bool TryBuildFirstSanitizedVisibleDecisionV1(
+        private static bool TryBuildSanitizedVisibleDecisionV1(
             object viewModel,
             out byte[] result)
         {
@@ -256,7 +256,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             boundClientActions = new List<object>();
             try
             {
-                if (!TryBuildFirstSanitizedVisibleDecisionCoreV1(
+                if (!TryBuildSanitizedVisibleDecisionCoreV1(
                         viewModel,
                         out VisibleDecisionResultV1 payload,
                         out boundClientActions))
@@ -295,7 +295,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             }
         }
 
-        private static bool TryBuildFirstSanitizedVisibleDecisionCoreV1(
+        private static bool TryBuildSanitizedVisibleDecisionCoreV1(
             object viewModel,
             out VisibleDecisionResultV1 result,
             out List<object> boundClientActions)
@@ -316,7 +316,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     DuelViewModelType,
                     "GameTurnText",
                     out object? turnTextValue) ||
-                !TryParseVisibleTurnV1(turnTextValue, out uint turn) || turn != 1 ||
+                !TryParseVisibleTurnV1(turnTextValue, out uint turn) ||
                 !TryReadExactPropertyV1(
                     viewModel,
                     "DuelScene",
@@ -357,21 +357,16 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 // the Shields-zone player association for this client version.
                 return false;
             }
-            // The first emitted slice deliberately excludes temporary revealed
+            // This emitted slice deliberately excludes temporary revealed
             // zones. Until every revealed-zone presentation can be assigned to
             // the exact public state field, omitting one would be incomplete.
-            // The first live-success candidate is deliberately restricted to
-            // the untouched 60-card, seven-card-hand opening state. Combined
-            // with empty public zones, zero mana, and base life, this proves
-            // that no game action has occurred and Initiative is absent.
-            // Later states abstain until a visible Initiative source is
-            // reconstructed.
-            if (!seated.Priority || phase != "main1" ||
-                snapshots.Any(player => player.Life != 20 ||
-                    player.HandCount != 7 || player.LibraryCount != 53 ||
-                    player.ManaPool.Any(mana => mana != 0) ||
-                    player.Battlefield.Count != 0 ||
-                    player.Graveyard.Count != 0 || player.Exile.Count != 0) ||
+            // V1.15 admits ordinary noncombat main-phase decisions with an
+            // empty stack and no visible modal. Life, mana, hand and library
+            // counts, battlefield, graveyard, and exile are mapped from their
+            // rendered presentation values. Combat, stack items, revealed
+            // windows, and Initiative still abstain until represented fully.
+            if (!seated.Priority ||
+                (phase != "main1" && phase != "main2") ||
                 seated.Revealed.Count != 0 || opponent.Revealed.Count != 0 ||
                 (opponent.Hand.Count != 0 && opponent.Hand.Count != opponent.HandCount) ||
                 !TryRequireNoUnrepresentedVisibleModalSurfaceV1(viewModel) ||
@@ -774,6 +769,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 
         private static bool TryRequireNoVisiblePromptChoiceV1(object viewModel)
         {
+            const string promptType = "Shiny.Play.Duel.ViewModel.PromptBoxViewModel";
             if (!TryReadExactPropertyV1(
                     viewModel,
                     "DuelScene",
@@ -784,20 +780,69 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !TryReadExactPropertyV1(
                     promptBox,
                     "DuelScene",
-                    "Shiny.Play.Duel.ViewModel.PromptBoxViewModel",
+                    promptType,
                     "IsPromptBoxActive",
                     out object? activeValue) ||
-                !(activeValue is bool active) || active ||
+                !(activeValue is bool active) || !active ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    promptBox,
+                    "DuelScene",
+                    promptType,
+                    "OkPromptButton",
+                    out object? okButton) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    promptBox,
+                    "DuelScene",
+                    promptType,
+                    "DoneButton",
+                    out object? doneButton) ||
+                !TryReadVisiblePriorityControlV1(
+                    okButton,
+                    out bool okEligible,
+                    out _) ||
+                !TryReadVisiblePriorityControlV1(
+                    doneButton,
+                    out bool doneEligible,
+                    out _) ||
+                (okEligible ? 1 : 0) + (doneEligible ? 1 : 0) != 1 ||
                 !TryReadExactPropertyV1(
                     promptBox,
                     "DuelScene",
-                    "Shiny.Play.Duel.ViewModel.PromptBoxViewModel",
+                    promptType,
+                    "ManaButtons",
+                    out object? manaButtonsValue) ||
+                !TryBoundedCollectionV1(
+                    manaButtonsValue,
+                    16,
+                    out List<object> manaButtons) ||
+                manaButtons.Count != 0 ||
+                !TryReadExactPropertyV1(
+                    promptBox,
+                    "DuelScene",
+                    promptType,
+                    "NumberEntry",
+                    out object? numberEntry) ||
+                numberEntry == null ||
+                !TryReadExactPropertyV1(
+                    numberEntry,
+                    "DuelScene",
+                    "Shiny.Play.Duel.ViewModel.NumberEntryData",
+                    "Enabled",
+                    out object? numberEntryEnabledValue) ||
+                !(numberEntryEnabledValue is bool numberEntryEnabled) ||
+                numberEntryEnabled ||
+                !TryReadExactPropertyV1(
+                    promptBox,
+                    "DuelScene",
+                    promptType,
                     "StandardButtons",
                     out object? buttonsValue) ||
                 !TryBoundedCollectionV1(buttonsValue, 64, out List<object> buttons))
             {
                 return false;
             }
+            object selectedPriorityControl = okEligible ? okButton! : doneButton!;
+            int visibleEnabledButtonCount = 0;
             foreach (object button in buttons)
             {
                 if (!TryReadExactPropertyV1(
@@ -812,12 +857,17 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                         "Shiny.Play.Duel.ViewModel.OptionButton",
                         "Enabled",
                         out object? enabledValue) || !(enabledValue is bool enabled) ||
-                    (visible && enabled))
+                    (visible && enabled &&
+                        !ReferenceEquals(button, selectedPriorityControl)))
                 {
                     return false;
                 }
+                if (visible && enabled)
+                {
+                    visibleEnabledButtonCount++;
+                }
             }
-            return true;
+            return visibleEnabledButtonCount == 1;
         }
 
         private static bool TryReadZoneCardsForSnapshotV1(
@@ -1107,7 +1157,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         {
             // Card actions come only from the visible-source-bound client
             // collection. Priority Pass is joined separately from the one
-            // visible and enabled default OK or Done control.
+            // visible and enabled default OK control.
             actions = new List<Dictionary<string, object?>>();
             boundClientActions = new List<object>();
             var hand = new HashSet<object>(handCards, ReferenceIdentityComparerV1.Instance);
@@ -1143,7 +1193,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     }
                 }
             }
-            return actions.Count > 0 && actions.Count < 64 &&
+            return actions.Count < 64 &&
                 actions.Select(CanonicalBasicActionKeyV1).Distinct(StringComparer.Ordinal).Count() ==
                     actions.Count;
         }
@@ -1224,12 +1274,36 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             {
                 return true;
             }
+            if (!string.Equals(name, "OK", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
             if (!TryReadExactPrivateVisibleActionPropertyV1(
                     control,
                     "DuelScene",
                     buttonType,
                     "Action",
                     out object? action) || action == null ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    action,
+                    "WotC.MtGO.Client.Model.Reference",
+                    "WotC.MtGO.Client.Model.Play.IGameAction",
+                    "ActionType",
+                    out object? actionTypeValue) ||
+                actionTypeValue == null ||
+                actionTypeValue.GetType().FullName !=
+                    "WotC.MtGO.Client.Model.Play.ActionType" ||
+                !string.Equals(
+                    Enum.GetName(actionTypeValue.GetType(), actionTypeValue),
+                    "ChooseOption",
+                    StringComparison.Ordinal) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(
+                    action,
+                    "WotC.MtGO.Client.Model.Reference",
+                    "WotC.MtGO.Client.Model.Play.IGameAction",
+                    "ActionFlags",
+                    out object? actionFlagsValue) ||
+                !(actionFlagsValue is uint actionFlags) || actionFlags != 1u ||
                 !TryReadExactPrivateVisibleActionPropertyV1(
                     action,
                     "WotC.MtGO.Client.Model.Reference",

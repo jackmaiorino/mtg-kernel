@@ -9,7 +9,9 @@ namespace WotC.MtGO.Client.Model.Play
     public enum GamePhase
     {
         Invalid = 0,
-        PreCombatMain = 4
+        Upkeep = 2,
+        PreCombatMain = 4,
+        PostCombatMain = 10
     }
 
     public enum Counter
@@ -51,6 +53,7 @@ namespace Shiny.Play.Duel
             }
         }
         public ActionType ActionType => ActionType.CardAction;
+        public uint ActionFlags => 0u;
         public bool IsDefault => false;
         public string ActionChoices => string.Empty;
         public bool AltMenuAction => false;
@@ -142,7 +145,10 @@ namespace Shiny.Play.Duel.ViewModel
                 "Player.ManaPoolItems",
                 "Mana.ColorString",
                 "Mana.Count",
+                "NumberEntry.Enabled",
                 "Prompt.IsPromptBoxActive",
+                "Prompt.ManaButtons",
+                "Prompt.NumberEntry",
                 "Prompt.Text",
                 "Prompt.StandardButtons",
                 "Button.Name",
@@ -241,7 +247,7 @@ namespace Shiny.Play.Duel.ViewModel
             get
             {
                 VisibleGetterProbeV1.Record("Duel.CurrentPhase");
-                return WotC.MtGO.Client.Model.Play.GamePhase.PreCombatMain;
+                return CurrentPhaseFixture;
             }
         }
 
@@ -382,6 +388,8 @@ namespace Shiny.Play.Duel.ViewModel
 
         public ObservableCollection<PlayerViewModel> PlayerItems { get; } =
             new ObservableCollection<PlayerViewModel>();
+        public WotC.MtGO.Client.Model.Play.GamePhase CurrentPhaseFixture { get; set; } =
+            WotC.MtGO.Client.Model.Play.GamePhase.PreCombatMain;
         public CardSelectionViewModel CardSelectionFixture { get; } =
             new CardSelectionViewModel();
         public CardSelectorDialogViewModel CardSelectorDialogFixture { get; } =
@@ -500,7 +508,7 @@ namespace Shiny.Play.Duel.ViewModel
             get
             {
                 VisibleGetterProbeV1.Record("Player.Health");
-                return 20;
+                return HealthFixture;
             }
         }
 
@@ -643,6 +651,7 @@ namespace Shiny.Play.Duel.ViewModel
         public bool HasRadCountersFixture { get; set; }
         public int HandTotalFixture { get; set; }
         public int DeckTotalFixture { get; set; } = 53;
+        public int HealthFixture { get; set; } = 20;
         public ZoneViewModel Hand { get; } = new ZoneViewModel();
         public ZoneViewModel Companion { get; } = new ZoneViewModel();
         public ZoneViewModel Library { get; } = new ZoneViewModel();
@@ -704,11 +713,9 @@ namespace Shiny.Play.Duel.ViewModel
                 NameFixture = "OK",
                 VisibleFixture = true,
                 EnabledFixture = true,
-                ActionFixture = new VisibleFixtureCardAction
-                {
-                    IsDefaultFixture = true
-                }
+                ActionFixture = new VisibleFixturePromptAction()
             };
+            Buttons.Add(OkPromptButtonFixture);
         }
 
         public bool IsPromptBoxActive
@@ -716,9 +723,11 @@ namespace Shiny.Play.Duel.ViewModel
             get
             {
                 VisibleGetterProbeV1.Record("Prompt.IsPromptBoxActive");
-                return false;
+                return IsPromptBoxActiveFixture;
             }
         }
+
+        public bool IsPromptBoxActiveFixture { get; set; } = true;
 
         public string Text
         {
@@ -740,6 +749,29 @@ namespace Shiny.Play.Duel.ViewModel
 
         public ObservableCollection<OptionButton> Buttons { get; } =
             new ObservableCollection<OptionButton>();
+
+        public ObservableCollection<OptionButtonMana> ManaButtons
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Prompt.ManaButtons");
+                return ManaButtonItems;
+            }
+        }
+
+        public ObservableCollection<OptionButtonMana> ManaButtonItems { get; } =
+            new ObservableCollection<OptionButtonMana>();
+
+        public NumberEntryData NumberEntry
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Prompt.NumberEntry");
+                return NumberEntryFixture;
+            }
+        }
+
+        public NumberEntryData NumberEntryFixture { get; } = new NumberEntryData();
 
         public OptionButton OkPromptButton
         {
@@ -806,6 +838,24 @@ namespace Shiny.Play.Duel.ViewModel
         public string NameFixture { get; set; } = "fixture-button";
         public bool EnabledFixture { get; set; } = true;
         public bool VisibleFixture { get; set; }
+    }
+
+    public sealed class OptionButtonMana
+    {
+    }
+
+    public sealed class NumberEntryData
+    {
+        public bool Enabled
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("NumberEntry.Enabled");
+                return EnabledFixture;
+            }
+        }
+
+        public bool EnabledFixture { get; set; }
     }
 
     public static class VisibleActionJoinGetterProbeV1

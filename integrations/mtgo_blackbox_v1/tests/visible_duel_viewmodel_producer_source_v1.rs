@@ -72,7 +72,7 @@ fn managed_producer_getter_allowlist_exactly_matches_reviewed_surface() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 74);
+    assert_eq!(actual.len(), 77);
     assert_eq!(actual, expected);
 }
 
@@ -95,7 +95,7 @@ fn managed_producer_private_visible_action_join_allowlist_matches_audit() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 31);
+    assert_eq!(actual.len(), 32);
     assert_eq!(actual, expected);
     assert!(!source.contains("|WotC.MtGO.Client.Model.Play.IGame|CurrentTurn\""));
 }
@@ -209,6 +209,8 @@ fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
         "\"ColorString\"",
         "\"Count\"",
         "\"IsPromptBoxActive\"",
+        "\"ManaButtons\"",
+        "\"NumberEntry\"",
         "\"Text\"",
         "\"StandardButtons\"",
         "\"Visible\"",
@@ -220,7 +222,7 @@ fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
             "missing exact visible getter: {marker}"
         );
     }
-    assert!(source.contains("TryBuildFirstSanitizedVisibleDecisionV1("));
+    assert!(source.contains("TryBuildSanitizedVisibleDecisionV1("));
     assert!(source.contains("return ProjectionIncomplete;"));
     assert!(!source.contains("JavaScriptSerializer"));
 }

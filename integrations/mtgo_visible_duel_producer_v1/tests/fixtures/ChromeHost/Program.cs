@@ -141,7 +141,8 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         return 0;
                     }
                     // First exercise the full battlefield and counter getter
-                    // surface while the opening-only sanitizer must abstain.
+                    // surface while an unsupported combat state must abstain.
+                    localPermanent.IsAttackingFixture = true;
                     int incompleteStatus =
                         VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
                     int incompleteLength = view.ReadInt32(0);
@@ -153,6 +154,7 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     {
                         return 8;
                     }
+                    localPermanent.IsAttackingFixture = false;
                     seated.Battlefield.Clear();
                     opponent.Battlefield.Clear();
 
@@ -309,6 +311,56 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     viewModel.TemporaryZoneItems.Clear();
 
+                    // Ordinary local priority makes MTGO's prompt box active.
+                    // The only admitted visible prompt shape is the same
+                    // single enabled default OK control bound as Pass.
+                    viewModel.Prompt.IsPromptBoxActiveFixture = false;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 59;
+                    }
+                    viewModel.Prompt.IsPromptBoxActiveFixture = true;
+                    viewModel.Prompt.Buttons.Add(new OptionButton
+                    {
+                        NameFixture = "fixture-visible-choice",
+                        VisibleFixture = true,
+                        EnabledFixture = true,
+                        ActionFixture = new VisibleFixturePromptAction()
+                    });
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 60;
+                    }
+                    viewModel.Prompt.Buttons.RemoveAt(
+                        viewModel.Prompt.Buttons.Count - 1);
+                    viewModel.Prompt.OkPromptButton.NameFixture =
+                        "fixture-visible-choice";
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 61;
+                    }
+                    viewModel.Prompt.OkPromptButton.NameFixture = "OK";
+                    ((VisibleFixturePromptAction)viewModel.Prompt.OkPromptButton
+                        .ActionFixture!).ActionFlagsFixture = 0x4000u;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 62;
+                    }
+                    ((VisibleFixturePromptAction)viewModel.Prompt.OkPromptButton
+                        .ActionFixture!).ActionFlagsFixture = 1u;
+                    viewModel.Prompt.NumberEntryFixture.EnabledFixture = true;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 63;
+                    }
+                    viewModel.Prompt.NumberEntryFixture.EnabledFixture = false;
+                    viewModel.Prompt.ManaButtonItems.Add(new OptionButtonMana());
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 64;
+                    }
+                    viewModel.Prompt.ManaButtonItems.Clear();
+
                     viewModel.IsCommanderFixture = true;
                     if (!ExportsProjectionIncompleteV1(channelName, view))
                     {
@@ -460,21 +512,85 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     simpleAction.XTargetDivisorFixture = 1;
 
+                    // The original untouched opening remains inside the
+                    // broader noncombat main-phase slice.
+                    int openingStatus =
+                        VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+                    int openingLength = view.ReadInt32(0);
+                    byte[] openingBytes = new byte[openingLength];
+                    view.ReadArray(8, openingBytes, 0, openingBytes.Length);
+                    string opening = Encoding.UTF8.GetString(openingBytes);
+                    if (openingStatus != 0 ||
+                        !opening.StartsWith(
+                            "{\"result_kind\":\"visible_decision\",\"decision\":",
+                            StringComparison.Ordinal) ||
+                        !opening.Contains("\"turn\":1") ||
+                        !opening.Contains("\"phase\":\"main1\"") ||
+                        !opening.Contains("\"life_totals\":[20,20]") ||
+                        !opening.Contains("\"hand_counts\":[7,7]") ||
+                        !opening.Contains("\"library_counts\":[53,53]"))
+                    {
+                        return 58;
+                    }
+
                     // The semantic turn is derived only from the rendered
-                    // GameTurnText. Non-canonical or non-opening visible text
-                    // must fail closed before the first supported slice.
+                    // GameTurnText. Non-canonical text and unsupported
+                    // non-main phases fail closed.
                     viewModel.GameTurnTextFixture = "Turn 01";
                     if (!ExportsProjectionIncompleteV1(channelName, view))
                     {
                         return 26;
                     }
                     viewModel.GameTurnTextFixture = "Turn 2";
+                    viewModel.CurrentPhaseFixture = GamePhase.Upkeep;
                     if (!ExportsProjectionIncompleteV1(channelName, view))
                     {
                         return 27;
                     }
+
+                    // Exercise the general noncombat main-phase slice with
+                    // visibly changed game values and populated public zones.
+                    viewModel.CurrentPhaseFixture = GamePhase.PostCombatMain;
                     viewModel.GameTurnTextFixture =
-                        "Turn 1: fixture-visible-local-player";
+                        "Turn 4: fixture-visible-opponent";
+                    seated.IsActiveFixture = false;
+                    opponent.IsActiveFixture = true;
+                    seated.HealthFixture = 13;
+                    opponent.HealthFixture = 7;
+                    seated.DeckTotalFixture = 49;
+                    opponent.DeckTotalFixture = 46;
+                    seated.ManaItems[0].CountFixture = 2;
+                    opponent.ManaItems[0].CountFixture = 1;
+                    seated.Hand.CardItems.Remove(localPermanent);
+                    seated.HandTotalFixture = 6;
+                    opponent.HandTotalFixture = 4;
+                    localPermanent.IsTappedFixture = true;
+                    seated.Battlefield.Add(localPermanent);
+                    opponent.Battlefield.Add(new DuelSceneCardViewModel
+                    {
+                        NameFixture = "fixture-visible-opponent-battlefield",
+                        PowerFixture = 4,
+                        ToughnessFixture = 4,
+                        ThrowIfActionsReadFixture = true
+                    });
+                    seated.Graveyard.CardItems.Add(new DuelSceneCardViewModel
+                    {
+                        NameFixture = "fixture-visible-seated-graveyard"
+                    });
+                    opponent.Graveyard.CardItems.Add(new DuelSceneCardViewModel
+                    {
+                        NameFixture = "fixture-visible-opponent-graveyard",
+                        ThrowIfActionsReadFixture = true
+                    });
+                    seated.Exile.CardItems.Add(new DuelSceneCardViewModel
+                    {
+                        NameFixture = "fixture-visible-seated-exile"
+                    });
+                    opponent.Exile.CardItems.Add(new DuelSceneCardViewModel
+                    {
+                        NameFixture = "fixture-visible-opponent-exile",
+                        ThrowIfActionsReadFixture = true
+                    });
 
                     int status = VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(
                         channelName);
@@ -492,6 +608,18 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                             StringComparison.Ordinal) ||
                         !observed.Contains("\"current_state\"") ||
                         !observed.Contains("\"ordered_legal_actions\"") ||
+                        !observed.Contains("\"turn\":4") ||
+                        !observed.Contains("\"phase\":\"main2\"") ||
+                        !observed.Contains("\"active_player\":\"opponent\"") ||
+                        !observed.Contains("\"priority_player\":\"seated_player\"") ||
+                        !observed.Contains("\"life_totals\":[13,7]") ||
+                        !observed.Contains("\"hand_counts\":[6,4]") ||
+                        !observed.Contains("\"library_counts\":[49,46]") ||
+                        !observed.Contains("fixture-visible-permanent") ||
+                        !observed.Contains("fixture-visible-seated-graveyard") ||
+                        !observed.Contains("fixture-visible-opponent-graveyard") ||
+                        !observed.Contains("fixture-visible-seated-exile") ||
+                        !observed.Contains("fixture-visible-opponent-exile") ||
                         observed.Contains("fixture-player") ||
                         observed.Contains("fixture-prompt"))
                     {

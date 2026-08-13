@@ -124,7 +124,7 @@ while the client was outside a duel. It returned only the fixed
 `duel_surface_unavailable` abstention, as required. This lobby-only check does
 not attest any data-bearing getter or success path. The synthetic Pass control
 has not yet been confirmed in a real duel, and later special visible
-game state remains incomplete. Version 1.14 includes the 74-getter visible
+game state remains incomplete. Version 1.15 includes the 77-getter visible
 Initiative candidate seam, derives the turn only from the rendered
 `GameTurnText`, preserves which rendered player-relative exile panel contains
 each visible exiled object, and rejects states with visible poison, energy,
@@ -137,11 +137,22 @@ and speed presentation, also reject with the same generic abstention.
 Static inspection of `Card_View.ProcessMouseUp` also confirms that alternate
 menus, groups, action choices, mode choices, submenus, and attack-hover entries
 transform the raw card action collection before it becomes a visible menu.
-Version 1.14 reads those private transformation values only as one-way guards
+Version 1.15 reads those private transformation values only as one-way guards
 and generically abstains on every non-default value. No private value is
 exported. It also rejects target-bearing, X-bearing, sideboard, fake,
 confirmation, and nonzero mode-count action state until each subsequent
-player-visible modal is represented.
+player-visible modal is represented. Ordinary local priority is distinguished
+from choice prompts by the active prompt box, exactly one visible enabled
+default `OK` action with the exact `OK` flag, disabled numeric entry, and an
+empty mana-button collection. Any deviation abstains.
+The sanitized success path is no longer limited to the untouched opening. It
+now maps ordinary noncombat Main 1 and Main 2 decisions across bounded turns,
+including visible life, mana, hand and library counts, battlefield,
+graveyards, exile, attachments, and own hand. The synthetic fixture validates
+both the original opening and a populated Turn 4 Main 2 state. Combat, stack,
+revealed, Initiative, and modal states remain closed.
+The deterministic offline-tested version 1.15 producer DLL has SHA-256
+`17fcd2656e5fbd4d0cb29155de186f57d7eaa29cc31809ee7c226d361ae6558d`.
 It remains offline-only. This work
 does not implement a complete projection, admit a
 live decision, authorize event entry or spending, or send live MTGO input. Until the
