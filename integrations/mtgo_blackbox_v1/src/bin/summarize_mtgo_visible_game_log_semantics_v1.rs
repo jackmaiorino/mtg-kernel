@@ -156,6 +156,7 @@ fn event_kind_label_v1(kind: MtgoVisibleGameLogEventKindV1) -> &'static str {
         PlayedCard => "played_card",
         CastSpell => "cast_spell",
         ActivatedAbility => "activated_ability",
+        TriggeredAbilityOnStack => "triggered_ability_on_stack",
         DiscardedCard => "discarded_card",
         AttackedPlayer => "attacked_player",
         ConcededGame => "conceded_game",

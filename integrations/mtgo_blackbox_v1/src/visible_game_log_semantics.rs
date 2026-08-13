@@ -37,6 +37,7 @@ pub enum MtgoVisibleGameLogEventKindV1 {
     PlayedCard,
     CastSpell,
     ActivatedAbility,
+    TriggeredAbilityOnStack,
     DiscardedCard,
     AttackedPlayer,
     ConcededGame,
@@ -304,6 +305,25 @@ fn classify_record_v1(
     } else if let Some(actor) = text.strip_suffix(" has conceded from the game.") {
         actor_role = Some(role_for_actor_v1(actor, acting_player_alias, opponent_alias)?);
         kind = Some(MtgoVisibleGameLogEventKindV1::ConcededGame);
+    } else if let Some((actor, rest)) = text.split_once(" puts a triggered ability from ") {
+        if let Some(source_card) = first_linked_card_if_prefix_v1(record, rest) {
+            let suffix = rest
+                .strip_prefix(source_card)
+                .expect("the linked source card was checked as a prefix");
+            if is_exact_triggered_ability_stack_suffix_v1(suffix) {
+                actor_role = Some(role_for_actor_v1(
+                    actor,
+                    acting_player_alias,
+                    opponent_alias,
+                )?);
+                visible_card_names.extend(
+                    (0..record.visible_card_name_count_v1())
+                        .filter_map(|index| record.visible_card_name_v1(index))
+                        .map(str::to_owned),
+                );
+                kind = Some(MtgoVisibleGameLogEventKindV1::TriggeredAbilityOnStack);
+            }
+        }
     } else if let Some((actor, rest)) = text.split_once(" puts ") {
         if let Some((bottomed, opening)) = rest
             .strip_suffix(" card in hand.")
@@ -394,6 +414,21 @@ fn first_linked_card_if_prefix_v1<'a>(
     record
         .visible_card_name_v1(0)
         .filter(|card| visible_rest.starts_with(card))
+}
+
+fn is_exact_triggered_ability_stack_suffix_v1(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix(" onto the stack (") else {
+        return false;
+    };
+    if rest.is_empty() {
+        return false;
+    }
+    rest.strip_suffix(").")
+        .is_some_and(|ability| !ability.is_empty())
+        || rest
+            .strip_suffix('.')
+            .and_then(|body| body.rsplit_once(") targeting "))
+            .is_some_and(|(ability, targets)| !ability.is_empty() && !targets.is_empty())
 }
 
 fn role_for_actor_v1(
@@ -584,6 +619,7 @@ mod tests {
             "@PUnbuckledPie draws a card.",
             "@PUnbuckledPie plays @[Island@:123,456:@].",
             "@POpponent casts @[Lightning Bolt@:999,888:@] targeting @PUnbuckledPie.",
+            "@POpponent puts a triggered ability from @[Young Pyromancer@:321,654:@] onto the stack (Whenever you cast an instant or sorcery spell, create a 1/1 red Elemental creature token.) targeting @[Goblin Token@:777,666:@].",
             "@PUnbuckledPie is being attacked by @[Goblin Token@:777,666:@]",
             "@POpponent has conceded from the game.",
             "@PUnbuckledPie wins the game.",
@@ -592,8 +628,8 @@ mod tests {
         let projection =
             classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(&source, "UnbuckledPie")
                 .unwrap();
-        assert_eq!(projection.event_count_v1(), 12);
-        assert_eq!(projection.classified_source_record_count_v1(), 12);
+        assert_eq!(projection.event_count_v1(), 13);
+        assert_eq!(projection.classified_source_record_count_v1(), 13);
         assert_eq!(projection.unclassified_source_record_count_v1(), 0);
         assert_eq!(
             projection.event_v1(6).unwrap().kind_v1(),
@@ -608,16 +644,23 @@ mod tests {
             Some(MtgoVisibleGameLogPlayerRoleV1::Opponent)
         );
         assert_eq!(
-            projection.event_v1(8).unwrap().actor_role_v1(),
+            projection.event_v1(9).unwrap().actor_role_v1(),
             Some(MtgoVisibleGameLogPlayerRoleV1::Opponent)
         );
+        let trigger = projection.event_v1(8).unwrap();
+        assert_eq!(
+            trigger.kind_v1(),
+            MtgoVisibleGameLogEventKindV1::TriggeredAbilityOnStack
+        );
+        assert_eq!(trigger.visible_card_name_v1(0), Some("Young Pyromancer"));
+        assert_eq!(trigger.visible_card_name_v1(1), Some("Goblin Token"));
         assert_eq!(projection.event_v1(3).unwrap().primary_count_v1(), Some(1));
         assert_eq!(projection.event_v1(4).unwrap().primary_count_v1(), Some(6));
         assert_eq!(
             projection.event_v1(4).unwrap().secondary_count_v1(),
             Some(1)
         );
-        let match_win = projection.event_v1(11).unwrap();
+        let match_win = projection.event_v1(12).unwrap();
         assert_eq!(match_win.primary_count_v1(), Some(2));
         assert_eq!(match_win.secondary_count_v1(), Some(1));
         assert!(projection.opponent_alias_sha256_v1().is_some());
