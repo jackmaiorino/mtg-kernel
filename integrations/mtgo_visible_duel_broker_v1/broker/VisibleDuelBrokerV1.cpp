@@ -12,9 +12,7 @@
 #include <cstdio>
 #include <cwchar>
 #include <string>
-#ifdef MTGO_LIVE_PINNED_V1
 #include <vector>
-#endif
 
 #pragma comment(lib, "bcrypt.lib")
 #ifdef MTGO_LIVE_PINNED_V1
@@ -32,6 +30,8 @@ constexpr wchar_t kChannelPrefix[] = L"Local\\mtgkernel_mtgo_visible_v1_";
 #ifndef MTGO_LIVE_PINNED_V1
 constexpr wchar_t kOnlyAdmittedTargetFileName[] =
     L"synthetic_managed_host_v1.exe";
+constexpr wchar_t kVisibleFixtureTargetFileName[] =
+    L"visible_chrome_fixture_host_v1.exe";
 #else
 constexpr wchar_t kOnlyAdmittedTargetFileName[] = L"MTGO.exe";
 constexpr char kExpectedMtgoSha256[] =
@@ -45,7 +45,9 @@ constexpr char kExpectedReferenceSha256[] =
 constexpr char kExpectedBootstrapSha256[] =
     "9c62e801dbcb3fd21647ba1fc7837e1d49663b902530d5b2fb5a6197c9f465d4";
 constexpr char kExpectedProducerSha256[] =
-    "6d157961b24ee7b5e22f29cb5e453bb0cca8bbc08107453b6e80c582edbb60a3";
+    "05246fa77af3f6cd4e30654fbe28388ecc07425587ab1a9606f438a9aaabb82b";
+constexpr char kExpectedValidatorSha256[] =
+    "e95e60bdf3ff6b4e2347609e79b6b9950152912d92cb6105ccef9dc95085fd16";
 #endif
 
 struct VisibleDuelBootstrapParametersV1 {
@@ -103,7 +105,12 @@ bool IsNativeX64TargetWithExactFileNameV1(HANDLE process) {
   }
   const wchar_t* file_name = wcsrchr(image_path, L'\\');
   file_name = file_name == nullptr ? image_path : file_name + 1;
+#ifndef MTGO_LIVE_PINNED_V1
+  if (wcscmp(file_name, kOnlyAdmittedTargetFileName) != 0 &&
+      wcscmp(file_name, kVisibleFixtureTargetFileName) != 0) {
+#else
   if (wcscmp(file_name, kOnlyAdmittedTargetFileName) != 0) {
+#endif
     return false;
   }
 
@@ -299,6 +306,7 @@ bool JoinSiblingPathV1(const wchar_t* image_path, const wchar_t* file_name,
 bool ExactLiveMtgoIdentityV1(HANDLE process, DWORD process_id,
                              const wchar_t* bootstrap_path,
                              const wchar_t* producer_path,
+                             const wchar_t* validator_path,
                              std::uint64_t& process_start_time) {
   if (!ExactlyOneMtgoProcessV1(process_id) ||
       !IsNativeX64TargetWithExactFileNameV1(process) ||
@@ -314,7 +322,8 @@ bool ExactLiveMtgoIdentityV1(HANDLE process, DWORD process_id,
       !AuthenticodeValidV1(image_path) ||
       !HashMatchesV1(image_path, kExpectedMtgoSha256) ||
       !HashMatchesV1(bootstrap_path, kExpectedBootstrapSha256) ||
-      !HashMatchesV1(producer_path, kExpectedProducerSha256)) {
+      !HashMatchesV1(producer_path, kExpectedProducerSha256) ||
+      !HashMatchesV1(validator_path, kExpectedValidatorSha256)) {
     return false;
   }
   std::wstring duel_scene;
@@ -427,6 +436,75 @@ bool AllowedResultV1(const char* bytes, DWORD length) {
   return false;
 }
 
+bool StrictValidatorAcceptsV1(const wchar_t* validator_path,
+                              const char* bytes, DWORD length) {
+  if (!IsAbsoluteExistingFileV1(validator_path) || bytes == nullptr ||
+      length == 0 || length > kOutputBytes - 8 ||
+      wcschr(validator_path, L'"') != nullptr) {
+    return false;
+  }
+  SECURITY_ATTRIBUTES security{};
+  security.nLength = sizeof(security);
+  security.bInheritHandle = TRUE;
+  HANDLE child_stdin_read = nullptr;
+  HANDLE child_stdin_write = nullptr;
+  if (!CreatePipe(&child_stdin_read, &child_stdin_write, &security, 0)) {
+    return false;
+  }
+  HandleV1 stdin_read{child_stdin_read};
+  HandleV1 stdin_write{child_stdin_write};
+  if (!SetHandleInformation(stdin_write.value, HANDLE_FLAG_INHERIT, 0)) {
+    return false;
+  }
+  HandleV1 null_output{CreateFileW(
+      L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &security,
+      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)};
+  if (null_output.value == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  startup.dwFlags = STARTF_USESTDHANDLES;
+  startup.hStdInput = stdin_read.value;
+  startup.hStdOutput = null_output.value;
+  startup.hStdError = null_output.value;
+  PROCESS_INFORMATION child{};
+  std::wstring command_line = L"\"";
+  command_line.append(validator_path);
+  command_line.append(L"\"");
+  std::vector<wchar_t> mutable_command(command_line.begin(),
+                                       command_line.end());
+  mutable_command.push_back(L'\0');
+  if (!CreateProcessW(validator_path, mutable_command.data(), nullptr, nullptr,
+                      TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup,
+                      &child)) {
+    return false;
+  }
+  HandleV1 child_process{child.hProcess};
+  HandleV1 child_thread{child.hThread};
+  CloseHandle(stdin_read.value);
+  stdin_read.value = nullptr;
+  DWORD total = 0;
+  while (total < length) {
+    DWORD written = 0;
+    if (!WriteFile(stdin_write.value, bytes + total, length - total, &written,
+                   nullptr) || written == 0) {
+      TerminateProcess(child_process.value, 1);
+      return false;
+    }
+    total += written;
+  }
+  CloseHandle(stdin_write.value);
+  stdin_write.value = nullptr;
+  if (WaitForSingleObject(child_process.value, kWaitMilliseconds) !=
+      WAIT_OBJECT_0) {
+    TerminateProcess(child_process.value, 1);
+    return false;
+  }
+  DWORD exit_code = 1;
+  return GetExitCodeProcess(child_process.value, &exit_code) && exit_code == 0;
+}
+
 int FailV1(const char* code) {
   std::fprintf(stderr, "mtgo_visible_duel_broker_v1:%s\n", code);
   return 1;
@@ -434,16 +512,18 @@ int FailV1(const char* code) {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
-  if (argc != 7 || wcscmp(argv[1], L"--pid") != 0 ||
+  if (argc != 9 || wcscmp(argv[1], L"--pid") != 0 ||
       wcscmp(argv[3], L"--bootstrap") != 0 ||
-      wcscmp(argv[5], L"--producer") != 0) {
+      wcscmp(argv[5], L"--producer") != 0 ||
+      wcscmp(argv[7], L"--validator") != 0) {
     return FailV1("arguments");
   }
   wchar_t* pid_end = nullptr;
   unsigned long parsed_pid = wcstoul(argv[2], &pid_end, 10);
   if (parsed_pid == 0 || pid_end == nullptr || *pid_end != L'\0' ||
       !IsAbsoluteExistingFileV1(argv[4]) ||
-      !IsAbsoluteExistingFileV1(argv[6])) {
+      !IsAbsoluteExistingFileV1(argv[6]) ||
+      !IsAbsoluteExistingFileV1(argv[8])) {
     return FailV1("input_validation");
   }
   DWORD process_id = static_cast<DWORD>(parsed_pid);
@@ -482,7 +562,7 @@ int wmain(int argc, wchar_t** argv) {
   }
 #else
   std::uint64_t pre_process_start_time = 0;
-  if (!ExactLiveMtgoIdentityV1(process.value, process_id, argv[4], argv[6],
+  if (!ExactLiveMtgoIdentityV1(process.value, process_id, argv[4], argv[6], argv[8],
                                pre_process_start_time)) {
     UnmapViewOfFile(channel_view);
     return FailV1("live_identity_pre");
@@ -570,31 +650,38 @@ int wmain(int argc, wchar_t** argv) {
     return FailV1("producer_invoke");
   }
 
-#ifdef MTGO_LIVE_PINNED_V1
-  std::uint64_t post_process_start_time = 0;
-  if (!ExactLiveMtgoIdentityV1(process.value, process_id, argv[4], argv[6],
-                               post_process_start_time) ||
-      post_process_start_time != pre_process_start_time) {
-    SecureZeroMemory(channel_view, kOutputBytes);
-    UnmapViewOfFile(channel_view);
-    return FailV1("live_identity_post");
-  }
-#endif
-
   MemoryBarrier();
   const auto* header = static_cast<const std::uint32_t*>(channel_view);
   DWORD length = header[0];
   DWORD schema = header[1];
   const char* payload = static_cast<const char*>(channel_view) + 8;
-  if (schema != 1 || length == 0 || length > kOutputBytes - 8 ||
-      !AllowedResultV1(payload, length)) {
+  if (schema != 1 || length == 0 || length > kOutputBytes - 8) {
     SecureZeroMemory(channel_view, kOutputBytes);
     UnmapViewOfFile(channel_view);
     return FailV1("output_validation");
   }
-  std::fwrite(payload, 1, length, stdout);
-  std::fputc('\n', stdout);
+  std::vector<char> candidate(payload, payload + length);
   SecureZeroMemory(channel_view, kOutputBytes);
   UnmapViewOfFile(channel_view);
+
+  if (!AllowedResultV1(candidate.data(), length) &&
+      !StrictValidatorAcceptsV1(argv[8], candidate.data(), length)) {
+    SecureZeroMemory(candidate.data(), candidate.size());
+    return FailV1("output_validation");
+  }
+
+#ifdef MTGO_LIVE_PINNED_V1
+  std::uint64_t post_process_start_time = 0;
+  if (!ExactLiveMtgoIdentityV1(process.value, process_id, argv[4], argv[6],
+                               argv[8], post_process_start_time) ||
+      post_process_start_time != pre_process_start_time) {
+    SecureZeroMemory(candidate.data(), candidate.size());
+    return FailV1("live_identity_post");
+  }
+#endif
+
+  std::fwrite(candidate.data(), 1, length, stdout);
+  std::fputc('\n', stdout);
+  SecureZeroMemory(candidate.data(), candidate.size());
   return 0;
 }

@@ -5,11 +5,12 @@ $hostPath = (Resolve-Path (Join-Path $root 'synthetic_host\bin\Release\net472\sy
 $brokerPath = (Resolve-Path (Join-Path $root 'build\mtgo_visible_duel_broker_v1.exe')).Path
 $bootstrapPath = (Resolve-Path (Join-Path $root 'build\mtgo_visible_duel_bootstrap_v1.dll')).Path
 $producerPath = (Resolve-Path (Join-Path $root '..\mtgo_visible_duel_producer_v1\bin\Release\net472\mtgo_visible_duel_producer_v1.dll')).Path
+$validatorPath = (Get-Command check_mtgo_visible_duel_producer_result_v1.exe -ErrorAction Stop).Source
 
 $hostProcess = Start-Process -FilePath $hostPath -WindowStyle Hidden -PassThru
 try {
     Start-Sleep -Milliseconds 300
-    $output = & $brokerPath --pid $hostProcess.Id --bootstrap $bootstrapPath --producer $producerPath
+    $output = & $brokerPath --pid $hostProcess.Id --bootstrap $bootstrapPath --producer $producerPath --validator $validatorPath
     if ($LASTEXITCODE -ne 0) {
         throw 'synthetic broker invocation failed'
     }

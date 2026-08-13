@@ -2,6 +2,7 @@ using System;
 using System.IO.MemoryMappedFiles;
 using System.Text;
 using System.Windows;
+using System.Windows.Threading;
 using MtgKernel.Mtgo.VisibleDuelProducer.V1;
 using Shiny.Card.ViewModels;
 using Shiny.Play.Duel;
@@ -15,7 +16,7 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
         private const int Capacity = 1048576;
 
         [STAThread]
-        private static int Main()
+        private static int Main(string[] args)
         {
             string channelName = "Local\\mtgkernel_mtgo_visible_v1_" + new string('b', 64);
             using (var channel = MemoryMappedFile.CreateNew(channelName, Capacity))
@@ -106,6 +107,22 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                 window.Show();
                 try
                 {
+                    if (args.Length == 1 && string.Equals(
+                            args[0],
+                            "--wait-for-broker",
+                            StringComparison.Ordinal))
+                    {
+                        seated.Battlefield.Clear();
+                        opponent.Battlefield.Clear();
+                        var timeout = new DispatcherTimer
+                        {
+                            Interval = TimeSpan.FromMinutes(2)
+                        };
+                        timeout.Tick += (_, __) => window.Close();
+                        timeout.Start();
+                        application.Run(window);
+                        return 0;
+                    }
                     // First exercise the full battlefield and counter getter
                     // surface while the opening-only sanitizer must abstain.
                     int incompleteStatus =
