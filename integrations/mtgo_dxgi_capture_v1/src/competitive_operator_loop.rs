@@ -95,9 +95,11 @@ use crate::probe::{
     refresh_competitive_match_visible_game_log_snapshot_v1,
     refresh_competitive_match_visible_game_log_v1,
     refresh_ratified_attested_direct_visible_selection_v1,
+    require_ratified_direct_visible_combat_source_qualification_v1,
     require_ratified_direct_visible_source_qualification_v1,
     resolve_opaque_profile_bound_duel_control_v1,
     score_and_select_opaque_admitted_duel_perception_with_loaded_deployment_v1,
+    score_ratified_attested_direct_visible_combat_source_observation_v1,
     score_ratified_attested_direct_visible_source_observation_v1,
     score_select_and_resolve_opaque_player_visible_duel_perception_with_ongoing_history_v1,
     AdmittedMtgoPlayerVisibleDuelGestureTargetProtocolV1,
@@ -117,6 +119,7 @@ use crate::probe::{
     OpaqueMtgoPreparedPlayerVisibleDuelGesturePointerV1,
     OpaqueMtgoPreparedPlayerVisibleGameplayBeforeInputV1,
     OpaqueMtgoProfileBoundDuelResolvedControlV1,
+    OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1,
     OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1,
     OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,
     OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
@@ -134,8 +137,9 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1, MtgoDuelGestureStageV1,
     MtgoNativeCheckpointCompetitiveCapabilitiesV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
-    MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoPlayerVisibleDuelActionV1,
-    MtgoPlayerVisibleDuelGesturePrimitiveV1, MtgoPlayerVisibleDuelScorerV1,
+    MtgoPlayerVisibleCombatScorerV1, MtgoPlayerVisibleConfirmedDuelDecisionV1,
+    MtgoPlayerVisibleDuelActionV1, MtgoPlayerVisibleDuelGesturePrimitiveV1,
+    MtgoPlayerVisibleDuelScorerV1, MtgoPlayerVisiblePreparedCombatKindV1,
     MtgoProfileBoundPostconditionCalibrationV1, MtgoProfileBoundPostconditionRegionSetV1,
 };
 use serde::{Deserialize, Serialize};
@@ -154,6 +158,8 @@ const COMPETITIVE_OPERATOR_PLAYER_VISIBLE_PRIMITIVE_CONFIRMATION_CHAIN_DOMAIN_V1
     b"mtgo-competitive-operator-player-visible-primitive-confirmation-chain-v1";
 const COMPETITIVE_OPERATOR_DIRECT_VISIBLE_BEFORE_DISPATCH_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-operator-direct-visible-before-dispatch-v1";
+const COMPETITIVE_OPERATOR_DIRECT_VISIBLE_COMBAT_PREPARED_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-operator-direct-visible-combat-prepared-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -521,6 +527,75 @@ pub(crate) enum MtgoCompetitiveOperatorDirectVisibleGameplaySelectionV1 {
 pub enum MtgoCompetitiveOperatorAttendedDirectVisibleGameplaySelectionV1 {
     ReadyToDispatch(Box<OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1>),
     Abstained(Box<OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleAbstainedV1>),
+}
+
+/// One attended selection pass across both ordinary and combat-specific
+/// player-visible producer results. Combat choices remain prepared only and
+/// cannot reach the ordinary dispatch path.
+pub enum MtgoCompetitiveOperatorAttendedDirectVisibleAnyGameplaySelectionV1 {
+    OrdinaryReadyToDispatch(
+        Box<OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1>,
+    ),
+    CombatPrepared(Box<OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1>),
+    Abstained(Box<OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleAbstainedV1>),
+}
+
+/// Exact attended-game ownership plus one source-attested, model-prepared
+/// combat execution contract. The contract is retained privately. There is no
+/// conversion to the ordinary action dispatcher, process, command, event
+/// entry, or spending operation.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1;
+/// fn cannot_act(value: OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1) {
+///     value.dispatch();
+///     let _ = value.client_object();
+/// }
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1 {
+    _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    _confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+    _scored: OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1,
+    kind: MtgoPlayerVisiblePreparedCombatKindV1,
+    bridge_commitment_sha256: String,
+    operator_binding_commitment_sha256: String,
+}
+
+impl OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1 {
+    pub fn kind_v1(&self) -> MtgoPlayerVisiblePreparedCombatKindV1 {
+        self.kind
+    }
+
+    pub fn bridge_commitment_sha256_v1(&self) -> &str {
+        &self.bridge_commitment_sha256
+    }
+
+    pub fn operator_binding_commitment_sha256_v1(&self) -> &str {
+        &self.operator_binding_commitment_sha256
+    }
+
+    pub fn completed_game_count_v1(&self) -> usize {
+        self.completed_match_history.as_ref().map_or(
+            0,
+            OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1,
+        )
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
 }
 
 pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1 {
@@ -3633,6 +3708,205 @@ where
     })
 }
 
+/// Captures one exact direct-source observation for the attended game, imports
+/// only the retained player-visible history, and routes that single
+/// observation to either the ordinary scorer or the unified combat scorer.
+/// Combat results stop at an opaque prepared contract. No combat input occurs.
+#[allow(clippy::too_many_arguments)]
+pub fn select_competitive_operator_attended_direct_visible_any_gameplay_action_v1<S>(
+    owner: OpaqueMtgoCompetitiveOperatorAttendedGameplayV1,
+    visible_game_log_capture_request: MtgoDxgiCaptureRequestV3,
+    direct_source_runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    reviewed_qualification_commitment_sha256: &str,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+    scorer: &mut S,
+) -> Result<MtgoCompetitiveOperatorAttendedDirectVisibleAnyGameplaySelectionV1, String>
+where
+    S: MtgoPlayerVisibleDuelScorerV1
+        + MtgoPlayerVisibleCombatScorerV1
+        + MtgoCompetitiveExternalPublicHistoryConsumerV1<Output = ()>
+        + MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1<Output = ()>,
+{
+    let OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        completed_match_history,
+        confirmed_history,
+    } = owner;
+    validate_operator_completed_history_count_v1(
+        session.commitments_v1().game_number,
+        completed_match_history
+            .as_ref()
+            .map(OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1),
+    )?;
+    match completed_match_history.as_ref() {
+        Some(history) => history
+            .visit_external_completed_match_history_v1(scorer)
+            .map_err(|error| format!("import earlier completed visible games: {error}"))?,
+        None => visit_empty_external_completed_match_history_v1(scorer)
+            .map_err(|error| format!("reset completed visible games for game one: {error}"))?,
+    };
+    let visible_game_log = refresh_competitive_match_visible_game_log_v1(
+        visible_game_log.into_match_lease_v1(),
+        &visible_identity,
+        visible_game_log_capture_request,
+    )?;
+    validate_operator_visible_game_log_lineage_v1(&lease, &visible_identity, &visible_game_log)?;
+    validate_operator_direct_visible_selection_owner_v1(
+        &lease,
+        &session,
+        &visible_identity,
+        &visible_game_log,
+        confirmed_history.as_ref(),
+    )?;
+    let frame = capture_admitted_mtgo_duel_visible_frame_v1(
+        &lease.resources.duel_perception_profile,
+        capture_timeout_ms,
+    )?;
+    let observation = crate::probe::observe_attested_direct_visible_source_v1(
+        frame,
+        &lease.resources.duel_perception_profile,
+        direct_source_runtime,
+        capture_timeout_ms,
+        broker_timeout_ms,
+    )?;
+    validate_operator_direct_visible_observation_freshness_v1(&visible_game_log, &observation)?;
+    let abstention = observation.abstention_reason_v1();
+    if abstention.is_none() {
+        visible_game_log
+            .visit_ongoing_external_public_history_v1(confirmed_history.as_ref(), scorer)
+            .map_err(|error| format!("import direct-source player-visible history: {error}"))?;
+    }
+    let deployment_commitment_sha256 = lease
+        .resources
+        .checkpoint_deployment
+        .deployment_commitment_sha256()
+        .to_owned();
+
+    if observation.combat_scoring_required_v1() {
+        require_ratified_direct_visible_combat_source_qualification_v1(
+            reviewed_qualification_commitment_sha256,
+        )?;
+        let scored = score_ratified_attested_direct_visible_combat_source_observation_v1(
+            observation,
+            reviewed_qualification_commitment_sha256,
+            &deployment_commitment_sha256,
+            scorer,
+        )?;
+        let source_observation_commitment_sha256 =
+            scored.source_observation_commitment_sha256_v1().to_owned();
+        let kind = scored
+            .prepared_kind_v1()
+            .ok_or("a combat-specific direct observation did not produce a combat plan")?;
+        let bridge_commitment_sha256 = scored
+            .bridge_commitment_sha256_v1()
+            .ok_or("a combat-specific direct observation lacks its bridge commitment")?
+            .to_owned();
+        let session_commitments = session.commitments_v1();
+        let launch_commitments = visible_identity.commitments_v1();
+        let prior_history_commitment = confirmed_history
+            .as_ref()
+            .map(
+                CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::history_commitment_sha256_v1,
+            )
+            .unwrap_or("none");
+        let operator_binding_commitment_sha256 =
+            direct_visible_combat_operator_binding_commitment_v1(
+                &lease
+                    .lease
+                    .commitments_v1()
+                    .gameplay_lease_commitment_sha256,
+                &session_commitments.session_commitment_sha256,
+                &launch_commitments.launch_identity_commitment_sha256,
+                visible_game_log.snapshot_commitment_sha256_v1(),
+                prior_history_commitment,
+                &deployment_commitment_sha256,
+                &source_observation_commitment_sha256,
+                &bridge_commitment_sha256,
+            );
+        return Ok(
+            MtgoCompetitiveOperatorAttendedDirectVisibleAnyGameplaySelectionV1::CombatPrepared(
+                Box::new(
+                    OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1 {
+                        _lease: lease,
+                        _session: session,
+                        _visible_identity: visible_identity,
+                        _visible_game_log: visible_game_log,
+                        _confirmed_history: confirmed_history,
+                        completed_match_history,
+                        _scored: scored,
+                        kind,
+                        bridge_commitment_sha256,
+                        operator_binding_commitment_sha256,
+                    },
+                ),
+            ),
+        );
+    }
+
+    require_ratified_direct_visible_source_qualification_v1(
+        reviewed_qualification_commitment_sha256,
+    )?;
+    let scored = score_ratified_attested_direct_visible_source_observation_v1(
+        observation,
+        reviewed_qualification_commitment_sha256,
+        &deployment_commitment_sha256,
+        scorer,
+    )?;
+    if let Some(reason) = scored.abstention_reason_v1() {
+        if Some(reason) != abstention {
+            return Err("direct-source abstention changed during scoring".to_owned());
+        }
+        return Ok(
+            MtgoCompetitiveOperatorAttendedDirectVisibleAnyGameplaySelectionV1::Abstained(
+                Box::new(
+                    OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleAbstainedV1 {
+                        owner: OpaqueMtgoCompetitiveOperatorDirectVisibleAbstainedV1 {
+                            lease,
+                            session,
+                            visible_identity,
+                            visible_game_log,
+                            confirmed_history,
+                            _scored: scored,
+                            reason,
+                        },
+                        completed_match_history,
+                    },
+                ),
+            ),
+        );
+    }
+    let refreshed = refresh_ratified_attested_direct_visible_selection_v1(
+        scored,
+        &lease.resources.duel_perception_profile,
+        direct_source_runtime,
+        capture_timeout_ms,
+        broker_timeout_ms,
+    )?;
+    let ready = bind_competitive_post_entry_operator_direct_visible_before_dispatch_auto_v1(
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        refreshed,
+        capture_timeout_ms,
+    )?;
+    Ok(
+        MtgoCompetitiveOperatorAttendedDirectVisibleAnyGameplaySelectionV1::OrdinaryReadyToDispatch(
+            Box::new(
+                OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleBeforeDispatchV1 {
+                    direct: ready,
+                    completed_match_history,
+                },
+            ),
+        ),
+    )
+}
+
 /// Qualification-only current-game direct visible selection retaining every
 /// earlier completed game. This stays crate-private because its scorer is
 /// caller supplied. The production live route must resume only from an opaque
@@ -6366,6 +6640,32 @@ fn hash_parts_v1(domain: &[u8], parts: &[&[u8]]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn direct_visible_combat_operator_binding_commitment_v1(
+    gameplay_lease_commitment_sha256: &str,
+    session_commitment_sha256: &str,
+    launch_identity_commitment_sha256: &str,
+    visible_game_log_snapshot_commitment_sha256: &str,
+    prior_history_commitment_sha256: &str,
+    deployment_commitment_sha256: &str,
+    source_observation_commitment_sha256: &str,
+    bridge_commitment_sha256: &str,
+) -> String {
+    hash_parts_v1(
+        COMPETITIVE_OPERATOR_DIRECT_VISIBLE_COMBAT_PREPARED_DOMAIN_V1,
+        &[
+            gameplay_lease_commitment_sha256.as_bytes(),
+            session_commitment_sha256.as_bytes(),
+            launch_identity_commitment_sha256.as_bytes(),
+            visible_game_log_snapshot_commitment_sha256.as_bytes(),
+            prior_history_commitment_sha256.as_bytes(),
+            deployment_commitment_sha256.as_bytes(),
+            source_observation_commitment_sha256.as_bytes(),
+            bridge_commitment_sha256.as_bytes(),
+            b"combat_model_prepared_no_dispatch_event_entry_or_spending_authority",
+        ],
+    )
+}
+
 fn operator_auxiliary_resolution_commitment_v1(
     domain: &[u8],
     resource_bundle_commitment_sha256: &str,
@@ -7526,6 +7826,40 @@ mod tests {
                 validate_operator_direct_visible_observation_times_v1(game_log, before, after)
                     .is_err()
             );
+        }
+    }
+
+    #[test]
+    fn combat_operator_binding_commits_every_owned_visible_lineage() {
+        let original = direct_visible_combat_operator_binding_commitment_v1(
+            &digest('1'),
+            &digest('2'),
+            &digest('3'),
+            &digest('4'),
+            &digest('5'),
+            &digest('6'),
+            &digest('7'),
+            &digest('8'),
+        );
+        assert_eq!(original.len(), 64);
+        for changed in '1'..='8' {
+            let mut values = [
+                digest('1'),
+                digest('2'),
+                digest('3'),
+                digest('4'),
+                digest('5'),
+                digest('6'),
+                digest('7'),
+                digest('8'),
+            ];
+            let index = changed.to_digit(10).unwrap() as usize - 1;
+            values[index] = digest('a');
+            let crossed = direct_visible_combat_operator_binding_commitment_v1(
+                &values[0], &values[1], &values[2], &values[3], &values[4], &values[5], &values[6],
+                &values[7],
+            );
+            assert_ne!(crossed, original);
         }
     }
 

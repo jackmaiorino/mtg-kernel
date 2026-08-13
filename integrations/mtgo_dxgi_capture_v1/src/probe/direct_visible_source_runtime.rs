@@ -17,15 +17,18 @@ use mtgo_blackbox_v1::{
     parse_and_validate_visible_duel_producer_result_v1, player_visible_duel_action_family_v1,
     prepare_direct_visible_gameplay_before_dispatch_v1,
     refresh_direct_visible_selection_before_dispatch_v1,
+    score_and_prepare_strict_visible_combat_producer_result_v1,
     score_and_select_strict_visible_duel_producer_result_v1, AdmittedMtgoDuelPerceptionProfileV1,
     CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
     CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
     CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
+    CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1,
     CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDirectVisibleCompetitiveObservationBracketV1,
     MtgoDirectVisibleGameplayBeforeDispatchRecordV1, MtgoDirectVisibleGameplayBeforeRegionV1,
-    MtgoDuelActionFamilyV1, MtgoEvidenceSourceV1, MtgoPlayerVisibleDuelScorerV1,
-    MtgoPlayerVisibleGameplayPostconditionKindV1, MtgoRectPxV1, MtgoSizePxV1,
+    MtgoDuelActionFamilyV1, MtgoEvidenceSourceV1, MtgoPlayerVisibleCombatScorerV1,
+    MtgoPlayerVisibleDuelScorerV1, MtgoPlayerVisibleGameplayPostconditionKindV1,
+    MtgoPlayerVisiblePreparedCombatKindV1, MtgoRectPxV1, MtgoSizePxV1,
     MtgoVisibleDuelViewModelBrokerAbstentionReasonV1, MtgoVisibleDuelViewModelBrokerResultV1,
     MTGO_DIRECT_VISIBLE_COMPETITIVE_OBSERVATION_BRACKET_SCHEMA_V1,
     MTGO_DIRECT_VISIBLE_GAMEPLAY_BEFORE_DISPATCH_SCHEMA_V1,
@@ -64,6 +67,7 @@ const DIRECT_VISIBLE_SOURCE_EQUIVALENT_REGIONS_DOMAIN_V1: &[u8] =
 const DIRECT_VISIBLE_DISPATCH_RUNTIME_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-dispatch-runtime-v1";
 const DIRECT_VISIBLE_DISPATCH_RECEIPT_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-dispatch-receipt-v1";
 const RATIFIED_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
+const RATIFIED_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
 const RATIFIED_DIRECT_VISIBLE_DISPATCH_RUNTIME_COMMITMENT_V1: Option<&str> = None;
 const PINNED_MTGO_EXECUTABLE_SHA256_V1: &str =
     "bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92";
@@ -270,6 +274,81 @@ pub struct OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
     outcome: CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
 }
 
+/// Qualification-only combat scoring outcome retaining the exact attested
+/// observation whose sanitized player-visible bytes were scored. The model
+/// receives only the transport-neutral combat schema. This wrapper grants no
+/// input, event-entry, or spending authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1;
+/// fn cannot_extract_or_dispatch(value: OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1) {
+///     let _ = value.raw_client_object();
+///     value.dispatch();
+/// }
+/// ```
+pub struct OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1 {
+    _observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    outcome: CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1,
+}
+
+impl OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1 {
+    pub fn abstention_reason_v1(&self) -> Option<MtgoVisibleDuelViewModelBrokerAbstentionReasonV1> {
+        match &self.outcome {
+            CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Abstained { reason } => {
+                Some(*reason)
+            }
+            CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Prepared(_) => None,
+        }
+    }
+
+    pub fn prepared_kind_v1(&self) -> Option<MtgoPlayerVisiblePreparedCombatKindV1> {
+        match &self.outcome {
+            CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Abstained { .. } => None,
+            CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Prepared(prepared) => {
+                Some(prepared.kind_v1())
+            }
+        }
+    }
+
+    pub fn bridge_commitment_sha256_v1(&self) -> Option<&str> {
+        match &self.outcome {
+            CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Abstained { .. } => None,
+            CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Prepared(prepared) => {
+                Some(prepared.bridge_commitment_sha256_v1())
+            }
+        }
+    }
+
+    pub fn source_observation_commitment_sha256_v1(&self) -> &str {
+        &self._observation.commitments.observation_commitment_sha256
+    }
+
+    pub fn model_selection_count_v1(&self) -> Option<usize> {
+        match &self.outcome {
+            CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Abstained { .. } => None,
+            CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Prepared(prepared) => {
+                Some(prepared.model_selection_count_v1())
+            }
+        }
+    }
+
+    pub fn model_scoring_completed_v1(&self) -> bool {
+        true
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
 impl OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
     pub fn abstention_reason_v1(&self) -> Option<MtgoVisibleDuelViewModelBrokerAbstentionReasonV1> {
         match &self.outcome {
@@ -429,6 +508,52 @@ pub fn score_ratified_attested_direct_visible_source_observation_v1<
         _observation: observation,
         outcome,
     })
+}
+
+/// Qualification-only bridge from one source-attested observation into the
+/// unified player-visible combat scorer. The production source qualification
+/// root is empty, so no live observation can currently reach a caller-supplied
+/// scorer through this function.
+pub fn score_ratified_attested_direct_visible_combat_source_observation_v1<
+    S: MtgoPlayerVisibleCombatScorerV1,
+>(
+    observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    reviewed_qualification_commitment_sha256: &str,
+    deployment_commitment_sha256: &str,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1, String> {
+    require_ratified_direct_visible_combat_source_qualification_v1(
+        reviewed_qualification_commitment_sha256,
+    )?;
+    let outcome = score_and_prepare_strict_visible_combat_producer_result_v1(
+        &observation.exact_result_bytes.0,
+        deployment_commitment_sha256,
+        scorer,
+    )
+    .map_err(|error| format!("score attested direct visible combat observation: {error}"))?;
+    Ok(
+        OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1 {
+            _observation: observation,
+            outcome,
+        },
+    )
+}
+
+pub(crate) fn require_ratified_direct_visible_combat_source_qualification_v1(
+    reviewed_qualification_commitment_sha256: &str,
+) -> Result<(), String> {
+    let Some(ratified) = RATIFIED_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1 else {
+        return Err(
+            "the production player-visible combat-source qualification root is empty".to_owned(),
+        );
+    };
+    if reviewed_qualification_commitment_sha256 != ratified {
+        return Err(
+            "the reviewed player-visible combat-source qualification commitment is not ratified"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn require_ratified_direct_visible_source_qualification_v1(
@@ -1277,6 +1402,10 @@ impl OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
             .captured_at_unix_millis
     }
 
+    pub(crate) fn combat_scoring_required_v1(&self) -> bool {
+        result_requires_combat_scoring_v1(&self.result)
+    }
+
     pub fn producer_execution_attested_v1(&self) -> bool {
         true
     }
@@ -1300,6 +1429,16 @@ impl OpaqueMtgoAttestedDirectVisibleSourceObservationV1 {
     pub fn permits_spending_v1(&self) -> bool {
         false
     }
+}
+
+fn result_requires_combat_scoring_v1(result: &MtgoVisibleDuelViewModelBrokerResultV1) -> bool {
+    matches!(
+        result,
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleBlockerTargetSelection { .. }
+    )
 }
 
 /// One release-pinned direct-source execution bracketed by two live composed
@@ -2431,6 +2570,40 @@ mod tests {
     }
 
     #[test]
+    fn combat_routing_is_kind_only_and_excludes_ordinary_and_abstained_results() {
+        let ordinary = MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
+            decision: Box::new(visible_decision_v1(
+                mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1::Pass {
+                    actor: mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1::SeatedPlayer,
+                },
+            )),
+        };
+        assert!(!result_requires_combat_scoring_v1(&ordinary));
+        assert!(!result_requires_combat_scoring_v1(
+            &MtgoVisibleDuelViewModelBrokerResultV1::Abstained {
+                reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1::ProjectionIncomplete,
+            }
+        ));
+
+        let mut state =
+            visible_decision_v1(mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1::Pass {
+                actor: mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1::SeatedPlayer,
+            })
+            .current_state;
+        state.phase = mtg_kernel::rl::ZoneIndependentStepV1::DeclareAttackers;
+        let combat = MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection {
+            selection: Box::new(
+                mtgo_blackbox_v1::MtgoPlayerVisibleAttackerSelectionInputV1 {
+                    current_state: state,
+                    ordered_candidates: Vec::new(),
+                    unique_visible_enabled_done_control: true,
+                },
+            ),
+        };
+        assert!(result_requires_combat_scoring_v1(&combat));
+    }
+
+    #[test]
     fn runtime_verification_rejects_unpinned_relative_artifacts() {
         let relative = Path::new("not-a-release-artifact");
         assert!(
@@ -2446,6 +2619,10 @@ mod tests {
     #[test]
     fn production_scoring_ratification_root_is_empty() {
         assert!(require_ratified_direct_visible_source_qualification_v1(&"a".repeat(64)).is_err());
+        assert!(
+            require_ratified_direct_visible_combat_source_qualification_v1(&"a".repeat(64))
+                .is_err()
+        );
     }
 
     #[test]

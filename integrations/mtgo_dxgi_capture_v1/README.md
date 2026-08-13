@@ -182,6 +182,20 @@ The private direct-source preparation seam consumes the release-pinned refreshed
 
 The competitive gameplay owner retains the attended best-of-three history. The current direct-source select and retry functions import every completed earlier game followed by the current game's confirmed decisions and rendered Game Log, then perform the direct-source score and pixel join without exposing a bare gameplay lease. They are crate-private qualification seams because they accept a caller-supplied scorer. Application code cannot use those seams to create a live before-dispatch value. A future public selection constructor must consume the opaque loaded checkpoint and require its native player-visible scorer capability. Dispatch remains unreachable while that capability and the separate production ratification root are absent.
 
+`select_competitive_operator_attended_direct_visible_any_gameplay_action_v1`
+adds one-observation routing for the unified player-visible scorer. It keeps the
+exact attended League or Challenge lease, current-game session, visible launch
+identity, rendered Game Log, current-game decisions, and completed earlier
+games while routing an ordinary result to the existing ordinary path or a
+combat result to the transport-neutral combat bridge. Attacker,
+single-attacker blocker, multi-attacker blocker, and visible target stages
+return an opaque prepared combat owner bound to the source observation,
+deployment, every model selection, and coordinate-free execution commitment.
+That owner has no dispatch conversion. Combat uses a distinct empty production
+qualification root, so a future ordinary direct-source review cannot approve
+combat implicitly. Combat dispatch and its action-specific fresh visible
+confirmation remain separate work.
+
 `verify_direct_visible_source_runtime_v1` and `observe_attested_direct_visible_source_v1` supply the first opaque Windows owner for the release-pinned direct observer. The runtime verifier uses compile-time SHA-256 pins for the native broker, bootstrap, managed producer, and strict release validator. Observation consumes one admitted acting-player duel frame, invokes the broker against that exact MTGO process without passing a decision hash or selected index, bounds and strictly parses its only outward value, rehashes every runtime artifact, and immediately captures a second frame from the same process, window, output, profile, format, and geometry. Temporary stdout and stderr buffers are cleared on every return path. The move-only result retains both frames and the sanitized result but publicly exposes only fixed abstention, execution and artifact commitments, and false scoring, input, entry, and spending flags. A data-bearing result remains a qualification candidate until the no-stakes duel corpus and complete visible action surface are reviewed. The pinned observe-only live broker still compile-disables client-action dispatch.
 
 `verify_direct_visible_dispatch_runtime_v1` pins the separately named dispatch-capable broker at SHA-256 `918d99c4fc22d7ce3c0c6b080ca46a06bc1ab9922607dd46aa083bfa4da5eea` plus the same bootstrap, producer, and validator. A reproducible rebuild leaves the qualified observe-only broker byte-identical. The public attended dispatch wrapper can consume only the complete history-preserving pre-dispatch value, binds the exact sanitized decision SHA-256 and selected index, shares the process-wide one-input gate, and accepts only the fixed submitted receipt. Its attended confirmation wrapper refreshes the bound player-visible Game Log, captures a newer composed frame, rehashes the internally fixed action-specific visible regions, advances the attended game session and sanitized history, and only then reopens the gate. Any uncertainty consumes ownership and leaves the gate closed. The independent production dispatch ratification root is `None`, so neither the broker nor these APIs can currently send an action.
