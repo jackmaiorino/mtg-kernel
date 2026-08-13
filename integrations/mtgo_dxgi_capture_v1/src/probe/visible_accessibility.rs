@@ -11,6 +11,7 @@ use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, TreeScope_
 pub const MTGO_VISIBLE_ACCESSIBILITY_PROBE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CORROBORATION_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_ACCESSIBILITY_CATALOG_SCHEMA_V1: u32 = 1;
+pub const MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_SCHEMA_V1: u32 = 1;
 
 const MAX_VISIBLE_ACCESSIBILITY_QUERIES_V1: usize = 64;
 const MAX_VISIBLE_ACCESSIBILITY_ELEMENTS_V1: i32 = 4_096;
@@ -27,6 +28,8 @@ const VISIBLE_ACCESSIBILITY_CATALOG_DOMAIN_V1: &[u8] =
     b"mtgo-visible-accessibility-known-label-catalog-v1";
 const VISIBLE_ACCESSIBILITY_CATALOG_REPORT_DOMAIN_V1: &[u8] =
     b"mtgo-visible-accessibility-known-label-catalog-report-v1";
+const VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_REPORT_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-accessibility-known-label-pixel-catalog-report-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +72,43 @@ pub struct MtgoVisibleAccessibilityCatalogProbeSummaryV1 {
     pub safe_for_semantic_evidence: bool,
     pub safe_for_policy_scoring: bool,
     pub safe_for_input: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityPixelCatalogEntrySummaryV1 {
+    pub query_id: String,
+    pub slice: MtgoVisibleAccessibilityCatalogSliceV1,
+    pub expected_visible_text_sha256: String,
+    pub exact_visible_match_count: u32,
+    pub observed_control_type_ids: Vec<i32>,
+    pub private_pixel_match_set_commitment_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1 {
+    pub schema_version: u32,
+    pub catalog_commitment_sha256: String,
+    pub source_pixel_report_commitment_sha256: String,
+    pub source_window_identity_commitment_sha256: String,
+    pub before_capture_commitment_sha256: String,
+    pub after_capture_commitment_sha256: String,
+    pub before_frame_sha256: String,
+    pub after_frame_sha256: String,
+    pub entries: Vec<MtgoVisibleAccessibilityPixelCatalogEntrySummaryV1>,
+    pub total_pixel_corroborated_match_count: u32,
+    pub has_pixel_corroborated_match: bool,
+    pub capture_bracket_identity_confirmed: bool,
+    pub matched_regions_pixel_stable_across_bracket: bool,
+    pub raw_visible_text_exposed: bool,
+    pub caller_selected_text_queries_enabled: bool,
+    pub unmatched_visible_text_retained: bool,
+    pub private_match_rectangles_exposed: bool,
+    pub safe_for_semantic_evidence: bool,
+    pub safe_for_policy_scoring: bool,
+    pub safe_for_input: bool,
+    pub report_commitment_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -728,6 +768,31 @@ pub fn run_visible_accessibility_known_label_catalog_cli_v1(
     probe_mtgo_visible_accessibility_known_label_catalog_v1(window_request)
 }
 
+/// Runs the fixed known-label catalog through the composed-pixel capture
+/// bracket. Raw labels, unmatched UIA names, rectangles, and pixels remain
+/// private. The result is diagnostic and cannot become semantic evidence,
+/// policy input, or client input without a separately reviewed profile.
+pub fn probe_mtgo_visible_accessibility_known_label_catalog_with_pixel_corroboration_v1(
+    window_request: MtgoDxgiCaptureRequestV3,
+) -> Result<MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1, String> {
+    let catalog = known_label_catalog_v1();
+    validate_known_label_catalog_v1(&catalog)?;
+    let catalog_commitment_sha256 = known_label_catalog_commitment_v1(&catalog)?;
+    let queries = known_label_queries_v1(&catalog);
+    let source = probe_mtgo_visible_accessibility_exact_text_with_pixel_corroboration_v1(
+        window_request,
+        queries,
+    )?
+    .summary_v1();
+    build_known_label_pixel_catalog_summary_v1(&catalog, catalog_commitment_sha256, source)
+}
+
+pub fn run_visible_accessibility_known_label_catalog_pixel_corroboration_cli_v1(
+) -> Result<MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1, String> {
+    let window_request = parse_catalog_cli_v1()?;
+    probe_mtgo_visible_accessibility_known_label_catalog_with_pixel_corroboration_v1(window_request)
+}
+
 fn known_label_catalog_v1() -> Vec<PrivateVisibleAccessibilityCatalogEntryV1> {
     vec![
         PrivateVisibleAccessibilityCatalogEntryV1 {
@@ -761,14 +826,19 @@ fn known_label_catalog_v1() -> Vec<PrivateVisibleAccessibilityCatalogEntryV1> {
 fn validate_known_label_catalog_v1(
     catalog: &[PrivateVisibleAccessibilityCatalogEntryV1],
 ) -> Result<(), String> {
-    let queries = catalog
+    validate_queries_v1(&known_label_queries_v1(catalog))
+}
+
+fn known_label_queries_v1(
+    catalog: &[PrivateVisibleAccessibilityCatalogEntryV1],
+) -> Vec<MtgoVisibleAccessibilityExactTextQueryV1> {
+    catalog
         .iter()
         .map(|entry| MtgoVisibleAccessibilityExactTextQueryV1 {
             query_id: entry.query_id.to_owned(),
             expected_visible_text: entry.expected_visible_text.to_owned(),
         })
-        .collect::<Vec<_>>();
-    validate_queries_v1(&queries)
+        .collect()
 }
 
 fn known_label_catalog_commitment_v1(
@@ -824,6 +894,97 @@ fn known_label_catalog_report_commitment_v1(
             b"safe_for_policy_scoring=false",
             b"safe_for_input=false",
         ],
+    ))
+}
+
+fn build_known_label_pixel_catalog_summary_v1(
+    catalog: &[PrivateVisibleAccessibilityCatalogEntryV1],
+    catalog_commitment_sha256: String,
+    source: MtgoVisibleAccessibilityPixelCorroborationSummaryV1,
+) -> Result<MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1, String> {
+    if source.report_commitment_sha256 != pixel_summary_commitment_v1(&source)?
+        || source.query_results.len() != catalog.len()
+        || !source.capture_bracket_identity_confirmed
+        || !source.matched_regions_pixel_stable_across_bracket
+        || source.raw_visible_text_exposed
+        || source.private_match_rectangles_exposed
+        || source.safe_for_semantic_evidence
+        || source.safe_for_policy_scoring
+        || source.safe_for_input
+    {
+        return Err(
+            "pixel-corroborated accessibility source is invalid or too authoritative".into(),
+        );
+    }
+    let entries = catalog
+        .iter()
+        .zip(&source.query_results)
+        .map(|(entry, result)| {
+            if entry.query_id != result.query_id
+                || sha256_hex_v1(entry.expected_visible_text.as_bytes())
+                    != result.expected_visible_text_sha256
+            {
+                return Err("pixel-corroborated catalog query identity changed".to_owned());
+            }
+            Ok(MtgoVisibleAccessibilityPixelCatalogEntrySummaryV1 {
+                query_id: entry.query_id.to_owned(),
+                slice: entry.slice,
+                expected_visible_text_sha256: result.expected_visible_text_sha256.clone(),
+                exact_visible_match_count: result.exact_visible_match_count,
+                observed_control_type_ids: result.observed_control_type_ids.clone(),
+                private_pixel_match_set_commitment_sha256: result
+                    .private_pixel_match_set_commitment_sha256
+                    .clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let total = entries.iter().try_fold(0_u32, |count, entry| {
+        count
+            .checked_add(entry.exact_visible_match_count)
+            .ok_or("pixel-corroborated catalog match count overflow")
+    })?;
+    if total != source.total_pixel_corroborated_match_count
+        || source.has_pixel_corroborated_match != (total != 0)
+    {
+        return Err("pixel-corroborated catalog match totals changed".to_owned());
+    }
+    let mut summary = MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1 {
+        schema_version: MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_SCHEMA_V1,
+        catalog_commitment_sha256,
+        source_pixel_report_commitment_sha256: source.report_commitment_sha256,
+        source_window_identity_commitment_sha256: source.source_window_identity_commitment_sha256,
+        before_capture_commitment_sha256: source.before_capture_commitment_sha256,
+        after_capture_commitment_sha256: source.after_capture_commitment_sha256,
+        before_frame_sha256: source.before_frame_sha256,
+        after_frame_sha256: source.after_frame_sha256,
+        entries,
+        total_pixel_corroborated_match_count: total,
+        has_pixel_corroborated_match: total != 0,
+        capture_bracket_identity_confirmed: true,
+        matched_regions_pixel_stable_across_bracket: true,
+        raw_visible_text_exposed: false,
+        caller_selected_text_queries_enabled: false,
+        unmatched_visible_text_retained: false,
+        private_match_rectangles_exposed: false,
+        safe_for_semantic_evidence: false,
+        safe_for_policy_scoring: false,
+        safe_for_input: false,
+        report_commitment_sha256: String::new(),
+    };
+    summary.report_commitment_sha256 = known_label_pixel_catalog_report_commitment_v1(&summary)?;
+    Ok(summary)
+}
+
+fn known_label_pixel_catalog_report_commitment_v1(
+    summary: &MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
+) -> Result<String, String> {
+    let mut record = summary.clone();
+    record.report_commitment_sha256.clear();
+    let bytes = serde_json::to_vec(&record)
+        .map_err(|error| format!("serialize visible accessibility pixel catalog: {error}"))?;
+    Ok(commitment_v1(
+        VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_REPORT_DOMAIN_V1,
+        &[&bytes],
     ))
 }
 
@@ -1323,6 +1484,67 @@ mod tests {
         }
         assert!(json.contains("bottoming.cancel"));
         assert!(json.contains("sideboard.submit_deck"));
+    }
+
+    #[test]
+    fn known_label_pixel_catalog_is_hash_only_and_rejects_source_substitution() {
+        let catalog = known_label_catalog_v1();
+        let catalog_commitment = known_label_catalog_commitment_v1(&catalog).unwrap();
+        let query_results = catalog
+            .iter()
+            .map(|entry| MtgoVisibleAccessibilityPixelQueryResultV1 {
+                query_id: entry.query_id.to_owned(),
+                expected_visible_text_sha256: sha256_hex_v1(entry.expected_visible_text.as_bytes()),
+                exact_visible_match_count: 0,
+                observed_control_type_ids: Vec::new(),
+                private_pixel_match_set_commitment_sha256: "a".repeat(64),
+            })
+            .collect();
+        let mut source = MtgoVisibleAccessibilityPixelCorroborationSummaryV1 {
+            schema_version: MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CORROBORATION_SCHEMA_V1,
+            before_capture_commitment_sha256: "b".repeat(64),
+            after_capture_commitment_sha256: "c".repeat(64),
+            before_frame_sha256: "d".repeat(64),
+            after_frame_sha256: "e".repeat(64),
+            accessibility_report_commitment_sha256: "f".repeat(64),
+            source_window_identity_commitment_sha256: "1".repeat(64),
+            query_results,
+            total_pixel_corroborated_match_count: 0,
+            has_pixel_corroborated_match: false,
+            capture_bracket_identity_confirmed: true,
+            matched_regions_pixel_stable_across_bracket: true,
+            raw_visible_text_exposed: false,
+            private_match_rectangles_exposed: false,
+            safe_for_semantic_evidence: false,
+            safe_for_policy_scoring: false,
+            safe_for_input: false,
+            report_commitment_sha256: String::new(),
+        };
+        source.report_commitment_sha256 = pixel_summary_commitment_v1(&source).unwrap();
+        let summary = build_known_label_pixel_catalog_summary_v1(
+            &catalog,
+            catalog_commitment.clone(),
+            source.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            summary.report_commitment_sha256,
+            known_label_pixel_catalog_report_commitment_v1(&summary).unwrap()
+        );
+        let json = serde_json::to_string(&summary).unwrap();
+        for raw_label in ["Cancel", "Combat", "Keep", "Mulligan", "Submit Deck"] {
+            assert!(!json.contains(raw_label));
+        }
+        assert!(!summary.safe_for_semantic_evidence);
+        assert!(!summary.safe_for_policy_scoring);
+        assert!(!summary.safe_for_input);
+
+        source.query_results[0].query_id = "crossed.query".to_owned();
+        source.report_commitment_sha256 = pixel_summary_commitment_v1(&source).unwrap();
+        assert!(
+            build_known_label_pixel_catalog_summary_v1(&catalog, catalog_commitment, source)
+                .is_err()
+        );
     }
 
     #[test]

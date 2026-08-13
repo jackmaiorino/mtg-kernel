@@ -2365,6 +2365,8 @@ fn visible_accessibility_probe_is_read_only_private_and_requires_pixel_corrobora
 fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
     let source = include_str!("../src/probe/visible_accessibility.rs");
     let binary = include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_v1.rs");
+    let pixel_binary =
+        include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_pixels_v1.rs");
 
     for required in [
         "fn known_label_catalog_v1()",
@@ -2389,9 +2391,24 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         );
     }
     assert!(binary.contains("run_visible_accessibility_known_label_catalog_cli_v1"));
+    assert!(pixel_binary
+        .contains("run_visible_accessibility_known_label_catalog_pixel_corroboration_cli_v1"));
+    for required in [
+        "probe_mtgo_visible_accessibility_known_label_catalog_with_pixel_corroboration_v1",
+        "build_known_label_pixel_catalog_summary_v1",
+        "source.report_commitment_sha256 != pixel_summary_commitment_v1(&source)?",
+        "source.query_results.len() != catalog.len()",
+        "pixel-corroborated catalog query identity changed",
+        "VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_REPORT_DOMAIN_V1",
+    ] {
+        assert!(
+            source.contains(required),
+            "visible accessibility pixel catalog is missing: {required}"
+        );
+    }
     for forbidden in ["--query", "CurrentName", "GetCurrentPattern", "SendInput"] {
         assert!(
-            !binary.contains(forbidden),
+            !binary.contains(forbidden) && !pixel_binary.contains(forbidden),
             "visible accessibility catalog binary exposes forbidden capability: {forbidden}"
         );
     }

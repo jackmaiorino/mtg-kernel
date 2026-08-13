@@ -439,10 +439,12 @@ pub use probe::{
     probe_mtgo_process_epoch_visible_game_log_v1, probe_mtgo_visible_accessibility_exact_text_v1,
     probe_mtgo_visible_accessibility_exact_text_with_pixel_corroboration_v1,
     probe_mtgo_visible_accessibility_known_label_catalog_v1,
+    probe_mtgo_visible_accessibility_known_label_catalog_with_pixel_corroboration_v1,
     refresh_competitive_match_visible_game_log_v1,
     review_player_visible_duel_gesture_target_schema_v1,
     review_player_visible_gameplay_postcondition_schema_v1, run_cli_v3,
     run_visible_accessibility_known_label_catalog_cli_v1,
+    run_visible_accessibility_known_label_catalog_pixel_corroboration_cli_v1,
     run_visible_accessibility_pixel_corroboration_cli_v1, run_visible_accessibility_probe_cli_v1,
     score_and_select_card_aware_bottoming_model_v5, score_and_select_card_aware_pregame_model_v4,
     score_and_select_opaque_player_visible_duel_perception_v1,
@@ -511,7 +513,9 @@ pub use probe::{
     MtgoVerifiedDuelGestureTargetRuntimeCommitmentsV1,
     MtgoVerifiedDuelPerceptionRuntimeCommitmentsV1, MtgoVisibleAccessibilityCatalogEntrySummaryV1,
     MtgoVisibleAccessibilityCatalogProbeSummaryV1, MtgoVisibleAccessibilityCatalogSliceV1,
-    MtgoVisibleAccessibilityExactTextQueryV1, MtgoVisibleAccessibilityPixelCorroborationSummaryV1,
+    MtgoVisibleAccessibilityExactTextQueryV1, MtgoVisibleAccessibilityPixelCatalogEntrySummaryV1,
+    MtgoVisibleAccessibilityPixelCatalogProbeSummaryV1,
+    MtgoVisibleAccessibilityPixelCorroborationSummaryV1,
     MtgoVisibleAccessibilityPixelQueryResultV1, MtgoVisibleAccessibilityProbeSummaryV1,
     MtgoVisibleAccessibilityQueryResultV1, OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
     OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoAdmittedDuelVisibleFrameV1,
@@ -559,6 +563,7 @@ pub use probe::{
     MTGO_PLAYER_VISIBLE_DUEL_GESTURE_TARGET_SCHEMA_REVIEW_SCHEMA_V1,
     MTGO_PREGAME_CARD_AWARE_SCORING_SCHEMA_V4, MTGO_PREGAME_EXTERNAL_SCORING_SCHEMA_V3,
     MTGO_VISIBLE_ACCESSIBILITY_CATALOG_SCHEMA_V1,
+    MTGO_VISIBLE_ACCESSIBILITY_PIXEL_CATALOG_SCHEMA_V1,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
