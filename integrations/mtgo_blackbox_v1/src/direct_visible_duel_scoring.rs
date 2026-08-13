@@ -17,7 +17,7 @@ pub enum CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1 {
     Abstained {
         reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1,
     },
-    Selected(CheckedUntrustedMtgoDirectVisibleModelSelectionV1),
+    Selected(Box<CheckedUntrustedMtgoDirectVisibleModelSelectionV1>),
 }
 
 /// One model selection bound to the SHA-256 of the exact strictly parsed
@@ -41,6 +41,7 @@ pub struct CheckedUntrustedMtgoDirectVisibleModelSelectionV1 {
     response: MtgoPlayerVisibleDuelScoreResponseV1,
     selected_index: usize,
     selected_action: MtgoPlayerVisibleDuelActionV1,
+    confirmed_decision: crate::MtgoPlayerVisibleConfirmedDuelDecisionV1,
 }
 
 impl CheckedUntrustedMtgoDirectVisibleModelSelectionV1 {
@@ -108,8 +109,11 @@ impl CheckedUntrustedMtgoDirectVisibleModelSelectionV1 {
 /// ```
 pub struct CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1 {
     exact_producer_result_sha256: String,
+    model_input_commitment_sha256: String,
+    deployment_commitment_sha256: String,
     selected_index: usize,
     selected_action: MtgoPlayerVisibleDuelActionV1,
+    confirmed_decision: crate::MtgoPlayerVisibleConfirmedDuelDecisionV1,
     selection_commitment_sha256: String,
     refresh_commitment_sha256: String,
 }
@@ -125,6 +129,12 @@ impl CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1 {
 
     pub fn selection_commitment_sha256_v1(&self) -> &str {
         &self.selection_commitment_sha256
+    }
+
+    pub fn player_visible_confirmed_decision_v1(
+        &self,
+    ) -> &crate::MtgoPlayerVisibleConfirmedDuelDecisionV1 {
+        &self.confirmed_decision
     }
 
     pub fn refresh_commitment_sha256_v1(&self) -> &str {
@@ -146,6 +156,14 @@ impl CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1 {
     #[allow(dead_code)] // Reserved for the private authorized dispatch owner.
     pub(crate) fn exact_producer_result_sha256_v1(&self) -> &str {
         &self.exact_producer_result_sha256
+    }
+
+    pub(crate) fn model_input_commitment_sha256_v1(&self) -> &str {
+        &self.model_input_commitment_sha256
+    }
+
+    pub(crate) fn deployment_commitment_sha256_v1(&self) -> &str {
+        &self.deployment_commitment_sha256
     }
 }
 
@@ -190,8 +208,11 @@ pub fn refresh_direct_visible_selection_before_dispatch_v1(
     );
     Ok(CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1 {
         exact_producer_result_sha256: refreshed_sha256,
+        model_input_commitment_sha256: selection.model_input_commitment_sha256,
+        deployment_commitment_sha256: selection.deployment_commitment_sha256,
         selected_index: selection.selected_index,
         selected_action: selection.selected_action,
+        confirmed_decision: selection.confirmed_decision,
         selection_commitment_sha256: selection.selection_commitment_sha256,
         refresh_commitment_sha256,
     })
@@ -218,6 +239,7 @@ pub fn score_and_select_strict_visible_duel_producer_result_v1<S: MtgoPlayerVisi
                 deployment_commitment_sha256,
                 scorer,
             )
+            .map(Box::new)
             .map(CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Selected)
         }
     }
@@ -263,6 +285,10 @@ fn score_visible_decision_v1<S: MtgoPlayerVisibleDuelScorerV1>(
         }
     }
     let selected_action = decision.ordered_legal_actions[selected_index].clone();
+    let confirmed_decision = crate::MtgoPlayerVisibleConfirmedDuelDecisionV1 {
+        current_state: decision.current_state.clone(),
+        selected_action: selected_action.clone(),
+    };
     let response_json = serde_json::to_vec(&response).map_err(|error| {
         error_v1(
             "direct_visible_duel_response_serialization",
@@ -295,6 +321,7 @@ fn score_visible_decision_v1<S: MtgoPlayerVisibleDuelScorerV1>(
         response,
         selected_index,
         selected_action,
+        confirmed_decision,
     })
 }
 
@@ -597,7 +624,7 @@ mod tests {
             panic!("complete decision unexpectedly abstained");
         };
         let refreshed =
-            refresh_direct_visible_selection_before_dispatch_v1(selection, &bytes).unwrap();
+            refresh_direct_visible_selection_before_dispatch_v1(*selection, &bytes).unwrap();
         assert_eq!(refreshed.selected_index_v1(), 1);
         assert!(matches!(
             refreshed.selected_action_v1(),
@@ -631,7 +658,7 @@ mod tests {
             else {
                 panic!("complete decision unexpectedly abstained");
             };
-            selection
+            *selection
         }
 
         let bytes = visible_result_v1();

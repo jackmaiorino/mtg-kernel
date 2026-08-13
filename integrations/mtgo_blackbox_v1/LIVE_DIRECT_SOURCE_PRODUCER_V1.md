@@ -88,6 +88,18 @@ lifecycle, complete visible control set, model deployment, selected action,
 fresh pre-input frame, input receipt, newer postcondition frame, visible Game
 Log corroboration where available, and confirmed player-visible history.
 
+`bind_refreshed_direct_visible_selection_to_competitive_match_v1` now supplies
+the coordinate-free join immediately before a future direct dispatch owner. It
+consumes the exact post-score refresh and binds it to the visible
+match-in-progress lifecycle, approved account and written permission, exact
+League or Challenge event, match and game, deployment, selected action, and a
+before/after composed-frame bracket whose decision-relevant visible regions
+are unchanged. The result is checked-untrusted, retains no client object or
+identifier, and has no dispatch or input conversion. The remaining Windows
+join must construct this value from privately retained captures, consume it
+into exactly one sealed producer dispatch, and withhold the next transaction
+until a newer player-visible postcondition extends the exact-game history.
+
 ## Nonclaims
 
 The first managed root seam identifies the exact public WPF `DuelScene`,

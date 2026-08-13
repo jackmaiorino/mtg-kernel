@@ -255,7 +255,11 @@ pub fn bind_profile_bound_action_plan_to_competitive_match_v1(
             "lifecycle and model action plans must interpret the exact same source frame",
         ));
     }
-    validate_gameplay_authorization_v1(&lifecycle, mode_authorization, gameplay_authorization)?;
+    validate_competitive_match_gameplay_authorization_v1(
+        &lifecycle,
+        mode_authorization,
+        gameplay_authorization,
+    )?;
 
     let authorization_commitment_sha256 =
         competitive_match_gameplay_authorization_commitment_v1(gameplay_authorization)?;
@@ -449,7 +453,7 @@ pub fn check_untrusted_competitive_gameplay_before_input_pixels_v1(
     })
 }
 
-fn validate_gameplay_authorization_v1(
+pub(crate) fn validate_competitive_match_gameplay_authorization_v1(
     lifecycle: &CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
     mode: &MtgoAuthorizationScopeV1,
     authorization: &MtgoCompetitiveMatchGameplayAuthorizationV1,
