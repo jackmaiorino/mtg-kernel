@@ -90,6 +90,7 @@ use mtgo_blackbox_v1::{
     validate_competitive_player_visible_game_history_for_session_v1,
     validate_native_checkpoint_competitive_capabilities_v1,
     CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
     CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1,
     CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1, MtgoDuelGestureStageV1,
@@ -110,6 +111,8 @@ const COMPETITIVE_OPERATOR_SIDEBOARD_RESOLUTION_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-operator-sideboard-resolution-v1";
 const COMPETITIVE_OPERATOR_PLAYER_VISIBLE_PRIMITIVE_CONFIRMATION_CHAIN_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-operator-player-visible-primitive-confirmation-chain-v1";
+const COMPETITIVE_OPERATOR_DIRECT_VISIBLE_BEFORE_DISPATCH_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-operator-direct-visible-before-dispatch-v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -375,6 +378,62 @@ pub struct OpaqueMtgoCompetitiveOperatorGameplayLeaseV1 {
     resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
     lease: OpaqueMtgoCompetitiveEventGameplayLeaseV1,
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
+/// Move-only ownership join for one direct client action selected solely from
+/// the player-visible model boundary. It withholds the exact event lease, game
+/// session, launch identity, public Game Log, prior confirmed history, and
+/// checked-untrusted direct source until an opaque live-source producer and
+/// dispatch executor are both present.
+///
+/// This is deliberately not an input capability. It exposes only a composite
+/// commitment and the already sanitized selected player-visible action.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1;
+/// fn cannot_act(value: OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1) {
+///     let _ = value.dispatch();
+///     let _ = value.client_action();
+///     let _ = value.process_handle();
+/// }
+/// ```
+pub struct OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1 {
+    _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    _confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    _direct: CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
+    selected_action: MtgoPlayerVisibleDuelActionV1,
+    operator_binding_commitment_sha256: String,
+}
+
+impl OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1 {
+    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        &self.selected_action
+    }
+
+    pub fn operator_binding_commitment_sha256_v1(&self) -> &str {
+        &self.operator_binding_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
 }
 
 /// Move-only player-visible gameplay selection for one exact League or
@@ -2497,6 +2556,104 @@ where
     )
 }
 
+/// Joins one structurally checked direct-source selection to the exact opaque
+/// competitive operator ownership. No source attestation or input occurs.
+/// A later live producer must consume this value after proving the exact
+/// broker, producer, source frame, and visible decision bracket in process.
+pub fn bind_competitive_post_entry_operator_direct_visible_before_dispatch_v1(
+    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    direct: CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1, String> {
+    let lease_commitments = lease.lease.commitments_v1();
+    let session_commitments = session.commitments_v1();
+    let launch_commitments = visible_identity.commitments_v1();
+    let direct_commitments = direct.dispatch_commitments_v1();
+    validate_operator_direct_visible_before_dispatch_v1(
+        &lease.resource_commitments,
+        &lease_commitments,
+        &session_commitments,
+        &launch_commitments,
+        visible_identity.event_identity_sha256_v1(),
+        visible_identity.match_identity_sha256_v1(),
+        &visible_game_log,
+        confirmed_history.as_ref(),
+        &direct_commitments,
+    )?;
+    let selected_action = direct.selected_action_v1().clone();
+    let selected_action_json = serde_json::to_vec(&selected_action)
+        .map_err(|error| format!("serialize direct visible operator selection: {error}"))?;
+    let prior_history_commitment = confirmed_history
+        .as_ref()
+        .map(
+            CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1::history_commitment_sha256_v1,
+        )
+        .unwrap_or("none");
+    let operator_binding_commitment_sha256 = hash_parts_v1(
+        COMPETITIVE_OPERATOR_DIRECT_VISIBLE_BEFORE_DISPATCH_DOMAIN_V1,
+        &[
+            lease_commitments
+                .gameplay_lease_commitment_sha256
+                .as_bytes(),
+            session_commitments.session_commitment_sha256.as_bytes(),
+            launch_commitments
+                .launch_identity_commitment_sha256
+                .as_bytes(),
+            visible_game_log.snapshot_commitment_sha256_v1().as_bytes(),
+            prior_history_commitment.as_bytes(),
+            direct_commitments
+                .direct_competitive_scope_commitment_sha256_v1()
+                .as_bytes(),
+            direct_commitments
+                .before_dispatch_commitment_sha256_v1()
+                .as_bytes(),
+            direct_commitments
+                .decision_commitment_sha256_v1()
+                .as_bytes(),
+            direct_commitments
+                .selection_commitment_sha256_v1()
+                .as_bytes(),
+            direct_commitments.refresh_commitment_sha256_v1().as_bytes(),
+            direct_commitments
+                .exact_producer_result_sha256_v1()
+                .as_bytes(),
+            direct_commitments.broker_binary_sha256_v1().as_bytes(),
+            direct_commitments.producer_binary_sha256_v1().as_bytes(),
+            &selected_action_json,
+            direct_commitments
+                .selected_index_v1()
+                .to_be_bytes()
+                .as_slice(),
+            direct_commitments
+                .source_frame_id_v1()
+                .to_be_bytes()
+                .as_slice(),
+            direct_commitments
+                .source_frame_sequence_v1()
+                .to_be_bytes()
+                .as_slice(),
+            direct_commitments
+                .source_captured_at_unix_millis_v1()
+                .to_be_bytes()
+                .as_slice(),
+            b"operator_ownership_withheld_pending_opaque_live_source_and_dispatch",
+        ],
+    );
+    Ok(OpaqueMtgoCompetitiveOperatorDirectVisibleBeforeDispatchV1 {
+        _lease: lease,
+        _session: session,
+        _visible_identity: visible_identity,
+        _visible_game_log: visible_game_log,
+        _confirmed_history: confirmed_history,
+        _direct: direct,
+        selected_action,
+        operator_binding_commitment_sha256,
+    })
+}
+
 /// Joins the exact operator-owned player-visible selection to a validated
 /// coordinate-free gesture plan for the same selected visible action. This is
 /// an offline ownership transition only. Fresh target pixels, a fresh pre-input
@@ -4064,6 +4221,164 @@ fn validate_operator_gameplay_action_source_v1(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn validate_operator_direct_visible_before_dispatch_v1(
+    resources: &MtgoCompetitiveOperatorResourceCommitmentsV1,
+    lease: &MtgoCompetitiveEventGameplayLeaseCommitmentsV1,
+    session: &MtgoCompetitiveGestureGameSessionCommitmentsV1,
+    launch: &crate::MtgoOpaqueCompetitiveLaunchIdentityCommitmentsV1,
+    launch_event_identity_sha256: &str,
+    launch_match_identity_sha256: &str,
+    visible_game_log: &OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<&CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    direct: &mtgo_blackbox_v1::MtgoDirectVisibleGameplayDispatchCommitmentsV1<'_>,
+) -> Result<(), String> {
+    let session_policy = session
+        .policy_deployment_commitment_sha256
+        .as_deref()
+        .ok_or("direct gameplay requires a session bound to the selected policy deployment")?;
+    validate_operator_direct_visible_join_identity_v1(&OperatorDirectVisibleJoinIdentityV1 {
+        resource_deployment_commitment_sha256: resources
+            .policy_deployment_commitment_sha256
+            .clone(),
+        lease_event_kind: lease.event_kind,
+        lease_event_identity_sha256: lease.event_identity_sha256.clone(),
+        lease_match_identity_sha256: lease.match_identity_sha256.clone(),
+        lease_game_number: lease.game_number,
+        lease_deployment_commitment_sha256: lease.policy_deployment_commitment_sha256.clone(),
+        session_event_kind: session.event_kind,
+        session_game_number: session.game_number,
+        session_deployment_commitment_sha256: session_policy.to_owned(),
+        session_mode_authorization_commitment_sha256: session
+            .mode_authorization_commitment_sha256
+            .clone(),
+        session_gameplay_authorization_commitment_sha256: session
+            .match_gameplay_authorization_commitment_sha256
+            .clone(),
+        session_valid_from_frame_sequence: session.valid_from_frame_sequence,
+        session_valid_through_frame_sequence: session.valid_through_frame_sequence,
+        session_last_confirmed_frame_sequence: session.last_confirmed_frame_sequence,
+        launch_event_kind: launch.event_kind,
+        launch_event_identity_sha256: launch_event_identity_sha256.to_owned(),
+        launch_match_identity_sha256: launch_match_identity_sha256.to_owned(),
+        launch_game_number: launch.game_number,
+        launch_frame_sequence: launch.frame_sequence,
+        launch_captured_at_unix_millis: launch.captured_at_unix_millis,
+        game_log_event_kind: visible_game_log.event_kind_v1(),
+        game_log_event_identity_sha256: visible_game_log.event_identity_sha256_v1().to_owned(),
+        game_log_match_identity_sha256: visible_game_log.match_identity_sha256_v1().to_owned(),
+        game_log_game_number: visible_game_log.game_number_v1(),
+        game_log_captured_at_unix_millis: visible_game_log.latest_capture_unix_millis_v1(),
+        direct_event_kind: direct.event_kind_v1(),
+        direct_event_identity_sha256: direct.event_identity_sha256_v1().to_owned(),
+        direct_match_identity_sha256: direct.match_identity_sha256_v1().to_owned(),
+        direct_game_number: direct.game_number_v1(),
+        direct_deployment_commitment_sha256: direct.deployment_commitment_sha256_v1().to_owned(),
+        direct_mode_authorization_commitment_sha256: direct
+            .mode_authorization_commitment_sha256_v1()
+            .to_owned(),
+        direct_gameplay_authorization_commitment_sha256: direct
+            .gameplay_authorization_commitment_sha256_v1()
+            .to_owned(),
+        direct_source_frame_sequence: direct.source_frame_sequence_v1(),
+        direct_source_captured_at_unix_millis: direct.source_captured_at_unix_millis_v1(),
+    })?;
+    match confirmed_history {
+        Some(history) => validate_competitive_player_visible_game_history_for_session_v1(
+            history,
+            &resources.policy_deployment_commitment_sha256,
+            session.confirmed_action_count,
+            session.last_confirmed_frame_sequence,
+            direct.source_frame_sequence_v1(),
+        )
+        .map_err(|error| format!("validate direct visible confirmed history: {error}"))?,
+        None if session.confirmed_action_count == 0 => {}
+        None => {
+            return Err(
+                "direct visible gameplay session has confirmed actions but no decision history"
+                    .to_owned(),
+            )
+        }
+    }
+    Ok(())
+}
+
+struct OperatorDirectVisibleJoinIdentityV1 {
+    resource_deployment_commitment_sha256: String,
+    lease_event_kind: MtgoCompetitiveEventKindV1,
+    lease_event_identity_sha256: String,
+    lease_match_identity_sha256: String,
+    lease_game_number: u8,
+    lease_deployment_commitment_sha256: String,
+    session_event_kind: MtgoCompetitiveEventKindV1,
+    session_game_number: u8,
+    session_deployment_commitment_sha256: String,
+    session_mode_authorization_commitment_sha256: String,
+    session_gameplay_authorization_commitment_sha256: String,
+    session_valid_from_frame_sequence: u64,
+    session_valid_through_frame_sequence: u64,
+    session_last_confirmed_frame_sequence: u64,
+    launch_event_kind: MtgoCompetitiveEventKindV1,
+    launch_event_identity_sha256: String,
+    launch_match_identity_sha256: String,
+    launch_game_number: u8,
+    launch_frame_sequence: u64,
+    launch_captured_at_unix_millis: u128,
+    game_log_event_kind: MtgoCompetitiveEventKindV1,
+    game_log_event_identity_sha256: String,
+    game_log_match_identity_sha256: String,
+    game_log_game_number: u8,
+    game_log_captured_at_unix_millis: u128,
+    direct_event_kind: MtgoCompetitiveEventKindV1,
+    direct_event_identity_sha256: String,
+    direct_match_identity_sha256: String,
+    direct_game_number: u8,
+    direct_deployment_commitment_sha256: String,
+    direct_mode_authorization_commitment_sha256: String,
+    direct_gameplay_authorization_commitment_sha256: String,
+    direct_source_frame_sequence: u64,
+    direct_source_captured_at_unix_millis: u128,
+}
+
+fn validate_operator_direct_visible_join_identity_v1(
+    value: &OperatorDirectVisibleJoinIdentityV1,
+) -> Result<(), String> {
+    if value.lease_event_kind != value.session_event_kind
+        || value.lease_event_kind != value.launch_event_kind
+        || value.lease_event_kind != value.game_log_event_kind
+        || value.lease_event_kind != value.direct_event_kind
+        || value.lease_game_number != value.session_game_number
+        || value.lease_game_number != value.launch_game_number
+        || value.lease_game_number != value.game_log_game_number
+        || value.lease_game_number != value.direct_game_number
+        || value.lease_event_identity_sha256 != value.launch_event_identity_sha256
+        || value.lease_event_identity_sha256 != value.game_log_event_identity_sha256
+        || value.lease_event_identity_sha256 != value.direct_event_identity_sha256
+        || value.lease_match_identity_sha256 != value.launch_match_identity_sha256
+        || value.lease_match_identity_sha256 != value.game_log_match_identity_sha256
+        || value.lease_match_identity_sha256 != value.direct_match_identity_sha256
+        || value.lease_deployment_commitment_sha256 != value.resource_deployment_commitment_sha256
+        || value.session_deployment_commitment_sha256 != value.resource_deployment_commitment_sha256
+        || value.direct_deployment_commitment_sha256 != value.resource_deployment_commitment_sha256
+        || value.session_mode_authorization_commitment_sha256
+            != value.direct_mode_authorization_commitment_sha256
+        || value.session_gameplay_authorization_commitment_sha256
+            != value.direct_gameplay_authorization_commitment_sha256
+        || value.launch_frame_sequence > value.direct_source_frame_sequence
+        || value.launch_captured_at_unix_millis > value.direct_source_captured_at_unix_millis
+        || value.game_log_captured_at_unix_millis > value.direct_source_captured_at_unix_millis
+        || value.direct_source_frame_sequence < value.session_valid_from_frame_sequence
+        || value.direct_source_frame_sequence <= value.session_last_confirmed_frame_sequence
+        || value.direct_source_frame_sequence > value.session_valid_through_frame_sequence
+    {
+        return Err(
+            "direct visible gameplay changed the operator event, match, game, deployment, authorization, source frame, or Game Log lineage"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn require_sha256_v1(value: &str, label: &str) -> Result<(), String> {
     if value.len() != 64
         || !value
@@ -4404,6 +4719,45 @@ mod tests {
         let mut session = gameplay_session_v1();
         session.policy_deployment_commitment_sha256 = Some(digest('8'));
         (resources, lease, session, gameplay_action_perception_v1())
+    }
+
+    fn direct_visible_join_v1() -> OperatorDirectVisibleJoinIdentityV1 {
+        OperatorDirectVisibleJoinIdentityV1 {
+            resource_deployment_commitment_sha256: digest('8'),
+            lease_event_kind: MtgoCompetitiveEventKindV1::League,
+            lease_event_identity_sha256: digest('d'),
+            lease_match_identity_sha256: digest('e'),
+            lease_game_number: 1,
+            lease_deployment_commitment_sha256: digest('8'),
+            session_event_kind: MtgoCompetitiveEventKindV1::League,
+            session_game_number: 1,
+            session_deployment_commitment_sha256: digest('8'),
+            session_mode_authorization_commitment_sha256: digest('2'),
+            session_gameplay_authorization_commitment_sha256: digest('6'),
+            session_valid_from_frame_sequence: 10,
+            session_valid_through_frame_sequence: 300,
+            session_last_confirmed_frame_sequence: 199,
+            launch_event_kind: MtgoCompetitiveEventKindV1::League,
+            launch_event_identity_sha256: digest('d'),
+            launch_match_identity_sha256: digest('e'),
+            launch_game_number: 1,
+            launch_frame_sequence: 100,
+            launch_captured_at_unix_millis: 1_000,
+            game_log_event_kind: MtgoCompetitiveEventKindV1::League,
+            game_log_event_identity_sha256: digest('d'),
+            game_log_match_identity_sha256: digest('e'),
+            game_log_game_number: 1,
+            game_log_captured_at_unix_millis: 1_900,
+            direct_event_kind: MtgoCompetitiveEventKindV1::League,
+            direct_event_identity_sha256: digest('d'),
+            direct_match_identity_sha256: digest('e'),
+            direct_game_number: 1,
+            direct_deployment_commitment_sha256: digest('8'),
+            direct_mode_authorization_commitment_sha256: digest('2'),
+            direct_gameplay_authorization_commitment_sha256: digest('6'),
+            direct_source_frame_sequence: 202,
+            direct_source_captured_at_unix_millis: 2_000,
+        }
     }
 
     fn native_pregame_checkout_identity_v1() -> OperatorNativePregameCheckoutIdentityV1 {
@@ -4886,5 +5240,45 @@ mod tests {
             &digest('8'),
         )
         .is_err());
+    }
+
+    #[test]
+    fn direct_visible_operator_join_accepts_both_modes_and_exact_lineage() {
+        validate_operator_direct_visible_join_identity_v1(&direct_visible_join_v1()).unwrap();
+        let mut challenge = direct_visible_join_v1();
+        challenge.lease_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        challenge.session_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        challenge.launch_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        challenge.game_log_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        challenge.direct_event_kind = MtgoCompetitiveEventKindV1::Challenge;
+        validate_operator_direct_visible_join_identity_v1(&challenge).unwrap();
+    }
+
+    #[test]
+    fn direct_visible_operator_join_rejects_crossed_authority_and_lineage() {
+        let mutations: [fn(&mut OperatorDirectVisibleJoinIdentityV1); 10] = [
+            |value| value.direct_event_kind = MtgoCompetitiveEventKindV1::Challenge,
+            |value| value.direct_event_identity_sha256 = digest('f'),
+            |value| value.direct_match_identity_sha256 = digest('f'),
+            |value| value.direct_game_number = 2,
+            |value| value.direct_deployment_commitment_sha256 = digest('f'),
+            |value| value.direct_mode_authorization_commitment_sha256 = digest('f'),
+            |value| value.direct_gameplay_authorization_commitment_sha256 = digest('f'),
+            |value| {
+                value.direct_source_frame_sequence = value.session_last_confirmed_frame_sequence
+            },
+            |value| {
+                value.direct_source_frame_sequence = value.session_valid_through_frame_sequence + 1
+            },
+            |value| {
+                value.game_log_captured_at_unix_millis =
+                    value.direct_source_captured_at_unix_millis + 1
+            },
+        ];
+        for mutate in mutations {
+            let mut crossed = direct_visible_join_v1();
+            mutate(&mut crossed);
+            assert!(validate_operator_direct_visible_join_identity_v1(&crossed).is_err());
+        }
     }
 }

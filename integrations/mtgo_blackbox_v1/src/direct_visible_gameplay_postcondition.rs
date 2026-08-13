@@ -192,6 +192,10 @@ impl MtgoDirectVisibleGameplayDispatchCommitmentsV1<'_> {
 }
 
 impl CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1 {
+    pub fn selected_action_v1(&self) -> &crate::MtgoPlayerVisibleDuelActionV1 {
+        self.plan.selected_action_v1()
+    }
+
     pub fn dispatch_commitments_v1(&self) -> MtgoDirectVisibleGameplayDispatchCommitmentsV1<'_> {
         MtgoDirectVisibleGameplayDispatchCommitmentsV1 {
             event_kind: self.plan.event_kind_v1(),
