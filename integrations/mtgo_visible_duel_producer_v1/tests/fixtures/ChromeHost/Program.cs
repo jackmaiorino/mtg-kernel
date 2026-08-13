@@ -234,6 +234,30 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
                     seated.Shields.CardItems.Clear();
 
+                    // The current player-visible decision schema does not
+                    // encode these rendered player-counter badges. Their
+                    // presence must therefore abstain instead of silently
+                    // presenting an incomplete game state to the model.
+                    foreach (Action<bool> setVisibleCounter in new Action<bool>[]
+                    {
+                        value => seated.HasEnergyCountersFixture = value,
+                        value => seated.HasExperienceCountersFixture = value,
+                        value => seated.HasPoisonCountersFixture = value,
+                        value => seated.HasRadCountersFixture = value,
+                        value => opponent.HasEnergyCountersFixture = value,
+                        value => opponent.HasExperienceCountersFixture = value,
+                        value => opponent.HasPoisonCountersFixture = value,
+                        value => opponent.HasRadCountersFixture = value
+                    })
+                    {
+                        setVisibleCounter(true);
+                        if (!ExportsProjectionIncompleteV1(channelName, view))
+                        {
+                            return 29;
+                        }
+                        setVisibleCounter(false);
+                    }
+
                     // The semantic turn is derived only from the rendered
                     // GameTurnText. Non-canonical or non-opening visible text
                     // must fail closed before the first supported slice.

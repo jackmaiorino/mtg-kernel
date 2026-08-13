@@ -102,6 +102,10 @@ namespace Shiny.Play.Duel.ViewModel
                 "Player.Active",
                 "Player.MatActive",
                 "Player.Health",
+                "Player.HasEnergyCounters",
+                "Player.HasExperienceCounters",
+                "Player.HasPoisonCounters",
+                "Player.HasRadCounters",
                 "Player.HandTotal",
                 "Player.DeckTotal",
                 "Player.ManaPoolItems",
@@ -272,6 +276,42 @@ namespace Shiny.Play.Duel.ViewModel
             }
         }
 
+        public bool HasEnergyCounters
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Player.HasEnergyCounters");
+                return HasEnergyCountersFixture;
+            }
+        }
+
+        public bool HasExperienceCounters
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Player.HasExperienceCounters");
+                return HasExperienceCountersFixture;
+            }
+        }
+
+        public bool HasPoisonCounters
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Player.HasPoisonCounters");
+                return HasPoisonCountersFixture;
+            }
+        }
+
+        public bool HasRadCounters
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Player.HasRadCounters");
+                return HasRadCountersFixture;
+            }
+        }
+
         public int HandTotal
         {
             get
@@ -361,6 +401,10 @@ namespace Shiny.Play.Duel.ViewModel
         public bool IsLocalFixture { get; set; }
         public bool IsActiveFixture { get; set; }
         public bool IsPriorityFixture { get; set; }
+        public bool HasEnergyCountersFixture { get; set; }
+        public bool HasExperienceCountersFixture { get; set; }
+        public bool HasPoisonCountersFixture { get; set; }
+        public bool HasRadCountersFixture { get; set; }
         public int HandTotalFixture { get; set; }
         public int DeckTotalFixture { get; set; } = 53;
         public ZoneViewModel Hand { get; } = new ZoneViewModel();

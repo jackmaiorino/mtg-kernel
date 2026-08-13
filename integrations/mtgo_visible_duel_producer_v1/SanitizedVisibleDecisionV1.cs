@@ -509,6 +509,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "Active", out object? activeValue) || !(activeValue is bool active) ||
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "MatActive", out object? priorityValue) || !(priorityValue is bool priority) ||
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "Health", out object? lifeValue) || !(lifeValue is int life) || life < -1000000 || life > 1000000 ||
+                !TryRequireNoUnrepresentedVisiblePlayerCountersV1(player) ||
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "HandTotal", out object? handCountValue) || !(handCountValue is int handCount) || handCount < 0 || handCount > 10000 ||
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "DeckTotal", out object? deckCountValue) || !(deckCountValue is int deckCount) || deckCount < 0 || deckCount > 10000 ||
                 !TryReadExactPropertyV1(player, "DuelScene", playerType, "ManaPoolItems", out object? manaItemsValue) ||
@@ -538,6 +539,32 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             snapshot.Exile = exile;
             snapshot.Revealed = revealed;
             snapshot.Shields = shields;
+            return true;
+        }
+
+        private static bool TryRequireNoUnrepresentedVisiblePlayerCountersV1(
+            object player)
+        {
+            const string playerType = "Shiny.Play.Duel.ViewModel.PlayerViewModel";
+            foreach (string propertyName in new[]
+            {
+                "HasEnergyCounters",
+                "HasExperienceCounters",
+                "HasPoisonCounters",
+                "HasRadCounters"
+            })
+            {
+                if (!TryReadExactPropertyV1(
+                        player,
+                        "DuelScene",
+                        playerType,
+                        propertyName,
+                        out object? value) ||
+                    !(value is bool present) || present)
+                {
+                    return false;
+                }
+            }
             return true;
         }
 

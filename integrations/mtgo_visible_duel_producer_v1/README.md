@@ -3,11 +3,11 @@
 This isolated .NET Framework 4.7.2 assembly is the in-process root seam for a
 direct player-visible MTGO projection. It locates exactly one visible
 `Shiny.Play.Duel.DuelScene` through the WPF visual tree, requires its public
-`DataContext` to be the exact duel view-model type, and checks that all 48
+`DataContext` to be the exact duel view-model type, and checks that all 52
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.8 invokes only exact allowlisted getters for the player-visible game
+Version 1.9 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
@@ -68,7 +68,10 @@ producer now also reduces the rendered per-player Shields zone and each
 rendered card's public frame style to an Initiative-holder candidate. A
 non-null or ambiguous holder still forces abstention until an exact live UI
 corpus qualifies the per-player placement. No shield card, client object, or
-internal identifier is exported. Version 1.8 has not been
+internal identifier is exported. Visible poison, energy, experience, or
+radiation counter badges are detected at the player-panel layer and force an
+abstention because the current decision schema does not represent their
+amounts. Version 1.9 has not been
 loaded into MTGO.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.
