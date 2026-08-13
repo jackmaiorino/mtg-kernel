@@ -13,12 +13,13 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.3 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.4 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
-    /// to player-visible sources. It can emit only fixed abstentions and never
-    /// exports client objects or raw values.
+    /// to player-visible sources. It emits either a fixed abstention or the
+    /// bounded sanitized decision slice. It never exports client objects,
+    /// client identifiers, or unvalidated raw values.
     /// </summary>
-    public static class VisibleDuelProducerV1
+    public static partial class VisibleDuelProducerV1
     {
         private const string DuelRootType = "Shiny.Play.Duel.DuelScene";
         private const string DuelViewModelType = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
@@ -99,8 +100,14 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static readonly string[] PrivateVisibleActionJoinGetters =
         {
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|Actions",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|Game",
             "DuelScene|Shiny.Play.Duel.ViewModel.OptionButton|Action",
+            "DuelScene|Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel|Color",
+            "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|DoneButton",
+            "DuelScene|Shiny.Play.Duel.ViewModel.PromptBoxViewModel|OkPromptButton",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGame|CurrentTurn",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|ActionType",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|IsDefault",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.IGameAction|Name",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|CanBePerformedLocally",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|IsActivatedAbility",
@@ -198,14 +205,17 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.3 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.4 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
             {
                 return ProjectionIncomplete;
             }
-            return ProjectionIncomplete;
+            bool built = TryBuildFirstSanitizedVisibleDecisionV1(
+                viewModel,
+                out byte[] visibleDecision);
+            return built ? visibleDecision : ProjectionIncomplete;
         }
 
         private static bool CollectExactDuelRoots(
@@ -243,8 +253,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
             if (AllowedGetters.Length != 46 ||
                 AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 46 ||
-                PrivateVisibleActionJoinGetters.Length != 9 ||
-                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 9)
+                PrivateVisibleActionJoinGetters.Length != 15 ||
+                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 15)
             {
                 return false;
             }
@@ -1164,7 +1174,8 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             if (!ReferenceEquals(value, DuelSurfaceUnavailable) &&
                 !ReferenceEquals(value, SurfaceShapeMismatch) &&
                 !ReferenceEquals(value, ProjectionIncomplete) &&
-                !ReferenceEquals(value, OutputValidationFailed))
+                !ReferenceEquals(value, OutputValidationFailed) &&
+                !IsSanitizedVisibleDecisionResultV1(value))
             {
                 value = OutputValidationFailed;
             }
@@ -1195,6 +1206,25 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             {
                 return false;
             }
+        }
+
+        private static bool IsSanitizedVisibleDecisionResultV1(byte[] value)
+        {
+            byte[] prefix = Encoding.UTF8.GetBytes(
+                "{\"result_kind\":\"visible_decision\",\"decision\":");
+            if (value == null || value.Length <= prefix.Length ||
+                value.Length > MaximumOutputBytes - OutputPayloadOffset)
+            {
+                return false;
+            }
+            for (int index = 0; index < prefix.Length; index++)
+            {
+                if (value[index] != prefix[index])
+                {
+                    return false;
+                }
+            }
+            return value[value.Length - 1] == (byte)'}';
         }
     }
 }

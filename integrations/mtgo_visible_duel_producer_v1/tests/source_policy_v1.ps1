@@ -2,6 +2,8 @@ $ErrorActionPreference = 'Stop'
 
 $sourcePath = Join-Path $PSScriptRoot '..\VisibleDuelProducerV1.cs'
 $source = [IO.File]::ReadAllText((Resolve-Path $sourcePath))
+$sanitizerPath = Join-Path $PSScriptRoot '..\SanitizedVisibleDecisionV1.cs'
+$completeSource = $source + "`n" + [IO.File]::ReadAllText((Resolve-Path $sanitizerPath))
 
 $required = @(
     'Shiny.Play.Duel.DuelScene',
@@ -9,7 +11,7 @@ $required = @(
     'DataContext',
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
     'AllowedGetters.Length != 46',
-    'PrivateVisibleActionJoinGetters.Length != 9',
+    'PrivateVisibleActionJoinGetters.Length != 15',
     'projection_incomplete',
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
     'MemoryMappedFile.OpenExisting',
@@ -86,7 +88,7 @@ $forbidden = @(
     'ActionFlags'
 )
 foreach ($marker in $forbidden) {
-    if ($source.Contains($marker)) {
+    if ($completeSource.Contains($marker)) {
         throw "forbidden visible-producer marker present: $marker"
     }
 }
@@ -111,8 +113,8 @@ $privateGetterLines = [regex]::Matches(
     $privateGetterSource,
     '"(?:DuelScene|WotC\.MtGO\.Client\.Model\.Reference)\|[^"\r\n]+\|[^"\r\n]+"'
 )
-if ($privateGetterLines.Count -ne 9) {
-    throw 'producer source must contain exactly 9 private visible-action join getters'
+if ($privateGetterLines.Count -ne 15) {
+    throw 'producer source must contain exactly 15 private visible-action join getters'
 }
 
 if (-not $source.Contains('if (localPlayer)') -or

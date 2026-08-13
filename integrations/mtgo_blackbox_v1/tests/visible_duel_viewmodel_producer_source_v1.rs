@@ -3,16 +3,27 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 
-fn producer_source_v1() -> String {
+fn producer_root_v1() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    fs::read_to_string(
-        manifest_dir
-            .parent()
-            .expect("integrations directory")
-            .join("mtgo_visible_duel_producer_v1")
-            .join("VisibleDuelProducerV1.cs"),
-    )
-    .expect("read direct-source producer")
+    manifest_dir
+        .parent()
+        .expect("integrations directory")
+        .join("mtgo_visible_duel_producer_v1")
+}
+
+fn producer_source_v1() -> String {
+    fs::read_to_string(producer_root_v1().join("VisibleDuelProducerV1.cs"))
+        .expect("read direct-source producer")
+}
+
+fn complete_producer_source_v1() -> String {
+    ["VisibleDuelProducerV1.cs", "SanitizedVisibleDecisionV1.cs"]
+        .into_iter()
+        .map(|name| {
+            fs::read_to_string(producer_root_v1().join(name)).expect("read producer source")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn compiled_getter_entries_v1(source: &str) -> HashSet<String> {
@@ -82,13 +93,13 @@ fn managed_producer_private_visible_action_join_allowlist_matches_audit() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 9);
+    assert_eq!(actual.len(), 15);
     assert_eq!(actual, expected);
 }
 
 #[test]
 fn managed_producer_has_no_raw_output_or_side_effect_api_markers() {
-    let source = producer_source_v1();
+    let source = complete_producer_source_v1();
     for forbidden in [
         "ReadProcessMemory",
         "WriteProcessMemory",
@@ -132,7 +143,7 @@ fn managed_producer_has_no_raw_output_or_side_effect_api_markers() {
     assert!(source.contains("AllowedGetters.Contains(exactKey, StringComparer.Ordinal)"));
     assert!(source.contains("private const int MaximumVisibleTextCharacters = 4096;"));
     assert!(source.contains("private const int MaximumVisibleCollectionItems = 1024;"));
-    assert!(source.matches("return ProjectionIncomplete;").count() >= 2);
+    assert!(source.contains("return built ? visibleDecision : ProjectionIncomplete;"));
 }
 
 #[test]
@@ -164,8 +175,8 @@ fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
             "missing exact visible getter: {marker}"
         );
     }
-    assert!(source.contains("return ProjectionIncomplete;"));
-    assert!(!source.contains("JsonSerializer"));
+    assert!(source.contains("TryBuildFirstSanitizedVisibleDecisionV1("));
+    assert!(source.contains("return built ? visibleDecision : ProjectionIncomplete;"));
     assert!(!source.contains("JavaScriptSerializer"));
 }
 

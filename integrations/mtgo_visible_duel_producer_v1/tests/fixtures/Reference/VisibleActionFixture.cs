@@ -11,6 +11,24 @@ namespace WotC.MtGO.Client.Model.Play
     {
         string Name { get; }
         ActionType ActionType { get; }
+        bool IsDefault { get; }
+    }
+
+    public interface IGame
+    {
+        int CurrentTurn { get; }
+    }
+
+    public sealed class VisibleFixtureGame : IGame
+    {
+        public int CurrentTurn
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("Game.CurrentTurn");
+                return 1;
+            }
+        }
     }
 
     public interface ICardAction : IGameAction
@@ -38,11 +56,13 @@ namespace WotC.MtGO.Client.Model.Play
             {
                 "Action.Name",
                 "Action.ActionType",
+                "Action.IsDefault",
                 "CardAction.CanBePerformedLocally",
                 "CardAction.IsManaAbility",
                 "CardAction.IsActivatedAbility",
                 "CardAction.IsCastAction",
-                "CardAction.ModeOptions"
+                "CardAction.ModeOptions",
+                "Game.CurrentTurn"
             };
             foreach (string name in expected)
             {
@@ -62,7 +82,7 @@ namespace WotC.MtGO.Client.Model.Play
             get
             {
                 PrivateVisibleActionGetterProbeV1.Record("Action.Name");
-                return "fixture-visible-action";
+                return NameFixture;
             }
         }
 
@@ -72,6 +92,15 @@ namespace WotC.MtGO.Client.Model.Play
             {
                 PrivateVisibleActionGetterProbeV1.Record("Action.ActionType");
                 return ActionType.CardAction;
+            }
+        }
+
+        public bool IsDefault
+        {
+            get
+            {
+                PrivateVisibleActionGetterProbeV1.Record("Action.IsDefault");
+                return IsDefaultFixture;
             }
         }
 
@@ -90,7 +119,7 @@ namespace WotC.MtGO.Client.Model.Play
             get
             {
                 PrivateVisibleActionGetterProbeV1.Record("CardAction.IsManaAbility");
-                return false;
+                return ManaFixture;
             }
         }
 
@@ -100,7 +129,7 @@ namespace WotC.MtGO.Client.Model.Play
             {
                 PrivateVisibleActionGetterProbeV1.Record(
                     "CardAction.IsActivatedAbility");
-                return false;
+                return ActivatedFixture;
             }
         }
 
@@ -109,7 +138,7 @@ namespace WotC.MtGO.Client.Model.Play
             get
             {
                 PrivateVisibleActionGetterProbeV1.Record("CardAction.IsCastAction");
-                return true;
+                return CastFixture;
             }
         }
 
@@ -121,5 +150,25 @@ namespace WotC.MtGO.Client.Model.Play
                 return new string[0];
             }
         }
+
+        public string NameFixture { get; set; } = "fixture-visible-action";
+        public bool ManaFixture { get; set; }
+        public bool ActivatedFixture { get; set; }
+        public bool CastFixture { get; set; } = true;
+        public bool IsDefaultFixture { get; set; }
+    }
+}
+
+namespace WotC.MtGO.Client.Model
+{
+    public enum MagicColors
+    {
+        Invalid = 0,
+        White = 1,
+        Blue = 2,
+        Black = 4,
+        Red = 8,
+        Green = 16,
+        Colorless = 32
     }
 }

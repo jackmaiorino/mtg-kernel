@@ -97,10 +97,16 @@ and invoked that producer once against the exact client, receiving only the
 fixed `duel_surface_unavailable` abstention while no duel was open. It
 deliberately invoked no MTGO getter in that qualified version. Version 1.2 now
 has an offline-qualified layer for player-visible chrome, player panels,
-public zones, cards, attachments, and counters. It never enumerates either
-library or an opponent's hidden hand, bounds and type checks temporary values,
-discards the values, and still emits only `projection_incomplete`. Version 1.2 has not been
-loaded into MTGO. This work does not implement a complete projection, admit a
+public zones, cards, attachments, and counters. Version 1.4 adds an offline
+synthetic sanitized-success slice for an untouched 60-card Turn 1 Main 1
+opening and
+passes that output through the strict Rust schema validator. It never enumerates
+either library or an opponent's hidden hand or action collection, and it never
+reads a face-down exiled card name. Version 1.4 has not been loaded into MTGO,
+and the live broker still accepts only fixed abstentions. The synthetic Pass
+control has not yet been confirmed in a real duel, and later special visible
+game state remains incomplete. This work
+does not implement a complete projection, admit a
 live decision, authorize event entry or spending, or send input. Until the
 reviewed complete producer and corpus exist, DXGI remains a candidate source
 for board and legal-control reconstruction; direct Game Log parsing remains a

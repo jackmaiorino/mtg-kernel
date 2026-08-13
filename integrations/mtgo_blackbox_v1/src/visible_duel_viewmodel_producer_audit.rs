@@ -16,7 +16,7 @@ const ROOT_TYPE_V1: &str = "Shiny.Play.Duel.DuelScene";
 const ROOT_ACCESSOR_V1: &str = "FrameworkElement.DataContext";
 const ROOT_VIEWMODEL_TYPE_V1: &str = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
 const AUDIT_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-viewmodel-producer-audit-v1";
-const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 9;
+const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 15;
 const REFERENCE_ASSEMBLY_SHA256_V1: &str =
     "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 
@@ -61,6 +61,7 @@ pub struct MtgoVisibleDuelViewModelProducerAuditV1 {
     pub private_visible_action_join_reference_assembly_sha256: String,
     pub first_exported_success_schema: String,
     pub emits_fixed_abstention_only_until_projection_complete: bool,
+    pub sanitized_player_visible_decision_slice_present: bool,
     pub unknown_types_reject: bool,
     pub unknown_properties_reject: bool,
     pub recursive_reflection_forbidden: bool,
@@ -184,10 +185,11 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         root_viewmodel_type: ROOT_VIEWMODEL_TYPE_V1.to_owned(),
         allowed_property_getters,
         private_visible_action_join_getters,
-        private_visible_action_join_reference_assembly_sha256:
-            REFERENCE_ASSEMBLY_SHA256_V1.to_owned(),
+        private_visible_action_join_reference_assembly_sha256: REFERENCE_ASSEMBLY_SHA256_V1
+            .to_owned(),
         first_exported_success_schema: FIRST_EXPORTED_SUCCESS_SCHEMA_V1.to_owned(),
-        emits_fixed_abstention_only_until_projection_complete: true,
+        emits_fixed_abstention_only_until_projection_complete: false,
+        sanitized_player_visible_decision_slice_present: true,
         unknown_types_reject: true,
         unknown_properties_reject: true,
         recursive_reflection_forbidden: true,
@@ -204,10 +206,10 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         output_transport_status_contains_game_information: false,
         visible_chrome_getter_layer_present: true,
         visible_chrome_getter_count: 19,
-        visible_chrome_values_exported: false,
+        visible_chrome_values_exported: true,
         visible_zone_and_card_getter_layer_present: true,
         visible_zone_and_card_getter_count: 23,
-        visible_zone_and_card_values_exported: false,
+        visible_zone_and_card_values_exported: true,
         private_visible_action_join_layer_present: true,
         private_visible_action_join_getter_count: PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1,
         private_action_objects_exported: false,
@@ -243,7 +245,8 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
             "producer root, surface, information boundary, and output schema must be exact",
         ));
     }
-    if !audit.emits_fixed_abstention_only_until_projection_complete
+    if audit.emits_fixed_abstention_only_until_projection_complete
+        || !audit.sanitized_player_visible_decision_slice_present
         || !audit.unknown_types_reject
         || !audit.unknown_properties_reject
         || !audit.recursive_reflection_forbidden
@@ -260,10 +263,10 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.output_transport_status_contains_game_information
         || !audit.visible_chrome_getter_layer_present
         || audit.visible_chrome_getter_count != 19
-        || audit.visible_chrome_values_exported
+        || !audit.visible_chrome_values_exported
         || !audit.visible_zone_and_card_getter_layer_present
         || audit.visible_zone_and_card_getter_count != 23
-        || audit.visible_zone_and_card_values_exported
+        || !audit.visible_zone_and_card_values_exported
         || !audit.private_visible_action_join_layer_present
         || audit.private_visible_action_join_getter_count
             != PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1
@@ -382,14 +385,50 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
         ),
         (
             "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "Game",
+            BoundVisibleActionObject,
+        ),
+        (
+            "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.OptionButton",
             "Action",
             VisibleEnabledPromptControl,
         ),
         (
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel",
+            "Color",
+            BoundVisibleActionObject,
+        ),
+        (
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.PromptBoxViewModel",
+            "DoneButton",
+            VisibleEnabledPromptControl,
+        ),
+        (
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.PromptBoxViewModel",
+            "OkPromptButton",
+            VisibleEnabledPromptControl,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.IGame",
+            "CurrentTurn",
+            BoundVisibleActionObject,
+        ),
+        (
             "WotC.MtGO.Client.Model.Reference.dll",
             "WotC.MtGO.Client.Model.Play.IGameAction",
             "ActionType",
+            BoundVisibleActionObject,
+        ),
+        (
+            "WotC.MtGO.Client.Model.Reference.dll",
+            "WotC.MtGO.Client.Model.Play.IGameAction",
+            "IsDefault",
             BoundVisibleActionObject,
         ),
         (
@@ -487,7 +526,7 @@ mod tests {
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
         assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 23);
         assert!(checked.private_visible_action_join_layer_present_v1());
-        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 9);
+        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 15);
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());
         assert!(!checked.safe_for_live_semantic_evidence_v1());

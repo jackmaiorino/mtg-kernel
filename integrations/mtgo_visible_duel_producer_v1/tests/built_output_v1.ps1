@@ -11,6 +11,7 @@ $expectedReferences = @(
     'PresentationCore',
     'PresentationFramework',
     'System.Core',
+    'System.Runtime.Serialization',
     'WindowsBase'
 )
 $actualReferences = @($assembly.GetReferencedAssemblies().Name | Sort-Object -Unique)

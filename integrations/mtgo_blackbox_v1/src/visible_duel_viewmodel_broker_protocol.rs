@@ -59,6 +59,27 @@ pub enum MtgoVisibleDuelViewModelBrokerResultV1 {
     },
 }
 
+/// Strictly parses and validates the producer's first outward JSON value.
+/// The returned enum has no raw client object, internal identifier, free-form
+/// diagnostic, transport metadata, model authority, or input authority.
+pub fn parse_and_validate_visible_duel_producer_result_v1(
+    bytes: &[u8],
+) -> Result<MtgoVisibleDuelViewModelBrokerResultV1, MtgoContractErrorV1> {
+    if bytes.is_empty() || bytes.len() > 1_048_568 {
+        return Err(error_v1(
+            "visible_duel_producer_result_length",
+            "producer result must fit the broker-created bounded channel",
+        ));
+    }
+    let result: MtgoVisibleDuelViewModelBrokerResultV1 = serde_json::from_slice(bytes)
+        .map_err(|error| error_v1("visible_duel_producer_result_json", error.to_string()))?;
+    if let MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { decision } = &result {
+        validate_player_visible_expected_v2(decision)?;
+        validate_player_visible_duel_decision_input_strict_v1(decision)?;
+    }
+    Ok(result)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoVisibleDuelViewModelBrokerResponseV1 {
@@ -388,6 +409,48 @@ mod tests {
                 actor: MtgoPlayerRelativeRoleV1::SeatedPlayer,
             }],
         }
+    }
+
+    #[test]
+    fn strict_producer_result_parser_accepts_visible_decision_and_fixed_abstention() {
+        let visible = MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
+            decision: Box::new(decision_v1()),
+        };
+        let bytes = serde_json::to_vec(&visible).unwrap();
+        assert!(matches!(
+            parse_and_validate_visible_duel_producer_result_v1(&bytes).unwrap(),
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. }
+        ));
+        let abstained = br#"{"result_kind":"abstained","reason":"projection_incomplete"}"#;
+        assert!(matches!(
+            parse_and_validate_visible_duel_producer_result_v1(abstained).unwrap(),
+            MtgoVisibleDuelViewModelBrokerResultV1::Abstained {
+                reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1::ProjectionIncomplete
+            }
+        ));
+    }
+
+    #[test]
+    fn strict_producer_result_parser_rejects_internal_unknown_and_malformed_values() {
+        let visible = MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
+            decision: Box::new(decision_v1()),
+        };
+        let mut value = serde_json::to_value(&visible).unwrap();
+        value["decision"]["current_state"]["hidden_library_order"] = serde_json::json!(["secret"]);
+        assert!(parse_and_validate_visible_duel_producer_result_v1(
+            &serde_json::to_vec(&value).unwrap()
+        )
+        .is_err());
+
+        let mut internal = serde_json::to_value(&visible).unwrap();
+        internal["decision"]["ordered_legal_actions"][0]["client_object_id"] =
+            serde_json::json!(991);
+        assert!(parse_and_validate_visible_duel_producer_result_v1(
+            &serde_json::to_vec(&internal).unwrap()
+        )
+        .is_err());
+        assert!(parse_and_validate_visible_duel_producer_result_v1(b"{}").is_err());
+        assert!(parse_and_validate_visible_duel_producer_result_v1(b"").is_err());
     }
 
     fn response_v1(
