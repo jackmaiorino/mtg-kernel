@@ -2328,7 +2328,6 @@ fn visible_accessibility_probe_is_read_only_private_and_requires_pixel_corrobora
         "safe_for_semantic_evidence: false",
         "safe_for_policy_scoring: false",
         "safe_for_input: false",
-        "private_match_set_commitment_sha256",
     ] {
         assert!(
             source.contains(required),
@@ -2367,6 +2366,8 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
     let binary = include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_v1.rs");
     let pixel_binary =
         include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_pixels_v1.rs");
+    let review_binary =
+        include_str!("../src/bin/probe_mtgo_visible_accessibility_catalog_review_v1.rs");
 
     for required in [
         "fn known_label_catalog_v1()",
@@ -2393,6 +2394,8 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
     assert!(binary.contains("run_visible_accessibility_known_label_catalog_cli_v1"));
     assert!(pixel_binary
         .contains("run_visible_accessibility_known_label_catalog_pixel_corroboration_cli_v1"));
+    assert!(review_binary
+        .contains("run_visible_accessibility_known_label_catalog_review_artifact_cli_v1"));
     for required in [
         "probe_mtgo_visible_accessibility_known_label_catalog_with_pixel_corroboration_v1",
         "build_known_label_pixel_catalog_summary_v1",
@@ -2406,6 +2409,15 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         "visible_absence_reviewed_when_match_count_is_zero",
         "every_matched_region_visibly_contains_exact_catalog_label",
         "production_evaluation_ratified_v1(&self) -> bool",
+        "persist_mtgo_visible_accessibility_catalog_review_artifact_v1",
+        "before-visible-client.png",
+        "after-visible-client.png",
+        "review-template.json",
+        "contains_only_player_visible_pixels_and_opaque_commitments: true",
+        "raw_or_unmatched_visible_text_exposed: false",
+        "pixel_coordinates_exposed: false",
+        "accessibility_metadata_exposed: false",
+        "process_or_window_metadata_exposed: false",
     ] {
         assert!(
             source.contains(required),
@@ -2425,6 +2437,13 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
         "pub dpi: u32",
         "pub eligible_visible_element_count",
         "pub visible_named_element_count",
+        "pub source_window_identity_commitment_sha256",
+        "pub before_capture_commitment_sha256",
+        "pub after_capture_commitment_sha256",
+        "pub private_match_set_commitment_sha256",
+        "pub private_pixel_match_set_commitment_sha256",
+        "pub rect_client_px",
+        "pub capture_bracket_identity_confirmed",
     ] {
         assert!(
             !source.contains(forbidden_public_metadata),
@@ -2433,7 +2452,9 @@ fn visible_accessibility_catalog_is_fixed_hash_only_and_non_actionable() {
     }
     for forbidden in ["--query", "CurrentName", "GetCurrentPattern", "SendInput"] {
         assert!(
-            !binary.contains(forbidden) && !pixel_binary.contains(forbidden),
+            !binary.contains(forbidden)
+                && !pixel_binary.contains(forbidden)
+                && !review_binary.contains(forbidden),
             "visible accessibility catalog binary exposes forbidden capability: {forbidden}"
         );
     }
@@ -2464,7 +2485,7 @@ fn visible_accessibility_pixel_corroboration_is_capture_bracketed_and_non_action
         "safe_for_semantic_evidence: false",
         "safe_for_policy_scoring: false",
         "safe_for_input: false",
-        "private_pixel_match_set_commitment_sha256",
+        "visible_pixel_match_set_commitment_sha256",
     ] {
         assert!(
             source.contains(required),
