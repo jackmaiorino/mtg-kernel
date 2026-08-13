@@ -8,6 +8,7 @@ use crate::{
 use sha2::{Digest, Sha256};
 
 const DIRECT_VISIBLE_SELECTION_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-duel-scoring-selection-v1";
+const DIRECT_VISIBLE_REFRESH_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-duel-dispatch-refresh-v1";
 
 /// Result of applying a player-visible-only scorer to the exact first outward
 /// bytes released by the strict producer boundary. An abstention never calls
@@ -89,6 +90,111 @@ impl CheckedUntrustedMtgoDirectVisibleModelSelectionV1 {
     pub(crate) fn deployment_commitment_sha256_v1(&self) -> &str {
         &self.deployment_commitment_sha256
     }
+}
+
+/// One selected action whose exact producer bytes were observed again after
+/// scoring and remained byte-identical. The live producer independently
+/// rebuilds and hashes the decision once more on MTGO's UI thread before its
+/// private client-action call. This outer refresh closes selection drift but
+/// still grants no input, event-entry, or spending authority.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1;
+/// fn cannot_dispatch(value: &CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1) {
+///     let _ = value.dispatch();
+///     let _ = value.client_action();
+///     let _ = value.process_handle();
+/// }
+/// ```
+pub struct CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1 {
+    exact_producer_result_sha256: String,
+    selected_index: usize,
+    selected_action: MtgoPlayerVisibleDuelActionV1,
+    selection_commitment_sha256: String,
+    refresh_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1 {
+    pub fn selected_index_v1(&self) -> usize {
+        self.selected_index
+    }
+
+    pub fn selected_action_v1(&self) -> &MtgoPlayerVisibleDuelActionV1 {
+        &self.selected_action
+    }
+
+    pub fn selection_commitment_sha256_v1(&self) -> &str {
+        &self.selection_commitment_sha256
+    }
+
+    pub fn refresh_commitment_sha256_v1(&self) -> &str {
+        &self.refresh_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    #[allow(dead_code)] // Reserved for the private authorized dispatch owner.
+    pub(crate) fn exact_producer_result_sha256_v1(&self) -> &str {
+        &self.exact_producer_result_sha256
+    }
+}
+
+/// Requires a second exact producer observation after scoring. Any abstention,
+/// byte change, action-order change, or visible-state change rejects. The
+/// returned value is coordinate-free and non-authorizing.
+pub fn refresh_direct_visible_selection_before_dispatch_v1(
+    selection: CheckedUntrustedMtgoDirectVisibleModelSelectionV1,
+    refreshed_exact_producer_result: &[u8],
+) -> Result<CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1, MtgoContractErrorV1> {
+    let MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { decision } =
+        parse_and_validate_visible_duel_producer_result_v1(refreshed_exact_producer_result)?
+    else {
+        return Err(error_v1(
+            "direct_visible_duel_refresh_abstained",
+            "the refreshed producer result is not a complete visible decision",
+        ));
+    };
+    let refreshed_sha256 = sha256_v1(refreshed_exact_producer_result);
+    if refreshed_sha256 != selection.exact_producer_result_sha256 {
+        return Err(error_v1(
+            "direct_visible_duel_refresh_changed",
+            "the exact producer result changed after model selection",
+        ));
+    }
+    if decision.ordered_legal_actions.get(selection.selected_index)
+        != Some(&selection.selected_action)
+    {
+        return Err(error_v1(
+            "direct_visible_duel_refresh_selection_mismatch",
+            "the refreshed action order does not retain the selected visible action",
+        ));
+    }
+    let refresh_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_REFRESH_DOMAIN_V1,
+        &[
+            refreshed_sha256.as_bytes(),
+            selection.selection_commitment_sha256.as_bytes(),
+            &(selection.selected_index as u64).to_be_bytes(),
+            b"second_exact_visible_observation_matches_no_input_authority",
+        ],
+    );
+    Ok(CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1 {
+        exact_producer_result_sha256: refreshed_sha256,
+        selected_index: selection.selected_index,
+        selected_action: selection.selected_action,
+        selection_commitment_sha256: selection.selection_commitment_sha256,
+        refresh_commitment_sha256,
+    })
 }
 
 /// Strictly parses one exact producer result and, only for a complete visible
@@ -468,6 +574,102 @@ mod tests {
         assert_eq!(
             first.deployment_commitment_sha256_v1(),
             second.deployment_commitment_sha256_v1()
+        );
+    }
+
+    #[test]
+    fn second_exact_observation_preserves_only_the_selected_visible_action() {
+        let bytes = visible_result_v1();
+        let mut scorer = RecordingVisibleScorerV1 {
+            called: false,
+            selected_index: 1,
+            wrong_width: false,
+            saw_forbidden_field: false,
+        };
+        let CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Selected(selection) =
+            score_and_select_strict_visible_duel_producer_result_v1(
+                &bytes,
+                &"f".repeat(64),
+                &mut scorer,
+            )
+            .unwrap()
+        else {
+            panic!("complete decision unexpectedly abstained");
+        };
+        let refreshed =
+            refresh_direct_visible_selection_before_dispatch_v1(selection, &bytes).unwrap();
+        assert_eq!(refreshed.selected_index_v1(), 1);
+        assert!(matches!(
+            refreshed.selected_action_v1(),
+            MtgoPlayerVisibleDuelActionV1::PlayLand { .. }
+        ));
+        assert_eq!(
+            refreshed.exact_producer_result_sha256_v1(),
+            sha256_v1(&bytes)
+        );
+        assert!(!refreshed.safe_for_live_input_v1());
+        assert!(!refreshed.permits_event_entry_v1());
+        assert!(!refreshed.permits_spending_v1());
+    }
+
+    #[test]
+    fn changed_state_action_order_or_abstention_cannot_refresh_a_selection() {
+        fn selection_v1(bytes: &[u8]) -> CheckedUntrustedMtgoDirectVisibleModelSelectionV1 {
+            let mut scorer = RecordingVisibleScorerV1 {
+                called: false,
+                selected_index: 1,
+                wrong_width: false,
+                saw_forbidden_field: false,
+            };
+            let CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Selected(selection) =
+                score_and_select_strict_visible_duel_producer_result_v1(
+                    bytes,
+                    &"1".repeat(64),
+                    &mut scorer,
+                )
+                .unwrap()
+            else {
+                panic!("complete decision unexpectedly abstained");
+            };
+            selection
+        }
+
+        let bytes = visible_result_v1();
+        let mut changed_state = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap();
+        changed_state["decision"]["current_state"]["life_totals"][0] = serde_json::json!(19);
+        let changed_state = serde_json::to_vec(&changed_state).unwrap();
+        assert_eq!(
+            refresh_direct_visible_selection_before_dispatch_v1(
+                selection_v1(&bytes),
+                &changed_state,
+            )
+            .err()
+            .unwrap()
+            .code(),
+            "direct_visible_duel_refresh_changed"
+        );
+
+        let mut reordered = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap();
+        reordered["decision"]["ordered_legal_actions"]
+            .as_array_mut()
+            .unwrap()
+            .reverse();
+        let reordered = serde_json::to_vec(&reordered).unwrap();
+        assert_eq!(
+            refresh_direct_visible_selection_before_dispatch_v1(selection_v1(&bytes), &reordered)
+                .err()
+                .unwrap()
+                .code(),
+            "direct_visible_duel_refresh_changed"
+        );
+
+        let abstained = br#"{"result_kind":"abstained","reason":"projection_incomplete"}"#;
+        assert_eq!(
+            refresh_direct_visible_selection_before_dispatch_v1(selection_v1(&bytes), abstained)
+                .err()
+                .unwrap()
+                .code(),
+            "direct_visible_duel_refresh_abstained"
         );
     }
 }
