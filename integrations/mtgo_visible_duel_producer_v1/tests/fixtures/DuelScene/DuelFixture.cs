@@ -10,8 +10,11 @@ namespace WotC.MtGO.Client.Model.Play
     {
         Invalid = 0,
         Upkeep = 2,
+        Draw = 3,
         PreCombatMain = 4,
-        PostCombatMain = 10
+        BeginCombat = 5,
+        PostCombatMain = 10,
+        EndOfTurn = 11
     }
 
     public enum Counter

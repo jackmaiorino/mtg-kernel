@@ -360,13 +360,14 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             // This emitted slice deliberately excludes temporary revealed
             // zones. Until every revealed-zone presentation can be assigned to
             // the exact public state field, omitting one would be incomplete.
-            // V1.15 admits ordinary noncombat main-phase decisions with an
-            // empty stack and no visible modal. Life, mana, hand and library
-            // counts, battlefield, graveyard, and exile are mapped from their
-            // rendered presentation values. Combat, stack items, revealed
-            // windows, and Initiative still abstain until represented fully.
+            // V1.16 admits ordinary noncombat priority decisions during
+            // upkeep, draw, either main phase, and the end step with an empty
+            // stack and no visible modal. Life, mana, hand and library counts,
+            // battlefield, graveyard, and exile are mapped from their rendered
+            // presentation values. Combat, stack items, revealed windows, and
+            // Initiative still abstain until represented fully.
             if (!seated.Priority ||
-                (phase != "main1" && phase != "main2") ||
+                !IsSupportedNoncombatPriorityPhaseV1(phase) ||
                 seated.Revealed.Count != 0 || opponent.Revealed.Count != 0 ||
                 (opponent.Hand.Count != 0 && opponent.Hand.Count != opponent.HandCount) ||
                 !TryRequireNoUnrepresentedVisibleModalSurfaceV1(viewModel) ||
@@ -926,6 +927,15 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 default: return false;
             }
             return true;
+        }
+
+        private static bool IsSupportedNoncombatPriorityPhaseV1(string phase)
+        {
+            return phase == "upkeep" ||
+                phase == "draw" ||
+                phase == "main1" ||
+                phase == "main2" ||
+                phase == "end";
         }
 
         private static bool TryParseVisibleTurnV1(object? value, out uint turn)

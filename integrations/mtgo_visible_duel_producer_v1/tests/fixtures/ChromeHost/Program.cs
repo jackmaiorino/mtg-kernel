@@ -513,7 +513,7 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     simpleAction.XTargetDivisorFixture = 1;
 
                     // The original untouched opening remains inside the
-                    // broader noncombat main-phase slice.
+                    // broader noncombat priority slice.
                     int openingStatus =
                         VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
                     int openingLength = view.ReadInt32(0);
@@ -534,21 +534,38 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                     }
 
                     // The semantic turn is derived only from the rendered
-                    // GameTurnText. Non-canonical text and unsupported
-                    // non-main phases fail closed.
+                    // GameTurnText. Non-canonical text fails closed.
                     viewModel.GameTurnTextFixture = "Turn 01";
                     if (!ExportsProjectionIncompleteV1(channelName, view))
                     {
                         return 26;
                     }
                     viewModel.GameTurnTextFixture = "Turn 2";
+
+                    // Empty-stack priority during upkeep, draw, and end step
+                    // uses the same complete visible state and action surface.
                     viewModel.CurrentPhaseFixture = GamePhase.Upkeep;
-                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    if (!ExportsVisiblePhaseV1(channelName, view, "upkeep"))
                     {
                         return 27;
                     }
+                    viewModel.CurrentPhaseFixture = GamePhase.Draw;
+                    if (!ExportsVisiblePhaseV1(channelName, view, "draw"))
+                    {
+                        return 59;
+                    }
+                    viewModel.CurrentPhaseFixture = GamePhase.EndOfTurn;
+                    if (!ExportsVisiblePhaseV1(channelName, view, "end"))
+                    {
+                        return 60;
+                    }
+                    viewModel.CurrentPhaseFixture = GamePhase.BeginCombat;
+                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    {
+                        return 61;
+                    }
 
-                    // Exercise the general noncombat main-phase slice with
+                    // Exercise the general noncombat priority slice with
                     // visibly changed game values and populated public zones.
                     viewModel.CurrentPhaseFixture = GamePhase.PostCombatMain;
                     viewModel.GameTurnTextFixture =
@@ -737,6 +754,26 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
             view.ReadArray(8, bytes, 0, bytes.Length);
             return Encoding.UTF8.GetString(bytes) ==
                 "{\"result_kind\":\"abstained\",\"reason\":\"projection_incomplete\"}";
+        }
+
+        private static bool ExportsVisiblePhaseV1(
+            string channelName,
+            MemoryMappedViewAccessor view,
+            string expectedPhase)
+        {
+            int status = VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+            int length = view.ReadInt32(0);
+            if (status != 0 || length <= 0 || length > Capacity - 8)
+            {
+                return false;
+            }
+            byte[] bytes = new byte[length];
+            view.ReadArray(8, bytes, 0, bytes.Length);
+            string observed = Encoding.UTF8.GetString(bytes);
+            return observed.StartsWith(
+                    "{\"result_kind\":\"visible_decision\",\"decision\":",
+                    StringComparison.Ordinal) &&
+                observed.Contains("\"phase\":\"" + expectedPhase + "\"");
         }
 
         private static bool TryReadInitiativeHolderFixtureV1(

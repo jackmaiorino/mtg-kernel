@@ -7,7 +7,7 @@ direct player-visible MTGO projection. It locates exactly one visible
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.15 invokes only exact allowlisted getters for the player-visible game
+Version 1.16 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
@@ -38,7 +38,8 @@ remain local and are discarded. The producer can serialize a bounded
 player-visible values, or return one of the fixed abstentions. The slice is
 explicit about which player-relative rendered exile panel contains each
 visible exiled object, so later positions cannot collapse the two UI panels.
-The slice supports noncombat Main 1 and Main 2 decisions on any bounded turn.
+The slice supports empty-stack noncombat priority decisions during upkeep,
+draw, Main 1, Main 2, and the end step on any bounded turn.
 It maps visible life, mana, hand and library counts, battlefield, graveyards,
 exile, attachments, and the seated player's visible hand. Stack items, combat,
 revealed-zone windows, Initiative, choice prompts, and modal choices remain
@@ -61,9 +62,10 @@ strict Rust producer-result validator. It booby-traps either-library
 enumeration, opponent hidden-hand enumeration, closed revealed-zone
 enumeration, opponent card-action collection inspection, and face-down name
 reads. It also verifies that no hidden fixture value enters the output. The
-fixture validates both the original untouched opening and a Turn 4 Main 2
-state with changed life, mana, hand and library counts and populated
-battlefield, graveyard, and exile zones. The native offline broker test
+fixture validates the original untouched opening, upkeep, draw, and end-step
+priority, plus a Turn 4 Main 2 state with changed life, mana, hand and library
+counts and populated battlefield, graveyard, and exile zones. The native
+offline broker test
 observes the synthetic decision, dispatches its Pass index, and proves neither
 that dispatch nor another index for the same decision can be replayed.
 
@@ -90,11 +92,11 @@ represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
 abstention. Target-bearing, X-bearing, sideboard, fake, confirmation, and
 mode-count action state likewise forces abstention until its subsequent
-player-visible modal is represented. Version 1.15 has not been loaded into
+player-visible modal is represented. Version 1.16 has not been loaded into
 MTGO.
 The deterministic Release build tested outside the client is at
-`D:\mtgo-visible-duel-producer-v1.15-codex` with DLL SHA-256
-`17fcd2656e5fbd4d0cb29155de186f57d7eaa29cc31809ee7c226d361ae6558d`.
+`D:\mtgo-visible-duel-producer-v1.16-codex` with DLL SHA-256
+`6caf04df1d8cb462a306680b4a3a0ef26878fae95f60cc1898c84d0598308885`.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.
 The next tranche must confirm the exact client pass control, add later special
