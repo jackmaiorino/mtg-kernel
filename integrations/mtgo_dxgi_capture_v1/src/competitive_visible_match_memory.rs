@@ -15,6 +15,8 @@ const COMBINED_COMPETITIVE_VISIBLE_GAME_MEMORY_DOMAIN_V1: &[u8] =
     b"mtgo-combined-competitive-player-visible-game-memory-v1";
 const COMPETITIVE_VISIBLE_GAME_OUTCOME_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-player-visible-game-outcome-v1";
+const COMPETITIVE_COMPLETED_MATCH_HISTORY_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-player-visible-completed-match-history-v1";
 
 pub const MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1: u32 = 1;
 
@@ -174,6 +176,60 @@ pub trait MtgoCompetitiveExternalPublicHistoryConsumerV1 {
     fn finish_public_history_v1(&mut self) -> Result<Self::Output, String>;
 }
 
+/// Player-visible bounds for one complete earlier-game history supplied to a
+/// pregame or sideboard head. Event mode and all adapter lineage stay outside
+/// this callback because they are not needed to choose a game action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MtgoCompetitiveExternalCompletedMatchHistoryHeaderV1 {
+    pub completed_game_count: usize,
+}
+
+/// One completed game's visible identity inside a best-of-three history. The
+/// two source streams that follow retain independent clocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MtgoCompetitiveExternalCompletedGameHeaderV1 {
+    pub game_number: u8,
+    pub winner: MtgoCompetitivePlayerRelativeGameWinnerV1,
+    pub confirmed_decision_count: usize,
+    pub public_event_count: usize,
+}
+
+/// Kernel-owned consumer boundary for the ordered completed games in one
+/// match. Within each game, confirmed decisions and rendered Game Log facts
+/// remain separate ordered streams. No callback exposes event or match IDs,
+/// commitments, raw text, paths, pixels, coordinates, or input authority.
+pub trait MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1 {
+    type Output;
+
+    fn begin_completed_match_history_v1(
+        &mut self,
+        header: MtgoCompetitiveExternalCompletedMatchHistoryHeaderV1,
+    ) -> Result<(), String>;
+
+    fn begin_completed_game_v1(
+        &mut self,
+        header: MtgoCompetitiveExternalCompletedGameHeaderV1,
+    ) -> Result<(), String>;
+
+    fn consume_confirmed_decision_v1(
+        &mut self,
+        decision: MtgoCompetitiveExternalConfirmedDecisionV1,
+    ) -> Result<(), String>;
+
+    fn finish_confirmed_decision_stream_v1(&mut self) -> Result<(), String>;
+
+    fn consume_public_game_log_event_v1(
+        &mut self,
+        event: MtgoCompetitiveExternalPublicGameLogEventV1<'_>,
+    ) -> Result<(), String>;
+
+    fn finish_public_game_log_stream_v1(&mut self) -> Result<(), String>;
+
+    fn finish_completed_game_v1(&mut self) -> Result<(), String>;
+
+    fn finish_completed_match_history_v1(&mut self) -> Result<Self::Output, String>;
+}
+
 /// Replays the complete current player-visible history snapshot for one
 /// in-progress League or Challenge game. A consumer must replace its prior
 /// imported MTGO history at `begin_public_history_v1`; repeated refreshes are
@@ -289,6 +345,26 @@ pub struct OpaqueMtgoCompetitiveVisibleGameOutcomeV1 {
     outcome_commitment_sha256: String,
 }
 
+/// Move-only complete public history for the games already finished in one
+/// League or Challenge match. A game-two decision owns exactly game one. A
+/// game-three decision owns games one and two. The private outcomes retain the
+/// exact adapter lineage while consumers receive only player-visible facts.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveCompletedMatchHistoryV1;
+/// let _forged = OpaqueMtgoCompetitiveCompletedMatchHistoryV1 {};
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoCompetitiveCompletedMatchHistoryV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>();
+/// ```
+pub struct OpaqueMtgoCompetitiveCompletedMatchHistoryV1 {
+    outcomes: Vec<OpaqueMtgoCompetitiveVisibleGameOutcomeV1>,
+    history_commitment_sha256: String,
+}
+
 pub(crate) struct MtgoCompetitiveVisibleGameOutcomeLineageV1<'a> {
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub event_identity_sha256: &'a str,
@@ -345,6 +421,171 @@ impl OpaqueMtgoCompetitiveVisibleGameOutcomeV1 {
         self.memory
             .into_match_log_lease_and_confirmed_decisions_v1()
     }
+}
+
+impl OpaqueMtgoCompetitiveCompletedMatchHistoryV1 {
+    pub fn completed_game_count_v1(&self) -> usize {
+        self.outcomes.len()
+    }
+
+    pub fn ready_for_kernel_auxiliary_history_import_v1(&self) -> bool {
+        true
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub fn visit_external_completed_match_history_v1<C>(
+        &self,
+        consumer: &mut C,
+    ) -> Result<C::Output, String>
+    where
+        C: MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
+    {
+        validate_completed_match_history_v1(&self.outcomes)?;
+        consumer.begin_completed_match_history_v1(
+            MtgoCompetitiveExternalCompletedMatchHistoryHeaderV1 {
+                completed_game_count: self.outcomes.len(),
+            },
+        )?;
+        for outcome in &self.outcomes {
+            let memory = &outcome.memory;
+            let lineage = memory.game_log.lineage_v1();
+            consumer.begin_completed_game_v1(MtgoCompetitiveExternalCompletedGameHeaderV1 {
+                game_number: lineage.game_number,
+                winner: outcome.winner,
+                confirmed_decision_count: memory.confirmed_decision_count_v1(),
+                public_event_count: memory.public_event_count_v1(),
+            })?;
+            for index in 0..memory.confirmed_decision_count_v1() {
+                let decision = memory.confirmed_decision_v1(index).ok_or_else(|| {
+                    "completed-match confirmed decision stream changed while visited".to_owned()
+                })?;
+                consumer.consume_confirmed_decision_v1(
+                    MtgoCompetitiveExternalConfirmedDecisionV1 {
+                        within_source_position: decision.sequence_v1(),
+                        player_visible_decision: decision.player_visible_decision_v1().clone(),
+                    },
+                )?;
+            }
+            consumer.finish_confirmed_decision_stream_v1()?;
+            for index in 0..memory.public_event_count_v1() {
+                let event = memory.public_event_v1(index).ok_or_else(|| {
+                    "completed-match Game Log stream changed while visited".to_owned()
+                })?;
+                consumer.consume_public_game_log_event_v1(
+                    MtgoCompetitiveExternalPublicGameLogEventV1 { event },
+                )?;
+            }
+            consumer.finish_public_game_log_stream_v1()?;
+            consumer.finish_completed_game_v1()?;
+        }
+        consumer.finish_completed_match_history_v1()
+    }
+
+    pub(crate) fn latest_lineage_v1(
+        &self,
+    ) -> Result<MtgoCompetitiveVisibleGameOutcomeLineageV1<'_>, String> {
+        validate_completed_match_history_v1(&self.outcomes)?;
+        self.outcomes
+            .last()
+            .map(OpaqueMtgoCompetitiveVisibleGameOutcomeV1::lineage_v1)
+            .ok_or_else(|| "completed-match history is empty".to_owned())
+    }
+
+    pub(crate) fn history_commitment_sha256_v1(&self) -> &str {
+        &self.history_commitment_sha256
+    }
+}
+
+/// Starts a complete best-of-three public history from the visibly completed
+/// first game. A game-two outcome cannot start a history because that would
+/// silently discard game one.
+pub fn begin_competitive_completed_match_history_v1(
+    outcome: OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+) -> Result<OpaqueMtgoCompetitiveCompletedMatchHistoryV1, String> {
+    if outcome.lineage_v1().game_number != 1 {
+        return Err("completed-match history must start with game one".to_owned());
+    }
+    finish_completed_match_history_v1(vec![outcome])
+}
+
+/// Appends the exact next completed game. Only game two may be appended because
+/// a best-of-three game three has no later pregame or sideboard decision.
+pub fn append_competitive_completed_match_history_v1(
+    mut history: OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
+    outcome: OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+) -> Result<OpaqueMtgoCompetitiveCompletedMatchHistoryV1, String> {
+    validate_completed_match_history_v1(&history.outcomes)?;
+    history.outcomes.push(outcome);
+    finish_completed_match_history_v1(history.outcomes)
+}
+
+fn finish_completed_match_history_v1(
+    outcomes: Vec<OpaqueMtgoCompetitiveVisibleGameOutcomeV1>,
+) -> Result<OpaqueMtgoCompetitiveCompletedMatchHistoryV1, String> {
+    validate_completed_match_history_v1(&outcomes)?;
+    let mut parts = Vec::with_capacity(outcomes.len() * 3 + 1);
+    parts.push((outcomes.len() as u64).to_be_bytes().to_vec());
+    for outcome in &outcomes {
+        let lineage = outcome.lineage_v1();
+        parts.push(vec![lineage.game_number]);
+        parts.push(lineage.source_memory_commitment_sha256.as_bytes().to_vec());
+        parts.push(lineage.outcome_commitment_sha256.as_bytes().to_vec());
+    }
+    let refs = parts.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let history_commitment_sha256 =
+        commitment_with_domain_v1(COMPETITIVE_COMPLETED_MATCH_HISTORY_DOMAIN_V1, &refs);
+    Ok(OpaqueMtgoCompetitiveCompletedMatchHistoryV1 {
+        outcomes,
+        history_commitment_sha256,
+    })
+}
+
+fn validate_completed_match_history_v1(
+    outcomes: &[OpaqueMtgoCompetitiveVisibleGameOutcomeV1],
+) -> Result<(), String> {
+    let lineages = outcomes
+        .iter()
+        .map(OpaqueMtgoCompetitiveVisibleGameOutcomeV1::lineage_v1)
+        .collect::<Vec<_>>();
+    validate_completed_match_history_lineages_v1(&lineages)
+}
+
+fn validate_completed_match_history_lineages_v1(
+    lineages: &[MtgoCompetitiveVisibleGameOutcomeLineageV1<'_>],
+) -> Result<(), String> {
+    if lineages.is_empty() || lineages.len() > 2 {
+        return Err("completed-match history must contain one or two games".to_owned());
+    }
+    let first = &lineages[0];
+    for (index, lineage) in lineages.iter().enumerate() {
+        let expected_game = u8::try_from(index + 1)
+            .map_err(|_| "completed-match history game index overflow".to_owned())?;
+        if lineage.event_kind != first.event_kind
+            || lineage.event_identity_sha256 != first.event_identity_sha256
+            || lineage.match_identity_sha256 != first.match_identity_sha256
+            || lineage.game_number != expected_game
+        {
+            return Err(
+                "completed-match history changed event, match, or exact game order".to_owned(),
+            );
+        }
+    }
+    Ok(())
 }
 
 enum OpaqueMtgoCompetitivePlayerVisibleGameLogSourceV1 {
@@ -806,5 +1047,61 @@ mod tests {
             .unwrap(),
             "\"separate_ordered_streams_no_cross_source_total_order\""
         );
+    }
+
+    #[test]
+    fn completed_match_history_requires_exact_prefix_of_one_match() {
+        let event = "1".repeat(64);
+        let match_id = "2".repeat(64);
+        let other = "3".repeat(64);
+        let memory = "4".repeat(64);
+        let outcome = "5".repeat(64);
+        let lineage = |event_kind, event_id, match_id, game_number| {
+            MtgoCompetitiveVisibleGameOutcomeLineageV1 {
+                event_kind,
+                event_identity_sha256: event_id,
+                match_identity_sha256: match_id,
+                game_number,
+                source_memory_commitment_sha256: &memory,
+                outcome_commitment_sha256: &outcome,
+                winner: MtgoCompetitivePlayerRelativeGameWinnerV1::ActingPlayer,
+            }
+        };
+        validate_completed_match_history_lineages_v1(&[lineage(League, &event, &match_id, 1)])
+            .unwrap();
+        validate_completed_match_history_lineages_v1(&[
+            lineage(League, &event, &match_id, 1),
+            lineage(League, &event, &match_id, 2),
+        ])
+        .unwrap();
+
+        assert!(validate_completed_match_history_lineages_v1(&[]).is_err());
+        assert!(validate_completed_match_history_lineages_v1(&[
+            lineage(League, &event, &match_id, 1),
+            lineage(League, &event, &match_id, 2),
+            lineage(League, &event, &match_id, 3),
+        ])
+        .is_err());
+        for invalid in [
+            vec![lineage(League, &event, &match_id, 2)],
+            vec![
+                lineage(League, &event, &match_id, 1),
+                lineage(League, &event, &match_id, 1),
+            ],
+            vec![
+                lineage(League, &event, &match_id, 1),
+                lineage(Challenge, &event, &match_id, 2),
+            ],
+            vec![
+                lineage(League, &event, &match_id, 1),
+                lineage(League, &other, &match_id, 2),
+            ],
+            vec![
+                lineage(League, &event, &match_id, 1),
+                lineage(League, &event, &other, 2),
+            ],
+        ] {
+            assert!(validate_completed_match_history_lineages_v1(&invalid).is_err());
+        }
     }
 }

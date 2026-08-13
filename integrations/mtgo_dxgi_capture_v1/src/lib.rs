@@ -47,6 +47,7 @@ pub use actuator::{
     bind_competitive_event_native_sideboard_request_v1,
     bind_competitive_event_pregame_native_request_from_session_v1,
     bind_competitive_event_pregame_native_request_v1,
+    bind_competitive_event_pregame_native_request_with_completed_history_v2,
     bind_competitive_event_runtime_to_match_launch_identity_v1,
     bind_confirmed_competitive_open_entry_review_to_entry_review_v1,
     bind_prepared_competitive_duel_pass_session_v2,
@@ -57,6 +58,7 @@ pub use actuator::{
     competitive_authorization_ratification_readiness_v1,
     competitive_native_pregame_model_input_commitment_v1,
     complete_competitive_event_pregame_session_v1,
+    complete_competitive_event_pregame_session_with_history_v2,
     confirm_competitive_event_sideboard_transfer_visible_v1,
     confirm_pending_competitive_duel_gesture_continuation_v1,
     confirm_pending_competitive_duel_gesture_primitive_v1,
@@ -267,6 +269,7 @@ pub use competitive_operator_loop::{
     checkout_competitive_post_entry_operator_attended_native_pregame_v1,
     checkout_competitive_post_entry_operator_gameplay_v1,
     checkout_competitive_post_entry_operator_native_pregame_v1,
+    checkout_competitive_post_entry_operator_native_pregame_with_completed_history_v2,
     checkout_competitive_post_entry_operator_native_sideboard_v1,
     confirm_competitive_post_entry_operator_player_visible_gameplay_primitive_v1,
     confirm_pending_competitive_post_entry_operator_lifecycle_v1,
@@ -354,13 +357,17 @@ pub use competitive_visible_history_readiness::{
 };
 #[cfg(target_os = "windows")]
 pub use competitive_visible_match_memory::{
+    append_competitive_completed_match_history_v1, begin_competitive_completed_match_history_v1,
     bind_competitive_player_visible_game_memory_v1,
     bind_match_scoped_competitive_player_visible_game_memory_v1,
+    MtgoCompetitiveExternalCompletedGameHeaderV1,
+    MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
+    MtgoCompetitiveExternalCompletedMatchHistoryHeaderV1,
     MtgoCompetitiveExternalConfirmedDecisionV1, MtgoCompetitiveExternalPublicGameLogEventV1,
     MtgoCompetitiveExternalPublicHistoryConsumerV1, MtgoCompetitiveExternalPublicHistoryHeaderV1,
     MtgoCompetitiveExternalPublicHistoryOrderingV1, MtgoCompetitivePlayerRelativeGameWinnerV1,
-    OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
-    MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
+    OpaqueMtgoCompetitiveCompletedMatchHistoryV1, OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1,
+    OpaqueMtgoCompetitiveVisibleGameOutcomeV1, MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
 };
 
 #[cfg(target_os = "windows")]

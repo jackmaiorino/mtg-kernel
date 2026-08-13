@@ -40,6 +40,8 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub public_player_known_submitted_pregame_deck_configuration_present: bool,
     pub public_player_known_pregame_deck_configuration_present: bool,
     pub public_pregame_ordered_confirmed_bottom_history_present: bool,
+    pub public_completed_match_history_contract_present: bool,
+    pub later_game_pregame_completed_history_binding_present: bool,
     pub checked_untrusted_pregame_score_response_contract_present: bool,
     pub checked_untrusted_pregame_semantic_resolution_present: bool,
     pub terminal_outcome_trained_pregame_head_present: bool,
@@ -47,6 +49,7 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub native_checkpoint_sideboard_interface_present: bool,
     pub public_player_visible_sideboard_payload_contract_present: bool,
     pub public_player_visible_sideboard_score_binding_present: bool,
+    pub sideboard_completed_history_binding_present: bool,
     pub checked_untrusted_sideboard_score_response_contract_present: bool,
     pub checked_untrusted_sideboard_manifest_resolution_present: bool,
     pub terminal_outcome_trained_sideboard_head_present: bool,
@@ -86,11 +89,14 @@ impl MtgoCompetitiveModelDecisionReadinessV1 {
             && self.public_player_known_submitted_pregame_deck_configuration_present
             && self.public_player_known_pregame_deck_configuration_present
             && self.public_pregame_ordered_confirmed_bottom_history_present
+            && self.public_completed_match_history_contract_present
+            && self.later_game_pregame_completed_history_binding_present
             && self.terminal_outcome_trained_pregame_head_present
             && self.public_model_owned_pregame_action_path_present
             && self.native_checkpoint_sideboard_interface_present
             && self.public_player_visible_sideboard_payload_contract_present
             && self.public_player_visible_sideboard_score_binding_present
+            && self.sideboard_completed_history_binding_present
             && self.terminal_outcome_trained_sideboard_head_present
             && self.public_model_owned_changed_sideboard_path_present
             && self.public_model_owned_unchanged_sideboard_path_present
@@ -136,6 +142,8 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         public_player_known_submitted_pregame_deck_configuration_present: true,
         public_player_known_pregame_deck_configuration_present: true,
         public_pregame_ordered_confirmed_bottom_history_present: true,
+        public_completed_match_history_contract_present: true,
+        later_game_pregame_completed_history_binding_present: true,
         checked_untrusted_pregame_score_response_contract_present: true,
         checked_untrusted_pregame_semantic_resolution_present: true,
         terminal_outcome_trained_pregame_head_present: false,
@@ -143,6 +151,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         native_checkpoint_sideboard_interface_present: false,
         public_player_visible_sideboard_payload_contract_present: true,
         public_player_visible_sideboard_score_binding_present: true,
+        sideboard_completed_history_binding_present: true,
         checked_untrusted_sideboard_score_response_contract_present: true,
         checked_untrusted_sideboard_manifest_resolution_present: true,
         terminal_outcome_trained_sideboard_head_present: false,
@@ -199,12 +208,15 @@ mod tests {
         assert!(report.public_player_known_submitted_pregame_deck_configuration_present);
         assert!(report.public_player_known_pregame_deck_configuration_present);
         assert!(report.public_pregame_ordered_confirmed_bottom_history_present);
+        assert!(report.public_completed_match_history_contract_present);
+        assert!(report.later_game_pregame_completed_history_binding_present);
         assert!(report.checked_untrusted_pregame_score_response_contract_present);
         assert!(report.checked_untrusted_pregame_semantic_resolution_present);
         assert!(!report.public_model_owned_pregame_action_path_present);
         assert!(!report.native_checkpoint_sideboard_interface_present);
         assert!(report.public_player_visible_sideboard_payload_contract_present);
         assert!(report.public_player_visible_sideboard_score_binding_present);
+        assert!(report.sideboard_completed_history_binding_present);
         assert!(report.checked_untrusted_sideboard_score_response_contract_present);
         assert!(report.checked_untrusted_sideboard_manifest_resolution_present);
         assert!(!report.public_model_owned_changed_sideboard_path_present);

@@ -91,6 +91,8 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub competitive_pregame_player_known_submitted_deck_configuration_present: bool,
     pub competitive_pregame_player_known_deck_configuration_present: bool,
     pub competitive_pregame_ordered_confirmed_bottom_history_present: bool,
+    pub competitive_completed_match_history_contract_present: bool,
+    pub competitive_later_game_pregame_history_binding_present: bool,
     pub competitive_pregame_public_context_contract_present: bool,
     pub competitive_pregame_play_draw_context_present: bool,
     pub competitive_pregame_match_score_context_present: bool,
@@ -111,6 +113,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub native_checkpoint_changed_sideboard_interface_present: bool,
     pub competitive_player_visible_sideboard_payload_contract_present: bool,
     pub competitive_player_visible_sideboard_score_binding_present: bool,
+    pub competitive_sideboard_completed_history_binding_present: bool,
     pub competitive_sideboard_score_response_contract_present: bool,
 }
 
@@ -214,6 +217,8 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             competitive_pregame_player_known_submitted_deck_configuration_present: true,
             competitive_pregame_player_known_deck_configuration_present: true,
             competitive_pregame_ordered_confirmed_bottom_history_present: true,
+            competitive_completed_match_history_contract_present: true,
+            competitive_later_game_pregame_history_binding_present: true,
             competitive_pregame_public_context_contract_present: true,
             competitive_pregame_play_draw_context_present: true,
             competitive_pregame_match_score_context_present: true,
@@ -235,6 +240,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             native_checkpoint_changed_sideboard_interface_present: false,
             competitive_player_visible_sideboard_payload_contract_present: true,
             competitive_player_visible_sideboard_score_binding_present: true,
+            competitive_sideboard_completed_history_binding_present: true,
             competitive_sideboard_score_response_contract_present: true,
         },
         status:

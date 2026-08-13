@@ -1,5 +1,5 @@
 use crate::competitive_pregame_policy::AdmittedMtgoCompetitivePregameHeuristicV1;
-use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveVisibleGameOutcomeV1;
+use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveCompletedMatchHistoryV1;
 use crate::probe::{
     advance_evaluated_competitive_event_monitor_v1,
     advance_prepared_competitive_duel_gesture_sequence_from_pinned_runtime_v1,
@@ -1697,7 +1697,7 @@ impl OpaqueMtgoMeasuredCompetitiveEventSideboardV1 {
 /// ```
 pub struct OpaqueMtgoCompetitiveNativeSideboardRequestV1 {
     _measurement: OpaqueMtgoMeasuredCompetitiveEventSideboardV1,
-    _outcome: OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+    completed_history: OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
     model_input: MtgoCompetitiveNativeSideboardModelInputV1,
     model_input_commitment_sha256: String,
     _request_binding_commitment_sha256: String,
@@ -1710,6 +1710,18 @@ impl OpaqueMtgoCompetitiveNativeSideboardRequestV1 {
 
     pub fn model_input_commitment_sha256_v1(&self) -> &str {
         &self.model_input_commitment_sha256
+    }
+
+    pub fn completed_game_count_v1(&self) -> usize {
+        self.completed_history.completed_game_count_v1()
+    }
+
+    pub fn visit_completed_match_history_v1<C>(&self, consumer: &mut C) -> Result<C::Output, String>
+    where
+        C: crate::MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
+    {
+        self.completed_history
+            .visit_external_completed_match_history_v1(consumer)
     }
 
     pub(crate) fn source_manifest_v1(&self) -> &ValidatedMtgoCompetitiveDeckManifestV1 {
@@ -2194,6 +2206,7 @@ pub struct MtgoCompetitiveEventPregameSessionCommitmentsV1 {
     pub confirmed_bottom_history_commitment_sha256: String,
     pub current_model_context_binding_commitment_sha256: Option<String>,
     pub player_visible_public_context_commitment_sha256: Option<String>,
+    pub completed_match_history_commitment_sha256: Option<String>,
     pub event_kind: MtgoCompetitiveEventKindV1,
     pub game_number: u8,
     pub current_stage: MtgoCompetitivePregameStageV1,
@@ -2225,6 +2238,7 @@ pub struct OpaqueMtgoCompetitiveEventPregameSessionV1 {
     ordered_confirmed_bottom_slots: Vec<u8>,
     current_model_context: Option<OpaqueMtgoCompetitivePregamePublicContextWitnessV1>,
     player_visible_public_context: Option<MtgoCompetitivePregamePlayerVisiblePublicContextStateV1>,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
     commitments: MtgoCompetitiveEventPregameSessionCommitmentsV1,
 }
 
@@ -2385,6 +2399,24 @@ impl OpaqueMtgoCompetitiveNativePregameRequestV1 {
 
     pub fn model_input_commitment_sha256_v1(&self) -> &str {
         &self.model_input_commitment_sha256
+    }
+
+    pub fn completed_game_count_v1(&self) -> usize {
+        self._session.completed_match_history.as_ref().map_or(
+            0,
+            OpaqueMtgoCompetitiveCompletedMatchHistoryV1::completed_game_count_v1,
+        )
+    }
+
+    pub fn visit_completed_match_history_v1<C>(&self, consumer: &mut C) -> Result<C::Output, String>
+    where
+        C: crate::MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
+    {
+        self._session
+            .completed_match_history
+            .as_ref()
+            .ok_or_else(|| "game-one pregame request has no completed match history".to_owned())?
+            .visit_external_completed_match_history_v1(consumer)
     }
 
     pub fn safe_for_model_scoring_v1(&self) -> bool {
@@ -5777,16 +5809,16 @@ pub fn measure_competitive_event_runtime_sideboard_v1(
     })
 }
 
-/// Joins the exact visible Sideboarding configuration with one exact
-/// prior-game visible outcome. The model-facing payload contains only game
-/// information. This does not call a checkpoint, select a target, move a
-/// card, or submit the sideboard.
+/// Joins the exact visible Sideboarding configuration with the complete exact
+/// prefix of earlier player-visible games in this match. The model-facing
+/// payload contains only game information. This does not call a checkpoint,
+/// select a target, move a card, or submit the sideboard.
 pub fn bind_competitive_event_native_sideboard_request_v1(
     measurement: OpaqueMtgoMeasuredCompetitiveEventSideboardV1,
-    outcome: OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+    completed_history: OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
 ) -> Result<OpaqueMtgoCompetitiveNativeSideboardRequestV1, String> {
     let sideboard = &measurement.commitments.sideboard_classification;
-    let outcome_lineage = outcome.lineage_v1();
+    let outcome_lineage = completed_history.latest_lineage_v1()?;
     if sideboard.event_kind != outcome_lineage.event_kind
         || sideboard.event_identity_sha256 != outcome_lineage.event_identity_sha256
         || sideboard.match_identity_sha256 != outcome_lineage.match_identity_sha256
@@ -5842,6 +5874,7 @@ pub fn bind_competitive_event_native_sideboard_request_v1(
             sideboard.sideboard_snapshot_commitment_sha256.as_bytes(),
             sideboard.deck_manifest_commitment_sha256.as_bytes(),
             sideboard.policy_deployment_commitment_sha256.as_bytes(),
+            completed_history.history_commitment_sha256_v1().as_bytes(),
             outcome_lineage.source_memory_commitment_sha256.as_bytes(),
             outcome_lineage.outcome_commitment_sha256.as_bytes(),
             b"opaque_adapter_lineage_not_model_game_information_no_selection_no_input_no_submit",
@@ -5849,7 +5882,7 @@ pub fn bind_competitive_event_native_sideboard_request_v1(
     );
     Ok(OpaqueMtgoCompetitiveNativeSideboardRequestV1 {
         _measurement: measurement,
-        _outcome: outcome,
+        completed_history,
         model_input,
         model_input_commitment_sha256,
         _request_binding_commitment_sha256: request_binding_commitment_sha256,
@@ -7152,6 +7185,27 @@ pub fn checkout_competitive_event_pregame_session_v1(
     match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
     initial_observation: OpaqueMtgoCompetitivePregameObservationV1,
 ) -> Result<OpaqueMtgoCompetitiveEventPregameSessionV1, String> {
+    if initial_observation.commitments.game_number != 1 {
+        return Err(
+            "later-game pregame checkout requires the complete earlier player-visible history"
+                .to_owned(),
+        );
+    }
+    checkout_competitive_event_pregame_session_pending_history_v2(
+        runtime,
+        match_launch,
+        initial_observation,
+    )
+}
+
+/// Internal construction seam used only while the same call is attaching the
+/// required completed-game history for game two or game three. The partially
+/// bound session is never returned through a public API.
+fn checkout_competitive_event_pregame_session_pending_history_v2(
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    initial_observation: OpaqueMtgoCompetitivePregameObservationV1,
+) -> Result<OpaqueMtgoCompetitiveEventPregameSessionV1, String> {
     let runtime_process_continuity_commitment_sha256 = runtime
         .current_frame
         .process_continuity_commitment_sha256_v1();
@@ -7179,6 +7233,7 @@ pub fn checkout_competitive_event_pregame_session_v1(
         ordered_confirmed_bottom_slots: Vec::new(),
         current_model_context: None,
         player_visible_public_context: None,
+        completed_match_history: None,
         commitments,
     })
 }
@@ -7261,6 +7316,41 @@ pub fn bind_competitive_event_pregame_native_request_v1(
     context: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
     deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
 ) -> Result<OpaqueMtgoCompetitiveNativePregameRequestV1, String> {
+    bind_competitive_event_pregame_native_request_with_history_v2(
+        runtime,
+        match_launch,
+        context,
+        deck_manifest,
+        None,
+    )
+}
+
+/// Game-two and game-three pregame request binder. The complete exact prefix of
+/// earlier player-visible games remains move-only inside the event session and
+/// is available only through the sanitized completed-history visitor.
+pub fn bind_competitive_event_pregame_native_request_with_completed_history_v2(
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    context: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+    deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
+    completed_match_history: OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
+) -> Result<OpaqueMtgoCompetitiveNativePregameRequestV1, String> {
+    bind_competitive_event_pregame_native_request_with_history_v2(
+        runtime,
+        match_launch,
+        context,
+        deck_manifest,
+        Some(completed_match_history),
+    )
+}
+
+fn bind_competitive_event_pregame_native_request_with_history_v2(
+    runtime: OpaqueMtgoCompetitiveEventRuntimeV1,
+    match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    context: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+    deck_manifest: &ValidatedMtgoCompetitiveDeckManifestV1,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+) -> Result<OpaqueMtgoCompetitiveNativePregameRequestV1, String> {
     validate_player_known_deck_state_against_runtime_v1(
         &runtime.commitments,
         &runtime.player_known_deck_state,
@@ -7331,8 +7421,12 @@ pub fn bind_competitive_event_pregame_native_request_v1(
         )),
         commitments: observation_commitments,
     };
-    let mut session =
-        checkout_competitive_event_pregame_session_v1(runtime, match_launch, observation)?;
+    let mut session = checkout_competitive_event_pregame_session_pending_history_v2(
+        runtime,
+        match_launch,
+        observation,
+    )?;
+    attach_completed_match_history_to_pregame_session_v2(&mut session, completed_match_history)?;
     session
         .commitments
         .current_model_context_binding_commitment_sha256 = Some(
@@ -7364,6 +7458,46 @@ pub fn bind_competitive_event_pregame_native_request_v1(
         return Err("native pregame request changed the exact event-session lineage".to_owned());
     }
     finish_competitive_event_pregame_native_request_v1(session, model_input, &context_commitments)
+}
+
+fn attach_completed_match_history_to_pregame_session_v2(
+    session: &mut OpaqueMtgoCompetitiveEventPregameSessionV1,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+) -> Result<(), String> {
+    match completed_match_history {
+        None if session.commitments.game_number == 1 => Ok(()),
+        None => Err(
+            "game-two or game-three pregame requires complete earlier player-visible history"
+                .to_owned(),
+        ),
+        Some(history) => {
+            let lineage = history.latest_lineage_v1()?;
+            let expected_completed_games = usize::from(
+                session
+                    .commitments
+                    .game_number
+                    .checked_sub(1)
+                    .ok_or("pregame game number underflow")?,
+            );
+            if lineage.event_kind != session.commitments.event_kind
+                || lineage.event_identity_sha256 != session.commitments.event_identity_sha256
+                || lineage.match_identity_sha256 != session.commitments.match_identity_sha256
+                || lineage.game_number.checked_add(1) != Some(session.commitments.game_number)
+                || history.completed_game_count_v1() != expected_completed_games
+            {
+                return Err(
+                    "pregame completed history changed the exact event, match, or game prefix"
+                        .to_owned(),
+                );
+            }
+            session
+                .commitments
+                .completed_match_history_commitment_sha256 =
+                Some(history.history_commitment_sha256_v1().to_owned());
+            session.completed_match_history = Some(history);
+            Ok(())
+        }
+    }
 }
 
 /// Rebuilds the next visible-only model request from an advanced pregame
@@ -8867,6 +9001,32 @@ pub fn complete_competitive_event_pregame_session_v1(
     ),
     String,
 > {
+    if session.completed_match_history.is_some() {
+        return Err(
+            "history-bearing pregame must complete through the history-preserving v2 seam"
+                .to_owned(),
+        );
+    }
+    let (runtime, launch, completed_match_history) =
+        complete_competitive_event_pregame_session_with_history_v2(session)?;
+    if completed_match_history.is_some() {
+        return Err("game-one pregame unexpectedly returned completed history".to_owned());
+    }
+    Ok((runtime, launch))
+}
+
+/// Releases a game-two or game-three event runtime while returning the exact
+/// move-only earlier-game history for later gameplay and sideboard ownership.
+pub fn complete_competitive_event_pregame_session_with_history_v2(
+    session: OpaqueMtgoCompetitiveEventPregameSessionV1,
+) -> Result<
+    (
+        OpaqueMtgoCompetitiveEventRuntimeV1,
+        RatifiedMtgoCompetitiveMatchLaunchV1,
+        Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+    ),
+    String,
+> {
     validate_competitive_event_pregame_session_integrity_v1(&session)?;
     if session.commitments.current_stage != MtgoCompetitivePregameStageV1::GameplayReady {
         return Err(
@@ -8911,6 +9071,7 @@ pub fn complete_competitive_event_pregame_session_v1(
         game_number: session.commitments.game_number,
         completion_frame_sequence: session.commitments.current_frame_sequence,
     };
+    let completed_match_history = session.completed_match_history;
     let mut runtime = session.runtime;
     let prior_runtime_commitment_sha256 = runtime.commitments.runtime_commitment_sha256.clone();
     runtime.commitments.pregame_session_count = runtime
@@ -8925,7 +9086,7 @@ pub fn complete_competitive_event_pregame_session_v1(
         &runtime.commitments,
         completion_receipt_sha256.as_bytes(),
     );
-    Ok((runtime, session.match_launch))
+    Ok((runtime, session.match_launch, completed_match_history))
 }
 
 /// Withholds the event coordinator while the existing all-family exact-game
@@ -13458,6 +13619,7 @@ fn competitive_event_pregame_session_commitments_from_parts_v1(
             competitive_pregame_confirmed_bottom_history_commitment_v1(&[]),
         current_model_context_binding_commitment_sha256: None,
         player_visible_public_context_commitment_sha256: None,
+        completed_match_history_commitment_sha256: None,
         event_kind: runtime.event_kind,
         game_number,
         current_stage: source.stage,
@@ -13524,6 +13686,11 @@ fn competitive_event_pregame_session_commitment_v1(
                 .as_bytes(),
             value
                 .player_visible_public_context_commitment_sha256
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes(),
+            value
+                .completed_match_history_commitment_sha256
                 .as_deref()
                 .unwrap_or("")
                 .as_bytes(),
@@ -13668,6 +13835,25 @@ fn validate_competitive_event_pregame_session_integrity_v1(
     let retained_player_visible_public_context_commitment = session
         .player_visible_public_context
         .map(competitive_pregame_player_visible_public_context_state_commitment_v1);
+    let retained_completed_match_history_commitment = session
+        .completed_match_history
+        .as_ref()
+        .map(OpaqueMtgoCompetitiveCompletedMatchHistoryV1::history_commitment_sha256_v1);
+    let retained_completed_match_history_valid = match &session.completed_match_history {
+        None => value.game_number == 1,
+        Some(history) => history.latest_lineage_v1().is_ok_and(|lineage| {
+            lineage.event_kind == value.event_kind
+                && lineage.event_identity_sha256 == value.event_identity_sha256
+                && lineage.match_identity_sha256 == value.match_identity_sha256
+                && lineage.game_number.checked_add(1) == Some(value.game_number)
+                && value
+                    .game_number
+                    .checked_sub(1)
+                    .is_some_and(|prior_game_count| {
+                        history.completed_game_count_v1() == usize::from(prior_game_count)
+                    })
+        }),
+    };
     let retained_public_context_pair_valid = match (
         session.current_model_context.as_ref(),
         session.player_visible_public_context,
@@ -13745,6 +13931,9 @@ fn validate_competitive_event_pregame_session_integrity_v1(
         || !retained_model_context_matches
         || value.player_visible_public_context_commitment_sha256
             != retained_player_visible_public_context_commitment
+        || value.completed_match_history_commitment_sha256.as_deref()
+            != retained_completed_match_history_commitment
+        || !retained_completed_match_history_valid
         || !retained_public_context_pair_valid
     {
         return Err("competitive pregame session lineage changed".to_owned());

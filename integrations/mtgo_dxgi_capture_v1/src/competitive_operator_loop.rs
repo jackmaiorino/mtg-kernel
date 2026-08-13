@@ -5,6 +5,7 @@ use crate::actuator::{
     bind_competitive_duel_gesture_sequence_session_v1,
     bind_competitive_event_native_sideboard_request_v1,
     bind_competitive_event_pregame_native_request_v1,
+    bind_competitive_event_pregame_native_request_with_completed_history_v2,
     bind_competitive_event_runtime_to_match_launch_identity_v1,
     checkout_competitive_event_gameplay_session_v1,
     competitive_gesture_game_session_action_authorities_v1,
@@ -50,7 +51,7 @@ use crate::competitive_operator_bootstrap::{
     OpaqueMtgoCompetitiveOperatorResourcesV1,
 };
 use crate::competitive_visible_match_memory::MtgoCompetitiveExternalPublicHistoryConsumerV1;
-use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveVisibleGameOutcomeV1;
+use crate::competitive_visible_match_memory::OpaqueMtgoCompetitiveCompletedMatchHistoryV1;
 use crate::probe::{
     advance_opaque_player_visible_duel_gesture_target_v1,
     begin_competitive_match_visible_game_log_action_baseline_v1,
@@ -1662,6 +1663,11 @@ pub fn checkout_competitive_post_entry_operator_native_pregame_v1(
             )
         }
     };
+    if game_number != 1 {
+        return Err(
+            "later-game competitive pregame requires the history-preserving v2 checkout".to_owned(),
+        );
+    }
     let launch = match_launch.gameplay_authorization_record_v2();
     validate_operator_native_pregame_checkout_v1(&OperatorNativePregameCheckoutIdentityV1 {
         route_match_identity_sha256: match_identity_sha256,
@@ -1692,6 +1698,83 @@ pub fn checkout_competitive_post_entry_operator_native_pregame_v1(
         context,
         &resources.deck_manifest,
     )?;
+    require_sha256_v1(
+        request.model_input_commitment_sha256_v1(),
+        "competitive operator pregame request",
+    )?;
+    Ok(OpaqueMtgoCompetitiveOperatorNativePregameRequestV1 {
+        resources,
+        resource_commitments,
+        request,
+        prior_operator: commitments,
+    })
+}
+
+/// Game-two and game-three counterpart to the game-one checkout. The complete
+/// exact earlier-game visible history moves into the native pregame request and
+/// can be consumed only through its sanitized visitor.
+pub fn checkout_competitive_post_entry_operator_native_pregame_with_completed_history_v2(
+    operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
+    match_launch: RatifiedMtgoCompetitiveMatchLaunchV1,
+    context: OpaqueMtgoClassifiedCompetitivePregameModelContextV1,
+    completed_match_history: OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorNativePregameRequestV1, String> {
+    let directive = next_competitive_post_entry_operator_directive_v1(&operator)?;
+    let (match_identity_sha256, game_number) = match directive.route {
+        MtgoCompetitivePostEntryOperatorRouteV1::ResolvePregameWithNativeModel {
+            match_identity_sha256,
+            game_number,
+            ..
+        } => (match_identity_sha256, game_number),
+        _ => {
+            return Err(
+                "competitive post-entry operator is not at a native pregame request".to_owned(),
+            )
+        }
+    };
+    if !(2..=3).contains(&game_number) {
+        return Err("history-preserving pregame checkout requires game two or three".to_owned());
+    }
+    let launch = match_launch.gameplay_authorization_record_v2();
+    validate_operator_native_pregame_checkout_v1(&OperatorNativePregameCheckoutIdentityV1 {
+        route_match_identity_sha256: match_identity_sha256,
+        route_game_number: game_number,
+        launch_match_identity_sha256: launch.match_identity_sha256.clone(),
+        launch_game_number: launch.game_number,
+        launch_event_kind: launch.event_kind,
+        operator_event_kind: operator.commitments.event_kind,
+        resource_bundle_commitment_sha256: operator
+            .resource_commitments
+            .resource_bundle_commitment_sha256
+            .clone(),
+        operator_resource_bundle_commitment_sha256: operator
+            .commitments
+            .resource_bundle_commitment_sha256
+            .clone(),
+    })?;
+    let OpaqueMtgoCompetitivePostEntryOperatorV1 {
+        resources,
+        resource_commitments,
+        runtime,
+        visible_game_log_baseline: _,
+        commitments,
+    } = operator;
+    let request = bind_competitive_event_pregame_native_request_with_completed_history_v2(
+        runtime,
+        match_launch,
+        context,
+        &resources.deck_manifest,
+        completed_match_history,
+    )?;
+    if request.completed_game_count_v1()
+        != usize::from(
+            game_number
+                .checked_sub(1)
+                .ok_or("native pregame route game number underflow")?,
+        )
+    {
+        return Err("native pregame request lost the complete earlier-game history".to_owned());
+    }
     require_sha256_v1(
         request.model_input_commitment_sha256_v1(),
         "competitive operator pregame request",
@@ -1978,7 +2061,7 @@ pub fn refresh_resolved_competitive_operator_attended_pregame_visible_game_log_v
 /// pixels but performs no capture, scoring, drag, submission, or other input.
 pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
     operator: OpaqueMtgoCompetitivePostEntryOperatorV1,
-    outcome: OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+    completed_history: OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
     classifier_timeout_ms: u32,
 ) -> Result<OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1, String> {
     let directive = next_competitive_post_entry_operator_directive_v1(&operator)?;
@@ -2001,7 +2084,7 @@ pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
                 )
             }
         };
-    let outcome_lineage = outcome.lineage_v1();
+    let outcome_lineage = completed_history.latest_lineage_v1()?;
     validate_operator_native_sideboard_checkout_v1(&OperatorNativeSideboardCheckoutIdentityV1 {
         route_match_identity_sha256,
         route_game_number,
@@ -2051,7 +2134,8 @@ pub fn checkout_competitive_post_entry_operator_native_sideboard_v1(
         &resources.navigation_runtime,
         classifier_timeout_ms,
     )?;
-    let request = bind_competitive_event_native_sideboard_request_v1(measurement, outcome)?;
+    let request =
+        bind_competitive_event_native_sideboard_request_v1(measurement, completed_history)?;
     require_sha256_v1(
         request.model_input_commitment_sha256_v1(),
         "competitive operator sideboard request",
