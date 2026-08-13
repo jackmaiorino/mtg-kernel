@@ -49,3 +49,7 @@ returns only a fixed submitted or rejected receipt, and rejects every later
 index for the consumed decision. The live broker compile-disables that command.
 Live dispatch remains unavailable until the scorer, attended authorization,
 fresh-state, and newer visible-postcondition checks are joined in one runtime.
+
+The producer v1.5 lobby-only clean-restart result and exact binary manifest are
+recorded in `LIVE_QUALIFICATION_2026-08-13.md`. It returned the expected fixed
+duel-surface abstention. A successful no-stakes duel projection remains open.
