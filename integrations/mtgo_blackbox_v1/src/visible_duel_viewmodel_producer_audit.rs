@@ -16,7 +16,8 @@ const ROOT_TYPE_V1: &str = "Shiny.Play.Duel.DuelScene";
 const ROOT_ACCESSOR_V1: &str = "FrameworkElement.DataContext";
 const ROOT_VIEWMODEL_TYPE_V1: &str = "Shiny.Play.Duel.ViewModel.DuelSceneViewModel";
 const AUDIT_DOMAIN_V1: &[u8] = b"mtgo-visible-duel-viewmodel-producer-audit-v1";
-const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 33;
+const PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1: u32 = 34;
+const PRIVATE_VISIBLE_COMBAT_JOIN_FIELD_COUNT_V1: u32 = 2;
 const REFERENCE_ASSEMBLY_SHA256_V1: &str =
     "f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8";
 
@@ -47,6 +48,15 @@ pub struct MtgoPrivateVisibleActionJoinGetterV1 {
     pub binding: MtgoPrivateVisibleActionJoinBindingV1,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoPrivateVisibleCombatJoinFieldV1 {
+    pub assembly_file_name: String,
+    pub declaring_type: String,
+    pub field_name: String,
+    pub binding: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoVisibleDuelViewModelProducerAuditV1 {
@@ -60,6 +70,8 @@ pub struct MtgoVisibleDuelViewModelProducerAuditV1 {
     pub allowed_property_getters: Vec<MtgoVisibleDuelViewModelProducerPropertyV1>,
     pub private_visible_action_join_getters: Vec<MtgoPrivateVisibleActionJoinGetterV1>,
     pub private_visible_action_join_reference_assembly_sha256: String,
+    pub private_visible_combat_join_fields: Vec<MtgoPrivateVisibleCombatJoinFieldV1>,
+    pub private_visible_combat_join_reference_assembly_sha256: String,
     pub first_exported_success_schema: String,
     pub emits_fixed_abstention_only_until_projection_complete: bool,
     pub sanitized_player_visible_decision_slice_present: bool,
@@ -85,6 +97,9 @@ pub struct MtgoVisibleDuelViewModelProducerAuditV1 {
     pub visible_zone_and_card_values_exported: bool,
     pub private_visible_action_join_layer_present: bool,
     pub private_visible_action_join_getter_count: u32,
+    pub private_visible_combat_join_layer_present: bool,
+    pub private_visible_combat_join_field_count: u32,
+    pub private_combat_objects_exported: bool,
     pub private_action_objects_exported: bool,
     pub private_action_identifiers_exported: bool,
     pub opponent_action_collections_inspected: bool,
@@ -104,6 +119,7 @@ pub struct CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
     commitment_sha256: String,
     allowed_property_count: usize,
     private_visible_action_join_getter_count: usize,
+    private_visible_combat_join_field_count: usize,
 }
 
 impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
@@ -124,7 +140,7 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
     }
 
     pub fn visible_chrome_getter_count_v1(&self) -> u32 {
-        22
+        25
     }
 
     pub fn visible_zone_and_card_getter_layer_present_v1(&self) -> bool {
@@ -132,7 +148,7 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
     }
 
     pub fn visible_zone_and_card_getter_count_v1(&self) -> u32 {
-        31
+        34
     }
 
     pub fn private_visible_action_join_layer_present_v1(&self) -> bool {
@@ -141,6 +157,10 @@ impl CheckedUntrustedMtgoVisibleDuelViewModelProducerAuditV1 {
 
     pub fn private_visible_action_join_getter_count_v1(&self) -> usize {
         self.private_visible_action_join_getter_count
+    }
+
+    pub fn private_visible_combat_join_field_count_v1(&self) -> usize {
+        self.private_visible_combat_join_field_count
     }
 
     pub fn offline_sealed_action_dispatch_present_v1(&self) -> bool {
@@ -179,6 +199,8 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
     allowed_property_getters.sort_by_key(property_key_v1);
     let mut private_visible_action_join_getters = private_visible_action_join_getters_v1();
     private_visible_action_join_getters.sort_by_key(private_action_join_key_v1);
+    let mut private_visible_combat_join_fields = private_visible_combat_join_fields_v1();
+    private_visible_combat_join_fields.sort_by_key(private_combat_join_key_v1);
     MtgoVisibleDuelViewModelProducerAuditV1 {
         schema_version: MTGO_VISIBLE_DUEL_VIEWMODEL_PRODUCER_AUDIT_SCHEMA_V1,
         audit_kind: AUDIT_KIND_V1.to_owned(),
@@ -191,6 +213,9 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         allowed_property_getters,
         private_visible_action_join_getters,
         private_visible_action_join_reference_assembly_sha256: REFERENCE_ASSEMBLY_SHA256_V1
+            .to_owned(),
+        private_visible_combat_join_fields,
+        private_visible_combat_join_reference_assembly_sha256: REFERENCE_ASSEMBLY_SHA256_V1
             .to_owned(),
         first_exported_success_schema: FIRST_EXPORTED_SUCCESS_SCHEMA_V1.to_owned(),
         emits_fixed_abstention_only_until_projection_complete: false,
@@ -210,13 +235,16 @@ pub fn mtgo_visible_duel_viewmodel_producer_audit_v1() -> MtgoVisibleDuelViewMod
         maximum_output_bytes: 1_048_576,
         output_transport_status_contains_game_information: false,
         visible_chrome_getter_layer_present: true,
-        visible_chrome_getter_count: 22,
+        visible_chrome_getter_count: 25,
         visible_chrome_values_exported: true,
         visible_zone_and_card_getter_layer_present: true,
-        visible_zone_and_card_getter_count: 31,
+        visible_zone_and_card_getter_count: 34,
         visible_zone_and_card_values_exported: true,
         private_visible_action_join_layer_present: true,
         private_visible_action_join_getter_count: PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1,
+        private_visible_combat_join_layer_present: true,
+        private_visible_combat_join_field_count: PRIVATE_VISIBLE_COMBAT_JOIN_FIELD_COUNT_V1,
+        private_combat_objects_exported: false,
         private_action_objects_exported: false,
         private_action_identifiers_exported: false,
         opponent_action_collections_inspected: false,
@@ -243,6 +271,8 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.root_viewmodel_type != ROOT_VIEWMODEL_TYPE_V1
         || audit.private_visible_action_join_reference_assembly_sha256
             != REFERENCE_ASSEMBLY_SHA256_V1
+        || audit.private_visible_combat_join_reference_assembly_sha256
+            != REFERENCE_ASSEMBLY_SHA256_V1
         || audit.first_exported_success_schema != FIRST_EXPORTED_SUCCESS_SCHEMA_V1
     {
         return Err(error_v1(
@@ -267,14 +297,18 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         || audit.maximum_output_bytes != 1_048_576
         || audit.output_transport_status_contains_game_information
         || !audit.visible_chrome_getter_layer_present
-        || audit.visible_chrome_getter_count != 22
+        || audit.visible_chrome_getter_count != 25
         || !audit.visible_chrome_values_exported
         || !audit.visible_zone_and_card_getter_layer_present
-        || audit.visible_zone_and_card_getter_count != 31
+        || audit.visible_zone_and_card_getter_count != 34
         || !audit.visible_zone_and_card_values_exported
         || !audit.private_visible_action_join_layer_present
         || audit.private_visible_action_join_getter_count
             != PRIVATE_VISIBLE_ACTION_JOIN_GETTER_COUNT_V1
+        || !audit.private_visible_combat_join_layer_present
+        || audit.private_visible_combat_join_field_count
+            != PRIVATE_VISIBLE_COMBAT_JOIN_FIELD_COUNT_V1
+        || audit.private_combat_objects_exported
         || audit.private_action_objects_exported
         || audit.private_action_identifiers_exported
         || audit.opponent_action_collections_inspected
@@ -344,6 +378,23 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         ));
     }
 
+    let expected_combat = private_visible_combat_join_fields_v1()
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let actual_combat = audit
+        .private_visible_combat_join_fields
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    if actual_combat.len() != audit.private_visible_combat_join_fields.len()
+        || actual_combat != expected_combat
+    {
+        return Err(error_v1(
+            "visible_duel_viewmodel_producer_audit_private_combat_join_allowlist",
+            "private combat join fields must exactly match the rendered blocking-association surface",
+        ));
+    }
+
     for (declaring_type, property_name) in [
         (
             "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
@@ -373,6 +424,7 @@ pub fn check_untrusted_visible_duel_viewmodel_producer_audit_v1(
         commitment_sha256: commitment_v1(AUDIT_DOMAIN_V1, &[&canonical]),
         allowed_property_count: audit.allowed_property_getters.len(),
         private_visible_action_join_getter_count: audit.private_visible_action_join_getters.len(),
+        private_visible_combat_join_field_count: audit.private_visible_combat_join_fields.len(),
     })
 }
 
@@ -393,6 +445,12 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
             "Actions",
+            SeatedPlayerVisibleCard,
+        ),
+        (
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "GameCard",
             SeatedPlayerVisibleCard,
         ),
         (
@@ -596,6 +654,18 @@ fn private_visible_action_join_getters_v1() -> Vec<MtgoPrivateVisibleActionJoinG
     .collect()
 }
 
+fn private_visible_combat_join_fields_v1() -> Vec<MtgoPrivateVisibleCombatJoinFieldV1> {
+    ["Order", "Target"]
+        .into_iter()
+        .map(|field_name| MtgoPrivateVisibleCombatJoinFieldV1 {
+            assembly_file_name: "WotC.MtGO.Client.Model.Reference.dll".to_owned(),
+            declaring_type: "WotC.MtGO.Client.Model.Play.OrderedCombatParticipant".to_owned(),
+            field_name: field_name.to_owned(),
+            binding: "rendered_blocker_lane_to_visible_object_ordinals_only".to_owned(),
+        })
+        .collect()
+}
+
 fn property_key_v1(property: &MtgoVisibleDuelViewModelProducerPropertyV1) -> String {
     format!(
         "{}\0{}\0{}",
@@ -607,6 +677,13 @@ fn private_action_join_key_v1(property: &MtgoPrivateVisibleActionJoinGetterV1) -
     format!(
         "{}\0{}\0{}",
         property.assembly_file_name, property.declaring_type, property.property_name
+    )
+}
+
+fn private_combat_join_key_v1(field: &MtgoPrivateVisibleCombatJoinFieldV1) -> String {
+    format!(
+        "{}\0{}\0{}",
+        field.assembly_file_name, field.declaring_type, field.field_name
     )
 }
 
@@ -634,13 +711,14 @@ mod tests {
             mtgo_visible_duel_viewmodel_producer_audit_v1(),
         )
         .unwrap();
-        assert_eq!(checked.allowed_property_count_v1(), 83);
+        assert_eq!(checked.allowed_property_count_v1(), 89);
         assert!(checked.visible_chrome_getter_layer_present_v1());
-        assert_eq!(checked.visible_chrome_getter_count_v1(), 22);
+        assert_eq!(checked.visible_chrome_getter_count_v1(), 25);
         assert!(checked.visible_zone_and_card_getter_layer_present_v1());
-        assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 31);
+        assert_eq!(checked.visible_zone_and_card_getter_count_v1(), 34);
         assert!(checked.private_visible_action_join_layer_present_v1());
-        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 33);
+        assert_eq!(checked.private_visible_action_join_getter_count_v1(), 34);
+        assert_eq!(checked.private_visible_combat_join_field_count_v1(), 2);
         assert!(checked.offline_sealed_action_dispatch_present_v1());
         assert!(!checked.producer_execution_attested_v1());
         assert!(!checked.full_projection_implemented_v1());

@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_SURFACE_SCHEMA_V1: u32 = 1;
 pub const MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1: &str =
-    "a45916c8929cc36a5936d69f4f88933b21349580878bf0f9c0accd081463fa82";
+    "1655acc1097182871d9cf9481e43cc9bed5f4f801fa29f2c5a81a4801ec441c5";
 
 const SURFACE_KIND_V1: &str = "mtgo_visible_duel_viewmodel_candidate_surface_v1";
 const INFORMATION_BOUNDARY_V1: &str = "seated_player_visible_ui_equivalent_only_v1";
@@ -193,6 +193,24 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             MtgoVisibleViewModelPropertyContextV1::AlwaysVisibleDuelChrome,
             "rendered turn label",
             &["current_state.turn"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
+            "InteractionState",
+            "InteractionState",
+            MtgoVisibleViewModelPropertyContextV1::TransientTraversalOnly,
+            "current rendered card-target interaction surface",
+            &[],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.Utility.InteractionState",
+            "Mode",
+            "Shiny.Play.Duel.Utility.InteractMode",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePromptOnly,
+            "visible target-selection mode, admitted only with rendered targeting and targetable-card highlights",
+            &[],
         ),
         candidate(
             "DuelScene.dll",
@@ -391,6 +409,15 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             MtgoVisibleViewModelPropertyContextV1::VisiblePlayerPanel,
             "visible life total",
             &["current_state.life_totals"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.PlayerViewModel",
+            "IsTargetable",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisiblePlayerPanel,
+            "visible player targetability highlight, used to reject a card-only target decision",
+            &[],
         ),
         candidate(
             "DuelScene.dll",
@@ -681,6 +708,24 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
         candidate(
             "DuelScene.dll",
             "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "IsTargetable",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered targetable-card highlight",
+            &["blocker_target_selection.ordered_visible_targetable_attackers"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "IsTargeting",
+            "Boolean",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered source-card targeting highlight",
+            &["blocker_target_selection.blocker"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
             "IsSpeedEmblem",
             "Boolean",
             MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
@@ -731,6 +776,15 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
             "card rendered in a blocker association",
             &["blocker_selection.ordered_candidates.currently_blocking"],
+        ),
+        candidate(
+            "DuelScene.dll",
+            "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+            "VisualBlockingOrders",
+            "IList<OrderedCombatParticipant>",
+            MtgoVisibleViewModelPropertyContextV1::VisibleCardPresentation,
+            "rendered blocker lane and damage-order placement",
+            &["current_state.combat.blocker_assignments"],
         ),
         candidate(
             "DuelScene.dll",
@@ -909,12 +963,6 @@ pub fn mtgo_visible_duel_viewmodel_candidate_surface_v1(
             "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
             "GameId",
             "internal match identifier",
-        ),
-        forbidden(
-            "DuelScene.dll",
-            "Shiny.Play.Duel.ViewModel.DuelSceneViewModel",
-            "InteractionState",
-            "non-rendered interaction state",
         ),
         forbidden(
             "DuelScene.dll",
@@ -1274,8 +1322,8 @@ mod tests {
         let checked = check_untrusted_visible_duel_viewmodel_candidate_surface_v1(manifest)
             .expect("compiled metadata candidate surface");
         assert_eq!(checked.product_version_v1(), "3.4.158.4691");
-        assert_eq!(checked.candidate_property_count_v1(), 83);
-        assert_eq!(checked.forbidden_property_count_v1(), 29);
+        assert_eq!(checked.candidate_property_count_v1(), 89);
+        assert_eq!(checked.forbidden_property_count_v1(), 28);
         assert_eq!(
             checked.commitment_sha256_v1(),
             MTGO_VISIBLE_DUEL_VIEWMODEL_CANDIDATE_SURFACE_COMMITMENT_V1

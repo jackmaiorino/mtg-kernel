@@ -104,6 +104,32 @@ namespace Shiny.Play.Duel
     }
 }
 
+namespace Shiny.Play.Duel.Utility
+{
+    public enum InteractMode
+    {
+        None = 0,
+        SelectTargets = 1,
+        SelectAction = 2,
+        SelectPlayer = 3
+    }
+
+    public sealed class InteractionState
+    {
+        public InteractMode Mode
+        {
+            get
+            {
+                Shiny.Play.Duel.ViewModel.VisibleGetterProbeV1.Record(
+                    "InteractionState.Mode");
+                return ModeFixture;
+            }
+        }
+
+        public InteractMode ModeFixture { get; set; }
+    }
+}
+
 namespace Shiny.Play.Duel.ViewModel
 {
     public static class VisibleGetterProbeV1
@@ -121,6 +147,8 @@ namespace Shiny.Play.Duel.ViewModel
             {
                 "Duel.CurrentPhase",
                 "Duel.GameTurnText",
+                "Duel.InteractionState",
+                "InteractionState.Mode",
                 "Duel.IsCommander",
                 "Duel.CardSelection",
                 "Duel.CardSelectorDialog",
@@ -142,6 +170,7 @@ namespace Shiny.Play.Duel.ViewModel
                 "Player.Active",
                 "Player.MatActive",
                 "Player.Health",
+                "Player.IsTargetable",
                 "Player.HasEnergyCounters",
                 "Player.HasExperienceCounters",
                 "Player.HasPoisonCounters",
@@ -203,12 +232,15 @@ namespace Shiny.Play.Duel.ViewModel
                 "DuelCard.IsController",
                 "DuelCard.CardAttachedTo",
                 "DuelCard.HasNoBlockingAction",
+                "DuelCard.IsTargetable",
+                "DuelCard.IsTargeting",
                 "DuelCard.IsSpeedEmblem",
                 "DuelCard.IsToken",
                 "DuelCard.RingTemptationCounter",
                 "DuelCard.SpeedCounter",
                 "DuelCard.VisuallyAttacking",
                 "DuelCard.VisuallyBlocking",
+                "DuelCard.VisualBlockingOrders",
                 "DuelCard.VisibleCounters",
                 "Counter.Quantity",
                 "Counter.Type"
@@ -268,6 +300,15 @@ namespace Shiny.Play.Duel.ViewModel
             {
                 VisibleGetterProbeV1.Record("Duel.GameTurnText");
                 return GameTurnTextFixture;
+            }
+        }
+
+        public Shiny.Play.Duel.Utility.InteractionState InteractionState
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Duel.InteractionState");
+                return InteractionStateFixture;
             }
         }
 
@@ -407,6 +448,8 @@ namespace Shiny.Play.Duel.ViewModel
             new CardSelectorDialogViewModel();
         public CardSelectorManager CardSelectorsFixture { get; } =
             new CardSelectorManager();
+        public Shiny.Play.Duel.Utility.InteractionState InteractionStateFixture { get; } =
+            new Shiny.Play.Duel.Utility.InteractionState();
         public bool IsPileZoneActiveFixture { get; set; }
         public bool IsCommanderFixture { get; set; }
         public bool IsPlanechaseFixture { get; set; }
@@ -520,6 +563,16 @@ namespace Shiny.Play.Duel.ViewModel
             {
                 VisibleGetterProbeV1.Record("Player.Health");
                 return HealthFixture;
+            }
+        }
+
+
+        public bool IsTargetable
+        {
+            get
+            {
+                VisibleGetterProbeV1.Record("Player.IsTargetable");
+                return IsTargetableFixture;
             }
         }
 
@@ -656,6 +709,7 @@ namespace Shiny.Play.Duel.ViewModel
         public bool IsLocalFixture { get; set; }
         public bool IsActiveFixture { get; set; }
         public bool IsPriorityFixture { get; set; }
+        public bool IsTargetableFixture { get; set; }
         public bool HasEnergyCountersFixture { get; set; }
         public bool HasExperienceCountersFixture { get; set; }
         public bool HasPoisonCountersFixture { get; set; }
@@ -887,6 +941,7 @@ namespace Shiny.Play.Duel.ViewModel
                 "Duel.Game",
                 "DuelCard.Associations",
                 "DuelCard.Actions",
+                "DuelCard.GameCard",
                 "Mana.Color",
                 "Prompt.DoneButton",
                 "Prompt.OkPromptButton"
@@ -989,6 +1044,22 @@ namespace Shiny.Play.Duel.ViewModel
                 return !ActionItems.Any(action => action.Name == "Block");
             }
         }
+        public bool IsTargetable
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.IsTargetable");
+                return IsTargetableFixture;
+            }
+        }
+        public bool IsTargeting
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.IsTargeting");
+                return IsTargetingFixture;
+            }
+        }
         public bool IsToken
         {
             get
@@ -1011,6 +1082,22 @@ namespace Shiny.Play.Duel.ViewModel
             {
                 VisibleZoneGetterProbeV1.Record("DuelCard.VisuallyBlocking");
                 return VisuallyBlockingFixture;
+            }
+        }
+        public IList<OrderedCombatParticipant> VisualBlockingOrders
+        {
+            get
+            {
+                VisibleZoneGetterProbeV1.Record("DuelCard.VisualBlockingOrders");
+                return VisualBlockingOrderItems;
+            }
+        }
+        public IGameCard GameCard
+        {
+            get
+            {
+                VisibleActionJoinGetterProbeV1.Record("DuelCard.GameCard");
+                return GameCardFixture;
             }
         }
         public bool IsSpeedEmblem
@@ -1066,8 +1153,13 @@ namespace Shiny.Play.Duel.ViewModel
         public int RingTemptationCounterFixture { get; set; }
         public int SpeedCounterFixture { get; set; }
         public bool IsTokenFixture { get; set; }
+        public bool IsTargetableFixture { get; set; }
+        public bool IsTargetingFixture { get; set; }
         public bool VisuallyAttackingFixture { get; set; }
         public bool VisuallyBlockingFixture { get; set; }
+        public IGameCard GameCardFixture { get; set; } = new VisibleFixtureGameCard();
+        public IList<OrderedCombatParticipant> VisualBlockingOrderItems { get; } =
+            new List<OrderedCombatParticipant>();
         public IList<CardCounterViewModel> CounterItems { get; } =
             new List<CardCounterViewModel>();
         public bool ThrowIfActionsReadFixture { get; set; }

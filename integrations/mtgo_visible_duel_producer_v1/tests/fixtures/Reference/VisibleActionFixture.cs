@@ -20,6 +20,28 @@ namespace WotC.MtGO.Client.Model.Play
         void ExecuteAction(IGameAction action);
     }
 
+    public interface IGameCard
+    {
+    }
+
+    public interface ITargetSet
+    {
+    }
+
+    public sealed class VisibleFixtureGameCard : IGameCard
+    {
+    }
+
+    public sealed class VisibleFixtureTargetSet : ITargetSet
+    {
+    }
+
+    public struct OrderedCombatParticipant
+    {
+        public int Order;
+        public IGameCard Target;
+    }
+
     public sealed class VisibleFixtureGame : IGame
     {
         public IGameAction? ExpectedAction { get; set; }

@@ -848,22 +848,24 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         IsBlockingFixture = true,
                         VisuallyBlockingFixture = false
                     };
-                    firstBlocker.ActionItems.Add(new VisibleFixtureCardAction
+                    var firstBlockAction = new VisibleFixtureCardAction
                     {
                         NameFixture = "Block",
                         CastFixture = false
-                    });
+                    };
+                    firstBlocker.ActionItems.Add(firstBlockAction);
                     var secondBlocker = new DuelSceneCardViewModel
                     {
                         NameFixture = "fixture-visible-second-blocker",
                         PowerFixture = 3,
                         ToughnessFixture = 3
                     };
-                    secondBlocker.ActionItems.Add(new VisibleFixtureCardAction
+                    var secondBlockAction = new VisibleFixtureCardAction
                     {
                         NameFixture = "Block",
                         CastFixture = false
-                    });
+                    };
+                    secondBlocker.ActionItems.Add(secondBlockAction);
                     var singleVisibleAttacker = new DuelSceneCardViewModel
                     {
                         NameFixture = "fixture-visible-single-attacker",
@@ -925,10 +927,83 @@ namespace MtgKernel.Mtgo.VisibleChromeFixtureHost.V1
                         ThrowIfActionsReadFixture = true
                     };
                     opponent.Battlefield.Add(secondVisibleAttacker);
-                    if (!ExportsProjectionIncompleteV1(channelName, view))
+                    firstBlockAction.TargetItems.Add(new VisibleFixtureTargetSet());
+                    secondBlockAction.TargetItems.Add(new VisibleFixtureTargetSet());
+                    int multiBlockersStatus =
+                        VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+                    string visibleMultiBlockers = Encoding.UTF8.GetString(
+                        ReadPayloadFixtureV1(view));
+                    if (multiBlockersStatus != 0 ||
+                        !visibleMultiBlockers.StartsWith(
+                            "{\"result_kind\":\"visible_multi_attacker_blocker_selection\",\"selection\":",
+                            StringComparison.Ordinal) ||
+                        !visibleMultiBlockers.Contains(
+                            "\"ordered_attackers\":[{\"visible_ordinal\":2},{\"visible_ordinal\":3}]") ||
+                        !visibleMultiBlockers.Contains(
+                            "\"ordered_available_blockers\":[{\"visible_ordinal\":0},{\"visible_ordinal\":1}]") ||
+                        !visibleMultiBlockers.Contains(
+                            "\"blocker_assignments\":[]") ||
+                        !visibleMultiBlockers.Contains(
+                            "\"unique_visible_enabled_done_control\":true") ||
+                        visibleMultiBlockers.Contains("GameCard") ||
+                        visibleMultiBlockers.Contains("TargetSet"))
                     {
                         return 83;
                     }
+
+                    firstBlocker.IsTargetingFixture = true;
+                    singleVisibleAttacker.IsTargetableFixture = true;
+                    secondVisibleAttacker.IsTargetableFixture = true;
+                    viewModel.InteractionStateFixture.ModeFixture =
+                        Shiny.Play.Duel.Utility.InteractMode.SelectTargets;
+                    int targetStatus =
+                        VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+                    string visibleTargets = Encoding.UTF8.GetString(
+                        ReadPayloadFixtureV1(view));
+                    if (targetStatus != 0 ||
+                        !visibleTargets.StartsWith(
+                            "{\"result_kind\":\"visible_blocker_target_selection\",\"selection\":",
+                            StringComparison.Ordinal) ||
+                        !visibleTargets.Contains("\"blocker\":{\"visible_ordinal\":0}") ||
+                        !visibleTargets.Contains(
+                            "\"ordered_visible_targetable_attackers\":[{\"visible_ordinal\":2},{\"visible_ordinal\":3}]") ||
+                        visibleTargets.Contains("LegalTargets") ||
+                        visibleTargets.Contains("TargetSet") ||
+                        visibleTargets.Contains("GameCard"))
+                    {
+                        return 84;
+                    }
+
+                    firstBlocker.IsTargetingFixture = false;
+                    singleVisibleAttacker.IsTargetableFixture = false;
+                    secondVisibleAttacker.IsTargetableFixture = false;
+                    viewModel.InteractionStateFixture.ModeFixture =
+                        Shiny.Play.Duel.Utility.InteractMode.None;
+                    firstBlocker.VisuallyBlockingFixture = true;
+                    firstBlocker.VisualBlockingOrderItems.Add(
+                        new OrderedCombatParticipant
+                        {
+                            Order = 1,
+                            Target = singleVisibleAttacker.GameCardFixture
+                        });
+                    int assignedStatus =
+                        VisibleDuelProducerV1.ExportVisibleDecisionOrAbstainV1(channelName);
+                    string visibleAssignedBlockers = Encoding.UTF8.GetString(
+                        ReadPayloadFixtureV1(view));
+                    if (assignedStatus != 0 ||
+                        !visibleAssignedBlockers.StartsWith(
+                            "{\"result_kind\":\"visible_multi_attacker_blocker_selection\",\"selection\":",
+                            StringComparison.Ordinal) ||
+                        !visibleAssignedBlockers.Contains(
+                            "\"blocker_assignments\":[{\"attacker\":{\"visible_ordinal\":2},\"ordered_blockers\":[{\"visible_ordinal\":0}]}]") ||
+                        !visibleAssignedBlockers.Contains(
+                            "\"ordered_available_blockers\":[{\"visible_ordinal\":1}]") ||
+                        visibleAssignedBlockers.Contains("GameCard"))
+                    {
+                        return 85;
+                    }
+                    firstBlocker.VisualBlockingOrderItems.Clear();
+                    firstBlocker.VisuallyBlockingFixture = false;
                     opponent.Battlefield.Remove(secondVisibleAttacker);
 
                     viewModel.Prompt.Buttons.Remove(doneButton);

@@ -13,8 +13,9 @@ $required = @(
     'FrameworkElement',
     'DataContext',
     'Shiny.Play.Duel.ViewModel.DuelSceneViewModel',
-    'AllowedGetters.Length != 83',
-    'PrivateVisibleActionJoinGetters.Length != 33',
+    'AllowedGetters.Length != 89',
+    'PrivateVisibleActionJoinGetters.Length != 34',
+    'PrivateVisibleCombatJoinFields.Length != 2',
     'projection_incomplete',
     'BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy',
     'MemoryMappedFile.OpenExisting',
@@ -62,6 +63,9 @@ $required = @(
     'ExpectedCurrentSelection',
     'TryBuildSanitizedVisibleAttackerSelectionAndBindingsV1',
     'TryBuildSanitizedVisibleSingleAttackerBlockerSelectionV1',
+    'TryBuildSanitizedVisibleMultiAttackerBlockerSelectionV1',
+    'TryBuildSanitizedVisibleBlockerTargetSelectionV1',
+    'TryReadExactPrivateVisibleCombatFieldV1',
     'ExpectedDecisionSha256',
     'ExecuteAction',
     'ConditionalWeakTable<object, HashSet<string>>',
@@ -113,7 +117,6 @@ $forbidden = @(
     'GetProperties(',
     'InvokeMember(',
     'Dynamic',
-    'GameCard',
     'GamePlayer',
     'ModelZone',
     'CardDefinition',
@@ -142,8 +145,8 @@ if ($publicStart -lt 0 -or $privateStart -le $publicStart) {
 }
 $publicGetterSource = $source.Substring($publicStart, $privateStart - $publicStart)
 $getterLines = [regex]::Matches($publicGetterSource, '"(?:Card|DuelScene)\|[^"\r\n]+\|[^"\r\n]+"')
-if ($getterLines.Count -ne 83) {
-    throw "producer source must contain exactly 83 compile-time getter entries"
+if ($getterLines.Count -ne 89) {
+    throw "producer source must contain exactly 89 compile-time getter entries"
 }
 
 $privateEnd = $source.IndexOf('};', $privateStart)
@@ -155,8 +158,26 @@ $privateGetterLines = [regex]::Matches(
     $privateGetterSource,
     '"(?:DuelScene|WotC\.MtGO\.Client\.Model\.Reference)\|[^"\r\n]+\|[^"\r\n]+"'
 )
-if ($privateGetterLines.Count -ne 33) {
-    throw 'producer source must contain exactly 33 private visible-source join getters'
+if ($privateGetterLines.Count -ne 34) {
+    throw 'producer source must contain exactly 34 private visible-source join getters'
+}
+
+$combatStart = $source.IndexOf('private static readonly string[] PrivateVisibleCombatJoinFields')
+$combatEnd = $source.IndexOf('};', $combatStart)
+if ($combatStart -lt 0 -or $combatEnd -lt 0) {
+    throw 'private combat join field array is missing or unterminated'
+}
+$combatSource = $source.Substring($combatStart, $combatEnd - $combatStart)
+$combatLines = [regex]::Matches(
+    $combatSource,
+    '"WotC\.MtGO\.Client\.Model\.Reference\|[^"\r\n]+\|(?:Order|Target)"'
+)
+if ($combatLines.Count -ne 2) {
+    throw 'producer source must contain exactly two private visible combat join fields'
+}
+if ([regex]::Matches($privateGetterSource, '\|GameCard"').Count -ne 1 -or
+    $publicGetterSource.Contains('|GameCard"')) {
+    throw 'GameCard may appear only as one private transaction-local visible combat join'
 }
 
 if (-not $source.Contains('if (localPlayer)') -or

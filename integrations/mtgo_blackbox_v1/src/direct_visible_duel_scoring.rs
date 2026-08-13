@@ -251,6 +251,12 @@ pub fn score_and_select_strict_visible_duel_producer_result_v1<S: MtgoPlayerVisi
                 "direct_visible_blocker_scorer_missing",
                 "blocker selection requires the separate sequential player-visible deliberation scorer",
             )),
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection { .. }
+        | MtgoVisibleDuelViewModelBrokerResultV1::VisibleBlockerTargetSelection { .. } =>
+            Err(error_v1(
+                "direct_visible_multi_blocker_scorer_missing",
+                "multi-attacker blocking requires the separate staged player-visible blocker scorer",
+            )),
     }
 }
 

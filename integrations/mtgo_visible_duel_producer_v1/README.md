@@ -3,15 +3,15 @@
 This isolated .NET Framework 4.7.2 assembly is the in-process root seam for a
 direct player-visible MTGO projection. It locates exactly one visible
 `Shiny.Play.Duel.DuelScene` through the WPF visual tree, requires its public
-`DataContext` to be the exact duel view-model type, and checks that all 83
+`DataContext` to be the exact duel view-model type, and checks that all 89
 compile-time allowlisted public getters exist on the pinned presentation
 assemblies.
 
-Version 1.20 invokes only exact allowlisted getters for the player-visible game
+Version 1.21 invokes only exact allowlisted getters for the player-visible game
 chrome, two player panels, mana display, prompt, visible standard buttons,
 public zones, battlefield and stack cards, attachments, and visible counters.
 It checks exact declaring types, bounded collections, bounded visible strings,
-and basic two-seat consistency. It also performs thirty-three exact private joins
+and basic two-seat consistency. It also performs thirty-four exact private joins
 from visible enabled prompt controls and the seated player's visible cards to
 the corresponding action objects. Those joins read only visible action labels,
 action type, locally-performable classification, cast, activated, and mana
@@ -19,7 +19,9 @@ classification, visible mode labels, and the displayed mana color. Private
 alternate-menu, group, action-choice, mode-choice, submenu, and attack-hover
 values are used only as one-way guards. A non-default value forces a generic
 abstention until the corresponding visible menu shape is modeled exactly; the
-private value itself is never exported. The turn
+private value itself is never exported. Two exact private combat fields join
+the already rendered blocker order back to already visible battlefield cards.
+Their values are discarded before serialization. The turn
 number is parsed only from the rendered `GameTurnText`, accepting the pinned
 English-client forms `Turn N` and `Turn N: active player`; other locales or
 formats abstain. The ordinary local-priority prompt is admitted only when the
@@ -51,7 +53,7 @@ prompts, and modal choices remain closed. Raw association objects never leave
 the producer. Its supported actions are source-bound cast, play-land,
 activated-ability, and mana-ability actions plus the one visible priority Pass.
 
-Version 1.20 also emits a separate coordinate-free attacker-selection result
+Version 1.21 also emits a separate coordinate-free attacker-selection result
 for the narrow direct-opponent declare-attackers case. It contains the current
 visible public state, the battlefield-order attacker candidates, each
 candidate's visible selected state, and the fact that one enabled visible
@@ -63,16 +65,26 @@ turns it into the checkpoint's sequential include/exclude deliberation without
 touching the client. Exert, grouped attacks, alternate victims, modals,
 nonempty stack, and ambiguous or incomplete controls still abstain.
 
-Version 1.20 also emits an observation-only blocker-selection result for the
+Version 1.21 also retains the observation-only blocker-selection result for the
 narrow case with exactly one visibly attacking opposing creature, an initially
 empty block lane, simple visible `Block` actions, and one enabled visible
 `Done` control. The result contains visible battlefield ordinals and rendered
 combat state only. It carries no client target, action object, input method, or
-dispatch authority. Multiple attackers, existing assignments, complicated
-menus, and incomplete controls abstain. The ordinary selected-index dispatcher
-explicitly rejects this result.
+dispatch authority. The ordinary selected-index dispatcher explicitly rejects
+this result.
 
-Version 1.20 adds a sealed attacker-step dispatcher for that result. The
+For multiple visible attackers, version 1.21 emits two separate staged results.
+The first presents only the rendered current assignments, unassigned visible
+blockers, visible attacker order, and `Done`. After one blocker is chosen and
+MTGO opens its target prompt, the second presents only the one visibly targeting
+blocker and opponent attackers currently marked targetable by the client. The
+producer verifies the presence of the internal target-set shape but never reads
+or exports its candidate list, targets, IDs, or objects. Existing assignments
+come only from rendered blocker order. Any targetable player, nonattacker,
+ambiguous targeting card, incomplete control, or inconsistent presentation
+abstains.
+
+Version 1.21 retains the sealed attacker-step dispatcher for that result. The
 adapter commits the exact source selection, candidate count, and desired
 attacker bit set. On every call the producer completely rebuilds the current
 visible selection, requires the same candidate objects in the same visible
@@ -111,8 +123,10 @@ attacker, rejects exert, alternate-victim, and missing-`Done` variants, and
 proves the legacy selected-index dispatcher cannot execute the new result.
 It separately validates the single-attacker blocker observation, proves that
 rendered attacking and blocking state wins over contradictory backing fixture
-flags, rejects multiple attackers, and proves the ordinary dispatcher performs
-zero actions for the blocker result.
+flags, and proves the ordinary dispatcher performs zero actions for the blocker
+result. It also validates two attackers and two blockers, an existing rendered
+assignment, and the intermediate visible target prompt. The fixture proves the
+backing target-set candidates never enter the serialized result.
 
 Version 1.5 was loaded into a clean MTGO 3.4.158.4691 process and invoked
 while no duel was open. It returned only the fixed
@@ -138,10 +152,10 @@ represented. Commander and Planechase duel layouts, plus visible dungeon,
 Ring-temptation, and speed presentation, also force the same generic
 abstention. Target-bearing, X-bearing, sideboard, fake, confirmation, and
 mode-count action state likewise forces abstention until its subsequent
-player-visible modal is represented. Version 1.20 has not been loaded into
+player-visible modal is represented. Version 1.21 has not been loaded into
 MTGO. Version 1.17 remains loaded in the current broker process; no attempt was
 made to replace its locked assembly. A separate deterministic Release build of
-the v1.20 source succeeded outside the client with zero warnings and zero
+the v1.21 source succeeded outside the client with zero warnings and zero
 errors. It has not been live-qualified.
 The live broker build explicitly rejects the dispatch command until it is joined to
 the attended competitive authorization and confirmed-postcondition chain.

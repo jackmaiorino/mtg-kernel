@@ -72,7 +72,7 @@ fn managed_producer_getter_allowlist_exactly_matches_reviewed_surface() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 83);
+    assert_eq!(actual.len(), 89);
     assert_eq!(actual, expected);
 }
 
@@ -95,9 +95,32 @@ fn managed_producer_private_visible_action_join_allowlist_matches_audit() {
             )
         })
         .collect::<HashSet<_>>();
-    assert_eq!(actual.len(), 33);
+    assert_eq!(actual.len(), 34);
     assert_eq!(actual, expected);
     assert!(!source.contains("|WotC.MtGO.Client.Model.Play.IGame|CurrentTurn\""));
+}
+
+#[test]
+fn managed_producer_private_visible_combat_join_allowlist_matches_audit() {
+    let source = producer_source_v1();
+    let actual = compiled_entries_v1(&source, "PrivateVisibleCombatJoinFields");
+    let expected = mtgo_blackbox_v1::mtgo_visible_duel_viewmodel_producer_audit_v1()
+        .private_visible_combat_join_fields
+        .into_iter()
+        .map(|field| {
+            format!(
+                "{}|{}|{}",
+                field
+                    .assembly_file_name
+                    .strip_suffix(".dll")
+                    .expect("reviewed assembly suffix"),
+                field.declaring_type,
+                field.field_name
+            )
+        })
+        .collect::<HashSet<_>>();
+    assert_eq!(actual.len(), 2);
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -136,8 +159,10 @@ fn managed_producer_has_bounded_output_and_no_unrelated_side_effect_api_markers(
     assert!(source.contains("MemoryMappedFile.OpenExisting"));
     assert!(source.contains("private static bool IsExactChannelName"));
     assert_eq!(source.matches("property.GetValue(target, null)").count(), 2);
+    assert_eq!(source.matches("field.GetValue(target)").count(), 1);
     assert!(source.contains("private static bool TryReadExactPropertyV1("));
     assert!(source.contains("private static bool TryReadExactPrivateVisibleActionPropertyV1("));
+    assert!(source.contains("private static bool TryReadExactPrivateVisibleCombatFieldV1("));
     assert!(source.contains("private static bool TryValidateVisibleChromeProjectionV1("));
     assert!(source.contains("private static bool TryParseVisibleTurnV1("));
     assert!(
@@ -175,6 +200,8 @@ fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
     for marker in [
         "\"CurrentPhase\"",
         "\"GameTurnText\"",
+        "\"InteractionState\"",
+        "\"Mode\"",
         "\"IsCommander\"",
         "\"IsPlanechase\"",
         "\"Players\"",
@@ -183,6 +210,8 @@ fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
         "\"Active\"",
         "\"MatActive\"",
         "\"Health\"",
+        "\"IsTargetable\"",
+        "\"IsTargeting\"",
         "\"HasEnergyCounters\"",
         "\"HasExperienceCounters\"",
         "\"HasPoisonCounters\"",
@@ -203,6 +232,7 @@ fn managed_producer_visible_chrome_getters_are_exact_and_output_stays_fixed() {
         "\"TemporaryZones\"",
         "\"ThreePilePanelEnabled\"",
         "\"TwoPilePanelEnabled\"",
+        "\"VisualBlockingOrders\"",
         "\"HandTotal\"",
         "\"DeckTotal\"",
         "\"ManaPoolItems\"",

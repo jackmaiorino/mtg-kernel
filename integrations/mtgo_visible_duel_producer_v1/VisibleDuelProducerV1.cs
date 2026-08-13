@@ -13,7 +13,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
 {
     /// <summary>
     /// In-process root seam for the MTGO player-visible duel projection.
-    /// V1.20 invokes only exact allowlisted getters for visible chrome, player
+    /// V1.21 invokes only exact allowlisted getters for visible chrome, player
     /// panels, public zones, card presentation, and private action joins bound
     /// to player-visible sources. It emits either a fixed abstention or the
     /// bounded sanitized decision slice. It never exports client objects,
@@ -70,17 +70,21 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsAbilityOnTheStack",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsController",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsSpeedEmblem",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsTargetable",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsTargeting",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|IsToken",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|RingTemptationCounter",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|SpeedCounter",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|VisuallyAttacking",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|VisuallyBlocking",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|VisualBlockingOrders",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|VisibleCounters",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelection",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelectorDialog",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CardSelectors",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|CurrentPhase",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|GameTurnText",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|InteractionState",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|IsCommander",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|IsPileZoneActive",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|IsPlanechase",
@@ -94,6 +98,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|TemporaryZones",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|ThreePilePanelEnabled",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|TwoPilePanelEnabled",
+            "DuelScene|Shiny.Play.Duel.Utility.InteractionState|Mode",
             "DuelScene|Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel|ColorString",
             "DuelScene|Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel|Count",
             "DuelScene|Shiny.Play.Duel.ViewModel.OptionButton|Enabled",
@@ -112,6 +117,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|HandTotal",
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|HandZone",
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|Health",
+            "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|IsTargetable",
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|LibraryZone",
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|LocalPlayer",
             "DuelScene|Shiny.Play.Duel.ViewModel.PlayerViewModel|ManaPoolItems",
@@ -138,6 +144,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         {
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|Associations",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|Actions",
+            "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel|GameCard",
             "DuelScene|Shiny.Play.Duel.ViewModel.DuelSceneViewModel|Game",
             "DuelScene|Shiny.Play.Duel.ViewModel.OptionButton|Action",
             "DuelScene|Shiny.Play.Duel.ViewModel.ManaPoolItemViewModel|Color",
@@ -169,6 +176,16 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|XDeterminedByTargetWithGreatestCMC",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|XIsAMinimum",
             "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.ICardAction|XTargetDivisor"
+        };
+
+        // Exact public fields on the presentation-owned blocking-order value.
+        // They are used only to join a rendered blocker lane to already
+        // visible attacker and blocker ordinals. The backing target object is
+        // discarded before serialization.
+        private static readonly string[] PrivateVisibleCombatJoinFields =
+        {
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.OrderedCombatParticipant|Order",
+            "WotC.MtGO.Client.Model.Reference|WotC.MtGO.Client.Model.Play.OrderedCombatParticipant|Target"
         };
 
         /// <summary>
@@ -309,7 +326,7 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 return SurfaceShapeMismatch;
             }
 
-            // V1.20 qualifies exact visible chrome, player-panel, public-zone,
+            // V1.21 qualifies exact visible chrome, player-panel, public-zone,
             // card-presentation, and visible-source-bound private action-join
             // routes. Temporary objects and values never leave this call.
             if (!TryValidateVisibleChromeProjectionV1(viewModel))
@@ -403,10 +420,12 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         private static bool ValidateExactGetterSurface()
         {
             Assembly[] loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-            if (AllowedGetters.Length != 83 ||
-                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 83 ||
-                PrivateVisibleActionJoinGetters.Length != 33 ||
-                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 33)
+            if (AllowedGetters.Length != 89 ||
+                AllowedGetters.Distinct(StringComparer.Ordinal).Count() != 89 ||
+                PrivateVisibleActionJoinGetters.Length != 34 ||
+                PrivateVisibleActionJoinGetters.Distinct(StringComparer.Ordinal).Count() != 34 ||
+                PrivateVisibleCombatJoinFields.Length != 2 ||
+                PrivateVisibleCombatJoinFields.Distinct(StringComparer.Ordinal).Count() != 2)
             {
                 return false;
             }
@@ -473,6 +492,32 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 if (declaringType == null || property == null ||
                     property.GetIndexParameters().Length != 0 || getter == null ||
                     !getter.IsPublic || getter.GetParameters().Length != 0)
+                {
+                    return false;
+                }
+            }
+            foreach (string allowed in PrivateVisibleCombatJoinFields)
+            {
+                string[] parts = allowed.Split('|');
+                if (parts.Length != 3)
+                {
+                    return false;
+                }
+                Assembly[] assemblyMatches = loadedAssemblies
+                    .Where(assembly => string.Equals(
+                        assembly.GetName().Name,
+                        parts[0],
+                        StringComparison.Ordinal))
+                    .ToArray();
+                if (assemblyMatches.Length != 1)
+                {
+                    return false;
+                }
+                Type declaringType = assemblyMatches[0].GetType(parts[1], false, false);
+                FieldInfo? field = declaringType?.GetField(
+                    parts[2],
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
+                if (declaringType == null || field == null || field.IsStatic || !field.IsPublic)
                 {
                     return false;
                 }
@@ -872,7 +917,10 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     !((name.StartsWith("Attack ", StringComparison.Ordinal) ||
                         string.Equals(name, "Don't attack", StringComparison.Ordinal)) &&
                         TryRequireSimpleVisibleAttackerToggleActionV1(action, name))) ||
-                !TryRequireNoUnrepresentedVisibleCardActionModalV1(action))
+                !(string.Equals(name, "Block", StringComparison.Ordinal)
+                    ? (TryRequireNoUnrepresentedVisibleCardActionModalV1(action) ||
+                       TryRequireSimpleVisibleMultiAttackerBlockerActionV1(action))
+                    : TryRequireNoUnrepresentedVisibleCardActionModalV1(action)))
             {
                 return false;
             }
@@ -925,6 +973,43 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                     action, assembly, cardAction, "Targets", out object? targetsValue) &&
                 targetsValue is ICollection targets && targets.Count == 0 &&
                 TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "HasXTarget", out object? hasXValue) &&
+                hasXValue is bool hasX && !hasX &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "InSideboard", out object? sideboardValue) &&
+                sideboardValue is bool sideboard && !sideboard &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ConfirmModeString", out object? confirmValue) &&
+                confirmValue == null &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ConfirmBeforeTargetingOwnCard", out object? ownConfirmValue) &&
+                ownConfirmValue is bool ownConfirm && !ownConfirm &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "IsFakeAction", out object? fakeValue) &&
+                fakeValue is bool fake && !fake &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ModeMinChoices", out object? modeMinValue) &&
+                modeMinValue is uint modeMin && modeMin == 0u &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "ModeMaxChoices", out object? modeMaxValue) &&
+                modeMaxValue is uint modeMax && modeMax == 0u &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "XIsAMinimum", out object? xMinimumValue) &&
+                xMinimumValue is bool xMinimum && !xMinimum &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "XDeterminedByTargetWithGreatestCMC", out object? xTargetValue) &&
+                xTargetValue is bool xTarget && !xTarget &&
+                TryReadExactPrivateVisibleActionPropertyV1(
+                    action, assembly, cardAction, "XTargetDivisor", out object? divisorValue) &&
+                divisorValue is int divisor && divisor == 1;
+        }
+
+        private static bool TryRequireNoUnrepresentedVisibleCardActionModalExceptTargetsV1(
+            object action)
+        {
+            const string assembly = "WotC.MtGO.Client.Model.Reference";
+            const string cardAction = "WotC.MtGO.Client.Model.Play.ICardAction";
+            return TryReadExactPrivateVisibleActionPropertyV1(
                     action, assembly, cardAction, "HasXTarget", out object? hasXValue) &&
                 hasXValue is bool hasX && !hasX &&
                 TryReadExactPrivateVisibleActionPropertyV1(
@@ -1428,6 +1513,48 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             return true;
         }
 
+        private static bool TryReadExactPrivateVisibleCombatFieldV1(
+            object target,
+            string assemblyName,
+            string declaringTypeName,
+            string fieldName,
+            out object? value)
+        {
+            value = null;
+            string exactKey = assemblyName + "|" + declaringTypeName + "|" + fieldName;
+            if (!PrivateVisibleCombatJoinFields.Contains(exactKey, StringComparer.Ordinal))
+            {
+                return false;
+            }
+            Assembly[] matchingAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(assembly => string.Equals(
+                    assembly.GetName().Name,
+                    assemblyName,
+                    StringComparison.Ordinal))
+                .ToArray();
+            if (matchingAssemblies.Length != 1)
+            {
+                return false;
+            }
+            Type declaringType = matchingAssemblies[0].GetType(
+                declaringTypeName,
+                false,
+                false);
+            if (declaringType == null || target.GetType() != declaringType)
+            {
+                return false;
+            }
+            FieldInfo? field = declaringType.GetField(
+                fieldName,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly);
+            if (field == null || field.IsStatic || !field.IsPublic)
+            {
+                return false;
+            }
+            value = field.GetValue(target);
+            return true;
+        }
+
         private static bool TryBoundedCollectionV1(
             object? value,
             int maximumItems,
@@ -1501,7 +1628,9 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 !ReferenceEquals(value, VisibleActionRejected) &&
                 !IsSanitizedVisibleDecisionResultV1(value) &&
                 !IsSanitizedVisibleAttackerSelectionResultV1(value) &&
-                !IsSanitizedVisibleSingleAttackerBlockerSelectionResultV1(value))
+                !IsSanitizedVisibleSingleAttackerBlockerSelectionResultV1(value) &&
+                !IsSanitizedVisibleMultiAttackerBlockerSelectionResultV1(value) &&
+                !IsSanitizedVisibleBlockerTargetSelectionResultV1(value))
             {
                 value = OutputValidationFailed;
             }
@@ -1577,6 +1706,39 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         {
             byte[] prefix = Encoding.UTF8.GetBytes(
                 "{\"result_kind\":\"visible_single_attacker_blocker_selection\",\"selection\":");
+            if (value == null || value.Length <= prefix.Length ||
+                value.Length > MaximumOutputBytes - OutputPayloadOffset)
+            {
+                return false;
+            }
+            for (int index = 0; index < prefix.Length; index++)
+            {
+                if (value[index] != prefix[index])
+                {
+                    return false;
+                }
+            }
+            return value[value.Length - 1] == (byte)'}';
+        }
+
+        private static bool IsSanitizedVisibleMultiAttackerBlockerSelectionResultV1(
+            byte[] value)
+        {
+            byte[] prefix = Encoding.UTF8.GetBytes(
+                "{\"result_kind\":\"visible_multi_attacker_blocker_selection\",\"selection\":");
+            return HasExactSanitizedResultEnvelopeV1(value, prefix);
+        }
+
+        private static bool IsSanitizedVisibleBlockerTargetSelectionResultV1(
+            byte[] value)
+        {
+            byte[] prefix = Encoding.UTF8.GetBytes(
+                "{\"result_kind\":\"visible_blocker_target_selection\",\"selection\":");
+            return HasExactSanitizedResultEnvelopeV1(value, prefix);
+        }
+
+        private static bool HasExactSanitizedResultEnvelopeV1(byte[] value, byte[] prefix)
+        {
             if (value == null || value.Length <= prefix.Length ||
                 value.Length > MaximumOutputBytes - OutputPayloadOffset)
             {

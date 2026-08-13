@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
@@ -130,7 +131,19 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 new List<VisibleObjectRefV1>();
 
             [DataMember(Name = "blocker_assignments", Order = 4)]
-            public List<object> BlockerAssignments { get; set; } = new List<object>();
+            public List<VisibleBlockerAssignmentV1> BlockerAssignments { get; set; } =
+                new List<VisibleBlockerAssignmentV1>();
+        }
+
+        [DataContract]
+        private sealed class VisibleBlockerAssignmentV1
+        {
+            [DataMember(Name = "attacker", Order = 1)]
+            public VisibleObjectRefV1 Attacker { get; set; } = new VisibleObjectRefV1();
+
+            [DataMember(Name = "ordered_blockers", Order = 2)]
+            public List<VisibleObjectRefV1> OrderedBlockers { get; set; } =
+                new List<VisibleObjectRefV1>();
         }
 
         [DataContract]
@@ -327,6 +340,57 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
         }
 
         [DataContract]
+        private sealed class VisibleMultiAttackerBlockerSelectionV1
+        {
+            [DataMember(Name = "current_state", Order = 1)]
+            public VisibleStateV1 CurrentState { get; set; } = new VisibleStateV1();
+
+            [DataMember(Name = "ordered_available_blockers", Order = 2)]
+            public List<VisibleObjectRefV1> OrderedAvailableBlockers { get; set; } =
+                new List<VisibleObjectRefV1>();
+
+            [DataMember(Name = "unique_visible_enabled_done_control", Order = 3)]
+            public bool UniqueVisibleEnabledDoneControl { get; set; }
+        }
+
+        [DataContract]
+        private sealed class VisibleMultiAttackerBlockerSelectionResultV1
+        {
+            [DataMember(Name = "result_kind", Order = 1)]
+            public string ResultKind { get; set; } =
+                "visible_multi_attacker_blocker_selection";
+
+            [DataMember(Name = "selection", Order = 2)]
+            public VisibleMultiAttackerBlockerSelectionV1 Selection { get; set; } =
+                new VisibleMultiAttackerBlockerSelectionV1();
+        }
+
+        [DataContract]
+        private sealed class VisibleBlockerTargetSelectionV1
+        {
+            [DataMember(Name = "current_state", Order = 1)]
+            public VisibleStateV1 CurrentState { get; set; } = new VisibleStateV1();
+
+            [DataMember(Name = "blocker", Order = 2)]
+            public VisibleObjectRefV1 Blocker { get; set; } = new VisibleObjectRefV1();
+
+            [DataMember(Name = "ordered_visible_targetable_attackers", Order = 3)]
+            public List<VisibleObjectRefV1> OrderedVisibleTargetableAttackers { get; set; } =
+                new List<VisibleObjectRefV1>();
+        }
+
+        [DataContract]
+        private sealed class VisibleBlockerTargetSelectionResultV1
+        {
+            [DataMember(Name = "result_kind", Order = 1)]
+            public string ResultKind { get; set; } = "visible_blocker_target_selection";
+
+            [DataMember(Name = "selection", Order = 2)]
+            public VisibleBlockerTargetSelectionV1 Selection { get; set; } =
+                new VisibleBlockerTargetSelectionV1();
+        }
+
+        [DataContract]
         private sealed class VisibleAttackerExecutionUniverseV1
         {
             [DataMember(Name = "current_state", Order = 1)]
@@ -375,6 +439,14 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             boundClientActions = new List<object>();
             try
             {
+                if (TryBuildSanitizedVisibleBlockerTargetSelectionV1(
+                        viewModel,
+                        out result))
+                {
+                    // The target modal is a separately typed visible model
+                    // decision. No client target or action binding leaves it.
+                    return true;
+                }
                 if (TryBuildSanitizedVisibleAttackerSelectionV1(viewModel, out result))
                 {
                     // The legacy selected-index dispatcher cannot consume a
@@ -386,8 +458,17 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                         viewModel,
                         out result))
                 {
-                    // Blocker deliberation is observation-only in V1.20.
+                    // Blocker deliberation is observation-only in V1.21.
                     // No client action binding leaves this branch.
+                    return true;
+                }
+                if (TryBuildSanitizedVisibleMultiAttackerBlockerSelectionV1(
+                        viewModel,
+                        out result))
+                {
+                    // Multi-attacker blocking is staged through a later
+                    // visible target modal. This observation carries no
+                    // executable action binding.
                     return true;
                 }
                 if (!TryBuildSanitizedVisibleDecisionCoreV1(
@@ -464,6 +545,75 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 var serializer = new DataContractJsonSerializer(
                     typeof(VisibleSingleAttackerBlockerSelectionResultV1),
                     settings);
+                using (var stream = new MemoryStream())
+                {
+                    serializer.WriteObject(stream, payload);
+                    if (stream.Length <= 0 ||
+                        stream.Length > MaximumOutputBytes - OutputPayloadOffset)
+                    {
+                        return false;
+                    }
+                    result = stream.ToArray();
+                }
+                return true;
+            }
+            catch
+            {
+                result = Array.Empty<byte>();
+                return false;
+            }
+        }
+
+        internal static bool TryBuildSanitizedVisibleMultiAttackerBlockerSelectionV1(
+            object viewModel,
+            out byte[] result)
+        {
+            return TrySerializeSanitizedVisibleCombatSelectionV1<
+                VisibleMultiAttackerBlockerSelectionResultV1>(
+                viewModel,
+                TryBuildSanitizedVisibleMultiAttackerBlockerSelectionCoreV1,
+                out result);
+        }
+
+        internal static bool TryBuildSanitizedVisibleBlockerTargetSelectionV1(
+            object viewModel,
+            out byte[] result)
+        {
+            return TrySerializeSanitizedVisibleCombatSelectionV1<
+                VisibleBlockerTargetSelectionResultV1>(
+                viewModel,
+                TryBuildSanitizedVisibleBlockerTargetSelectionCoreV1,
+                out result);
+        }
+
+        private delegate bool TryBuildVisibleCombatPayloadV1<TPayload>(
+            object viewModel,
+            out TPayload payload);
+
+        private static bool TrySerializeSanitizedVisibleCombatSelectionV1<TPayload>(
+            object viewModel,
+            TryBuildVisibleCombatPayloadV1<TPayload> builder,
+            out byte[] result)
+        {
+            result = Array.Empty<byte>();
+            try
+            {
+                if (!builder(viewModel, out TPayload payload))
+                {
+                    return false;
+                }
+                var serializer = new DataContractJsonSerializer(
+                    typeof(TPayload),
+                    new DataContractJsonSerializerSettings
+                    {
+                        UseSimpleDictionaryFormat = true,
+                        KnownTypes = new[]
+                        {
+                            typeof(VisibleObjectRefV1),
+                            typeof(Dictionary<string, object?>)
+                        },
+                        EmitTypeInformation = EmitTypeInformation.Never
+                    });
                 using (var stream = new MemoryStream())
                 {
                     serializer.WriteObject(stream, payload);
@@ -1094,7 +1244,6 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
             {
                 return false;
             }
-
             var objectRefs = new Dictionary<object, VisibleObjectRefV1>(
                 ReferenceIdentityComparerV1.Instance);
             uint nextOrdinal = 0;
@@ -1205,6 +1354,370 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 UniqueVisibleEnabledDoneControl = true
             };
             return true;
+        }
+
+        private static bool TryBuildSanitizedVisibleMultiAttackerBlockerSelectionCoreV1(
+            object viewModel,
+            out VisibleMultiAttackerBlockerSelectionResultV1 result)
+        {
+            result = new VisibleMultiAttackerBlockerSelectionResultV1();
+            if (!TryBuildVisibleDeclareBlockersSnapshotV1(
+                    viewModel,
+                    false,
+                    out VisibleStateV1 state,
+                    out List<object> seatedBattlefield,
+                    out List<object> opponentBattlefield,
+                    out Dictionary<object, VisibleObjectRefV1> objectRefs,
+                    out List<VisibleObjectRefV1> visibleAttackers) ||
+                visibleAttackers.Count < 2 ||
+                !TryMapVisibleBlockerAssignmentsV1(
+                    seatedBattlefield,
+                    opponentBattlefield,
+                    objectRefs,
+                    visibleAttackers,
+                    out List<VisibleBlockerAssignmentV1> assignments) ||
+                !TryMapVisibleMultiAttackerBlockerCandidatesV1(
+                    seatedBattlefield,
+                    objectRefs,
+                    out List<VisibleObjectRefV1> availableBlockers))
+            {
+                return false;
+            }
+            state.Combat.AttackersDeclared = true;
+            state.Combat.OrderedAttackers = visibleAttackers;
+            state.Combat.BlockerAssignments = assignments;
+            result.Selection = new VisibleMultiAttackerBlockerSelectionV1
+            {
+                CurrentState = state,
+                OrderedAvailableBlockers = availableBlockers,
+                UniqueVisibleEnabledDoneControl = true
+            };
+            return true;
+        }
+
+        private static bool TryBuildSanitizedVisibleBlockerTargetSelectionCoreV1(
+            object viewModel,
+            out VisibleBlockerTargetSelectionResultV1 result)
+        {
+            result = new VisibleBlockerTargetSelectionResultV1();
+            if (!TryBuildVisibleDeclareBlockersSnapshotV1(
+                    viewModel,
+                    true,
+                    out VisibleStateV1 state,
+                    out List<object> seatedBattlefield,
+                    out List<object> opponentBattlefield,
+                    out Dictionary<object, VisibleObjectRefV1> objectRefs,
+                    out List<VisibleObjectRefV1> visibleAttackers) ||
+                visibleAttackers.Count < 2 ||
+                !TryMapVisibleBlockerAssignmentsV1(
+                    seatedBattlefield,
+                    opponentBattlefield,
+                    objectRefs,
+                    visibleAttackers,
+                    out List<VisibleBlockerAssignmentV1> assignments))
+            {
+                return false;
+            }
+
+            var targetingBlockers = new List<object>();
+            foreach (object card in seatedBattlefield)
+            {
+                if (!TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "IsTargeting",
+                        out object? targetingValue) ||
+                    !(targetingValue is bool targeting))
+                {
+                    return false;
+                }
+                if (targeting)
+                {
+                    targetingBlockers.Add(card);
+                }
+            }
+            if (targetingBlockers.Count != 1 ||
+                !TryRequireVisibleTargetSelectionModeV1(viewModel) ||
+                !objectRefs.TryGetValue(
+                    targetingBlockers.Single(),
+                    out VisibleObjectRefV1? blocker))
+            {
+                return false;
+            }
+
+            var targetableAttackers = new List<VisibleObjectRefV1>();
+            for (int index = 0; index < opponentBattlefield.Count; index++)
+            {
+                object card = opponentBattlefield[index];
+                if (!TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "VisuallyAttacking",
+                        out object? attackingValue) ||
+                    !(attackingValue is bool attacking) ||
+                    !TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "IsTargetable",
+                        out object? targetableValue) ||
+                    !(targetableValue is bool targetable) ||
+                    !TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "IsTargeting",
+                        out object? targetingValue) ||
+                    !(targetingValue is bool targeting) || targeting ||
+                    !objectRefs.TryGetValue(card, out VisibleObjectRefV1? attacker))
+                {
+                    return false;
+                }
+                if (targetable && !attacking)
+                {
+                    return false;
+                }
+                if (attacking && targetable)
+                {
+                    targetableAttackers.Add(attacker);
+                }
+            }
+            foreach (object card in seatedBattlefield)
+            {
+                if (!TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "IsTargetable",
+                        out object? targetableValue) ||
+                    !(targetableValue is bool targetable) || targetable)
+                {
+                    return false;
+                }
+            }
+            if (targetableAttackers.Count == 0)
+            {
+                return false;
+            }
+
+            state.Combat.AttackersDeclared = true;
+            state.Combat.OrderedAttackers = visibleAttackers;
+            state.Combat.BlockerAssignments = assignments;
+            result.Selection = new VisibleBlockerTargetSelectionV1
+            {
+                CurrentState = state,
+                Blocker = blocker,
+                OrderedVisibleTargetableAttackers = targetableAttackers
+            };
+            return true;
+        }
+
+        private static bool TryBuildVisibleDeclareBlockersSnapshotV1(
+            object viewModel,
+            bool targetModalExpected,
+            out VisibleStateV1 state,
+            out List<object> seatedBattlefieldCards,
+            out List<object> opponentBattlefieldCards,
+            out Dictionary<object, VisibleObjectRefV1> objectRefs,
+            out List<VisibleObjectRefV1> visibleAttackers)
+        {
+            state = new VisibleStateV1();
+            seatedBattlefieldCards = new List<object>();
+            opponentBattlefieldCards = new List<object>();
+            objectRefs = new Dictionary<object, VisibleObjectRefV1>(
+                ReferenceIdentityComparerV1.Instance);
+            visibleAttackers = new List<VisibleObjectRefV1>();
+            if (!TryRequireSupportedDuelVariantV1(viewModel) ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "CurrentPhase",
+                    out object? phaseValue) ||
+                !TryMapVisiblePhaseV1(phaseValue, out string phase) ||
+                !string.Equals(phase, "declare_blockers", StringComparison.Ordinal) ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "GameTurnText",
+                    out object? turnTextValue) ||
+                !TryParseVisibleTurnV1(turnTextValue, out uint turn) ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "Players",
+                    out object? playersValue) ||
+                !TryBoundedCollectionV1(playersValue, 2, out List<object> players) ||
+                players.Count != 2)
+            {
+                return false;
+            }
+            var snapshots = new List<PlayerSnapshotV1>();
+            foreach (object player in players)
+            {
+                if (!TryBuildPlayerSnapshotV1(player, out PlayerSnapshotV1 snapshot))
+                {
+                    return false;
+                }
+                snapshots.Add(snapshot);
+            }
+            if (snapshots.Count(player => player.Local) != 1 ||
+                snapshots.Count(player => player.Active) != 1 ||
+                snapshots.Count(player => player.Priority) != 1)
+            {
+                return false;
+            }
+            PlayerSnapshotV1 seated = snapshots.Single(player => player.Local);
+            PlayerSnapshotV1 opponent = snapshots.Single(player => !player.Local);
+            if (seated.Active || !opponent.Active || !seated.Priority ||
+                seated.Revealed.Count != 0 || opponent.Revealed.Count != 0 ||
+                (opponent.Hand.Count != 0 && opponent.Hand.Count != opponent.HandCount) ||
+                !TryMapVisibleInitiativeHolderV1(seated, opponent, out string? initiative) ||
+                initiative != null ||
+                !TryRequireNoUnrepresentedVisibleModalSurfaceV1(viewModel) ||
+                (!targetModalExpected &&
+                    (!TryRequireVisibleAttackerDoneControlV1(viewModel, out object? doneAction) ||
+                     doneAction == null)) ||
+                !TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "StackZone",
+                    out object? stackZone) || stackZone == null ||
+                !TryReadExactPropertyV1(
+                    stackZone,
+                    "DuelScene",
+                    "Shiny.Play.Duel.ViewModel.ZoneViewModel",
+                    "Count",
+                    out object? stackCountValue) ||
+                !(stackCountValue is int stackCount) || stackCount != 0 ||
+                !TryReadExactPropertyV1(
+                    stackZone,
+                    "DuelScene",
+                    "Shiny.Play.Duel.ViewModel.ZoneViewModel",
+                    "Cards",
+                    out object? stackCardsValue) ||
+                !TryBoundedCollectionV1(stackCardsValue, 0, out List<object> stackCards) ||
+                stackCards.Count != 0)
+            {
+                return false;
+            }
+
+            foreach (PlayerSnapshotV1 player in snapshots)
+            {
+                if (!TryReadExactPropertyV1(
+                        player.Player,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.PlayerViewModel",
+                        "IsTargetable",
+                        out object? playerTargetableValue) ||
+                    !(playerTargetableValue is bool playerTargetable) ||
+                    playerTargetable)
+                {
+                    return false;
+                }
+            }
+
+            uint nextOrdinal = 0;
+            Dictionary<object, VisibleObjectRefV1> localObjectRefs = objectRefs;
+            Func<object, VisibleObjectRefV1> register = card =>
+            {
+                if (!localObjectRefs.TryGetValue(card, out VisibleObjectRefV1 visibleRef))
+                {
+                    visibleRef = new VisibleObjectRefV1 { VisibleOrdinal = nextOrdinal++ };
+                    localObjectRefs.Add(card, visibleRef);
+                }
+                return visibleRef;
+            };
+            foreach (object card in seated.Battlefield) register(card);
+            foreach (object card in opponent.Battlefield) register(card);
+            foreach (object card in seated.Graveyard) register(card);
+            foreach (object card in opponent.Graveyard) register(card);
+            foreach (object card in seated.Exile) register(card);
+            foreach (object card in opponent.Exile) register(card);
+            foreach (object card in seated.Hand) register(card);
+            foreach (object card in opponent.Hand) register(card);
+
+            if (!TryMapBattlefieldForVisibleBlockerSelectionV1(
+                    seated.Battlefield,
+                    false,
+                    objectRefs,
+                    out List<VisibleBattlefieldCardV1> seatedBattlefield,
+                    out List<VisibleRelationV1> relations,
+                    out List<VisibleObjectRefV1> seatedAttackers) ||
+                seatedAttackers.Count != 0 ||
+                !TryMapBattlefieldForVisibleBlockerSelectionV1(
+                    opponent.Battlefield,
+                    true,
+                    objectRefs,
+                    out List<VisibleBattlefieldCardV1> opponentBattlefield,
+                    out List<VisibleRelationV1> opponentRelations,
+                    out visibleAttackers) ||
+                visibleAttackers.Count == 0 || visibleAttackers.Count > 64 ||
+                !TryMapNamedCardsV1(seated.Graveyard, objectRefs, out List<VisibleNamedCardV1> seatedGraveyard) ||
+                !TryMapNamedCardsV1(opponent.Graveyard, objectRefs, out List<VisibleNamedCardV1> opponentGraveyard) ||
+                !TryMapExileV1(seated.Exile, "seated_player", objectRefs, out List<VisibleExileCardV1> seatedExile) ||
+                !TryMapExileV1(opponent.Exile, "opponent", objectRefs, out List<VisibleExileCardV1> opponentExile) ||
+                !TryMapNamedCardsV1(seated.Hand, objectRefs, out List<VisibleNamedCardV1> ownHand) ||
+                !TryMapNamedCardsV1(opponent.Hand, objectRefs, out List<VisibleNamedCardV1> opponentKnownHand))
+            {
+                return false;
+            }
+            relations.AddRange(opponentRelations);
+            seatedExile.AddRange(opponentExile);
+            state = new VisibleStateV1
+            {
+                Turn = turn,
+                Phase = phase,
+                ActivePlayer = "opponent",
+                PriorityPlayer = "seated_player",
+                Initiative = null,
+                LifeTotals = new[] { seated.Life, opponent.Life },
+                ManaPools = new[] { seated.ManaPool, opponent.ManaPool },
+                HandCounts = new[] { seated.HandCount, opponent.HandCount },
+                LibraryCounts = new[] { seated.LibraryCount, opponent.LibraryCount },
+                Battlefield = new[] { seatedBattlefield, opponentBattlefield },
+                Graveyards = new[] { seatedGraveyard, opponentGraveyard },
+                Exile = seatedExile,
+                Stack = new List<VisibleStackItemV1>(),
+                Combat = new VisibleCombatStateV1(),
+                VisibleObjectRelations = relations,
+                OwnHand = ownHand,
+                KnownLibraryCards = new[] { new List<object>(), new List<object>() },
+                KnownHandCards = new[]
+                {
+                    new List<VisibleNamedCardV1>(),
+                    opponentKnownHand
+                }
+            };
+            seatedBattlefieldCards = seated.Battlefield;
+            opponentBattlefieldCards = opponent.Battlefield;
+            return true;
+        }
+
+        private static bool TryRequireVisibleTargetSelectionModeV1(object viewModel)
+        {
+            return TryReadExactPropertyV1(
+                    viewModel,
+                    "DuelScene",
+                    DuelViewModelType,
+                    "InteractionState",
+                    out object? interactionState) && interactionState != null &&
+                TryReadExactPropertyV1(
+                    interactionState,
+                    "DuelScene",
+                    "Shiny.Play.Duel.Utility.InteractionState",
+                    "Mode",
+                    out object? modeValue) && modeValue != null &&
+                modeValue.GetType().FullName == "Shiny.Play.Duel.Utility.InteractMode" &&
+                string.Equals(
+                    Enum.GetName(modeValue.GetType(), modeValue),
+                    "SelectTargets",
+                    StringComparison.Ordinal);
         }
 
         private static bool TryRequireSupportedDuelVariantV1(object viewModel)
@@ -1960,6 +2473,303 @@ namespace MtgKernel.Mtgo.VisibleDuelProducer.V1
                 });
             }
             return true;
+        }
+
+        private static bool TryMapBattlefieldForVisibleBlockerSelectionV1(
+            List<object> cards,
+            bool collectAttackers,
+            Dictionary<object, VisibleObjectRefV1> refs,
+            out List<VisibleBattlefieldCardV1> mapped,
+            out List<VisibleRelationV1> relations,
+            out List<VisibleObjectRefV1> visibleAttackers)
+        {
+            mapped = new List<VisibleBattlefieldCardV1>();
+            relations = new List<VisibleRelationV1>();
+            visibleAttackers = new List<VisibleObjectRefV1>();
+            foreach (object card in cards)
+            {
+                if (!TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "IsFaceDown", out object? faceDownValue) || !(faceDownValue is bool faceDown) || faceDown ||
+                    !TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "Name", out object? nameValue) || !(nameValue is string name) || !IsBoundedVisibleStringV1(name, 256, true) ||
+                    !TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "IsTapped", out object? tappedValue) || !(tappedValue is bool tapped) ||
+                    !TryReadExactPropertyV1(card, "DuelScene", "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel", "VisuallyAttacking", out object? attackingValue) || !(attackingValue is bool attacking) ||
+                    !TryReadExactPropertyV1(card, "DuelScene", "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel", "VisuallyBlocking", out object? blockingValue) || !(blockingValue is bool) ||
+                    (!collectAttackers && attacking) ||
+                    !TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "CurrentDamage", out object? damageValue) || !(damageValue is int damage) || damage < 0 || damage > ushort.MaxValue ||
+                    !TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "Power", out object? powerValue) || (powerValue != null && !(powerValue is int)) ||
+                    !TryReadExactPropertyV1(card, "Card", "Shiny.Card.ViewModels.CardViewModel", "Toughness", out object? toughnessValue) || (toughnessValue != null && !(toughnessValue is int)) ||
+                    !TryReadExactPropertyV1(card, "DuelScene", "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel", "IsToken", out object? tokenValue) || !(tokenValue is bool token) ||
+                    !TryReadExactPropertyV1(card, "DuelScene", "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel", "VisibleCounters", out object? countersValue) ||
+                    !TryBoundedCollectionV1(countersValue, 128, out List<object> counters) ||
+                    !TryMapCountersV1(counters, out VisibleCounterStateV1 counterState) ||
+                    !TryReadExactPropertyV1(card, "DuelScene", "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel", "CardAttachedTo", out object? attachedTo))
+                {
+                    return false;
+                }
+                if (attachedTo != null)
+                {
+                    if (!refs.TryGetValue(attachedTo, out VisibleObjectRefV1? attachedRef))
+                    {
+                        return false;
+                    }
+                    relations.Add(new VisibleRelationV1
+                    {
+                        Object = refs[card],
+                        AttachedTo = attachedRef
+                    });
+                }
+                VisibleObjectRefV1 objectRef = refs[card];
+                if (collectAttackers && attacking)
+                {
+                    visibleAttackers.Add(objectRef);
+                }
+                mapped.Add(new VisibleBattlefieldCardV1
+                {
+                    ObjectRef = objectRef,
+                    CardName = name,
+                    Tapped = tapped,
+                    MarkedDamage = checked((ushort)damage),
+                    Counters = counterState,
+                    IsToken = token,
+                    VisibleEffectivePower = (int?)powerValue,
+                    VisibleEffectiveToughness = (int?)toughnessValue
+                });
+            }
+            return true;
+        }
+
+        private static bool TryMapVisibleBlockerAssignmentsV1(
+            List<object> seatedBattlefield,
+            List<object> opponentBattlefield,
+            Dictionary<object, VisibleObjectRefV1> refs,
+            List<VisibleObjectRefV1> visibleAttackers,
+            out List<VisibleBlockerAssignmentV1> assignments)
+        {
+            assignments = new List<VisibleBlockerAssignmentV1>();
+            var attackerByBackingCard = new Dictionary<object, VisibleObjectRefV1>(
+                ReferenceIdentityComparerV1.Instance);
+            for (int index = 0; index < opponentBattlefield.Count; index++)
+            {
+                object card = opponentBattlefield[index];
+                if (!TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "VisuallyAttacking",
+                        out object? attackingValue) ||
+                    !(attackingValue is bool attacking) ||
+                    !TryReadExactPrivateVisibleActionPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "GameCard",
+                        out object? gameCard))
+                {
+                    return false;
+                }
+                if (attacking)
+                {
+                    if (gameCard == null || attackerByBackingCard.ContainsKey(gameCard))
+                    {
+                        return false;
+                    }
+                    attackerByBackingCard.Add(gameCard, refs[card]);
+                }
+            }
+            if (attackerByBackingCard.Count != visibleAttackers.Count)
+            {
+                return false;
+            }
+
+            var orderedByAttacker = visibleAttackers.ToDictionary(
+                attacker => attacker.VisibleOrdinal,
+                _ => new List<Tuple<int, VisibleObjectRefV1>>());
+            foreach (object card in seatedBattlefield)
+            {
+                if (!TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "VisuallyBlocking",
+                        out object? blockingValue) ||
+                    !(blockingValue is bool blocking) ||
+                    !TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "VisualBlockingOrders",
+                        out object? ordersValue) ||
+                    !TryBoundedCollectionV1(ordersValue, 64, out List<object> orders) ||
+                    blocking != (orders.Count > 0))
+                {
+                    return false;
+                }
+                // Multiple blocking destinations for one permanent require a
+                // separate layout qualification. Normal blocking admits one.
+                if (orders.Count > 1)
+                {
+                    return false;
+                }
+                foreach (object order in orders)
+                {
+                    if (!TryReadExactPrivateVisibleCombatFieldV1(
+                            order,
+                            "WotC.MtGO.Client.Model.Reference",
+                            "WotC.MtGO.Client.Model.Play.OrderedCombatParticipant",
+                            "Order",
+                            out object? orderValue) ||
+                        !(orderValue is int position) || position <= 0 || position > 64 ||
+                        !TryReadExactPrivateVisibleCombatFieldV1(
+                            order,
+                            "WotC.MtGO.Client.Model.Reference",
+                            "WotC.MtGO.Client.Model.Play.OrderedCombatParticipant",
+                            "Target",
+                            out object? target) || target == null ||
+                        !attackerByBackingCard.TryGetValue(
+                            target,
+                            out VisibleObjectRefV1? attacker))
+                    {
+                        return false;
+                    }
+                    orderedByAttacker[attacker.VisibleOrdinal].Add(
+                        Tuple.Create(position, refs[card]));
+                }
+            }
+
+            foreach (VisibleObjectRefV1 attacker in visibleAttackers)
+            {
+                List<Tuple<int, VisibleObjectRefV1>> blockers =
+                    orderedByAttacker[attacker.VisibleOrdinal];
+                if (blockers.Count == 0)
+                {
+                    continue;
+                }
+                blockers.Sort((left, right) => left.Item1.CompareTo(right.Item1));
+                for (int index = 0; index < blockers.Count; index++)
+                {
+                    if (blockers[index].Item1 != index + 1)
+                    {
+                        return false;
+                    }
+                }
+                assignments.Add(new VisibleBlockerAssignmentV1
+                {
+                    Attacker = attacker,
+                    OrderedBlockers = blockers.Select(blocker => blocker.Item2).ToList()
+                });
+            }
+            return true;
+        }
+
+        private static bool TryMapVisibleMultiAttackerBlockerCandidatesV1(
+            List<object> seatedBattlefield,
+            Dictionary<object, VisibleObjectRefV1> refs,
+            out List<VisibleObjectRefV1> candidates)
+        {
+            candidates = new List<VisibleObjectRefV1>();
+            foreach (object card in seatedBattlefield)
+            {
+                if (!refs.TryGetValue(card, out VisibleObjectRefV1? blocker) ||
+                    !TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "VisuallyBlocking",
+                        out object? blockingValue) ||
+                    !(blockingValue is bool currentlyBlocking) ||
+                    !TryReadExactPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "HasNoBlockingAction",
+                        out object? noBlockingValue) ||
+                    !(noBlockingValue is bool hasNoBlockingAction) ||
+                    !TryReadExactPrivateVisibleActionPropertyV1(
+                        card,
+                        "DuelScene",
+                        "Shiny.Play.Duel.ViewModel.DuelSceneCardViewModel",
+                        "Actions",
+                        out object? actionsValue) ||
+                    !TryBoundedCollectionV1(actionsValue, 64, out List<object> actions))
+                {
+                    return false;
+                }
+                int blockActionCount = 0;
+                foreach (object action in actions)
+                {
+                    if (!TryReadExactPrivateVisibleActionPropertyV1(
+                            action,
+                            "WotC.MtGO.Client.Model.Reference",
+                            "WotC.MtGO.Client.Model.Play.IGameAction",
+                            "Name",
+                            out object? nameValue) ||
+                        !(nameValue is string name) ||
+                        !IsBoundedVisibleStringV1(name, 512, true))
+                    {
+                        return false;
+                    }
+                    if (!string.Equals(name, "Block", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+                    if (!TryRequireSimpleVisibleMultiAttackerBlockerActionV1(action))
+                    {
+                        return false;
+                    }
+                    blockActionCount++;
+                }
+                if (hasNoBlockingAction != (blockActionCount == 0) || blockActionCount > 1)
+                {
+                    return false;
+                }
+                if (blockActionCount == 1 && !currentlyBlocking)
+                {
+                    candidates.Add(blocker);
+                }
+            }
+            return candidates.Count <= 64;
+        }
+
+        private static bool TryRequireSimpleVisibleMultiAttackerBlockerActionV1(object action)
+        {
+            const string assembly = "WotC.MtGO.Client.Model.Reference";
+            const string gameAction = "WotC.MtGO.Client.Model.Play.IGameAction";
+            const string cardAction = "WotC.MtGO.Client.Model.Play.ICardAction";
+            if (action.GetType().FullName == "Shiny.Play.Duel.GroupCardAction" ||
+                !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, gameAction, "ActionType", out object? actionTypeValue) ||
+                actionTypeValue == null || actionTypeValue.GetType().FullName != "WotC.MtGO.Client.Model.Play.ActionType" ||
+                !string.Equals(Enum.GetName(actionTypeValue.GetType(), actionTypeValue), "CardAction", StringComparison.Ordinal) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, cardAction, "CanBePerformedLocally", out object? localValue) || !(localValue is bool local) || !local ||
+                !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, cardAction, "IsManaAbility", out object? manaValue) || !(manaValue is bool mana) || mana ||
+                !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, cardAction, "IsActivatedAbility", out object? activatedValue) || !(activatedValue is bool activated) || activated ||
+                !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, cardAction, "IsCastAction", out object? castValue) || !(castValue is bool cast) || cast ||
+                !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, cardAction, "ModeOptions", out object? modesValue) ||
+                (modesValue != null && (!TryBoundedCollectionV1(modesValue, 0, out List<object> modes) || modes.Count != 0)) ||
+                !TryRequireBasicVisibleCardActionMenuShapeV1(action) ||
+                !TryReadExactPrivateVisibleActionPropertyV1(action, assembly, cardAction, "Targets", out object? targetsValue) ||
+                !TryBoundedCollectionV1(targetsValue, 1, out List<object> targets) || targets.Count != 1)
+            {
+                return false;
+            }
+            Assembly[] referenceAssemblies = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(candidate => string.Equals(
+                    candidate.GetName().Name,
+                    assembly,
+                    StringComparison.Ordinal))
+                .ToArray();
+            Type? targetSetType = referenceAssemblies.Length == 1
+                ? referenceAssemblies[0].GetType(
+                    "WotC.MtGO.Client.Model.Play.ITargetSet",
+                    false,
+                    false)
+                : null;
+            if (targetSetType == null || targets[0] == null ||
+                !targetSetType.IsInstanceOfType(targets[0]))
+            {
+                return false;
+            }
+            // The target-set values are deliberately not read or exported.
+            // Outward choices come separately from IsTargetable presentation.
+            return TryRequireNoUnrepresentedVisibleCardActionModalExceptTargetsV1(action);
         }
 
         private static bool TryMapVisibleSingleAttackerBlockerCandidatesV1(
