@@ -66,6 +66,38 @@ producer boundary.
   has yet been qualified. The current producer must continue to abstain after
   the untouched opening until that mapping is proven.
 
+## Visible action completeness
+
+The public `IGameAction.ActionType` enum identifies the client prompt families
+that must eventually be represented or cause an explicit abstention:
+
+- choose an option;
+- perform a card action;
+- order targets;
+- distribute among targets;
+- choose a number;
+- choose a player;
+- choose a pile;
+- pay mana;
+- select from a list;
+- choose a wish card;
+- confirm the legacy mana-burn prompt;
+- use the card selector.
+
+This enum is a completeness inventory, not model input. `ActionType`, internal
+mode IDs, attack-victim IDs, target-requirement flags, selected modifiers, and
+backing target objects are not eligible exports merely because the client
+exposes them.
+
+For a card action, the exact displayed source card, menu name, group name, mode
+labels, confirmation text, target prompt, and visible selectable candidates are
+eligible only when they are present in the rendered action path. The producer
+may retain the corresponding client action and target objects privately for one
+transaction, but the model receives only relative player roles, visible object
+ordinals, visible option ordinals, visible labels, and bounded public numeric
+choices. Any family whose full visible choice set cannot be reconstructed must
+abstain rather than return a partial legal-action list.
+
 ## Governing information boundary
 
 Direct process attachment and exact client-object joins are allowed under the
