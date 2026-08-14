@@ -32,7 +32,7 @@ param(
     [AllowEmptyString()]
     [string]$ExpectedWindowTitle,
 
-    [ValidateSet('MainClient', 'ForegroundOwnedWindow')]
+    [ValidateSet('MainClient', 'ForegroundOwnedWindow', 'VisibleOwnedPopup')]
     [string]$TargetWindowMode = 'MainClient',
 
     [Parameter(Mandatory = $true)]
@@ -58,22 +58,27 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if ([string]::IsNullOrEmpty($ExpectedWindowTitle) -and
-    $TargetWindowMode -cne 'ForegroundOwnedWindow') {
-    throw 'MTGO_CLICK_EMPTY_TITLE_REQUIRES_FOREGROUND_OWNED_WINDOW'
+    $TargetWindowMode -cne 'ForegroundOwnedWindow' -and
+    $TargetWindowMode -cne 'VisibleOwnedPopup') {
+    throw 'MTGO_CLICK_EMPTY_TITLE_REQUIRES_OWNED_WINDOW'
 }
 
 if (-not ('MtgoSupervisedClickNativeV1' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 public static class MtgoSupervisedClickNativeV1
 {
     private const uint GA_ROOT = 2;
+    private const uint GW_OWNER = 4;
     private const int DWMWA_CLOAKED = 14;
     private const int INPUT_MOUSE = 0;
     private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+
+    private delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct POINT
@@ -153,6 +158,12 @@ public static class MtgoSupervisedClickNativeV1
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetAncestor(IntPtr window, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr window, uint command);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
 
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
@@ -243,6 +254,30 @@ public static class MtgoSupervisedClickNativeV1
         return window != IntPtr.Zero && GetAncestor(window, GA_ROOT) == window;
     }
 
+    public static IntPtr[] VisibleOwnedRootWindowsForProcess(IntPtr mainWindow, uint processId)
+    {
+        List<IntPtr> windows = new List<IntPtr>();
+        EnumWindows(delegate(IntPtr candidate, IntPtr ignored)
+        {
+            uint candidateProcessId;
+            GetWindowThreadProcessId(candidate, out candidateProcessId);
+            if (candidate != mainWindow &&
+                candidateProcessId == processId &&
+                IsWindowVisible(candidate) &&
+                IsRootWindow(candidate) &&
+                GetWindow(candidate, GW_OWNER) == mainWindow)
+            {
+                windows.Add(candidate);
+            }
+            return true;
+        }, IntPtr.Zero);
+        windows.Sort(delegate(IntPtr left, IntPtr right)
+        {
+            return left.ToInt64().CompareTo(right.ToInt64());
+        });
+        return windows.ToArray();
+    }
+
     public static string WindowTitle(IntPtr window)
     {
         int length = GetWindowTextLengthW(window);
@@ -311,8 +346,20 @@ try {
     if ($TargetWindowMode -ceq 'MainClient') {
         [IntPtr]$window = $mainWindow
     }
-    else {
+    elseif ($TargetWindowMode -ceq 'ForegroundOwnedWindow') {
         [IntPtr]$window = [MtgoSupervisedClickNativeV1]::GetForegroundWindow()
+    }
+    else {
+        if ([MtgoSupervisedClickNativeV1]::GetForegroundWindow() -ne $mainWindow) {
+            throw 'MTGO_CLICK_OWNED_POPUP_REQUIRES_FOREGROUND_MAIN_CLIENT'
+        }
+        $ownedPopups = @([MtgoSupervisedClickNativeV1]::VisibleOwnedRootWindowsForProcess(
+            $mainWindow,
+            [uint32]$ExpectedProcessId))
+        if ($ownedPopups.Count -ne 1) {
+            throw "MTGO_CLICK_VISIBLE_OWNED_POPUP_COUNT_MISMATCH:$($ownedPopups.Count)"
+        }
+        [IntPtr]$window = $ownedPopups[0]
     }
     if (-not [MtgoSupervisedClickNativeV1]::IsWindow($window) -or
         -not [MtgoSupervisedClickNativeV1]::IsRootWindow($window) -or
@@ -346,12 +393,19 @@ try {
         throw 'MTGO_CLICK_POINT_OUTSIDE_CLIENT'
     }
 
-    if (-not [MtgoSupervisedClickNativeV1]::ActivateWindow($window)) {
-        throw 'MTGO_CLICK_ACTIVATION_FAILED'
+    if ($TargetWindowMode -ceq 'VisibleOwnedPopup') {
+        if ([MtgoSupervisedClickNativeV1]::GetForegroundWindow() -ne $mainWindow) {
+            throw 'MTGO_CLICK_OWNED_POPUP_FOREGROUND_CHANGED'
+        }
     }
-    Start-Sleep -Milliseconds 200
-    if ([MtgoSupervisedClickNativeV1]::GetForegroundWindow() -ne $window) {
-        throw 'MTGO_CLICK_FOREGROUND_MISMATCH'
+    else {
+        if (-not [MtgoSupervisedClickNativeV1]::ActivateWindow($window)) {
+            throw 'MTGO_CLICK_ACTIVATION_FAILED'
+        }
+        Start-Sleep -Milliseconds 200
+        if ([MtgoSupervisedClickNativeV1]::GetForegroundWindow() -ne $window) {
+            throw 'MTGO_CLICK_FOREGROUND_MISMATCH'
+        }
     }
 
     $screenPoint = New-Object MtgoSupervisedClickNativeV1+POINT
@@ -372,7 +426,13 @@ try {
         $actualCursor.X -ne $screenPoint.X -or $actualCursor.Y -ne $screenPoint.Y) {
         throw 'MTGO_CLICK_CURSOR_POSITION_CHANGED'
     }
-    if ([MtgoSupervisedClickNativeV1]::GetForegroundWindow() -ne $window -or
+    $expectedForeground = if ($TargetWindowMode -ceq 'VisibleOwnedPopup') {
+        $mainWindow
+    }
+    else {
+        $window
+    }
+    if ([MtgoSupervisedClickNativeV1]::GetForegroundWindow() -ne $expectedForeground -or
         -not [MtgoSupervisedClickNativeV1]::IsSameRootWindowAtPoint($window, $screenPoint)) {
         throw 'MTGO_CLICK_PRE_INPUT_STATE_CHANGED'
     }

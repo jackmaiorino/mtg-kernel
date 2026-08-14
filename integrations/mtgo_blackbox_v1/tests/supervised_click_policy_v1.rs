@@ -95,12 +95,17 @@ fn click_helper_does_not_claim_postcondition_or_autonomous_authority() {
 }
 
 #[test]
-fn click_helper_allows_only_an_exact_untitled_foreground_owned_window() {
+fn click_helper_allows_only_exact_untitled_owned_windows() {
     for required in [
         "[AllowEmptyString()]",
-        "MTGO_CLICK_EMPTY_TITLE_REQUIRES_FOREGROUND_OWNED_WINDOW",
+        "MTGO_CLICK_EMPTY_TITLE_REQUIRES_OWNED_WINDOW",
         "WindowTitle($window) -cne $ExpectedWindowTitle",
         "$TargetWindowMode -cne 'ForegroundOwnedWindow'",
+        "$TargetWindowMode -cne 'VisibleOwnedPopup'",
+        "VisibleOwnedRootWindowsForProcess",
+        "MTGO_CLICK_VISIBLE_OWNED_POPUP_COUNT_MISMATCH",
+        "MTGO_CLICK_OWNED_POPUP_REQUIRES_FOREGROUND_MAIN_CLIENT",
+        "MTGO_CLICK_OWNED_POPUP_FOREGROUND_CHANGED",
     ] {
         assert!(
             CLICK_SCRIPT.contains(required),
