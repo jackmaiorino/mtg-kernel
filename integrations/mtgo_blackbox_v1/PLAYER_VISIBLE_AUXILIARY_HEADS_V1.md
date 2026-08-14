@@ -134,9 +134,12 @@ not auxiliary-ready merely because it can score in-game decisions.
 is the executable game-two handoff fixture. It freezes one complete prior game
 as separate confirmed-decision and rendered-Game-Log streams, the exact
 seven-card Keep or Mulligan input, and both unchanged and inventory-conserving
-changed sideboard targets. Its tests recompute the existing adapter input and
-selection commitments plus source-only commitments that bind each current
-decision to the complete prior-game history.
+changed sideboard targets.
+`../mtgo_dxgi_capture_v1/fixtures/player_visible_competitive_london_bottoming_conformance_source_v1.json`
+adds the required game-one empty-history replacement plus exact bottom-one
+Select and Submit states. Together their tests recompute the existing adapter
+input and selection commitments plus source-only commitments that bind each
+current decision to the complete prior-game history.
 
 The fixture deployment digest is a fixture-only sentinel. The file is not a
 checkpoint package, production ratification, event session, entry decision, or

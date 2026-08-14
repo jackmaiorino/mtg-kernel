@@ -24,6 +24,9 @@ use sha2::{Digest, Sha256};
 const FIXTURE_JSON: &str = include_str!(
     "../fixtures/player_visible_competitive_auxiliary_heads_conformance_source_v1.json"
 );
+const LONDON_FIXTURE_JSON: &str = include_str!(
+    "../fixtures/player_visible_competitive_london_bottoming_conformance_source_v1.json"
+);
 const COMPLETED_HISTORY_SOURCE_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-completed-match-history-conformance-source-v1";
 const PREGAME_SOURCE_DOMAIN_V1: &[u8] = b"mtgo-player-visible-pregame-conformance-source-v1";
@@ -39,6 +42,17 @@ struct ConformanceFixtureV1 {
     expected_completed_match_history_source_commitment_sha256: String,
     pregame: PregameFixtureV1,
     sideboard: SideboardFixtureV1,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LondonConformanceFixtureV1 {
+    schema_version: u32,
+    fixture_id: String,
+    fixture_deployment_commitment_sha256: String,
+    completed_match_history: CompletedMatchHistorySourceV1,
+    expected_completed_match_history_source_commitment_sha256: String,
+    pregame_cases: Vec<LondonPregameFixtureV1>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -94,6 +108,20 @@ struct PublicGameLogEventSourceV1 {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PregameFixtureV1 {
+    model_input: MtgoCompetitiveNativePregameModelInputV1,
+    expected_model_input_commitment_sha256: String,
+    expected_source_commitment_sha256: String,
+    ordered_action_logits_f32_bits: Vec<u32>,
+    value_f32_bits: u32,
+    expected_selected_index: usize,
+    expected_selected_action: MtgoCompetitiveNativePregameActionV1,
+    expected_checked_selection_commitment_sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LondonPregameFixtureV1 {
+    case_id: String,
     model_input: MtgoCompetitiveNativePregameModelInputV1,
     expected_model_input_commitment_sha256: String,
     expected_source_commitment_sha256: String,
@@ -430,4 +458,83 @@ fn fixture_rejects_unknown_fields_and_history_is_not_optional_for_game_two() {
         .unwrap()
         .remove("completed_match_history");
     assert!(serde_json::from_value::<ConformanceFixtureV1>(missing_history).is_err());
+}
+
+#[test]
+fn london_bottoming_source_requires_empty_game_one_history_and_pins_select_then_submit() {
+    let fixture: LondonConformanceFixtureV1 = serde_json::from_str(LONDON_FIXTURE_JSON).unwrap();
+    assert_eq!(fixture.schema_version, 1);
+    assert_eq!(
+        fixture.fixture_id,
+        "player-visible-competitive-london-bottoming-game-one-v1"
+    );
+    assert!(fixture.completed_match_history.games.is_empty());
+    assert_eq!(
+        fixture.completed_match_history.ordering,
+        MtgoCompetitiveExternalPublicHistoryOrderingV1::SeparateOrderedStreamsNoCrossSourceTotalOrder
+    );
+    let history_commitment = history_source_commitment_v1(&fixture.completed_match_history);
+    assert_eq!(
+        history_commitment,
+        fixture.expected_completed_match_history_source_commitment_sha256
+    );
+    assert_eq!(fixture.pregame_cases.len(), 2);
+
+    for case in &fixture.pregame_cases {
+        assert_eq!(case.model_input.game_number, 1);
+        assert_eq!(case.model_input.acting_player_games_won, 0);
+        assert_eq!(case.model_input.opponent_games_won, 0);
+        validate_competitive_native_pregame_model_input_v1(&case.model_input).unwrap();
+        let input_commitment =
+            competitive_native_pregame_model_input_commitment_v1(&case.model_input).unwrap();
+        assert_eq!(
+            input_commitment,
+            case.expected_model_input_commitment_sha256
+        );
+        let source_commitment = commitment_v1(
+            PREGAME_SOURCE_DOMAIN_V1,
+            &[
+                input_commitment.as_bytes(),
+                history_commitment.as_bytes(),
+                b"complete_prior_games_plus_exact_current_pregame_decision_no_authority",
+            ],
+        );
+        assert_eq!(source_commitment, case.expected_source_commitment_sha256);
+
+        let mut scorer = PregameFixtureScorerV1 {
+            ordered_action_logits_f32_bits: &case.ordered_action_logits_f32_bits,
+            value_f32_bits: case.value_f32_bits,
+        };
+        let checked = score_checked_untrusted_competitive_native_pregame_v1(
+            &case.model_input,
+            &fixture.fixture_deployment_commitment_sha256,
+            &mut scorer,
+        )
+        .unwrap();
+        assert_eq!(checked.selected_index_v1(), case.expected_selected_index);
+        assert_eq!(checked.selected_action_v1(), &case.expected_selected_action);
+        assert_eq!(
+            checked.selection_commitment_sha256_v1(),
+            case.expected_checked_selection_commitment_sha256
+        );
+        assert!(!checked.safe_for_live_input_v1());
+        assert!(!checked.permits_event_session_recovery_v1());
+    }
+
+    assert_eq!(
+        fixture.pregame_cases[0].case_id,
+        "bottom_one_select_card_v1"
+    );
+    assert!(matches!(
+        fixture.pregame_cases[0].expected_selected_action,
+        MtgoCompetitiveNativePregameActionV1::SelectForBottom { card_slot: 1 }
+    ));
+    assert_eq!(fixture.pregame_cases[1].case_id, "bottom_one_submit_v1");
+    assert!(matches!(
+        fixture.pregame_cases[1].expected_selected_action,
+        MtgoCompetitiveNativePregameActionV1::SubmitBottoming
+    ));
+
+    let sanitized: Value = serde_json::from_str(LONDON_FIXTURE_JSON).unwrap();
+    assert_no_forbidden_model_keys(&sanitized);
 }

@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "fixture_id": "player-visible-competitive-london-bottoming-game-one-v1",
+  "fixture_deployment_commitment_sha256": "35047b64317d92c6e77598ebc5f50f1f9dff0a741fe8bcb613164be3fef0ca5b",
+  "completed_match_history": {
+    "ordering": "separate_ordered_streams_no_cross_source_total_order",
+    "games": []
+  },
+  "expected_completed_match_history_source_commitment_sha256": "d7a511d8f8345119157d7a9bd26661660b2b5171a9ec1445622ae910867741f1",
+  "pregame_cases": [
+    {
+      "case_id": "bottom_one_select_card_v1",
+      "model_input": {
+        "game_number": 1,
+        "play_draw": "on_play",
+        "acting_player_games_won": 0,
+        "opponent_games_won": 0,
+        "player_known_deck_configuration": {
+          "mainboard": [
+            {
+              "visible_card_name": "Lightning Bolt",
+              "count": 4
+            },
+            {
+              "visible_card_name": "Mountain",
+              "count": 56
+            }
+          ],
+          "sideboard": [
+            {
+              "visible_card_name": "Island",
+              "count": 3
+            },
+            {
+              "visible_card_name": "Lightning Bolt",
+              "count": 12
+            }
+          ]
+        },
+        "stage": {
+          "stage": "london_bottoming",
+          "required_bottom_count": 1,
+          "selected_bottom_count": 0
+        },
+        "prospective_keep_size": null,
+        "required_bottom_count": 1,
+        "selected_bottom_count": 0,
+        "ordered_visible_cards": [
+          {
+            "card_slot": 0,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 1,
+            "visible_card_name": "Lightning Bolt",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 2,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 3,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 4,
+            "visible_card_name": "Lightning Bolt",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 5,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 6,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          }
+        ],
+        "ordered_confirmed_bottom_slots": [],
+        "ordered_actions": [
+          {
+            "action": "select_for_bottom",
+            "card_slot": 0
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 1
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 2
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 3
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 4
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 5
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 6
+          }
+        ]
+      },
+      "expected_model_input_commitment_sha256": "607e74d2544ca508674df5548564e25ad78b62998556036bfaa0f14ef300df9a",
+      "expected_source_commitment_sha256": "64744824113528086e6bc8e0547a44d2a76d90d4b3613e214f514740e59ece79",
+      "ordered_action_logits_f32_bits": [0, 1073741824, 0, 0, 0, 0, 0],
+      "value_f32_bits": 1048576000,
+      "expected_selected_index": 1,
+      "expected_selected_action": {
+        "action": "select_for_bottom",
+        "card_slot": 1
+      },
+      "expected_checked_selection_commitment_sha256": "fc47e29919465dc7ed5b5e4c4a0183d796d22e33dfa48a129370ce6c69b1a65e"
+    },
+    {
+      "case_id": "bottom_one_submit_v1",
+      "model_input": {
+        "game_number": 1,
+        "play_draw": "on_play",
+        "acting_player_games_won": 0,
+        "opponent_games_won": 0,
+        "player_known_deck_configuration": {
+          "mainboard": [
+            {
+              "visible_card_name": "Lightning Bolt",
+              "count": 4
+            },
+            {
+              "visible_card_name": "Mountain",
+              "count": 56
+            }
+          ],
+          "sideboard": [
+            {
+              "visible_card_name": "Island",
+              "count": 3
+            },
+            {
+              "visible_card_name": "Lightning Bolt",
+              "count": 12
+            }
+          ]
+        },
+        "stage": {
+          "stage": "london_bottoming",
+          "required_bottom_count": 1,
+          "selected_bottom_count": 1
+        },
+        "prospective_keep_size": null,
+        "required_bottom_count": 1,
+        "selected_bottom_count": 1,
+        "ordered_visible_cards": [
+          {
+            "card_slot": 0,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 1,
+            "visible_card_name": "Lightning Bolt",
+            "selected_for_bottom": true
+          },
+          {
+            "card_slot": 2,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 3,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 4,
+            "visible_card_name": "Lightning Bolt",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 5,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          },
+          {
+            "card_slot": 6,
+            "visible_card_name": "Mountain",
+            "selected_for_bottom": false
+          }
+        ],
+        "ordered_confirmed_bottom_slots": [1],
+        "ordered_actions": [
+          {
+            "action": "select_for_bottom",
+            "card_slot": 0
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 2
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 3
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 4
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 5
+          },
+          {
+            "action": "select_for_bottom",
+            "card_slot": 6
+          },
+          {
+            "action": "submit_bottoming"
+          }
+        ]
+      },
+      "expected_model_input_commitment_sha256": "aff11694b6db0ea86c149a9556c816632c6829b9a3b8ee6dab42bf64b1f7532f",
+      "expected_source_commitment_sha256": "a2c15051d0e666dc8db3105f1054c10a755ad90066d37df6bd829e808175f260",
+      "ordered_action_logits_f32_bits": [0, 0, 0, 0, 0, 0, 1073741824],
+      "value_f32_bits": 1048576000,
+      "expected_selected_index": 6,
+      "expected_selected_action": {
+        "action": "submit_bottoming"
+      },
+      "expected_checked_selection_commitment_sha256": "fe6f7ac34457e0a9f30874e8a8ba525b24d99e09b1a075d806cc4f68b2ebb9f1"
+    }
+  ]
+}
