@@ -85,6 +85,8 @@ const DIRECT_VISIBLE_BACKGROUND_STABILITY_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-background-stability-v1";
 const DIRECT_VISIBLE_BACKGROUND_REVIEW_ARTIFACT_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-background-review-artifact-v1";
+const DIRECT_VISIBLE_SEATED_DUEL_REVIEW_ARTIFACT_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-seated-duel-review-artifact-v1";
 const DIRECT_VISIBLE_BACKGROUND_REVIEW_PARTIAL_PREFIX_V1: &str =
     ".mtgo-direct-visible-background-review-partial-";
 const DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1: &[u8] =
@@ -1939,6 +1941,7 @@ fn result_requires_combat_scoring_v1(result: &MtgoVisibleDuelViewModelBrokerResu
 /// use mtgo_dxgi_capture_v1::OpaqueMtgoQualifiedDirectVisibleSourceObservationV1;
 /// fn cannot_extract_or_act(value: OpaqueMtgoQualifiedDirectVisibleSourceObservationV1) {
 ///     let _ = value.visible_decision();
+///     let _ = value.exact_result_bytes_v1();
 ///     let _ = value.raw_client_object();
 ///     value.dispatch();
 /// }
@@ -1946,8 +1949,108 @@ fn result_requires_combat_scoring_v1(result: &MtgoVisibleDuelViewModelBrokerResu
 pub struct OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
     _before_frame: OpaqueMtgoDxgiFrameCandidateV3,
     _after_frame: OpaqueMtgoDxgiFrameCandidateV3,
+    exact_result_bytes: ZeroingVecV1,
     result: MtgoVisibleDuelViewModelBrokerResultV1,
     commitments: MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1,
+    qualification_role: PrivateMtgoDirectVisibleQualificationRoleV1,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PrivateMtgoDirectVisibleQualificationRoleV1 {
+    ActingPlayerDuel,
+    Spectator,
+}
+
+impl PrivateMtgoDirectVisibleQualificationRoleV1 {
+    fn as_str_v1(self) -> &'static str {
+        match self {
+            Self::ActingPlayerDuel => "acting_player_duel",
+            Self::Spectator => "spectator",
+        }
+    }
+}
+
+/// Commitments for a newly written role-bound seated-duel review candidate.
+/// The artifact contains the exact strict player-visible producer result but
+/// no pixels, client identity, participant identity, path, scoring value, or
+/// action authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MtgoSeatedDuelDirectVisibleReviewArtifactReceiptV1 {
+    pub schema: &'static str,
+    pub status: &'static str,
+    pub output_directory: PathBuf,
+    pub qualification_role: &'static str,
+    pub result_kind: String,
+    pub runtime_identity_commitment_sha256: String,
+    pub before_capture_commitment_sha256: String,
+    pub after_capture_commitment_sha256: String,
+    pub sanitized_result_sha256: String,
+    pub qualification_commitment_sha256: String,
+    pub manifest_sha256: String,
+    pub review_template_sha256: String,
+    pub artifact_commitment_sha256: String,
+    pub review_completed: bool,
+    pub safe_for_live_semantic_evidence: bool,
+    pub safe_for_model_scoring: bool,
+    pub safe_for_input: bool,
+    pub permits_event_entry: bool,
+    pub permits_spending: bool,
+}
+
+#[derive(Serialize)]
+struct PrivateMtgoSeatedDuelDirectVisibleReviewManifestV1<'a> {
+    schema: &'static str,
+    artifact_kind: &'static str,
+    status: &'static str,
+    information_boundary: &'static str,
+    qualification_role: &'static str,
+    result_kind: &'a str,
+    visible_result_file: &'static str,
+    visible_result_byte_length: usize,
+    visible_result_sha256: &'a str,
+    runtime_identity_commitment_sha256: &'a str,
+    broker_binary_sha256: &'a str,
+    producer_binary_sha256: &'a str,
+    before_capture_commitment_sha256: &'a str,
+    after_capture_commitment_sha256: &'a str,
+    qualification_commitment_sha256: &'a str,
+    review_template_file: &'static str,
+    participant_identifiers_emitted: bool,
+    account_identifiers_emitted: bool,
+    process_identifiers_emitted: bool,
+    process_paths_emitted: bool,
+    window_titles_emitted: bool,
+    match_or_game_identifiers_emitted: bool,
+    raw_pixels_emitted: bool,
+    review_completed: bool,
+    safe_for_live_semantic_evidence: bool,
+    safe_for_model_scoring: bool,
+    safe_for_input: bool,
+    permits_event_entry: bool,
+    permits_spending: bool,
+}
+
+#[derive(Serialize)]
+struct PrivateMtgoSeatedDuelDirectVisibleReviewTemplateV1<'a> {
+    schema: &'static str,
+    artifact_status_required: &'static str,
+    qualification_role_required: &'static str,
+    result_kind: &'a str,
+    manifest_sha256: &'a str,
+    visible_result_sha256: &'a str,
+    runtime_identity_commitment_sha256: &'a str,
+    before_capture_commitment_sha256: &'a str,
+    after_capture_commitment_sha256: &'a str,
+    qualification_commitment_sha256: &'a str,
+    reviewer_alias: &'static str,
+    simultaneously_rendered_surface_reviewed: bool,
+    every_exported_fact_visible_in_rendered_ui_or_rendered_game_log: bool,
+    every_exported_legal_action_matches_visible_controls: bool,
+    seated_player_private_information_matches_visible_ui: bool,
+    ordinary_surface_complete: bool,
+    combat_surface_complete: bool,
+    no_hidden_zone_internal_identifier_or_nonvisible_metadata: bool,
+    review_completed: bool,
 }
 
 /// Public commitments for one release-pinned producer result that was observed
@@ -2827,6 +2930,7 @@ pub fn qualify_attested_direct_visible_source_current_duel_v1(
     Ok(OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
         _before_frame: before_frame,
         _after_frame: after_frame,
+        exact_result_bytes: output,
         result,
         commitments: MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1 {
             runtime_identity_commitment_sha256: runtime
@@ -2840,6 +2944,7 @@ pub fn qualify_attested_direct_visible_source_current_duel_v1(
             sanitized_result_sha256,
             qualification_commitment_sha256,
         },
+        qualification_role: PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
     })
 }
 
@@ -2916,6 +3021,7 @@ pub fn qualify_attested_direct_visible_source_current_spectator_v1(
     Ok(OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
         _before_frame: before_frame,
         _after_frame: after_frame,
+        exact_result_bytes: output,
         result,
         commitments: MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1 {
             runtime_identity_commitment_sha256: runtime
@@ -2929,6 +3035,7 @@ pub fn qualify_attested_direct_visible_source_current_spectator_v1(
             sanitized_result_sha256,
             qualification_commitment_sha256,
         },
+        qualification_role: PrivateMtgoDirectVisibleQualificationRoleV1::Spectator,
     })
 }
 
@@ -3125,6 +3232,179 @@ pub fn write_stable_background_direct_visible_review_artifact_v1(
         permits_event_entry: false,
         permits_spending: false,
     })
+}
+
+/// Persists one exact data-bearing result from the internally captured,
+/// acting-player seated-duel qualification path. Spectator qualifications and
+/// abstentions write nothing. The two composed frames remain private and are
+/// dropped without persistence. The resulting files are manual-review input
+/// only and cannot authorize semantic evidence, scoring, input, entry, or
+/// spending.
+pub fn write_seated_duel_direct_visible_review_artifact_v1(
+    observation: OpaqueMtgoQualifiedDirectVisibleSourceObservationV1,
+    requested_output_directory: &Path,
+) -> Result<MtgoSeatedDuelDirectVisibleReviewArtifactReceiptV1, String> {
+    write_seated_duel_direct_visible_review_artifact_from_parts_v1(
+        observation.qualification_role,
+        &observation.exact_result_bytes.0,
+        &observation.result,
+        &observation.commitments,
+        requested_output_directory,
+    )
+}
+
+fn write_seated_duel_direct_visible_review_artifact_from_parts_v1(
+    qualification_role: PrivateMtgoDirectVisibleQualificationRoleV1,
+    exact_result_bytes: &[u8],
+    retained_result: &MtgoVisibleDuelViewModelBrokerResultV1,
+    commitments: &MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1,
+    requested_output_directory: &Path,
+) -> Result<MtgoSeatedDuelDirectVisibleReviewArtifactReceiptV1, String> {
+    if qualification_role != PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel {
+        return Err(
+            "seated duel review artifact requires the acting-player duel qualification role"
+                .to_owned(),
+        );
+    }
+    let reparsed = parse_and_validate_visible_duel_producer_result_v1(exact_result_bytes)
+        .map_err(|_| "seated duel review result is not strictly visible-equivalent".to_owned())?;
+    if &reparsed != retained_result {
+        return Err("seated duel review result differs from its retained typed value".to_owned());
+    }
+    let result_kind = direct_visible_data_bearing_result_kind_v1(&reparsed)
+        .ok_or("seated duel review artifact requires a data-bearing acting-player result")?;
+    let visible_result_sha256 = sha256_hex_v1(exact_result_bytes);
+    if visible_result_sha256 != commitments.sanitized_result_sha256 {
+        return Err("seated duel review result hash differs from its qualification".to_owned());
+    }
+
+    let output_directory =
+        validate_background_direct_visible_review_output_v1(requested_output_directory)?;
+    let qualification_role = qualification_role.as_str_v1();
+    let manifest = PrivateMtgoSeatedDuelDirectVisibleReviewManifestV1 {
+        schema: "mtgo-direct-visible-seated-duel-review-manifest/v1",
+        artifact_kind: "attested_seated_duel_visible_review_candidate",
+        status: "pending_manual_visible_equivalence_review",
+        information_boundary: "rendered_mtgo_ui_or_rendered_game_log_only",
+        qualification_role,
+        result_kind,
+        visible_result_file: "visible-result.json",
+        visible_result_byte_length: exact_result_bytes.len(),
+        visible_result_sha256: &visible_result_sha256,
+        runtime_identity_commitment_sha256: &commitments.runtime_identity_commitment_sha256,
+        broker_binary_sha256: &commitments.broker_binary_sha256,
+        producer_binary_sha256: &commitments.producer_binary_sha256,
+        before_capture_commitment_sha256: &commitments.before_capture_commitment_sha256,
+        after_capture_commitment_sha256: &commitments.after_capture_commitment_sha256,
+        qualification_commitment_sha256: &commitments.qualification_commitment_sha256,
+        review_template_file: "review-template.json",
+        participant_identifiers_emitted: false,
+        account_identifiers_emitted: false,
+        process_identifiers_emitted: false,
+        process_paths_emitted: false,
+        window_titles_emitted: false,
+        match_or_game_identifiers_emitted: false,
+        raw_pixels_emitted: false,
+        review_completed: false,
+        safe_for_live_semantic_evidence: false,
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    };
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize seated duel review manifest: {error}"))?;
+    let manifest_sha256 = sha256_hex_v1(&manifest_bytes);
+    let review_template = PrivateMtgoSeatedDuelDirectVisibleReviewTemplateV1 {
+        schema: "mtgo-direct-visible-seated-duel-review-template/v1",
+        artifact_status_required: "pending_manual_visible_equivalence_review",
+        qualification_role_required: "acting_player_duel",
+        result_kind,
+        manifest_sha256: &manifest_sha256,
+        visible_result_sha256: &visible_result_sha256,
+        runtime_identity_commitment_sha256: &commitments.runtime_identity_commitment_sha256,
+        before_capture_commitment_sha256: &commitments.before_capture_commitment_sha256,
+        after_capture_commitment_sha256: &commitments.after_capture_commitment_sha256,
+        qualification_commitment_sha256: &commitments.qualification_commitment_sha256,
+        reviewer_alias: "",
+        simultaneously_rendered_surface_reviewed: false,
+        every_exported_fact_visible_in_rendered_ui_or_rendered_game_log: false,
+        every_exported_legal_action_matches_visible_controls: false,
+        seated_player_private_information_matches_visible_ui: false,
+        ordinary_surface_complete: false,
+        combat_surface_complete: false,
+        no_hidden_zone_internal_identifier_or_nonvisible_metadata: false,
+        review_completed: false,
+    };
+    let review_template_bytes = serde_json::to_vec_pretty(&review_template)
+        .map_err(|error| format!("serialize seated duel review template: {error}"))?;
+    let review_template_sha256 = sha256_hex_v1(&review_template_bytes);
+    let artifact_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_SEATED_DUEL_REVIEW_ARTIFACT_DOMAIN_V1,
+        &[
+            commitments.runtime_identity_commitment_sha256.as_bytes(),
+            commitments.before_capture_commitment_sha256.as_bytes(),
+            commitments.after_capture_commitment_sha256.as_bytes(),
+            commitments.qualification_commitment_sha256.as_bytes(),
+            result_kind.as_bytes(),
+            visible_result_sha256.as_bytes(),
+            manifest_sha256.as_bytes(),
+            review_template_sha256.as_bytes(),
+            b"acting_player_duel_pending_review_no_pixels_no_model_no_input_no_entry_no_spending",
+        ],
+    );
+
+    persist_background_direct_visible_review_artifact_v1(
+        &output_directory,
+        exact_result_bytes,
+        &manifest_bytes,
+        &review_template_bytes,
+    )?;
+    Ok(MtgoSeatedDuelDirectVisibleReviewArtifactReceiptV1 {
+        schema: "mtgo-direct-visible-seated-duel-review-artifact-receipt/v1",
+        status: "pending_manual_visible_equivalence_review",
+        output_directory,
+        qualification_role,
+        result_kind: result_kind.to_owned(),
+        runtime_identity_commitment_sha256: commitments.runtime_identity_commitment_sha256.clone(),
+        before_capture_commitment_sha256: commitments.before_capture_commitment_sha256.clone(),
+        after_capture_commitment_sha256: commitments.after_capture_commitment_sha256.clone(),
+        sanitized_result_sha256: visible_result_sha256,
+        qualification_commitment_sha256: commitments.qualification_commitment_sha256.clone(),
+        manifest_sha256,
+        review_template_sha256,
+        artifact_commitment_sha256,
+        review_completed: false,
+        safe_for_live_semantic_evidence: false,
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    })
+}
+
+fn direct_visible_data_bearing_result_kind_v1(
+    result: &MtgoVisibleDuelViewModelBrokerResultV1,
+) -> Option<&'static str> {
+    match result {
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. } => Some("visible_decision"),
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. } => {
+            Some("visible_attacker_selection")
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+            ..
+        } => Some("visible_single_attacker_blocker_selection"),
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+            ..
+        } => Some("visible_single_attacker_blocker_execution_state"),
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection { .. } => {
+            Some("visible_multi_attacker_blocker_selection")
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleBlockerTargetSelection { .. } => {
+            Some("visible_blocker_target_selection")
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => None,
+    }
 }
 
 fn validate_background_direct_visible_review_output_v1(
@@ -4260,6 +4540,166 @@ mod tests {
         stable_background_observation_v1(MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
             decision: Box::new(decision),
         })
+    }
+
+    fn seated_duel_review_parts_v1() -> (
+        Vec<u8>,
+        MtgoVisibleDuelViewModelBrokerResultV1,
+        MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1,
+    ) {
+        let mut decision =
+            visible_decision_v1(mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1::Pass {
+                actor: mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1::SeatedPlayer,
+            });
+        decision.current_state.hand_counts = [0, 0];
+        decision.current_state.library_counts = [53, 53];
+        let result = MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
+            decision: Box::new(decision),
+        };
+        let bytes = serde_json::to_vec(&result).unwrap();
+        let sanitized_result_sha256 = sha256_hex_v1(&bytes);
+        let commitments = MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1 {
+            runtime_identity_commitment_sha256: "a".repeat(64),
+            broker_binary_sha256: "b".repeat(64),
+            producer_binary_sha256: "c".repeat(64),
+            before_capture_commitment_sha256: "d".repeat(64),
+            after_capture_commitment_sha256: "e".repeat(64),
+            sanitized_result_sha256,
+            qualification_commitment_sha256: "f".repeat(64),
+        };
+        (bytes, result, commitments)
+    }
+
+    #[test]
+    fn seated_duel_review_artifact_is_role_bound_exact_and_non_authoritative() {
+        let parent = TemporaryReviewParentV1::new("seated-duel-valid");
+        let output = parent.child("artifact");
+        let (bytes, result, commitments) = seated_duel_review_parts_v1();
+        let receipt = write_seated_duel_direct_visible_review_artifact_from_parts_v1(
+            PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+            &bytes,
+            &result,
+            &commitments,
+            &output,
+        )
+        .unwrap();
+
+        let mut files = fs::read_dir(&output)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        files.sort();
+        assert_eq!(
+            files,
+            vec![
+                "manifest.json",
+                "review-template.json",
+                "visible-result.json"
+            ]
+        );
+        assert_eq!(fs::read(output.join("visible-result.json")).unwrap(), bytes);
+        let manifest_bytes = fs::read(output.join("manifest.json")).unwrap();
+        assert_eq!(sha256_hex_v1(&manifest_bytes), receipt.manifest_sha256);
+        let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+        assert_eq!(manifest["qualification_role"], "acting_player_duel");
+        for field in [
+            "participant_identifiers_emitted",
+            "account_identifiers_emitted",
+            "process_identifiers_emitted",
+            "process_paths_emitted",
+            "window_titles_emitted",
+            "match_or_game_identifiers_emitted",
+            "raw_pixels_emitted",
+            "review_completed",
+            "safe_for_live_semantic_evidence",
+            "safe_for_model_scoring",
+            "safe_for_input",
+            "permits_event_entry",
+            "permits_spending",
+        ] {
+            assert_eq!(manifest[field], false, "manifest field {field}");
+        }
+        let review_bytes = fs::read(output.join("review-template.json")).unwrap();
+        assert_eq!(sha256_hex_v1(&review_bytes), receipt.review_template_sha256);
+        let review: serde_json::Value = serde_json::from_slice(&review_bytes).unwrap();
+        assert_eq!(review["manifest_sha256"], receipt.manifest_sha256);
+        assert_eq!(
+            review["visible_result_sha256"],
+            receipt.sanitized_result_sha256
+        );
+        for field in [
+            "simultaneously_rendered_surface_reviewed",
+            "every_exported_fact_visible_in_rendered_ui_or_rendered_game_log",
+            "every_exported_legal_action_matches_visible_controls",
+            "seated_player_private_information_matches_visible_ui",
+            "ordinary_surface_complete",
+            "combat_surface_complete",
+            "no_hidden_zone_internal_identifier_or_nonvisible_metadata",
+            "review_completed",
+        ] {
+            assert_eq!(review[field], false, "review field {field}");
+        }
+        assert_eq!(receipt.qualification_role, "acting_player_duel");
+        assert!(!receipt.review_completed);
+        assert!(!receipt.safe_for_live_semantic_evidence);
+        assert!(!receipt.safe_for_model_scoring);
+        assert!(!receipt.safe_for_input);
+        assert!(!receipt.permits_event_entry);
+        assert!(!receipt.permits_spending);
+    }
+
+    #[test]
+    fn seated_duel_review_rejects_spectator_abstention_and_hash_drift_without_writes() {
+        let parent = TemporaryReviewParentV1::new("seated-duel-rejections");
+        let (bytes, result, commitments) = seated_duel_review_parts_v1();
+
+        let spectator_output = parent.child("spectator");
+        assert!(
+            write_seated_duel_direct_visible_review_artifact_from_parts_v1(
+                PrivateMtgoDirectVisibleQualificationRoleV1::Spectator,
+                &bytes,
+                &result,
+                &commitments,
+                &spectator_output,
+            )
+            .is_err()
+        );
+        assert!(!spectator_output.exists());
+
+        let abstention = MtgoVisibleDuelViewModelBrokerResultV1::Abstained {
+            reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1::ProjectionIncomplete,
+        };
+        let abstention_bytes = serde_json::to_vec(&abstention).unwrap();
+        let mut abstention_commitments = commitments.clone();
+        abstention_commitments.sanitized_result_sha256 = sha256_hex_v1(&abstention_bytes);
+        let abstention_output = parent.child("abstention");
+        assert!(
+            write_seated_duel_direct_visible_review_artifact_from_parts_v1(
+                PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+                &abstention_bytes,
+                &abstention,
+                &abstention_commitments,
+                &abstention_output,
+            )
+            .is_err()
+        );
+        assert!(!abstention_output.exists());
+
+        let mut drifted_commitments = commitments;
+        drifted_commitments.sanitized_result_sha256 = "0".repeat(64);
+        let drifted_output = parent.child("hash-drift");
+        assert!(
+            write_seated_duel_direct_visible_review_artifact_from_parts_v1(
+                PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+                &bytes,
+                &result,
+                &drifted_commitments,
+                &drifted_output,
+            )
+            .is_err()
+        );
+        assert!(!drifted_output.exists());
+        assert_eq!(fs::read_dir(&parent.0).unwrap().count(), 0);
     }
 
     #[test]
