@@ -29,7 +29,7 @@ The kernel encoder constructs the private Flat V2 packet directly. It must not r
 | phase, active, priority, initiative, life, mana, hand and library counts | current visible state | Encode relative to the seated player. |
 | card token | visible card name | Resolve by exact unique name in the frozen kernel card catalog. Unknown or ambiguous names fail closed. Never accept a numeric ID from the adapter. |
 | object identity | decision-local visible ordinal | Use only for within-decision joins. Never treat it as a persistent or kernel object ID. |
-| zone, relative controller, tapped, damage, counters, token, effective power and toughness | current visible state | Encode directly. |
+| zone, relative controller, tapped, damage, counters, token, effective power and toughness | current visible state | Encode directly. Battlefield controller comes from the rendered player-side `BattlefieldCards` partition. Physical owner is unavailable and must be neutral. |
 | combat and public object relations | current visible state | Encode exact visible order and links. |
 | stack controller, kind, visible target order | current visible state | Encode directly. Any unavailable stack detail is neutral as below. |
 | legal action kind and visible parameters | ordered visible actions | Encode in exact supplied order. Choice ordinals are the visible order, not recovered kernel indices. |
