@@ -485,6 +485,82 @@ class FeatureEncodingTest(unittest.TestCase):
             ),
         )
 
+    def test_detached_historical_stack_source_gets_dedicated_node(self) -> None:
+        # Feature-Encoder Successor (collab CLAUDE #221, folding CODEX #235's
+        # historical stack-source encoder fix): a stack item's own source can
+        # retain an older incarnation (zone_change_count) of a card whose
+        # arena_id already has a newer live incarnation elsewhere in the
+        # observation (here, still on the battlefield). Before this fix,
+        # registering the source through the ordinary arena-claiming path
+        # raised FeatureSchemaError("multiple visible incarnations share one
+        # arena_id in a single decision") even though nothing here is
+        # actually ambiguous -- Rust correctly exposes the historically
+        # stable source, and it deserves the same detached-node treatment
+        # `test_detached_historical_paid_cost_refs_get_dedicated_nodes` and
+        # `test_detached_historical_stack_target_resolves_to_its_own_generation_node`
+        # already exercise for paid-cost provenance and announcement-time
+        # targets.
+        obs = observation()
+        actions = legal_actions()
+        live = obs["projection"]["battlefield"][1][1]["stable"]
+        live["zone_change_count"] = 2
+        historical = deep_copy(live)
+        historical["zone_change_count"] = 0
+        obs["projection"]["stack"][0]["source"] = historical
+
+        # This is the regression check itself: before the fix, this call
+        # raised FeatureSchemaError instead of returning.
+        encoded = encode_decision(obs, actions)
+
+        stack_group = OBJECT_GROUPS.index("stack")
+        stack_nodes = torch.nonzero(encoded.object_groups == stack_group, as_tuple=False).flatten()
+        self.assertEqual(stack_nodes.numel(), 1)
+        stack_node = int(stack_nodes.item())
+        self.assertEqual(int(encoded.object_card_ids[stack_node]), historical["card_db_id"] + 1)
+
+        live_nodes = torch.nonzero(
+            (encoded.object_groups == OBJECT_GROUPS.index("opponent_battlefield"))
+            & (encoded.object_card_ids == live["card_db_id"] + 1),
+            as_tuple=False,
+        ).flatten()
+        self.assertEqual(live_nodes.numel(), 1)
+        self.assertNotEqual(stack_node, int(live_nodes.item()))
+
+        mapping = {historical["arena_id"]: 303}
+        assert_encoded_equal(
+            self,
+            encoded,
+            encode_decision(
+                remap_all_arena_references(obs, mapping),
+                remap_all_arena_references(actions, mapping),
+            ),
+        )
+
+    def test_live_stack_source_still_shares_its_node_with_the_same_incarnation(self) -> None:
+        # The ordinary case (a stack item's source is genuinely the same
+        # incarnation as an already-registered node, e.g. an activated
+        # ability whose source permanent has not changed zones) must keep
+        # deduplicating to the SAME node, not gain a second detached one:
+        # `_add_node` short-circuits on an exact (arena_id, zone_change_count)
+        # key match before `register_arena` is ever consulted, so this holds
+        # regardless of the historical-source fix.
+        obs = observation()
+        actions = legal_actions()
+        live = obs["projection"]["battlefield"][1][1]["stable"]
+        obs["projection"]["stack"][0]["source"] = deep_copy(live)
+
+        encoded = encode_decision(obs, actions)
+        stack_group = OBJECT_GROUPS.index("stack")
+        self.assertEqual(
+            torch.nonzero(encoded.object_groups == stack_group, as_tuple=False).numel(), 0
+        )
+        live_nodes = torch.nonzero(
+            (encoded.object_groups == OBJECT_GROUPS.index("opponent_battlefield"))
+            & (encoded.object_card_ids == live["card_db_id"] + 1),
+            as_tuple=False,
+        ).flatten()
+        self.assertEqual(live_nodes.numel(), 1)
+
     def test_same_generation_historical_target_accepts_control_change_only(self) -> None:
         obs = complete_observation()
         actions = complete_legal_actions()

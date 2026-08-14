@@ -1704,6 +1704,36 @@ class _NodeRegistry:
         features, token = _card_public_features(_blank_public_from_ref(ref, source_kind), self.actor, order, source_kind, self.current_turn)
         return self._add_node(key, features, token, group)
 
+    def add_historical_stack_source_node(self, ref: dict[str, Any], order: int) -> int:
+        """Register a stack item's announcing source without claiming a live arena incarnation.
+
+        A stack ability can retain an older source incarnation (an earlier
+        zone_change_count) while the same arena_id already has a newer live
+        incarnation elsewhere in the observation (for example the permanent
+        re-entered the battlefield through some other route). Rust exposes
+        the historically stable source correctly; without detached-node
+        treatment here, registering it through the ordinary arena-claiming
+        path raises "multiple visible incarnations share one arena_id in a
+        single decision" even though nothing about the decision is actually
+        ambiguous. This mirrors `add_historical_ref_node` (paid_cost), which
+        already has this treatment: when the source's (arena_id,
+        zone_change_count) key is genuinely new (the historical case), the
+        node is registered without claiming the arena; when the key matches
+        an already-registered node (the ordinary case, e.g. an activated
+        ability whose source is still the live battlefield permanent),
+        `_add_node` deduplicates by key and returns the existing node
+        untouched, so live sources continue to resolve exactly as before.
+        """
+        key = self.validate_ref(ref)
+        features, token = _card_public_features(
+            _blank_public_from_ref(ref, "stack"),
+            self.actor,
+            order,
+            "stack",
+            self.current_turn,
+        )
+        return self._add_node(key, features, token, "stack", register_arena=False)
+
     def add_historical_ref_node(self, ref: dict[str, Any], order: int) -> int:
         """Register payment-time provenance without claiming a current arena incarnation."""
         key = self.validate_ref(ref)
@@ -1930,7 +1960,7 @@ def _objects(obs: dict[str, Any]) -> tuple[_NodeRegistry, list[list[float]], lis
     for i, card in enumerate(p["exile"]):
         registry.add_card(card, "exile", i)
     for i, item in enumerate(p["stack"]):
-        registry.add_ref_node(item["source"], "stack", i, "stack")
+        registry.add_historical_stack_source_node(item["source"], i)
     historical_target_order = 0
     for item in p["stack"]:
         for target in item["targets"]:
