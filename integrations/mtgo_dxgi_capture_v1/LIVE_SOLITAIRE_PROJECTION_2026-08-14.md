@@ -97,13 +97,46 @@ so no pregame pixel-review artifact was written. The exact enabled
 enabled `CombatButton` appeared, proving the visible pregame-to-first-main
 control transition without granting model or input authority.
 
+## Relogin repeat
+
+After a later relogin to the same signed client process and executable, a new
+no-cost one-player Custom Match was opened with deck
+`mtgo-kernel-modern-basics-v1`. The foreground title was
+`(Solitaire): Freeform: Vs. UnbuckledPie`, and the rendered client remained at
+the opening Keep or Mulligan prompt. No prompt action was invoked.
+
+The native observe-only broker and strict validator were rebuilt from their
+recorded source commits with the recorded toolchains. The observe-only broker
+reproduced SHA-256
+`e83e1f08260cdbd80e68527964de54afd2774beed8f344b03f609fdd75a34fab`.
+The strict validator reproduced SHA-256
+`4e0eea73bf592a0a80aa5e42a05f191640b4f1f46d917f1b1bca80a81815334c`.
+The validator build required the recorded adapter source path as well as the
+recorded source commit and `/Brepro`; rebuilding the same commit from another
+absolute worktree path produced different bytes and was rejected.
+
+The full duel qualifier rejected before observation because its fixed title
+gate accepts only `(1-on-1)` windows. The separately pinned observe-only broker
+was then invoked twice without any dispatch arguments. Both runs returned the
+exact sanitized result:
+
+`{"result_kind":"abstained","reason":"projection_incomplete"}`
+
+The canonical UTF-8 result SHA-256 was
+`4bcf3ea8c2287b476d6207c2bba7a35024e0a3fe4f9fd0f0124b1d7e5f8d8029`.
+The MTGO process remained responsive. This repeats the intended fail-closed
+one-player behavior and also identifies that the attended capture qualifier is
+duel-only rather than a general practice-surface qualifier.
+
 ## Nonclaims
 
 This check proves the current signed client, exact rebuilt observer chain,
 one-player navigation, one visible land-play postcondition, one complete
 one-player turn boundary, one reviewed positive `Combat` catalog case, live
 positive `Keep` and `Mulligan` accessibility matches, and fail-closed
-two-player projection requirement. It does not qualify the accessibility
-catalog, a data-bearing two-player observation, model scoring, ordinary or
-combat dispatch, match-history import, event entry, or spending. All production
-source and dispatch ratification roots remain empty.
+two-player projection requirement. The relogin repeat additionally proves that
+the pinned observer and validator remain reproducible and return the same
+abstention in a fresh one-player Custom Match. It does not qualify the
+accessibility catalog, a data-bearing two-player observation, model scoring,
+ordinary or combat dispatch, match-history import, event entry, or spending.
+All production source and dispatch ratification roots remain empty.
