@@ -56,7 +56,7 @@ constexpr char kExpectedReferenceSha256[] =
 constexpr char kExpectedBootstrapSha256[] =
     "1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b";
 constexpr char kExpectedProducerSha256[] =
-    "857478e466fc3cb7e4473d069ec46837f95abfa137b815062da818859b237e60";
+    "3b19cd76514350f33a1d96ce7a69b7168f394a54cd7b5c70422d0f61b39f1596";
 constexpr char kExpectedValidatorSha256[] =
     "4e0eea73bf592a0a80aa5e42a05f191640b4f1f46d917f1b1bca80a81815334c";
 #endif

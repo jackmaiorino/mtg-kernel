@@ -48,8 +48,8 @@ $liveDispatchBrokerCommand = "call `"$vcvars`" >nul && cl /nologo /std:c++20 /pe
 if ($LASTEXITCODE -ne 0) {
     throw "native live dispatch broker build failed"
 }
-$expectedLiveBrokerSha256 = '3906163c2ddd56030c629df7ca6474de03fec337f9150f5e97e75663d0198a07'
-$expectedLiveDispatchBrokerSha256 = '9e4687889cb24da07f92b97298ec5f266115e69e4494d002337435ad460a93b5'
+$expectedLiveBrokerSha256 = 'e83e1f08260cdbd80e68527964de54afd2774beed8f344b03f609fdd75a34fab'
+$expectedLiveDispatchBrokerSha256 = '95dcfe3eb38006e8dd26800776ef2e329aef1a9dbf265ba5a0bfe179247b9e49'
 $observedLiveBrokerSha256 = (Get-FileHash -LiteralPath $liveBrokerOut -Algorithm SHA256).Hash.ToLowerInvariant()
 $observedLiveDispatchBrokerSha256 = (Get-FileHash -LiteralPath $liveDispatchBrokerOut -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($observedLiveBrokerSha256 -ne $expectedLiveBrokerSha256) {
