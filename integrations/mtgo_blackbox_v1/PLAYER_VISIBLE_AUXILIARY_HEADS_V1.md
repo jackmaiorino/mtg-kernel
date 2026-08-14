@@ -4,7 +4,8 @@
 
 The adapter already owns the exact League and Challenge event session across
 pregame and sideboarding. It also exposes coordinate-free checked scoring
-contracts for Keep, Mulligan, London bottoming, and a final sideboard target.
+contracts for Keep, Mulligan, London bottoming, and a bounded sequential
+sideboard deliberation.
 Those contracts are not checkpoint implementations. The loaded native
 deployment has no pregame head, no sideboard head, and no opaque model-owned
 return that can resume the retained event session.
@@ -85,20 +86,22 @@ impl NativeCompetitivePregameScorerV1<'_> {
 
 The kernel-owned sideboard input contains the exact player-known current
 configuration, next game number, public match score, and complete earlier-game
-public history. The kernel performs a pure local bounded deliberation:
+public history. The adapter drives a pure local bounded deliberation through
+the exact retained checkpoint scorer:
 
 1. move one named card from sideboard to mainboard;
 2. move one named card from mainboard to sideboard;
 3. submit the current candidate configuration when legal.
 
 Every local step exposes a canonical ordered legal-action vector. Card order is
-the frozen exact visible-name order. Applying an action changes only the local
-candidate and emits no client input. The deliberation stops after at most 64
-decisions; failure to submit returns an abstention. Submitting the initial
-configuration is the explicit unchanged decision. The public scorer wrapper
-returns only the legal final target configuration, a finite value, and exact
-input and deployment commitments. The adapter continues to validate inventory
-conservation and legal partition sizes independently.
+the frozen exact visible-name order. The native scorer returns one finite logit
+per ordered action plus a finite value and binds the exact decision and loaded
+deployment. The adapter selects the first maximum, applies the selected action
+only to the local candidate, and emits no client input. The deliberation stops
+after at most 64 decisions; failure to submit returns an abstention. Submitting
+the initial configuration is the explicit unchanged decision. Only explicit
+Submit creates an opaque checked final target. The adapter independently
+validates inventory conservation and legal partition sizes.
 
 Suggested kernel surface:
 
@@ -106,10 +109,10 @@ Suggested kernel surface:
 pub struct NativeCompetitiveSideboardScorerV1<'a> { /* private */ }
 
 impl NativeCompetitiveSideboardScorerV1<'_> {
-    pub fn select_target_v1(
+    pub fn score_step_v1(
         &mut self,
-        input: &ExternalPlayerVisibleSideboardDecisionV1,
-    ) -> Result<NativeCompetitiveSideboardSelectionV1, NativeCompetitiveAuxErrorV1>;
+        decision: &ExternalPlayerVisibleSideboardStepV1,
+    ) -> Result<NativeCompetitiveSideboardScoreV1, NativeCompetitiveAuxErrorV1>;
 }
 ```
 
@@ -131,10 +134,11 @@ not auxiliary-ready merely because it can score in-game decisions.
 ## Canonical conformance source
 
 `../mtgo_dxgi_capture_v1/fixtures/player_visible_competitive_auxiliary_heads_conformance_source_v1.json`
-is the executable game-two handoff fixture. It freezes one complete prior game
-as separate confirmed-decision and rendered-Game-Log streams, the exact
-seven-card Keep or Mulligan input, and both unchanged and inventory-conserving
-changed sideboard targets.
+is the legacy executable game-two handoff fixture. It freezes one complete
+prior game as separate confirmed-decision and rendered-Game-Log streams, the
+exact seven-card Keep or Mulligan input, and both unchanged and
+inventory-conserving changed sideboard targets. Its whole-target sideboard
+responses are structural compatibility cases, not native model provenance.
 `../mtgo_dxgi_capture_v1/fixtures/player_visible_competitive_london_bottoming_conformance_source_v1.json`
 adds the required game-one empty-history replacement plus exact bottom-one
 Select and Submit states. Together their tests recompute the existing adapter
@@ -156,8 +160,8 @@ After the kernel types exist, the adapter should:
 2. borrow the exact auxiliary scorer from the retained loaded deployment;
 3. bind the returned checkpoint and auxiliary-package identities to that
    deployment;
-4. privately map the selected pregame index or sideboard target back to the
-   retained exact semantic request;
+4. privately map the selected pregame index or opaque submitted sideboard
+   deliberation back to the retained exact semantic request;
 5. resume only through the existing fresh-capture, visible-control,
    postcondition, one-input, and sideboard inventory gates;
 6. require the separate attended launch and event authorization already owned

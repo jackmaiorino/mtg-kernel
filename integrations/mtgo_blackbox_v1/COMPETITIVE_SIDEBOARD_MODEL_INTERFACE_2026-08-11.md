@@ -2,13 +2,20 @@
 
 ## Finding
 
-The current native checkpoint cannot choose a changed sideboard configuration.
+The current native checkpoint cannot choose a sideboard configuration.
 `ObservationV5`, `ActionSemanticV1`, `FlatScoringDecisionViewV2`, and
 `NativeCheckpointInferenceV1::score_decision_v1` describe decisions inside one
-game. The kernel has no best-of-three match episode, between-game observation,
-sideboard action vocabulary, or sideboard checkpoint head. References to
-sideboard cards in `card_def.rs` and the fixed Burn mainboard provenance in
-`rl.rs` do not provide those surfaces.
+game. The kernel now has deterministic best-of-three match state and session
+types plus exact registered-deck and 60/15 configuration validators in
+`bo3_match.rs`, `bo3_session.rs`, and `sideboard.rs`. Those are reusable match
+and own-deck primitives. The kernel still has no player-visible between-game
+observation, sideboard action vocabulary, or checkpoint head.
+
+The current deterministic sideboard policy is simulator plumbing, not a model
+surface. Its matchup lookup takes `opponent_deck_id`, which is hidden in a real
+MTGO match and is therefore ineligible for the competitive model boundary. A
+future model may infer opponent strategy from prior visible play, but neither
+that hidden identifier nor its matchup table may enter the MTGO scorer.
 
 The competitive adapter already implements the downstream UI mechanics. It can
 reconstruct one exact visible mainboard and sideboard configuration, validate a
@@ -24,8 +31,9 @@ native model decision supplies its proof.
 
 ## Required mtg-kernel match surface
 
-Add a versioned best-of-three match session that owns consecutive games and the
-between-game transition. Its model-visible sideboard observation must contain:
+Extend the existing versioned best-of-three match session with a model-owned,
+player-visible between-game policy transition. Its sideboard observation must
+contain:
 
 1. the exact deck-list, canonical deck-manifest, current mainboard, and current
    sideboard commitments;
@@ -89,7 +97,22 @@ kernel cannot represent remains ineligible for competitive deployment.
 
 ## Adapter binding
 
-The native checkpoint scorer must be the only production source of a target configuration.
+The native checkpoint scorer must be the only production source of a target
+configuration. The adapter now exposes the required pure-local sequential
+transport in `competitive_native_sideboard_deliberation.rs`: each response is
+an exact ordered finite logit vector, deterministic first-maximum selection
+applies one local move, and only an explicit `SubmitConfiguration` produces an
+opaque final target. The session stops after 64 decisions and owns no MTGO
+runtime or input capability.
+`score_competitive_native_sideboard_request_deliberation_v1` first imports the
+exact retained completed-game player-visible history and then runs every local
+decision through that same scorer instance while retaining the event request
+and final selection together. It therefore closes the adapter-owned history
+handoff without exposing transport or hidden client state.
+
+The older whole-target `MtgoCompetitiveNativeSideboardScoreResponseV1` remains
+an offline compatibility fixture. It cannot satisfy native model provenance or
+resume the competitive event session.
 
 Once the native surface exists, the adapter should:
 
@@ -123,8 +146,8 @@ offline tests. It must not become model provenance or production authority.
 The changed-sideboard path is not wiring-complete until all of the following are
 true:
 
-- the kernel implements best-of-three match episodes and the typed sideboard
-  observation and action surface;
+- the existing kernel best-of-three episode owns the typed player-visible
+  sideboard observation and sequential action surface;
 - a checkpoint package commits a terminal-outcome-trained sideboard head and
   exposes it through a concrete native inference handle;
 - the adapter accumulates only prior acting-player-visible game history across

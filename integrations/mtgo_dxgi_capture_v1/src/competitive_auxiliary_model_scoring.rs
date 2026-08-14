@@ -257,9 +257,10 @@ pub fn score_checked_untrusted_competitive_native_pregame_request_v1<
     })
 }
 
-/// Coordinate-free target response for one exact player-visible sideboard
-/// input. This response is structurally checkable but does not prove kernel
-/// checkpoint origin.
+/// Coordinate-free whole-target compatibility response for one exact
+/// player-visible sideboard input. This remains useful for offline structural
+/// fixtures, but it neither proves checkpoint origin nor satisfies the native
+/// sequential model provenance contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoCompetitiveNativeSideboardScoreResponseV1 {
@@ -270,8 +271,10 @@ pub struct MtgoCompetitiveNativeSideboardScoreResponseV1 {
     pub value_f32_bits: u32,
 }
 
-/// Minimal semantic scorer seam for a future kernel sideboard head or an
-/// offline test double. Implementing this trait supplies no live authority.
+/// Whole-target offline scorer seam. A future production kernel head must use
+/// `MtgoCompetitiveNativeSideboardDeliberationScorerV1`, which returns ordered
+/// logits for each pure-local move and explicit SubmitConfiguration decision.
+/// Implementing this compatibility trait supplies no live authority.
 pub trait MtgoCompetitiveNativeSideboardScorerV1 {
     fn score_sideboard_v1(
         &mut self,

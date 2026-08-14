@@ -23,6 +23,9 @@ mod competitive_auxiliary_action_resolution;
 mod competitive_native_sideboard;
 
 #[cfg(target_os = "windows")]
+mod competitive_native_sideboard_deliberation;
+
+#[cfg(target_os = "windows")]
 mod competitive_operator_bootstrap;
 #[cfg(target_os = "windows")]
 mod competitive_operator_loop;
@@ -283,6 +286,24 @@ pub use competitive_native_sideboard::{
     visible_native_sideboard_configuration_v1, MtgoCompetitiveNativeSideboardCardCountV1,
     MtgoCompetitiveNativeSideboardConfigurationV1, MtgoCompetitiveNativeSideboardModelInputV1,
     MtgoCompetitiveNativeSideboardModelSelectionV1,
+};
+
+#[cfg(target_os = "windows")]
+pub use competitive_native_sideboard_deliberation::{
+    advance_competitive_native_sideboard_deliberation_v1,
+    begin_competitive_native_sideboard_deliberation_v1,
+    score_competitive_native_sideboard_request_deliberation_v1,
+    MtgoCompetitiveNativeSideboardDeliberationActionV1,
+    MtgoCompetitiveNativeSideboardDeliberationAdvanceV1,
+    MtgoCompetitiveNativeSideboardDeliberationDecisionV1,
+    MtgoCompetitiveNativeSideboardDeliberationScoreResponseV1,
+    MtgoCompetitiveNativeSideboardDeliberationScorerV1,
+    MtgoCompetitiveNativeSideboardDeliberationStepReceiptV1,
+    OpaqueMtgoCompetitiveNativeSideboardDeliberationV1,
+    OpaqueMtgoScoredCompetitiveNativeSideboardDeliberationRequestV1,
+    OpaqueMtgoSubmittedCompetitiveNativeSideboardSelectionV1,
+    MTGO_COMPETITIVE_NATIVE_SIDEBOARD_DELIBERATION_SCHEMA_V1,
+    MTGO_COMPETITIVE_NATIVE_SIDEBOARD_MAX_DECISIONS_V1,
 };
 
 #[cfg(target_os = "windows")]
