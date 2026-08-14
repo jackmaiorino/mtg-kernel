@@ -32,11 +32,14 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub direct_source_synthetic_loader_qualification_present: bool,
     pub direct_source_identity_pinned_live_abstention_broker_present: bool,
     pub direct_source_live_abstention_qualification_passed: bool,
+    pub direct_source_live_solitaire_visible_equivalent_abstention_passed: bool,
+    pub direct_source_live_spectator_visible_equivalent_abstention_passed: bool,
     pub direct_source_audited_broker_runtime_present: bool,
     pub direct_source_background_stable_visible_equivalent_qualification_present: bool,
     pub direct_source_background_live_stable_abstention_passed: bool,
     pub direct_source_background_foreground_rebind_present: bool,
     pub direct_source_live_data_bearing_producer_attestation_present: bool,
+    pub direct_source_seated_two_player_data_bearing_qualification_present: bool,
     pub persisted_visible_game_log_parser_present: bool,
     pub persisted_visible_game_log_local_corpus_passed: bool,
     pub post_entry_operator_pairing_ready_game_log_baseline_present: bool,
@@ -195,11 +198,14 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             direct_source_synthetic_loader_qualification_present: true,
             direct_source_identity_pinned_live_abstention_broker_present: true,
             direct_source_live_abstention_qualification_passed: true,
+            direct_source_live_solitaire_visible_equivalent_abstention_passed: true,
+            direct_source_live_spectator_visible_equivalent_abstention_passed: true,
             direct_source_audited_broker_runtime_present: true,
             direct_source_background_stable_visible_equivalent_qualification_present: true,
             direct_source_background_live_stable_abstention_passed: true,
             direct_source_background_foreground_rebind_present: true,
             direct_source_live_data_bearing_producer_attestation_present: false,
+            direct_source_seated_two_player_data_bearing_qualification_present: false,
             persisted_visible_game_log_parser_present: true,
             persisted_visible_game_log_local_corpus_passed: true,
             post_entry_operator_pairing_ready_game_log_baseline_present: true,
@@ -407,6 +413,16 @@ mod tests {
         assert!(
             report
                 .known_wiring_gaps
+                .direct_source_live_solitaire_visible_equivalent_abstention_passed
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .direct_source_live_spectator_visible_equivalent_abstention_passed
+        );
+        assert!(
+            report
+                .known_wiring_gaps
                 .direct_source_audited_broker_runtime_present
         );
         assert!(
@@ -428,6 +444,11 @@ mod tests {
             !report
                 .known_wiring_gaps
                 .direct_source_live_data_bearing_producer_attestation_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .direct_source_seated_two_player_data_bearing_qualification_present
         );
         assert!(
             report
