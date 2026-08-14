@@ -663,6 +663,21 @@ pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatRescoreV1 {
     confirmation_commitment_sha256: String,
 }
 
+/// The owner is public so it can survive the confirmation boundary, but its
+/// current caller-supplied-scorer function is intentionally not exported.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::{
+///     score_competitive_operator_attended_direct_visible_combat_rescore_v1,
+///     OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatRescoreV1,
+/// };
+/// fn cannot_supply_an_application_scorer(
+///     value: OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatRescoreV1,
+/// ) {
+///     let _ = score_competitive_operator_attended_direct_visible_combat_rescore_v1;
+///     drop(value);
+/// }
+/// ```
 impl OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatRescoreV1 {
     pub fn confirmation_commitment_sha256_v1(&self) -> &str {
         &self.confirmation_commitment_sha256

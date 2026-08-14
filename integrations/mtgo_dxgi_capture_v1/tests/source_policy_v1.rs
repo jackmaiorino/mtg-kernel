@@ -2877,6 +2877,8 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "refresh_ratified_attested_direct_visible_selection_v1,",
         "OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1,",
         "OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1,",
+        "select_competitive_operator_attended_direct_visible_any_gameplay_action_v1,",
+        "score_competitive_operator_attended_direct_visible_combat_rescore_v1,",
     ] {
         assert!(
             !public_api.contains(forbidden_export),
@@ -2955,6 +2957,17 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "OpaqueMtgoCompetitiveOperatorCompletedVisibleMatchV1,",
         "OpaqueMtgoCompetitiveOperatorVisibleSideboardingV1,",
         "return_confirmed_competitive_post_entry_operator_player_visible_gameplay_v1,",
+        "prepare_competitive_operator_attended_direct_visible_combat_step_v1,",
+        "execute_competitive_operator_attended_direct_visible_combat_step_v1,",
+        "confirm_competitive_operator_attended_direct_visible_combat_step_v1,",
+        "append_competitive_operator_attended_direct_visible_combat_history_v1,",
+        "MtgoCompetitiveOperatorAttendedDirectVisibleAnyGameplaySelectionV1,",
+        "MtgoCompetitiveOperatorAttendedDirectVisibleCombatAdvanceV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatBeforeDispatchV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPendingV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatRescoreV1,",
+        "OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatConfirmedV1,",
     ] {
         assert!(
             public_api.contains(required_player_visible_export),
