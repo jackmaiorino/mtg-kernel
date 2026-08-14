@@ -90,6 +90,16 @@ impl NativeExternalPlayerVisibleScorerV1<'_> {
 
 The score owns finite ordered logits and a finite value plus checkpoint and input commitments. It exposes no Flat packet, raw tensor, `ObservationV5`, semantic kernel action, action binding, random seed, or consume method.
 
+The public-history importer must also implement the adapter's combat callback.
+One callback value represents one complete attacker or blocker declaration,
+even when MTGO required several visible toggles, target prompts, or `Done`
+clicks. It contains the sanitized source and final visible states plus the exact
+ordered local model calls. Each local call contains only the visible input,
+selected index, and selected visible choice. The kernel must preserve that
+order, count the composite once in action history, and reject an unsupported
+combat value. It must not request or reconstruct capture identities,
+commitments, client objects, or physical input receipts.
+
 For the existing non-recurrent checkpoint, `replace_public_history_v1` validates and commits the two streams but the score must report `public_history_used_by_model_v1() == false`. A future recurrent head can report true only after its training and deployment identity bind that input contract.
 
 ## Required tests
@@ -110,6 +120,11 @@ For the existing non-recurrent checkpoint, `replace_public_history_v1` validates
 12. Single-attacker blocker inclusion preserves visible battlefield order,
     rejects a second attacker or preexisting assignment, always presents
     `false` then `true`, and has no client target or input conversion.
+13. Composite combat history preserves every ordered local model call, counts
+    the complete declaration once, and rejects an unsupported combat callback
+    instead of silently dropping it.
+14. The kernel-facing combat value has no frame, commitment, client-object,
+    coordinate, process, or physical-input field or accessor.
 
 ## Readiness rule
 

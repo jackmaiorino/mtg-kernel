@@ -60,6 +60,11 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub action_corroboration_supports_only_exactly_stated_action_families: bool,
     pub action_corroboration_grants_additional_input: bool,
     pub confirmed_model_decision_history_present: bool,
+    pub composite_combat_decision_history_present: bool,
+    pub composite_combat_rescore_continuity_present: bool,
+    pub composite_combat_counts_as_one_session_action: bool,
+    pub combat_kernel_consumer_contract_present: bool,
+    pub unsupported_combat_kernel_consumer_fails_closed: bool,
     pub dual_source_exact_game_memory_present: bool,
     pub explicit_kernel_consumer_contract_present: bool,
     pub ongoing_history_snapshot_replay_contract_present: bool,
@@ -132,6 +137,11 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         action_corroboration_supports_only_exactly_stated_action_families: true,
         action_corroboration_grants_additional_input: false,
         confirmed_model_decision_history_present: true,
+        composite_combat_decision_history_present: true,
+        composite_combat_rescore_continuity_present: true,
+        composite_combat_counts_as_one_session_action: true,
+        combat_kernel_consumer_contract_present: true,
+        unsupported_combat_kernel_consumer_fails_closed: true,
         dual_source_exact_game_memory_present: true,
         explicit_kernel_consumer_contract_present: true,
         ongoing_history_snapshot_replay_contract_present: true,
@@ -208,6 +218,11 @@ mod tests {
         assert!(report.action_corroboration_supports_only_exactly_stated_action_families);
         assert!(!report.action_corroboration_grants_additional_input);
         assert!(report.confirmed_model_decision_history_present);
+        assert!(report.composite_combat_decision_history_present);
+        assert!(report.composite_combat_rescore_continuity_present);
+        assert!(report.composite_combat_counts_as_one_session_action);
+        assert!(report.combat_kernel_consumer_contract_present);
+        assert!(report.unsupported_combat_kernel_consumer_fails_closed);
         assert!(report.dual_source_exact_game_memory_present);
         assert!(report.explicit_kernel_consumer_contract_present);
         assert!(report.ongoing_history_snapshot_replay_contract_present);
