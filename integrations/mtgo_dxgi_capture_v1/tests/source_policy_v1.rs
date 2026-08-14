@@ -2284,6 +2284,74 @@ fn background_direct_source_is_exact_visible_equivalent_and_non_actuating() {
 }
 
 #[test]
+fn background_direct_visible_review_artifact_is_data_bearing_but_non_authoritative() {
+    let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let binary = include_str!("../src/bin/capture_mtgo_direct_visible_background_review_v1.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "write_stable_background_direct_visible_review_artifact_v1",
+        "parse_and_validate_visible_duel_producer_result_v1(exact_result_bytes)",
+        "background review artifact requires a data-bearing duel result",
+        "rendered_mtgo_ui_or_rendered_game_log_only",
+        "visible-result.json",
+        "review-template.json",
+        "pending_manual_visible_equivalence_review",
+        "every_exported_fact_visible_in_rendered_ui_or_rendered_game_log",
+        "legal_action_set_matches_visible_controls",
+        "no_hidden_zone_or_internal_identifier",
+        "review_completed: false",
+        "safe_for_live_semantic_evidence: false",
+        "safe_for_model_scoring: false",
+        "safe_for_input: false",
+        "permits_event_entry: false",
+        "permits_spending: false",
+        "background review artifact may not be written inside the repository",
+        "create_new(true)",
+        "fs::rename(&partial, output)",
+        "cleanup_background_direct_visible_review_partial_v1",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "background review writer is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "qualify_stable_background_direct_visible_source_v1",
+        "write_stable_background_direct_visible_review_artifact_v1",
+        "MTGO_DIRECT_VISIBLE_BACKGROUND_REVIEW_REJECTED",
+    ] {
+        assert!(
+            binary.contains(required),
+            "background review CLI is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "write_stable_background_direct_visible_review_artifact_v1",
+        "MtgoStableBackgroundDirectVisibleReviewArtifactReceiptV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "background review API is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "visible_result: serde_json::Value",
+        "process_id:",
+        "process_image:",
+        "raw_client_object",
+        "hidden_client_id",
+        "SendInput",
+        "SetCursorPos",
+    ] {
+        assert!(
+            !binary.contains(forbidden),
+            "background review CLI exposes a forbidden surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn preview_ocr_probe_is_offline_expected_text_only_and_non_actuating() {
     let source = include_str!("../src/bin/probe_mtgo_preview_ocr_v1.rs");
     for required in [

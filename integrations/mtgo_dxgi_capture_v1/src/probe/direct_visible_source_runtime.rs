@@ -41,6 +41,7 @@ use mtgo_blackbox_v1::{
     MTGO_DIRECT_VISIBLE_COMPETITIVE_OBSERVATION_BRACKET_SCHEMA_V1,
     MTGO_DIRECT_VISIBLE_GAMEPLAY_BEFORE_DISPATCH_SCHEMA_V1,
 };
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsString;
@@ -80,6 +81,10 @@ const DIRECT_VISIBLE_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-no-stakes-qualification-v1";
 const DIRECT_VISIBLE_BACKGROUND_STABILITY_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-background-stability-v1";
+const DIRECT_VISIBLE_BACKGROUND_REVIEW_ARTIFACT_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-background-review-artifact-v1";
+const DIRECT_VISIBLE_BACKGROUND_REVIEW_PARTIAL_PREFIX_V1: &str =
+    ".mtgo-direct-visible-background-review-partial-";
 const DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-scored-refresh-v1";
 const DIRECT_VISIBLE_SOURCE_COMPETITIVE_BEFORE_DISPATCH_DOMAIN_V1: &[u8] =
@@ -1957,6 +1962,69 @@ pub struct MtgoStableBackgroundDirectVisibleSourceCommitmentsV1 {
     pub stability_commitment_sha256: String,
 }
 
+/// Commitments for a newly written manual-review artifact containing one exact
+/// strict visible-equivalent producer result. The artifact is review input
+/// only. Every authority flag stays false, including after a reviewer edits a
+/// separate copy of the template.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MtgoStableBackgroundDirectVisibleReviewArtifactReceiptV1 {
+    pub schema: &'static str,
+    pub status: &'static str,
+    pub output_directory: PathBuf,
+    pub result_kind: String,
+    pub runtime_identity_commitment_sha256: String,
+    pub sanitized_result_sha256: String,
+    pub stability_commitment_sha256: String,
+    pub manifest_sha256: String,
+    pub review_template_sha256: String,
+    pub artifact_commitment_sha256: String,
+    pub review_completed: bool,
+    pub safe_for_live_semantic_evidence: bool,
+    pub safe_for_model_scoring: bool,
+    pub safe_for_input: bool,
+    pub permits_event_entry: bool,
+    pub permits_spending: bool,
+}
+
+#[derive(Serialize)]
+struct PrivateMtgoStableBackgroundDirectVisibleReviewManifestV1<'a> {
+    schema: &'static str,
+    artifact_kind: &'static str,
+    status: &'static str,
+    information_boundary: &'static str,
+    result_kind: &'a str,
+    visible_result_file: &'static str,
+    visible_result_byte_length: usize,
+    visible_result_sha256: &'a str,
+    runtime_identity_commitment_sha256: &'a str,
+    broker_binary_sha256: &'a str,
+    producer_binary_sha256: &'a str,
+    stability_commitment_sha256: &'a str,
+    review_template_file: &'static str,
+    review_completed: bool,
+    safe_for_live_semantic_evidence: bool,
+    safe_for_model_scoring: bool,
+    safe_for_input: bool,
+    permits_event_entry: bool,
+    permits_spending: bool,
+}
+
+#[derive(Serialize)]
+struct PrivateMtgoStableBackgroundDirectVisibleReviewTemplateV1<'a> {
+    schema: &'static str,
+    artifact_status_required: &'static str,
+    result_kind: &'a str,
+    visible_result_sha256: &'a str,
+    stability_commitment_sha256: &'a str,
+    reviewer_alias: &'static str,
+    every_exported_fact_visible_in_rendered_ui_or_rendered_game_log: bool,
+    legal_action_set_matches_visible_controls: bool,
+    ordinary_surface_complete: bool,
+    combat_surface_complete: bool,
+    no_hidden_zone_or_internal_identifier: bool,
+    review_completed: bool,
+}
+
 /// Move-only background-safe qualification of the direct visible source.
 ///
 /// The exact sanitized result is retained privately and has no extraction,
@@ -2843,6 +2911,256 @@ pub fn qualify_stable_background_direct_visible_source_v1(
             stability_commitment_sha256,
         },
     })
+}
+
+/// Writes one exact data-bearing visible-equivalent producer result for
+/// manual review. An abstention writes nothing. This function does not ratify
+/// the result and cannot create model, semantic-evidence, input, event-entry,
+/// or spending authority.
+pub fn write_stable_background_direct_visible_review_artifact_v1(
+    observation: OpaqueMtgoStableBackgroundDirectVisibleSourceV1,
+    requested_output_directory: &Path,
+) -> Result<MtgoStableBackgroundDirectVisibleReviewArtifactReceiptV1, String> {
+    let exact_result_bytes = &observation._exact_result_bytes.0;
+    let reparsed = parse_and_validate_visible_duel_producer_result_v1(exact_result_bytes)
+        .map_err(|_| "background review result is not strictly visible-equivalent".to_owned())?;
+    if reparsed != observation.result {
+        return Err("background review result differs from its retained typed value".to_owned());
+    }
+    let result_kind = match &reparsed {
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. } => "visible_decision",
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. } => {
+            "visible_attacker_selection"
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+            ..
+        } => "visible_single_attacker_blocker_selection",
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+            ..
+        } => "visible_single_attacker_blocker_execution_state",
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection { .. } => {
+            "visible_multi_attacker_blocker_selection"
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::VisibleBlockerTargetSelection { .. } => {
+            "visible_blocker_target_selection"
+        }
+        MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => {
+            return Err("background review artifact requires a data-bearing duel result".to_owned())
+        }
+    };
+    let commitments = observation.commitments;
+    let visible_result_sha256 = sha256_hex_v1(exact_result_bytes);
+    if visible_result_sha256 != commitments.sanitized_result_sha256 {
+        return Err("background review result hash differs from its qualification".to_owned());
+    }
+
+    let output_directory =
+        validate_background_direct_visible_review_output_v1(requested_output_directory)?;
+    let manifest = PrivateMtgoStableBackgroundDirectVisibleReviewManifestV1 {
+        schema: "mtgo-direct-visible-background-review-manifest/v1",
+        artifact_kind: "strict_player_visible_duel_result_manual_review",
+        status: "pending_manual_visible_equivalence_review",
+        information_boundary: "rendered_mtgo_ui_or_rendered_game_log_only",
+        result_kind,
+        visible_result_file: "visible-result.json",
+        visible_result_byte_length: exact_result_bytes.len(),
+        visible_result_sha256: &visible_result_sha256,
+        runtime_identity_commitment_sha256: &commitments.runtime_identity_commitment_sha256,
+        broker_binary_sha256: &commitments.broker_binary_sha256,
+        producer_binary_sha256: &commitments.producer_binary_sha256,
+        stability_commitment_sha256: &commitments.stability_commitment_sha256,
+        review_template_file: "review-template.json",
+        review_completed: false,
+        safe_for_live_semantic_evidence: false,
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    };
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| format!("serialize background review manifest: {error}"))?;
+    let review_template = PrivateMtgoStableBackgroundDirectVisibleReviewTemplateV1 {
+        schema: "mtgo-direct-visible-background-review-template/v1",
+        artifact_status_required: "pending_manual_visible_equivalence_review",
+        result_kind,
+        visible_result_sha256: &visible_result_sha256,
+        stability_commitment_sha256: &commitments.stability_commitment_sha256,
+        reviewer_alias: "",
+        every_exported_fact_visible_in_rendered_ui_or_rendered_game_log: false,
+        legal_action_set_matches_visible_controls: false,
+        ordinary_surface_complete: false,
+        combat_surface_complete: false,
+        no_hidden_zone_or_internal_identifier: false,
+        review_completed: false,
+    };
+    let review_template_bytes = serde_json::to_vec_pretty(&review_template)
+        .map_err(|error| format!("serialize background review template: {error}"))?;
+    let manifest_sha256 = sha256_hex_v1(&manifest_bytes);
+    let review_template_sha256 = sha256_hex_v1(&review_template_bytes);
+    let artifact_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_BACKGROUND_REVIEW_ARTIFACT_DOMAIN_V1,
+        &[
+            commitments.runtime_identity_commitment_sha256.as_bytes(),
+            commitments.stability_commitment_sha256.as_bytes(),
+            result_kind.as_bytes(),
+            visible_result_sha256.as_bytes(),
+            manifest_sha256.as_bytes(),
+            review_template_sha256.as_bytes(),
+            b"pending_review_no_model_no_input_no_entry_no_spending",
+        ],
+    );
+
+    persist_background_direct_visible_review_artifact_v1(
+        &output_directory,
+        exact_result_bytes,
+        &manifest_bytes,
+        &review_template_bytes,
+    )?;
+    Ok(MtgoStableBackgroundDirectVisibleReviewArtifactReceiptV1 {
+        schema: "mtgo-direct-visible-background-review-artifact-receipt/v1",
+        status: "pending_manual_visible_equivalence_review",
+        output_directory,
+        result_kind: result_kind.to_owned(),
+        runtime_identity_commitment_sha256: commitments.runtime_identity_commitment_sha256,
+        sanitized_result_sha256: visible_result_sha256,
+        stability_commitment_sha256: commitments.stability_commitment_sha256,
+        manifest_sha256,
+        review_template_sha256,
+        artifact_commitment_sha256,
+        review_completed: false,
+        safe_for_live_semantic_evidence: false,
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    })
+}
+
+fn validate_background_direct_visible_review_output_v1(
+    requested: &Path,
+) -> Result<PathBuf, String> {
+    if !requested.is_absolute() {
+        return Err("background review output must be an absolute directory".to_owned());
+    }
+    match fs::symlink_metadata(requested) {
+        Ok(_) => return Err("background review output must not already exist".to_owned()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("inspect background review output: {error}")),
+    }
+    let requested_parent = requested
+        .parent()
+        .ok_or("background review output has no parent")?;
+    let parent_metadata = fs::symlink_metadata(requested_parent)
+        .map_err(|error| format!("inspect background review output parent: {error}"))?;
+    if !parent_metadata.is_dir() || parent_metadata.file_type().is_symlink() {
+        return Err("background review output parent must be a non-symlink directory".to_owned());
+    }
+    let parent = requested_parent
+        .canonicalize()
+        .map_err(|error| format!("canonicalize background review output parent: {error}"))?;
+    let name = requested
+        .file_name()
+        .ok_or("background review output has no directory name")?;
+    if name.to_string_lossy().starts_with('.')
+        && name
+            .to_string_lossy()
+            .starts_with(DIRECT_VISIBLE_BACKGROUND_REVIEW_PARTIAL_PREFIX_V1)
+    {
+        return Err("background review output uses the private partial prefix".to_owned());
+    }
+    let output = parent.join(name);
+    match fs::symlink_metadata(&output) {
+        Ok(_) => return Err("background review output must resolve to a new path".to_owned()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "inspect resolved background review output: {error}"
+            ))
+        }
+    }
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("could not derive repository root")?
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repository root: {error}"))?;
+    if output.starts_with(repository) {
+        return Err(
+            "background review artifact may not be written inside the repository".to_owned(),
+        );
+    }
+    Ok(output)
+}
+
+fn persist_background_direct_visible_review_artifact_v1(
+    output: &Path,
+    visible_result_bytes: &[u8],
+    manifest_bytes: &[u8],
+    review_template_bytes: &[u8],
+) -> Result<(), String> {
+    let parent = output
+        .parent()
+        .ok_or("background review output has no parent")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before epoch: {error}"))?
+        .as_nanos();
+    let mut partial = None;
+    for attempt in 0..16_u8 {
+        let candidate = parent.join(format!(
+            "{DIRECT_VISIBLE_BACKGROUND_REVIEW_PARTIAL_PREFIX_V1}{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        match fs::create_dir(&candidate) {
+            Ok(()) => {
+                partial = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "create background review partial directory: {error}"
+                ))
+            }
+        }
+    }
+    let partial =
+        partial.ok_or("could not reserve a unique background review partial directory")?;
+    let result = (|| {
+        write_new_synced_file_v1(&partial.join("visible-result.json"), visible_result_bytes)?;
+        write_new_synced_file_v1(&partial.join("manifest.json"), manifest_bytes)?;
+        write_new_synced_file_v1(&partial.join("review-template.json"), review_template_bytes)?;
+        fs::rename(&partial, output)
+            .map_err(|error| format!("commit background review artifact directory: {error}"))?;
+        Ok(())
+    })();
+    if result.is_err() {
+        cleanup_background_direct_visible_review_partial_v1(parent, &partial);
+    }
+    result
+}
+
+fn write_new_synced_file_v1(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut file = File::options()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("create background review artifact file: {error}"))?;
+    file.write_all(bytes)
+        .map_err(|error| format!("write background review artifact file: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("sync background review artifact file: {error}"))
+}
+
+fn cleanup_background_direct_visible_review_partial_v1(parent: &Path, partial: &Path) {
+    let owned_name = partial
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.starts_with(DIRECT_VISIBLE_BACKGROUND_REVIEW_PARTIAL_PREFIX_V1))
+        .unwrap_or(false);
+    if partial.parent() == Some(parent) && owned_name {
+        let _ = fs::remove_dir_all(partial);
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -3740,6 +4058,33 @@ fn commitment_v1(domain: &[u8], parts: &[&[u8]]) -> String {
 mod tests {
     use super::*;
 
+    struct TemporaryReviewParentV1(PathBuf);
+
+    impl TemporaryReviewParentV1 {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "mtgo-direct-visible-review-test-{label}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn child(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TemporaryReviewParentV1 {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     fn visible_decision_v1(
         action: mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1,
     ) -> mtgo_blackbox_v1::MtgoPlayerVisibleDuelDecisionInputV1 {
@@ -3773,6 +4118,143 @@ mod tests {
             },
             ordered_legal_actions: vec![action],
         }
+    }
+
+    fn stable_background_observation_v1(
+        result: MtgoVisibleDuelViewModelBrokerResultV1,
+    ) -> OpaqueMtgoStableBackgroundDirectVisibleSourceV1 {
+        let bytes = serde_json::to_vec(&result).unwrap();
+        let sanitized_result_sha256 = sha256_hex_v1(&bytes);
+        OpaqueMtgoStableBackgroundDirectVisibleSourceV1 {
+            _exact_result_bytes: ZeroingVecV1(bytes),
+            result,
+            commitments: MtgoStableBackgroundDirectVisibleSourceCommitmentsV1 {
+                runtime_identity_commitment_sha256: "a".repeat(64),
+                broker_binary_sha256: "b".repeat(64),
+                producer_binary_sha256: "c".repeat(64),
+                sanitized_result_sha256,
+                stability_commitment_sha256: "d".repeat(64),
+            },
+        }
+    }
+
+    fn data_bearing_background_observation_v1() -> OpaqueMtgoStableBackgroundDirectVisibleSourceV1 {
+        let mut decision =
+            visible_decision_v1(mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1::Pass {
+                actor: mtgo_blackbox_v1::MtgoPlayerRelativeRoleV1::SeatedPlayer,
+            });
+        decision.current_state.hand_counts = [0, 0];
+        decision.current_state.library_counts = [53, 53];
+        stable_background_observation_v1(MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
+            decision: Box::new(decision),
+        })
+    }
+
+    #[test]
+    fn background_review_artifact_preserves_only_exact_visible_result_and_false_authority() {
+        let parent = TemporaryReviewParentV1::new("valid");
+        let output = parent.child("artifact");
+        let observation = data_bearing_background_observation_v1();
+        let expected_result = observation._exact_result_bytes.0.clone();
+        let receipt =
+            write_stable_background_direct_visible_review_artifact_v1(observation, &output)
+                .unwrap();
+
+        let mut files = fs::read_dir(&receipt.output_directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        files.sort();
+        assert_eq!(
+            files,
+            vec![
+                "manifest.json",
+                "review-template.json",
+                "visible-result.json"
+            ]
+        );
+        let written_result =
+            fs::read(receipt.output_directory.join("visible-result.json")).unwrap();
+        assert_eq!(written_result, expected_result);
+        assert_eq!(
+            sha256_hex_v1(&written_result),
+            receipt.sanitized_result_sha256
+        );
+
+        let manifest_bytes = fs::read(receipt.output_directory.join("manifest.json")).unwrap();
+        assert_eq!(sha256_hex_v1(&manifest_bytes), receipt.manifest_sha256);
+        let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+        for field in [
+            "review_completed",
+            "safe_for_live_semantic_evidence",
+            "safe_for_model_scoring",
+            "safe_for_input",
+            "permits_event_entry",
+            "permits_spending",
+        ] {
+            assert_eq!(manifest[field], false, "manifest field {field}");
+        }
+        let review_bytes = fs::read(receipt.output_directory.join("review-template.json")).unwrap();
+        assert_eq!(sha256_hex_v1(&review_bytes), receipt.review_template_sha256);
+        let review: serde_json::Value = serde_json::from_slice(&review_bytes).unwrap();
+        assert_eq!(review["reviewer_alias"], "");
+        for field in [
+            "every_exported_fact_visible_in_rendered_ui_or_rendered_game_log",
+            "legal_action_set_matches_visible_controls",
+            "ordinary_surface_complete",
+            "combat_surface_complete",
+            "no_hidden_zone_or_internal_identifier",
+            "review_completed",
+        ] {
+            assert_eq!(review[field], false, "review field {field}");
+        }
+        assert!(!receipt.review_completed);
+        assert!(!receipt.safe_for_live_semantic_evidence);
+        assert!(!receipt.safe_for_model_scoring);
+        assert!(!receipt.safe_for_input);
+        assert!(!receipt.permits_event_entry);
+        assert!(!receipt.permits_spending);
+    }
+
+    #[test]
+    fn background_review_abstention_writes_nothing() {
+        let parent = TemporaryReviewParentV1::new("abstention");
+        let output = parent.child("artifact");
+        let observation =
+            stable_background_observation_v1(MtgoVisibleDuelViewModelBrokerResultV1::Abstained {
+                reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1::DuelSurfaceUnavailable,
+            });
+        assert!(
+            write_stable_background_direct_visible_review_artifact_v1(observation, &output)
+                .is_err()
+        );
+        assert!(!output.exists());
+        assert_eq!(fs::read_dir(&parent.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn background_review_refuses_repository_and_existing_outputs() {
+        let inside_repository = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "never-create-background-review-{}",
+            std::process::id()
+        ));
+        assert!(!inside_repository.exists());
+        assert!(write_stable_background_direct_visible_review_artifact_v1(
+            data_bearing_background_observation_v1(),
+            &inside_repository,
+        )
+        .is_err());
+        assert!(!inside_repository.exists());
+
+        let parent = TemporaryReviewParentV1::new("existing");
+        let existing = parent.child("artifact");
+        fs::create_dir(&existing).unwrap();
+        assert!(write_stable_background_direct_visible_review_artifact_v1(
+            data_bearing_background_observation_v1(),
+            &existing,
+        )
+        .is_err());
+        assert_eq!(fs::read_dir(&existing).unwrap().count(), 0);
     }
 
     #[test]
