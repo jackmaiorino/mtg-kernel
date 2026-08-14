@@ -88,6 +88,8 @@ fn gameplay_preview_selects_only_a_visible_foreground_mtgo_duel() {
         "game_window_title_identity",
         "participants_and_match_game_ids",
         "participants_only",
+        "single_opponent_only_spectator_role_not_title_proven",
+        "requested spectator role is not title-proven",
         "mtgo_visible_spectator_gameplay_calibration_preview_v1",
     ] {
         assert!(

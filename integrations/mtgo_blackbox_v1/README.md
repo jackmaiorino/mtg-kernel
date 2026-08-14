@@ -52,7 +52,7 @@ Example for an already-open spectated Standard game:
   -ExpectedGameFormat Standard
 ```
 
-Spectator-game output uses artifact kind `mtgo_visible_spectator_gameplay_calibration_preview_v1` and records `capture_role = spectator`. It is still only a local calibration preview. It is not accepted by the reviewed desktop-preview contract and grants no OCR, evidence, scoring, or input authority. A spectator frame may inform duel-window identity and coarse battlefield layout, but it must not calibrate player hand, prompt, priority, legal-action, target-selection, or input regions.
+Spectator-game output uses artifact kind `mtgo_visible_spectator_gameplay_calibration_preview_v1` and records `capture_role = spectator`. Some current client windows show only one opponent in the native title even when opened through Watch. In that case the manifest records `single_opponent_only_spectator_role_not_title_proven`; the requested mode is not treated as title proof. The output is still only a local calibration preview. It is not accepted by the reviewed desktop-preview contract and grants no OCR, evidence, scoring, or input authority. A spectator frame may inform duel-window identity and coarse battlefield layout, but it must not calibrate player hand, prompt, priority, legal-action, target-selection, or input regions.
 
 Example for an already-open acting-player duel, including a League or Challenge match only after a separately approved non-spending launch:
 

@@ -546,6 +546,7 @@ function Get-MtgoPreviewSnapshot {
     $gameWindowTitleIdentity = 'not_applicable'
     $baseGameWindowTitleRule = $null
     $identifiedGameWindowTitleRule = $null
+    $singleOpponentSpectatorTitleRule = $null
     if ($TargetWindowMode -ceq 'MainClient') {
         if ($windows.Count -ne 1) {
             throw "MTGO_PREVIEW_EXPECTED_EXACTLY_ONE_VISIBLE_TOP_LEVEL_WINDOW:$($windows.Count)"
@@ -593,6 +594,7 @@ function Get-MtgoPreviewSnapshot {
             $captureRole = 'spectator'
             $baseGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^,#\r\n]+$' -f $escapedGameFormat)
             $identifiedGameWindowTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,\r\n]+,\s*[^,#\r\n]+?\s+Match #\s*\d+\s*-\s*Game #\s*\d+$' -f $escapedGameFormat)
+            $singleOpponentSpectatorTitleRule = ('^\(1-on-1\): {0}: Vs\. [^,#\r\n]+$' -f $escapedGameFormat)
         }
         elseif ($TargetWindowMode -ceq 'ForegroundDuelGame') {
             $captureRole = 'acting_player_duel'
@@ -605,6 +607,9 @@ function Get-MtgoPreviewSnapshot {
             $identifiedGameWindowTitleRule = ('^\(Solitaire\): {0}: Vs\. [^\r\n]+?\s+Match #\s*\d+\s*-\s*Game #\s*\d+$' -f $escapedGameFormat)
         }
         $expectedWindowTitleRule = "$identifiedGameWindowTitleRule OR $baseGameWindowTitleRule"
+        if ($TargetWindowMode -ceq 'ForegroundSpectatorGame') {
+            $expectedWindowTitleRule = "$expectedWindowTitleRule OR $singleOpponentSpectatorTitleRule (requested spectator role is not title-proven)"
+        }
     }
 
     if (-not [MtgoVisiblePreviewNativeV1]::IsWindow($windowHandle) -or
@@ -631,6 +636,10 @@ function Get-MtgoPreviewSnapshot {
         }
         elseif ($windowTitle -cmatch $baseGameWindowTitleRule) {
             $gameWindowTitleIdentity = 'participants_only'
+        }
+        elseif ($TargetWindowMode -ceq 'ForegroundSpectatorGame' -and
+            $windowTitle -cmatch $singleOpponentSpectatorTitleRule) {
+            $gameWindowTitleIdentity = 'single_opponent_only_spectator_role_not_title_proven'
         }
         else {
             throw "MTGO_PREVIEW_GAME_WINDOW_TITLE_MISMATCH:$windowTitle"
