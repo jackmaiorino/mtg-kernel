@@ -79,6 +79,8 @@ const DIRECT_VISIBLE_SOURCE_OBSERVATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-observation-v1";
 const DIRECT_VISIBLE_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-no-stakes-qualification-v1";
+const DIRECT_VISIBLE_SPECTATOR_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-spectator-source-no-stakes-qualification-v1";
 const DIRECT_VISIBLE_BACKGROUND_STABILITY_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-background-stability-v1";
 const DIRECT_VISIBLE_BACKGROUND_REVIEW_ARTIFACT_DOMAIN_V1: &[u8] =
@@ -2841,6 +2843,95 @@ pub fn qualify_attested_direct_visible_source_current_duel_v1(
     })
 }
 
+/// Performs one in-memory, no-input qualification of the release-pinned
+/// direct observer in the currently foreground spectator duel. This route is
+/// permanently spectator qualification only. It cannot establish acting-
+/// player knowledge, legal-action authority, model-scoring authority, or
+/// input authority even if the producer returns a data-bearing result.
+pub fn qualify_attested_direct_visible_source_current_spectator_v1(
+    expected_game_format: &str,
+    runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+) -> Result<OpaqueMtgoQualifiedDirectVisibleSourceObservationV1, String> {
+    if !(100..=10_000).contains(&capture_timeout_ms) || !(100..=30_000).contains(&broker_timeout_ms)
+    {
+        return Err(
+            "direct-source spectator qualification timeout is outside the supported range"
+                .to_owned(),
+        );
+    }
+    verify_runtime_identity_now_v1(runtime)?;
+    let request = MtgoDxgiCaptureRequestV3 {
+        expected_executable_sha256: PINNED_MTGO_EXECUTABLE_SHA256_V1.to_owned(),
+        expected_signer_thumbprint: PINNED_MTGO_SIGNER_THUMBPRINT_V1.to_owned(),
+        expected_signer_subject_sha256: PINNED_MTGO_SIGNER_SUBJECT_SHA256_V1.to_owned(),
+        window_mode: CaptureWindowModeV2::SpectatorGame,
+        expected_game_format: Some(expected_game_format.to_owned()),
+        expected_title_contains: None,
+        timeout_ms: capture_timeout_ms,
+    };
+    let before_frame = capture_mtgo_dxgi_frame_candidate_v3(request.clone())?;
+    let before_commitments = before_frame.commitments_v3();
+    require_fresh_source_v1(
+        before_commitments.captured_at_unix_millis,
+        unix_millis_now_v1()?,
+    )?;
+    let process_id = before_frame.manifest.pre.process_id;
+    if process_id == 0 {
+        return Err(
+            "direct-source spectator qualification has no MTGO process identity".to_owned(),
+        );
+    }
+
+    let invocation = invoke_observe_only_broker_v1(
+        runtime,
+        process_id,
+        Duration::from_millis(u64::from(broker_timeout_ms)),
+    );
+    let after_frame_result = capture_mtgo_dxgi_frame_candidate_v3(request);
+    let runtime_recheck = verify_runtime_identity_now_v1(runtime);
+    runtime_recheck?;
+    let after_frame = after_frame_result?;
+    let output = invocation?;
+    validate_same_unadmitted_spectator_observation_lineage_v1(&before_frame, &after_frame)?;
+    let result = parse_and_validate_visible_duel_producer_result_v1(&output.0).map_err(|_| {
+        "direct-source spectator broker did not return one sanitized visible result".to_owned()
+    })?;
+    let sanitized_result_sha256 = sha256_hex_v1(&output.0);
+    let after_commitments = after_frame.commitments_v3();
+    let qualification_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_SPECTATOR_SOURCE_QUALIFICATION_DOMAIN_V1,
+        &[
+            runtime
+                .commitments
+                .runtime_identity_commitment_sha256
+                .as_bytes(),
+            before_commitments.capture_commitment_sha256.as_bytes(),
+            after_commitments.capture_commitment_sha256.as_bytes(),
+            sanitized_result_sha256.as_bytes(),
+            b"spectator_visible_only_no_actor_knowledge_no_scoring_no_input",
+        ],
+    );
+    Ok(OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
+        _before_frame: before_frame,
+        _after_frame: after_frame,
+        result,
+        commitments: MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1 {
+            runtime_identity_commitment_sha256: runtime
+                .commitments
+                .runtime_identity_commitment_sha256
+                .clone(),
+            broker_binary_sha256: runtime.commitments.broker_binary_sha256.clone(),
+            producer_binary_sha256: runtime.commitments.producer_binary_sha256.clone(),
+            before_capture_commitment_sha256: before_commitments.capture_commitment_sha256,
+            after_capture_commitment_sha256: after_commitments.capture_commitment_sha256,
+            sanitized_result_sha256,
+            qualification_commitment_sha256,
+        },
+    })
+}
+
 /// Runs the release-pinned observe-only producer twice against the sole MTGO
 /// process without capturing pixels or requiring the client to be foreground.
 ///
@@ -3940,16 +4031,37 @@ fn validate_same_unadmitted_duel_observation_lineage_v1(
     before: &OpaqueMtgoDxgiFrameCandidateV3,
     after: &OpaqueMtgoDxgiFrameCandidateV3,
 ) -> Result<(), String> {
+    validate_same_unadmitted_observation_lineage_v1(
+        before,
+        after,
+        "duel_game",
+        "acting_player_duel",
+    )
+}
+
+fn validate_same_unadmitted_spectator_observation_lineage_v1(
+    before: &OpaqueMtgoDxgiFrameCandidateV3,
+    after: &OpaqueMtgoDxgiFrameCandidateV3,
+) -> Result<(), String> {
+    validate_same_unadmitted_observation_lineage_v1(before, after, "spectator_game", "spectator")
+}
+
+fn validate_same_unadmitted_observation_lineage_v1(
+    before: &OpaqueMtgoDxgiFrameCandidateV3,
+    after: &OpaqueMtgoDxgiFrameCandidateV3,
+    expected_window_mode: &str,
+    expected_capture_role: &str,
+) -> Result<(), String> {
     let before_commitments = before.commitments_v3();
     let after_commitments = after.commitments_v3();
     let before_manifest = &before.manifest;
     let after_manifest = &after.manifest;
     if before_commitments.capture_commitment_sha256 == after_commitments.capture_commitment_sha256
         || after_commitments.captured_at_unix_millis <= before_commitments.captured_at_unix_millis
-        || before_manifest.window_mode != "duel_game"
-        || after_manifest.window_mode != "duel_game"
-        || before_manifest.capture_role != "acting_player_duel"
-        || after_manifest.capture_role != "acting_player_duel"
+        || before_manifest.window_mode != expected_window_mode
+        || after_manifest.window_mode != expected_window_mode
+        || before_manifest.capture_role != expected_capture_role
+        || after_manifest.capture_role != expected_capture_role
         || before_manifest.expected_game_format != after_manifest.expected_game_format
         || before_manifest.pre.hwnd != after_manifest.pre.hwnd
         || before_manifest.pre.process_id != after_manifest.pre.process_id
@@ -3969,7 +4081,7 @@ fn validate_same_unadmitted_duel_observation_lineage_v1(
         || before_manifest.frame.canonical_height != after_manifest.frame.canonical_height
     {
         return Err(
-            "direct-source qualification changed the duel process, window, output, format, or geometry"
+            "direct-source qualification changed the process, window, output, mode, role, format, or geometry"
                 .to_owned(),
         );
     }

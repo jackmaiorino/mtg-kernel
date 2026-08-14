@@ -550,6 +550,7 @@ pub use probe::{
     probe_mtgo_visible_accessibility_known_label_catalog_with_pixel_corroboration_v1,
     promote_classified_competitive_deck_gate_to_event_listing_v1,
     qualify_attested_direct_visible_source_current_duel_v1,
+    qualify_attested_direct_visible_source_current_spectator_v1,
     qualify_stable_background_direct_visible_source_v1,
     refresh_competitive_match_visible_game_log_v1,
     review_player_visible_duel_gesture_target_schema_v1,

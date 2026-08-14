@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "qualification_id": "direct_visible_spectator_qualification_20260814_v1",
+  "surface": "foreground_spectator_duel",
+  "game_format": "Modern",
+  "visible_title_shape": "two_visible_participants",
+  "account_role": "spectator_only",
+  "runtime_identity_commitment_sha256": "cd267bf77e1fbabcb75102bdcec32cfae6a8ab0cc394e4138bcc611c66556c2f",
+  "broker_binary_sha256": "e83e1f08260cdbd80e68527964de54afd2774beed8f344b03f609fdd75a34fab",
+  "producer_binary_sha256": "3b19cd76514350f33a1d96ce7a69b7168f394a54cd7b5c70422d0f61b39f1596",
+  "before_capture_commitment_sha256": "3a77cd1f35e03d745dced0df18c6bfd5dacb35b05c15e59184b9363831cfb771",
+  "after_capture_commitment_sha256": "5bd25690d1f3e1da21e5e488ffaebc726026f26c988a788e2de5549cb5ed5dd2",
+  "sanitized_result_sha256": "4bcf3ea8c2287b476d6207c2bba7a35024e0a3fe4f9fd0f0124b1d7e5f8d8029",
+  "qualification_commitment_sha256": "a0e667d94b0d56017a36f25cd95cc1c81c085f7e1f99df5605d951ca416d31c6",
+  "producer_result": {
+    "status": "abstained",
+    "reason": "projection_incomplete"
+  },
+  "static_source_constraints": {
+    "visible_chrome_player_count_required": 2,
+    "visible_chrome_local_player_count_required": 1,
+    "semantic_builder_player_count_required": 2,
+    "first_failing_predicate_proven": false
+  },
+  "authority": {
+    "acting_player_authority": false,
+    "safe_for_live_semantic_evidence": false,
+    "safe_for_model_scoring": false,
+    "safe_for_input": false,
+    "permits_event_entry": false,
+    "permits_spending": false
+  },
+  "nonclaims": [
+    "The fixed projection_incomplete result does not identify the first failing producer predicate.",
+    "A spectator surface cannot establish acting-player private knowledge or legal actions.",
+    "This qualification does not replace a seated two-player no-stakes qualification."
+  ]
+}
