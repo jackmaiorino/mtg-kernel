@@ -1503,8 +1503,7 @@ fn load_visible_accessibility_catalog_review_artifact_v1(
             let (crop_width, crop_height, bgra8) =
                 decode_visible_accessibility_png_to_bgra8_v1(&bytes)?;
             if sha256_hex_v1(&bytes) != crop.png_sha256
-                || sha256_hex_v1(&bgra8) != crop.region_bgra8_sha256
-                || !visible_crop_exists_at_same_position_v1(
+                || !visible_crop_matches_region_commitment_at_same_position_v1(
                     &before_bgra8,
                     &after_bgra8,
                     before_width,
@@ -1512,6 +1511,7 @@ fn load_visible_accessibility_catalog_review_artifact_v1(
                     &bgra8,
                     crop_width,
                     crop_height,
+                    &crop.region_bgra8_sha256,
                 )?
             {
                 return Err(
@@ -1796,6 +1796,52 @@ fn visible_crop_exists_at_same_position_v1(
     crop_width: u32,
     crop_height: u32,
 ) -> Result<bool, String> {
+    visible_crop_matches_at_same_position_v1(
+        before,
+        after,
+        frame_width,
+        frame_height,
+        crop,
+        crop_width,
+        crop_height,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn visible_crop_matches_region_commitment_at_same_position_v1(
+    before: &[u8],
+    after: &[u8],
+    frame_width: u32,
+    frame_height: u32,
+    crop: &[u8],
+    crop_width: u32,
+    crop_height: u32,
+    expected_region_commitment_sha256: &str,
+) -> Result<bool, String> {
+    visible_crop_matches_at_same_position_v1(
+        before,
+        after,
+        frame_width,
+        frame_height,
+        crop,
+        crop_width,
+        crop_height,
+        Some(expected_region_commitment_sha256),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn visible_crop_matches_at_same_position_v1(
+    before: &[u8],
+    after: &[u8],
+    frame_width: u32,
+    frame_height: u32,
+    crop: &[u8],
+    crop_width: u32,
+    crop_height: u32,
+    expected_region_commitment_sha256: Option<&str>,
+) -> Result<bool, String> {
     if crop_width == 0 || crop_height == 0 || crop_width > frame_width || crop_height > frame_height
     {
         return Ok(false);
@@ -1829,7 +1875,29 @@ fn visible_crop_exists_at_same_position_v1(
                     && after[frame_start..frame_end] == crop[crop_start..crop_end]
             });
             if matches {
-                return Ok(true);
+                if let Some(expected) = expected_region_commitment_sha256 {
+                    let observed = mtgo_blackbox_v1::visible_frame_region_content_sha256_v1(
+                        before,
+                        &MtgoSizePxV1 {
+                            width: frame_width,
+                            height: frame_height,
+                        },
+                        &MtgoRectPxV1 {
+                            x,
+                            y,
+                            width: crop_width,
+                            height: crop_height,
+                        },
+                    )
+                    .map_err(|error| {
+                        format!("recompute persisted accessibility crop commitment: {error}")
+                    })?;
+                    if observed == expected {
+                        return Ok(true);
+                    }
+                } else {
+                    return Ok(true);
+                }
             }
         }
     }
@@ -2157,8 +2225,12 @@ pub fn finalize_visible_accessibility_catalog_review_artifact_v1(
             .map_err(|error| format!("parse edited accessibility catalog review: {error}"))?;
     let reviewer_alias_bytes =
         read_bounded_regular_file_v1(reviewer_alias_path, 256, "reviewer alias")?;
-    let reviewer_alias =
+    let reviewer_alias_with_optional_line_ending =
         std::str::from_utf8(&reviewer_alias_bytes).map_err(|_| "reviewer alias must be UTF-8")?;
+    let reviewer_alias = reviewer_alias_with_optional_line_ending
+        .strip_suffix("\r\n")
+        .or_else(|| reviewer_alias_with_optional_line_ending.strip_suffix('\n'))
+        .unwrap_or(reviewer_alias_with_optional_line_ending);
     if reviewer_alias.trim() != reviewer_alias
         || reviewer_alias.is_empty()
         || reviewer_alias.chars().any(char::is_control)
@@ -2168,7 +2240,7 @@ pub fn finalize_visible_accessibility_catalog_review_artifact_v1(
                 .to_owned(),
         );
     }
-    review.reviewer_alias_sha256 = sha256_hex_v1(reviewer_alias_bytes.as_slice());
+    review.reviewer_alias_sha256 = sha256_hex_v1(reviewer_alias.as_bytes());
     review.review_commitment_sha256.clear();
     review.review_commitment_sha256 =
         mtgo_visible_accessibility_catalog_review_commitment_v1(&review)?;
@@ -3162,6 +3234,20 @@ mod tests {
         let before_pixels = vec![10, 20, 30, 255, 40, 50, 60, 255];
         let after_pixels = vec![10, 20, 30, 255, 41, 51, 61, 255];
         let crop_pixels = before_pixels[..4].to_vec();
+        let crop_region_hash = mtgo_blackbox_v1::visible_frame_region_content_sha256_v1(
+            &before_pixels,
+            &MtgoSizePxV1 {
+                width: 2,
+                height: 1,
+            },
+            &MtgoRectPxV1 {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap();
         let before_png = encode_visible_accessibility_png_v1(&before_pixels, 2, 1).unwrap();
         let after_png = encode_visible_accessibility_png_v1(&after_pixels, 2, 1).unwrap();
         let crop_png = encode_visible_accessibility_png_v1(&crop_pixels, 1, 1).unwrap();
@@ -3175,7 +3261,7 @@ mod tests {
                 let expected_visible_text_sha256 =
                     sha256_hex_v1(entry.expected_visible_text.as_bytes());
                 let region_hashes = if index == 0 {
-                    vec![sha256_hex_v1(&crop_pixels)]
+                    vec![crop_region_hash.clone()]
                 } else {
                     Vec::new()
                 };
@@ -3262,7 +3348,7 @@ mod tests {
                             vec![PrivateVisibleAccessibilityCatalogReviewCropV1 {
                                 file: crop_file.clone(),
                                 png_sha256: sha256_hex_v1(&crop_png),
-                                region_bgra8_sha256: sha256_hex_v1(&crop_pixels),
+                                region_bgra8_sha256: crop_region_hash.clone(),
                             }]
                         } else {
                             Vec::new()
@@ -3997,6 +4083,42 @@ mod tests {
             1
         )
         .unwrap());
+        let region_commitment = mtgo_blackbox_v1::visible_frame_region_content_sha256_v1(
+            &before,
+            &MtgoSizePxV1 {
+                width: 2,
+                height: 1,
+            },
+            &MtgoRectPxV1 {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+        )
+        .unwrap();
+        assert!(visible_crop_matches_region_commitment_at_same_position_v1(
+            &before,
+            &same_position_after,
+            2,
+            1,
+            &crop,
+            1,
+            1,
+            &region_commitment,
+        )
+        .unwrap());
+        assert!(!visible_crop_matches_region_commitment_at_same_position_v1(
+            &before,
+            &same_position_after,
+            2,
+            1,
+            &crop,
+            1,
+            1,
+            &"0".repeat(64),
+        )
+        .unwrap());
         assert!(
             !visible_crop_exists_at_same_position_v1(&before, &moved_after, 2, 1, &crop, 1, 1)
                 .unwrap()
@@ -4053,7 +4175,7 @@ mod tests {
             serde_json::to_vec_pretty(&edited_review).unwrap(),
         )
         .unwrap();
-        fs::write(&reviewer_alias_path, b"reviewer-one").unwrap();
+        fs::write(&reviewer_alias_path, b"reviewer-one\n").unwrap();
 
         let receipt = finalize_visible_accessibility_catalog_review_artifact_v1(
             &artifact,
@@ -4122,7 +4244,7 @@ mod tests {
             serde_json::to_vec_pretty(&edited_review).unwrap(),
         )
         .unwrap();
-        fs::write(&reviewer_alias_path, b"reviewer-one\n").unwrap();
+        fs::write(&reviewer_alias_path, b"reviewer-one\n\n").unwrap();
         assert!(finalize_visible_accessibility_catalog_review_artifact_v1(
             &artifact,
             &edited_review_path,

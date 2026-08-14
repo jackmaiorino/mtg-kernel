@@ -61,11 +61,49 @@ remaining empty turn to Turn 2 first main. The rendered Game Log added the Turn
 2 and draw entries, and the hand returned to eight cards. This is a complete
 visible one-player turn-boundary trace with no event entry or spending.
 
+## Visible accessibility catalog cases
+
+A first-main catalog probe found two exact visible `Combat` matches and zero
+matches for `Keep`, `Mulligan`, `Cancel`, and `Submit Deck`. The paired DXGI
+review artifact was manually checked against the full before and after client
+frames and both `Combat` crops. Its artifact commitment is
+`401adad0e54dbb2be9f7bfba3c05910eea282d9fa31c2d187e5be819b23279e2`.
+The completed review commitment is
+`7a9f0bd51860b4b2d6ee35c803780c3e2894e50b9726e6b1bef00126bf1f8af3`,
+and the completed review file SHA-256 is
+`56425b2f7bc15f79a1e0df1ea21cfb134c50e6dbf44dd8f19b976dc8e271a322`.
+The case remains non-ratified and unsafe for semantic evidence, policy
+scoring, or input.
+
+That live artifact exposed two probe defects. A visible zero-area Windows shell
+island caused the occlusion audit to fail even though it could not cover a
+pixel. The audit now records successful empty-area DWM bounds as
+non-occluding, while failed or inverted bounds still reject. The persisted
+crop loader also compared a coordinate-bound region commitment to a plain
+pixel hash. It now rediscovers an identical before/after crop position and
+recomputes the exact coordinate-bound commitment. Focused tests cover both
+fixes. A one-case corpus evaluation then rejected as designed because the
+corpus does not yet contain both reviewed presence and reviewed absence for
+every fixed catalog label.
+
+The first Solitaire game was ended through the exact visible `Concede Match`
+confirmation. A second no-cost one-player game was created through the visible
+`Custom Match` dialog with one player and the same test deck. Its opening-hand
+catalog probe found two exact visible `Keep` matches, two exact visible
+`Mulligan` matches, and zero matches for the other three catalog entries. A
+static Desktop Duplication frame was not available within the fixed timeout,
+so no pregame pixel-review artifact was written. The exact enabled
+`KeepButton` was then invoked. Both pregame controls disappeared and one
+enabled `CombatButton` appeared, proving the visible pregame-to-first-main
+control transition without granting model or input authority.
+
 ## Nonclaims
 
 This check proves the current signed client, exact rebuilt observer chain,
 one-player navigation, one visible land-play postcondition, one complete
-one-player turn boundary, and fail-closed two-player projection requirement. It
-does not qualify a data-bearing two-player observation, model scoring, ordinary
-or combat dispatch, match-history import, event entry, or spending. All
-production source and dispatch ratification roots remain empty.
+one-player turn boundary, one reviewed positive `Combat` catalog case, live
+positive `Keep` and `Mulligan` accessibility matches, and fail-closed
+two-player projection requirement. It does not qualify the accessibility
+catalog, a data-bearing two-player observation, model scoring, ordinary or
+combat dispatch, match-history import, event entry, or spending. All production
+source and dispatch ratification roots remain empty.

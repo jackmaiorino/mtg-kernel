@@ -3590,28 +3590,70 @@ fn audit_occlusion(hwnd: HWND, client: SignedRectV1) -> ProbeResult<(bool, u32, 
                 ));
             }
             if IsWindowVisible(current).as_bool() && dwm_u32(current, DWMWA_CLOAKED)? == 0 {
-                let bounds = dwm_rect(current, DWMWA_EXTENDED_FRAME_BOUNDS)?;
-                let intersects = bounds.intersects(client);
-                if intersects {
-                    intersections = intersections
-                        .checked_add(1)
-                        .ok_or("occlusion count overflow")?;
+                match dwm_occlusion_rect_v1(current)? {
+                    Some(bounds) => {
+                        let intersects = bounds.intersects(client);
+                        if intersects {
+                            intersections = intersections
+                                .checked_add(1)
+                                .ok_or("occlusion count overflow")?;
+                        }
+                        lines.push(format!(
+                            "{}:{}:{}:{}:{}:{}",
+                            current.0 as usize,
+                            bounds.left,
+                            bounds.top,
+                            bounds.right,
+                            bounds.bottom,
+                            intersects
+                        ));
+                    }
+                    None => {
+                        // Windows can leave a top-level shell island marked
+                        // visible while DWM reports an empty rectangle. A
+                        // successful empty-area query cannot cover a desktop
+                        // pixel, but it remains bound into the z-order digest.
+                        lines.push(format!("{}:empty:false", current.0 as usize));
+                    }
                 }
-                lines.push(format!(
-                    "{}:{}:{}:{}:{}:{}",
-                    current.0 as usize,
-                    bounds.left,
-                    bounds.top,
-                    bounds.right,
-                    bounds.bottom,
-                    intersects
-                ));
             }
             current = GetWindow(current, GW_HWNDNEXT)
                 .map_err(|error| format!("GetWindow(GW_HWNDNEXT) before target: {error}"))?;
         }
     }
     Err("target was not found within the top-level z-order audit bound".to_owned())
+}
+
+fn dwm_occlusion_rect_v1(hwnd: HWND) -> ProbeResult<Option<SignedRectV1>> {
+    unsafe {
+        let mut value = RECT::default();
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&mut value as *mut RECT).cast::<c_void>(),
+            std::mem::size_of::<RECT>() as u32,
+        )
+        .map_err(|error| format!("DwmGetWindowAttribute occlusion rect: {error}"))?;
+        classify_occlusion_rect_v1(rect(value))
+    }
+}
+
+fn classify_occlusion_rect_v1(value: SignedRectV1) -> ProbeResult<Option<SignedRectV1>> {
+    let width = value
+        .right
+        .checked_sub(value.left)
+        .ok_or("occlusion rectangle width overflow")?;
+    let height = value
+        .bottom
+        .checked_sub(value.top)
+        .ok_or("occlusion rectangle height overflow")?;
+    if width < 0 || height < 0 {
+        return Err("occlusion rectangle is inverted".to_owned());
+    }
+    if width == 0 || height == 0 {
+        return Ok(None);
+    }
+    Ok(Some(value))
 }
 
 fn query_process_image(handle: windows::Win32::Foundation::HANDLE) -> ProbeResult<String> {
@@ -4119,6 +4161,45 @@ mod tests {
         let mut bad_format = request(CaptureWindowModeV2::SolitaireGame);
         bad_format.expected_game_format = Some("Freeform:".to_owned());
         assert!(validate_capture_request_v3(&bad_format).is_err());
+    }
+
+    #[test]
+    fn occlusion_rect_classification_skips_only_successful_empty_area() {
+        let visible = SignedRectV1 {
+            left: -10,
+            top: 20,
+            right: 30,
+            bottom: 60,
+        };
+        assert_eq!(classify_occlusion_rect_v1(visible).unwrap(), Some(visible));
+
+        assert_eq!(
+            classify_occlusion_rect_v1(SignedRectV1 {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 100,
+            })
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            classify_occlusion_rect_v1(SignedRectV1 {
+                left: 0,
+                top: 10,
+                right: 100,
+                bottom: 10,
+            })
+            .unwrap(),
+            None
+        );
+        assert!(classify_occlusion_rect_v1(SignedRectV1 {
+            left: 10,
+            top: 0,
+            right: 9,
+            bottom: 10,
+        })
+        .is_err());
     }
 
     #[test]
