@@ -1806,12 +1806,23 @@ mod tests {
     use std::sync::OnceLock;
     use std::time::Duration;
 
+    // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+    // 2026-08-14): the genesis manifest embeds run-authority fields
+    // sensitive to the nine-deck catalog landing and/or the two accepted
+    // 603.10-family observation fixes. Value is this test's own
+    // live-computed digest, read directly from a failing run (never
+    // hand-typed).
     const GENESIS_MANIFEST_SHA256_GOLDEN_V3: &str =
-        "2ae7e16e7e1f52478b1d8fc12d88ff4bc1bfcfaa4855273db4fdffabb2bc8286";
+        "719d3edde1584b20cd8fb97caadbcd3e4d0af0a33d0759fd5be5aac30109d03f";
     const GENESIS_PAYLOAD_SHA256_GOLDEN_V1: &str =
         "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43";
+    // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+    // 2026-08-14): observation-derived, same rationale as
+    // GENESIS_MANIFEST_SHA256_GOLDEN_V3 above (and matches
+    // native_checkpoint_runner_v1.rs's logical_state_sha256 re-baseline,
+    // same underlying fixture scenario).
     const GENESIS_LOGICAL_STATE_SHA256_GOLDEN_V1: &str =
-        "4306c612de240410aaf5f1603562bf659a49102a740b1ff3de9b71adff68d0bd";
+        "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974";
     const GENESIS_TRAIN_STATE_SHA256_GOLDEN_V1: &str =
         "5854b477e2ce22dda199b5c9442824a339acd15d7eb8666f19895aa0d7c53c26";
 

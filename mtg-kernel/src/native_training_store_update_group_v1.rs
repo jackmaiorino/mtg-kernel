@@ -4126,8 +4126,21 @@ mod tests {
     fn sync_path_reproduces_mains_golden_store_hash() {
         use sha2::Digest;
 
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): "origin/main" here means pristine pre-PR-98
+        // main (commit e930890), before the two accepted 603.10-family
+        // observation fixes and the nine-deck catalog landing that PR-98
+        // carries. Pre/post-merge bit-comparability ends at the merge
+        // epoch by design, so this test's literal premise (bit-identical
+        // to pre-epoch main) is superseded, not violated: the byte LENGTH
+        // below is unchanged (still verifies no structural/additive-field
+        // perturbation, this test's other stated purpose), and only the
+        // digest -- which is sensitive to the observation content the
+        // epoch deliberately changed -- moved. Value is this test's own
+        // live-computed digest, read directly from a failing run (never
+        // hand-typed).
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "d0413353fbb7298c47646adfc56d6d43a22e83cb59f874731973177e4ad00f61";
+            "73e1af55771e8b8876fba629a21dafb0f8d657e04ab3f790465db60e6ddb8ec8";
         const MAIN_GOLDEN_LEN_V1: usize = 78_190;
 
         let run_bytes = test_fixture_bytes_v2();
@@ -4590,6 +4603,18 @@ mod tests {
         // The episode projection carries counts, seeds, deck bindings, and
         // trajectory digests but no float bits, so this pre-C2 pin is
         // platform-independent.
+        //
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): deck bindings and trajectory digests are
+        // exactly the fields the two accepted 603.10-family observation
+        // fixes and the nine-deck catalog landing move; the pre-C2 store-
+        // format baseline itself is otherwise undisturbed. Value is this
+        // test's own live-computed digest, read directly from a failing
+        // run (never hand-typed). The Linux-gnu-only whole-group byte pin
+        // above (lines gated by #[cfg(target_os = "linux", ...)]) is the
+        // same class of literal but could not be verified or re-baselined
+        // from this Windows host; it needs the identical treatment on a
+        // Linux target before this test is fully current there.
         let value: Value = serde_json::from_slice(group.canonical_bytes()).unwrap();
         let episodes_cj =
             to_canonical_json_bytes_v1(&value["evidence"]["episodes"], episode_null_policy_v1())
@@ -4597,7 +4622,7 @@ mod tests {
         let episodes_sha256: [u8; 32] = Sha256::digest(&episodes_cj).into();
         assert_eq!(
             lower_hex_raw32_v1(episodes_sha256),
-            "a250bc19d5ce9a756e89c1e40abaaf59b532eead9ad8fd748c60b8b4221f70b3",
+            "2002effe9f1cc7a88d896dffeacb157cab00201a9c401ca9530c1b3338cc1372",
             "the legacy episode projection drifted from the pre-C2 baseline"
         );
     }
