@@ -145,6 +145,7 @@ fn fixture(event_kind: MtgoCompetitiveEventKindV1) -> Fixture {
         approved_account_alias_sha256: digest('a'),
         event_identity_sha256: digest('4'),
         event_display_label_sha256: digest('5'),
+        deck_display_label_sha256: digest('6'),
         deck_list_sha256: deck.deck_list_sha256().to_owned(),
         deck_manifest_commitment_sha256: deck.manifest_commitment_sha256().to_owned(),
         deck_format_sha256: deck.format_sha256().to_owned(),
@@ -311,6 +312,21 @@ fn target_deck_format_policy_and_visible_identity_are_exact() {
         .unwrap()
         .code(),
         "event_listing_target_binding"
+    );
+
+    let mut deck_label_fixture = fixture(MtgoCompetitiveEventKindV1::League);
+    deck_label_fixture.target.deck_display_label_sha256 = "not-a-digest".to_owned();
+    assert_eq!(
+        validate_visible_competitive_event_listing_selection_v1(
+            deck_label_fixture.lifecycle,
+            &deck_label_fixture.deck,
+            deck_label_fixture.target,
+            deck_label_fixture.raw,
+        )
+        .err()
+        .unwrap()
+        .code(),
+        "event_listing_deck_label"
     );
 }
 

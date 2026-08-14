@@ -4080,6 +4080,7 @@ mod tests {
             approved_account_alias_sha256: digest('a'),
             event_identity_sha256: digest('b'),
             event_display_label_sha256: sha256_hex_v1(label.as_bytes()),
+            deck_display_label_sha256: digest('9'),
             deck_list_sha256: digest('c'),
             deck_manifest_commitment_sha256: digest('d'),
             deck_format_sha256: digest('e'),

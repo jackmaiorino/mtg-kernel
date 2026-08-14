@@ -29,6 +29,7 @@ pub struct MtgoCompetitiveEventListingTargetV1 {
     pub approved_account_alias_sha256: String,
     pub event_identity_sha256: String,
     pub event_display_label_sha256: String,
+    pub deck_display_label_sha256: String,
     pub deck_list_sha256: String,
     pub deck_manifest_commitment_sha256: String,
     pub deck_format_sha256: String,
@@ -102,6 +103,10 @@ impl CheckedUntrustedMtgoCompetitiveEventListingSelectionV1 {
 
     pub fn deck_list_sha256_v1(&self) -> &str {
         &self.target.deck_list_sha256
+    }
+
+    pub fn deck_display_label_sha256_v1(&self) -> &str {
+        &self.target.deck_display_label_sha256
     }
 
     pub fn deck_manifest_commitment_sha256_v1(&self) -> &str {
@@ -489,6 +494,10 @@ fn validate_target_v1(
         ),
         (&target.event_identity_sha256, "event_listing_event"),
         (&target.event_display_label_sha256, "event_listing_label"),
+        (
+            &target.deck_display_label_sha256,
+            "event_listing_deck_label",
+        ),
         (&target.deck_list_sha256, "event_listing_deck"),
         (
             &target.deck_manifest_commitment_sha256,

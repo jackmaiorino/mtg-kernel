@@ -1348,6 +1348,7 @@ mod tests {
             approved_account_alias_sha256: digest('a'),
             event_identity_sha256: digest('3'),
             event_display_label_sha256: digest('4'),
+            deck_display_label_sha256: digest('6'),
             deck_list_sha256: deck.deck_list_sha256().to_owned(),
             deck_manifest_commitment_sha256: deck.manifest_commitment_sha256().to_owned(),
             deck_format_sha256: deck.format_sha256().to_owned(),

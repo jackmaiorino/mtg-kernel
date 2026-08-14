@@ -189,10 +189,14 @@ pub fn validate_visible_competitive_deck_gate_v1(
         || raw.event_kind != target.event_kind
         || raw.event_identity_sha256 != target.event_identity_sha256
         || raw.event_display_label_sha256 != target.event_display_label_sha256
+        || raw
+            .selected_deck_label_sha256
+            .as_ref()
+            .is_some_and(|value| value != &target.deck_display_label_sha256)
     {
         return Err(error_v1(
             "competitive_deck_gate_target_binding",
-            "visible deck gate must match the exact event and deck target",
+            "visible deck gate must match the exact event, deck manifest, and displayed deck label target",
         ));
     }
     if !raw.select_deck_control_enabled
@@ -528,6 +532,7 @@ mod tests {
             approved_account_alias_sha256: digest('2'),
             event_identity_sha256: digest('3'),
             event_display_label_sha256: digest('4'),
+            deck_display_label_sha256: digest('e'),
             deck_list_sha256: deck.deck_list_sha256().to_owned(),
             deck_manifest_commitment_sha256: deck.manifest_commitment_sha256().to_owned(),
             deck_format_sha256: deck.format_sha256().to_owned(),
@@ -656,7 +661,7 @@ mod tests {
         selected.state = MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected;
         selected.missing_deck_prompt_rect_client_px = None;
         selected.missing_deck_prompt_region_sha256 = None;
-        selected.selected_deck_label_sha256 = Some(digest('9'));
+        selected.selected_deck_label_sha256 = Some(digest('e'));
         selected.selected_deck_rect_client_px = Some(MtgoRectPxV1 {
             x: 600,
             y: 100,
@@ -687,7 +692,7 @@ mod tests {
         review_available.state = MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable;
         review_available.missing_deck_prompt_rect_client_px = None;
         review_available.missing_deck_prompt_region_sha256 = None;
-        review_available.selected_deck_label_sha256 = Some(digest('9'));
+        review_available.selected_deck_label_sha256 = Some(digest('e'));
         review_available.selected_deck_rect_client_px = Some(MtgoRectPxV1 {
             x: 600,
             y: 100,
@@ -753,6 +758,29 @@ mod tests {
         assert!(
             validate_visible_competitive_deck_gate_v1(lifecycle, &deck, target, crossed).is_err()
         );
+
+        let deck = deck_v1();
+        let target = target_v1(&deck);
+        let lifecycle = lifecycle_v1();
+        let mut wrong_deck_label = awaiting_v1(&lifecycle, &deck, &target);
+        wrong_deck_label.state = MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected;
+        wrong_deck_label.missing_deck_prompt_rect_client_px = None;
+        wrong_deck_label.missing_deck_prompt_region_sha256 = None;
+        wrong_deck_label.selected_deck_label_sha256 = Some(digest('9'));
+        wrong_deck_label.selected_deck_rect_client_px = Some(MtgoRectPxV1 {
+            x: 600,
+            y: 100,
+            width: 200,
+            height: 50,
+        });
+        wrong_deck_label.selected_deck_region_sha256 = Some(digest('c'));
+        assert!(validate_visible_competitive_deck_gate_v1(
+            lifecycle,
+            &deck,
+            target,
+            wrong_deck_label,
+        )
+        .is_err());
 
         let deck = deck_v1();
         let target = target_v1(&deck);

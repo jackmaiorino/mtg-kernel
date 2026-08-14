@@ -1222,6 +1222,7 @@ mod tests {
             approved_account_alias_sha256: profile.approved_account_alias_sha256().to_owned(),
             event_identity_sha256: format!("{:064x}", index + 100),
             event_display_label_sha256: format!("{:064x}", index + 110),
+            deck_display_label_sha256: format!("{:064x}", index + 120),
             deck_list_sha256: deck.deck_list_sha256().to_owned(),
             deck_manifest_commitment_sha256: deck.manifest_commitment_sha256().to_owned(),
             deck_format_sha256: deck.format_sha256().to_owned(),
