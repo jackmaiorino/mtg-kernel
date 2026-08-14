@@ -2940,7 +2940,8 @@ fn competitive_deck_chooser_is_exact_two_state_visible_only_and_non_authorizing(
         "deck_chooser_profiles",
         "expected exactly one reviewed deck-chooser state match",
         "deck-chooser target requires exactly two reviewed state profiles",
-        "deck-chooser row, detail, or Submit differs from reviewed pixels",
+        "deck-chooser label, row, detail, or Submit differs from reviewed pixels",
+        "deck_label_region_rect_client_px",
         "selection_detail_rect_client_px",
     ] {
         assert!(
@@ -2978,6 +2979,7 @@ fn competitive_deck_chooser_is_exact_two_state_visible_only_and_non_authorizing(
         "UdpSocket",
         "reqwest",
         "pub fn canonical_bgra8",
+        "pub fn deck_label_region_rect",
         "pub fn deck_row_control_rect",
         "pub fn selection_detail_rect",
         "pub fn submit_control_rect",

@@ -561,7 +561,9 @@ struct MtgoCompetitiveDeckChooserProfileV1 {
     state: MtgoCompetitiveDeckChooserStateV1,
     client_size_px: MtgoSizePxV1,
     chooser_title_search_rect_client_px: MtgoRectPxV1,
-    deck_label_search_rect_client_px: MtgoRectPxV1,
+    deck_label_region_rect_client_px: MtgoRectPxV1,
+    unselected_deck_label_reference_sha256s: Vec<String>,
+    selected_deck_label_reference_sha256s: Vec<String>,
     deck_row_control_rect_client_px: MtgoRectPxV1,
     unselected_deck_row_reference_sha256s: Vec<String>,
     selected_deck_row_reference_sha256s: Vec<String>,
@@ -2934,22 +2936,12 @@ fn classify_deck_chooser_from_words_v1(
     .into_iter()
     .filter(|rect| rect_inside_v1(rect, &profile.chooser_title_search_rect_client_px))
     .collect::<Vec<_>>();
-    let deck_matches = find_exact_token_sequence_v1(
-        words,
-        &normalized_tokens_v1(&profile.expected_visible_deck_label),
-    )
-    .into_iter()
-    .filter(|rect| {
-        rect_inside_v1(rect, &profile.deck_label_search_rect_client_px)
-            && rect_inside_v1(rect, &profile.deck_row_control_rect_client_px)
-    })
-    .collect::<Vec<_>>();
-    if title_matches.len() != 1 || deck_matches.len() != 1 {
-        return Err("deck-chooser profile did not find one exact title and deck label".to_owned());
+    if title_matches.len() != 1 {
+        return Err("deck-chooser profile did not find one exact title".to_owned());
     }
     let size = profile.client_size_px.clone();
     let chooser_title_rect_client_px = title_matches[0].clone();
-    let selected_deck_label_rect_client_px = deck_matches[0].clone();
+    let selected_deck_label_rect_client_px = profile.deck_label_region_rect_client_px.clone();
     let chooser_title_region_sha256 = visible_frame_region_content_sha256_v1(
         canonical_bgra8,
         &size,
@@ -2981,6 +2973,11 @@ fn classify_deck_chooser_from_words_v1(
     )
     .map_err(|error| format!("hash deck-chooser Submit pixels: {error}"))?;
     let selected = profile.state == MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected;
+    let deck_label_references = if selected {
+        &profile.selected_deck_label_reference_sha256s
+    } else {
+        &profile.unselected_deck_label_reference_sha256s
+    };
     let row_references = if selected {
         &profile.selected_deck_row_reference_sha256s
     } else {
@@ -2996,9 +2993,12 @@ fn classify_deck_chooser_from_words_v1(
     } else {
         &profile.disabled_submit_reference_sha256s
     };
-    if row_references
-        .binary_search(&deck_row_control_region_sha256)
+    if deck_label_references
+        .binary_search(&selected_deck_label_region_sha256)
         .is_err()
+        || row_references
+            .binary_search(&deck_row_control_region_sha256)
+            .is_err()
         || detail_references
             .binary_search(&selection_detail_region_sha256)
             .is_err()
@@ -3006,7 +3006,9 @@ fn classify_deck_chooser_from_words_v1(
             .binary_search(&submit_control_region_sha256)
             .is_err()
     {
-        return Err("deck-chooser row, detail, or Submit differs from reviewed pixels".to_owned());
+        return Err(
+            "deck-chooser label, row, detail, or Submit differs from reviewed pixels".to_owned(),
+        );
     }
     let chooser = MtgoVisibleCompetitiveDeckChooserV1 {
         schema_version: 1,
@@ -3662,7 +3664,7 @@ fn validate_deck_chooser_assets_v1<'a>(
         previous_profile_id = Some(profile.profile_id.as_str());
         for rect in [
             &profile.chooser_title_search_rect_client_px,
-            &profile.deck_label_search_rect_client_px,
+            &profile.deck_label_region_rect_client_px,
             &profile.deck_row_control_rect_client_px,
             &profile.selection_detail_rect_client_px,
             &profile.submit_control_rect_client_px,
@@ -3672,7 +3674,7 @@ fn validate_deck_chooser_assets_v1<'a>(
             }
         }
         if !rect_inside_v1(
-            &profile.deck_label_search_rect_client_px,
+            &profile.deck_label_region_rect_client_px,
             &profile.deck_row_control_rect_client_px,
         ) || rects_overlap_v1(
             &profile.chooser_title_search_rect_client_px,
@@ -3696,6 +3698,16 @@ fn validate_deck_chooser_assets_v1<'a>(
             return Err("deck-chooser profile evidence and controls overlap".to_owned());
         }
         let selected = profile.state == MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected;
+        validate_sorted_references_v1(
+            &profile.unselected_deck_label_reference_sha256s,
+            "deck-chooser unselected exact-label references",
+            !selected,
+        )?;
+        validate_sorted_references_v1(
+            &profile.selected_deck_label_reference_sha256s,
+            "deck-chooser selected exact-label references",
+            selected,
+        )?;
         validate_sorted_references_v1(
             &profile.unselected_deck_row_reference_sha256s,
             "deck-chooser unselected row references",
@@ -3727,13 +3739,15 @@ fn validate_deck_chooser_assets_v1<'a>(
             selected,
         )?;
         if (selected
-            && (!profile.unselected_deck_row_reference_sha256s.is_empty()
+            && (!profile.unselected_deck_label_reference_sha256s.is_empty()
+                || !profile.unselected_deck_row_reference_sha256s.is_empty()
                 || !profile
                     .unselected_selection_detail_reference_sha256s
                     .is_empty()
                 || !profile.disabled_submit_reference_sha256s.is_empty()))
             || (!selected
-                && (!profile.selected_deck_row_reference_sha256s.is_empty()
+                && (!profile.selected_deck_label_reference_sha256s.is_empty()
+                    || !profile.selected_deck_row_reference_sha256s.is_empty()
                     || !profile
                         .selected_selection_detail_reference_sha256s
                         .is_empty()
@@ -3762,7 +3776,7 @@ fn validate_deck_chooser_assets_v1<'a>(
             || profile.client_size_px != base.client_size_px
             || profile.chooser_title_search_rect_client_px
                 != base.chooser_title_search_rect_client_px
-            || profile.deck_label_search_rect_client_px != base.deck_label_search_rect_client_px
+            || profile.deck_label_region_rect_client_px != base.deck_label_region_rect_client_px
             || profile.deck_row_control_rect_client_px != base.deck_row_control_rect_client_px
             || profile.selection_detail_rect_client_px != base.selection_detail_rect_client_px
             || profile.submit_control_rect_client_px != base.submit_control_rect_client_px
@@ -6660,7 +6674,7 @@ mod tests {
     }
 
     fn deck_chooser_words_v1() -> Vec<OcrWordV1> {
-        let mut words = vec![
+        vec![
             OcrWordV1 {
                 normalized: "Modern".to_owned(),
                 rect: MtgoRectPxV1 {
@@ -6679,17 +6693,7 @@ mod tests {
                     height: 3,
                 },
             },
-        ];
-        words.push(OcrWordV1 {
-            normalized: "mtgo-kernel-modern-basics-v1".to_owned(),
-            rect: MtgoRectPxV1 {
-                x: 3,
-                y: 18,
-                width: 26,
-                height: 4,
-            },
-        });
-        words
+        ]
     }
 
     fn deck_chooser_assets_v1(
@@ -6712,7 +6716,12 @@ mod tests {
             width: 31,
             height: 11,
         };
-        let deck_label_search_rect_client_px = deck_row_control_rect_client_px.clone();
+        let deck_label_region_rect_client_px = MtgoRectPxV1 {
+            x: 3,
+            y: 18,
+            width: 26,
+            height: 4,
+        };
         let selection_detail_rect_client_px = MtgoRectPxV1 {
             x: 34,
             y: 15,
@@ -6728,6 +6737,12 @@ mod tests {
         let row_hash =
             visible_frame_region_content_sha256_v1(pixels, &size, &deck_row_control_rect_client_px)
                 .unwrap();
+        let label_hash = visible_frame_region_content_sha256_v1(
+            pixels,
+            &size,
+            &deck_label_region_rect_client_px,
+        )
+        .unwrap();
         let detail_hash =
             visible_frame_region_content_sha256_v1(pixels, &size, &selection_detail_rect_client_px)
                 .unwrap();
@@ -6748,6 +6763,11 @@ mod tests {
         .map(|(profile_id, state)| {
             let matching = state == matching_state;
             let selected = state == MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected;
+            let state_label_hash = if matching {
+                label_hash.clone()
+            } else {
+                digest(if selected { '8' } else { '9' })
+            };
             let state_row_hash = if matching {
                 row_hash.clone()
             } else {
@@ -6774,7 +6794,17 @@ mod tests {
                 state,
                 client_size_px: size.clone(),
                 chooser_title_search_rect_client_px: chooser_title_search_rect_client_px.clone(),
-                deck_label_search_rect_client_px: deck_label_search_rect_client_px.clone(),
+                deck_label_region_rect_client_px: deck_label_region_rect_client_px.clone(),
+                unselected_deck_label_reference_sha256s: if selected {
+                    Vec::new()
+                } else {
+                    vec![state_label_hash.clone()]
+                },
+                selected_deck_label_reference_sha256s: if selected {
+                    vec![state_label_hash]
+                } else {
+                    Vec::new()
+                },
                 deck_row_control_rect_client_px: deck_row_control_rect_client_px.clone(),
                 unselected_deck_row_reference_sha256s: if selected {
                     Vec::new()
@@ -6944,11 +6974,20 @@ mod tests {
         let profiles = validate_deck_chooser_assets_v1(&assets, &header).unwrap();
         let mut words = deck_chooser_words_v1();
         words.push(OcrWordV1 {
-            normalized: "mtgo-kernel-modern-basics-v1".to_owned(),
+            normalized: "Modern".to_owned(),
             rect: MtgoRectPxV1 {
                 x: 3,
-                y: 22,
-                width: 26,
+                y: 6,
+                width: 10,
+                height: 3,
+            },
+        });
+        words.push(OcrWordV1 {
+            normalized: "Decks".to_owned(),
+            rect: MtgoRectPxV1 {
+                x: 14,
+                y: 6,
+                width: 8,
                 height: 3,
             },
         });
