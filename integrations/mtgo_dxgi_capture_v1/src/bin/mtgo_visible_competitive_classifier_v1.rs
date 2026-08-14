@@ -9,8 +9,8 @@ use mtgo_blackbox_v1::{
     validate_observed_decision_v1, validate_visible_competitive_event_record_v1,
     validate_visible_competitive_lifecycle_snapshot_v1,
     validate_visible_competitive_sideboard_snapshot_v1, visible_frame_region_content_sha256_v1,
-    MtgoCompetitiveDeckManifestV1, MtgoCompetitiveDeckPartitionV1, MtgoCompetitiveEntryTermsV1,
-    MtgoCompetitiveEventCompletionV1, MtgoCompetitiveEventKindV1,
+    MtgoCompetitiveDeckGateStateV1, MtgoCompetitiveDeckManifestV1, MtgoCompetitiveDeckPartitionV1,
+    MtgoCompetitiveEntryTermsV1, MtgoCompetitiveEventCompletionV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveEventListingTargetV1, MtgoCompetitiveEventProgressV1,
     MtgoCompetitiveEventRecordVisibleFactKindV1, MtgoCompetitiveEventRecordVisibleFactV1,
     MtgoCompetitiveEventVisibleStatusV1, MtgoCompetitiveLifecyclePhaseV1, MtgoEvidenceSourceV1,
@@ -19,15 +19,18 @@ use mtgo_blackbox_v1::{
     MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoPlayerVisibleDuelDecisionInputV1,
     MtgoPlayerVisibleDuelGesturePlanV1, MtgoPlayerVisibleDuelGestureTargetRoleV1,
     MtgoPlayerVisibleGameplayPostconditionKindV1, MtgoRectPxV1, MtgoSizePxV1,
-    MtgoVisibleActionControlSetV1, MtgoVisibleCompetitiveEventListingSelectionV1,
-    MtgoVisibleCompetitiveEventRecordV1, MtgoVisibleCompetitiveLifecycleSnapshotV1,
-    MtgoVisibleCompetitiveSideboardCardV1, MtgoVisibleCompetitiveSideboardSnapshotV1,
-    MtgoVisibleCompetitiveSideboardZoneV1, MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
+    MtgoVisibleActionControlSetV1, MtgoVisibleCompetitiveDeckGateV1,
+    MtgoVisibleCompetitiveEventListingSelectionV1, MtgoVisibleCompetitiveEventRecordV1,
+    MtgoVisibleCompetitiveLifecycleSnapshotV1, MtgoVisibleCompetitiveSideboardCardV1,
+    MtgoVisibleCompetitiveSideboardSnapshotV1, MtgoVisibleCompetitiveSideboardZoneV1,
+    MTGO_COMPETITIVE_DECK_GATE_SCHEMA_V1, MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
     MTGO_COMPETITIVE_EVENT_RECORD_SCHEMA_V1, MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
     MTGO_COMPETITIVE_SIDEBOARD_SCHEMA_V1,
 };
 #[cfg(target_os = "windows")]
 use mtgo_dxgi_capture_v1::{
+    MtgoCompetitiveDeckGateClassifierProcessResponseV1,
+    MtgoCompetitiveDeckGateClassifierRequestHeaderV1,
     MtgoCompetitiveEventListingClassifierProcessResponseV1,
     MtgoCompetitiveEventListingClassifierRequestHeaderV1,
     MtgoCompetitiveEventRecordClassifierProcessResponseV1,
@@ -61,6 +64,8 @@ use windows::{
 #[cfg(target_os = "windows")]
 const EVENT_LISTING_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-event-listing-v1";
 #[cfg(target_os = "windows")]
+const DECK_GATE_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-deck-gate-v1";
+#[cfg(target_os = "windows")]
 const NAVIGATION_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-navigation-v1";
 #[cfg(target_os = "windows")]
 const EVENT_RECORD_MODE_ARGUMENT_V1: &str = "--mtgo-visible-competitive-event-record-v1";
@@ -77,6 +82,8 @@ const PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_MODE_ARGUMENT_V1: &str =
 #[cfg(target_os = "windows")]
 const EVENT_LISTING_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_LISTING_V1\0";
 #[cfg(target_os = "windows")]
+const DECK_GATE_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_DECK_GATE_V1\0";
+#[cfg(target_os = "windows")]
 const NAVIGATION_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_NAVIGATION_V1\0";
 #[cfg(target_os = "windows")]
 const EVENT_RECORD_PROTOCOL_MAGIC_V1: &[u8] = b"MTGO_VISIBLE_COMPETITIVE_EVENT_RECORD_V1\0";
@@ -92,6 +99,11 @@ const PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_PROTOCOL_MAGIC_V1: &[u8] =
     b"MTGO_PLAYER_VISIBLE_GAMEPLAY_POSTCONDITION_V1\0";
 #[cfg(target_os = "windows")]
 const EVENT_LISTING_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_event_listing_v1";
+#[cfg(target_os = "windows")]
+const DECK_GATE_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_deck_gate_v1";
+#[cfg(target_os = "windows")]
+const DECK_GATE_REQUEST_SCOPE_V1: &str =
+    "league_and_challenge_three_state_deck_gate_checked_untrusted_v1";
 #[cfg(target_os = "windows")]
 const NAVIGATION_REQUEST_PROTOCOL_V1: &str = "mtgo_visible_competitive_navigation_v1";
 #[cfg(target_os = "windows")]
@@ -122,6 +134,9 @@ const COMBINED_ASSET_SCOPE_V1: &str =
 const PIXEL_FORMAT_V1: &str = "bgra8_unorm_top_down_tightly_packed_v1";
 #[cfg(target_os = "windows")]
 const REQUEST_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-competitive-event-listing-classifier-request-v1";
+#[cfg(target_os = "windows")]
+const DECK_GATE_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-deck-gate-classifier-request-v1";
 #[cfg(target_os = "windows")]
 const NAVIGATION_REQUEST_COMMITMENT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-navigation-classifier-request-v1";
@@ -179,6 +194,8 @@ struct MtgoCompetitiveEventListingClassifierAssetsV1 {
     scope: String,
     canonical_pixel_format: String,
     profiles: Vec<MtgoCompetitiveEventListingOcrProfileV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    deck_gate_profiles: Vec<MtgoCompetitiveDeckGateProfileV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     navigation_profiles: Vec<MtgoCompetitiveNavigationRegionProfileV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -493,6 +510,28 @@ struct MtgoCompetitiveEventListingOcrProfileV1 {
 }
 
 #[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MtgoCompetitiveDeckGateProfileV1 {
+    profile_id: String,
+    event_kind: MtgoCompetitiveEventKindV1,
+    event_display_label_sha256: String,
+    expected_visible_event_label: String,
+    deck_display_label_sha256: String,
+    expected_visible_deck_label: String,
+    state: MtgoCompetitiveDeckGateStateV1,
+    client_size_px: MtgoSizePxV1,
+    event_label_search_rect_client_px: MtgoRectPxV1,
+    deck_status_search_rect_client_px: MtgoRectPxV1,
+    select_deck_control_rect_client_px: MtgoRectPxV1,
+    select_deck_control_reference_sha256s: Vec<String>,
+    open_entry_review_status_rect_client_px: MtgoRectPxV1,
+    open_entry_review_unavailable_reference_sha256s: Vec<String>,
+    open_entry_review_enabled_reference_sha256s: Vec<String>,
+    confidence_bps: u16,
+}
+
+#[cfg(target_os = "windows")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OcrWordV1 {
     normalized: String,
@@ -549,6 +588,9 @@ fn run_v1() -> Result<Vec<u8>, String> {
     match args.get(1).map(String::as_str) {
         Some(EVENT_LISTING_MODE_ARGUMENT_V1) if args.len() == 2 => {
             run_event_listing_v1(&actual_classifier_sha256)
+        }
+        Some(DECK_GATE_MODE_ARGUMENT_V1) if args.len() == 2 => {
+            run_deck_gate_v1(&actual_classifier_sha256)
         }
         Some(NAVIGATION_MODE_ARGUMENT_V1) if args.len() == 2 => {
             run_navigation_v1(&actual_classifier_sha256)
@@ -660,6 +702,80 @@ fn run_event_listing_v1(actual_classifier_sha256: &str) -> Result<Vec<u8>, Strin
     )?;
     serde_json::to_vec(&response)
         .map_err(|error| format!("serialize selected-listing response: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn run_deck_gate_v1(actual_classifier_sha256: &str) -> Result<Vec<u8>, String> {
+    let mut stdin = io::stdin().lock();
+    let mut magic = vec![0_u8; DECK_GATE_PROTOCOL_MAGIC_V1.len()];
+    stdin
+        .read_exact(&mut magic)
+        .map_err(|error| format!("read deck-gate protocol magic: {error}"))?;
+    if magic != DECK_GATE_PROTOCOL_MAGIC_V1 {
+        return Err("deck-gate protocol magic differs".to_owned());
+    }
+    let header_length = read_u64_be_v1(&mut stdin, "deck-gate header length")?;
+    let assets_length = read_u64_be_v1(&mut stdin, "deck-gate assets length")?;
+    let header_length = bounded_usize_v1(header_length, MAX_HEADER_BYTES_V1, "deck-gate header")?;
+    let assets_length = bounded_usize_v1(assets_length, MAX_ASSETS_BYTES_V1, "deck-gate assets")?;
+    let header_json = read_exact_vec_v1(&mut stdin, header_length, "deck-gate header")?;
+    let assets_json = read_exact_vec_v1(&mut stdin, assets_length, "deck-gate assets")?;
+    let header = parse_canonical_json_v1::<MtgoCompetitiveDeckGateClassifierRequestHeaderV1>(
+        &header_json,
+        "deck-gate request header",
+    )?;
+    validate_deck_gate_header_identity_v1(&header, &assets_json, actual_classifier_sha256)?;
+    let pixel_length = bounded_usize_v1(
+        header.canonical_byte_length,
+        usize::try_from(MAX_CANONICAL_BYTES_V1)
+            .map_err(|_| "classifier byte bound does not fit this process".to_owned())?,
+        "deck-gate canonical pixels",
+    )?;
+    let canonical_bgra8 = read_exact_vec_v1(&mut stdin, pixel_length, "deck-gate pixels")?;
+    let mut trailing = [0_u8; 1];
+    if stdin
+        .read(&mut trailing)
+        .map_err(|error| format!("check deck-gate request end: {error}"))?
+        != 0
+    {
+        return Err("deck-gate request has trailing bytes".to_owned());
+    }
+    validate_deck_gate_pixels_v1(&header, &canonical_bgra8)?;
+    let assets = parse_canonical_json_v1::<MtgoCompetitiveEventListingClassifierAssetsV1>(
+        &assets_json,
+        "deck-gate classifier assets",
+    )?;
+    let profiles = validate_deck_gate_assets_v1(&assets, &header)?;
+    let request_commitment_sha256 = commitment_v1(
+        DECK_GATE_REQUEST_COMMITMENT_DOMAIN_V1,
+        &[&header_json, &assets_json, &canonical_bgra8],
+    );
+    let words = recognize_words_v1(
+        header.canonical_width,
+        header.canonical_height,
+        &canonical_bgra8,
+    )?;
+    let mut matches = profiles
+        .into_iter()
+        .filter_map(|profile| {
+            classify_deck_gate_from_words_v1(
+                &header,
+                profile,
+                &canonical_bgra8,
+                &words,
+                request_commitment_sha256.clone(),
+            )
+            .ok()
+        })
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(format!(
+            "expected exactly one reviewed deck-gate state match, found {}",
+            matches.len()
+        ));
+    }
+    let response = matches.remove(0);
+    serde_json::to_vec(&response).map_err(|error| format!("serialize deck-gate response: {error}"))
 }
 
 #[cfg(target_os = "windows")]
@@ -2533,6 +2649,155 @@ fn classify_from_words_v1(
 }
 
 #[cfg(target_os = "windows")]
+fn classify_deck_gate_from_words_v1(
+    header: &MtgoCompetitiveDeckGateClassifierRequestHeaderV1,
+    profile: &MtgoCompetitiveDeckGateProfileV1,
+    canonical_bgra8: &[u8],
+    words: &[OcrWordV1],
+    request_commitment_sha256: String,
+) -> Result<MtgoCompetitiveDeckGateClassifierProcessResponseV1, String> {
+    let event_matches = find_exact_token_sequence_v1(
+        words,
+        &normalized_tokens_v1(&profile.expected_visible_event_label),
+    )
+    .into_iter()
+    .filter(|rect| rect_inside_v1(rect, &profile.event_label_search_rect_client_px))
+    .collect::<Vec<_>>();
+    if event_matches.len() != 1 {
+        return Err("deck-gate profile did not find one exact event label".to_owned());
+    }
+    let selected_deck_matches = find_exact_token_sequence_v1(
+        words,
+        &normalized_tokens_v1(&profile.expected_visible_deck_label),
+    )
+    .into_iter()
+    .filter(|rect| rect_inside_v1(rect, &profile.deck_status_search_rect_client_px))
+    .collect::<Vec<_>>();
+    let missing_deck_matches =
+        find_exact_token_sequence_v1(words, &normalized_tokens_v1("Please Select a Deck"))
+            .into_iter()
+            .filter(|rect| rect_inside_v1(rect, &profile.deck_status_search_rect_client_px))
+            .collect::<Vec<_>>();
+    match profile.state {
+        MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection => {
+            if missing_deck_matches.len() != 1 || !selected_deck_matches.is_empty() {
+                return Err("awaiting-deck OCR state differs".to_owned());
+            }
+        }
+        MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected
+        | MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable => {
+            if !missing_deck_matches.is_empty() || selected_deck_matches.len() != 1 {
+                return Err("selected-deck OCR state differs".to_owned());
+            }
+        }
+    }
+    let size = profile.client_size_px.clone();
+    let event_label_rect_client_px = event_matches[0].clone();
+    let event_label_region_sha256 =
+        visible_frame_region_content_sha256_v1(canonical_bgra8, &size, &event_label_rect_client_px)
+            .map_err(|error| format!("hash deck-gate event label pixels: {error}"))?;
+    let select_deck_control_region_sha256 = visible_frame_region_content_sha256_v1(
+        canonical_bgra8,
+        &size,
+        &profile.select_deck_control_rect_client_px,
+    )
+    .map_err(|error| format!("hash deck-gate deck control pixels: {error}"))?;
+    if profile
+        .select_deck_control_reference_sha256s
+        .binary_search(&select_deck_control_region_sha256)
+        .is_err()
+    {
+        return Err("deck-gate deck control is not one reviewed enabled reference".to_owned());
+    }
+    let open_entry_review_status_sha256 = visible_frame_region_content_sha256_v1(
+        canonical_bgra8,
+        &size,
+        &profile.open_entry_review_status_rect_client_px,
+    )
+    .map_err(|error| format!("hash deck-gate Open Entry Review status pixels: {error}"))?;
+    let open_review_available =
+        profile.state == MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable;
+    let expected_open_review_references = if open_review_available {
+        &profile.open_entry_review_enabled_reference_sha256s
+    } else {
+        &profile.open_entry_review_unavailable_reference_sha256s
+    };
+    if expected_open_review_references
+        .binary_search(&open_entry_review_status_sha256)
+        .is_err()
+    {
+        return Err("deck-gate Open Entry Review status differs from reviewed state".to_owned());
+    }
+
+    let missing_deck_prompt_rect_client_px = missing_deck_matches.first().cloned();
+    let missing_deck_prompt_region_sha256 = missing_deck_prompt_rect_client_px
+        .as_ref()
+        .map(|rect| {
+            visible_frame_region_content_sha256_v1(canonical_bgra8, &size, rect)
+                .map_err(|error| format!("hash missing-deck prompt pixels: {error}"))
+        })
+        .transpose()?;
+    let selected_deck_rect_client_px = selected_deck_matches.first().cloned();
+    let selected_deck_region_sha256 = selected_deck_rect_client_px
+        .as_ref()
+        .map(|rect| {
+            visible_frame_region_content_sha256_v1(canonical_bgra8, &size, rect)
+                .map_err(|error| format!("hash selected-deck label pixels: {error}"))
+        })
+        .transpose()?;
+    let selected_deck_label_sha256 = selected_deck_rect_client_px
+        .as_ref()
+        .map(|_| header.target.deck_display_label_sha256.clone());
+    let open_entry_review_control_rect_client_px =
+        open_review_available.then(|| profile.open_entry_review_status_rect_client_px.clone());
+    let open_entry_review_control_region_sha256 =
+        open_review_available.then_some(open_entry_review_status_sha256);
+    let gate = MtgoVisibleCompetitiveDeckGateV1 {
+        schema_version: MTGO_COMPETITIVE_DECK_GATE_SCHEMA_V1,
+        observation_id: format!(
+            "windows-ocr-deck-gate-v1:{}",
+            &request_commitment_sha256[..24]
+        ),
+        target_commitment_sha256: header.target_commitment_sha256.clone(),
+        event_kind: header.target.event_kind,
+        event_identity_sha256: header.target.event_identity_sha256.clone(),
+        event_display_label_sha256: header.target.event_display_label_sha256.clone(),
+        source_lifecycle_snapshot_commitment_sha256: header
+            .source_lifecycle_snapshot_commitment_sha256
+            .clone(),
+        frame_id: header.frame_id,
+        frame_sequence: header.frame_sequence,
+        frame_sha256: header.canonical_bgra8_sha256.clone(),
+        client_bounds: MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: header.canonical_width,
+            height: header.canonical_height,
+        },
+        state: profile.state,
+        event_label_rect_client_px,
+        event_label_region_sha256,
+        select_deck_control_rect_client_px: profile.select_deck_control_rect_client_px.clone(),
+        select_deck_control_region_sha256,
+        select_deck_control_enabled: true,
+        missing_deck_prompt_rect_client_px,
+        missing_deck_prompt_region_sha256,
+        selected_deck_label_sha256,
+        selected_deck_rect_client_px,
+        selected_deck_region_sha256,
+        open_entry_review_control_rect_client_px,
+        open_entry_review_control_region_sha256,
+        open_entry_review_control_enabled: open_review_available,
+        confidence_bps: profile.confidence_bps,
+    };
+    Ok(MtgoCompetitiveDeckGateClassifierProcessResponseV1 {
+        schema_version: 1,
+        request_commitment_sha256,
+        gate,
+    })
+}
+
+#[cfg(target_os = "windows")]
 fn validate_duel_perception_header_identity_v1(
     header: &MtgoDuelPerceptionRequestHeaderV1,
     assets_json: &[u8],
@@ -2663,6 +2928,66 @@ fn validate_pixels_v1(
         || sha256_hex_v1(canonical_bgra8) != header.canonical_bgra8_sha256
     {
         return Err("selected-listing pixels differ from the request header".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_deck_gate_header_identity_v1(
+    header: &MtgoCompetitiveDeckGateClassifierRequestHeaderV1,
+    assets_json: &[u8],
+    actual_classifier_sha256: &str,
+) -> Result<(), String> {
+    if header.schema_version != 1
+        || header.protocol != DECK_GATE_REQUEST_PROTOCOL_V1
+        || header.parser_scope != DECK_GATE_REQUEST_SCOPE_V1
+        || header.frame_id == 0
+        || header.frame_sequence == 0
+        || header.captured_at_unix_millis == 0
+        || header.canonical_width == 0
+        || header.canonical_height == 0
+        || header.canonical_width > 16_384
+        || header.canonical_height > 16_384
+    {
+        return Err("deck-gate request identity is invalid".to_owned());
+    }
+    let expected_stride = header
+        .canonical_width
+        .checked_mul(4)
+        .ok_or("deck-gate stride overflow")?;
+    let expected_length = u64::from(expected_stride)
+        .checked_mul(u64::from(header.canonical_height))
+        .ok_or("deck-gate pixel length overflow")?;
+    if header.canonical_stride != expected_stride
+        || header.canonical_byte_length != expected_length
+        || expected_length == 0
+        || expected_length > MAX_CANONICAL_BYTES_V1
+        || header.classifier_assets_manifest_sha256 != sha256_hex_v1(assets_json)
+        || header.classifier_binary_sha256 != actual_classifier_sha256
+    {
+        return Err("deck-gate runtime, geometry, or assets differ".to_owned());
+    }
+    for digest in deck_gate_header_digests_v1(header) {
+        validate_sha256_v1(digest, "deck-gate request commitment")?;
+    }
+    validate_target_v1(&header.target)?;
+    if header.target.approved_account_alias_sha256 != header.approved_account_alias_sha256
+        || header.target_commitment_sha256 != target_commitment_v1(&header.target)?
+    {
+        return Err("deck-gate request changed its exact account or target".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_deck_gate_pixels_v1(
+    header: &MtgoCompetitiveDeckGateClassifierRequestHeaderV1,
+    canonical_bgra8: &[u8],
+) -> Result<(), String> {
+    if u64::try_from(canonical_bgra8.len()).ok() != Some(header.canonical_byte_length)
+        || sha256_hex_v1(canonical_bgra8) != header.canonical_bgra8_sha256
+    {
+        return Err("deck-gate pixels differ from the request header".to_owned());
     }
     Ok(())
 }
@@ -2834,6 +3159,161 @@ fn validate_sideboard_pixels_v1(
         return Err("sideboard pixels differ from the request header".to_owned());
     }
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn validate_deck_gate_assets_v1<'a>(
+    assets: &'a MtgoCompetitiveEventListingClassifierAssetsV1,
+    header: &MtgoCompetitiveDeckGateClassifierRequestHeaderV1,
+) -> Result<Vec<&'a MtgoCompetitiveDeckGateProfileV1>, String> {
+    if assets.schema_version != 1
+        || assets.scope != COMBINED_ASSET_SCOPE_V1
+        || assets.canonical_pixel_format != PIXEL_FORMAT_V1
+        || assets.deck_gate_profiles.is_empty()
+        || assets.deck_gate_profiles.len() > MAX_PROFILES_V1
+    {
+        return Err("deck-gate assets identity or profile count is invalid".to_owned());
+    }
+    let client_bounds = MtgoRectPxV1 {
+        x: 0,
+        y: 0,
+        width: header.canonical_width,
+        height: header.canonical_height,
+    };
+    let mut previous_profile_id: Option<&str> = None;
+    let mut profile_ids = HashSet::new();
+    for profile in &assets.deck_gate_profiles {
+        validate_identifier_v1(&profile.profile_id, "deck-gate profile id")?;
+        if !profile_ids.insert(profile.profile_id.as_str())
+            || previous_profile_id.is_some_and(|previous| previous >= profile.profile_id.as_str())
+            || profile.expected_visible_event_label.is_empty()
+            || profile.expected_visible_event_label.len() > MAX_EXPECTED_LABEL_BYTES_V1
+            || profile.expected_visible_event_label.trim() != profile.expected_visible_event_label
+            || profile
+                .expected_visible_event_label
+                .chars()
+                .any(char::is_control)
+            || sha256_hex_v1(profile.expected_visible_event_label.as_bytes())
+                != profile.event_display_label_sha256
+            || profile.expected_visible_deck_label.is_empty()
+            || profile.expected_visible_deck_label.len() > MAX_EXPECTED_LABEL_BYTES_V1
+            || profile.expected_visible_deck_label.trim() != profile.expected_visible_deck_label
+            || profile
+                .expected_visible_deck_label
+                .chars()
+                .any(char::is_control)
+            || sha256_hex_v1(profile.expected_visible_deck_label.as_bytes())
+                != profile.deck_display_label_sha256
+            || profile.client_size_px.width != header.canonical_width
+            || profile.client_size_px.height != header.canonical_height
+            || !(9_500..=10_000).contains(&profile.confidence_bps)
+        {
+            return Err("deck-gate profile identity, label, order, or geometry differs".to_owned());
+        }
+        previous_profile_id = Some(profile.profile_id.as_str());
+        let rects = [
+            &profile.event_label_search_rect_client_px,
+            &profile.deck_status_search_rect_client_px,
+            &profile.select_deck_control_rect_client_px,
+            &profile.open_entry_review_status_rect_client_px,
+        ];
+        if rects
+            .iter()
+            .any(|rect| !rect_inside_v1(rect, &client_bounds))
+        {
+            return Err("deck-gate profile rectangle is outside the client".to_owned());
+        }
+        for first in 0..rects.len() {
+            for second in (first + 1)..rects.len() {
+                if rects_overlap_v1(rects[first], rects[second]) {
+                    return Err("deck-gate profile rectangles overlap".to_owned());
+                }
+            }
+        }
+        validate_sorted_references_v1(
+            &profile.select_deck_control_reference_sha256s,
+            "deck-gate deck control references",
+            true,
+        )?;
+        let review_available =
+            profile.state == MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable;
+        validate_sorted_references_v1(
+            &profile.open_entry_review_unavailable_reference_sha256s,
+            "deck-gate unavailable review references",
+            !review_available,
+        )?;
+        validate_sorted_references_v1(
+            &profile.open_entry_review_enabled_reference_sha256s,
+            "deck-gate enabled review references",
+            review_available,
+        )?;
+        if (review_available
+            && !profile
+                .open_entry_review_unavailable_reference_sha256s
+                .is_empty())
+            || (!review_available
+                && !profile
+                    .open_entry_review_enabled_reference_sha256s
+                    .is_empty())
+        {
+            return Err(
+                "deck-gate profile mixes available and unavailable review states".to_owned(),
+            );
+        }
+    }
+    let matches = assets
+        .deck_gate_profiles
+        .iter()
+        .filter(|profile| {
+            profile.event_kind == header.target.event_kind
+                && profile.event_display_label_sha256 == header.target.event_display_label_sha256
+                && profile.deck_display_label_sha256 == header.target.deck_display_label_sha256
+        })
+        .collect::<Vec<_>>();
+    if matches.len() != 3 {
+        return Err("deck-gate target requires exactly three reviewed state profiles".to_owned());
+    }
+    let mut state_seen = [false; 3];
+    for profile in &matches {
+        let rank = deck_gate_state_rank_v1(profile.state);
+        if state_seen[rank] {
+            return Err("deck-gate target contains a duplicate state profile".to_owned());
+        }
+        state_seen[rank] = true;
+    }
+    if state_seen != [true, true, true] {
+        return Err("deck-gate target is missing a required state profile".to_owned());
+    }
+    Ok(matches)
+}
+
+#[cfg(target_os = "windows")]
+fn validate_sorted_references_v1(
+    references: &[String],
+    label: &str,
+    required: bool,
+) -> Result<(), String> {
+    if references.len() > MAX_CONTROL_REFERENCES_V1 || (required && references.is_empty()) {
+        return Err(format!("{label} count is invalid"));
+    }
+    let mut previous: Option<&str> = None;
+    for reference in references {
+        validate_sha256_v1(reference, label)?;
+        if previous.is_some_and(|value| value >= reference.as_str()) {
+            return Err(format!("{label} must be unique and sorted"));
+        }
+        previous = Some(reference.as_str());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn deck_gate_state_rank_v1(state: MtgoCompetitiveDeckGateStateV1) -> usize {
+    match state {
+        MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection => 0,
+        MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected => 1,
+        MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable => 2,
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -3826,6 +4306,7 @@ fn validate_target_v1(target: &MtgoCompetitiveEventListingTargetV1) -> Result<()
         target.approved_account_alias_sha256.as_str(),
         target.event_identity_sha256.as_str(),
         target.event_display_label_sha256.as_str(),
+        target.deck_display_label_sha256.as_str(),
         target.deck_list_sha256.as_str(),
         target.deck_manifest_commitment_sha256.as_str(),
         target.deck_format_sha256.as_str(),
@@ -3844,6 +4325,26 @@ fn validate_target_v1(target: &MtgoCompetitiveEventListingTargetV1) -> Result<()
 
 #[cfg(target_os = "windows")]
 fn header_digests_v1(header: &MtgoCompetitiveEventListingClassifierRequestHeaderV1) -> [&str; 12] {
+    [
+        &header.canonical_bgra8_sha256,
+        &header.source_capture_commitment_sha256,
+        &header.source_frame_profile_binding_sha256,
+        &header.source_navigation_classification_result_commitment_sha256,
+        &header.source_lifecycle_snapshot_commitment_sha256,
+        &header.navigation_profile_commitment_sha256,
+        &header.navigation_profile_admission_commitment_sha256,
+        &header.approved_account_alias_sha256,
+        &header.runtime_identity_commitment_sha256,
+        &header.classifier_binary_sha256,
+        &header.classifier_assets_manifest_sha256,
+        &header.target_commitment_sha256,
+    ]
+}
+
+#[cfg(target_os = "windows")]
+fn deck_gate_header_digests_v1(
+    header: &MtgoCompetitiveDeckGateClassifierRequestHeaderV1,
+) -> [&str; 12] {
     [
         &header.canonical_bgra8_sha256,
         &header.source_capture_commitment_sha256,
@@ -4443,6 +4944,7 @@ mod tests {
             scope: COMBINED_ASSET_SCOPE_V1.to_owned(),
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: Vec::new(),
+            deck_gate_profiles: Vec::new(),
             navigation_profiles: vec![MtgoCompetitiveNavigationRegionProfileV1 {
                 profile_id: "league-sideboard-64x48-v1".to_owned(),
                 event_kind: MtgoCompetitiveEventKindV1::League,
@@ -4571,6 +5073,7 @@ mod tests {
             scope: COMBINED_ASSET_SCOPE_V1.to_owned(),
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: Vec::new(),
+            deck_gate_profiles: Vec::new(),
             navigation_profiles: vec![navigation_profile_v1(pixels)],
             event_record_profiles: vec![event_record_profile_v1(pixels)],
             sideboard_profiles: Vec::new(),
@@ -4623,6 +5126,7 @@ mod tests {
             scope: ASSET_SCOPE_V1.to_owned(),
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: vec![profile_v1(&pixels, label)],
+            deck_gate_profiles: Vec::new(),
             navigation_profiles: Vec::new(),
             event_record_profiles: Vec::new(),
             sideboard_profiles: Vec::new(),
@@ -4649,6 +5153,7 @@ mod tests {
             scope: ASSET_SCOPE_V1.to_owned(),
             canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
             profiles: vec![profile_v1(&pixels, label)],
+            deck_gate_profiles: Vec::new(),
             navigation_profiles: Vec::new(),
             event_record_profiles: Vec::new(),
             sideboard_profiles: Vec::new(),
@@ -5294,5 +5799,332 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    fn deck_gate_words_v1(state: MtgoCompetitiveDeckGateStateV1) -> Vec<OcrWordV1> {
+        let mut words = vec![
+            OcrWordV1 {
+                normalized: "Modern".to_owned(),
+                rect: MtgoRectPxV1 {
+                    x: 2,
+                    y: 2,
+                    width: 5,
+                    height: 4,
+                },
+            },
+            OcrWordV1 {
+                normalized: "Challenge".to_owned(),
+                rect: MtgoRectPxV1 {
+                    x: 8,
+                    y: 2,
+                    width: 8,
+                    height: 4,
+                },
+            },
+            OcrWordV1 {
+                normalized: "64".to_owned(),
+                rect: MtgoRectPxV1 {
+                    x: 17,
+                    y: 2,
+                    width: 3,
+                    height: 4,
+                },
+            },
+        ];
+        if state == MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection {
+            for (index, value) in ["Please", "Select", "a", "Deck"].into_iter().enumerate() {
+                words.push(OcrWordV1 {
+                    normalized: value.to_owned(),
+                    rect: MtgoRectPxV1 {
+                        x: 2 + u32::try_from(index).unwrap() * 7,
+                        y: 14,
+                        width: 5,
+                        height: 4,
+                    },
+                });
+            }
+        } else {
+            words.push(OcrWordV1 {
+                normalized: "mtgo-kernel-modern-basics-v1".to_owned(),
+                rect: MtgoRectPxV1 {
+                    x: 2,
+                    y: 14,
+                    width: 30,
+                    height: 4,
+                },
+            });
+        }
+        words
+    }
+
+    fn deck_gate_assets_v1(
+        pixels: &[u8],
+        matching_state: MtgoCompetitiveDeckGateStateV1,
+    ) -> MtgoCompetitiveEventListingClassifierAssetsV1 {
+        let size = MtgoSizePxV1 {
+            width: 64,
+            height: 48,
+        };
+        let event_label_search_rect_client_px = MtgoRectPxV1 {
+            x: 0,
+            y: 0,
+            width: 32,
+            height: 10,
+        };
+        let deck_status_search_rect_client_px = MtgoRectPxV1 {
+            x: 0,
+            y: 12,
+            width: 36,
+            height: 10,
+        };
+        let select_deck_control_rect_client_px = MtgoRectPxV1 {
+            x: 42,
+            y: 0,
+            width: 8,
+            height: 8,
+        };
+        let open_entry_review_status_rect_client_px = MtgoRectPxV1 {
+            x: 42,
+            y: 12,
+            width: 8,
+            height: 8,
+        };
+        let select_hash = visible_frame_region_content_sha256_v1(
+            pixels,
+            &size,
+            &select_deck_control_rect_client_px,
+        )
+        .unwrap();
+        let open_hash = visible_frame_region_content_sha256_v1(
+            pixels,
+            &size,
+            &open_entry_review_status_rect_client_px,
+        )
+        .unwrap();
+        let event_label = "Modern Challenge 64";
+        let deck_label = "mtgo-kernel-modern-basics-v1";
+        let states = [
+            (
+                "a-awaiting-deck-v1",
+                MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection,
+            ),
+            (
+                "b-compatible-deck-selected-v1",
+                MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected,
+            ),
+            (
+                "c-open-entry-review-v1",
+                MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable,
+            ),
+        ];
+        let deck_gate_profiles = states
+            .into_iter()
+            .map(|(profile_id, state)| {
+                let matching = state == matching_state;
+                let review_available =
+                    state == MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable;
+                MtgoCompetitiveDeckGateProfileV1 {
+                    profile_id: profile_id.to_owned(),
+                    event_kind: MtgoCompetitiveEventKindV1::Challenge,
+                    event_display_label_sha256: sha256_hex_v1(event_label.as_bytes()),
+                    expected_visible_event_label: event_label.to_owned(),
+                    deck_display_label_sha256: sha256_hex_v1(deck_label.as_bytes()),
+                    expected_visible_deck_label: deck_label.to_owned(),
+                    state,
+                    client_size_px: size.clone(),
+                    event_label_search_rect_client_px: event_label_search_rect_client_px.clone(),
+                    deck_status_search_rect_client_px: deck_status_search_rect_client_px.clone(),
+                    select_deck_control_rect_client_px: select_deck_control_rect_client_px.clone(),
+                    select_deck_control_reference_sha256s: vec![select_hash.clone()],
+                    open_entry_review_status_rect_client_px:
+                        open_entry_review_status_rect_client_px.clone(),
+                    open_entry_review_unavailable_reference_sha256s: if review_available {
+                        Vec::new()
+                    } else if matching {
+                        vec![open_hash.clone()]
+                    } else {
+                        vec![digest('d')]
+                    },
+                    open_entry_review_enabled_reference_sha256s: if review_available {
+                        if matching {
+                            vec![open_hash.clone()]
+                        } else {
+                            vec![digest('e')]
+                        }
+                    } else {
+                        Vec::new()
+                    },
+                    confidence_bps: 9_500,
+                }
+            })
+            .collect();
+        MtgoCompetitiveEventListingClassifierAssetsV1 {
+            schema_version: 1,
+            scope: COMBINED_ASSET_SCOPE_V1.to_owned(),
+            canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
+            profiles: Vec::new(),
+            deck_gate_profiles,
+            navigation_profiles: Vec::new(),
+            event_record_profiles: Vec::new(),
+            sideboard_profiles: Vec::new(),
+        }
+    }
+
+    fn deck_gate_header_v1(
+        pixels: &[u8],
+        assets: &MtgoCompetitiveEventListingClassifierAssetsV1,
+    ) -> MtgoCompetitiveDeckGateClassifierRequestHeaderV1 {
+        let target = MtgoCompetitiveEventListingTargetV1 {
+            schema_version: MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
+            target_id: "modern-challenge-64-deck-gate-v1".to_owned(),
+            event_kind: MtgoCompetitiveEventKindV1::Challenge,
+            approved_account_alias_sha256: digest('a'),
+            event_identity_sha256: digest('b'),
+            event_display_label_sha256: sha256_hex_v1(b"Modern Challenge 64"),
+            deck_display_label_sha256: sha256_hex_v1(b"mtgo-kernel-modern-basics-v1"),
+            deck_list_sha256: digest('c'),
+            deck_manifest_commitment_sha256: digest('1'),
+            deck_format_sha256: digest('2'),
+            policy_deployment_commitment_sha256: digest('3'),
+        };
+        let assets_bytes = serde_json::to_vec(assets).unwrap();
+        MtgoCompetitiveDeckGateClassifierRequestHeaderV1 {
+            schema_version: 1,
+            protocol: DECK_GATE_REQUEST_PROTOCOL_V1.to_owned(),
+            parser_scope: DECK_GATE_REQUEST_SCOPE_V1.to_owned(),
+            frame_id: 11,
+            frame_sequence: 13,
+            captured_at_unix_millis: 17,
+            canonical_width: 64,
+            canonical_height: 48,
+            canonical_stride: 256,
+            canonical_byte_length: pixels.len() as u64,
+            canonical_bgra8_sha256: sha256_hex_v1(pixels),
+            source_capture_commitment_sha256: digest('4'),
+            source_frame_profile_binding_sha256: digest('5'),
+            source_navigation_classification_result_commitment_sha256: digest('6'),
+            source_lifecycle_snapshot_commitment_sha256: digest('7'),
+            navigation_profile_commitment_sha256: digest('8'),
+            navigation_profile_admission_commitment_sha256: digest('9'),
+            approved_account_alias_sha256: digest('a'),
+            runtime_identity_commitment_sha256: digest('f'),
+            classifier_binary_sha256: digest('0'),
+            classifier_assets_manifest_sha256: sha256_hex_v1(&assets_bytes),
+            target_commitment_sha256: target_commitment_v1(&target).unwrap(),
+            target,
+        }
+    }
+
+    #[test]
+    fn exact_three_state_deck_gate_profiles_classify_without_authority() {
+        let pixels = (0..64 * 48 * 4)
+            .map(|index| ((index * 17 + 11) % 251) as u8)
+            .collect::<Vec<_>>();
+        for state in [
+            MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection,
+            MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected,
+            MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable,
+        ] {
+            let assets = deck_gate_assets_v1(&pixels, state);
+            let header = deck_gate_header_v1(&pixels, &assets);
+            let profiles = validate_deck_gate_assets_v1(&assets, &header).unwrap();
+            let mut matches = profiles
+                .into_iter()
+                .filter_map(|profile| {
+                    classify_deck_gate_from_words_v1(
+                        &header,
+                        profile,
+                        &pixels,
+                        &deck_gate_words_v1(state),
+                        digest('1'),
+                    )
+                    .ok()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(matches.len(), 1);
+            let response = matches.remove(0);
+            assert_eq!(response.gate.state, state);
+            assert_eq!(
+                response.gate.open_entry_review_control_enabled,
+                state == MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable
+            );
+            assert!(!response.gate.select_deck_control_region_sha256.is_empty());
+        }
+    }
+
+    #[test]
+    fn deck_gate_profile_drift_incomplete_corpus_and_ambiguity_fail_closed() {
+        let pixels = vec![37_u8; 64 * 48 * 4];
+        let state = MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected;
+        let mut assets = deck_gate_assets_v1(&pixels, state);
+        let header = deck_gate_header_v1(&pixels, &assets);
+        assets.deck_gate_profiles.pop();
+        assert!(validate_deck_gate_assets_v1(&assets, &header).is_err());
+
+        let mut assets = deck_gate_assets_v1(&pixels, state);
+        assets.deck_gate_profiles[1].deck_status_search_rect_client_px = assets.deck_gate_profiles
+            [1]
+        .event_label_search_rect_client_px
+        .clone();
+        assert!(validate_deck_gate_assets_v1(&assets, &header).is_err());
+
+        let assets = deck_gate_assets_v1(&pixels, state);
+        let profiles = validate_deck_gate_assets_v1(&assets, &header).unwrap();
+        let mut duplicated_words = deck_gate_words_v1(state);
+        duplicated_words.push(OcrWordV1 {
+            normalized: "mtgo-kernel-modern-basics-v1".to_owned(),
+            rect: MtgoRectPxV1 {
+                x: 2,
+                y: 18,
+                width: 30,
+                height: 3,
+            },
+        });
+        assert!(profiles.into_iter().all(|profile| {
+            classify_deck_gate_from_words_v1(
+                &header,
+                profile,
+                &pixels,
+                &duplicated_words,
+                digest('1'),
+            )
+            .is_err()
+        }));
+    }
+
+    #[test]
+    fn deck_gate_header_binds_binary_assets_target_and_pixels() {
+        let pixels = vec![41_u8; 64 * 48 * 4];
+        let assets = deck_gate_assets_v1(
+            &pixels,
+            MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected,
+        );
+        let assets_bytes = serde_json::to_vec(&assets).unwrap();
+        let header = deck_gate_header_v1(&pixels, &assets);
+        validate_deck_gate_header_identity_v1(
+            &header,
+            &assets_bytes,
+            &header.classifier_binary_sha256,
+        )
+        .unwrap();
+        validate_deck_gate_pixels_v1(&header, &pixels).unwrap();
+
+        let mut changed_pixels = pixels.clone();
+        changed_pixels[0] ^= 1;
+        assert!(validate_deck_gate_pixels_v1(&header, &changed_pixels).is_err());
+        assert!(validate_deck_gate_header_identity_v1(
+            &header,
+            b"{}",
+            &header.classifier_binary_sha256,
+        )
+        .is_err());
+        let mut changed_target = header.clone();
+        changed_target.target.deck_display_label_sha256 = digest('d');
+        assert!(validate_deck_gate_header_identity_v1(
+            &changed_target,
+            &assets_bytes,
+            &changed_target.classifier_binary_sha256,
+        )
+        .is_err());
     }
 }

@@ -1138,6 +1138,30 @@ pub fn bind_classified_navigation_frame_to_competitive_event_listing_v1(
         &source_frame.approved_account_alias_sha256,
         &source_frame.source_frame.canonical_bgra8,
     )?;
+    bind_checked_competitive_event_listing_parts_v1(
+        source_navigation,
+        source_frame,
+        navigation_classification,
+        selection,
+        open_entry_review_control_rect_client_px,
+    )
+}
+
+pub(super) fn bind_checked_competitive_event_listing_parts_v1(
+    source_navigation: MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
+    source_frame: OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    navigation_classification: OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    selection: CheckedUntrustedMtgoCompetitiveEventListingSelectionV1,
+    open_entry_review_control_rect_client_px: MtgoRectPxV1,
+) -> Result<OpaqueMtgoSourceBoundCompetitiveEventListingV1, String> {
+    if source_navigation.source_frame != source_frame.commitments_v1()
+        || source_navigation.phase != MtgoCompetitiveLifecyclePhaseV1::EventBrowser
+        || source_navigation.event_kind != selection.event_kind_v1()
+        || source_navigation.source_frame.approved_account_alias_sha256
+            != selection.approved_account_alias_sha256_v1()
+    {
+        return Err("checked event listing source lineage differs".to_owned());
+    }
     let target_commitment_sha256 = selection.target_commitment_sha256_v1().to_owned();
     let selection_commitment_sha256 = selection.selection_commitment_sha256_v1().to_owned();
     let event_kind = selection.event_kind_v1();

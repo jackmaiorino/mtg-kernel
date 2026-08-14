@@ -75,6 +75,8 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub pre_entry_visible_deck_gate_contract_present: bool,
     pub pre_entry_exact_visible_deck_label_target_present: bool,
     pub pre_entry_deck_gate_to_selected_listing_bridge_present: bool,
+    pub pre_entry_visible_deck_gate_classifier_protocol_present: bool,
+    pub pre_entry_visible_deck_gate_reviewed_three_state_corpus_present: bool,
     pub pre_entry_visible_deck_gate_classifier_present: bool,
     pub pre_entry_visible_deck_selection_actuator_present: bool,
     pub pre_entry_operator_loop_present: bool,
@@ -230,6 +232,8 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             pre_entry_visible_deck_gate_contract_present: true,
             pre_entry_exact_visible_deck_label_target_present: true,
             pre_entry_deck_gate_to_selected_listing_bridge_present: true,
+            pre_entry_visible_deck_gate_classifier_protocol_present: true,
+            pre_entry_visible_deck_gate_reviewed_three_state_corpus_present: false,
             pre_entry_visible_deck_gate_classifier_present: false,
             pre_entry_visible_deck_selection_actuator_present: false,
             pre_entry_operator_loop_present: true,
@@ -596,6 +600,16 @@ mod tests {
             report
                 .known_wiring_gaps
                 .pre_entry_deck_gate_to_selected_listing_bridge_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .pre_entry_visible_deck_gate_classifier_protocol_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .pre_entry_visible_deck_gate_reviewed_three_state_corpus_present
         );
         assert!(
             !report
