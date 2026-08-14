@@ -45,6 +45,14 @@ postconditions. The current visible Game Log grammar classifies that complete
 five-record public trace without exposing raw text, paths, aliases, source
 identifiers, or card names.
 
+The signed-in no-cost navigation pass also supplies one live League and one
+live Challenge selected-listing source. Challenge confirms both
+`AwaitingCompatibleDeckSelection` and `CompatibleDeckSelected`; League
+confirms the compatible-deck-selected layout and its distinct price and
+leaderboard surface. Neither mode exposes Open Entry Review before a separate
+entry-option choice. These local previews are useful corpus sources but remain
+pending visual review and do not populate a semantic evaluation root.
+
 Completion is still contradicted by current source and static readiness:
 
 - the loaded checkpoint has no player-visible-only duel-action interface and
