@@ -1515,3 +1515,7 @@ mod tests {
         assert!(validate_completed_match_history_lineages_v1(&[first, second]).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "competitive_visible_match_memory_conformance_tests.rs"]
+mod ongoing_history_conformance_tests;
