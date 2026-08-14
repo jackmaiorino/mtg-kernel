@@ -6901,6 +6901,316 @@ mod tests {
         }
     }
 
+    fn decode_strict_test_png_to_bgra8_v1(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
+        let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+        decoder.set_transformations(png::Transformations::IDENTITY);
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
+        assert!(!info.interlaced);
+        assert!(info.animation_control.is_none());
+        assert_eq!(info.bit_depth, png::BitDepth::Eight);
+        assert!(matches!(
+            info.color_type,
+            png::ColorType::Rgb | png::ColorType::Rgba
+        ));
+        let width = info.width;
+        let height = info.height;
+        let color_type = info.color_type;
+        let channels = if color_type == png::ColorType::Rgb {
+            3
+        } else {
+            4
+        };
+        let source_len = usize::try_from(width)
+            .unwrap()
+            .checked_mul(usize::try_from(height).unwrap())
+            .unwrap()
+            .checked_mul(channels)
+            .unwrap();
+        let mut source = vec![0_u8; source_len];
+        let frame = reader.next_frame(&mut source).unwrap();
+        assert_eq!(frame.width, width);
+        assert_eq!(frame.height, height);
+        assert_eq!(frame.color_type, color_type);
+        assert_eq!(frame.bit_depth, png::BitDepth::Eight);
+        assert_eq!(frame.buffer_size(), source_len);
+        let mut canonical = Vec::with_capacity(
+            usize::try_from(width)
+                .unwrap()
+                .checked_mul(usize::try_from(height).unwrap())
+                .unwrap()
+                .checked_mul(4)
+                .unwrap(),
+        );
+        match color_type {
+            png::ColorType::Rgb => {
+                for pixel in source.chunks_exact(3) {
+                    canonical.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
+                }
+            }
+            png::ColorType::Rgba => {
+                for pixel in source.chunks_exact(4) {
+                    assert_eq!(pixel[3], 255);
+                    canonical.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
+                }
+            }
+            _ => unreachable!(),
+        }
+        (width, height, canonical)
+    }
+
+    fn natural_league_deck_chooser_assets_v1(
+        unselected_pixels: &[u8],
+        selected_pixels: &[u8],
+        width: u32,
+        height: u32,
+    ) -> MtgoCompetitiveEventListingClassifierAssetsV1 {
+        let size = MtgoSizePxV1 { width, height };
+        let chooser_title_search_rect_client_px = MtgoRectPxV1 {
+            x: 300,
+            y: 0,
+            width: 260,
+            height: 50,
+        };
+        let deck_row_control_rect_client_px = MtgoRectPxV1 {
+            x: 15,
+            y: 75,
+            width: 120,
+            height: 140,
+        };
+        let deck_label_region_rect_client_px = MtgoRectPxV1 {
+            x: 20,
+            y: 155,
+            width: 115,
+            height: 40,
+        };
+        let selection_detail_rect_client_px = MtgoRectPxV1 {
+            x: 444,
+            y: 52,
+            width: 436,
+            height: 160,
+        };
+        let submit_control_rect_client_px = MtgoRectPxV1 {
+            x: 610,
+            y: 688,
+            width: 125,
+            height: 31,
+        };
+        let region_hash = |pixels: &[u8], rect: &MtgoRectPxV1| {
+            visible_frame_region_content_sha256_v1(pixels, &size, rect).unwrap()
+        };
+        let unselected_label = region_hash(unselected_pixels, &deck_label_region_rect_client_px);
+        let selected_label = region_hash(selected_pixels, &deck_label_region_rect_client_px);
+        let unselected_row = region_hash(unselected_pixels, &deck_row_control_rect_client_px);
+        let selected_row = region_hash(selected_pixels, &deck_row_control_rect_client_px);
+        let unselected_detail = region_hash(unselected_pixels, &selection_detail_rect_client_px);
+        let selected_detail = region_hash(selected_pixels, &selection_detail_rect_client_px);
+        let disabled_submit = region_hash(unselected_pixels, &submit_control_rect_client_px);
+        let enabled_submit = region_hash(selected_pixels, &submit_control_rect_client_px);
+        let profiles = [
+            (
+                "a-modern-league-awaiting-exact-deck-v1",
+                MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection,
+            ),
+            (
+                "b-modern-league-exact-deck-selected-v1",
+                MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected,
+            ),
+        ]
+        .into_iter()
+        .map(|(profile_id, state)| {
+            let selected = state == MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected;
+            MtgoCompetitiveDeckChooserProfileV1 {
+                profile_id: profile_id.to_owned(),
+                event_kind: MtgoCompetitiveEventKindV1::League,
+                event_display_label_sha256: sha256_hex_v1(b"Modern League"),
+                deck_display_label_sha256: sha256_hex_v1(b"mtgo-kernel-modern-basics-v1"),
+                expected_visible_deck_label: "mtgo-kernel-modern-basics-v1".to_owned(),
+                chooser_title_label_sha256: sha256_hex_v1(b"Modern Decks"),
+                expected_visible_chooser_title: "Modern Decks".to_owned(),
+                state,
+                client_size_px: size.clone(),
+                chooser_title_search_rect_client_px: chooser_title_search_rect_client_px.clone(),
+                deck_label_region_rect_client_px: deck_label_region_rect_client_px.clone(),
+                unselected_deck_label_reference_sha256s: if selected {
+                    Vec::new()
+                } else {
+                    vec![unselected_label.clone()]
+                },
+                selected_deck_label_reference_sha256s: if selected {
+                    vec![selected_label.clone()]
+                } else {
+                    Vec::new()
+                },
+                deck_row_control_rect_client_px: deck_row_control_rect_client_px.clone(),
+                unselected_deck_row_reference_sha256s: if selected {
+                    Vec::new()
+                } else {
+                    vec![unselected_row.clone()]
+                },
+                selected_deck_row_reference_sha256s: if selected {
+                    vec![selected_row.clone()]
+                } else {
+                    Vec::new()
+                },
+                selection_detail_rect_client_px: selection_detail_rect_client_px.clone(),
+                unselected_selection_detail_reference_sha256s: if selected {
+                    Vec::new()
+                } else {
+                    vec![unselected_detail.clone()]
+                },
+                selected_selection_detail_reference_sha256s: if selected {
+                    vec![selected_detail.clone()]
+                } else {
+                    Vec::new()
+                },
+                submit_control_rect_client_px: submit_control_rect_client_px.clone(),
+                disabled_submit_reference_sha256s: if selected {
+                    Vec::new()
+                } else {
+                    vec![disabled_submit.clone()]
+                },
+                enabled_submit_reference_sha256s: if selected {
+                    vec![enabled_submit.clone()]
+                } else {
+                    Vec::new()
+                },
+                confidence_bps: 9_500,
+            }
+        })
+        .collect();
+        MtgoCompetitiveEventListingClassifierAssetsV1 {
+            schema_version: 1,
+            scope: COMBINED_ASSET_SCOPE_V1.to_owned(),
+            canonical_pixel_format: PIXEL_FORMAT_V1.to_owned(),
+            profiles: Vec::new(),
+            deck_gate_profiles: Vec::new(),
+            deck_chooser_profiles: profiles,
+            navigation_profiles: Vec::new(),
+            event_record_profiles: Vec::new(),
+            sideboard_profiles: Vec::new(),
+        }
+    }
+
+    fn natural_league_deck_chooser_header_v1(
+        pixels: &[u8],
+        width: u32,
+        height: u32,
+        assets: &MtgoCompetitiveEventListingClassifierAssetsV1,
+    ) -> MtgoCompetitiveDeckChooserClassifierRequestHeaderV1 {
+        let target = MtgoCompetitiveEventListingTargetV1 {
+            schema_version: MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
+            target_id: "modern-league-deck-chooser-calibration-v1".to_owned(),
+            event_kind: MtgoCompetitiveEventKindV1::League,
+            approved_account_alias_sha256: digest('a'),
+            event_identity_sha256: digest('b'),
+            event_display_label_sha256: sha256_hex_v1(b"Modern League"),
+            deck_display_label_sha256: sha256_hex_v1(b"mtgo-kernel-modern-basics-v1"),
+            deck_list_sha256: digest('c'),
+            deck_manifest_commitment_sha256: digest('1'),
+            deck_format_sha256: digest('2'),
+            policy_deployment_commitment_sha256: digest('3'),
+        };
+        let assets_bytes = serde_json::to_vec(assets).unwrap();
+        MtgoCompetitiveDeckChooserClassifierRequestHeaderV1 {
+            schema_version: 1,
+            protocol: DECK_CHOOSER_REQUEST_PROTOCOL_V1.to_owned(),
+            parser_scope: DECK_CHOOSER_REQUEST_SCOPE_V1.to_owned(),
+            frame_id: 19,
+            frame_sequence: 23,
+            captured_at_unix_millis: 29,
+            canonical_width: width,
+            canonical_height: height,
+            canonical_stride: width.checked_mul(4).unwrap(),
+            canonical_byte_length: u64::try_from(pixels.len()).unwrap(),
+            canonical_bgra8_sha256: sha256_hex_v1(pixels),
+            source_capture_commitment_sha256: digest('4'),
+            source_frame_profile_binding_sha256: digest('5'),
+            source_deck_gate_observation_commitment_sha256: digest('6'),
+            source_deck_gate_result_commitment_sha256: digest('7'),
+            source_window_continuity_commitment_sha256: digest('8'),
+            navigation_profile_commitment_sha256: digest('9'),
+            navigation_profile_admission_commitment_sha256: digest('d'),
+            approved_account_alias_sha256: digest('a'),
+            runtime_identity_commitment_sha256: digest('e'),
+            classifier_binary_sha256: digest('f'),
+            classifier_assets_manifest_sha256: sha256_hex_v1(&assets_bytes),
+            target_commitment_sha256: target_commitment_v1(&target).unwrap(),
+            target,
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the external pending-review natural Modern League chooser PNG pair"]
+    fn natural_modern_league_chooser_pair_matches_exactly_one_state_per_frame() {
+        let unselected_path = std::env::var("MTGO_LEAGUE_CHOOSER_UNSELECTED_PNG_V1").unwrap();
+        let selected_path = std::env::var("MTGO_LEAGUE_CHOOSER_SELECTED_PNG_V1").unwrap();
+        let unselected_png = std::fs::read(unselected_path).unwrap();
+        let selected_png = std::fs::read(selected_path).unwrap();
+        assert_eq!(
+            sha256_hex_v1(&unselected_png),
+            "b8109095b9239aa949e7e8fa2cf5a0a4e2d701beb85ddf347e312b33f828c3c8"
+        );
+        assert_eq!(
+            sha256_hex_v1(&selected_png),
+            "b339e16b46b47b56ed1060c7f7975ce720fceb55527697ec054fa3155d0c5c41"
+        );
+        let (unselected_width, unselected_height, unselected_pixels) =
+            decode_strict_test_png_to_bgra8_v1(&unselected_png);
+        let (selected_width, selected_height, selected_pixels) =
+            decode_strict_test_png_to_bgra8_v1(&selected_png);
+        assert_eq!((unselected_width, unselected_height), (885, 734));
+        assert_eq!((selected_width, selected_height), (885, 734));
+        assert_eq!(
+            sha256_hex_v1(&unselected_pixels),
+            "6b844c89b0b8a306a968e3779a2901f9c054a30202270aeb5639a0eeb01cb007"
+        );
+        assert_eq!(
+            sha256_hex_v1(&selected_pixels),
+            "21915bcc3f86ff9a5be9b834ebfc9877b5502950e12e377f40fe7e340523a013"
+        );
+        let assets = natural_league_deck_chooser_assets_v1(
+            &unselected_pixels,
+            &selected_pixels,
+            unselected_width,
+            unselected_height,
+        );
+        for (pixels, expected_state) in [
+            (
+                unselected_pixels.as_slice(),
+                MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection,
+            ),
+            (
+                selected_pixels.as_slice(),
+                MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected,
+            ),
+        ] {
+            let header = natural_league_deck_chooser_header_v1(
+                pixels,
+                unselected_width,
+                unselected_height,
+                &assets,
+            );
+            let profiles = validate_deck_chooser_assets_v1(&assets, &header).unwrap();
+            let words = recognize_words_v1(unselected_width, unselected_height, pixels).unwrap();
+            let matches = profiles
+                .into_iter()
+                .filter_map(|profile| {
+                    classify_deck_chooser_from_words_v1(
+                        &header,
+                        profile,
+                        pixels,
+                        &words,
+                        digest('1'),
+                    )
+                    .ok()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].chooser.state, expected_state);
+        }
+    }
+
     #[test]
     fn exact_two_state_deck_chooser_profiles_classify_without_authority() {
         let pixels = (0..64 * 48 * 4)
