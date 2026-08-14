@@ -10,7 +10,6 @@ use crate::canonical_json_v1::{
     CanonicalJsonErrorKindV1, CanonicalJsonErrorV1, CanonicalJsonNullPolicyV1,
     from_canonical_json_bytes_v1, to_canonical_json_bytes_v1,
 };
-use crate::card_def::KERNEL_CARDDB_HASH;
 pub use crate::common_model_snapshot_v1::CommonModelSnapshotRecordV1;
 use crate::common_model_snapshot_v1::{
     AUTHORITY_RUNTIME_IDENTITY_V1, BASE_SEED_V1, INITIALIZER_IDENTITY_V1, MODEL_INIT_SEED_V1,
@@ -93,8 +92,7 @@ use crate::rl_session::{
     RL_SESSION_PROTOCOL_VERSION_V6, RL_SESSION_SCHEMA_VERSION, RL_SESSION_SCHEMA_VERSION_V6,
 };
 use crate::runtime_decks::{
-    RUNTIME_DECK_CATALOG_FILE_SHA256, RUNTIME_DECK_CATALOG_SCHEMA, RUNTIME_DECK_PROTOCOL,
-    runtime_deck_by_id,
+    RUNTIME_DECK_CATALOG_SCHEMA, RUNTIME_DECK_PROTOCOL, runtime_deck_by_id,
 };
 use crate::strict_source_tree_attestation_v1::{
     STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1,
@@ -130,6 +128,12 @@ const FROZEN_SOURCE_TREE_RECIPE_SHA256_V2: &str =
     "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece";
 const FROZEN_SOURCE_TREE_RECIPE_BYTE_COUNT_V2: u64 = 5_847;
 
+// Dual-Profile Catalog Successor (collab CLAUDE #220): the numeric u64 form
+// is no longer compared against any live build constant at decode time (see
+// `validate_frozen_rev3_authorities_v2`'s doc comment), so it is otherwise
+// unused; retained byte-identical as part of the permanent historical
+// authority record rather than deleted.
+#[allow(dead_code)]
 const FROZEN_CARD_DB_HASH_U64_V2: u64 = 0xa06f_a956_6106_f0ea;
 const FROZEN_CARD_DB_HASH_U64_HEX_V2: &str = "a06fa9566106f0ea";
 const FROZEN_RUNTIME_CATALOG_SCHEMA_V2: &str = "kernel_runtime_decks/v1";
@@ -139,6 +143,25 @@ const FROZEN_RUNTIME_CATALOG_SHA256_V2: &str =
 const FROZEN_RALLY_DECK_ID_V2: &str = "Rally";
 const FROZEN_RALLY_DECK_HASH_U64_V2: u64 = 0x0c9f_01c2_5444_12bf;
 const FROZEN_RALLY_DECK_HASH_U64_HEX_V2: &str = "0c9f01c2544412bf";
+
+// CURRENT catalog profile (Dual-Profile Catalog Successor, collab CLAUDE
+// #220): the live nine-deck catalog identity as of the runtime-decks-nine
+// landing, pinned as its own frozen authority parallel to and independent of
+// the FROZEN_CARD_DB_HASH_U64_V2 / FROZEN_RUNTIME_CATALOG_SHA256_V2
+// (historical/rev3) literals above, which stay untouched forever. Only the
+// two catalog *content* identities differ between the two profiles --
+// `RUNTIME_DECK_CATALOG_SCHEMA`/`RUNTIME_DECK_PROTOCOL` (format) and the
+// Rally deck's own hash are unchanged and shared by both profiles, so they
+// are not restated here. See `classify_catalog_profile_v1` for the
+// mutually-exclusive, hybrid-rejecting classifier that selects between the
+// two tuples, and `validate_environment_v2`/`validate_frozen_rev3_authorities_v2`
+// for why neither tuple is checked against the crate's live build constants
+// at decode time (only construction/mutation call sites read live constants,
+// and they always do so directly, never through a frozen pin).
+const FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1: &str = "64c82a261e078f1a";
+const FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -1364,6 +1387,10 @@ pub struct ValidatedTrainRunV2 {
     /// Private on purpose: no caller may construct, override, or widen it, and
     /// the only way to obtain one is to decode a complete, coherent record.
     environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1,
+    /// The closed catalog-identity profile classification decided at decode
+    /// time (Dual-Profile Catalog Successor, collab CLAUDE #220). Private for
+    /// the same reason as `environment_trajectory_contract` above.
+    catalog_profile: NativeRunCatalogProfileV1,
 }
 
 /// The closed trajectory-contract classification of a validated run.
@@ -1380,6 +1407,27 @@ pub(crate) enum NativeRunEnvironmentTrajectoryContractV1 {
     EnvironmentRandomizationV2,
 }
 
+/// The closed catalog-identity profile classification of a validated run
+/// (Dual-Profile Catalog Successor, collab CLAUDE #220).
+///
+/// Sealed and crate-private. A record is exactly one of these two, decided by
+/// a complete-tuple match (`card_db_hash_u64_hex`, `runtime_catalog_sha256`)
+/// against exactly one of two disjoint frozen literal pairs at decode time in
+/// [`classify_catalog_profile_v1`]; there is no third state, no default, and
+/// every hybrid (neither pair, or a value from one field's pair paired with
+/// the other field's opposite pair) is rejected. `Historical` pins the frozen
+/// rev3 two-deck catalog forever, byte-identical, and stays readable: a
+/// historical record decodes and validates cleanly. `Current` pins the live
+/// nine-deck catalog as of the runtime-decks-nine landing. Callers that must
+/// admit only live science-loop authority (science-loop use, publication,
+/// resume) reject `Historical` with a specific error at their own boundary;
+/// this module itself never refuses to decode or validate either profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeRunCatalogProfileV1 {
+    Historical,
+    Current,
+}
+
 impl ValidatedTrainRunV2 {
     pub fn record(&self) -> &TrainRunV2 {
         &self.record
@@ -1392,6 +1440,17 @@ impl ValidatedTrainRunV2 {
         &self,
     ) -> NativeRunEnvironmentTrajectoryContractV1 {
         self.environment_trajectory_contract
+    }
+
+    /// The catalog-identity profile this record was classified as at decode
+    /// time. Crate-private and by value, same discipline as
+    /// `environment_trajectory_contract_v1`: read-only evidence, not a
+    /// switch. Callers that must admit only live science-loop authority
+    /// (science-loop use, publication, resume) use this to reject
+    /// `NativeRunCatalogProfileV1::Historical` at their own boundary with
+    /// their own specific error.
+    pub(crate) fn catalog_profile_v1(&self) -> NativeRunCatalogProfileV1 {
+        self.catalog_profile
     }
 
     pub fn canonical_bytes(&self) -> &[u8] {
@@ -1635,9 +1694,10 @@ fn validate_decoded_train_run_v2(
 
     validate_cross_bindings_v2(&record)?;
 
-    // One closed classification, after all shared environment/contracts/
+    // Two closed classifications, after all shared environment/contracts/
     // cross-binding validation and before standalone-semantics reconstruction.
     let environment_trajectory_contract = classify_environment_trajectory_contract_v1(&record)?;
+    let catalog_profile = classify_catalog_profile_v1(&record.environment)?;
 
     let expected_core = reconstruct_standalone_semantics_core_v2(&record, requested_episode_count)?;
     if record.contracts.standalone_semantics.core != expected_core {
@@ -1670,6 +1730,7 @@ fn validate_decoded_train_run_v2(
         identity_bundle_sha256,
         standalone_semantics_sha256,
         environment_trajectory_contract,
+        catalog_profile,
     })
 }
 
@@ -1760,16 +1821,70 @@ fn environment_randomization_section_is_exact_v2(
         && section.cross_language_goldens_file_sha256 == ENVIRONMENT_RANDOMIZATION_GOLDENS_SHA256_V1
 }
 
+/// The one closed catalog-identity profile classifier (Dual-Profile Catalog
+/// Successor, collab CLAUDE #220).
+///
+/// Exactly two complete tuples are admissible: the record's own
+/// `card_db_hash_u64_hex` and `runtime_catalog_sha256` fields must equal
+/// EITHER both HISTORICAL frozen rev3 literals (`FROZEN_CARD_DB_HASH_U64_HEX_V2`,
+/// `FROZEN_RUNTIME_CATALOG_SHA256_V2`, byte-identical forever) OR both CURRENT
+/// frozen literals (`FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`,
+/// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`, pinned to the live nine-deck
+/// catalog as of the runtime-decks-nine landing); every other combination,
+/// including a hybrid that matches one field's literal from one tuple and the
+/// other field's literal from the other tuple, is rejected. This mirrors
+/// `classify_environment_trajectory_contract_v1`'s own shape (whole-tuple
+/// selection before any partial-field tolerance, every hybrid rejected) but
+/// is a distinct, independent classification: a record's trajectory contract
+/// and its catalog profile vary independently.
+fn classify_catalog_profile_v1(
+    environment: &TrainRunEnvironmentV2,
+) -> Result<NativeRunCatalogProfileV1> {
+    let historical = environment.card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_V2
+        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_V2;
+    let current = environment.card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
+    match (historical, current) {
+        (true, false) => Ok(NativeRunCatalogProfileV1::Historical),
+        (false, true) => Ok(NativeRunCatalogProfileV1::Current),
+        _ => Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
+    }
+}
+
+/// Dual-Profile Catalog Successor (collab CLAUDE #220): this function is now
+/// catalog-profile-scoped. It no longer compares the crate's live
+/// `KERNEL_CARDDB_HASH` / `RUNTIME_DECK_CATALOG_FILE_SHA256` build constants
+/// against the frozen rev3 (`FROZEN_CARD_DB_HASH_U64_V2` /
+/// `FROZEN_RUNTIME_CATALOG_SHA256_V2`) literals at all -- that ambient
+/// live-owner check is removed here (previously two `||` arms of this same
+/// function). Two disjoint reasons, one per profile: for a HISTORICAL-profile
+/// decode, the crate's live catalog constants moved permanently to the
+/// nine-deck identity with the runtime-decks-nine landing, so requiring them
+/// to still equal the frozen rev3 pin would make every historical record
+/// permanently undecodable, destroying regression evidence rather than
+/// gating it (the exact catch the historical-decoder ruling made the first
+/// time this pattern came up); for a CURRENT-profile decode, this module
+/// deliberately performs no live-build-constant check at decode time at all
+/// -- only construction/mutation call sites (production capture) read the
+/// live constants, and they always do so directly, never through a decode-
+/// time pin, per the design's "live checks at construction/mutation time
+/// only" binding. Catalog-identity exactness for BOTH profiles is instead
+/// independently enforced against the record's own embedded
+/// `card_db_hash_u64_hex`/`runtime_catalog_sha256` fields by
+/// `classify_catalog_profile_v1`, which every decode still calls and which
+/// rejects every hybrid. Every other literal check below is untouched and
+/// unconditional: none of these other authorities differ between the two
+/// catalog profiles, so they continue to gate both exactly as before. The
+/// frozen literals themselves (rev3 and the two catalog format constants
+/// shared by both profiles) are byte-identical to before this change.
 fn validate_frozen_rev3_authorities_v2() -> Result<()> {
     let rally = runtime_deck_by_id(CANONICAL_RALLY_DECK_ID)
         .ok_or_else(|| TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral))?;
     if SOURCE_TREE_RECIPE_IDENTITY_V1 != FROZEN_SOURCE_TREE_RECIPE_IDENTITY_V2
         || SOURCE_TREE_RECIPE_SHA256_V1 != FROZEN_SOURCE_TREE_RECIPE_SHA256_V2
         || STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1 != FROZEN_SOURCE_TREE_RECIPE_BYTE_COUNT_V2
-        || KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2
         || RUNTIME_DECK_CATALOG_SCHEMA != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
         || RUNTIME_DECK_PROTOCOL != FROZEN_RUNTIME_CATALOG_PROTOCOL_V2
-        || RUNTIME_DECK_CATALOG_FILE_SHA256 != FROZEN_RUNTIME_CATALOG_SHA256_V2
         || CANONICAL_RALLY_DECK_ID != FROZEN_RALLY_DECK_ID_V2
         || rally.runtime_deck_hash != FROZEN_RALLY_DECK_HASH_U64_V2
         || RL_SESSION_PROTOCOL_NAME != FROZEN_PROTOCOL_V2
@@ -1992,13 +2107,25 @@ fn validate_runtime_v2(runtime: &TrainRunRuntimeV2, toolchain: &TrainRunToolchai
     Ok(())
 }
 
+/// Dual-Profile Catalog Successor (collab CLAUDE #220): the live-owner block
+/// below no longer pins `KERNEL_CARDDB_HASH`/`RUNTIME_DECK_CATALOG_FILE_SHA256`
+/// against the historical rev3 literal, and the record-field block no longer
+/// pins `environment.card_db_hash_u64_hex`/`environment.runtime_catalog_sha256`
+/// against it either -- both catalog *content* identities are deliberately
+/// carved out of this function entirely (for both profiles, at decode time)
+/// and delegated whole to `classify_catalog_profile_v1`, exactly the same
+/// delegation shape this function already uses for
+/// `environment.protocol_version`/`environment.schema_version` (owned by
+/// `classify_environment_trajectory_contract_v1`, see the comment below).
+/// See `validate_frozen_rev3_authorities_v2` for the full reasoning; every
+/// other literal here (catalog *format* schema/protocol, the Rally deck's own
+/// hash, protocol name, kernel/surface/policy-surface versions) is unchanged
+/// and unconditional, since none of those differ between catalog profiles.
 fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
     let rally = runtime_deck_by_id(CANONICAL_RALLY_DECK_ID)
         .ok_or_else(|| TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral))?;
-    if KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2
-        || RUNTIME_DECK_CATALOG_SCHEMA != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
+    if RUNTIME_DECK_CATALOG_SCHEMA != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
         || RUNTIME_DECK_PROTOCOL != FROZEN_RUNTIME_CATALOG_PROTOCOL_V2
-        || RUNTIME_DECK_CATALOG_FILE_SHA256 != FROZEN_RUNTIME_CATALOG_SHA256_V2
         || CANONICAL_RALLY_DECK_ID != FROZEN_RALLY_DECK_ID_V2
         || rally.runtime_deck_hash != FROZEN_RALLY_DECK_HASH_U64_V2
         || RL_SESSION_PROTOCOL_NAME != FROZEN_PROTOCOL_V2
@@ -2010,10 +2137,10 @@ fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
-    if environment.card_db_hash_u64_hex != FROZEN_CARD_DB_HASH_U64_HEX_V2
-        || environment.runtime_catalog_schema != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
+    if environment.runtime_catalog_schema != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
         || environment.runtime_catalog_protocol != FROZEN_RUNTIME_CATALOG_PROTOCOL_V2
-        || environment.runtime_catalog_sha256 != FROZEN_RUNTIME_CATALOG_SHA256_V2
+        // `environment.card_db_hash_u64_hex` and `environment.runtime_catalog_sha256`
+        // are deliberately not pinned here; see the function doc comment.
         || environment.deck_ids != [FROZEN_RALLY_DECK_ID_V2, FROZEN_RALLY_DECK_ID_V2]
         || environment.deck_hashes_u64_hex
             != [
@@ -3258,6 +3385,17 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
     tests::fixture_bytes()
 }
 
+/// The HISTORICAL-profile sibling of [`test_fixture_bytes_v2`]: a coherent
+/// record carrying the frozen rev3 catalog literals instead of the live
+/// nine-deck ones. Test-only: used by the dual-profile decode-acceptance and
+/// boundary-rejection suites (this module and its consumers) to exercise a
+/// record that decodes clean but must be rejected at the science-loop,
+/// publisher, and resume boundaries.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_historical_v1() -> Vec<u8> {
+    tests::fixture_bytes_historical()
+}
+
 /// A coherent, fully reminted environment randomization V2 record. Test-only:
 /// the diagonal and genuine-execution suites use it as the validated V2 run
 /// authority.
@@ -3944,10 +4082,18 @@ mod tests {
                 "build_profile": "release"
             },
             "environment": {
-                "card_db_hash_u64_hex": FROZEN_CARD_DB_HASH_U64_HEX_V2,
+                // Dual-Profile Catalog Successor (collab CLAUDE #220): the
+                // default fixture builds a CURRENT-profile record (live
+                // nine-deck catalog identity), matching what production
+                // capture actually mints today, so every test built on top
+                // of `fixture_record()` exercises the live science-loop/
+                // publish/resume paths unrejected. `fixture_record_historical()`
+                // below overrides these two fields back to the HISTORICAL
+                // (rev3) literals for the dedicated dual-profile tests.
+                "card_db_hash_u64_hex": FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1,
                 "runtime_catalog_schema": FROZEN_RUNTIME_CATALOG_SCHEMA_V2,
                 "runtime_catalog_protocol": FROZEN_RUNTIME_CATALOG_PROTOCOL_V2,
-                "runtime_catalog_sha256": FROZEN_RUNTIME_CATALOG_SHA256_V2,
+                "runtime_catalog_sha256": FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1,
                 "deck_ids": [FROZEN_RALLY_DECK_ID_V2, FROZEN_RALLY_DECK_ID_V2],
                 "deck_hashes_u64_hex": [FROZEN_RALLY_DECK_HASH_U64_HEX_V2, FROZEN_RALLY_DECK_HASH_U64_HEX_V2],
                 "protocol": FROZEN_PROTOCOL_V2,
@@ -4130,6 +4276,28 @@ mod tests {
         let mut record = TrainRunV2::from(wire);
         refresh_derived(&mut record);
         record
+    }
+
+    /// The dedicated HISTORICAL-profile sibling of `fixture_record()`: the
+    /// exact same coherent record, with the two catalog-content fields
+    /// overridden back to the frozen rev3 literals (byte-identical to what
+    /// every fixture built before the runtime-decks-nine landing carried).
+    /// Used only by the dual-profile decode-acceptance and boundary-rejection
+    /// tests; every other test keeps using the CURRENT-profile default.
+    pub(super) fn fixture_record_historical() -> TrainRunV2 {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex = FROZEN_CARD_DB_HASH_U64_HEX_V2.to_owned();
+        record.environment.runtime_catalog_sha256 = FROZEN_RUNTIME_CATALOG_SHA256_V2.to_owned();
+        refresh_derived(&mut record);
+        record
+    }
+
+    pub(super) fn fixture_bytes_historical() -> Vec<u8> {
+        to_canonical_json_bytes_v1(
+            &fixture_record_historical(),
+            CanonicalJsonNullPolicyV1::Forbid,
+        )
+        .unwrap()
     }
 
     fn refresh_derived(record: &mut TrainRunV2) {
@@ -5384,8 +5552,12 @@ mod tests {
         validate_frozen_rev3_authorities_v2().unwrap();
 
         // The fixture is assembled from the frozen RunV2 literals, not from
-        // production owners. Successful decode therefore exercises the
-        // independent owner-to-frozen and record-to-frozen checks together.
+        // production owners (with the sole deliberate exception of the two
+        // catalog-content fields, which `fixture_record()` now sets to the
+        // CURRENT-profile literals -- see `classify_catalog_profile_v1` and
+        // the dedicated dual-profile tests below for that axis). Successful
+        // decode therefore exercises the independent owner-to-frozen and
+        // record-to-frozen checks together for every other authority.
         let record = fixture_record();
         assert_eq!(
             record.source.source_tree_recipe_byte_count,
@@ -5393,7 +5565,7 @@ mod tests {
         );
         assert_eq!(
             record.environment.runtime_catalog_sha256,
-            FROZEN_RUNTIME_CATALOG_SHA256_V2
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
         );
         assert_eq!(
             record.contracts.tensorizer,
@@ -5469,6 +5641,101 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    // Dual-Profile Catalog Successor (collab CLAUDE #220)
+    // ------------------------------------------------------------------
+
+    /// Canary: the new CURRENT-profile frozen literals must equal today's
+    /// live build constants exactly. If this ever fails, either the crate's
+    /// card database/runtime catalog changed again (needs a new profile) or
+    /// the frozen literals were typed wrong when this successor landed.
+    #[test]
+    fn current_frozen_literal_matches_the_live_build_constant() {
+        use crate::card_def::KERNEL_CARDDB_HASH;
+        use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
+        assert_eq!(
+            format!("{KERNEL_CARDDB_HASH:016x}"),
+            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+        );
+        assert_eq!(
+            RUNTIME_DECK_CATALOG_FILE_SHA256,
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
+        );
+    }
+
+    #[test]
+    fn historical_fixture_decodes_clean_and_classifies_historical() {
+        let validated = decode_train_run_v2(&fixture_bytes_historical()).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+        assert_eq!(
+            validated.record().environment.card_db_hash_u64_hex,
+            FROZEN_CARD_DB_HASH_U64_HEX_V2
+        );
+        assert_eq!(
+            validated.record().environment.runtime_catalog_sha256,
+            FROZEN_RUNTIME_CATALOG_SHA256_V2
+        );
+    }
+
+    #[test]
+    fn current_fixture_decodes_clean_and_classifies_current() {
+        let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Current
+        );
+        assert_eq!(
+            validated.record().environment.card_db_hash_u64_hex,
+            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+        );
+        assert_eq!(
+            validated.record().environment.runtime_catalog_sha256,
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
+        );
+    }
+
+    #[test]
+    fn hybrid_current_card_db_with_historical_catalog_sha_is_rejected() {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex =
+            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1.to_owned();
+        record.environment.runtime_catalog_sha256 = FROZEN_RUNTIME_CATALOG_SHA256_V2.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
+    #[test]
+    fn hybrid_historical_card_db_with_current_catalog_sha_is_rejected() {
+        let mut record = fixture_record_historical();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
+    #[test]
+    fn neither_known_catalog_literal_pair_is_rejected() {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex = "1111111111111111".to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
     #[test]
     fn hierarchy_has_exact_root_snapshot_and_core_key_counts() {
         let value = serde_json::to_value(fixture_record()).unwrap();
@@ -5496,17 +5763,24 @@ mod tests {
         assert_eq!(semantics, record.contracts.standalone_semantics.sha256);
         assert_eq!(identity, record.contracts.identity_bundle_sha256);
         assert_eq!(run_bytes, fixture_bytes());
+        // Dual-Profile Catalog Successor (collab CLAUDE #220): these three
+        // digests are recomputed here because `fixture_record()` now embeds
+        // the CURRENT-profile catalog literals (see that function's doc
+        // comment); the digests themselves are unrelated to catalog identity
+        // otherwise, so a value change here is expected and is not itself
+        // evidence of anything beyond the fixture's own environment fields
+        // changing.
         assert_eq!(
             semantics,
-            "2b2b65d958f74e631a5ca995410af641dda25505db65550f08c94c04c910cdbe"
+            "affcfccc974e48a0da001147812e6ce0f0d106b6d1c8b4a545b8e5512185c8e0"
         );
         assert_eq!(
             identity,
-            "b42a00d17ffe03b3e4221985587a24f56227658a73cd5a48c671c6b013842eed"
+            "f118e0a86ab58a145279ec0f4fb7446d1c67adeb7a968eb7d67aa4763d7bf323"
         );
         assert_eq!(
             sha256_hex(&run_bytes),
-            "dae0b647887ef07ffe6e307490a96bfff69a22b29d69f8d1d9c3f96eb484846f"
+            "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
         );
     }
 
@@ -6200,7 +6474,7 @@ mod tests {
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
         assert_eq!(
             sha256_hex(&bytes),
-            "dae0b647887ef07ffe6e307490a96bfff69a22b29d69f8d1d9c3f96eb484846f"
+            "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
         );
         assert!(
             !String::from_utf8(bytes)
@@ -6498,7 +6772,7 @@ mod tests {
         assert!(legacy.record().contracts().response_exploiter_v1.is_none());
         assert_eq!(
             sha256_hex(&legacy_bytes),
-            "dae0b647887ef07ffe6e307490a96bfff69a22b29d69f8d1d9c3f96eb484846f"
+            "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
         );
         assert!(!String::from_utf8(legacy_bytes)
             .unwrap()
@@ -7731,6 +8005,13 @@ mod tests {
         assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
 
+        // Dual-Profile Catalog Successor (collab CLAUDE #220): this real,
+        // pre-nine-deck store must classify HISTORICAL, not merely decode.
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+
         // This is a uniform-identity run: the ladder pool section must be
         // absent, and the uniform identities validate exactly as before.
         assert!(
@@ -7779,6 +8060,13 @@ mod tests {
         assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
 
+        // Dual-Profile Catalog Successor (collab CLAUDE #220): this real,
+        // pre-nine-deck store must classify HISTORICAL, not merely decode.
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+
         // This is a ladder-identity, FRESH-INIT run: the pool section is
         // present, but the init section is absent (fresh init from the
         // common model snapshot -- the shape this amendment's field must
@@ -7800,6 +8088,43 @@ mod tests {
         assert_eq!(
             validated.record().contracts().opponent_policy.identity,
             FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
+        );
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220) acceptance
+    /// evidence: the coordinator-designated ladder pilot store root
+    /// (`pool3\primary`, distinct from the `runs\dev0\run-0` leg the
+    /// pre-existing regression above reads) decodes clean, read-only, and
+    /// classifies HISTORICAL. Independently confirms the dual-profile
+    /// mechanism against a second real leg of the same evidence tree. This
+    /// test depends on that external evidence directory remaining present on
+    /// this machine, and never writes to it.
+    #[test]
+    fn real_ladder_pilot_pool3_primary_run_json_decodes_historical() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary\run.json";
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real ladder pilot pool3/primary run.json at {REAL_RUN_JSON_PATH}: {error}"
+            )
+        });
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real ladder pilot pool3/primary run.json failed validation: {error:?}")
+        });
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+        assert_eq!(
+            validated.record().environment.card_db_hash_u64_hex,
+            FROZEN_CARD_DB_HASH_U64_HEX_V2
+        );
+        assert_eq!(
+            validated.record().environment.runtime_catalog_sha256,
+            FROZEN_RUNTIME_CATALOG_SHA256_V2
         );
     }
 
@@ -7836,6 +8161,13 @@ mod tests {
         });
         assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+
+        // Dual-Profile Catalog Successor (collab CLAUDE #220): this real,
+        // pre-nine-deck store must classify HISTORICAL, not merely decode.
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
 
         let response = validated
             .record()
