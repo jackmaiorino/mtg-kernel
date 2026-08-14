@@ -72,6 +72,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub public_combat_continuation_ownership_path_present: bool,
     pub public_combat_continuation_accepts_external_scorer: bool,
     pub native_checkpoint_external_public_history_import_present: bool,
+    pub pre_entry_visible_deck_gate_contract_present: bool,
+    pub pre_entry_visible_deck_gate_classifier_present: bool,
+    pub pre_entry_visible_deck_selection_actuator_present: bool,
     pub pre_entry_operator_loop_present: bool,
     pub post_entry_operator_loop_present: bool,
     pub post_entry_operator_native_pregame_request_checkout_present: bool,
@@ -222,6 +225,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             public_combat_continuation_ownership_path_present: true,
             public_combat_continuation_accepts_external_scorer: false,
             native_checkpoint_external_public_history_import_present: false,
+            pre_entry_visible_deck_gate_contract_present: true,
+            pre_entry_visible_deck_gate_classifier_present: false,
+            pre_entry_visible_deck_selection_actuator_present: false,
             pre_entry_operator_loop_present: true,
             post_entry_operator_loop_present: true,
             post_entry_operator_native_pregame_request_checkout_present: true,
@@ -572,6 +578,21 @@ mod tests {
                 .native_checkpoint_external_public_history_import_present
         );
         assert!(report.known_wiring_gaps.pre_entry_operator_loop_present);
+        assert!(
+            report
+                .known_wiring_gaps
+                .pre_entry_visible_deck_gate_contract_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .pre_entry_visible_deck_gate_classifier_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .pre_entry_visible_deck_selection_actuator_present
+        );
         assert!(report.known_wiring_gaps.post_entry_operator_loop_present);
         assert!(
             report
