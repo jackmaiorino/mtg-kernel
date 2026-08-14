@@ -36,8 +36,33 @@ pub(crate) const NATIVE_FLAT_OBJECT_GROUP_COUNT_V2: usize = 20;
 pub(crate) const NATIVE_FLAT_MAX_CARD_TOKEN_V2: u32 = (u16::MAX as u32) + 1;
 pub(crate) const NATIVE_FLAT_TENSORIZER_IDENTITY_V2: &str =
     "mtg-kernel-python-encoded-decision-tensor-contract-v2";
+// Feature-Encoder Successor (collab CLAUDE #221, folding CODEX #235's
+// historical stack-source encoder fix into the versioned feature-authority
+// successor): this is the module's own live declaration of the Python
+// `features.py` source hash the native reconstruction is asserted to match,
+// canary-verified against the real file at test time (see
+// `production_v2_full_decision_matches_python_all_thirteen_tensors`). It
+// moves forward with the live source exactly as `KERNEL_CARDDB_HASH` does
+// for the catalog identity (Dual-Profile Catalog Successor). The historical
+// value (fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb)
+// is preserved forever, byte-identical, as
+// `FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2` in
+// native_training_store_run_v2.rs, whose decode-time check now accepts
+// either literal (see `FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1`
+// there).
+//
+// UNVERIFIED PENDING RECONCILIATION: collab binds the CURRENT profile's
+// features.py identity to `b316c0aa...`, but this repo has no byte-exact
+// patch for CODEX #235's "historical stack-source encoder fix", only its
+// semantic description. The literal below is the SHA-256 this branch's own
+// reconstruction of that fix actually produces, computed directly from the
+// edited file; it does NOT match the bound `b316c0aa...` prefix. Do not
+// treat this as production-ready until Jack/Codex reconcile the mismatch
+// (see the branch report). If the reconciliation supplies different file
+// bytes, only this literal (and its two independent mirrors below) need to
+// change.
 pub(crate) const NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2: &str =
-    "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb";
+    "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c";
 pub(crate) const NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2: &str =
     "5dbece4f903a09260a499295d866c7e6ff4283f9de83f842224511f977ae8a97";
 pub(crate) const NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2: &str =
