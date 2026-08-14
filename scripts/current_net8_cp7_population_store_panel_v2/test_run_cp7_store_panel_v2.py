@@ -95,6 +95,22 @@ class PanelRunnerTest(unittest.TestCase):
                          self._terminal(pair, "p1", len(rows) + 1)))
         return rows
 
+    def test_expected_header_tensorizer_features_source_sha256_pin(self) -> None:
+        # Feature-Encoder Successor (collab CLAUDE #221, folding CODEX #235):
+        # tripwire for the CURRENT-only rebind of the panel's expected
+        # outcome-jsonl header. Typed independently of expected_header's own
+        # literal so this cannot pass by self-reference; if this fails,
+        # either the pin moved without updating this test or vice versa.
+        #
+        # UNVERIFIED PENDING RECONCILIATION: this is this branch's own
+        # computed SHA-256 of its reconstruction of the historical
+        # stack-source encoder fix, not the collab-bound `b316c0aa...` value.
+        header = panel.expected_header(self.checkpoint)
+        self.assertEqual(
+            header["tensorizer_features_source_sha256"],
+            "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c",
+        )
+
     @staticmethod
     def _write(path: Path, rows: list[dict[str, object]]) -> None:
         with path.open("wb") as handle:
