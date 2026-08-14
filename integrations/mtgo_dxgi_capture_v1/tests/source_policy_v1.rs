@@ -2438,6 +2438,79 @@ fn seated_duel_review_artifact_is_role_bound_identity_free_and_non_authoritative
 }
 
 #[test]
+fn seated_duel_review_finalizer_is_exact_checked_untrusted_and_non_authoritative() {
+    let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let binary = include_str!("../src/bin/finalize_mtgo_seated_duel_direct_visible_review_v1.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "RATIFIED_SEATED_DUEL_DIRECT_VISIBLE_REVIEW_CANDIDATE_V1: Option<&str> = None",
+        "finalize_seated_duel_direct_visible_review_artifact_v1",
+        "load_checked_untrusted_seated_duel_direct_visible_review_v1",
+        "seated duel review artifact must contain exactly its three source files",
+        "parse_and_validate_visible_duel_producer_result_v1(&exact_result_bytes.0)",
+        "validate_source_seated_duel_review_template_v1",
+        "validate_edited_seated_duel_review_v1",
+        "validate_completed_seated_duel_review_v1",
+        "reviewer_alias_sha256_v1",
+        "reviewed_at_unix_millis",
+        "ordinary_surface_complete != ordinary",
+        "combat_surface_complete == ordinary",
+        "completed seated duel review may not modify its source artifact",
+        "require_outside_repository_v1(&parent, \"completed seated duel review output\")",
+        "DIRECT_VISIBLE_SEATED_DUEL_COMPLETED_REVIEW_PARTIAL_PREFIX_V1",
+        "production_evaluation_ratified: false",
+        "safe_for_live_semantic_evidence: false",
+        "safe_for_model_scoring: false",
+        "safe_for_input: false",
+        "permits_event_entry: false",
+        "permits_spending: false",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "seated duel review finalizer is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "run_seated_duel_direct_visible_review_finalization_cli_v1",
+        "MTGO_SEATED_DUEL_REVIEW_FINALIZATION_REJECTED",
+    ] {
+        assert!(
+            binary.contains(required),
+            "seated duel finalizer CLI is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "finalize_seated_duel_direct_visible_review_artifact_v1",
+        "load_checked_untrusted_seated_duel_direct_visible_review_v1",
+        "CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1",
+        "MtgoSeatedDuelDirectVisibleCompletedReviewV1",
+        "MtgoSeatedDuelDirectVisibleCompletedReviewReceiptV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "seated duel finalizer API is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "visible_result",
+        "raw_pixels",
+        "participant_name",
+        "account_name",
+        "process_id",
+        "SendInput",
+        "SetCursorPos",
+        "dispatch",
+        "score_decision",
+    ] {
+        assert!(
+            !binary.contains(forbidden),
+            "seated duel finalizer CLI exposes a forbidden surface: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn preview_ocr_probe_is_offline_expected_text_only_and_non_actuating() {
     let source = include_str!("../src/bin/probe_mtgo_preview_ocr_v1.rs");
     for required in [

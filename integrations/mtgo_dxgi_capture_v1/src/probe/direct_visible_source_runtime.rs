@@ -41,11 +41,11 @@ use mtgo_blackbox_v1::{
     MTGO_DIRECT_VISIBLE_COMPETITIVE_OBSERVATION_BRACKET_SCHEMA_V1,
     MTGO_DIRECT_VISIBLE_GAMEPLAY_BEFORE_DISPATCH_SCHEMA_V1,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::process::CommandExt;
@@ -87,6 +87,12 @@ const DIRECT_VISIBLE_BACKGROUND_REVIEW_ARTIFACT_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-background-review-artifact-v1";
 const DIRECT_VISIBLE_SEATED_DUEL_REVIEW_ARTIFACT_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-seated-duel-review-artifact-v1";
+const DIRECT_VISIBLE_SEATED_DUEL_COMPLETED_REVIEW_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-seated-duel-completed-review-v1";
+const DIRECT_VISIBLE_SEATED_DUEL_REVIEW_CANDIDATE_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-seated-duel-review-ratification-candidate-v1";
+const DIRECT_VISIBLE_SEATED_DUEL_COMPLETED_REVIEW_PARTIAL_PREFIX_V1: &str =
+    ".mtgo-direct-visible-seated-duel-completed-review-partial-";
 const DIRECT_VISIBLE_BACKGROUND_REVIEW_PARTIAL_PREFIX_V1: &str =
     ".mtgo-direct-visible-background-review-partial-";
 const DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1: &[u8] =
@@ -104,6 +110,8 @@ const RATIFIED_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<
 const RATIFIED_BACKGROUND_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
 const RATIFIED_BACKGROUND_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> =
     None;
+#[cfg(test)]
+const RATIFIED_SEATED_DUEL_DIRECT_VISIBLE_REVIEW_CANDIDATE_V1: Option<&str> = None;
 const RATIFIED_DIRECT_VISIBLE_DISPATCH_RUNTIME_COMMITMENT_V1: Option<&str> = None;
 const RATIFIED_DIRECT_VISIBLE_COMBAT_DISPATCH_RUNTIME_COMMITMENT_V1: Option<&str> = None;
 const PINNED_MTGO_EXECUTABLE_SHA256_V1: &str =
@@ -2053,6 +2061,191 @@ struct PrivateMtgoSeatedDuelDirectVisibleReviewTemplateV1<'a> {
     review_completed: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrivateLoadedMtgoSeatedDuelDirectVisibleReviewManifestV1 {
+    schema: String,
+    artifact_kind: String,
+    status: String,
+    information_boundary: String,
+    qualification_role: String,
+    result_kind: String,
+    visible_result_file: String,
+    visible_result_byte_length: usize,
+    visible_result_sha256: String,
+    runtime_identity_commitment_sha256: String,
+    broker_binary_sha256: String,
+    producer_binary_sha256: String,
+    before_capture_commitment_sha256: String,
+    after_capture_commitment_sha256: String,
+    qualification_commitment_sha256: String,
+    review_template_file: String,
+    participant_identifiers_emitted: bool,
+    account_identifiers_emitted: bool,
+    process_identifiers_emitted: bool,
+    process_paths_emitted: bool,
+    window_titles_emitted: bool,
+    match_or_game_identifiers_emitted: bool,
+    raw_pixels_emitted: bool,
+    review_completed: bool,
+    safe_for_live_semantic_evidence: bool,
+    safe_for_model_scoring: bool,
+    safe_for_input: bool,
+    permits_event_entry: bool,
+    permits_spending: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrivateLoadedMtgoSeatedDuelDirectVisibleReviewTemplateV1 {
+    schema: String,
+    artifact_status_required: String,
+    qualification_role_required: String,
+    result_kind: String,
+    manifest_sha256: String,
+    visible_result_sha256: String,
+    runtime_identity_commitment_sha256: String,
+    before_capture_commitment_sha256: String,
+    after_capture_commitment_sha256: String,
+    qualification_commitment_sha256: String,
+    reviewer_alias: String,
+    simultaneously_rendered_surface_reviewed: bool,
+    every_exported_fact_visible_in_rendered_ui_or_rendered_game_log: bool,
+    every_exported_legal_action_matches_visible_controls: bool,
+    seated_player_private_information_matches_visible_ui: bool,
+    ordinary_surface_complete: bool,
+    combat_surface_complete: bool,
+    no_hidden_zone_internal_identifier_or_nonvisible_metadata: bool,
+    review_completed: bool,
+}
+
+/// Immutable completed review record for one exact seated-duel qualification
+/// artifact. It is checked-untrusted evidence for later ratification work and
+/// never grants production evidence, model, input, entry, or spending scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MtgoSeatedDuelDirectVisibleCompletedReviewV1 {
+    pub schema: String,
+    pub source_manifest_sha256: String,
+    pub source_review_template_sha256: String,
+    pub source_artifact_commitment_sha256: String,
+    pub result_kind: String,
+    pub visible_result_sha256: String,
+    pub runtime_identity_commitment_sha256: String,
+    pub before_capture_commitment_sha256: String,
+    pub after_capture_commitment_sha256: String,
+    pub qualification_commitment_sha256: String,
+    pub reviewer_alias_sha256: String,
+    pub reviewed_at_unix_millis: u128,
+    pub simultaneously_rendered_surface_reviewed: bool,
+    pub every_exported_fact_visible_in_rendered_ui_or_rendered_game_log: bool,
+    pub every_exported_legal_action_matches_visible_controls: bool,
+    pub seated_player_private_information_matches_visible_ui: bool,
+    pub ordinary_surface_complete: bool,
+    pub combat_surface_complete: bool,
+    pub no_hidden_zone_internal_identifier_or_nonvisible_metadata: bool,
+    pub review_completed: bool,
+    pub review_commitment_sha256: String,
+    pub ratification_candidate_commitment_sha256: String,
+    pub production_evaluation_ratified: bool,
+    pub safe_for_live_semantic_evidence: bool,
+    pub safe_for_model_scoring: bool,
+    pub safe_for_input: bool,
+    pub permits_event_entry: bool,
+    pub permits_spending: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MtgoSeatedDuelDirectVisibleCompletedReviewReceiptV1 {
+    pub schema: &'static str,
+    pub output_path: PathBuf,
+    pub source_artifact_commitment_sha256: String,
+    pub review_commitment_sha256: String,
+    pub ratification_candidate_commitment_sha256: String,
+    pub completed_review_written: bool,
+    pub production_evaluation_ratified: bool,
+    pub safe_for_live_semantic_evidence: bool,
+    pub safe_for_model_scoring: bool,
+    pub safe_for_input: bool,
+    pub permits_event_entry: bool,
+    pub permits_spending: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoSeatedDuelDirectVisibleReviewedCandidateCommitmentsV1 {
+    pub source_artifact_commitment_sha256: String,
+    pub visible_result_sha256: String,
+    pub qualification_commitment_sha256: String,
+    pub review_commitment_sha256: String,
+    pub ratification_candidate_commitment_sha256: String,
+}
+
+/// Move-only structurally checked reviewed candidate. The retained exact
+/// result has no public extraction method, and the production ratification
+/// root is empty.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1;
+/// fn cannot_extract_or_act(value: CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1) {
+///     let _ = value.visible_result();
+///     let _ = value.raw_pixels();
+///     value.score();
+///     value.dispatch();
+/// }
+/// ```
+pub struct CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1 {
+    _exact_result_bytes: ZeroingVecV1,
+    _result: MtgoVisibleDuelViewModelBrokerResultV1,
+    _completed_review: MtgoSeatedDuelDirectVisibleCompletedReviewV1,
+    commitments: MtgoSeatedDuelDirectVisibleReviewedCandidateCommitmentsV1,
+}
+
+impl CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1 {
+    pub fn commitments_v1(&self) -> MtgoSeatedDuelDirectVisibleReviewedCandidateCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn production_evaluation_ratified_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_live_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+struct PrivateLoadedMtgoSeatedDuelDirectVisibleReviewArtifactV1 {
+    _artifact_directory: PathBuf,
+    manifest_sha256: String,
+    source_review_template_sha256: String,
+    artifact_commitment_sha256: String,
+    manifest: PrivateLoadedMtgoSeatedDuelDirectVisibleReviewManifestV1,
+    exact_result_bytes: ZeroingVecV1,
+    result: MtgoVisibleDuelViewModelBrokerResultV1,
+}
+
 /// Public commitments for one release-pinned producer result that was observed
 /// identically across two invocations of the same MTGO process incarnation.
 /// Process identifiers and executable paths stay private. No pixel capture is
@@ -3339,19 +3532,15 @@ fn write_seated_duel_direct_visible_review_artifact_from_parts_v1(
     let review_template_bytes = serde_json::to_vec_pretty(&review_template)
         .map_err(|error| format!("serialize seated duel review template: {error}"))?;
     let review_template_sha256 = sha256_hex_v1(&review_template_bytes);
-    let artifact_commitment_sha256 = commitment_v1(
-        DIRECT_VISIBLE_SEATED_DUEL_REVIEW_ARTIFACT_DOMAIN_V1,
-        &[
-            commitments.runtime_identity_commitment_sha256.as_bytes(),
-            commitments.before_capture_commitment_sha256.as_bytes(),
-            commitments.after_capture_commitment_sha256.as_bytes(),
-            commitments.qualification_commitment_sha256.as_bytes(),
-            result_kind.as_bytes(),
-            visible_result_sha256.as_bytes(),
-            manifest_sha256.as_bytes(),
-            review_template_sha256.as_bytes(),
-            b"acting_player_duel_pending_review_no_pixels_no_model_no_input_no_entry_no_spending",
-        ],
+    let artifact_commitment_sha256 = seated_duel_source_artifact_commitment_v1(
+        &commitments.runtime_identity_commitment_sha256,
+        &commitments.before_capture_commitment_sha256,
+        &commitments.after_capture_commitment_sha256,
+        &commitments.qualification_commitment_sha256,
+        result_kind,
+        &visible_result_sha256,
+        &manifest_sha256,
+        &review_template_sha256,
     );
 
     persist_background_direct_visible_review_artifact_v1(
@@ -3405,6 +3594,33 @@ fn direct_visible_data_bearing_result_kind_v1(
         }
         MtgoVisibleDuelViewModelBrokerResultV1::Abstained { .. } => None,
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn seated_duel_source_artifact_commitment_v1(
+    runtime_identity_commitment_sha256: &str,
+    before_capture_commitment_sha256: &str,
+    after_capture_commitment_sha256: &str,
+    qualification_commitment_sha256: &str,
+    result_kind: &str,
+    visible_result_sha256: &str,
+    manifest_sha256: &str,
+    review_template_sha256: &str,
+) -> String {
+    commitment_v1(
+        DIRECT_VISIBLE_SEATED_DUEL_REVIEW_ARTIFACT_DOMAIN_V1,
+        &[
+            runtime_identity_commitment_sha256.as_bytes(),
+            before_capture_commitment_sha256.as_bytes(),
+            after_capture_commitment_sha256.as_bytes(),
+            qualification_commitment_sha256.as_bytes(),
+            result_kind.as_bytes(),
+            visible_result_sha256.as_bytes(),
+            manifest_sha256.as_bytes(),
+            review_template_sha256.as_bytes(),
+            b"acting_player_duel_pending_review_no_pixels_no_model_no_input_no_entry_no_spending",
+        ],
+    )
 }
 
 fn validate_background_direct_visible_review_output_v1(
@@ -3532,6 +3748,710 @@ fn cleanup_background_direct_visible_review_partial_v1(parent: &Path, partial: &
     if partial.parent() == Some(parent) && owned_name {
         let _ = fs::remove_dir_all(partial);
     }
+}
+
+/// Finalizes a manually edited copy of one seated-duel review template. The
+/// source artifact is reloaded from exact bytes, the reviewer alias is hashed
+/// from a separate file, and the output is written atomically outside both the
+/// source artifact and repository. The completed record remains
+/// checked-untrusted and grants no production authority.
+pub fn finalize_seated_duel_direct_visible_review_artifact_v1(
+    artifact_directory: &Path,
+    edited_review_path: &Path,
+    reviewer_alias_path: &Path,
+    output_path: &Path,
+) -> Result<MtgoSeatedDuelDirectVisibleCompletedReviewReceiptV1, String> {
+    for (path, label) in [
+        (artifact_directory, "seated duel review artifact"),
+        (edited_review_path, "edited seated duel review"),
+        (reviewer_alias_path, "seated duel reviewer alias"),
+        (output_path, "completed seated duel review output"),
+    ] {
+        if !path.is_absolute() {
+            return Err(format!("{label} path must be absolute"));
+        }
+    }
+    let loaded = load_seated_duel_direct_visible_review_artifact_v1(artifact_directory)?;
+    let edited_review_bytes = read_bounded_direct_visible_review_file_v1(
+        edited_review_path,
+        64 * 1024,
+        "edited seated duel review",
+    )?;
+    let edited_review: PrivateLoadedMtgoSeatedDuelDirectVisibleReviewTemplateV1 =
+        serde_json::from_slice(&edited_review_bytes.0)
+            .map_err(|error| format!("parse edited seated duel review: {error}"))?;
+    validate_edited_seated_duel_review_v1(&loaded, &edited_review)?;
+    let reviewer_alias_sha256 = reviewer_alias_sha256_v1(reviewer_alias_path)?;
+    let reviewed_at_unix_millis = unix_millis_now_v1()?;
+    let mut completed = MtgoSeatedDuelDirectVisibleCompletedReviewV1 {
+        schema: "mtgo-direct-visible-seated-duel-completed-review/v1".to_owned(),
+        source_manifest_sha256: loaded.manifest_sha256.clone(),
+        source_review_template_sha256: loaded.source_review_template_sha256.clone(),
+        source_artifact_commitment_sha256: loaded.artifact_commitment_sha256.clone(),
+        result_kind: loaded.manifest.result_kind.clone(),
+        visible_result_sha256: loaded.manifest.visible_result_sha256.clone(),
+        runtime_identity_commitment_sha256: loaded
+            .manifest
+            .runtime_identity_commitment_sha256
+            .clone(),
+        before_capture_commitment_sha256: loaded.manifest.before_capture_commitment_sha256.clone(),
+        after_capture_commitment_sha256: loaded.manifest.after_capture_commitment_sha256.clone(),
+        qualification_commitment_sha256: loaded.manifest.qualification_commitment_sha256.clone(),
+        reviewer_alias_sha256,
+        reviewed_at_unix_millis,
+        simultaneously_rendered_surface_reviewed: edited_review
+            .simultaneously_rendered_surface_reviewed,
+        every_exported_fact_visible_in_rendered_ui_or_rendered_game_log: edited_review
+            .every_exported_fact_visible_in_rendered_ui_or_rendered_game_log,
+        every_exported_legal_action_matches_visible_controls: edited_review
+            .every_exported_legal_action_matches_visible_controls,
+        seated_player_private_information_matches_visible_ui: edited_review
+            .seated_player_private_information_matches_visible_ui,
+        ordinary_surface_complete: edited_review.ordinary_surface_complete,
+        combat_surface_complete: edited_review.combat_surface_complete,
+        no_hidden_zone_internal_identifier_or_nonvisible_metadata: edited_review
+            .no_hidden_zone_internal_identifier_or_nonvisible_metadata,
+        review_completed: edited_review.review_completed,
+        review_commitment_sha256: String::new(),
+        ratification_candidate_commitment_sha256: String::new(),
+        production_evaluation_ratified: false,
+        safe_for_live_semantic_evidence: false,
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    };
+    completed.review_commitment_sha256 = seated_duel_completed_review_commitment_v1(&completed);
+    completed.ratification_candidate_commitment_sha256 =
+        seated_duel_review_ratification_candidate_commitment_v1(&completed);
+    validate_completed_seated_duel_review_v1(&loaded, &completed, reviewed_at_unix_millis)?;
+    let canonical = serde_json::to_vec_pretty(&completed)
+        .map_err(|error| format!("serialize completed seated duel review: {error}"))?;
+    let output =
+        validate_completed_seated_duel_review_output_v1(output_path, &loaded._artifact_directory)?;
+    write_completed_seated_duel_review_v1(&output, &canonical)?;
+    Ok(MtgoSeatedDuelDirectVisibleCompletedReviewReceiptV1 {
+        schema: "mtgo-direct-visible-seated-duel-completed-review-receipt/v1",
+        output_path: output,
+        source_artifact_commitment_sha256: completed.source_artifact_commitment_sha256,
+        review_commitment_sha256: completed.review_commitment_sha256,
+        ratification_candidate_commitment_sha256: completed
+            .ratification_candidate_commitment_sha256,
+        completed_review_written: true,
+        production_evaluation_ratified: false,
+        safe_for_live_semantic_evidence: false,
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    })
+}
+
+/// Reloads an exact source artifact and completed review into a move-only
+/// checked-untrusted ratification candidate. No source result accessor or
+/// production conversion is exposed.
+pub fn load_checked_untrusted_seated_duel_direct_visible_review_v1(
+    artifact_directory: &Path,
+    completed_review_path: &Path,
+) -> Result<CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1, String> {
+    if !completed_review_path.is_absolute() {
+        return Err("completed seated duel review path must be absolute".to_owned());
+    }
+    let loaded = load_seated_duel_direct_visible_review_artifact_v1(artifact_directory)?;
+    let completed_bytes = read_bounded_direct_visible_review_file_v1(
+        completed_review_path,
+        64 * 1024,
+        "completed seated duel review",
+    )?;
+    let completed: MtgoSeatedDuelDirectVisibleCompletedReviewV1 =
+        serde_json::from_slice(&completed_bytes.0)
+            .map_err(|error| format!("parse completed seated duel review: {error}"))?;
+    validate_completed_seated_duel_review_v1(&loaded, &completed, unix_millis_now_v1()?)?;
+    let commitments = MtgoSeatedDuelDirectVisibleReviewedCandidateCommitmentsV1 {
+        source_artifact_commitment_sha256: completed.source_artifact_commitment_sha256.clone(),
+        visible_result_sha256: completed.visible_result_sha256.clone(),
+        qualification_commitment_sha256: completed.qualification_commitment_sha256.clone(),
+        review_commitment_sha256: completed.review_commitment_sha256.clone(),
+        ratification_candidate_commitment_sha256: completed
+            .ratification_candidate_commitment_sha256
+            .clone(),
+    };
+    Ok(CheckedUntrustedMtgoSeatedDuelDirectVisibleReviewV1 {
+        _exact_result_bytes: loaded.exact_result_bytes,
+        _result: loaded.result,
+        _completed_review: completed,
+        commitments,
+    })
+}
+
+pub fn run_seated_duel_direct_visible_review_finalization_cli_v1(
+) -> Result<MtgoSeatedDuelDirectVisibleCompletedReviewReceiptV1, String> {
+    let (artifact, edited_review, reviewer_alias, output) =
+        parse_seated_duel_review_finalization_arguments_v1(std::env::args_os().skip(1))?;
+    finalize_seated_duel_direct_visible_review_artifact_v1(
+        &artifact,
+        &edited_review,
+        &reviewer_alias,
+        &output,
+    )
+}
+
+fn load_seated_duel_direct_visible_review_artifact_v1(
+    artifact_directory: &Path,
+) -> Result<PrivateLoadedMtgoSeatedDuelDirectVisibleReviewArtifactV1, String> {
+    if !artifact_directory.is_absolute() {
+        return Err("seated duel review artifact path must be absolute".to_owned());
+    }
+    let metadata = fs::symlink_metadata(artifact_directory)
+        .map_err(|error| format!("inspect seated duel review artifact: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("seated duel review artifact must be a non-symlink directory".to_owned());
+    }
+    let artifact_directory = artifact_directory
+        .canonicalize()
+        .map_err(|error| format!("canonicalize seated duel review artifact: {error}"))?;
+    require_outside_repository_v1(&artifact_directory, "seated duel review artifact")?;
+    let expected_names = HashSet::from([
+        "manifest.json".to_owned(),
+        "review-template.json".to_owned(),
+        "visible-result.json".to_owned(),
+    ]);
+    let mut observed_names = HashSet::new();
+    for entry in fs::read_dir(&artifact_directory)
+        .map_err(|error| format!("enumerate seated duel review artifact: {error}"))?
+    {
+        let entry = entry.map_err(|error| format!("read seated duel artifact entry: {error}"))?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| "seated duel review artifact file name must be Unicode")?;
+        if !observed_names.insert(name) {
+            return Err("seated duel review artifact contains duplicate file names".to_owned());
+        }
+    }
+    if observed_names != expected_names {
+        return Err(
+            "seated duel review artifact must contain exactly its three source files".to_owned(),
+        );
+    }
+
+    let manifest_bytes = read_bounded_direct_visible_review_file_v1(
+        &artifact_directory.join("manifest.json"),
+        64 * 1024,
+        "seated duel review manifest",
+    )?;
+    let source_template_bytes = read_bounded_direct_visible_review_file_v1(
+        &artifact_directory.join("review-template.json"),
+        64 * 1024,
+        "seated duel source review template",
+    )?;
+    let exact_result_bytes = read_bounded_direct_visible_review_file_v1(
+        &artifact_directory.join("visible-result.json"),
+        MAX_BROKER_STDOUT_BYTES_V1,
+        "seated duel visible result",
+    )?;
+    let manifest_sha256 = sha256_hex_v1(&manifest_bytes.0);
+    let source_review_template_sha256 = sha256_hex_v1(&source_template_bytes.0);
+    let manifest: PrivateLoadedMtgoSeatedDuelDirectVisibleReviewManifestV1 =
+        serde_json::from_slice(&manifest_bytes.0)
+            .map_err(|error| format!("parse seated duel review manifest: {error}"))?;
+    validate_loaded_seated_duel_manifest_v1(&manifest)?;
+    if manifest.visible_result_byte_length != exact_result_bytes.0.len()
+        || manifest.visible_result_sha256 != sha256_hex_v1(&exact_result_bytes.0)
+    {
+        return Err("seated duel visible result does not match its manifest".to_owned());
+    }
+    let result = parse_and_validate_visible_duel_producer_result_v1(&exact_result_bytes.0)
+        .map_err(|_| "seated duel artifact result is not strictly visible-equivalent".to_owned())?;
+    let result_kind = direct_visible_data_bearing_result_kind_v1(&result)
+        .ok_or("seated duel artifact requires a data-bearing result")?;
+    if manifest.result_kind != result_kind {
+        return Err("seated duel artifact result kind differs from its manifest".to_owned());
+    }
+    let source_template: PrivateLoadedMtgoSeatedDuelDirectVisibleReviewTemplateV1 =
+        serde_json::from_slice(&source_template_bytes.0)
+            .map_err(|error| format!("parse seated duel source review template: {error}"))?;
+    validate_source_seated_duel_review_template_v1(&manifest, &manifest_sha256, &source_template)?;
+    let artifact_commitment_sha256 = seated_duel_source_artifact_commitment_v1(
+        &manifest.runtime_identity_commitment_sha256,
+        &manifest.before_capture_commitment_sha256,
+        &manifest.after_capture_commitment_sha256,
+        &manifest.qualification_commitment_sha256,
+        &manifest.result_kind,
+        &manifest.visible_result_sha256,
+        &manifest_sha256,
+        &source_review_template_sha256,
+    );
+    Ok(PrivateLoadedMtgoSeatedDuelDirectVisibleReviewArtifactV1 {
+        _artifact_directory: artifact_directory,
+        manifest_sha256,
+        source_review_template_sha256,
+        artifact_commitment_sha256,
+        manifest,
+        exact_result_bytes,
+        result,
+    })
+}
+
+fn validate_loaded_seated_duel_manifest_v1(
+    manifest: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewManifestV1,
+) -> Result<(), String> {
+    if manifest.schema != "mtgo-direct-visible-seated-duel-review-manifest/v1"
+        || manifest.artifact_kind != "attested_seated_duel_visible_review_candidate"
+        || manifest.status != "pending_manual_visible_equivalence_review"
+        || manifest.information_boundary != "rendered_mtgo_ui_or_rendered_game_log_only"
+        || manifest.qualification_role != "acting_player_duel"
+        || manifest.visible_result_file != "visible-result.json"
+        || manifest.review_template_file != "review-template.json"
+        || manifest.visible_result_byte_length == 0
+        || manifest.visible_result_byte_length > MAX_BROKER_STDOUT_BYTES_V1
+    {
+        return Err("seated duel review manifest has an unsupported fixed contract".to_owned());
+    }
+    for digest in [
+        &manifest.visible_result_sha256,
+        &manifest.runtime_identity_commitment_sha256,
+        &manifest.broker_binary_sha256,
+        &manifest.producer_binary_sha256,
+        &manifest.before_capture_commitment_sha256,
+        &manifest.after_capture_commitment_sha256,
+        &manifest.qualification_commitment_sha256,
+    ] {
+        validate_lower_sha256_direct_visible_review_v1(digest)?;
+    }
+    if manifest.broker_binary_sha256 != LIVE_BROKER_SHA256_V1
+        || manifest.producer_binary_sha256 != LIVE_PRODUCER_SHA256_V1
+        || manifest.before_capture_commitment_sha256 == manifest.after_capture_commitment_sha256
+    {
+        return Err("seated duel review manifest runtime or capture lineage is invalid".to_owned());
+    }
+    if manifest.participant_identifiers_emitted
+        || manifest.account_identifiers_emitted
+        || manifest.process_identifiers_emitted
+        || manifest.process_paths_emitted
+        || manifest.window_titles_emitted
+        || manifest.match_or_game_identifiers_emitted
+        || manifest.raw_pixels_emitted
+        || manifest.review_completed
+        || manifest.safe_for_live_semantic_evidence
+        || manifest.safe_for_model_scoring
+        || manifest.safe_for_input
+        || manifest.permits_event_entry
+        || manifest.permits_spending
+    {
+        return Err(
+            "seated duel review manifest crosses its information or authority boundary".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_source_seated_duel_review_template_v1(
+    manifest: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewManifestV1,
+    manifest_sha256: &str,
+    review: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewTemplateV1,
+) -> Result<(), String> {
+    validate_seated_duel_review_template_binding_v1(manifest, manifest_sha256, review)?;
+    if !review.reviewer_alias.is_empty()
+        || review.simultaneously_rendered_surface_reviewed
+        || review.every_exported_fact_visible_in_rendered_ui_or_rendered_game_log
+        || review.every_exported_legal_action_matches_visible_controls
+        || review.seated_player_private_information_matches_visible_ui
+        || review.ordinary_surface_complete
+        || review.combat_surface_complete
+        || review.no_hidden_zone_internal_identifier_or_nonvisible_metadata
+        || review.review_completed
+    {
+        return Err(
+            "seated duel source review template must retain every review field false".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_edited_seated_duel_review_v1(
+    loaded: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewArtifactV1,
+    review: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewTemplateV1,
+) -> Result<(), String> {
+    validate_seated_duel_review_template_binding_v1(
+        &loaded.manifest,
+        &loaded.manifest_sha256,
+        review,
+    )?;
+    let ordinary = loaded.manifest.result_kind == "visible_decision";
+    if !review.reviewer_alias.is_empty()
+        || !review.simultaneously_rendered_surface_reviewed
+        || !review.every_exported_fact_visible_in_rendered_ui_or_rendered_game_log
+        || !review.every_exported_legal_action_matches_visible_controls
+        || !review.seated_player_private_information_matches_visible_ui
+        || review.ordinary_surface_complete != ordinary
+        || review.combat_surface_complete == ordinary
+        || !review.no_hidden_zone_internal_identifier_or_nonvisible_metadata
+        || !review.review_completed
+    {
+        return Err(
+            "edited seated duel review is incomplete or claims the wrong visible surface kind"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_seated_duel_review_template_binding_v1(
+    manifest: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewManifestV1,
+    manifest_sha256: &str,
+    review: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewTemplateV1,
+) -> Result<(), String> {
+    if review.schema != "mtgo-direct-visible-seated-duel-review-template/v1"
+        || review.artifact_status_required != "pending_manual_visible_equivalence_review"
+        || review.qualification_role_required != "acting_player_duel"
+        || review.result_kind != manifest.result_kind
+        || review.manifest_sha256 != manifest_sha256
+        || review.visible_result_sha256 != manifest.visible_result_sha256
+        || review.runtime_identity_commitment_sha256 != manifest.runtime_identity_commitment_sha256
+        || review.before_capture_commitment_sha256 != manifest.before_capture_commitment_sha256
+        || review.after_capture_commitment_sha256 != manifest.after_capture_commitment_sha256
+        || review.qualification_commitment_sha256 != manifest.qualification_commitment_sha256
+    {
+        return Err("seated duel review does not bind the exact source artifact".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_completed_seated_duel_review_v1(
+    loaded: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewArtifactV1,
+    completed: &MtgoSeatedDuelDirectVisibleCompletedReviewV1,
+    now_unix_millis: u128,
+) -> Result<(), String> {
+    if completed.schema != "mtgo-direct-visible-seated-duel-completed-review/v1"
+        || completed.source_manifest_sha256 != loaded.manifest_sha256
+        || completed.source_review_template_sha256 != loaded.source_review_template_sha256
+        || completed.source_artifact_commitment_sha256 != loaded.artifact_commitment_sha256
+        || completed.result_kind != loaded.manifest.result_kind
+        || completed.visible_result_sha256 != loaded.manifest.visible_result_sha256
+        || completed.runtime_identity_commitment_sha256
+            != loaded.manifest.runtime_identity_commitment_sha256
+        || completed.before_capture_commitment_sha256
+            != loaded.manifest.before_capture_commitment_sha256
+        || completed.after_capture_commitment_sha256
+            != loaded.manifest.after_capture_commitment_sha256
+        || completed.qualification_commitment_sha256
+            != loaded.manifest.qualification_commitment_sha256
+    {
+        return Err("completed seated duel review does not bind the exact source".to_owned());
+    }
+    for digest in [
+        &completed.source_manifest_sha256,
+        &completed.source_review_template_sha256,
+        &completed.source_artifact_commitment_sha256,
+        &completed.visible_result_sha256,
+        &completed.runtime_identity_commitment_sha256,
+        &completed.before_capture_commitment_sha256,
+        &completed.after_capture_commitment_sha256,
+        &completed.qualification_commitment_sha256,
+        &completed.reviewer_alias_sha256,
+        &completed.review_commitment_sha256,
+        &completed.ratification_candidate_commitment_sha256,
+    ] {
+        validate_lower_sha256_direct_visible_review_v1(digest)?;
+    }
+    let ordinary = completed.result_kind == "visible_decision";
+    if completed.reviewed_at_unix_millis == 0
+        || completed.reviewed_at_unix_millis > now_unix_millis.saturating_add(60_000)
+        || !completed.simultaneously_rendered_surface_reviewed
+        || !completed.every_exported_fact_visible_in_rendered_ui_or_rendered_game_log
+        || !completed.every_exported_legal_action_matches_visible_controls
+        || !completed.seated_player_private_information_matches_visible_ui
+        || completed.ordinary_surface_complete != ordinary
+        || completed.combat_surface_complete == ordinary
+        || !completed.no_hidden_zone_internal_identifier_or_nonvisible_metadata
+        || !completed.review_completed
+        || completed.production_evaluation_ratified
+        || completed.safe_for_live_semantic_evidence
+        || completed.safe_for_model_scoring
+        || completed.safe_for_input
+        || completed.permits_event_entry
+        || completed.permits_spending
+    {
+        return Err(
+            "completed seated duel review crosses its review or authority boundary".to_owned(),
+        );
+    }
+    if completed.review_commitment_sha256 != seated_duel_completed_review_commitment_v1(completed)
+        || completed.ratification_candidate_commitment_sha256
+            != seated_duel_review_ratification_candidate_commitment_v1(completed)
+    {
+        return Err("completed seated duel review commitment changed".to_owned());
+    }
+    Ok(())
+}
+
+fn seated_duel_completed_review_commitment_v1(
+    completed: &MtgoSeatedDuelDirectVisibleCompletedReviewV1,
+) -> String {
+    let surface = if completed.ordinary_surface_complete {
+        b"ordinary_surface_complete=true;combat_surface_complete=false".as_slice()
+    } else {
+        b"ordinary_surface_complete=false;combat_surface_complete=true".as_slice()
+    };
+    commitment_v1(
+        DIRECT_VISIBLE_SEATED_DUEL_COMPLETED_REVIEW_DOMAIN_V1,
+        &[
+            completed.source_manifest_sha256.as_bytes(),
+            completed.source_review_template_sha256.as_bytes(),
+            completed.source_artifact_commitment_sha256.as_bytes(),
+            completed.result_kind.as_bytes(),
+            completed.visible_result_sha256.as_bytes(),
+            completed.runtime_identity_commitment_sha256.as_bytes(),
+            completed.before_capture_commitment_sha256.as_bytes(),
+            completed.after_capture_commitment_sha256.as_bytes(),
+            completed.qualification_commitment_sha256.as_bytes(),
+            completed.reviewer_alias_sha256.as_bytes(),
+            &completed.reviewed_at_unix_millis.to_be_bytes(),
+            surface,
+            b"simultaneously_rendered_surface_reviewed=true",
+            b"every_exported_fact_visible_in_rendered_ui_or_rendered_game_log=true",
+            b"every_exported_legal_action_matches_visible_controls=true",
+            b"seated_player_private_information_matches_visible_ui=true",
+            b"no_hidden_zone_internal_identifier_or_nonvisible_metadata=true",
+            b"review_completed=true",
+        ],
+    )
+}
+
+fn seated_duel_review_ratification_candidate_commitment_v1(
+    completed: &MtgoSeatedDuelDirectVisibleCompletedReviewV1,
+) -> String {
+    commitment_v1(
+        DIRECT_VISIBLE_SEATED_DUEL_REVIEW_CANDIDATE_DOMAIN_V1,
+        &[
+            completed.source_artifact_commitment_sha256.as_bytes(),
+            completed.visible_result_sha256.as_bytes(),
+            completed.qualification_commitment_sha256.as_bytes(),
+            completed.review_commitment_sha256.as_bytes(),
+            b"checked_untrusted_review_only_production_root_empty_no_model_no_input_no_entry_no_spending",
+        ],
+    )
+}
+
+fn reviewer_alias_sha256_v1(path: &Path) -> Result<String, String> {
+    let bytes =
+        read_bounded_direct_visible_review_file_v1(path, 256, "seated duel reviewer alias")?;
+    let with_optional_line_ending =
+        std::str::from_utf8(&bytes.0).map_err(|_| "seated duel reviewer alias must be UTF-8")?;
+    let alias = with_optional_line_ending
+        .strip_suffix("\r\n")
+        .or_else(|| with_optional_line_ending.strip_suffix('\n'))
+        .unwrap_or(with_optional_line_ending);
+    if alias.is_empty()
+        || alias.trim() != alias
+        || alias.chars().any(char::is_control)
+        || alias.len() > 128
+    {
+        return Err(
+            "seated duel reviewer alias must be bounded printable UTF-8 without surrounding whitespace"
+                .to_owned(),
+        );
+    }
+    Ok(sha256_hex_v1(alias.as_bytes()))
+}
+
+fn read_bounded_direct_visible_review_file_v1(
+    path: &Path,
+    limit: usize,
+    label: &str,
+) -> Result<ZeroingVecV1, String> {
+    if !path.is_absolute() {
+        return Err(format!("{label} path must be absolute"));
+    }
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| format!("inspect {label}: {error}"))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(format!("{label} must be a non-symlink regular file"));
+    }
+    let length = usize::try_from(metadata.len()).map_err(|_| format!("{label} is too large"))?;
+    if length == 0 || length > limit {
+        return Err(format!("{label} length is outside the supported range"));
+    }
+    let file = File::open(path).map_err(|error| format!("open {label}: {error}"))?;
+    let mut bytes = ZeroingVecV1(Vec::with_capacity(length));
+    file.take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
+        .read_to_end(&mut bytes.0)
+        .map_err(|error| format!("read {label}: {error}"))?;
+    if bytes.0.len() != length {
+        return Err(format!("{label} changed while it was read"));
+    }
+    Ok(bytes)
+}
+
+fn validate_lower_sha256_direct_visible_review_v1(value: &str) -> Result<(), String> {
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("seated duel review digest must be lowercase SHA-256".to_owned());
+    }
+    Ok(())
+}
+
+fn require_outside_repository_v1(path: &Path, label: &str) -> Result<(), String> {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("could not derive repository root")?
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repository root: {error}"))?;
+    if path.starts_with(repository) {
+        return Err(format!("{label} must be outside the repository"));
+    }
+    Ok(())
+}
+
+fn validate_completed_seated_duel_review_output_v1(
+    requested: &Path,
+    artifact_directory: &Path,
+) -> Result<PathBuf, String> {
+    if !requested.is_absolute() {
+        return Err("completed seated duel review output path must be absolute".to_owned());
+    }
+    match fs::symlink_metadata(requested) {
+        Ok(_) => return Err("completed seated duel review output must be new".to_owned()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "inspect completed seated duel review output: {error}"
+            ))
+        }
+    }
+    let parent = requested
+        .parent()
+        .ok_or("completed seated duel review output has no parent")?;
+    let parent_metadata = fs::symlink_metadata(parent)
+        .map_err(|error| format!("inspect completed seated duel review output parent: {error}"))?;
+    if !parent_metadata.is_dir() || parent_metadata.file_type().is_symlink() {
+        return Err(
+            "completed seated duel review output parent must be a non-symlink directory".to_owned(),
+        );
+    }
+    let parent = parent
+        .canonicalize()
+        .map_err(|error| format!("canonicalize completed seated duel review parent: {error}"))?;
+    if parent.starts_with(artifact_directory) {
+        return Err("completed seated duel review may not modify its source artifact".to_owned());
+    }
+    require_outside_repository_v1(&parent, "completed seated duel review output")?;
+    let name = requested
+        .file_name()
+        .ok_or("completed seated duel review output has no file name")?;
+    let output = parent.join(name);
+    match fs::symlink_metadata(&output) {
+        Ok(_) => {
+            return Err("completed seated duel review output must resolve to a new path".to_owned())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "inspect resolved completed seated duel review output: {error}"
+            ))
+        }
+    }
+    Ok(output)
+}
+
+fn write_completed_seated_duel_review_v1(output: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = output
+        .parent()
+        .ok_or("completed seated duel review output has no parent")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before epoch: {error}"))?
+        .as_nanos();
+    let mut partial = None;
+    for attempt in 0..16_u8 {
+        let candidate = parent.join(format!(
+            "{DIRECT_VISIBLE_SEATED_DUEL_COMPLETED_REVIEW_PARTIAL_PREFIX_V1}{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                partial = Some((candidate, file));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("create completed seated duel review: {error}")),
+        }
+    }
+    let (partial, mut file) =
+        partial.ok_or("could not reserve completed seated duel review partial file")?;
+    let result = (|| {
+        file.write_all(bytes)
+            .map_err(|error| format!("write completed seated duel review: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("sync completed seated duel review: {error}"))?;
+        drop(file);
+        fs::rename(&partial, output)
+            .map_err(|error| format!("commit completed seated duel review: {error}"))
+    })();
+    if result.is_err()
+        && partial.parent() == Some(parent)
+        && partial
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| {
+                value.starts_with(DIRECT_VISIBLE_SEATED_DUEL_COMPLETED_REVIEW_PARTIAL_PREFIX_V1)
+            })
+            .unwrap_or(false)
+    {
+        let _ = fs::remove_file(&partial);
+    }
+    result
+}
+
+fn parse_seated_duel_review_finalization_arguments_v1<I>(
+    args: I,
+) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf), String>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut args = args.into_iter();
+    let mut artifact = None;
+    let mut edited_review = None;
+    let mut reviewer_alias = None;
+    let mut output = None;
+    while let Some(argument) = args.next() {
+        let destination = match argument.to_str() {
+            Some("--artifact") => &mut artifact,
+            Some("--edited-review") => &mut edited_review,
+            Some("--reviewer-alias") => &mut reviewer_alias,
+            Some("--output") => &mut output,
+            _ => {
+                return Err(
+                    "seated duel review finalization accepts only --artifact, --edited-review, --reviewer-alias, and --output"
+                        .to_owned(),
+                )
+            }
+        };
+        if destination.is_some() {
+            return Err(
+                "seated duel review finalization arguments may appear only once".to_owned(),
+            );
+        }
+        *destination = Some(PathBuf::from(
+            args.next()
+                .ok_or("seated duel review finalization argument is missing its path")?,
+        ));
+    }
+    Ok((
+        artifact.ok_or("--artifact is required")?,
+        edited_review.ok_or("--edited-review is required")?,
+        reviewer_alias.ok_or("--reviewer-alias is required")?,
+        output.ok_or("--output is required")?,
+    ))
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -4560,14 +5480,46 @@ mod tests {
         let sanitized_result_sha256 = sha256_hex_v1(&bytes);
         let commitments = MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1 {
             runtime_identity_commitment_sha256: "a".repeat(64),
-            broker_binary_sha256: "b".repeat(64),
-            producer_binary_sha256: "c".repeat(64),
+            broker_binary_sha256: LIVE_BROKER_SHA256_V1.to_owned(),
+            producer_binary_sha256: LIVE_PRODUCER_SHA256_V1.to_owned(),
             before_capture_commitment_sha256: "d".repeat(64),
             after_capture_commitment_sha256: "e".repeat(64),
             sanitized_result_sha256,
             qualification_commitment_sha256: "f".repeat(64),
         };
         (bytes, result, commitments)
+    }
+
+    fn persist_test_seated_duel_review_artifact_v1(
+        output: &Path,
+    ) -> MtgoSeatedDuelDirectVisibleReviewArtifactReceiptV1 {
+        let (bytes, result, commitments) = seated_duel_review_parts_v1();
+        write_seated_duel_direct_visible_review_artifact_from_parts_v1(
+            PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+            &bytes,
+            &result,
+            &commitments,
+            output,
+        )
+        .unwrap()
+    }
+
+    fn completed_ordinary_review_value_v1(artifact: &Path) -> serde_json::Value {
+        let mut review: serde_json::Value =
+            serde_json::from_slice(&fs::read(artifact.join("review-template.json")).unwrap())
+                .unwrap();
+        for field in [
+            "simultaneously_rendered_surface_reviewed",
+            "every_exported_fact_visible_in_rendered_ui_or_rendered_game_log",
+            "every_exported_legal_action_matches_visible_controls",
+            "seated_player_private_information_matches_visible_ui",
+            "ordinary_surface_complete",
+            "no_hidden_zone_internal_identifier_or_nonvisible_metadata",
+            "review_completed",
+        ] {
+            review[field] = serde_json::Value::Bool(true);
+        }
+        review
     }
 
     #[test]
@@ -4700,6 +5652,225 @@ mod tests {
         );
         assert!(!drifted_output.exists());
         assert_eq!(fs::read_dir(&parent.0).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn seated_duel_review_finalizer_binds_exact_artifact_and_never_ratifies() {
+        let parent = TemporaryReviewParentV1::new("seated-duel-finalizer-valid");
+        let artifact = parent.child("artifact");
+        let source_receipt = persist_test_seated_duel_review_artifact_v1(&artifact);
+        let edited_review = parent.child("edited-review.json");
+        let reviewer_alias = parent.child("reviewer-alias.txt");
+        let completed_review = parent.child("completed-review.json");
+        fs::write(
+            &edited_review,
+            serde_json::to_vec_pretty(&completed_ordinary_review_value_v1(&artifact)).unwrap(),
+        )
+        .unwrap();
+        fs::write(&reviewer_alias, b"reviewer-one\n").unwrap();
+
+        let receipt = finalize_seated_duel_direct_visible_review_artifact_v1(
+            &artifact,
+            &edited_review,
+            &reviewer_alias,
+            &completed_review,
+        )
+        .unwrap();
+        assert!(receipt.completed_review_written);
+        assert!(!receipt.production_evaluation_ratified);
+        assert!(!receipt.safe_for_live_semantic_evidence);
+        assert!(!receipt.safe_for_model_scoring);
+        assert!(!receipt.safe_for_input);
+        assert!(!receipt.permits_event_entry);
+        assert!(!receipt.permits_spending);
+        assert_eq!(
+            receipt.source_artifact_commitment_sha256,
+            source_receipt.artifact_commitment_sha256
+        );
+
+        let completed: MtgoSeatedDuelDirectVisibleCompletedReviewV1 =
+            serde_json::from_slice(&fs::read(&completed_review).unwrap()).unwrap();
+        assert_eq!(
+            completed.reviewer_alias_sha256,
+            sha256_hex_v1(b"reviewer-one")
+        );
+        assert!(!String::from_utf8(fs::read(&completed_review).unwrap())
+            .unwrap()
+            .contains("reviewer-one"));
+        assert!(completed.ordinary_surface_complete);
+        assert!(!completed.combat_surface_complete);
+        assert!(completed.review_completed);
+        let checked = load_checked_untrusted_seated_duel_direct_visible_review_v1(
+            &artifact,
+            &completed_review,
+        )
+        .unwrap();
+        assert_eq!(
+            checked
+                .commitments_v1()
+                .ratification_candidate_commitment_sha256,
+            receipt.ratification_candidate_commitment_sha256
+        );
+        assert!(!checked.production_evaluation_ratified_v1());
+        assert!(!checked.safe_for_live_semantic_evidence_v1());
+        assert!(!checked.safe_for_model_scoring_v1());
+        assert!(!checked.safe_for_input_v1());
+        assert!(!checked.permits_event_entry_v1());
+        assert!(!checked.permits_spending_v1());
+        assert_eq!(
+            RATIFIED_SEATED_DUEL_DIRECT_VISIBLE_REVIEW_CANDIDATE_V1,
+            None
+        );
+        assert_eq!(fs::read_dir(&artifact).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn seated_duel_review_finalizer_rejects_incomplete_mutated_or_in_place_sources() {
+        let parent = TemporaryReviewParentV1::new("seated-duel-finalizer-reject");
+        let artifact = parent.child("artifact");
+        persist_test_seated_duel_review_artifact_v1(&artifact);
+        let edited_review = parent.child("edited-review.json");
+        let reviewer_alias = parent.child("reviewer-alias.txt");
+        let completed_review = parent.child("completed-review.json");
+        let mut review = completed_ordinary_review_value_v1(&artifact);
+        review["every_exported_fact_visible_in_rendered_ui_or_rendered_game_log"] =
+            serde_json::Value::Bool(false);
+        fs::write(&edited_review, serde_json::to_vec_pretty(&review).unwrap()).unwrap();
+        fs::write(&reviewer_alias, b"reviewer-one").unwrap();
+        assert!(finalize_seated_duel_direct_visible_review_artifact_v1(
+            &artifact,
+            &edited_review,
+            &reviewer_alias,
+            &completed_review,
+        )
+        .is_err());
+        assert!(!completed_review.exists());
+
+        fs::write(
+            &edited_review,
+            serde_json::to_vec_pretty(&completed_ordinary_review_value_v1(&artifact)).unwrap(),
+        )
+        .unwrap();
+        fs::write(&reviewer_alias, b"reviewer-one\n\n").unwrap();
+        assert!(finalize_seated_duel_direct_visible_review_artifact_v1(
+            &artifact,
+            &edited_review,
+            &reviewer_alias,
+            &completed_review,
+        )
+        .is_err());
+        assert!(!completed_review.exists());
+
+        fs::write(&reviewer_alias, b"reviewer-one").unwrap();
+        let inside_artifact = artifact.join("completed-review.json");
+        assert!(finalize_seated_duel_direct_visible_review_artifact_v1(
+            &artifact,
+            &edited_review,
+            &reviewer_alias,
+            &inside_artifact,
+        )
+        .is_err());
+        assert!(!inside_artifact.exists());
+
+        fs::write(artifact.join("unexpected.txt"), b"unexpected").unwrap();
+        assert!(finalize_seated_duel_direct_visible_review_artifact_v1(
+            &artifact,
+            &edited_review,
+            &reviewer_alias,
+            &completed_review,
+        )
+        .is_err());
+        assert!(!completed_review.exists());
+
+        fs::remove_file(artifact.join("unexpected.txt")).unwrap();
+        let inside_repository = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "never-create-completed-seated-review-{}",
+            std::process::id()
+        ));
+        assert!(!inside_repository.exists());
+        assert!(finalize_seated_duel_direct_visible_review_artifact_v1(
+            &artifact,
+            &edited_review,
+            &reviewer_alias,
+            &inside_repository,
+        )
+        .is_err());
+        assert!(!inside_repository.exists());
+
+        let mut changed_result = fs::read(artifact.join("visible-result.json")).unwrap();
+        changed_result.push(b' ');
+        fs::write(artifact.join("visible-result.json"), changed_result).unwrap();
+        assert!(finalize_seated_duel_direct_visible_review_artifact_v1(
+            &artifact,
+            &edited_review,
+            &reviewer_alias,
+            &completed_review,
+        )
+        .is_err());
+        assert!(!completed_review.exists());
+    }
+
+    #[test]
+    fn seated_duel_review_loader_rejects_completed_record_mutation() {
+        let parent = TemporaryReviewParentV1::new("seated-duel-loader-mutation");
+        let artifact = parent.child("artifact");
+        persist_test_seated_duel_review_artifact_v1(&artifact);
+        let edited_review = parent.child("edited-review.json");
+        let reviewer_alias = parent.child("reviewer-alias.txt");
+        let completed_review = parent.child("completed-review.json");
+        fs::write(
+            &edited_review,
+            serde_json::to_vec_pretty(&completed_ordinary_review_value_v1(&artifact)).unwrap(),
+        )
+        .unwrap();
+        fs::write(&reviewer_alias, b"reviewer-one").unwrap();
+        finalize_seated_duel_direct_visible_review_artifact_v1(
+            &artifact,
+            &edited_review,
+            &reviewer_alias,
+            &completed_review,
+        )
+        .unwrap();
+        let mut completed: serde_json::Value =
+            serde_json::from_slice(&fs::read(&completed_review).unwrap()).unwrap();
+        completed["safe_for_input"] = serde_json::Value::Bool(true);
+        fs::write(
+            &completed_review,
+            serde_json::to_vec_pretty(&completed).unwrap(),
+        )
+        .unwrap();
+        assert!(load_checked_untrusted_seated_duel_direct_visible_review_v1(
+            &artifact,
+            &completed_review,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn seated_duel_review_finalization_cli_requires_each_exact_path_once() {
+        let parsed = parse_seated_duel_review_finalization_arguments_v1([
+            OsString::from("--artifact"),
+            OsString::from(r"C:\artifact"),
+            OsString::from("--edited-review"),
+            OsString::from(r"C:\edited.json"),
+            OsString::from("--reviewer-alias"),
+            OsString::from(r"C:\alias.txt"),
+            OsString::from("--output"),
+            OsString::from(r"C:\completed.json"),
+        ])
+        .unwrap();
+        assert_eq!(parsed.0, PathBuf::from(r"C:\artifact"));
+        assert_eq!(parsed.3, PathBuf::from(r"C:\completed.json"));
+        assert!(
+            parse_seated_duel_review_finalization_arguments_v1(Vec::<OsString>::new()).is_err()
+        );
+        assert!(parse_seated_duel_review_finalization_arguments_v1([
+            OsString::from("--artifact"),
+            OsString::from(r"C:\artifact"),
+            OsString::from("--artifact"),
+            OsString::from(r"C:\other"),
+        ])
+        .is_err());
     }
 
     #[test]
