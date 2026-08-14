@@ -39,6 +39,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub direct_source_background_live_stable_abstention_passed: bool,
     pub direct_source_background_foreground_rebind_present: bool,
     pub direct_source_seated_duel_review_capture_harness_present: bool,
+    pub direct_source_two_local_client_target_binding_harness_present: bool,
     pub direct_source_seated_duel_review_finalizer_present: bool,
     pub direct_source_live_data_bearing_producer_attestation_present: bool,
     pub direct_source_seated_two_player_data_bearing_qualification_present: bool,
@@ -208,6 +209,7 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             direct_source_background_live_stable_abstention_passed: true,
             direct_source_background_foreground_rebind_present: true,
             direct_source_seated_duel_review_capture_harness_present: true,
+            direct_source_two_local_client_target_binding_harness_present: true,
             direct_source_seated_duel_review_finalizer_present: true,
             direct_source_live_data_bearing_producer_attestation_present: false,
             direct_source_seated_two_player_data_bearing_qualification_present: false,
@@ -450,6 +452,11 @@ mod tests {
             report
                 .known_wiring_gaps
                 .direct_source_seated_duel_review_capture_harness_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .direct_source_two_local_client_target_binding_harness_present
         );
         assert!(
             report

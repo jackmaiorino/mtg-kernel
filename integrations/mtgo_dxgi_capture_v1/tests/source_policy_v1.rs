@@ -2438,6 +2438,105 @@ fn seated_duel_review_artifact_is_role_bound_identity_free_and_non_authoritative
 }
 
 #[test]
+fn two_local_client_harness_targets_only_the_prebound_approved_client() {
+    let probe = include_str!("../src/probe.rs");
+    let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let binding_binary =
+        include_str!("../src/bin/bind_mtgo_approved_client_for_two_local_clients_v1.rs");
+    let capture_binary = include_str!(
+        "../src/bin/capture_mtgo_two_local_client_seated_duel_direct_visible_review_v1.rs"
+    );
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "two-client capture requires exactly two MTGO processes",
+        "two-client capture foreground is not the bound approved MTGO process",
+        "bound approved MTGO process is absent from the two-client topology",
+        "two-client MTGO process topology changed during capture",
+        "capture_mtgo_dxgi_frame_candidate_for_two_client_target_v1",
+        "MTGO_TWO_CLIENT_PROCESS_TOPOLOGY_DOMAIN_V1",
+    ] {
+        assert!(
+            probe.contains(required),
+            "two-client probe is missing: {required}"
+        );
+    }
+    for required in [
+        "bind_foreground_approved_mtgo_client_for_two_local_clients_v1",
+        "load_approved_mtgo_client_two_local_client_target_binding_v1",
+        "qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1",
+        "friend_client_excluded_from_capture: true",
+        "friend_client_excluded_from_observation: true",
+        "friend_client_excluded_from_scoring: true",
+        "friend_client_excluded_from_input: true",
+        "safe_for_model_scoring: false",
+        "safe_for_input: false",
+        "permits_event_entry: false",
+        "permits_spending: false",
+        "move_file_without_replace_v1",
+        "approved_target_only_friend_client_excluded_no_scoring_no_input_no_entry_no_spending",
+        "qualification_topology: qualification_topology.as_str_v1()",
+        "approved_target_binding_commitment_sha256: qualification_topology",
+        "two_client_process_topology_commitment_sha256: qualification_topology",
+        "operator_bound_two_local_clients",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "two-client runtime is missing: {required}"
+        );
+    }
+    for required in [
+        "bind_foreground_approved_mtgo_client_for_two_local_clients_v1",
+        "MTGO_APPROVED_CLIENT_TWO_LOCAL_CLIENT_BINDING_REJECTED",
+        "expected OUTPUT_BINDING_FILE",
+    ] {
+        assert!(
+            binding_binary.contains(required),
+            "binding CLI is missing: {required}"
+        );
+    }
+    for required in [
+        "load_approved_mtgo_client_two_local_client_target_binding_v1",
+        "qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1",
+        "write_two_local_client_seated_duel_direct_visible_review_artifact_v1",
+        "MTGO_TWO_LOCAL_CLIENT_SEATED_DUEL_REVIEW_REJECTED",
+    ] {
+        assert!(
+            capture_binary.contains(required),
+            "capture CLI is missing: {required}"
+        );
+    }
+    for required in [
+        "load_approved_mtgo_client_two_local_client_target_binding_v1",
+        "qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1",
+        "write_two_local_client_seated_duel_direct_visible_review_artifact_v1",
+        "OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1",
+        "OpaqueMtgoQualifiedTwoLocalClientDirectVisibleSourceObservationV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "public API is missing: {required}"
+        );
+    }
+    for binary in [binding_binary, capture_binary] {
+        for forbidden in [
+            "process_id:",
+            "account_name",
+            "participant_name",
+            "SendInput",
+            "SetCursorPos",
+            "permits_event_entry: true",
+            "permits_spending: true",
+        ] {
+            assert!(
+                !binary.contains(forbidden),
+                "two-client CLI exposes forbidden surface: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn seated_duel_review_finalizer_is_exact_checked_untrusted_and_non_authoritative() {
     let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
     let binary = include_str!("../src/bin/finalize_mtgo_seated_duel_direct_visible_review_v1.rs");

@@ -1,10 +1,13 @@
 use super::{
-    capture_admitted_mtgo_duel_visible_frame_v1, capture_mtgo_dxgi_frame_candidate_v3,
+    bind_current_foreground_mtgo_process_target_v1, capture_admitted_mtgo_duel_visible_frame_v1,
+    capture_mtgo_dxgi_frame_candidate_for_two_client_target_v1,
+    capture_mtgo_dxgi_frame_candidate_v3,
     competitive_entry_window_continuity_commitment_for_frame_v1,
     frame_id_from_capture_commitment_v1, perceive_admitted_duel_frame_v1, sha256_hex_v1,
     CaptureWindowModeV2, MtgoDuelPerceptionFrameIdentityV1, MtgoDxgiCaptureRequestV3,
     OpaqueMtgoAdmittedDuelPerceptionV1, OpaqueMtgoAdmittedDuelVisibleFrameV1,
     OpaqueMtgoDxgiFrameCandidateV3, OpaqueMtgoVerifiedDuelPerceptionRuntimeV1,
+    PinnedMtgoForegroundProcessTargetV1,
 };
 use crate::actuator::{
     halt_before_direct_visible_input_attempt_v1, release_unattempted_direct_visible_input_gate_v1,
@@ -79,6 +82,10 @@ const DIRECT_VISIBLE_SOURCE_OBSERVATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-observation-v1";
 const DIRECT_VISIBLE_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-no-stakes-qualification-v1";
+const DIRECT_VISIBLE_TWO_CLIENT_TARGET_BINDING_DOMAIN_V1: &[u8] =
+    b"mtgo-approved-main-client-target-binding-v1";
+const DIRECT_VISIBLE_TWO_CLIENT_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-two-local-client-target-qualification-v1";
 const DIRECT_VISIBLE_SPECTATOR_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-spectator-source-no-stakes-qualification-v1";
 const DIRECT_VISIBLE_BACKGROUND_STABILITY_DOMAIN_V1: &[u8] =
@@ -93,6 +100,8 @@ const DIRECT_VISIBLE_SEATED_DUEL_REVIEW_CANDIDATE_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-seated-duel-review-ratification-candidate-v1";
 const DIRECT_VISIBLE_SEATED_DUEL_COMPLETED_REVIEW_PARTIAL_PREFIX_V1: &str =
     ".mtgo-direct-visible-seated-duel-completed-review-partial-";
+const DIRECT_VISIBLE_TWO_CLIENT_TARGET_BINDING_PARTIAL_PREFIX_V1: &str =
+    ".mtgo-approved-main-client-target-binding-partial-";
 const DIRECT_VISIBLE_BACKGROUND_REVIEW_PARTIAL_PREFIX_V1: &str =
     ".mtgo-direct-visible-background-review-partial-";
 const DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1: &[u8] =
@@ -1963,10 +1972,198 @@ pub struct OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
     qualification_role: PrivateMtgoDirectVisibleQualificationRoleV1,
 }
 
+/// Non-sensitive receipt for an operator-selected local client binding. The
+/// target process identity remains inside the move-only binding file and is
+/// never exposed through this receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MtgoApprovedClientTwoLocalClientTargetBindingReceiptV1 {
+    pub schema: &'static str,
+    pub status: &'static str,
+    pub output_path: PathBuf,
+    pub target_binding_commitment_sha256: String,
+    pub target_was_only_mtgo_process: bool,
+    pub friend_client_excluded_from_capture: bool,
+    pub friend_client_excluded_from_observation: bool,
+    pub friend_client_excluded_from_scoring: bool,
+    pub friend_client_excluded_from_input: bool,
+    pub safe_for_model_scoring: bool,
+    pub safe_for_input: bool,
+    pub permits_event_entry: bool,
+    pub permits_spending: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrivateMtgoApprovedClientTwoLocalClientTargetBindingRecordV1 {
+    schema: String,
+    binding_kind: String,
+    scope: String,
+    target_process_id: u32,
+    target_process_start_filetime_100ns: u64,
+    target_executable_sha256: String,
+    target_signer_thumbprint: String,
+    target_signer_subject_sha256: String,
+    created_at_unix_millis: u128,
+    target_was_only_mtgo_process: bool,
+    friend_client_excluded_from_capture: bool,
+    friend_client_excluded_from_observation: bool,
+    friend_client_excluded_from_scoring: bool,
+    friend_client_excluded_from_input: bool,
+    safe_for_model_scoring: bool,
+    safe_for_input: bool,
+    permits_event_entry: bool,
+    permits_spending: bool,
+    binding_commitment_sha256: String,
+}
+
+/// Move-only operator binding for the approved MTGO client. This is an
+/// assertion made while that client is the sole foreground MTGO process. It
+/// does not independently prove an account name and grants no scoring, input,
+/// event-entry, or spending authority.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1;
+/// fn cannot_extract(value: OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1) {
+///     let _ = value.process_id();
+///     let _ = value.process_start_filetime_100ns();
+///     value.dispatch();
+/// }
+/// ```
+pub struct OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1 {
+    target: PinnedMtgoForegroundProcessTargetV1,
+    binding_commitment_sha256: String,
+}
+
+impl OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1 {
+    pub fn binding_commitment_sha256_v1(&self) -> &str {
+        &self.binding_commitment_sha256
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoQualifiedTwoLocalClientDirectVisibleSourceCommitmentsV1 {
+    pub approved_target_binding_commitment_sha256: String,
+    pub process_topology_commitment_sha256: String,
+    pub runtime_identity_commitment_sha256: String,
+    pub before_capture_commitment_sha256: String,
+    pub after_capture_commitment_sha256: String,
+    pub sanitized_result_sha256: String,
+    pub qualification_commitment_sha256: String,
+}
+
+/// Move-only qualification of the bound approved client with exactly one
+/// excluded local opponent client. The opponent is not observed or controlled.
+/// This remains review-only and grants no model or input authority.
+pub struct OpaqueMtgoQualifiedTwoLocalClientDirectVisibleSourceObservationV1 {
+    observation: OpaqueMtgoQualifiedDirectVisibleSourceObservationV1,
+    commitments: MtgoQualifiedTwoLocalClientDirectVisibleSourceCommitmentsV1,
+}
+
+impl OpaqueMtgoQualifiedTwoLocalClientDirectVisibleSourceObservationV1 {
+    pub fn commitments_v1(&self) -> MtgoQualifiedTwoLocalClientDirectVisibleSourceCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MtgoTwoLocalClientSeatedDuelDirectVisibleReviewArtifactReceiptV1 {
+    pub schema: &'static str,
+    pub approved_target_binding_commitment_sha256: String,
+    pub process_topology_commitment_sha256: String,
+    pub source: MtgoSeatedDuelDirectVisibleReviewArtifactReceiptV1,
+    pub friend_client_excluded_from_capture: bool,
+    pub friend_client_excluded_from_observation: bool,
+    pub friend_client_excluded_from_scoring: bool,
+    pub friend_client_excluded_from_input: bool,
+    pub safe_for_model_scoring: bool,
+    pub safe_for_input: bool,
+    pub permits_event_entry: bool,
+    pub permits_spending: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PrivateMtgoDirectVisibleQualificationRoleV1 {
     ActingPlayerDuel,
     Spectator,
+}
+
+enum PrivateMtgoSeatedDuelQualificationTopologyV1 {
+    SingleMtgoProcess,
+    OperatorBoundTwoLocalClients {
+        approved_target_binding_commitment_sha256: String,
+        process_topology_commitment_sha256: String,
+    },
+}
+
+impl PrivateMtgoSeatedDuelQualificationTopologyV1 {
+    fn as_str_v1(&self) -> &'static str {
+        match self {
+            Self::SingleMtgoProcess => "single_mtgo_process",
+            Self::OperatorBoundTwoLocalClients { .. } => "operator_bound_two_local_clients",
+        }
+    }
+
+    fn approved_target_binding_commitment_sha256_v1(&self) -> Option<&str> {
+        match self {
+            Self::SingleMtgoProcess => None,
+            Self::OperatorBoundTwoLocalClients {
+                approved_target_binding_commitment_sha256,
+                ..
+            } => Some(approved_target_binding_commitment_sha256),
+        }
+    }
+
+    fn process_topology_commitment_sha256_v1(&self) -> Option<&str> {
+        match self {
+            Self::SingleMtgoProcess => None,
+            Self::OperatorBoundTwoLocalClients {
+                process_topology_commitment_sha256,
+                ..
+            } => Some(process_topology_commitment_sha256),
+        }
+    }
+
+    fn friend_client_excluded_v1(&self) -> bool {
+        matches!(self, Self::OperatorBoundTwoLocalClients { .. })
+    }
 }
 
 impl PrivateMtgoDirectVisibleQualificationRoleV1 {
@@ -2012,6 +2209,9 @@ struct PrivateMtgoSeatedDuelDirectVisibleReviewManifestV1<'a> {
     status: &'static str,
     information_boundary: &'static str,
     qualification_role: &'static str,
+    qualification_topology: &'static str,
+    approved_target_binding_commitment_sha256: Option<&'a str>,
+    two_client_process_topology_commitment_sha256: Option<&'a str>,
     result_kind: &'a str,
     visible_result_file: &'static str,
     visible_result_byte_length: usize,
@@ -2030,6 +2230,10 @@ struct PrivateMtgoSeatedDuelDirectVisibleReviewManifestV1<'a> {
     window_titles_emitted: bool,
     match_or_game_identifiers_emitted: bool,
     raw_pixels_emitted: bool,
+    friend_client_excluded_from_capture: bool,
+    friend_client_excluded_from_observation: bool,
+    friend_client_excluded_from_scoring: bool,
+    friend_client_excluded_from_input: bool,
     review_completed: bool,
     safe_for_live_semantic_evidence: bool,
     safe_for_model_scoring: bool,
@@ -2043,6 +2247,9 @@ struct PrivateMtgoSeatedDuelDirectVisibleReviewTemplateV1<'a> {
     schema: &'static str,
     artifact_status_required: &'static str,
     qualification_role_required: &'static str,
+    qualification_topology_required: &'static str,
+    approved_target_binding_commitment_sha256: Option<&'a str>,
+    two_client_process_topology_commitment_sha256: Option<&'a str>,
     result_kind: &'a str,
     manifest_sha256: &'a str,
     visible_result_sha256: &'a str,
@@ -2069,6 +2276,9 @@ struct PrivateLoadedMtgoSeatedDuelDirectVisibleReviewManifestV1 {
     status: String,
     information_boundary: String,
     qualification_role: String,
+    qualification_topology: String,
+    approved_target_binding_commitment_sha256: Option<String>,
+    two_client_process_topology_commitment_sha256: Option<String>,
     result_kind: String,
     visible_result_file: String,
     visible_result_byte_length: usize,
@@ -2087,6 +2297,10 @@ struct PrivateLoadedMtgoSeatedDuelDirectVisibleReviewManifestV1 {
     window_titles_emitted: bool,
     match_or_game_identifiers_emitted: bool,
     raw_pixels_emitted: bool,
+    friend_client_excluded_from_capture: bool,
+    friend_client_excluded_from_observation: bool,
+    friend_client_excluded_from_scoring: bool,
+    friend_client_excluded_from_input: bool,
     review_completed: bool,
     safe_for_live_semantic_evidence: bool,
     safe_for_model_scoring: bool,
@@ -2101,6 +2315,9 @@ struct PrivateLoadedMtgoSeatedDuelDirectVisibleReviewTemplateV1 {
     schema: String,
     artifact_status_required: String,
     qualification_role_required: String,
+    qualification_topology_required: String,
+    approved_target_binding_commitment_sha256: Option<String>,
+    two_client_process_topology_commitment_sha256: Option<String>,
     result_kind: String,
     manifest_sha256: String,
     visible_result_sha256: String,
@@ -3141,6 +3358,226 @@ pub fn qualify_attested_direct_visible_source_current_duel_v1(
     })
 }
 
+/// Binds the currently foreground approved MTGO client while it is the only
+/// MTGO process. Run this before launching the friend's second local client.
+/// The binding is qualification-only and is written to a new file outside the
+/// repository.
+pub fn bind_foreground_approved_mtgo_client_for_two_local_clients_v1(
+    requested_output_path: &Path,
+) -> Result<MtgoApprovedClientTwoLocalClientTargetBindingReceiptV1, String> {
+    let request = MtgoDxgiCaptureRequestV3 {
+        expected_executable_sha256: PINNED_MTGO_EXECUTABLE_SHA256_V1.to_owned(),
+        expected_signer_thumbprint: PINNED_MTGO_SIGNER_THUMBPRINT_V1.to_owned(),
+        expected_signer_subject_sha256: PINNED_MTGO_SIGNER_SUBJECT_SHA256_V1.to_owned(),
+        window_mode: CaptureWindowModeV2::MainClient,
+        expected_game_format: None,
+        expected_title_contains: None,
+        timeout_ms: 1_500,
+    };
+    let target = bind_current_foreground_mtgo_process_target_v1(request)?;
+    let created_at_unix_millis = unix_millis_now_v1()?;
+    let mut record = PrivateMtgoApprovedClientTwoLocalClientTargetBindingRecordV1 {
+        schema: "mtgo-approved-client-two-local-client-target-binding/v1".to_owned(),
+        binding_kind:
+            "operator_selected_foreground_approved_main_client_before_second_client_launch"
+                .to_owned(),
+        scope:
+            "two_local_clients_friend_opponent_excluded_from_capture_observation_scoring_and_input"
+                .to_owned(),
+        target_process_id: target.process_id,
+        target_process_start_filetime_100ns: target.process_start_filetime_100ns,
+        target_executable_sha256: target.executable_sha256.clone(),
+        target_signer_thumbprint: target.signer_thumbprint.clone(),
+        target_signer_subject_sha256: target.signer_subject_sha256.clone(),
+        created_at_unix_millis,
+        target_was_only_mtgo_process: true,
+        friend_client_excluded_from_capture: true,
+        friend_client_excluded_from_observation: true,
+        friend_client_excluded_from_scoring: true,
+        friend_client_excluded_from_input: true,
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+        binding_commitment_sha256: String::new(),
+    };
+    record.binding_commitment_sha256 =
+        approved_client_two_local_client_target_binding_commitment_v1(&record);
+    validate_approved_client_two_local_client_target_binding_record_v1(
+        &record,
+        created_at_unix_millis,
+    )?;
+    let output_path = validate_two_local_client_target_binding_output_v1(requested_output_path)?;
+    let bytes = serde_json::to_vec_pretty(&record)
+        .map_err(|error| format!("serialize approved-client target binding: {error}"))?;
+    write_two_local_client_target_binding_atomically_v1(&output_path, &bytes)?;
+    Ok(MtgoApprovedClientTwoLocalClientTargetBindingReceiptV1 {
+        schema: "mtgo-approved-client-two-local-client-target-binding-receipt/v1",
+        status: "approved_client_bound_before_second_client_launch",
+        output_path,
+        target_binding_commitment_sha256: record.binding_commitment_sha256,
+        target_was_only_mtgo_process: true,
+        friend_client_excluded_from_capture: true,
+        friend_client_excluded_from_observation: true,
+        friend_client_excluded_from_scoring: true,
+        friend_client_excluded_from_input: true,
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    })
+}
+
+/// Loads and rechecks an exact live approved-client binding. The target client
+/// must still be the same process incarnation, but a second MTGO client may
+/// now be running.
+pub fn load_approved_mtgo_client_two_local_client_target_binding_v1(
+    binding_path: &Path,
+) -> Result<OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1, String> {
+    require_outside_repository_v1(
+        binding_path,
+        "approved-client two-local-client target binding",
+    )?;
+    let bytes = read_bounded_direct_visible_review_file_v1(
+        binding_path,
+        16 * 1024,
+        "approved-client two-local-client target binding",
+    )?;
+    let record: PrivateMtgoApprovedClientTwoLocalClientTargetBindingRecordV1 =
+        serde_json::from_slice(&bytes.0)
+            .map_err(|_| "approved-client target binding is not strict JSON".to_owned())?;
+    validate_approved_client_two_local_client_target_binding_record_v1(
+        &record,
+        unix_millis_now_v1()?,
+    )?;
+    let current = inspect_pinned_mtgo_process_incarnation_v1(record.target_process_id)?;
+    if current.process_id != record.target_process_id
+        || current.process_start_filetime_100ns != record.target_process_start_filetime_100ns
+        || current.executable_sha256 != record.target_executable_sha256
+    {
+        return Err("approved-client target process incarnation changed".to_owned());
+    }
+    Ok(OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1 {
+        target: PinnedMtgoForegroundProcessTargetV1 {
+            process_id: record.target_process_id,
+            process_start_filetime_100ns: record.target_process_start_filetime_100ns,
+            executable_sha256: record.target_executable_sha256,
+            signer_thumbprint: record.target_signer_thumbprint,
+            signer_subject_sha256: record.target_signer_subject_sha256,
+        },
+        binding_commitment_sha256: record.binding_commitment_sha256,
+    })
+}
+
+/// Qualifies the bound approved client while exactly one other authentic MTGO
+/// client is present locally. Only the bound target PID reaches the observe-only
+/// broker. The second client stays excluded from capture, parsing, scoring, and
+/// input, and the result remains manual-review-only.
+pub fn qualify_attested_direct_visible_source_current_duel_with_two_local_clients_v1(
+    expected_game_format: &str,
+    runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    target_binding: OpaqueMtgoApprovedClientTwoLocalClientTargetBindingV1,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+) -> Result<OpaqueMtgoQualifiedTwoLocalClientDirectVisibleSourceObservationV1, String> {
+    if !(100..=10_000).contains(&capture_timeout_ms) || !(100..=30_000).contains(&broker_timeout_ms)
+    {
+        return Err(
+            "two-local-client direct-source qualification timeout is outside the supported range"
+                .to_owned(),
+        );
+    }
+    verify_runtime_identity_now_v1(runtime)?;
+    let request = MtgoDxgiCaptureRequestV3 {
+        expected_executable_sha256: PINNED_MTGO_EXECUTABLE_SHA256_V1.to_owned(),
+        expected_signer_thumbprint: PINNED_MTGO_SIGNER_THUMBPRINT_V1.to_owned(),
+        expected_signer_subject_sha256: PINNED_MTGO_SIGNER_SUBJECT_SHA256_V1.to_owned(),
+        window_mode: CaptureWindowModeV2::DuelGame,
+        expected_game_format: Some(expected_game_format.to_owned()),
+        expected_title_contains: None,
+        timeout_ms: capture_timeout_ms,
+    };
+    let before = capture_mtgo_dxgi_frame_candidate_for_two_client_target_v1(
+        request.clone(),
+        &target_binding.target,
+    )?;
+    let before_commitments = before.frame.commitments_v3();
+    require_fresh_source_v1(
+        before_commitments.captured_at_unix_millis,
+        unix_millis_now_v1()?,
+    )?;
+    let invocation = invoke_observe_only_broker_v1(
+        runtime,
+        target_binding.target.process_id,
+        Duration::from_millis(u64::from(broker_timeout_ms)),
+    );
+    let after_result =
+        capture_mtgo_dxgi_frame_candidate_for_two_client_target_v1(request, &target_binding.target);
+    verify_runtime_identity_now_v1(runtime)?;
+    let after = after_result?;
+    let output = invocation?;
+    if before.process_topology_commitment_sha256 != after.process_topology_commitment_sha256 {
+        return Err("two-local-client process topology changed during qualification".to_owned());
+    }
+    validate_same_unadmitted_duel_observation_lineage_v1(&before.frame, &after.frame)?;
+    let result = parse_and_validate_visible_duel_producer_result_v1(&output.0).map_err(|_| {
+        "two-local-client broker did not return one sanitized visible result".to_owned()
+    })?;
+    let sanitized_result_sha256 = sha256_hex_v1(&output.0);
+    let after_commitments = after.frame.commitments_v3();
+    let qualification_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_TWO_CLIENT_SOURCE_QUALIFICATION_DOMAIN_V1,
+        &[
+            target_binding.binding_commitment_sha256.as_bytes(),
+            before.process_topology_commitment_sha256.as_bytes(),
+            runtime
+                .commitments
+                .runtime_identity_commitment_sha256
+                .as_bytes(),
+            before_commitments.capture_commitment_sha256.as_bytes(),
+            after_commitments.capture_commitment_sha256.as_bytes(),
+            sanitized_result_sha256.as_bytes(),
+            b"approved_target_only_friend_client_excluded_no_scoring_no_input_no_entry_no_spending",
+        ],
+    );
+    let observation = OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
+        _before_frame: before.frame,
+        _after_frame: after.frame,
+        exact_result_bytes: output,
+        result,
+        commitments: MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1 {
+            runtime_identity_commitment_sha256: runtime
+                .commitments
+                .runtime_identity_commitment_sha256
+                .clone(),
+            broker_binary_sha256: runtime.commitments.broker_binary_sha256.clone(),
+            producer_binary_sha256: runtime.commitments.producer_binary_sha256.clone(),
+            before_capture_commitment_sha256: before_commitments.capture_commitment_sha256.clone(),
+            after_capture_commitment_sha256: after_commitments.capture_commitment_sha256.clone(),
+            sanitized_result_sha256: sanitized_result_sha256.clone(),
+            qualification_commitment_sha256: qualification_commitment_sha256.clone(),
+        },
+        qualification_role: PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+    };
+    Ok(
+        OpaqueMtgoQualifiedTwoLocalClientDirectVisibleSourceObservationV1 {
+            observation,
+            commitments: MtgoQualifiedTwoLocalClientDirectVisibleSourceCommitmentsV1 {
+                approved_target_binding_commitment_sha256: target_binding.binding_commitment_sha256,
+                process_topology_commitment_sha256: before.process_topology_commitment_sha256,
+                runtime_identity_commitment_sha256: runtime
+                    .commitments
+                    .runtime_identity_commitment_sha256
+                    .clone(),
+                before_capture_commitment_sha256: before_commitments.capture_commitment_sha256,
+                after_capture_commitment_sha256: after_commitments.capture_commitment_sha256,
+                sanitized_result_sha256,
+                qualification_commitment_sha256,
+            },
+        },
+    )
+}
+
 /// Performs one in-memory, no-input qualification of the release-pinned
 /// direct observer in the currently foreground spectator duel. This route is
 /// permanently spectator qualification only. It cannot establish acting-
@@ -3439,6 +3876,7 @@ pub fn write_seated_duel_direct_visible_review_artifact_v1(
 ) -> Result<MtgoSeatedDuelDirectVisibleReviewArtifactReceiptV1, String> {
     write_seated_duel_direct_visible_review_artifact_from_parts_v1(
         observation.qualification_role,
+        &PrivateMtgoSeatedDuelQualificationTopologyV1::SingleMtgoProcess,
         &observation.exact_result_bytes.0,
         &observation.result,
         &observation.commitments,
@@ -3446,8 +3884,57 @@ pub fn write_seated_duel_direct_visible_review_artifact_v1(
     )
 }
 
+/// Persists the exact visible result from a two-local-client qualification.
+/// The ordinary artifact commitment already binds the two-client qualification
+/// commitment, while this wrapper also reports the target-binding and stable
+/// process-topology commitments. Neither client identity nor raw pixels are
+/// emitted.
+pub fn write_two_local_client_seated_duel_direct_visible_review_artifact_v1(
+    observation: OpaqueMtgoQualifiedTwoLocalClientDirectVisibleSourceObservationV1,
+    requested_output_directory: &Path,
+) -> Result<MtgoTwoLocalClientSeatedDuelDirectVisibleReviewArtifactReceiptV1, String> {
+    let approved_target_binding_commitment_sha256 = observation
+        .commitments
+        .approved_target_binding_commitment_sha256
+        .clone();
+    let process_topology_commitment_sha256 = observation
+        .commitments
+        .process_topology_commitment_sha256
+        .clone();
+    let topology = PrivateMtgoSeatedDuelQualificationTopologyV1::OperatorBoundTwoLocalClients {
+        approved_target_binding_commitment_sha256: approved_target_binding_commitment_sha256
+            .clone(),
+        process_topology_commitment_sha256: process_topology_commitment_sha256.clone(),
+    };
+    let source = write_seated_duel_direct_visible_review_artifact_from_parts_v1(
+        observation.observation.qualification_role,
+        &topology,
+        &observation.observation.exact_result_bytes.0,
+        &observation.observation.result,
+        &observation.observation.commitments,
+        requested_output_directory,
+    )?;
+    Ok(
+        MtgoTwoLocalClientSeatedDuelDirectVisibleReviewArtifactReceiptV1 {
+            schema: "mtgo-two-local-client-seated-duel-direct-visible-review-artifact-receipt/v1",
+            approved_target_binding_commitment_sha256,
+            process_topology_commitment_sha256,
+            source,
+            friend_client_excluded_from_capture: true,
+            friend_client_excluded_from_observation: true,
+            friend_client_excluded_from_scoring: true,
+            friend_client_excluded_from_input: true,
+            safe_for_model_scoring: false,
+            safe_for_input: false,
+            permits_event_entry: false,
+            permits_spending: false,
+        },
+    )
+}
+
 fn write_seated_duel_direct_visible_review_artifact_from_parts_v1(
     qualification_role: PrivateMtgoDirectVisibleQualificationRoleV1,
+    qualification_topology: &PrivateMtgoSeatedDuelQualificationTopologyV1,
     exact_result_bytes: &[u8],
     retained_result: &MtgoVisibleDuelViewModelBrokerResultV1,
     commitments: &MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1,
@@ -3470,16 +3957,41 @@ fn write_seated_duel_direct_visible_review_artifact_from_parts_v1(
     if visible_result_sha256 != commitments.sanitized_result_sha256 {
         return Err("seated duel review result hash differs from its qualification".to_owned());
     }
-
+    for digest in [
+        qualification_topology.approved_target_binding_commitment_sha256_v1(),
+        qualification_topology.process_topology_commitment_sha256_v1(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        validate_lower_sha256_direct_visible_review_v1(digest)?;
+    }
+    if let PrivateMtgoSeatedDuelQualificationTopologyV1::OperatorBoundTwoLocalClients {
+        approved_target_binding_commitment_sha256,
+        process_topology_commitment_sha256,
+    } = qualification_topology
+    {
+        if approved_target_binding_commitment_sha256 == process_topology_commitment_sha256 {
+            return Err(
+                "two-client target binding and process topology commitments must be distinct"
+                    .to_owned(),
+            );
+        }
+    }
     let output_directory =
         validate_background_direct_visible_review_output_v1(requested_output_directory)?;
     let qualification_role = qualification_role.as_str_v1();
     let manifest = PrivateMtgoSeatedDuelDirectVisibleReviewManifestV1 {
-        schema: "mtgo-direct-visible-seated-duel-review-manifest/v1",
+        schema: "mtgo-direct-visible-seated-duel-review-manifest/v2",
         artifact_kind: "attested_seated_duel_visible_review_candidate",
         status: "pending_manual_visible_equivalence_review",
         information_boundary: "rendered_mtgo_ui_or_rendered_game_log_only",
         qualification_role,
+        qualification_topology: qualification_topology.as_str_v1(),
+        approved_target_binding_commitment_sha256: qualification_topology
+            .approved_target_binding_commitment_sha256_v1(),
+        two_client_process_topology_commitment_sha256: qualification_topology
+            .process_topology_commitment_sha256_v1(),
         result_kind,
         visible_result_file: "visible-result.json",
         visible_result_byte_length: exact_result_bytes.len(),
@@ -3498,6 +4010,10 @@ fn write_seated_duel_direct_visible_review_artifact_from_parts_v1(
         window_titles_emitted: false,
         match_or_game_identifiers_emitted: false,
         raw_pixels_emitted: false,
+        friend_client_excluded_from_capture: qualification_topology.friend_client_excluded_v1(),
+        friend_client_excluded_from_observation: qualification_topology.friend_client_excluded_v1(),
+        friend_client_excluded_from_scoring: qualification_topology.friend_client_excluded_v1(),
+        friend_client_excluded_from_input: qualification_topology.friend_client_excluded_v1(),
         review_completed: false,
         safe_for_live_semantic_evidence: false,
         safe_for_model_scoring: false,
@@ -3509,9 +4025,14 @@ fn write_seated_duel_direct_visible_review_artifact_from_parts_v1(
         .map_err(|error| format!("serialize seated duel review manifest: {error}"))?;
     let manifest_sha256 = sha256_hex_v1(&manifest_bytes);
     let review_template = PrivateMtgoSeatedDuelDirectVisibleReviewTemplateV1 {
-        schema: "mtgo-direct-visible-seated-duel-review-template/v1",
+        schema: "mtgo-direct-visible-seated-duel-review-template/v2",
         artifact_status_required: "pending_manual_visible_equivalence_review",
         qualification_role_required: "acting_player_duel",
+        qualification_topology_required: qualification_topology.as_str_v1(),
+        approved_target_binding_commitment_sha256: qualification_topology
+            .approved_target_binding_commitment_sha256_v1(),
+        two_client_process_topology_commitment_sha256: qualification_topology
+            .process_topology_commitment_sha256_v1(),
         result_kind,
         manifest_sha256: &manifest_sha256,
         visible_result_sha256: &visible_result_sha256,
@@ -3550,7 +4071,7 @@ fn write_seated_duel_direct_visible_review_artifact_from_parts_v1(
         &review_template_bytes,
     )?;
     Ok(MtgoSeatedDuelDirectVisibleReviewArtifactReceiptV1 {
-        schema: "mtgo-direct-visible-seated-duel-review-artifact-receipt/v1",
+        schema: "mtgo-direct-visible-seated-duel-review-artifact-receipt/v2",
         status: "pending_manual_visible_equivalence_review",
         output_directory,
         qualification_role,
@@ -3996,7 +4517,7 @@ fn load_seated_duel_direct_visible_review_artifact_v1(
 fn validate_loaded_seated_duel_manifest_v1(
     manifest: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewManifestV1,
 ) -> Result<(), String> {
-    if manifest.schema != "mtgo-direct-visible-seated-duel-review-manifest/v1"
+    if manifest.schema != "mtgo-direct-visible-seated-duel-review-manifest/v2"
         || manifest.artifact_kind != "attested_seated_duel_visible_review_candidate"
         || manifest.status != "pending_manual_visible_equivalence_review"
         || manifest.information_boundary != "rendered_mtgo_ui_or_rendered_game_log_only"
@@ -4018,6 +4539,47 @@ fn validate_loaded_seated_duel_manifest_v1(
         &manifest.qualification_commitment_sha256,
     ] {
         validate_lower_sha256_direct_visible_review_v1(digest)?;
+    }
+    match manifest.qualification_topology.as_str() {
+        "single_mtgo_process"
+            if manifest.approved_target_binding_commitment_sha256.is_none()
+                && manifest
+                    .two_client_process_topology_commitment_sha256
+                    .is_none()
+                && !manifest.friend_client_excluded_from_capture
+                && !manifest.friend_client_excluded_from_observation
+                && !manifest.friend_client_excluded_from_scoring
+                && !manifest.friend_client_excluded_from_input => {}
+        "operator_bound_two_local_clients"
+            if manifest.approved_target_binding_commitment_sha256.is_some()
+                && manifest
+                    .two_client_process_topology_commitment_sha256
+                    .is_some()
+                && manifest.friend_client_excluded_from_capture
+                && manifest.friend_client_excluded_from_observation
+                && manifest.friend_client_excluded_from_scoring
+                && manifest.friend_client_excluded_from_input
+                && manifest.approved_target_binding_commitment_sha256
+                    != manifest.two_client_process_topology_commitment_sha256 =>
+        {
+            validate_lower_sha256_direct_visible_review_v1(
+                manifest
+                    .approved_target_binding_commitment_sha256
+                    .as_deref()
+                    .unwrap_or_default(),
+            )?;
+            validate_lower_sha256_direct_visible_review_v1(
+                manifest
+                    .two_client_process_topology_commitment_sha256
+                    .as_deref()
+                    .unwrap_or_default(),
+            )?;
+        }
+        _ => {
+            return Err(
+                "seated duel review manifest has an invalid qualification topology".to_owned(),
+            )
+        }
     }
     if manifest.broker_binary_sha256 != LIVE_BROKER_SHA256_V1
         || manifest.producer_binary_sha256 != LIVE_PRODUCER_SHA256_V1
@@ -4102,9 +4664,14 @@ fn validate_seated_duel_review_template_binding_v1(
     manifest_sha256: &str,
     review: &PrivateLoadedMtgoSeatedDuelDirectVisibleReviewTemplateV1,
 ) -> Result<(), String> {
-    if review.schema != "mtgo-direct-visible-seated-duel-review-template/v1"
+    if review.schema != "mtgo-direct-visible-seated-duel-review-template/v2"
         || review.artifact_status_required != "pending_manual_visible_equivalence_review"
         || review.qualification_role_required != "acting_player_duel"
+        || review.qualification_topology_required != manifest.qualification_topology
+        || review.approved_target_binding_commitment_sha256
+            != manifest.approved_target_binding_commitment_sha256
+        || review.two_client_process_topology_commitment_sha256
+            != manifest.two_client_process_topology_commitment_sha256
         || review.result_kind != manifest.result_kind
         || review.manifest_sha256 != manifest_sha256
         || review.visible_result_sha256 != manifest.visible_result_sha256
@@ -4291,6 +4858,196 @@ fn validate_lower_sha256_direct_visible_review_v1(value: &str) -> Result<(), Str
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
         return Err("seated duel review digest must be lowercase SHA-256".to_owned());
+    }
+    Ok(())
+}
+
+fn approved_client_two_local_client_target_binding_commitment_v1(
+    record: &PrivateMtgoApprovedClientTwoLocalClientTargetBindingRecordV1,
+) -> String {
+    commitment_v1(
+        DIRECT_VISIBLE_TWO_CLIENT_TARGET_BINDING_DOMAIN_V1,
+        &[
+            record.schema.as_bytes(),
+            record.binding_kind.as_bytes(),
+            record.scope.as_bytes(),
+            &record.target_process_id.to_be_bytes(),
+            &record.target_process_start_filetime_100ns.to_be_bytes(),
+            record.target_executable_sha256.as_bytes(),
+            record.target_signer_thumbprint.as_bytes(),
+            record.target_signer_subject_sha256.as_bytes(),
+            &record.created_at_unix_millis.to_be_bytes(),
+            b"target_was_only_mtgo_process=true",
+            b"friend_client_excluded_from_capture=true",
+            b"friend_client_excluded_from_observation=true",
+            b"friend_client_excluded_from_scoring=true",
+            b"friend_client_excluded_from_input=true",
+            b"safe_for_model_scoring=false",
+            b"safe_for_input=false",
+            b"permits_event_entry=false",
+            b"permits_spending=false",
+        ],
+    )
+}
+
+fn validate_approved_client_two_local_client_target_binding_record_v1(
+    record: &PrivateMtgoApprovedClientTwoLocalClientTargetBindingRecordV1,
+    now_unix_millis: u128,
+) -> Result<(), String> {
+    for digest in [
+        &record.target_executable_sha256,
+        &record.target_signer_subject_sha256,
+        &record.binding_commitment_sha256,
+    ] {
+        validate_lower_sha256_direct_visible_review_v1(digest)?;
+    }
+    if record.target_signer_thumbprint.len() != 40
+        || !record
+            .target_signer_thumbprint
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("approved-client target signer thumbprint is invalid".to_owned());
+    }
+    if record.schema != "mtgo-approved-client-two-local-client-target-binding/v1"
+        || record.binding_kind
+            != "operator_selected_foreground_approved_main_client_before_second_client_launch"
+        || record.scope
+            != "two_local_clients_friend_opponent_excluded_from_capture_observation_scoring_and_input"
+        || record.target_process_id == 0
+        || record.target_process_start_filetime_100ns == 0
+        || record.target_executable_sha256 != PINNED_MTGO_EXECUTABLE_SHA256_V1
+        || record.target_signer_thumbprint != PINNED_MTGO_SIGNER_THUMBPRINT_V1
+        || record.target_signer_subject_sha256 != PINNED_MTGO_SIGNER_SUBJECT_SHA256_V1
+        || record.created_at_unix_millis == 0
+        || record.created_at_unix_millis > now_unix_millis.saturating_add(60_000)
+        || !record.target_was_only_mtgo_process
+        || !record.friend_client_excluded_from_capture
+        || !record.friend_client_excluded_from_observation
+        || !record.friend_client_excluded_from_scoring
+        || !record.friend_client_excluded_from_input
+        || record.safe_for_model_scoring
+        || record.safe_for_input
+        || record.permits_event_entry
+        || record.permits_spending
+    {
+        return Err("approved-client target binding crosses its strict scope".to_owned());
+    }
+    if record.binding_commitment_sha256
+        != approved_client_two_local_client_target_binding_commitment_v1(record)
+    {
+        return Err("approved-client target binding commitment changed".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_two_local_client_target_binding_output_v1(requested: &Path) -> Result<PathBuf, String> {
+    if !requested.is_absolute() {
+        return Err("approved-client target binding output must be absolute".to_owned());
+    }
+    match fs::symlink_metadata(requested) {
+        Ok(_) => return Err("approved-client target binding output must be new".to_owned()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "inspect approved-client target binding output: {error}"
+            ))
+        }
+    }
+    let requested_parent = requested
+        .parent()
+        .ok_or("approved-client target binding output has no parent")?;
+    let parent_metadata = fs::symlink_metadata(requested_parent)
+        .map_err(|error| format!("inspect approved-client target binding parent: {error}"))?;
+    if !parent_metadata.is_dir() || parent_metadata.file_type().is_symlink() {
+        return Err(
+            "approved-client target binding parent must be a non-symlink directory".to_owned(),
+        );
+    }
+    let parent = requested_parent
+        .canonicalize()
+        .map_err(|error| format!("canonicalize approved-client target binding parent: {error}"))?;
+    let name = requested
+        .file_name()
+        .ok_or("approved-client target binding output has no file name")?;
+    if name
+        .to_string_lossy()
+        .starts_with(DIRECT_VISIBLE_TWO_CLIENT_TARGET_BINDING_PARTIAL_PREFIX_V1)
+    {
+        return Err(
+            "approved-client target binding output uses the private partial prefix".to_owned(),
+        );
+    }
+    let output = parent.join(name);
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("could not derive repository root")?
+        .canonicalize()
+        .map_err(|error| format!("canonicalize repository root: {error}"))?;
+    if output.starts_with(repository) {
+        return Err("approved-client target binding must be outside the repository".to_owned());
+    }
+    Ok(output)
+}
+
+fn write_two_local_client_target_binding_atomically_v1(
+    output: &Path,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let parent = output
+        .parent()
+        .ok_or("approved-client target binding output has no parent")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before epoch: {error}"))?
+        .as_nanos();
+    let partial = parent.join(format!(
+        "{DIRECT_VISIBLE_TWO_CLIENT_TARGET_BINDING_PARTIAL_PREFIX_V1}{}-{nonce}",
+        std::process::id()
+    ));
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&partial)
+            .map_err(|error| format!("create approved-client target binding partial: {error}"))?;
+        file.write_all(bytes)
+            .map_err(|error| format!("write approved-client target binding partial: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("sync approved-client target binding partial: {error}"))?;
+        drop(file);
+        move_file_without_replace_v1(&partial, output)
+    })();
+    if result.is_err()
+        && partial.parent() == Some(parent)
+        && partial
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| {
+                value.starts_with(DIRECT_VISIBLE_TWO_CLIENT_TARGET_BINDING_PARTIAL_PREFIX_V1)
+            })
+    {
+        let _ = fs::remove_file(&partial);
+    }
+    result
+}
+
+fn move_file_without_replace_v1(source: &Path, destination: &Path) -> Result<(), String> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileW(existing_file_name: *const u16, new_file_name: *const u16) -> i32;
+    }
+    let mut source_wide = source.as_os_str().encode_wide().collect::<Vec<_>>();
+    let mut destination_wide = destination.as_os_str().encode_wide().collect::<Vec<_>>();
+    source_wide.push(0);
+    destination_wide.push(0);
+    let moved = unsafe { MoveFileW(source_wide.as_ptr(), destination_wide.as_ptr()) };
+    if moved == 0 {
+        return Err(format!(
+            "commit new approved-client target binding: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     Ok(())
 }
@@ -5397,6 +6154,93 @@ mod tests {
         }
     }
 
+    fn approved_client_binding_record_v1(
+    ) -> PrivateMtgoApprovedClientTwoLocalClientTargetBindingRecordV1 {
+        let mut record = PrivateMtgoApprovedClientTwoLocalClientTargetBindingRecordV1 {
+            schema: "mtgo-approved-client-two-local-client-target-binding/v1".to_owned(),
+            binding_kind:
+                "operator_selected_foreground_approved_main_client_before_second_client_launch"
+                    .to_owned(),
+            scope:
+                "two_local_clients_friend_opponent_excluded_from_capture_observation_scoring_and_input"
+                    .to_owned(),
+            target_process_id: 123,
+            target_process_start_filetime_100ns: 456,
+            target_executable_sha256: PINNED_MTGO_EXECUTABLE_SHA256_V1.to_owned(),
+            target_signer_thumbprint: PINNED_MTGO_SIGNER_THUMBPRINT_V1.to_owned(),
+            target_signer_subject_sha256: PINNED_MTGO_SIGNER_SUBJECT_SHA256_V1.to_owned(),
+            created_at_unix_millis: 1_000,
+            target_was_only_mtgo_process: true,
+            friend_client_excluded_from_capture: true,
+            friend_client_excluded_from_observation: true,
+            friend_client_excluded_from_scoring: true,
+            friend_client_excluded_from_input: true,
+            safe_for_model_scoring: false,
+            safe_for_input: false,
+            permits_event_entry: false,
+            permits_spending: false,
+            binding_commitment_sha256: String::new(),
+        };
+        record.binding_commitment_sha256 =
+            approved_client_two_local_client_target_binding_commitment_v1(&record);
+        record
+    }
+
+    #[test]
+    fn approved_client_binding_record_is_exact_move_only_and_non_authoritative() {
+        let record = approved_client_binding_record_v1();
+        validate_approved_client_two_local_client_target_binding_record_v1(&record, 1_000).unwrap();
+
+        let mut pid_drift = approved_client_binding_record_v1();
+        pid_drift.target_process_id += 1;
+        assert!(
+            validate_approved_client_two_local_client_target_binding_record_v1(&pid_drift, 1_000)
+                .is_err()
+        );
+
+        let mut broadened = approved_client_binding_record_v1();
+        broadened.friend_client_excluded_from_capture = false;
+        broadened.binding_commitment_sha256 =
+            approved_client_two_local_client_target_binding_commitment_v1(&broadened);
+        assert!(
+            validate_approved_client_two_local_client_target_binding_record_v1(&broadened, 1_000)
+                .is_err()
+        );
+
+        let mut authority = approved_client_binding_record_v1();
+        authority.safe_for_input = true;
+        authority.binding_commitment_sha256 =
+            approved_client_two_local_client_target_binding_commitment_v1(&authority);
+        assert!(
+            validate_approved_client_two_local_client_target_binding_record_v1(&authority, 1_000)
+                .is_err()
+        );
+
+        let mut value = serde_json::to_value(&record).unwrap();
+        value["unexpected"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<
+            PrivateMtgoApprovedClientTwoLocalClientTargetBindingRecordV1,
+        >(value)
+        .is_err());
+    }
+
+    #[test]
+    fn approved_client_binding_output_is_atomic_new_and_outside_repository() {
+        let parent = TemporaryReviewParentV1::new("approved-client-binding-output");
+        let output = parent.child("approved-client-binding.json");
+        let resolved = validate_two_local_client_target_binding_output_v1(&output).unwrap();
+        write_two_local_client_target_binding_atomically_v1(&resolved, b"binding").unwrap();
+        assert_eq!(fs::read(&resolved).unwrap(), b"binding");
+        assert!(validate_two_local_client_target_binding_output_v1(&output).is_err());
+        assert!(
+            write_two_local_client_target_binding_atomically_v1(&resolved, b"overwrite").is_err()
+        );
+        assert_eq!(fs::read(&resolved).unwrap(), b"binding");
+
+        let inside_repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("binding.json");
+        assert!(validate_two_local_client_target_binding_output_v1(&inside_repository).is_err());
+    }
+
     fn visible_decision_v1(
         action: mtgo_blackbox_v1::MtgoPlayerVisibleDuelActionV1,
     ) -> mtgo_blackbox_v1::MtgoPlayerVisibleDuelDecisionInputV1 {
@@ -5496,6 +6340,7 @@ mod tests {
         let (bytes, result, commitments) = seated_duel_review_parts_v1();
         write_seated_duel_direct_visible_review_artifact_from_parts_v1(
             PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+            &PrivateMtgoSeatedDuelQualificationTopologyV1::SingleMtgoProcess,
             &bytes,
             &result,
             &commitments,
@@ -5529,6 +6374,7 @@ mod tests {
         let (bytes, result, commitments) = seated_duel_review_parts_v1();
         let receipt = write_seated_duel_direct_visible_review_artifact_from_parts_v1(
             PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+            &PrivateMtgoSeatedDuelQualificationTopologyV1::SingleMtgoProcess,
             &bytes,
             &result,
             &commitments,
@@ -5554,6 +6400,9 @@ mod tests {
         assert_eq!(sha256_hex_v1(&manifest_bytes), receipt.manifest_sha256);
         let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
         assert_eq!(manifest["qualification_role"], "acting_player_duel");
+        assert_eq!(manifest["qualification_topology"], "single_mtgo_process");
+        assert!(manifest["approved_target_binding_commitment_sha256"].is_null());
+        assert!(manifest["two_client_process_topology_commitment_sha256"].is_null());
         for field in [
             "participant_identifiers_emitted",
             "account_identifiers_emitted",
@@ -5562,6 +6411,10 @@ mod tests {
             "window_titles_emitted",
             "match_or_game_identifiers_emitted",
             "raw_pixels_emitted",
+            "friend_client_excluded_from_capture",
+            "friend_client_excluded_from_observation",
+            "friend_client_excluded_from_scoring",
+            "friend_client_excluded_from_input",
             "review_completed",
             "safe_for_live_semantic_evidence",
             "safe_for_model_scoring",
@@ -5601,6 +6454,50 @@ mod tests {
     }
 
     #[test]
+    fn two_client_seated_duel_artifact_binds_target_topology_and_exclusion() {
+        let parent = TemporaryReviewParentV1::new("two-client-seated-duel-artifact");
+        let output = parent.child("artifact");
+        let (bytes, result, commitments) = seated_duel_review_parts_v1();
+        let target_binding = "1".repeat(64);
+        let process_topology = "2".repeat(64);
+        write_seated_duel_direct_visible_review_artifact_from_parts_v1(
+            PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+            &PrivateMtgoSeatedDuelQualificationTopologyV1::OperatorBoundTwoLocalClients {
+                approved_target_binding_commitment_sha256: target_binding.clone(),
+                process_topology_commitment_sha256: process_topology.clone(),
+            },
+            &bytes,
+            &result,
+            &commitments,
+            &output,
+        )
+        .unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(output.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest["qualification_topology"],
+            "operator_bound_two_local_clients"
+        );
+        assert_eq!(
+            manifest["approved_target_binding_commitment_sha256"],
+            target_binding
+        );
+        assert_eq!(
+            manifest["two_client_process_topology_commitment_sha256"],
+            process_topology
+        );
+        for field in [
+            "friend_client_excluded_from_capture",
+            "friend_client_excluded_from_observation",
+            "friend_client_excluded_from_scoring",
+            "friend_client_excluded_from_input",
+        ] {
+            assert_eq!(manifest[field], true, "manifest field {field}");
+        }
+        load_seated_duel_direct_visible_review_artifact_v1(&output).unwrap();
+    }
+
+    #[test]
     fn seated_duel_review_rejects_spectator_abstention_and_hash_drift_without_writes() {
         let parent = TemporaryReviewParentV1::new("seated-duel-rejections");
         let (bytes, result, commitments) = seated_duel_review_parts_v1();
@@ -5609,6 +6506,7 @@ mod tests {
         assert!(
             write_seated_duel_direct_visible_review_artifact_from_parts_v1(
                 PrivateMtgoDirectVisibleQualificationRoleV1::Spectator,
+                &PrivateMtgoSeatedDuelQualificationTopologyV1::SingleMtgoProcess,
                 &bytes,
                 &result,
                 &commitments,
@@ -5628,6 +6526,7 @@ mod tests {
         assert!(
             write_seated_duel_direct_visible_review_artifact_from_parts_v1(
                 PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+                &PrivateMtgoSeatedDuelQualificationTopologyV1::SingleMtgoProcess,
                 &abstention_bytes,
                 &abstention,
                 &abstention_commitments,
@@ -5643,6 +6542,7 @@ mod tests {
         assert!(
             write_seated_duel_direct_visible_review_artifact_from_parts_v1(
                 PrivateMtgoDirectVisibleQualificationRoleV1::ActingPlayerDuel,
+                &PrivateMtgoSeatedDuelQualificationTopologyV1::SingleMtgoProcess,
                 &bytes,
                 &result,
                 &drifted_commitments,

@@ -146,6 +146,8 @@ const PREGAME_KEEP_FIRST_MAIN_CONFIRMATION_DOMAIN_V3: &[u8] =
     b"mtgo-pregame-keep-first-main-confirmation-v3";
 const PREGAME_KEEP_BOTTOM_SIX_CONFIRMATION_DOMAIN_V3: &[u8] =
     b"mtgo-pregame-keep-bottom-six-confirmation-v3";
+const MTGO_TWO_CLIENT_PROCESS_TOPOLOGY_DOMAIN_V1: &[u8] =
+    b"mtgo-approved-target-two-client-process-topology-v1";
 const PREGAME_CONTROL_PROFILE_ID_V3: &str =
     "freeform-solitaire-pregame-controls-1550x925-20260810-v3";
 const PREGAME_MULLIGAN_LADDER_PROFILE_COMMITMENT_V3: &str =
@@ -168,6 +170,37 @@ pub struct MtgoDxgiCaptureRequestV3 {
     pub expected_game_format: Option<String>,
     pub expected_title_contains: Option<String>,
     pub timeout_ms: u32,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct PinnedMtgoForegroundProcessTargetV1 {
+    pub(crate) process_id: u32,
+    pub(crate) process_start_filetime_100ns: u64,
+    pub(crate) executable_sha256: String,
+    pub(crate) signer_thumbprint: String,
+    pub(crate) signer_subject_sha256: String,
+}
+
+pub(crate) struct OpaqueMtgoTwoClientTargetFrameCandidateV1 {
+    pub(crate) frame: OpaqueMtgoDxgiFrameCandidateV3,
+    pub(crate) process_topology_commitment_sha256: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PrivateMtgoProcessTopologyEntryV1 {
+    process_id: u32,
+    process_start_filetime_100ns: u64,
+    executable_sha256: String,
+    signer_thumbprint: String,
+    signer_subject_sha256: String,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PrivateMtgoTwoClientProcessTopologyV1 {
+    ordered_processes: Vec<PrivateMtgoProcessTopologyEntryV1>,
+    target_process_id: u32,
+    target_process_start_filetime_100ns: u64,
+    commitment_sha256: String,
 }
 
 /// Copyable telemetry only. Possessing this value does not prove capture.
@@ -2930,20 +2963,95 @@ pub fn run_cli_v3() -> Result<PathBuf, String> {
 pub fn capture_mtgo_dxgi_frame_candidate_v3(
     request: MtgoDxgiCaptureRequestV3,
 ) -> Result<OpaqueMtgoDxgiFrameCandidateV3, String> {
+    let (frame, topology) = capture_mtgo_dxgi_frame_candidate_with_target_v1(request, None)?;
+    if topology.is_some() {
+        return Err("single-client capture unexpectedly retained a process topology".to_owned());
+    }
+    Ok(frame)
+}
+
+pub(crate) fn bind_current_foreground_mtgo_process_target_v1(
+    request: MtgoDxgiCaptureRequestV3,
+) -> Result<PinnedMtgoForegroundProcessTargetV1, String> {
     validate_capture_request_v3(&request)?;
     let _dpi_guard = enter_per_monitor_v2()?;
-
     let hwnd = unsafe { GetForegroundWindow() };
     if hwnd.0.is_null() {
         return Err("foreground window is null".to_owned());
     }
     let pre = snapshot_window(hwnd, &request)?;
-    require_admitted_window(&pre)?;
+    require_admitted_window(&pre, None)?;
+    unsafe { DwmFlush().map_err(|error| format!("DwmFlush before target binding: {error}"))? };
+    let post = snapshot_window(hwnd, &request)?;
+    require_admitted_window(&post, None)?;
+    if pre != post {
+        return Err("MTGO target changed while its process incarnation was bound".to_owned());
+    }
+    Ok(PinnedMtgoForegroundProcessTargetV1 {
+        process_id: pre.process_id,
+        process_start_filetime_100ns: pre.process_start_filetime_100ns,
+        executable_sha256: pre.executable_sha256,
+        signer_thumbprint: pre.signer_thumbprint,
+        signer_subject_sha256: pre.signer_subject_sha256,
+    })
+}
+
+pub(crate) fn capture_mtgo_dxgi_frame_candidate_for_two_client_target_v1(
+    request: MtgoDxgiCaptureRequestV3,
+    target: &PinnedMtgoForegroundProcessTargetV1,
+) -> Result<OpaqueMtgoTwoClientTargetFrameCandidateV1, String> {
+    let (frame, topology) =
+        capture_mtgo_dxgi_frame_candidate_with_target_v1(request, Some(target))?;
+    Ok(OpaqueMtgoTwoClientTargetFrameCandidateV1 {
+        frame,
+        process_topology_commitment_sha256: topology
+            .ok_or("two-client capture lost its process topology commitment")?,
+    })
+}
+
+fn capture_mtgo_dxgi_frame_candidate_with_target_v1(
+    request: MtgoDxgiCaptureRequestV3,
+    target: Option<&PinnedMtgoForegroundProcessTargetV1>,
+) -> Result<(OpaqueMtgoDxgiFrameCandidateV3, Option<String>), String> {
+    validate_capture_request_v3(&request)?;
+    validate_pinned_capture_target_v1(&request, target)?;
+    let _dpi_guard = enter_per_monitor_v2()?;
+
+    let topology_before = target
+        .map(|target| snapshot_exact_two_mtgo_process_topology_v1(&request, target))
+        .transpose()?;
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.0.is_null() {
+        return Err("foreground window is null".to_owned());
+    }
+    let pre = snapshot_window(hwnd, &request)?;
+    require_admitted_window(&pre, target)?;
+    require_same_two_client_topology_v1(
+        topology_before.as_ref(),
+        target
+            .map(|target| snapshot_exact_two_mtgo_process_topology_v1(&request, target))
+            .transpose()?
+            .as_ref(),
+    )?;
 
     unsafe { DwmFlush().map_err(|error| format!("DwmFlush before capture: {error}"))? };
     let captured = capture_dxgi_frame(pre.client_rect_desktop_px, request.timeout_ms)?;
+    require_same_two_client_topology_v1(
+        topology_before.as_ref(),
+        target
+            .map(|target| snapshot_exact_two_mtgo_process_topology_v1(&request, target))
+            .transpose()?
+            .as_ref(),
+    )?;
     let post = snapshot_window(hwnd, &request)?;
-    require_admitted_window(&post)?;
+    require_admitted_window(&post, target)?;
+    require_same_two_client_topology_v1(
+        topology_before.as_ref(),
+        target
+            .map(|target| snapshot_exact_two_mtgo_process_topology_v1(&request, target))
+            .transpose()?
+            .as_ref(),
+    )?;
     if pre != post {
         return Err(
             "window, process, focus, geometry, cursor, or z-order changed during capture"
@@ -2990,12 +3098,15 @@ pub fn capture_mtgo_dxgi_frame_candidate_v3(
     };
     let capture_commitment_sha256 =
         capture_commitment_v3(&manifest, &captured.pixels, &captured.preview_png)?;
-    Ok(OpaqueMtgoDxgiFrameCandidateV3 {
-        capture_commitment_sha256,
-        canonical_bgra8: captured.pixels,
-        preview_png: captured.preview_png,
-        manifest,
-    })
+    Ok((
+        OpaqueMtgoDxgiFrameCandidateV3 {
+            capture_commitment_sha256,
+            canonical_bgra8: captured.pixels,
+            preview_png: captured.preview_png,
+            manifest,
+        },
+        topology_before.map(|topology| topology.commitment_sha256),
+    ))
 }
 
 /// Loads one already persisted DXGI capture into the same opaque in-process
@@ -3129,6 +3240,28 @@ fn validate_capture_request_v3(request: &MtgoDxgiCaptureRequestV3) -> ProbeResul
     }
 }
 
+fn validate_pinned_capture_target_v1(
+    request: &MtgoDxgiCaptureRequestV3,
+    target: Option<&PinnedMtgoForegroundProcessTargetV1>,
+) -> ProbeResult<()> {
+    let Some(target) = target else {
+        return Ok(());
+    };
+    if request.window_mode != CaptureWindowModeV2::DuelGame {
+        return Err("two-client target capture is restricted to an acting-player duel".to_owned());
+    }
+    if target.process_id == 0 || target.process_start_filetime_100ns == 0 {
+        return Err("two-client target has no process incarnation".to_owned());
+    }
+    if target.executable_sha256 != request.expected_executable_sha256
+        || target.signer_thumbprint != request.expected_signer_thumbprint
+        || target.signer_subject_sha256 != request.expected_signer_subject_sha256
+    {
+        return Err("two-client target identity differs from the capture request".to_owned());
+    }
+    Ok(())
+}
+
 fn enter_per_monitor_v2() -> ProbeResult<DpiContextGuardV1> {
     unsafe {
         let previous = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -3249,14 +3382,16 @@ fn snapshot_window(
     }
 }
 
-fn require_admitted_window(snapshot: &WindowSnapshotV1) -> ProbeResult<()> {
+fn require_admitted_window(
+    snapshot: &WindowSnapshotV1,
+    target: Option<&PinnedMtgoForegroundProcessTargetV1>,
+) -> ProbeResult<()> {
     if !snapshot.foreground
         || !snapshot.visible
         || snapshot.minimized
         || snapshot.cloaked
         || snapshot.hung
         || !snapshot.authenticode_valid
-        || snapshot.mtgo_process_count != 1
         || snapshot.display_affinity != WDA_NONE.0
         || !snapshot.desktop_composition_enabled
         || snapshot.dpi == 0
@@ -3265,6 +3400,24 @@ fn require_admitted_window(snapshot: &WindowSnapshotV1) -> ProbeResult<()> {
         || snapshot.occluding_windows_above != 0
     {
         return Err("window admission checks did not all pass".to_owned());
+    }
+    match target {
+        None if snapshot.mtgo_process_count != 1 => {
+            return Err("single-client capture requires exactly one MTGO process".to_owned())
+        }
+        Some(target)
+            if snapshot.mtgo_process_count != 2
+                || snapshot.process_id != target.process_id
+                || snapshot.process_start_filetime_100ns != target.process_start_filetime_100ns
+                || snapshot.executable_sha256 != target.executable_sha256
+                || snapshot.signer_thumbprint != target.signer_thumbprint
+                || snapshot.signer_subject_sha256 != target.signer_subject_sha256 =>
+        {
+            return Err(
+                "two-client capture foreground is not the bound approved MTGO process".to_owned(),
+            )
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -3679,6 +3832,14 @@ fn query_process_image(handle: windows::Win32::Foundation::HANDLE) -> ProbeResul
 }
 
 fn count_mtgo_processes(target_process_id: u32) -> ProbeResult<u32> {
+    let process_ids = mtgo_process_ids_v1()?;
+    if !process_ids.contains(&target_process_id) {
+        return Err("foreground MTGO process was absent from the process snapshot".to_owned());
+    }
+    u32::try_from(process_ids.len()).map_err(|_| "MTGO process count overflow".to_owned())
+}
+
+fn mtgo_process_ids_v1() -> ProbeResult<Vec<u32>> {
     let snapshot = ProcessHandleV1(
         unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
             .map_err(|error| format!("CreateToolhelp32Snapshot: {error}"))?,
@@ -3689,12 +3850,13 @@ fn count_mtgo_processes(target_process_id: u32) -> ProbeResult<u32> {
     };
     unsafe { Process32FirstW(snapshot.0, &mut entry) }
         .map_err(|error| format!("Process32FirstW: {error}"))?;
-    let mut count = 0u32;
-    let mut target_found = false;
+    let mut process_ids = Vec::new();
     loop {
         if utf16_nul(&entry.szExeFile).eq_ignore_ascii_case("MTGO.exe") {
-            count = count.checked_add(1).ok_or("MTGO process count overflow")?;
-            target_found |= entry.th32ProcessID == target_process_id;
+            if entry.th32ProcessID == 0 {
+                return Err("MTGO process snapshot contains process ID zero".to_owned());
+            }
+            process_ids.push(entry.th32ProcessID);
         }
         match unsafe { Process32NextW(snapshot.0, &mut entry) } {
             Ok(()) => {}
@@ -3702,10 +3864,116 @@ fn count_mtgo_processes(target_process_id: u32) -> ProbeResult<u32> {
             Err(error) => return Err(format!("Process32NextW: {error}")),
         }
     }
-    if !target_found {
-        return Err("foreground MTGO process was absent from the process snapshot".to_owned());
+    process_ids.sort_unstable();
+    if process_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err("MTGO process snapshot contains a duplicate process ID".to_owned());
     }
-    Ok(count)
+    Ok(process_ids)
+}
+
+fn snapshot_exact_two_mtgo_process_topology_v1(
+    request: &MtgoDxgiCaptureRequestV3,
+    target: &PinnedMtgoForegroundProcessTargetV1,
+) -> ProbeResult<PrivateMtgoTwoClientProcessTopologyV1> {
+    let process_ids = mtgo_process_ids_v1()?;
+    if process_ids.len() != 2 {
+        return Err("two-client capture requires exactly two MTGO processes".to_owned());
+    }
+    let mut ordered_processes = Vec::with_capacity(2);
+    for process_id in process_ids {
+        let handle = ProcessHandleV1(
+            unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
+                .map_err(|error| format!("open MTGO process topology member: {error}"))?,
+        );
+        let process_image = query_process_image(handle.0)?;
+        if !Path::new(&process_image)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("MTGO.exe"))
+        {
+            return Err("two-client topology member image is not MTGO.exe".to_owned());
+        }
+        let executable_sha256 = sha256_file(Path::new(&process_image))?;
+        if executable_sha256 != request.expected_executable_sha256 {
+            return Err("two-client topology contains a different MTGO executable".to_owned());
+        }
+        let signer = verify_authenticode(Path::new(&process_image))?;
+        if signer.thumbprint != request.expected_signer_thumbprint
+            || signer.subject_sha256 != request.expected_signer_subject_sha256
+        {
+            return Err("two-client topology contains an unpinned MTGO signer".to_owned());
+        }
+        let process_start_filetime_100ns = process_start_filetime(handle.0)?;
+        if process_start_filetime_100ns == 0 {
+            return Err("two-client topology contains a zero process start identity".to_owned());
+        }
+        ordered_processes.push(PrivateMtgoProcessTopologyEntryV1 {
+            process_id,
+            process_start_filetime_100ns,
+            executable_sha256,
+            signer_thumbprint: signer.thumbprint,
+            signer_subject_sha256: signer.subject_sha256,
+        });
+    }
+    ordered_processes.sort_by_key(|entry| (entry.process_id, entry.process_start_filetime_100ns));
+    if !ordered_processes.iter().any(|entry| {
+        entry.process_id == target.process_id
+            && entry.process_start_filetime_100ns == target.process_start_filetime_100ns
+            && entry.executable_sha256 == target.executable_sha256
+            && entry.signer_thumbprint == target.signer_thumbprint
+            && entry.signer_subject_sha256 == target.signer_subject_sha256
+    }) {
+        return Err(
+            "bound approved MTGO process is absent from the two-client topology".to_owned(),
+        );
+    }
+    let commitment_sha256 = mtgo_two_client_process_topology_commitment_v1(
+        &ordered_processes,
+        target.process_id,
+        target.process_start_filetime_100ns,
+    );
+    Ok(PrivateMtgoTwoClientProcessTopologyV1 {
+        ordered_processes,
+        target_process_id: target.process_id,
+        target_process_start_filetime_100ns: target.process_start_filetime_100ns,
+        commitment_sha256,
+    })
+}
+
+fn mtgo_two_client_process_topology_commitment_v1(
+    ordered_processes: &[PrivateMtgoProcessTopologyEntryV1],
+    target_process_id: u32,
+    target_process_start_filetime_100ns: u64,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update((MTGO_TWO_CLIENT_PROCESS_TOPOLOGY_DOMAIN_V1.len() as u64).to_be_bytes());
+    hasher.update(MTGO_TWO_CLIENT_PROCESS_TOPOLOGY_DOMAIN_V1);
+    hasher.update(target_process_id.to_be_bytes());
+    hasher.update(target_process_start_filetime_100ns.to_be_bytes());
+    hasher.update((ordered_processes.len() as u64).to_be_bytes());
+    for entry in ordered_processes {
+        hasher.update(entry.process_id.to_be_bytes());
+        hasher.update(entry.process_start_filetime_100ns.to_be_bytes());
+        for value in [
+            entry.executable_sha256.as_bytes(),
+            entry.signer_thumbprint.as_bytes(),
+            entry.signer_subject_sha256.as_bytes(),
+        ] {
+            hasher.update((value.len() as u64).to_be_bytes());
+            hasher.update(value);
+        }
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn require_same_two_client_topology_v1(
+    expected: Option<&PrivateMtgoTwoClientProcessTopologyV1>,
+    current: Option<&PrivateMtgoTwoClientProcessTopologyV1>,
+) -> ProbeResult<()> {
+    if expected != current {
+        return Err("two-client MTGO process topology changed during capture".to_owned());
+    }
+    Ok(())
 }
 
 fn process_start_filetime(handle: windows::Win32::Foundation::HANDLE) -> ProbeResult<u64> {
@@ -4114,6 +4382,79 @@ fn utf16_nul(value: &[u16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn two_client_topology_entry_v1(
+        process_id: u32,
+        process_start_filetime_100ns: u64,
+    ) -> PrivateMtgoProcessTopologyEntryV1 {
+        PrivateMtgoProcessTopologyEntryV1 {
+            process_id,
+            process_start_filetime_100ns,
+            executable_sha256: "a".repeat(64),
+            signer_thumbprint: "b".repeat(40),
+            signer_subject_sha256: "c".repeat(64),
+        }
+    }
+
+    #[test]
+    fn two_client_topology_commitment_binds_target_and_both_process_incarnations() {
+        let mut processes = vec![
+            two_client_topology_entry_v1(20, 200),
+            two_client_topology_entry_v1(10, 100),
+        ];
+        processes.sort_by_key(|entry| (entry.process_id, entry.process_start_filetime_100ns));
+        let baseline = mtgo_two_client_process_topology_commitment_v1(&processes, 10, 100);
+        assert_eq!(
+            baseline,
+            mtgo_two_client_process_topology_commitment_v1(&processes, 10, 100)
+        );
+        assert_ne!(
+            baseline,
+            mtgo_two_client_process_topology_commitment_v1(&processes, 20, 200)
+        );
+        let mut restarted_target = processes.clone();
+        restarted_target[0].process_start_filetime_100ns += 1;
+        assert_ne!(
+            baseline,
+            mtgo_two_client_process_topology_commitment_v1(&restarted_target, 10, 101)
+        );
+        let mut restarted_friend = processes.clone();
+        restarted_friend[1].process_start_filetime_100ns += 1;
+        assert_ne!(
+            baseline,
+            mtgo_two_client_process_topology_commitment_v1(&restarted_friend, 10, 100)
+        );
+    }
+
+    #[test]
+    fn two_client_capture_target_is_duel_only_and_exactly_pinned() {
+        let mut request = MtgoDxgiCaptureRequestV3 {
+            expected_executable_sha256: "a".repeat(64),
+            expected_signer_thumbprint: "b".repeat(40),
+            expected_signer_subject_sha256: "c".repeat(64),
+            window_mode: CaptureWindowModeV2::DuelGame,
+            expected_game_format: Some("Freeform".to_owned()),
+            expected_title_contains: None,
+            timeout_ms: 1_000,
+        };
+        let target = PinnedMtgoForegroundProcessTargetV1 {
+            process_id: 10,
+            process_start_filetime_100ns: 100,
+            executable_sha256: request.expected_executable_sha256.clone(),
+            signer_thumbprint: request.expected_signer_thumbprint.clone(),
+            signer_subject_sha256: request.expected_signer_subject_sha256.clone(),
+        };
+        assert!(validate_pinned_capture_target_v1(&request, Some(&target)).is_ok());
+        request.window_mode = CaptureWindowModeV2::MainClient;
+        assert!(validate_pinned_capture_target_v1(&request, Some(&target)).is_err());
+        request.window_mode = CaptureWindowModeV2::DuelGame;
+        let mut restarted = target.clone();
+        restarted.process_start_filetime_100ns = 0;
+        assert!(validate_pinned_capture_target_v1(&request, Some(&restarted)).is_err());
+        let mut wrong_binary = target;
+        wrong_binary.executable_sha256 = "d".repeat(64);
+        assert!(validate_pinned_capture_target_v1(&request, Some(&wrong_binary)).is_err());
+    }
     use mtgo_blackbox_v1::{MtgoNativeCheckpointIdentityV1, MTGO_EXTERNAL_MODEL_SCORING_SCHEMA_V1};
     use serde_json::json;
 

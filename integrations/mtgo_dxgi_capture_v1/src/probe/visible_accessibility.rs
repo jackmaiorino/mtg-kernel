@@ -572,7 +572,7 @@ pub fn probe_mtgo_visible_accessibility_exact_text_v1(
         return Err("visible accessibility probe found no foreground window".to_owned());
     }
     let pre = snapshot_window(hwnd, &window_request)?;
-    require_admitted_window(&pre)?;
+    require_admitted_window(&pre, None)?;
 
     let _com = ComApartmentGuardV1::initialize_v1()?;
     let automation: IUIAutomation = unsafe {
@@ -711,7 +711,7 @@ pub fn probe_mtgo_visible_accessibility_exact_text_v1(
     }
 
     let post = snapshot_window(hwnd, &window_request)?;
-    require_admitted_window(&post)?;
+    require_admitted_window(&post, None)?;
     if pre != post {
         return Err(
             "MTGO window, process, visibility, cursor, geometry, or z-order changed during accessibility probe"
