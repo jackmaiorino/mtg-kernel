@@ -36,4 +36,4 @@ Adapter consequence:
 - `compatible_deck_selected`: visible selected deck, missing-deck prompt absent, and Open Entry Review still unavailable.
 - `open_entry_review_available`: visible selected deck and visible enabled Open Entry Review control, with the missing-deck prompt absent.
 
-The contract is coordinate-private after validation and grants no input, entry, or spending authority. Production still needs a reviewed classifier corpus for all three states and a separately authorized exact-deck selection actuator with a visible postcondition before the entry-option and Open Entry Review stages can be calibrated.
+The contract is coordinate-private after validation and grants no input, entry, or spending authority. An `open_entry_review_available` value can now be consumed directly into the existing selected-listing evaluation chain; neither earlier state can take that path. Production still needs a reviewed classifier corpus for all three states and a separately authorized exact-deck selection actuator with a visible postcondition before the entry-option and Open Entry Review stages can be calibrated.

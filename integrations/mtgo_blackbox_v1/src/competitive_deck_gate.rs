@@ -1,8 +1,11 @@
 use crate::{
     competitive_event_listing_target_commitment_v1,
+    validate_visible_competitive_event_listing_selection_v1,
+    CheckedUntrustedMtgoCompetitiveEventListingSelectionV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoCompetitiveEventKindV1,
     MtgoCompetitiveEventListingTargetV1, MtgoCompetitiveLifecyclePhaseV1, MtgoContractErrorV1,
-    MtgoRectPxV1, ValidatedMtgoCompetitiveDeckManifestV1,
+    MtgoRectPxV1, MtgoVisibleCompetitiveEventListingSelectionV1,
+    ValidatedMtgoCompetitiveDeckManifestV1, MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -61,9 +64,9 @@ pub struct MtgoVisibleCompetitiveDeckGateV1 {
 /// gate. It deliberately has no deck-chooser, entry-review, input, or spending
 /// conversion.
 pub struct CheckedUntrustedMtgoCompetitiveDeckGateV1 {
-    _lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
-    _target: MtgoCompetitiveEventListingTargetV1,
-    _raw: MtgoVisibleCompetitiveDeckGateV1,
+    lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+    target: MtgoCompetitiveEventListingTargetV1,
+    raw: MtgoVisibleCompetitiveDeckGateV1,
     target_commitment_sha256: String,
     observation_commitment_sha256: String,
     state: MtgoCompetitiveDeckGateStateV1,
@@ -307,13 +310,72 @@ pub fn validate_visible_competitive_deck_gate_v1(
     );
     let state = raw.state;
     Ok(CheckedUntrustedMtgoCompetitiveDeckGateV1 {
-        _lifecycle: lifecycle,
-        _target: target,
-        _raw: raw,
+        lifecycle,
+        target,
+        raw,
         target_commitment_sha256,
         observation_commitment_sha256,
         state,
     })
+}
+
+/// Consumes the exact review-available deck gate into the established selected
+/// listing contract. Earlier deck-gate states cannot enter the listing
+/// evaluation or Open Entry Review chain.
+pub fn promote_open_entry_review_available_deck_gate_v1(
+    gate: CheckedUntrustedMtgoCompetitiveDeckGateV1,
+    deck: &ValidatedMtgoCompetitiveDeckManifestV1,
+) -> Result<CheckedUntrustedMtgoCompetitiveEventListingSelectionV1, MtgoContractErrorV1> {
+    let CheckedUntrustedMtgoCompetitiveDeckGateV1 {
+        lifecycle,
+        target,
+        raw,
+        target_commitment_sha256,
+        state,
+        ..
+    } = gate;
+    if state != MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable {
+        return Err(error_v1(
+            "competitive_deck_gate_promotion_state",
+            "only an exact visible Open Entry Review control may enter the selected-listing chain",
+        ));
+    }
+    let open_entry_review_control_rect_client_px = raw
+        .open_entry_review_control_rect_client_px
+        .ok_or_else(|| {
+            error_v1(
+                "competitive_deck_gate_promotion_control",
+                "review-available gate lost its visible Open Entry Review bounds",
+            )
+        })?;
+    let open_entry_review_control_region_sha256 =
+        raw.open_entry_review_control_region_sha256.ok_or_else(|| {
+            error_v1(
+                "competitive_deck_gate_promotion_control",
+                "review-available gate lost its visible Open Entry Review pixels",
+            )
+        })?;
+    let selection = MtgoVisibleCompetitiveEventListingSelectionV1 {
+        schema_version: MTGO_COMPETITIVE_EVENT_LISTING_SCHEMA_V1,
+        selection_id: raw.observation_id,
+        target_commitment_sha256,
+        event_kind: raw.event_kind,
+        event_identity_sha256: raw.event_identity_sha256,
+        event_display_label_sha256: raw.event_display_label_sha256,
+        source_lifecycle_snapshot_commitment_sha256: raw
+            .source_lifecycle_snapshot_commitment_sha256,
+        frame_id: raw.frame_id,
+        frame_sequence: raw.frame_sequence,
+        frame_sha256: raw.frame_sha256,
+        client_bounds: raw.client_bounds,
+        event_label_rect_client_px: raw.event_label_rect_client_px,
+        event_label_region_sha256: raw.event_label_region_sha256,
+        open_entry_review_control_rect_client_px,
+        open_entry_review_control_region_sha256,
+        open_entry_review_control_enabled: raw.open_entry_review_control_enabled,
+        confidence_bps: raw.confidence_bps,
+    };
+    validate_visible_competitive_event_listing_selection_v1(lifecycle, deck, target, selection)
 }
 
 fn validate_rect_inside_v1(
@@ -615,6 +677,7 @@ mod tests {
             awaiting.observation_commitment_sha256_v1(),
             selected.observation_commitment_sha256_v1()
         );
+        assert!(promote_open_entry_review_available_deck_gate_v1(awaiting, &deck).is_err());
 
         let deck = deck_v1();
         let target = target_v1(&deck);
@@ -646,10 +709,21 @@ mod tests {
         assert!(review_available.ready_for_open_entry_review_v1());
         assert!(!review_available.permits_open_entry_review_v1());
         assert!(!review_available.safe_for_input_v1());
+        let promoted_target_commitment = review_available.target_commitment_sha256_v1().to_owned();
         assert_ne!(
             selected.observation_commitment_sha256_v1(),
             review_available.observation_commitment_sha256_v1()
         );
+        assert!(promote_open_entry_review_available_deck_gate_v1(selected, &deck).is_err());
+        let promoted =
+            promote_open_entry_review_available_deck_gate_v1(review_available, &deck).unwrap();
+        assert_eq!(
+            promoted.target_commitment_sha256_v1(),
+            promoted_target_commitment
+        );
+        assert!(!promoted.safe_for_input_v1());
+        assert!(!promoted.permits_event_entry_v1());
+        assert!(!promoted.permits_spending_v1());
     }
 
     #[test]
