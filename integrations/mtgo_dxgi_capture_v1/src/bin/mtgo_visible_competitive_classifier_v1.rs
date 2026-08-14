@@ -565,9 +565,11 @@ struct MtgoCompetitiveDeckChooserProfileV1 {
     deck_row_control_rect_client_px: MtgoRectPxV1,
     unselected_deck_row_reference_sha256s: Vec<String>,
     selected_deck_row_reference_sha256s: Vec<String>,
+    selection_detail_rect_client_px: MtgoRectPxV1,
+    unselected_selection_detail_reference_sha256s: Vec<String>,
+    selected_selection_detail_reference_sha256s: Vec<String>,
     submit_control_rect_client_px: MtgoRectPxV1,
-    disabled_submit_reference_sha256s: Vec<String>,
-    enabled_submit_reference_sha256s: Vec<String>,
+    submit_control_reference_sha256s: Vec<String>,
     confidence_bps: u16,
 }
 
@@ -2965,6 +2967,12 @@ fn classify_deck_chooser_from_words_v1(
         &profile.deck_row_control_rect_client_px,
     )
     .map_err(|error| format!("hash deck-chooser row pixels: {error}"))?;
+    let selection_detail_region_sha256 = visible_frame_region_content_sha256_v1(
+        canonical_bgra8,
+        &size,
+        &profile.selection_detail_rect_client_px,
+    )
+    .map_err(|error| format!("hash deck-chooser selection-detail pixels: {error}"))?;
     let submit_control_region_sha256 = visible_frame_region_content_sha256_v1(
         canonical_bgra8,
         &size,
@@ -2977,19 +2985,23 @@ fn classify_deck_chooser_from_words_v1(
     } else {
         &profile.unselected_deck_row_reference_sha256s
     };
-    let submit_references = if selected {
-        &profile.enabled_submit_reference_sha256s
+    let detail_references = if selected {
+        &profile.selected_selection_detail_reference_sha256s
     } else {
-        &profile.disabled_submit_reference_sha256s
+        &profile.unselected_selection_detail_reference_sha256s
     };
+    let submit_references = &profile.submit_control_reference_sha256s;
     if row_references
         .binary_search(&deck_row_control_region_sha256)
         .is_err()
+        || detail_references
+            .binary_search(&selection_detail_region_sha256)
+            .is_err()
         || submit_references
             .binary_search(&submit_control_region_sha256)
             .is_err()
     {
-        return Err("deck-chooser row or Submit state differs from reviewed pixels".to_owned());
+        return Err("deck-chooser row, detail, or Submit differs from reviewed pixels".to_owned());
     }
     let chooser = MtgoVisibleCompetitiveDeckChooserV1 {
         schema_version: 1,
@@ -3022,9 +3034,11 @@ fn classify_deck_chooser_from_words_v1(
         deck_row_control_rect_client_px: profile.deck_row_control_rect_client_px.clone(),
         deck_row_control_region_sha256,
         deck_row_selected: selected,
+        selection_detail_rect_client_px: profile.selection_detail_rect_client_px.clone(),
+        selection_detail_region_sha256,
         submit_control_rect_client_px: profile.submit_control_rect_client_px.clone(),
         submit_control_region_sha256,
-        submit_control_enabled: selected,
+        submit_control_visible: true,
         confidence_bps: profile.confidence_bps,
     };
     Ok(MtgoCompetitiveDeckChooserClassifierProcessResponseV1 {
@@ -3645,6 +3659,7 @@ fn validate_deck_chooser_assets_v1<'a>(
             &profile.chooser_title_search_rect_client_px,
             &profile.deck_label_search_rect_client_px,
             &profile.deck_row_control_rect_client_px,
+            &profile.selection_detail_rect_client_px,
             &profile.submit_control_rect_client_px,
         ] {
             if !rect_inside_v1(rect, &client_bounds) {
@@ -3659,9 +3674,18 @@ fn validate_deck_chooser_assets_v1<'a>(
             &profile.deck_row_control_rect_client_px,
         ) || rects_overlap_v1(
             &profile.chooser_title_search_rect_client_px,
+            &profile.selection_detail_rect_client_px,
+        ) || rects_overlap_v1(
+            &profile.chooser_title_search_rect_client_px,
             &profile.submit_control_rect_client_px,
         ) || rects_overlap_v1(
             &profile.deck_row_control_rect_client_px,
+            &profile.selection_detail_rect_client_px,
+        ) || rects_overlap_v1(
+            &profile.deck_row_control_rect_client_px,
+            &profile.submit_control_rect_client_px,
+        ) || rects_overlap_v1(
+            &profile.selection_detail_rect_client_px,
             &profile.submit_control_rect_client_px,
         ) {
             return Err("deck-chooser profile evidence and controls overlap".to_owned());
@@ -3678,21 +3702,30 @@ fn validate_deck_chooser_assets_v1<'a>(
             selected,
         )?;
         validate_sorted_references_v1(
-            &profile.disabled_submit_reference_sha256s,
-            "deck-chooser disabled Submit references",
+            &profile.unselected_selection_detail_reference_sha256s,
+            "deck-chooser unselected detail references",
             !selected,
         )?;
         validate_sorted_references_v1(
-            &profile.enabled_submit_reference_sha256s,
-            "deck-chooser enabled Submit references",
+            &profile.selected_selection_detail_reference_sha256s,
+            "deck-chooser selected detail references",
             selected,
+        )?;
+        validate_sorted_references_v1(
+            &profile.submit_control_reference_sha256s,
+            "deck-chooser visible Submit references",
+            true,
         )?;
         if (selected
             && (!profile.unselected_deck_row_reference_sha256s.is_empty()
-                || !profile.disabled_submit_reference_sha256s.is_empty()))
+                || !profile
+                    .unselected_selection_detail_reference_sha256s
+                    .is_empty()))
             || (!selected
                 && (!profile.selected_deck_row_reference_sha256s.is_empty()
-                    || !profile.enabled_submit_reference_sha256s.is_empty()))
+                    || !profile
+                        .selected_selection_detail_reference_sha256s
+                        .is_empty()))
         {
             return Err("deck-chooser profile mixes selected and unselected states".to_owned());
         }
@@ -3719,6 +3752,7 @@ fn validate_deck_chooser_assets_v1<'a>(
                 != base.chooser_title_search_rect_client_px
             || profile.deck_label_search_rect_client_px != base.deck_label_search_rect_client_px
             || profile.deck_row_control_rect_client_px != base.deck_row_control_rect_client_px
+            || profile.selection_detail_rect_client_px != base.selection_detail_rect_client_px
             || profile.submit_control_rect_client_px != base.submit_control_rect_client_px
             || profile.confidence_bps != base.confidence_bps
     }) {
@@ -6614,18 +6648,26 @@ mod tests {
     }
 
     fn deck_chooser_words_v1() -> Vec<OcrWordV1> {
-        let mut words = Vec::new();
-        for (index, value) in ["Please", "Select", "a", "Deck"].into_iter().enumerate() {
-            words.push(OcrWordV1 {
-                normalized: value.to_owned(),
+        let mut words = vec![
+            OcrWordV1 {
+                normalized: "Modern".to_owned(),
                 rect: MtgoRectPxV1 {
-                    x: 2 + u32::try_from(index).unwrap() * 6,
+                    x: 2,
                     y: 3,
-                    width: 5,
+                    width: 10,
                     height: 3,
                 },
-            });
-        }
+            },
+            OcrWordV1 {
+                normalized: "Decks".to_owned(),
+                rect: MtgoRectPxV1 {
+                    x: 13,
+                    y: 3,
+                    width: 8,
+                    height: 3,
+                },
+            },
+        ];
         words.push(OcrWordV1 {
             normalized: "mtgo-kernel-modern-basics-v1".to_owned(),
             rect: MtgoRectPxV1 {
@@ -6659,6 +6701,12 @@ mod tests {
             height: 11,
         };
         let deck_label_search_rect_client_px = deck_row_control_rect_client_px.clone();
+        let selection_detail_rect_client_px = MtgoRectPxV1 {
+            x: 34,
+            y: 15,
+            width: 28,
+            height: 11,
+        };
         let submit_control_rect_client_px = MtgoRectPxV1 {
             x: 42,
             y: 30,
@@ -6667,6 +6715,9 @@ mod tests {
         };
         let row_hash =
             visible_frame_region_content_sha256_v1(pixels, &size, &deck_row_control_rect_client_px)
+                .unwrap();
+        let detail_hash =
+            visible_frame_region_content_sha256_v1(pixels, &size, &selection_detail_rect_client_px)
                 .unwrap();
         let submit_hash =
             visible_frame_region_content_sha256_v1(pixels, &size, &submit_control_rect_client_px)
@@ -6690,10 +6741,11 @@ mod tests {
             } else {
                 digest(if selected { 'd' } else { 'e' })
             };
-            let state_submit_hash = if matching {
-                submit_hash.clone()
+            let state_submit_hash = submit_hash.clone();
+            let state_detail_hash = if matching {
+                detail_hash.clone()
             } else {
-                digest(if selected { '6' } else { '7' })
+                digest(if selected { '1' } else { '2' })
             };
             MtgoCompetitiveDeckChooserProfileV1 {
                 profile_id: profile_id.to_owned(),
@@ -6701,8 +6753,8 @@ mod tests {
                 event_display_label_sha256: sha256_hex_v1(b"Modern Challenge 64"),
                 deck_display_label_sha256: sha256_hex_v1(b"mtgo-kernel-modern-basics-v1"),
                 expected_visible_deck_label: "mtgo-kernel-modern-basics-v1".to_owned(),
-                chooser_title_label_sha256: sha256_hex_v1(b"Please Select a Deck"),
-                expected_visible_chooser_title: "Please Select a Deck".to_owned(),
+                chooser_title_label_sha256: sha256_hex_v1(b"Modern Decks"),
+                expected_visible_chooser_title: "Modern Decks".to_owned(),
                 state,
                 client_size_px: size.clone(),
                 chooser_title_search_rect_client_px: chooser_title_search_rect_client_px.clone(),
@@ -6718,17 +6770,19 @@ mod tests {
                 } else {
                     Vec::new()
                 },
+                selection_detail_rect_client_px: selection_detail_rect_client_px.clone(),
+                unselected_selection_detail_reference_sha256s: if selected {
+                    Vec::new()
+                } else {
+                    vec![state_detail_hash.clone()]
+                },
+                selected_selection_detail_reference_sha256s: if selected {
+                    vec![state_detail_hash]
+                } else {
+                    Vec::new()
+                },
                 submit_control_rect_client_px: submit_control_rect_client_px.clone(),
-                disabled_submit_reference_sha256s: if selected {
-                    Vec::new()
-                } else {
-                    vec![state_submit_hash.clone()]
-                },
-                enabled_submit_reference_sha256s: if selected {
-                    vec![state_submit_hash]
-                } else {
-                    Vec::new()
-                },
+                submit_control_reference_sha256s: vec![state_submit_hash],
                 confidence_bps: 9_500,
             }
         })
@@ -6820,13 +6874,10 @@ mod tests {
             assert_eq!(matches.len(), 1);
             let response = matches.remove(0);
             assert_eq!(response.chooser.state, state);
-            assert_eq!(
-                response.chooser.submit_control_enabled,
-                state == MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected
-            );
+            assert_eq!(response.chooser.submit_control_visible, true);
             assert_eq!(
                 response.chooser.deck_row_selected,
-                response.chooser.submit_control_enabled
+                state == MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected
             );
         }
     }
@@ -6842,6 +6893,13 @@ mod tests {
 
         let mut assets = deck_chooser_assets_v1(&pixels, state);
         assets.deck_chooser_profiles[0].submit_control_rect_client_px = assets
+            .deck_chooser_profiles[0]
+            .deck_row_control_rect_client_px
+            .clone();
+        assert!(validate_deck_chooser_assets_v1(&assets, &header).is_err());
+
+        let mut assets = deck_chooser_assets_v1(&pixels, state);
+        assets.deck_chooser_profiles[0].selection_detail_rect_client_px = assets
             .deck_chooser_profiles[0]
             .deck_row_control_rect_client_px
             .clone();

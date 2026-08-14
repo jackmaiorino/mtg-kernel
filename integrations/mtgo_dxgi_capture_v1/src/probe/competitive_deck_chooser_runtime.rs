@@ -84,9 +84,11 @@ pub struct MtgoVisibleCompetitiveDeckChooserV1 {
     pub deck_row_control_rect_client_px: MtgoRectPxV1,
     pub deck_row_control_region_sha256: String,
     pub deck_row_selected: bool,
+    pub selection_detail_rect_client_px: MtgoRectPxV1,
+    pub selection_detail_region_sha256: String,
     pub submit_control_rect_client_px: MtgoRectPxV1,
     pub submit_control_region_sha256: String,
-    pub submit_control_enabled: bool,
+    pub submit_control_visible: bool,
     pub confidence_bps: u16,
 }
 
@@ -194,7 +196,7 @@ impl OpaqueMtgoClassifiedCompetitiveDeckChooserV1 {
     ) -> Result<MtgoCompetitiveDeckControlTargetV1, String> {
         if self.commitments.state != MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection
             || self.raw.deck_row_selected
-            || self.raw.submit_control_enabled
+            || !self.raw.submit_control_visible
         {
             return Err(
                 "exact deck-row input requires the unselected reviewed chooser state".to_owned(),
@@ -216,7 +218,7 @@ impl OpaqueMtgoClassifiedCompetitiveDeckChooserV1 {
     ) -> Result<MtgoCompetitiveDeckControlTargetV1, String> {
         if self.commitments.state != MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected
             || !self.raw.deck_row_selected
-            || !self.raw.submit_control_enabled
+            || !self.raw.submit_control_visible
         {
             return Err(
                 "deck Submit requires the exact selected reviewed chooser state".to_owned(),
@@ -422,6 +424,7 @@ pub fn check_untrusted_competitive_deck_chooser_pixels_v1(
         &raw.chooser_title_rect_client_px,
         &raw.selected_deck_label_rect_client_px,
         &raw.deck_row_control_rect_client_px,
+        &raw.selection_detail_rect_client_px,
         &raw.submit_control_rect_client_px,
     ] {
         if !rect_inside_v1(rect, bounds) {
@@ -436,23 +439,36 @@ pub fn check_untrusted_competitive_deck_chooser_pixels_v1(
         &raw.deck_row_control_rect_client_px,
     ) || rects_overlap_v1(
         &raw.chooser_title_rect_client_px,
+        &raw.selection_detail_rect_client_px,
+    ) || rects_overlap_v1(
+        &raw.chooser_title_rect_client_px,
         &raw.submit_control_rect_client_px,
     ) || rects_overlap_v1(
         &raw.deck_row_control_rect_client_px,
+        &raw.selection_detail_rect_client_px,
+    ) || rects_overlap_v1(
+        &raw.deck_row_control_rect_client_px,
+        &raw.submit_control_rect_client_px,
+    ) || rects_overlap_v1(
+        &raw.selection_detail_rect_client_px,
         &raw.submit_control_rect_client_px,
     ) {
         return Err("deck-chooser evidence and controls have invalid geometry".to_owned());
     }
     match raw.state {
         MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection => {
-            if raw.deck_row_selected || raw.submit_control_enabled {
-                return Err("awaiting deck-chooser state cannot expose enabled Submit".to_owned());
+            if raw.deck_row_selected || !raw.submit_control_visible {
+                return Err(
+                    "awaiting deck-chooser state requires an unselected row and visible Submit"
+                        .to_owned(),
+                );
             }
         }
         MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected => {
-            if !raw.deck_row_selected || !raw.submit_control_enabled {
+            if !raw.deck_row_selected || !raw.submit_control_visible {
                 return Err(
-                    "selected deck-chooser state requires selected row and Submit".to_owned(),
+                    "selected deck-chooser state requires selected row and visible Submit"
+                        .to_owned(),
                 );
             }
         }
@@ -472,6 +488,11 @@ pub fn check_untrusted_competitive_deck_chooser_pixels_v1(
             &raw.deck_row_control_rect_client_px,
             raw.deck_row_control_region_sha256.as_str(),
             "deck row",
+        ),
+        (
+            &raw.selection_detail_rect_client_px,
+            raw.selection_detail_region_sha256.as_str(),
+            "selection detail",
         ),
         (
             &raw.submit_control_rect_client_px,
@@ -930,6 +951,12 @@ mod tests {
             width: 16,
             height: 2,
         };
+        let detail_rect = MtgoRectPxV1 {
+            x: 21,
+            y: 4,
+            width: 10,
+            height: 5,
+        };
         let submit_rect = MtgoRectPxV1 {
             x: 22,
             y: 10,
@@ -1011,9 +1038,11 @@ mod tests {
             deck_row_control_rect_client_px: row_rect.clone(),
             deck_row_control_region_sha256: region_hash(&row_rect),
             deck_row_selected: selected,
+            selection_detail_rect_client_px: detail_rect.clone(),
+            selection_detail_region_sha256: region_hash(&detail_rect),
             submit_control_rect_client_px: submit_rect.clone(),
             submit_control_region_sha256: region_hash(&submit_rect),
-            submit_control_enabled: selected,
+            submit_control_visible: true,
             confidence_bps: 10_000,
         };
         FixtureV1 {
@@ -1090,7 +1119,7 @@ mod tests {
     #[test]
     fn contradictory_state_region_hash_and_geometry_fail_closed() {
         let mut fixture = fixture_v1(MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected);
-        fixture.raw.submit_control_enabled = false;
+        fixture.raw.submit_control_visible = false;
         assert!(check_untrusted_competitive_deck_chooser_pixels_v1(
             &fixture.header,
             &fixture.raw,
@@ -1100,6 +1129,15 @@ mod tests {
 
         let mut fixture = fixture_v1(MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected);
         fixture.raw.deck_row_control_region_sha256 = digest('e');
+        assert!(check_untrusted_competitive_deck_chooser_pixels_v1(
+            &fixture.header,
+            &fixture.raw,
+            &fixture.pixels,
+        )
+        .is_err());
+
+        let mut fixture = fixture_v1(MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected);
+        fixture.raw.selection_detail_region_sha256 = digest('d');
         assert!(check_untrusted_competitive_deck_chooser_pixels_v1(
             &fixture.header,
             &fixture.raw,
