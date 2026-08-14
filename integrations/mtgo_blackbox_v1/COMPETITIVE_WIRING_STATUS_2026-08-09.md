@@ -63,6 +63,13 @@ three-state readiness flag plus every live semantic, scoring, input, entry,
 and spending authority false. The receipt is usable only for offline partial
 classifier-reference generation.
 
+The partial receipt is now consumed by a production-code structural checker
+and a dedicated offline qualification executable. The main static readiness
+report calls the same hash-pinned checker and separately reports the reviewed
+two-state cross-mode partial corpus as present while keeping the required
+three-state corpus false. Missing profiles, invented three-state completion,
+reference substitution, unknown fields, or any authority promotion reject.
+
 Completion is still contradicted by current source and static readiness:
 
 - the loaded checkpoint has no player-visible-only duel-action interface and

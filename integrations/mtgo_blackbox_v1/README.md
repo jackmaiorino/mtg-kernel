@@ -18,6 +18,8 @@ The first live no-cost League selected-event deck-gate trace is recorded in `LIV
 
 The cross-mode partial receipt is `../mtgo_dxgi_capture_v1/assets/reviewed_modern_deck_gate_partial_corpus_v1.json`. It covers the safe missing-deck and compatible-deck-selected states for both modes, records the Open Entry Review state as absent, and grants no live or entry authority.
 
+The sibling capture crate's `check_mtgo_reviewed_deck_gate_partial_corpus_v1` executable now parses that exact hash-pinned receipt through production code. It reports two qualified safe states for each mode while keeping full three-state readiness, live classification, semantic evidence, scoring, input, Open Entry Review, entry, and spending false. The main competitive wiring report consumes the same checker instead of treating the receipt as documentation-only evidence.
+
 ## Live calibration preview
 
 `scripts/capture_visible_mtgo_preview_v1.ps1` creates only a local, composed-desktop calibration preview. It crops the visible desktop to the MTGO client area. It does not use direct window capture, UI Automation, process memory, network data, client logs, hidden client state, or input.

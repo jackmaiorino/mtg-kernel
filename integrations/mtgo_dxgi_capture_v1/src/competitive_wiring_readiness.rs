@@ -1,5 +1,6 @@
 use crate::competitive_pregame_policy::competitive_pregame_heuristic_ratification_present_v1;
 use crate::{
+    check_built_in_reviewed_deck_gate_partial_corpus_v1,
     competitive_authorization_ratification_readiness_v1,
     MtgoCompetitiveAuthorizationRatificationReadinessV1,
 };
@@ -76,6 +77,7 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub pre_entry_exact_visible_deck_label_target_present: bool,
     pub pre_entry_deck_gate_to_selected_listing_bridge_present: bool,
     pub pre_entry_visible_deck_gate_classifier_protocol_present: bool,
+    pub pre_entry_visible_deck_gate_reviewed_two_state_cross_mode_partial_corpus_present: bool,
     pub pre_entry_visible_deck_gate_reviewed_three_state_corpus_present: bool,
     pub pre_entry_visible_deck_gate_classifier_present: bool,
     pub pre_entry_visible_deck_chooser_classifier_protocol_present: bool,
@@ -235,6 +237,8 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             pre_entry_exact_visible_deck_label_target_present: true,
             pre_entry_deck_gate_to_selected_listing_bridge_present: true,
             pre_entry_visible_deck_gate_classifier_protocol_present: true,
+            pre_entry_visible_deck_gate_reviewed_two_state_cross_mode_partial_corpus_present:
+                check_built_in_reviewed_deck_gate_partial_corpus_v1().is_ok(),
             pre_entry_visible_deck_gate_reviewed_three_state_corpus_present: false,
             pre_entry_visible_deck_gate_classifier_present: true,
             pre_entry_visible_deck_chooser_classifier_protocol_present: true,
@@ -609,6 +613,11 @@ mod tests {
             report
                 .known_wiring_gaps
                 .pre_entry_visible_deck_gate_classifier_protocol_present
+        );
+        assert!(
+            report
+                .known_wiring_gaps
+                .pre_entry_visible_deck_gate_reviewed_two_state_cross_mode_partial_corpus_present
         );
         assert!(
             !report

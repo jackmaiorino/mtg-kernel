@@ -36,7 +36,19 @@ mod competitive_visible_history_readiness;
 mod competitive_visible_match_memory;
 
 #[cfg(target_os = "windows")]
+mod reviewed_deck_gate_partial_corpus;
+
+#[cfg(target_os = "windows")]
 mod probe;
+
+#[cfg(target_os = "windows")]
+pub use reviewed_deck_gate_partial_corpus::{
+    check_built_in_reviewed_deck_gate_partial_corpus_v1,
+    check_untrusted_reviewed_deck_gate_partial_corpus_v1,
+    MtgoReviewedDeckGatePartialCorpusQualificationV1,
+    MTGO_REVIEWED_DECK_GATE_PARTIAL_CORPUS_QUALIFICATION_SCHEMA_V1,
+    MTGO_REVIEWED_DECK_GATE_PARTIAL_CORPUS_SHA256_V1,
+};
 
 #[cfg(target_os = "windows")]
 pub use actuator::{
