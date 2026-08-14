@@ -14,19 +14,24 @@ use crate::actuator::{
 use mtgo_blackbox_v1::{
     bind_refreshed_direct_visible_selection_to_competitive_match_v1,
     complete_direct_visible_gameplay_postcondition_v1,
+    confirm_player_visible_combat_execution_transition_v1,
     parse_and_validate_visible_duel_producer_result_v1, player_visible_duel_action_family_v1,
     prepare_direct_visible_gameplay_before_dispatch_v1,
+    prepare_player_visible_combat_execution_step_v1,
     refresh_direct_visible_selection_before_dispatch_v1,
     score_and_prepare_strict_visible_combat_producer_result_v1,
     score_and_select_strict_visible_duel_producer_result_v1, AdmittedMtgoDuelPerceptionProfileV1,
     CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
     CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
     CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
+    CheckedUntrustedMtgoPlayerVisibleCombatExecutionStepV1,
     CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1,
+    CheckedUntrustedMtgoPlayerVisibleCombatTransitionV1,
     CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDirectVisibleCompetitiveObservationBracketV1,
     MtgoDirectVisibleGameplayBeforeDispatchRecordV1, MtgoDirectVisibleGameplayBeforeRegionV1,
-    MtgoDuelActionFamilyV1, MtgoEvidenceSourceV1, MtgoPlayerVisibleCombatScorerV1,
+    MtgoDuelActionFamilyV1, MtgoEvidenceSourceV1, MtgoPlayerVisibleCombatBrokerCommandV1,
+    MtgoPlayerVisibleCombatScorerV1, MtgoPlayerVisibleCombatTransitionProgressV1,
     MtgoPlayerVisibleDuelScorerV1, MtgoPlayerVisibleGameplayPostconditionKindV1,
     MtgoPlayerVisiblePreparedCombatKindV1, MtgoRectPxV1, MtgoSizePxV1,
     MtgoVisibleDuelViewModelBrokerAbstentionReasonV1, MtgoVisibleDuelViewModelBrokerResultV1,
@@ -44,15 +49,15 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const LIVE_BROKER_SHA256_V1: &str =
-    "6b008edc7c261a3022729f0d7f8ea68eaa727ef86b9b90b2328830c4e121afd9";
+    "c0e02fec4355083d334e667151b9354558a48c78cae77630efbd6fe40e7dc547";
 const LIVE_DISPATCH_BROKER_SHA256_V1: &str =
-    "918d99c4fc22d7ce3c0c6b080ca46a06bc1ab9922607dd46aa083bfa4da5eea7";
+    "b67b5c4e31f65c81e26c04578655015812d1da56359314d57e95ac538e400233";
 const LIVE_BOOTSTRAP_SHA256_V1: &str =
     "1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b";
 const LIVE_PRODUCER_SHA256_V1: &str =
-    "a99751da026d9e9e0b023c090cb24e06b8399a52bb745f9bea1b1f9be22e53e9";
+    "857478e466fc3cb7e4473d069ec46837f95abfa137b815062da818859b237e60";
 const LIVE_VALIDATOR_SHA256_V1: &str =
-    "e95e60bdf3ff6b4e2347609e79b6b9950152912d92cb6105ccef9dc95085fd16";
+    "942508d83653f9fbc3555174102645e70a6a6d07f445debe1221504a7ba5cb96";
 const DIRECT_VISIBLE_SOURCE_RUNTIME_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-source-runtime-v1";
 const DIRECT_VISIBLE_SOURCE_OBSERVATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-observation-v1";
@@ -66,9 +71,12 @@ const DIRECT_VISIBLE_SOURCE_EQUIVALENT_REGIONS_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-equivalent-regions-v1";
 const DIRECT_VISIBLE_DISPATCH_RUNTIME_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-dispatch-runtime-v1";
 const DIRECT_VISIBLE_DISPATCH_RECEIPT_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-dispatch-receipt-v1";
+const DIRECT_VISIBLE_COMBAT_DISPATCH_RECEIPT_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-combat-dispatch-receipt-v1";
 const RATIFIED_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
 const RATIFIED_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
 const RATIFIED_DIRECT_VISIBLE_DISPATCH_RUNTIME_COMMITMENT_V1: Option<&str> = None;
+const RATIFIED_DIRECT_VISIBLE_COMBAT_DISPATCH_RUNTIME_COMMITMENT_V1: Option<&str> = None;
 const PINNED_MTGO_EXECUTABLE_SHA256_V1: &str =
     "bb9c1a189674cd7333b1d997259109576cafe78767f0f11badaad2203c388e92";
 const PINNED_MTGO_SIGNER_THUMBPRINT_V1: &str = "e9d9e2b989f90555b04c506fddf889c7aba7ac30";
@@ -347,6 +355,129 @@ impl OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1 {
     pub fn permits_spending_v1(&self) -> bool {
         false
     }
+}
+
+/// One exact model-prepared combat operation retained with the attested
+/// player-visible source that produced it. The broker arguments are private
+/// to this crate and the production combat-dispatch root is independently
+/// empty. This value therefore cannot submit input by itself.
+pub(crate) struct OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1 {
+    source_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    checked: CheckedUntrustedMtgoPlayerVisibleCombatExecutionStepV1,
+}
+
+impl OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1 {
+    pub(crate) fn operation_v1(
+        &self,
+    ) -> mtgo_blackbox_v1::MtgoPlayerVisibleCombatSubmittedOperationV1 {
+        self.checked.operation_v1()
+    }
+
+    pub(crate) fn execution_step_commitment_sha256_v1(&self) -> &str {
+        self.checked.execution_step_commitment_sha256_v1()
+    }
+}
+
+/// Combat input was submitted once and the process-wide input gate remains
+/// closed. Only a fresh, same-duel, source-attested visible result can consume
+/// this value and reopen the gate.
+pub(crate) struct OpaqueMtgoPendingAttestedDirectVisibleCombatDispatchV1 {
+    source_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    checked: CheckedUntrustedMtgoPlayerVisibleCombatExecutionStepV1,
+    dispatch_receipt_commitment_sha256: String,
+    dispatch_submitted_at_unix_millis: u128,
+}
+
+impl OpaqueMtgoPendingAttestedDirectVisibleCombatDispatchV1 {
+    pub(crate) fn dispatch_receipt_commitment_sha256_v1(&self) -> &str {
+        &self.dispatch_receipt_commitment_sha256
+    }
+}
+
+/// Exact intended combat transition confirmed by a strictly newer sanitized
+/// player-visible producer result. The fresh observation remains private and
+/// can be consumed only by the operator's continuation or rescore path.
+pub(crate) struct OpaqueMtgoConfirmedAttestedDirectVisibleCombatTransitionV1 {
+    fresh_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    transition: CheckedUntrustedMtgoPlayerVisibleCombatTransitionV1,
+    pending_receipt_commitment_sha256: String,
+}
+
+impl OpaqueMtgoConfirmedAttestedDirectVisibleCombatTransitionV1 {
+    pub(crate) fn progress_v1(&self) -> MtgoPlayerVisibleCombatTransitionProgressV1 {
+        self.transition.progress_v1()
+    }
+
+    pub(crate) fn confirmation_commitment_sha256_v1(&self) -> &str {
+        self.transition.confirmation_commitment_sha256_v1()
+    }
+
+    pub(crate) fn pending_receipt_commitment_sha256_v1(&self) -> &str {
+        &self.pending_receipt_commitment_sha256
+    }
+
+    pub(crate) fn into_same_plan_continuation_v1(
+        self,
+    ) -> Result<OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1, String> {
+        if self.transition.progress_v1()
+            != MtgoPlayerVisibleCombatTransitionProgressV1::ContinueSamePlan
+        {
+            return Err(
+                "this confirmed combat transition requires a fresh model decision".to_owned(),
+            );
+        }
+        let prepared = self
+            .transition
+            .into_prepared_continuation_v1()
+            .map_err(|error| format!("resume confirmed combat plan: {error}"))?;
+        let checked = prepare_player_visible_combat_execution_step_v1(
+            prepared,
+            &self.fresh_observation.exact_result_bytes.0,
+        )
+        .map_err(|error| format!("prepare next confirmed combat step: {error}"))?;
+        Ok(OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1 {
+            source_observation: self.fresh_observation,
+            checked,
+        })
+    }
+
+    pub(crate) fn into_fresh_observation_for_model_v1(
+        self,
+    ) -> Result<OpaqueMtgoAttestedDirectVisibleSourceObservationV1, String> {
+        if self.transition.progress_v1()
+            != MtgoPlayerVisibleCombatTransitionProgressV1::AwaitFreshCombatModelDecision
+        {
+            return Err(
+                "this confirmed combat transition does not require a fresh model decision"
+                    .to_owned(),
+            );
+        }
+        Ok(self.fresh_observation)
+    }
+}
+
+pub(crate) fn prepare_attested_direct_visible_combat_step_v1(
+    scored: OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1,
+) -> Result<OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1, String> {
+    let OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1 {
+        _observation: source_observation,
+        outcome,
+    } = scored;
+    let prepared = match outcome {
+        CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Prepared(prepared) => prepared,
+        CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Abstained { .. } => {
+            return Err("an abstained combat observation cannot prepare input".to_owned());
+        }
+    };
+    let checked = prepare_player_visible_combat_execution_step_v1(
+        prepared,
+        &source_observation.exact_result_bytes.0,
+    )
+    .map_err(|error| format!("prepare source-attested combat step: {error}"))?;
+    Ok(OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1 {
+        source_observation,
+        checked,
+    })
 }
 
 impl OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
@@ -1750,6 +1881,156 @@ pub(crate) fn execute_attested_direct_visible_selection_v1(
     })
 }
 
+pub(crate) fn execute_attested_direct_visible_combat_step_v1(
+    before: OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1,
+    runtime: &OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
+    reviewed_combat_dispatch_runtime_commitment_sha256: &str,
+    broker_timeout_ms: u32,
+) -> Result<OpaqueMtgoPendingAttestedDirectVisibleCombatDispatchV1, String> {
+    if !(100..=30_000).contains(&broker_timeout_ms) {
+        return Err(
+            "direct-visible combat dispatch timeout is outside the supported range".to_owned(),
+        );
+    }
+    require_ratified_direct_visible_combat_dispatch_runtime_v1(
+        reviewed_combat_dispatch_runtime_commitment_sha256,
+    )?;
+    if reviewed_combat_dispatch_runtime_commitment_sha256
+        != runtime
+            .commitments
+            .dispatch_runtime_identity_commitment_sha256
+    {
+        return Err(
+            "the ratified combat dispatch commitment and verified runtime differ".to_owned(),
+        );
+    }
+    verify_dispatch_runtime_identity_now_v1(runtime)?;
+    let OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1 {
+        source_observation,
+        checked,
+    } = before;
+    if source_observation.commitments.producer_binary_sha256
+        != runtime.commitments.producer_binary_sha256
+    {
+        return Err("combat observer and dispatch producer identities differ".to_owned());
+    }
+    let source_captured_at_unix_millis = source_observation.after_captured_at_unix_millis_v1();
+    let now = unix_millis_now_v1()?;
+    require_fresh_source_v1(source_captured_at_unix_millis, now)?;
+    let process_id = source_observation
+        ._after_frame
+        .source_frame
+        .manifest
+        .pre
+        .process_id;
+    if process_id == 0 {
+        return Err("direct-visible combat source has no MTGO process identity".to_owned());
+    }
+    reserve_direct_visible_input_gate_v1()?;
+    let attempt_started_at = match unix_millis_now_v1() {
+        Ok(value) => value,
+        Err(error) => {
+            release_unattempted_direct_visible_input_gate_v1()?;
+            return Err(error);
+        }
+    };
+    if let Err(error) = require_fresh_source_v1(source_captured_at_unix_millis, attempt_started_at)
+    {
+        release_unattempted_direct_visible_input_gate_v1()?;
+        return Err(error);
+    }
+    halt_before_direct_visible_input_attempt_v1()?;
+    let receipt = invoke_combat_dispatch_broker_v1(
+        runtime,
+        process_id,
+        checked.command_v1(),
+        Duration::from_millis(u64::from(broker_timeout_ms)),
+    )?;
+    verify_dispatch_runtime_identity_now_v1(runtime)?;
+    const SUBMITTED_RECEIPT_V1: &[u8] =
+        b"{\"result_kind\":\"action_dispatch_receipt\",\"status\":\"submitted\"}";
+    if receipt.0 != SUBMITTED_RECEIPT_V1 {
+        return Err("the sealed producer did not submit the combat operation".to_owned());
+    }
+    let dispatch_submitted_at_unix_millis = unix_millis_now_v1()?;
+    if dispatch_submitted_at_unix_millis < attempt_started_at {
+        return Err("system clock moved backwards during combat dispatch".to_owned());
+    }
+    let dispatch_receipt_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_COMBAT_DISPATCH_RECEIPT_DOMAIN_V1,
+        &[
+            runtime
+                .commitments
+                .dispatch_runtime_identity_commitment_sha256
+                .as_bytes(),
+            source_observation
+                .commitments
+                .observation_commitment_sha256
+                .as_bytes(),
+            checked.execution_step_commitment_sha256_v1().as_bytes(),
+            &attempt_started_at.to_be_bytes(),
+            &dispatch_submitted_at_unix_millis.to_be_bytes(),
+            &receipt.0,
+            b"one_combat_operation_submitted_pending_exact_newer_visible_transition",
+        ],
+    );
+    set_direct_visible_input_pending_v1(&dispatch_receipt_commitment_sha256)?;
+    Ok(OpaqueMtgoPendingAttestedDirectVisibleCombatDispatchV1 {
+        source_observation,
+        checked,
+        dispatch_receipt_commitment_sha256,
+        dispatch_submitted_at_unix_millis,
+    })
+}
+
+pub(crate) fn confirm_attested_direct_visible_combat_dispatch_v1(
+    pending: OpaqueMtgoPendingAttestedDirectVisibleCombatDispatchV1,
+    fresh_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    not_before_unix_millis: u128,
+) -> Result<OpaqueMtgoConfirmedAttestedDirectVisibleCombatTransitionV1, String> {
+    require_matching_direct_visible_input_pending_v1(&pending.dispatch_receipt_commitment_sha256)?;
+    if fresh_observation.before_captured_at_unix_millis_v1()
+        <= pending
+            .dispatch_submitted_at_unix_millis
+            .max(not_before_unix_millis)
+    {
+        return Err(
+            "combat confirmation observation is not strictly newer than dispatch".to_owned(),
+        );
+    }
+    validate_same_duel_observation_lineage_v1(
+        &pending.source_observation._after_frame,
+        &fresh_observation._before_frame,
+    )?;
+    if pending
+        .source_observation
+        .commitments
+        .runtime_identity_commitment_sha256
+        != fresh_observation
+            .commitments
+            .runtime_identity_commitment_sha256
+        || pending.source_observation.commitments.broker_binary_sha256
+            != fresh_observation.commitments.broker_binary_sha256
+        || pending
+            .source_observation
+            .commitments
+            .producer_binary_sha256
+            != fresh_observation.commitments.producer_binary_sha256
+    {
+        return Err("combat confirmation changed the visible-source runtime".to_owned());
+    }
+    let transition = confirm_player_visible_combat_execution_transition_v1(
+        pending.checked,
+        &fresh_observation.exact_result_bytes.0,
+    )
+    .map_err(|error| format!("confirm source-attested combat transition: {error}"))?;
+    Ok(OpaqueMtgoConfirmedAttestedDirectVisibleCombatTransitionV1 {
+        fresh_observation,
+        transition,
+        pending_receipt_commitment_sha256: pending.dispatch_receipt_commitment_sha256,
+    })
+}
+
 pub(crate) fn confirm_attested_direct_visible_dispatch_v1(
     pending: OpaqueMtgoPendingAttestedDirectVisibleDispatchV1,
     profile: &AdmittedMtgoDuelPerceptionProfileV1,
@@ -2105,6 +2386,22 @@ fn require_ratified_direct_visible_dispatch_runtime_v1(
     Ok(())
 }
 
+fn require_ratified_direct_visible_combat_dispatch_runtime_v1(
+    reviewed_dispatch_runtime_commitment_sha256: &str,
+) -> Result<(), String> {
+    let Some(ratified) = RATIFIED_DIRECT_VISIBLE_COMBAT_DISPATCH_RUNTIME_COMMITMENT_V1 else {
+        return Err(
+            "the production direct-visible combat dispatch ratification root is empty".to_owned(),
+        );
+    };
+    if reviewed_dispatch_runtime_commitment_sha256 != ratified {
+        return Err(
+            "the reviewed direct-visible combat dispatch runtime is not ratified".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn verify_dispatch_runtime_identity_now_v1(
     runtime: &OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
 ) -> Result<(), String> {
@@ -2289,6 +2586,194 @@ fn invoke_dispatch_broker_v1(
         Ok::<_, String>((status, stdout, stdout_truncated, stderr_truncated))
     })?;
     validate_broker_process_result_v1(status, stdout, stdout_truncated, stderr_truncated)
+}
+
+fn invoke_combat_dispatch_broker_v1(
+    runtime: &OpaqueMtgoVerifiedDirectVisibleDispatchRuntimeV1,
+    process_id: u32,
+    command: &MtgoPlayerVisibleCombatBrokerCommandV1,
+    timeout: Duration,
+) -> Result<ZeroingVecV1, String> {
+    if process_id == 0 {
+        return Err("direct-visible combat dispatch process is invalid".to_owned());
+    }
+    let combat_arguments = combat_dispatch_arguments_v1(command)?;
+    let mut child = Command::new(&runtime.broker_path);
+    child
+        .arg("--pid")
+        .arg(process_id.to_string())
+        .arg("--bootstrap")
+        .arg(&runtime.bootstrap_path)
+        .arg("--producer")
+        .arg(&runtime.producer_path)
+        .arg("--validator")
+        .arg(&runtime.validator_path);
+    for argument in combat_arguments {
+        child.arg(argument);
+    }
+    child
+        .current_dir(
+            runtime
+                .broker_path
+                .parent()
+                .ok_or("direct-visible combat dispatch broker has no parent directory")?,
+        )
+        .env_clear()
+        .creation_flags(CREATE_NO_WINDOW_V1)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = child
+        .spawn()
+        .map_err(|_| "release-pinned direct-visible combat broker could not start".to_owned())?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or("release-pinned direct-visible combat broker has no stdout")?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or("release-pinned direct-visible combat broker has no stderr")?;
+    let started = Instant::now();
+    let (status, stdout, stdout_truncated, stderr_truncated) = thread::scope(|scope| {
+        let stdout_reader =
+            scope.spawn(|| read_bounded_and_drain_v1(&mut stdout, MAX_BROKER_STDOUT_BYTES_V1));
+        let stderr_reader =
+            scope.spawn(|| read_bounded_and_drain_v1(&mut stderr, MAX_BROKER_STDERR_BYTES_V1));
+        let status = loop {
+            if let Some(status) = child
+                .try_wait()
+                .map_err(|_| "poll release-pinned direct-visible combat broker".to_owned())?
+            {
+                break status;
+            }
+            if started.elapsed() >= timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("release-pinned direct-visible combat broker timed out".to_owned());
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        let (stdout, stdout_truncated) = stdout_reader
+            .join()
+            .map_err(|_| "direct-visible combat dispatch stdout reader panicked".to_owned())??;
+        let (stderr, stderr_truncated) = stderr_reader
+            .join()
+            .map_err(|_| "direct-visible combat dispatch stderr reader panicked".to_owned())??;
+        drop(stderr);
+        Ok::<_, String>((status, stdout, stdout_truncated, stderr_truncated))
+    })?;
+    validate_broker_process_result_v1(status, stdout, stdout_truncated, stderr_truncated)
+}
+
+fn combat_dispatch_arguments_v1(
+    command: &MtgoPlayerVisibleCombatBrokerCommandV1,
+) -> Result<Vec<String>, String> {
+    fn lower_sha256_v1(value: &str) -> bool {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }
+    let arguments = match command {
+        MtgoPlayerVisibleCombatBrokerCommandV1::AttackerPlan {
+            current_selection_sha256,
+            candidate_count,
+            desired_mask_hex,
+            plan_commitment_sha256,
+        } => {
+            let desired_mask = u64::from_str_radix(desired_mask_hex, 16).ok();
+            if !lower_sha256_v1(current_selection_sha256)
+                || *candidate_count > 64
+                || desired_mask_hex.len() != 16
+                || desired_mask.is_none()
+                || (*candidate_count < 64
+                    && (desired_mask.expect("checked hexadecimal mask") >> candidate_count) != 0)
+                || !lower_sha256_v1(plan_commitment_sha256)
+            {
+                return Err("attacker combat broker arguments are invalid".to_owned());
+            }
+            vec![
+                "--attacker-selection-sha256".to_owned(),
+                current_selection_sha256.clone(),
+                "--candidate-count".to_owned(),
+                candidate_count.to_string(),
+                "--desired-mask".to_owned(),
+                desired_mask_hex.clone(),
+                "--plan-sha256".to_owned(),
+                plan_commitment_sha256.clone(),
+            ]
+        }
+        MtgoPlayerVisibleCombatBrokerCommandV1::SingleAttackerBlockerPlan {
+            current_selection_sha256,
+            candidate_count,
+            desired_mask_hex,
+            plan_commitment_sha256,
+        } => {
+            let desired_mask = u64::from_str_radix(desired_mask_hex, 16).ok();
+            if !lower_sha256_v1(current_selection_sha256)
+                || *candidate_count > 64
+                || desired_mask_hex.len() != 16
+                || desired_mask.is_none()
+                || (*candidate_count < 64
+                    && (desired_mask.expect("checked hexadecimal mask") >> candidate_count) != 0)
+                || !lower_sha256_v1(plan_commitment_sha256)
+            {
+                return Err("single-blocker combat broker arguments are invalid".to_owned());
+            }
+            vec![
+                "--single-blocker-selection-sha256".to_owned(),
+                current_selection_sha256.clone(),
+                "--candidate-count".to_owned(),
+                candidate_count.to_string(),
+                "--desired-mask".to_owned(),
+                desired_mask_hex.clone(),
+                "--plan-sha256".to_owned(),
+                plan_commitment_sha256.clone(),
+            ]
+        }
+        MtgoPlayerVisibleCombatBrokerCommandV1::MultiAttackerBlockerStep {
+            current_selection_sha256,
+            selected_index,
+            operation_kind,
+            blocker_visible_ordinal,
+            attacker_visible_ordinal,
+            model_selection_commitment_sha256,
+            execution_step_commitment_sha256,
+        } => {
+            let shape_valid = match operation_kind {
+                'f' => blocker_visible_ordinal.is_none() && attacker_visible_ordinal.is_none(),
+                'b' => blocker_visible_ordinal.is_some() && attacker_visible_ordinal.is_none(),
+                't' => blocker_visible_ordinal.is_some() && attacker_visible_ordinal.is_some(),
+                _ => false,
+            };
+            if !lower_sha256_v1(current_selection_sha256)
+                || *selected_index >= 64
+                || !shape_valid
+                || !lower_sha256_v1(model_selection_commitment_sha256)
+                || !lower_sha256_v1(execution_step_commitment_sha256)
+            {
+                return Err("multi-blocker combat broker arguments are invalid".to_owned());
+            }
+            vec![
+                "--blocker-selection-sha256".to_owned(),
+                current_selection_sha256.clone(),
+                "--selected-index".to_owned(),
+                selected_index.to_string(),
+                "--blocker-operation".to_owned(),
+                operation_kind.to_string(),
+                "--blocker-ordinal".to_owned(),
+                blocker_visible_ordinal.map_or_else(|| "-".to_owned(), |value| value.to_string()),
+                "--attacker-ordinal".to_owned(),
+                attacker_visible_ordinal.map_or_else(|| "-".to_owned(), |value| value.to_string()),
+                "--model-selection-sha256".to_owned(),
+                model_selection_commitment_sha256.clone(),
+                "--step-sha256".to_owned(),
+                execution_step_commitment_sha256.clone(),
+            ]
+        }
+    };
+    Ok(arguments)
 }
 
 fn validate_broker_process_result_v1(
@@ -2628,6 +3113,77 @@ mod tests {
     #[test]
     fn production_dispatch_ratification_root_is_empty() {
         assert!(require_ratified_direct_visible_dispatch_runtime_v1(&"a".repeat(64)).is_err());
+        assert!(
+            require_ratified_direct_visible_combat_dispatch_runtime_v1(&"a".repeat(64)).is_err()
+        );
+    }
+
+    #[test]
+    fn combat_dispatch_receipt_is_domain_separated_from_ordinary_dispatch() {
+        let parts = [b"runtime".as_slice(), b"step", b"receipt"];
+        assert_ne!(
+            commitment_v1(DIRECT_VISIBLE_COMBAT_DISPATCH_RECEIPT_DOMAIN_V1, &parts),
+            commitment_v1(DIRECT_VISIBLE_DISPATCH_RECEIPT_DOMAIN_V1, &parts)
+        );
+    }
+
+    #[test]
+    fn combat_broker_arguments_match_the_three_sealed_native_routes() {
+        let attacker = MtgoPlayerVisibleCombatBrokerCommandV1::AttackerPlan {
+            current_selection_sha256: "a".repeat(64),
+            candidate_count: 2,
+            desired_mask_hex: "0000000000000003".to_owned(),
+            plan_commitment_sha256: "b".repeat(64),
+        };
+        assert_eq!(
+            combat_dispatch_arguments_v1(&attacker).unwrap(),
+            vec![
+                "--attacker-selection-sha256".to_owned(),
+                "a".repeat(64),
+                "--candidate-count".to_owned(),
+                "2".to_owned(),
+                "--desired-mask".to_owned(),
+                "0000000000000003".to_owned(),
+                "--plan-sha256".to_owned(),
+                "b".repeat(64),
+            ]
+        );
+
+        let single = MtgoPlayerVisibleCombatBrokerCommandV1::SingleAttackerBlockerPlan {
+            current_selection_sha256: "c".repeat(64),
+            candidate_count: 1,
+            desired_mask_hex: "0000000000000001".to_owned(),
+            plan_commitment_sha256: "d".repeat(64),
+        };
+        let single_args = combat_dispatch_arguments_v1(&single).unwrap();
+        assert_eq!(single_args[0], "--single-blocker-selection-sha256");
+        assert_eq!(single_args[5], "0000000000000001");
+
+        let multi = MtgoPlayerVisibleCombatBrokerCommandV1::MultiAttackerBlockerStep {
+            current_selection_sha256: "e".repeat(64),
+            selected_index: 3,
+            operation_kind: 't',
+            blocker_visible_ordinal: Some(4),
+            attacker_visible_ordinal: Some(7),
+            model_selection_commitment_sha256: "f".repeat(64),
+            execution_step_commitment_sha256: "1".repeat(64),
+        };
+        let multi_args = combat_dispatch_arguments_v1(&multi).unwrap();
+        assert_eq!(multi_args[0], "--blocker-selection-sha256");
+        assert_eq!(multi_args[5], "t");
+        assert_eq!(multi_args[7], "4");
+        assert_eq!(multi_args[9], "7");
+
+        let malformed = MtgoPlayerVisibleCombatBrokerCommandV1::MultiAttackerBlockerStep {
+            current_selection_sha256: "e".repeat(64),
+            selected_index: 3,
+            operation_kind: 'b',
+            blocker_visible_ordinal: None,
+            attacker_visible_ordinal: Some(7),
+            model_selection_commitment_sha256: "f".repeat(64),
+            execution_step_commitment_sha256: "1".repeat(64),
+        };
+        assert!(combat_dispatch_arguments_v1(&malformed).is_err());
     }
 
     #[test]

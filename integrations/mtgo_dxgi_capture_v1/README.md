@@ -191,14 +191,24 @@ combat result to the transport-neutral combat bridge. Attacker,
 single-attacker blocker, multi-attacker blocker, and visible target stages
 return an opaque prepared combat owner bound to the source observation,
 deployment, every model selection, and coordinate-free execution commitment.
-That owner has no dispatch conversion. Combat uses a distinct empty production
-qualification root, so a future ordinary direct-source review cannot approve
-combat implicitly. Combat dispatch and its action-specific fresh visible
-confirmation remain separate work.
+Combat uses distinct empty production roots, so a future ordinary direct-source
+review cannot approve combat implicitly. The attended combat prepare and
+execute wrappers now map only the checked coordinate-free attacker or blocker
+arguments into the sealed broker. After one submission, the shared input gate
+stays closed while the operator refreshes the rendered Game Log and obtains a
+strictly newer source-attested result from the same duel. The exact intended
+visible toggle, prompt, assignment, or completed declaration must validate
+before another step can exist. Attacker and single-attacker blocker plans can
+continue monotonically. Multi-attacker blocking must return to a fresh model
+decision after every confirmed prompt or assignment. A completed declaration
+stops at an explicit combat-history boundary rather than silently re-entering
+ordinary play without recording the aggregate model decision. The combat
+source and combat-dispatch roots are both `None`, so this wiring cannot
+currently score the running client or send input.
 
 `verify_direct_visible_source_runtime_v1` and `observe_attested_direct_visible_source_v1` supply the first opaque Windows owner for the release-pinned direct observer. The runtime verifier uses compile-time SHA-256 pins for the native broker, bootstrap, managed producer, and strict release validator. Observation consumes one admitted acting-player duel frame, invokes the broker against that exact MTGO process without passing a decision hash or selected index, bounds and strictly parses its only outward value, rehashes every runtime artifact, and immediately captures a second frame from the same process, window, output, profile, format, and geometry. Temporary stdout and stderr buffers are cleared on every return path. The move-only result retains both frames and the sanitized result but publicly exposes only fixed abstention, execution and artifact commitments, and false scoring, input, entry, and spending flags. A data-bearing result remains a qualification candidate until the no-stakes duel corpus and complete visible action surface are reviewed. The pinned observe-only live broker still compile-disables client-action dispatch.
 
-`verify_direct_visible_dispatch_runtime_v1` pins the separately named dispatch-capable broker at SHA-256 `918d99c4fc22d7ce3c0c6b080ca46a06bc1ab9922607dd46aa083bfa4da5eea` plus the same bootstrap, producer, and validator. A reproducible rebuild leaves the qualified observe-only broker byte-identical. The public attended dispatch wrapper can consume only the complete history-preserving pre-dispatch value, binds the exact sanitized decision SHA-256 and selected index, shares the process-wide one-input gate, and accepts only the fixed submitted receipt. Its attended confirmation wrapper refreshes the bound player-visible Game Log, captures a newer composed frame, rehashes the internally fixed action-specific visible regions, advances the attended game session and sanitized history, and only then reopens the gate. Any uncertainty consumes ownership and leaves the gate closed. The independent production dispatch ratification root is `None`, so neither the broker nor these APIs can currently send an action.
+`verify_direct_visible_dispatch_runtime_v1` pins the separately named combat-capable dispatch broker at SHA-256 `b67b5c4e31f65c81e26c04578655015812d1da56359314d57e95ac538e400233`, observe-only broker `c0e02fec4355083d334e667151b9354558a48c78cae77630efbd6fe40e7dc547`, producer `857478e466fc3cb7e4473d069ec46837f95abfa137b815062da818859b237e60`, strict validator `942508d83653f9fbc3555174102645e70a6a6d07f445debe1221504a7ba5cb96`, and bootstrap `1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b`. A separate release build reproduced both native broker hashes. The public attended ordinary dispatch wrapper can consume only the complete history-preserving pre-dispatch value, binds the exact sanitized decision SHA-256 and selected index, shares the process-wide one-input gate, and accepts only the fixed submitted receipt. Its attended confirmation wrapper refreshes the bound player-visible Game Log, captures a newer composed frame, rehashes the internally fixed action-specific visible regions, advances the attended game session and sanitized history, and only then reopens the gate. Any uncertainty consumes ownership and leaves the gate closed. The independent production ordinary and combat dispatch ratification roots are both `None`, so neither the broker nor these APIs can currently send an action.
 
 `qualify_attested_direct_visible_source_current_duel_v1` supplies the narrower bridge needed before the duel-perception profile is ratified. It captures both live composed duel frames internally against the pinned MTGO executable and signer, derives the process identifier from the first frame, invokes the same observe-only broker, then requires the identical duel process, window title, output, format, and geometry in the second frame. Its move-only result is permanently qualification-only. The `qualify_mtgo_direct_visible_source_v1` binary prints only artifact and capture commitments, the fixed abstention category when present, and false authority flags. It never prints the retained visible decision or any process, object, card, state, pixel, or path data.
 
