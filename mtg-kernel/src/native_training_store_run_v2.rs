@@ -1787,6 +1787,46 @@ fn validate_decoded_train_run_v2(
     })
 }
 
+// Feature-Encoder Successor fix round (regression found by full-suite bisect,
+// 2026-08-14): `NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2` /
+// `_GOLDEN_STREAM_SHA256_V2` are LIVE constants imported from
+// native_full_episode_trajectory_v2.rs, re-baselined once there (per the
+// owner ruling, collab CLAUDE #236) when its own catalog-identity literals
+// moved. That module has no sealed evidence of its own reading through this
+// pin, so a straight re-baseline was correct for it -- but
+// `classify_environment_trajectory_contract_v1` below compares a REAL
+// record's OWN embedded `trajectory.cross_language_goldens_file_sha256` /
+// `_golden_stream_sha256` fields against these same live constants
+// unconditionally, and real, already-sealed RunV2 evidence (confirmed via
+// direct inspection of the real denovo-screen-256 store) carries the
+// PRE-epoch value in those fields. Re-baselining the live constants without
+// widening this decode-time comparison reproduced the exact "outage" class
+// the whole dual-profile discipline exists to prevent: a real store that
+// decoded before this branch's changes stopped decoding after them. The two
+// frozen HISTORICAL literals below are the pre-epoch values (verified
+// against that real record directly, and matching this file's own git
+// history before the golden regeneration commits); the CURRENT side stays
+// the live import, unconditionally, exactly as the golden regeneration
+// commits left it.
+const FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1: &str =
+    "e6cfffe080c349ceca82ddfc6504fb61801ac07cc3e1ae57a80345296f7ec45b";
+const FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1: &str =
+    "19171ada77ecd142ac458365563f6e65ad9f5ba352625c77a121ce0d00bb537f";
+
+/// Whole-pair, hybrid-rejecting classifier for the full-episode-trajectory
+/// golden pin embedded in `contracts.trajectory`, mirroring this file's own
+/// `tensorizer_authority_triple_is_known_v1`/`classify_catalog_profile_v1`
+/// shape: exactly two complete pairs admissible (the frozen HISTORICAL pair
+/// above, or the live CURRENT pair re-exported from
+/// native_full_episode_trajectory_v2.rs); every hybrid rejected.
+fn full_episode_trajectory_golden_pin_is_known_v1(file_sha256: &str, stream_sha256: &str) -> bool {
+    let historical = file_sha256 == FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1
+        && stream_sha256 == FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1;
+    let current = file_sha256 == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2
+        && stream_sha256 == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2;
+    historical || current
+}
+
 /// The one closed trajectory-contract classifier.
 ///
 /// Exactly two complete tuples are admissible, and every other cross-product of
@@ -1837,10 +1877,10 @@ fn classify_environment_trajectory_contract_v1(
                     == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2
                 && trajectory.cross_language_golden_stream_identity
                     == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2
-                && trajectory.cross_language_goldens_file_sha256
-                    == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2
-                && trajectory.cross_language_golden_stream_sha256
-                    == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2;
+                && full_episode_trajectory_golden_pin_is_known_v1(
+                    &trajectory.cross_language_goldens_file_sha256,
+                    &trajectory.cross_language_golden_stream_sha256,
+                );
             if v2_pins && v2_versions && environment_randomization_section_is_exact_v2(section) {
                 Ok(NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2)
             } else {
@@ -6012,6 +6052,55 @@ mod tests {
             "FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1 was overwritten in place; add a \
              new frozen profile instead of moving this one"
         );
+    }
+
+    /// Regression tripwire for the real denovo-screen-256 decode outage
+    /// (found by full-suite bisect, 2026-08-14): the two literals below are
+    /// typed independently of `FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1`/
+    /// `_GOLDEN_STREAM_SHA256_HISTORICAL_V1`'s own definitions, so this
+    /// cannot pass by self-reference. A future full-episode-trajectory
+    /// golden regeneration must add a third pair alongside this one and the
+    /// live CURRENT pair, never overwrite this HISTORICAL pair in place --
+    /// doing so would reproduce the exact outage this fix closed.
+    #[test]
+    fn full_episode_trajectory_historical_pin_is_not_silently_overwritten_in_place() {
+        assert_eq!(
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1,
+            "e6cfffe080c349ceca82ddfc6504fb61801ac07cc3e1ae57a80345296f7ec45b",
+            "FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1 was overwritten in \
+             place; add a new frozen profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1,
+            "19171ada77ecd142ac458365563f6e65ad9f5ba352625c77a121ce0d00bb537f",
+            "FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1 was overwritten in \
+             place; add a new frozen profile instead of moving this one"
+        );
+    }
+
+    /// Direct unit coverage of `full_episode_trajectory_golden_pin_is_known_v1`:
+    /// both the frozen HISTORICAL pair (the real denovo-screen-256 store's
+    /// own embedded values) and the live CURRENT pair (re-exported from
+    /// native_full_episode_trajectory_v2.rs) are accepted; every hybrid is
+    /// rejected.
+    #[test]
+    fn full_episode_trajectory_golden_pin_accepts_both_profiles_and_rejects_hybrids() {
+        assert!(full_episode_trajectory_golden_pin_is_known_v1(
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1,
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1,
+        ));
+        assert!(full_episode_trajectory_golden_pin_is_known_v1(
+            NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
+            NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
+        ));
+        assert!(!full_episode_trajectory_golden_pin_is_known_v1(
+            NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1,
+        ));
+        assert!(!full_episode_trajectory_golden_pin_is_known_v1(
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1,
+            NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
+        ));
     }
 
     /// A record whose tensorizer contract carries the full CURRENT triple
