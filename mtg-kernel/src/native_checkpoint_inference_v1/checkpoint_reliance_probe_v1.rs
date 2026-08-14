@@ -1740,9 +1740,17 @@ fn fixed_rally_corpus_is_repeatable_without_external_artifacts_v1() {
     let first = build_fixed_rally_corpus_v1(CORPUS_DECISION_COUNT_V1);
     let second = build_fixed_rally_corpus_v1(CORPUS_DECISION_COUNT_V1);
     assert_eq!(first.tensors.len(), 256);
+    // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+    // 2026-08-14): build_fixed_rally_corpus_v1 is a live reproduction (built
+    // twice in this test, both compared equal below), not a decode of
+    // sealed evidence, so it moves with the accepted observation/catalog
+    // changes. This value coincidentally matches the historical corpus
+    // identity pinned in scripts/action_ingress_admission_v1/v2's sealed,
+    // dated diagnostics (CORPUS_SHA256), which stay frozen forever on their
+    // own terms and are untouched by this update; the two are independent.
     assert_eq!(
         first.sha256,
-        "72103ea367a662f76675a044ad4efcf4c52bf86d32630df88e5247cf79f5e5e0"
+        "6685d907752db0e82b62b123ffb88142d2fb59adf40f6a354c8a61ab3bd81c41"
     );
     assert_eq!(first.episode_count, 4);
     assert_eq!(first.multi_action_decision_count, 256);

@@ -7899,9 +7899,12 @@ impl JoinFixtureV1 {
 fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     let (authority, deck_ids, deck_hashes, tape) = joined_fixture_v1();
     let frame = frame_joined_tape_v1(&authority, &deck_ids, deck_hashes, &tape).unwrap();
+    // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+    // 2026-08-14): joined_fixture_v1 carries live deck_ids/deck_hashes, so
+    // this serializer golden moves with the nine-deck catalog landing.
     assert_eq!(
         frame.sha256_v1(),
-        "be0bcb28622dc79ee0824cdebbbf2f0b65d3da9d6f324e9404c9cd67aec09aac",
+        "d6812f9e689c56911b38426ee17eddf00d400e94ee3ff8aa3ebf8d2310e00970",
         "the complete compact joined-body fixture is a frozen serializer golden"
     );
     assert!(frame

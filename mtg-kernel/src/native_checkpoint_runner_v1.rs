@@ -1218,9 +1218,18 @@ mod tests {
             run_native_checkpoint_v1(&run, &checkpoint, &fixture.payload, runner_config_v1())
                 .unwrap();
 
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): logical_state_sha256 is derived from the
+        // observation, so it alone (of the three digests in this test)
+        // moves with the two accepted 603.10-family observation fixes; the
+        // parent-commit comparison's premise (bit-identical to pre-fix
+        // behavior) is superseded by the epoch, not violated by it --
+        // model_parameter_sha256/train_state_sha256/deck_hashes below are
+        // unaffected and still verify against the original parent-commit
+        // capture unchanged.
         assert_eq!(
             lower_hex_raw32_v1(result.logical_state_sha256()),
-            "4306c612de240410aaf5f1603562bf659a49102a740b1ff3de9b71adff68d0bd"
+            "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974"
         );
         assert_eq!(
             lower_hex_raw32_v1(result.model_parameter_sha256()),
@@ -1241,9 +1250,12 @@ mod tests {
             [909_447_583_901_160_127, 909_447_583_901_160_127]
         );
         assert_eq!(bindings[0].learner_seat(), PlayerSeatV1::P0);
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): observation-derived, see logical_state_sha256
+        // above for the full rationale.
         assert_eq!(
             lower_hex_raw32_v1(bindings[0].trajectory_sha256()),
-            "1693f81f7c600950179f06f6d5388132caecd68996145ae8b149463b97b1b580"
+            "f6a0be9ced1bceb1628965d2597e7c3cc7adeaa5ae8de24aa017d52a481b6985"
         );
         assert_eq!(bindings[0].outer_trajectory_sha256_v2(), None);
         assert_eq!(bindings[0].policy_step_count(), 151);
@@ -1260,17 +1272,29 @@ mod tests {
             [909_447_583_901_160_127, 909_447_583_901_160_127]
         );
         assert_eq!(bindings[1].learner_seat(), PlayerSeatV1::P1);
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): observation-derived, see logical_state_sha256
+        // above for the full rationale.
         assert_eq!(
             lower_hex_raw32_v1(bindings[1].trajectory_sha256()),
-            "9b1eed043a756f60573b5bb8c010861f1f70c7c490531f81cee3f0bc148c94b9"
+            "2253bd914bb47db25ab403b212680272cec399a9e4459286b5a6bbcfb2d17b90"
         );
         assert_eq!(bindings[1].outer_trajectory_sha256_v2(), None);
-        assert_eq!(bindings[1].policy_step_count(), 191);
-        assert_eq!(bindings[1].physical_decision_count(), 161);
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): these step/decision counts are derived from a
+        // live replay whose legal-action availability can shift under the
+        // two accepted 603.10-family observation fixes (e.g. reset-scope
+        // widening changes which permanents are summoning-sick/tapped after
+        // a zone change), so the exact game length is not guaranteed
+        // invariant across the epoch even though it was deterministic
+        // before and after it. Values are this test's own live-computed
+        // counts, read directly from failing runs (never hand-typed).
+        assert_eq!(bindings[1].policy_step_count(), 200);
+        assert_eq!(bindings[1].physical_decision_count(), 167);
         assert_eq!(bindings[1].learner_policy_step_count(), 101);
-        assert_eq!(bindings[1].opponent_policy_step_count(), 90);
+        assert_eq!(bindings[1].opponent_policy_step_count(), 99);
         assert_eq!(bindings[1].learner_physical_decision_count(), 100);
-        assert_eq!(bindings[1].opponent_physical_decision_count(), 61);
+        assert_eq!(bindings[1].opponent_physical_decision_count(), 67);
     }
 
     #[test]
