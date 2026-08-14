@@ -5772,9 +5772,19 @@ mod tests {
                 [15, 1, 5, 0, 0, 0, 0, 0, 2, 1, 2],
             ]
         );
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): this digest is over the actual observation
+        // bytes of a live deterministic replay (config(1,1,1,1)), so it
+        // moves with the two accepted 603.10-family observation fixes and
+        // the nine-deck catalog landing exactly like every other
+        // determinism literal. scorer.counts above is unaffected (same
+        // structural shape), confirming this is a byte-content shift, not a
+        // behavioral regression. Value is this test's own live-computed
+        // digest, read directly from a failing run before this update
+        // (never hand-typed).
         assert_eq!(
             digest,
-            "d44958bd7089fef5f7b87fead755ef8b05139e264e2187afdb8d84501898946e"
+            "2683fe1dc81fba1d9b755a8482303394ee9ffc52678908524a540fbf43ebd043"
         );
     }
 
