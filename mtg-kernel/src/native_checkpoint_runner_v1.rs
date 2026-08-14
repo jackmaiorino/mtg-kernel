@@ -614,33 +614,42 @@ pub(crate) fn run_native_checkpoint_with_population_opponent_eval_v1(
 /// non-test build and can never be reached from a training run record or
 /// the live science loop, so the search authority can never supply learner
 /// reward or promotion reward (the design's own stop-the-lane condition).
+/// `#[cfg(test)]` is retained deliberately on the calibration-runner branch
+/// (`kernel_native_search_calibration_runner_v1`): widening this to a
+/// non-test build would be the gate this function exists to guard, not a
+/// cleanup.
 ///
-/// `#[allow(dead_code)]`, disclosed here rather than only in a report: this
-/// function has no caller anywhere in this crate right now, under any
-/// feature combination, so the strict clippy gate (`-D warnings`) flags it
-/// as unreachable. It is not reachable from a minimal-fixture test today.
-/// Every test in this file that constructs a `ValidatedTrainRunV2` fails
-/// with `TrainRunV2Error { kind: InvalidLiteral }` -- confirmed pre-existing
-/// on unmodified `c9b192d` and confirmed NOT a stale-fixture-bytes problem:
-/// `validate_frozen_rev3_authorities_v2` (native_training_store_run_v2.rs,
-/// runs unconditionally, independent of any input record's bytes) fails on
-/// `KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2` --
-/// `KERNEL_CARDDB_HASH` (live, `data/cards_v1.json`) has drifted from
-/// `FROZEN_CARD_DB_HASH_U64_V2` (this worktree's card pool has grown
-/// substantially since that rev3 gate was last pinned) and additionally
-/// `RUNTIME_DECK_CATALOG_FILE_SHA256 != FROZEN_RUNTIME_CATALOG_SHA256_V2`.
-/// No fixture regeneration fixes this, since the gate never inspects the
-/// fixture's bytes; reconciling it means editing a frozen validator
-/// constant, out of scope for this branch (would be true even for the
-/// existing ladder/population eval siblings above, which are reachable
-/// only via a feature-gated real test in native_science_loop_v1.rs this
-/// branch does not touch). Rebase plan: once `FROZEN_CARD_DB_HASH_U64_V2`
-/// (and the runtime catalog sha) are reconciled with the current CardDB on
-/// whatever branch owns that change, add a real caller here (a minimal
-/// fixture episode mirroring `fixture_v1()`/`authorities_v1()` above) and
-/// remove this `#[allow(dead_code)]`.
+/// Real caller since the calibration-runner branch: the `--ignored`
+/// calibration harness in `kernel_native_search_calibration_runner_v1`
+/// (`#[cfg(all(test, windows))]`) is the first production-shaped caller,
+/// so the `#[allow(dead_code)]` this function previously carried is gone --
+/// clippy's dead-code lint is satisfied by the real callsite, not suppressed.
+///
+/// CardDB/rev3-gate finding (calibration-runner branch, verified against
+/// `98df7dd`, not just cited from the prior comment): `validate_frozen_rev3_
+/// authorities_v2` (native_training_store_run_v2.rs, runs unconditionally at
+/// the top of `validate_decoded_train_run_v2`, the sole choke point behind
+/// both `decode_train_run_v2` and the internal `validate_train_run_record_v2`
+/// construction seam) currently fails with `TrainRunV2Error { kind:
+/// InvalidLiteral }` on EVERY `ValidatedTrainRunV2` construction on this
+/// worktree, confirmed by directly running
+/// `native_training_store_run_v2::tests::
+/// production_owners_and_record_are_independently_pinned_to_frozen_rev3`
+/// (calls `validate_frozen_rev3_authorities_v2().unwrap()` directly) and
+/// observing the panic. The check is input-independent (it compares live
+/// build-time constants against frozen literals before any record byte is
+/// inspected), so this blocks not only the fixture-based tests this comment
+/// previously described but also every REAL population-store load:
+/// `native_population_runtime_resolution_v1::resolve_population_handles_v1`
+/// (not itself `#[cfg(test)]`-annotated -- its enclosing module happens to
+/// be registered `#[cfg(test)]` in `lib.rs` today, separately from this
+/// finding) reads a real `run.json` from a real Store root via `fs::read`
+/// and feeds it straight into `decode_train_run_v2`, which fails the same
+/// way. This is a pre-existing, worktree-wide defect unrelated to the
+/// search-opponent feature; the calibration runner does not attempt to
+/// route around it. See that module's docs for the full investigation and
+/// current status.
 #[cfg(test)]
-#[allow(dead_code)]
 pub(crate) fn run_native_checkpoint_with_search_opponent_eval_v1(
     run: &ValidatedTrainRunV2,
     checkpoint: &CheckpointManifestV3,

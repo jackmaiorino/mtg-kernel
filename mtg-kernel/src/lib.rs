@@ -67,6 +67,16 @@ pub(crate) mod flat_action_contract_v2;
 pub mod flat_policy_v1;
 pub mod flat_policy_v2;
 pub mod ids;
+// Calibration-only harness for the kernel-native search opponent: every
+// function in this module either is, or exists only to call,
+// `run_native_checkpoint_with_search_opponent_eval_v1`
+// (`native_checkpoint_runner_v1`), which is itself `#[cfg(test)]`-gated so
+// the search authority can never reach a non-test/production build. Gating
+// the whole module the same way (rather than sprinkling `#[cfg(test)]`
+// through it) keeps that single gate in one place and matches this module
+// having no non-test consumer anywhere in the crate.
+#[cfg(test)]
+pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
 pub mod mana;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
