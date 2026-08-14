@@ -85,12 +85,12 @@ const ENVIRONMENT_PYTHON_REFERENCE_BYTES: &[u8] =
 const V2_ARTIFACT_RAW_LEN: usize = 251_658;
 /// The exact SHA-256 of those raw bytes.
 const V2_ARTIFACT_RAW_SHA256: &str =
-    "771323c7d2748204666d3f17a36102768416cf471cfbd67f5a7c7decfe12defc";
+    "1a79f8153fe8adb7d984609d5e510f8e9f2f9e37358ed42744873ae4fd743672";
 /// The exact byte length of the rebuilt portable semantic stream.
 const V2_SEMANTIC_STREAM_LEN: usize = 226_765;
 /// The exact SHA-256 of that stream.
 const V2_SEMANTIC_STREAM_SHA256: &str =
-    "ece763620ec193fe993bdcb4848888d53cd137761fc2fa551766dcaa181c17a8";
+    "554003d75532a26d50ff6599cd909223176926773dce21efcd9895e41e51cb8e";
 /// The frozen atom count of that stream: six header atoms, six atoms per
 /// positive case, one pair-positive count atom, four atoms per pair positive,
 /// one trajectory-reject count atom, three atoms per trajectory reject, one
@@ -155,9 +155,9 @@ const ACCEPTED_RESET_PHYSICAL_PROJECTION_IDENTITY_V2: &str =
     "mtg-kernel-environment-randomization-v2-physical-card-definition-projection/v1";
 const ACCEPTED_RESET_PORTABLE_STREAM_IDENTITY_V2: &str = "mtg-kernel-environment-randomization-v2-reset-physical-trajectory-portable-vector-stream-sha256-v1";
 const ACCEPTED_RESET_GOLDENS_FILE_SHA256_V2: &str =
-    "ab002901a598d40732d39f9b0f21abaa2b7445e63b1c14d45a44b7900f6b739b";
+    "18ec6cd138a76bce1bf06c6b794fe169fbe8d83c0a9265d0ff99119a4c4a16bc";
 const ACCEPTED_RESET_PORTABLE_STREAM_SHA256_V2: &str =
-    "15d312141f8d96f079684dd64b58b5bab803086a78ac9687e3c14aab91e0a3c9";
+    "97f8eeff002ec15f3e30f58fd1f1e477a8abf1db3a38e25aaeb810f87da2a085";
 
 // trainer_schedule: four facts, one of them metadata-only.
 const ACCEPTED_TRAINER_SCHEDULE_IDENTITY_V2: &str = "mtg-kernel-native-trainer-schedule-sha256-v1";

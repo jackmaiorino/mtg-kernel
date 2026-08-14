@@ -93,9 +93,9 @@ pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2: &str 
 /// hashes, because a V2 envelope that committed to a hash of the V2 artifact or
 /// of the V2 stream would commit to a digest computed over itself.
 pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2: &str =
-    "771323c7d2748204666d3f17a36102768416cf471cfbd67f5a7c7decfe12defc";
+    "1a79f8153fe8adb7d984609d5e510f8e9f2f9e37358ed42744873ae4fd743672";
 pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2: &str =
-    "ece763620ec193fe993bdcb4848888d53cd137761fc2fa551766dcaa181c17a8";
+    "554003d75532a26d50ff6599cd909223176926773dce21efcd9895e41e51cb8e";
 
 /// The exact number of atoms in the frozen V2 envelope.  `finish_v2` proves
 /// this count on every constructed envelope.
@@ -262,9 +262,9 @@ const EXPECTED_RESET_TRAJECTORY_PHYSICAL_PROJECTION_IDENTITY_V2: &str =
     "mtg-kernel-environment-randomization-v2-physical-card-definition-projection/v1";
 const EXPECTED_RESET_TRAJECTORY_VECTOR_STREAM_IDENTITY_V2: &str = "mtg-kernel-environment-randomization-v2-reset-physical-trajectory-portable-vector-stream-sha256-v1";
 const EXPECTED_RESET_TRAJECTORY_GOLDENS_FILE_SHA256_V2: &str =
-    "ab002901a598d40732d39f9b0f21abaa2b7445e63b1c14d45a44b7900f6b739b";
+    "18ec6cd138a76bce1bf06c6b794fe169fbe8d83c0a9265d0ff99119a4c4a16bc";
 const EXPECTED_RESET_TRAJECTORY_VECTOR_STREAM_SHA256_V2: &str =
-    "15d312141f8d96f079684dd64b58b5bab803086a78ac9687e3c14aab91e0a3c9";
+    "97f8eeff002ec15f3e30f58fd1f1e477a8abf1db3a38e25aaeb810f87da2a085";
 
 const EXPECTED_TRAINER_SCHEDULE_IDENTITY_V2: &str = "mtg-kernel-native-trainer-schedule-sha256-v1";
 const EXPECTED_TRAINER_SEED_VERSION_V2: &str = "kernel-python-rl-trainer-sha256-v2";

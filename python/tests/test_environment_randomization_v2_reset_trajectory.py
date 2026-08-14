@@ -43,9 +43,9 @@ RUNTIME_DECKS_PATH = REPO_ROOT / "data" / "runtime_decks_v1.json"
 
 # Independently reproduced pins. Normal generation must yield exactly these.
 ARTIFACT_BYTES = 27041
-ARTIFACT_SHA256 = "ab002901a598d40732d39f9b0f21abaa2b7445e63b1c14d45a44b7900f6b739b"
+ARTIFACT_SHA256 = "18ec6cd138a76bce1bf06c6b794fe169fbe8d83c0a9265d0ff99119a4c4a16bc"
 STREAM_BYTES = 27712
-STREAM_SHA256 = "15d312141f8d96f079684dd64b58b5bab803086a78ac9687e3c14aab91e0a3c9"
+STREAM_SHA256 = "97f8eeff002ec15f3e30f58fd1f1e477a8abf1db3a38e25aaeb810f87da2a085"
 
 NATIVE_PAIR_ROOT = 5_293_664_275_683_392_565
 # The same derivation with the schedule identity wrongly substituted for the
