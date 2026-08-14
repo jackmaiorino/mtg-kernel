@@ -30,9 +30,7 @@ use crate::fast_sampler::{
     FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
 };
 use crate::native_flat_tensorizer_v2::{
-    NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
-    NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2, NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2,
-    NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
+    NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
 };
 use crate::native_full_episode_trajectory_v1::{
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
@@ -265,55 +263,63 @@ const FROZEN_TRAINER_IDENTITY_V2: &str = "mtg-kernel-native-even-batch-trainer-v
 const FROZEN_TENSORIZER_IDENTITY_V2: &str = "mtg-kernel-python-encoded-decision-tensor-contract-v2";
 // Feature-Encoder Successor (collab CLAUDE #221, folding CODEX #235's
 // historical stack-source encoder fix into the versioned feature-authority
-// successor): the HISTORICAL features.py identity, byte-identical forever.
-// Every already-sealed RunV2 record captured before this successor landed
-// carries this value in `contracts.tensorizer.authoritative_features_source_sha256`
-// and must keep decoding. This is independently typed from
-// `native_flat_tensorizer_v2::NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2`
-// on purpose (this module's own frozen mirror, same discipline as every
-// other FROZEN_*_V2 pin), not derived from it.
+// successor): the HISTORICAL tensorizer-authority triple, byte-identical
+// forever. Every already-sealed RunV2 record captured before this successor
+// landed carries these three values in `contracts.tensorizer` and must keep
+// decoding. Independently typed from `native_flat_tensorizer_v2`'s own
+// constants on purpose (this module's own frozen mirror, same discipline as
+// every other FROZEN_*_V2 pin), not derived from them.
 const FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2: &str =
     "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb";
-// CURRENT features.py identity (Feature-Encoder Successor): the live source
-// hash as of the historical stack-source encoder fix, pinned as its own
-// frozen authority parallel to and independent of
-// `FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2` above, which stays
-// untouched forever. `feature_contract_digest`/`feature_encoding_digest` are
-// unchanged by the fix (same declared dimensions, same contract/encoding
-// digests for both profiles), so only this one tensorizer field gets a
-// CURRENT sibling; see `matches_frozen_tensorizer_authority_source_sha256_v1`
-// for the whole-tuple-free, single-field acceptance this axis uses instead
-// of a `classify_catalog_profile_v1`-style closed enum (mixing historical
-// and current feature-encoder-profile records in the science loop is safe:
-// the encoding shape did not change, only this narrow bugfix + provenance
-// hash did).
-//
-// UNVERIFIED PENDING RECONCILIATION: collab binds this to `b316c0aa...`;
-// this branch has no byte-exact patch for the described fix, only its
-// semantic specification, and this branch's own reconstruction hashes to
-// the value below instead. See the branch report for the mismatch; do not
-// treat this as production-ready until reconciled.
-const FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1: &str =
-    "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c";
 const FROZEN_TENSORIZER_FIXTURE_SHA256_V2: &str =
     "5dbece4f903a09260a499295d866c7e6ff4283f9de83f842224511f977ae8a97";
 const FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2: &str =
     "2f87d49106806a402148fc8b115a54ac94713eb717f45f897eff57a3bd1184ec";
 
-/// Feature-Encoder Successor: accepts either the HISTORICAL or CURRENT
-/// features.py identity for `contracts.tensorizer.authoritative_features_source_sha256`.
-/// Every other tensorizer field (`fixture_sha256`, `fixture_payload_sha256`)
-/// stays pinned to its single existing frozen literal in
-/// `validate_contracts_v2`: this branch's reconstruction of the encoder fix
-/// does not regenerate `data/flat_policy_v2/python_full_features_v2.json`
-/// (that requires running the Python generator, out of scope for a
-/// code-only change), so the two fixture-derived hashes have no known
-/// CURRENT value yet. A CURRENT-profile record whose tensorizer contract
-/// carries the new fixture hashes will not decode until that follow-up
-/// lands (see the branch report's deferred verification batch).
-fn matches_frozen_tensorizer_authority_source_sha256_v1(value: &str) -> bool {
-    value == FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
-        || value == FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
+// CURRENT tensorizer-authority triple (Feature-Encoder Successor): the live
+// values as of the historical stack-source encoder fix and its golden
+// regeneration (`python/tools/generate_python_full_features_v2_goldens.py`
+// against the fixed features.py), pinned as their own frozen authority
+// parallel to and independent of the three HISTORICAL literals above, which
+// stay untouched forever. `feature_contract_digest`/`feature_encoding_digest`
+// are unchanged by the fix (same declared dimensions, same contract/encoding
+// digests for both profiles), so only these three tensorizer fields get a
+// CURRENT sibling. See `tensorizer_authority_triple_is_known_v1` for the
+// whole-tuple, hybrid-rejecting classifier, mirroring
+// `classify_catalog_profile_v1`'s shape exactly.
+//
+// Codex confirmed this branch's reconstruction as the intended change and
+// ratified the source-hash literal below as the CURRENT-profile pin
+// (collab CLAUDE #239); the fixture/payload literals are downstream of it.
+const FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1: &str =
+    "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c";
+const FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1: &str =
+    "edd8c255d65b0f1eba17b029da2d0e4aa5f9600243e9e390cd105c0b32b92812";
+const FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1: &str =
+    "728a702e364a83b14f539c0fc9441aac5d272be4a776cbee9a08d343ed4cf69c";
+
+/// The one closed tensorizer-authority classifier (Feature-Encoder
+/// Successor), mirroring `classify_catalog_profile_v1`'s shape exactly:
+/// exactly two complete triples are admissible (all-HISTORICAL or
+/// all-CURRENT); every hybrid, including a triple that matches one field's
+/// literal from one profile and another field's literal from the other, is
+/// rejected. The three fields move together because the fixture and its
+/// payload hash are both generated FROM the source the source-hash field
+/// names, so a coherent record's triple is never partial.
+fn tensorizer_authority_triple_is_known_v1(
+    authoritative_features_source_sha256: &str,
+    fixture_sha256: &str,
+    fixture_payload_sha256: &str,
+) -> bool {
+    let historical = authoritative_features_source_sha256
+        == FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
+        && fixture_sha256 == FROZEN_TENSORIZER_FIXTURE_SHA256_V2
+        && fixture_payload_sha256 == FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2;
+    let current = authoritative_features_source_sha256
+        == FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
+        && fixture_sha256 == FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1
+        && fixture_payload_sha256 == FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1;
+    historical || current
 }
 
 const FROZEN_LOSS_IDENTITY_V2: &str = "terminal_reinforce_value/v3";
@@ -2041,27 +2047,25 @@ fn validate_frozen_rev3_authorities_v2() -> Result<()> {
         || NONCLAIM_V1 != FROZEN_SNAPSHOT_NONCLAIM_V2
         || NATIVE_TRAINER_CONTRACT_IDENTITY_V2 != FROZEN_TRAINER_IDENTITY_V2
         || NATIVE_FLAT_TENSORIZER_IDENTITY_V2 != FROZEN_TENSORIZER_IDENTITY_V2
-        // Feature-Encoder Successor (collab CLAUDE #221): the live
-        // `NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2` constant now
-        // permanently tracks the CURRENT features.py identity (moved
-        // forward with the historical stack-source encoder fix), so an
-        // unconditional equality check against the HISTORICAL-only
-        // `FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2` mirror here would
+        // Feature-Encoder Successor (collab CLAUDE #221): the three live
+        // `NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2` /
+        // `_FIXTURE_SHA256_V2` / `_FIXTURE_PAYLOAD_SHA256_V2` constants now
+        // permanently track the CURRENT tensorizer-authority triple (moved
+        // forward with the historical stack-source encoder fix and its
+        // golden regeneration), so an unconditional equality check against
+        // the HISTORICAL-only `FROZEN_TENSORIZER_*_V2` mirrors here would
         // make every live build fail this function permanently -- the same
         // outage class the Dual-Profile Catalog Successor fixed for
         // `KERNEL_CARDDB_HASH`/`FROZEN_CARD_DB_HASH_U64_V2`. The record-field
         // check (`validate_contracts_v2`, via
-        // `matches_frozen_tensorizer_authority_source_sha256_v1`) is the
-        // authority for this axis now; no live-build-constant check runs at
-        // decode time. See `current_profile_matches_live_build_identity_v1`
-        // for the equivalent catalog-axis mutation-boundary authenticity
-        // check; an analogous check for this axis is a reasonable follow-up
-        // fix-round item but is not required to prevent decode outages
-        // (unlike catalog identity, mixing historical/current
+        // `tensorizer_authority_triple_is_known_v1`) is the authority for
+        // this axis now; no live-build-constant check runs at decode time.
+        // See `current_profile_matches_live_build_identity_v1` for the
+        // equivalent catalog-axis mutation-boundary authenticity check; an
+        // analogous check for this axis is a reasonable follow-up fix-round
+        // item but is not required to prevent decode outages (unlike
+        // catalog identity, mixing historical/current
         // feature-encoder-profile records in the science loop is safe).
-        || NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2 != FROZEN_TENSORIZER_FIXTURE_SHA256_V2
-        || NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
-            != FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
         || u64::try_from(PARAMETER_COUNT_V1).ok() != Some(FROZEN_PARAMETER_ELEMENT_COUNT_V2)
         || TRAINER_ALGORITHM_V1 != FROZEN_LOSS_IDENTITY_V2
         || TRAIN_STEP_IDENTITY_V1 != FROZEN_TRAIN_STEP_IDENTITY_V2
@@ -2506,14 +2510,13 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
         || contracts.tensorizer.feature_contract_digest != FROZEN_FEATURE_CONTRACT_DIGEST_V2
         || contracts.tensorizer.feature_encoding_digest != FROZEN_FEATURE_ENCODING_DIGEST_V2
         // Feature-Encoder Successor (collab CLAUDE #221): accepts either the
-        // HISTORICAL or CURRENT features.py identity; see
-        // `matches_frozen_tensorizer_authority_source_sha256_v1`.
-        || !matches_frozen_tensorizer_authority_source_sha256_v1(
+        // HISTORICAL or CURRENT tensorizer-authority triple as a whole; see
+        // `tensorizer_authority_triple_is_known_v1`.
+        || !tensorizer_authority_triple_is_known_v1(
             &contracts.tensorizer.authoritative_features_source_sha256,
+            &contracts.tensorizer.fixture_sha256,
+            &contracts.tensorizer.fixture_payload_sha256,
         )
-        || contracts.tensorizer.fixture_sha256 != FROZEN_TENSORIZER_FIXTURE_SHA256_V2
-        || contracts.tensorizer.fixture_payload_sha256
-            != FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
         || contracts.loss.identity != FROZEN_LOSS_IDENTITY_V2
         || contracts.train_step.identity != FROZEN_TRAIN_STEP_IDENTITY_V2
         || !matches!(
@@ -5952,98 +5955,140 @@ mod tests {
     // own CURRENT-profile variant locally instead, exactly as the
     // hybrid-rejection tests above do for the catalog axis.
 
-    /// Canary: the CURRENT tensorizer-authority literal must equal the live
-    /// `native_flat_tensorizer_v2` module constant exactly (the two are
-    /// independently typed on purpose; this is the cross-module tripwire).
-    /// If this fails, either the two literals were typed inconsistently or
-    /// only one side of the successor was updated.
+    /// Canary: the CURRENT tensorizer-authority triple must equal today's
+    /// live values exactly -- the source-hash literal against the live
+    /// `native_flat_tensorizer_v2` module constant, and the fixture/payload
+    /// literals against a fresh read of the regenerated golden file itself
+    /// (not against `native_flat_tensorizer_v2`'s own constants, which are
+    /// this same triple's independently-typed twin, not its source of
+    /// truth). If this fails, either a literal was typed inconsistently, the
+    /// golden was regenerated without updating these pins, or vice versa.
     #[test]
-    fn tensorizer_current_frozen_literal_matches_the_live_module_constant() {
+    fn tensorizer_current_frozen_triple_matches_the_live_golden() {
         assert_eq!(
             crate::native_flat_tensorizer_v2::NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
         );
+        let golden_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../data/flat_policy_v2/python_full_features_v2.json");
+        let golden_bytes = std::fs::read(&golden_path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", golden_path.display()));
+        assert_eq!(sha256_hex(&golden_bytes), FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1);
+        let golden: serde_json::Value = serde_json::from_slice(&golden_bytes).unwrap();
+        assert_eq!(
+            golden["payload_sha256"].as_str().unwrap(),
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1
+        );
     }
 
     /// Current-pin tripwire, same discipline as
-    /// `current_pin_is_not_silently_overwritten_in_place`: the literal below
-    /// is typed independently of `FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1`'s
-    /// own definition, so this cannot pass by self-reference. A future
-    /// features.py change must add a fourth tensorizer-authority literal
-    /// alongside this one, never overwrite it in place.
+    /// `current_pin_is_not_silently_overwritten_in_place`: the three literals
+    /// below are typed independently of the constants' own definitions, so
+    /// this cannot pass by self-reference. A future features.py change must
+    /// add a fourth tensorizer-authority triple alongside this one, never
+    /// overwrite it in place.
     ///
-    /// UNVERIFIED PENDING RECONCILIATION: this literal is this branch's own
-    /// computed SHA-256 of its reconstruction of CODEX #235's fix, not the
-    /// collab-bound `b316c0aa...` value (see the branch report). Once
-    /// reconciled, update both this literal and
-    /// `FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1` together.
+    /// Codex confirmed this branch's reconstruction as the intended change
+    /// and ratified the source-hash literal as the CURRENT-profile pin
+    /// (collab CLAUDE #239); the fixture/payload literals are downstream of
+    /// it.
     #[test]
-    fn tensorizer_current_pin_is_not_silently_overwritten_in_place() {
+    fn tensorizer_current_triple_is_not_silently_overwritten_in_place() {
         assert_eq!(
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1,
             "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c",
             "FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1 was overwritten in place; add a \
              new frozen profile instead of moving this one"
         );
+        assert_eq!(
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1,
+            "edd8c255d65b0f1eba17b029da2d0e4aa5f9600243e9e390cd105c0b32b92812",
+            "FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1 was overwritten in place; add a new \
+             frozen profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1,
+            "728a702e364a83b14f539c0fc9441aac5d272be4a776cbee9a08d343ed4cf69c",
+            "FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1 was overwritten in place; add a \
+             new frozen profile instead of moving this one"
+        );
     }
 
-    /// A record whose tensorizer contract carries the CURRENT
-    /// `authoritative_features_source_sha256` (fixture hashes left at their
-    /// single existing historical value, since no CURRENT fixture golden
-    /// exists yet) decodes clean. This is the acceptance half of the
-    /// dual-profile widen: new captures from a crate built with the
-    /// historical stack-source encoder fix must not hit the outage
+    /// A record whose tensorizer contract carries the full CURRENT triple
+    /// decodes clean. This is the acceptance half of the dual-profile widen:
+    /// new captures from a crate built with the historical stack-source
+    /// encoder fix and the regenerated golden must not hit the outage
     /// `classify_catalog_profile_v1`'s sibling design was built to prevent.
     #[test]
-    fn current_tensorizer_authority_source_sha256_decodes_clean() {
+    fn current_tensorizer_authority_triple_decodes_clean() {
         let mut record = fixture_record();
         record.contracts.tensorizer.authoritative_features_source_sha256 =
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1.to_owned();
+        record.contracts.tensorizer.fixture_sha256 =
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1.to_owned();
+        record.contracts.tensorizer.fixture_payload_sha256 =
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1.to_owned();
         refresh_derived(&mut record);
         let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
         let validated = decode_train_run_v2(&bytes).unwrap();
         assert_eq!(
-            validated
-                .record()
-                .contracts
-                .tensorizer
-                .authoritative_features_source_sha256,
+            validated.record().contracts.tensorizer.authoritative_features_source_sha256,
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
         );
     }
 
     /// The historical-default fixture (unmodified `fixture_record()`) still
-    /// decodes clean under the widened check -- the historical literal was
+    /// decodes clean under the widened check -- the historical triple was
     /// never removed, only joined by the current one. Every already-sealed
     /// RunV2 evidence store keeps decoding.
     #[test]
-    fn historical_tensorizer_authority_source_sha256_still_decodes_clean() {
+    fn historical_tensorizer_authority_triple_still_decodes_clean() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
-            validated
-                .record()
-                .contracts
-                .tensorizer
-                .authoritative_features_source_sha256,
+            validated.record().contracts.tensorizer.authoritative_features_source_sha256,
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
+        );
+        assert_eq!(
+            validated.record().contracts.tensorizer.fixture_sha256,
+            FROZEN_TENSORIZER_FIXTURE_SHA256_V2
+        );
+        assert_eq!(
+            validated.record().contracts.tensorizer.fixture_payload_sha256,
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
         );
     }
 
-    /// Neither the historical nor the current literal: rejected. Mutation
-    /// target for the widen itself -- deleting either `||` arm of
-    /// `matches_frozen_tensorizer_authority_source_sha256_v1` would make one
-    /// of `current_tensorizer_authority_source_sha256_decodes_clean` /
-    /// `historical_tensorizer_authority_source_sha256_still_decodes_clean`
-    /// fail, and collapsing the whole check to `true` would make this test
-    /// fail.
+    /// A hybrid triple (CURRENT source hash paired with HISTORICAL fixture
+    /// hashes) is rejected, exactly mirroring the catalog axis's
+    /// `hybrid_current_card_db_with_historical_catalog_sha_is_rejected`.
+    /// Mutation target: weakening `tensorizer_authority_triple_is_known_v1`
+    /// from whole-tuple matching to independent per-field matching would
+    /// make this test fail.
     #[test]
-    fn neither_known_tensorizer_authority_source_sha256_literal_is_rejected() {
+    fn hybrid_current_source_hash_with_historical_fixture_hashes_is_rejected() {
         let mut record = fixture_record();
         record.contracts.tensorizer.authoritative_features_source_sha256 =
-            "1111111111111111111111111111111111111111111111111111111111111111".to_owned();
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
+    /// Neither known triple: rejected. Mutation target for the widen itself
+    /// -- collapsing `tensorizer_authority_triple_is_known_v1` to `true`
+    /// would make this test fail.
+    #[test]
+    fn neither_known_tensorizer_authority_triple_is_rejected() {
+        let mut record = fixture_record();
+        record.contracts.tensorizer.authoritative_features_source_sha256 =
+            "1".repeat(68);
         // (64 hex-looking chars would also work; length is not itself
         // validated for this field, only exact equality against one of the
-        // two frozen literals, so any non-matching value proves the point.)
+        // two frozen source-hash literals, so any non-matching value proves
+        // the point.)
         refresh_derived(&mut record);
         let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
         assert_eq!(
