@@ -42,10 +42,30 @@ projection deliberately requires exactly two visible player panels, while the
 Solitaire surface rendered only the local player panel. No missing opponent was
 synthesized and no one-player state was mislabeled as a two-player decision.
 
+## Visible control trace
+
+After the failed projection produced no artifact, one pointer calibration was
+performed entirely against visible accessibility bounds. A double-click at the
+center of the leftmost visible `Image-Forest` hand card, bounds
+`x=1039,y=879,w=100,h=74`, produced all three required rendered
+postconditions: Forests in hand decreased from three to two, one Forest
+appeared on the battlefield, and the rendered Game Log added
+`UnbuckledPie plays Forest.`
+
+The footer text `OK / Pass` did not expose an invoke pattern and a click on its
+label produced no visible change, so it was not treated as a confirmed action.
+The prompt instead exposed an enabled `CombatButton` with an invoke pattern.
+Invoking that exact button advanced from first main to second main and exposed
+one enabled `End StepButton`. Invoking `End StepButton` advanced through the
+remaining empty turn to Turn 2 first main. The rendered Game Log added the Turn
+2 and draw entries, and the hand returned to eight cards. This is a complete
+visible one-player turn-boundary trace with no event entry or spending.
+
 ## Nonclaims
 
 This check proves the current signed client, exact rebuilt observer chain,
-one-player navigation, and fail-closed two-player projection requirement. It
+one-player navigation, one visible land-play postcondition, one complete
+one-player turn boundary, and fail-closed two-player projection requirement. It
 does not qualify a data-bearing two-player observation, model scoring, ordinary
 or combat dispatch, match-history import, event entry, or spending. All
 production source and dispatch ratification roots remain empty.
