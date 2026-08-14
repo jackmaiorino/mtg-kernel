@@ -3155,7 +3155,7 @@ fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_
         "native_model_path_present",
         "competitive_capabilities_v1",
         "checkpoint.pregame_head_ready_v1()",
-        "checkpoint.native_duel_action_interface_present",
+        "checkpoint.player_visible_duel_action_ready_v1()",
         "checkpoint.sideboard_head_ready_v1()",
         "checkpoint capabilities changed lineage",
         "changed_sideboard_resources_present",

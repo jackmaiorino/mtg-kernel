@@ -37,9 +37,11 @@ pub struct MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
     pub deployment_commitment_sha256: String,
     pub native_duel_action_interface_present: bool,
     pub native_player_visible_duel_action_interface_present: bool,
+    pub native_player_visible_history_import_interface_present: bool,
     pub native_pregame_interface_present: bool,
     pub terminal_outcome_trained_pregame_head_present: bool,
     pub native_sideboard_interface_present: bool,
+    pub native_sequential_sideboard_interface_present: bool,
     pub terminal_outcome_trained_sideboard_head_present: bool,
     pub native_changed_sideboard_action_present: bool,
     pub native_unchanged_sideboard_action_present: bool,
@@ -47,12 +49,22 @@ pub struct MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
 }
 
 impl MtgoNativeCheckpointCompetitiveCapabilitiesV1 {
+    pub fn player_visible_duel_action_ready_v1(&self) -> bool {
+        self.native_duel_action_interface_present
+            && self.native_player_visible_duel_action_interface_present
+            && self.native_player_visible_history_import_interface_present
+    }
+
     pub fn pregame_head_ready_v1(&self) -> bool {
-        self.native_pregame_interface_present && self.terminal_outcome_trained_pregame_head_present
+        self.native_player_visible_history_import_interface_present
+            && self.native_pregame_interface_present
+            && self.terminal_outcome_trained_pregame_head_present
     }
 
     pub fn sideboard_head_ready_v1(&self) -> bool {
-        self.native_sideboard_interface_present
+        self.native_player_visible_history_import_interface_present
+            && self.native_sideboard_interface_present
+            && self.native_sequential_sideboard_interface_present
             && self.terminal_outcome_trained_sideboard_head_present
             && self.native_changed_sideboard_action_present
             && self.native_unchanged_sideboard_action_present
@@ -276,6 +288,14 @@ pub fn validate_native_checkpoint_competitive_capabilities_v1(
             "the player-visible duel interface requires the native duel action interface",
         ));
     }
+    if value.native_sequential_sideboard_interface_present
+        && !value.native_sideboard_interface_present
+    {
+        return Err(error_v1(
+            "mtgo_checkpoint_sequential_sideboard_capabilities_inconsistent",
+            "the sequential sideboard interface requires the native sideboard interface",
+        ));
+    }
     if !value.native_sideboard_interface_present
         && (value.terminal_outcome_trained_sideboard_head_present
             || value.native_changed_sideboard_action_present
@@ -310,9 +330,11 @@ fn current_native_checkpoint_competitive_capabilities_v1(
         deployment_commitment_sha256: deployment_commitment_sha256.to_owned(),
         native_duel_action_interface_present: true,
         native_player_visible_duel_action_interface_present: false,
+        native_player_visible_history_import_interface_present: false,
         native_pregame_interface_present: false,
         terminal_outcome_trained_pregame_head_present: false,
         native_sideboard_interface_present: false,
+        native_sequential_sideboard_interface_present: false,
         terminal_outcome_trained_sideboard_head_present: false,
         native_changed_sideboard_action_present: false,
         native_unchanged_sideboard_action_present: false,
@@ -520,6 +542,9 @@ mod tests {
         );
         assert!(capabilities.native_duel_action_interface_present);
         assert!(!capabilities.native_player_visible_duel_action_interface_present);
+        assert!(!capabilities.native_player_visible_history_import_interface_present);
+        assert!(!capabilities.native_sequential_sideboard_interface_present);
+        assert!(!capabilities.player_visible_duel_action_ready_v1());
         assert!(!capabilities.pregame_head_ready_v1());
         assert!(!capabilities.sideboard_head_ready_v1());
         validate_native_checkpoint_competitive_capabilities_v1(&capabilities).unwrap();
@@ -535,6 +560,51 @@ mod tests {
                 .code(),
             "mtgo_checkpoint_duel_capabilities_inconsistent"
         );
+
+        let mut impossible_sequential = capabilities.clone();
+        impossible_sequential.native_sequential_sideboard_interface_present = true;
+        impossible_sequential.capabilities_commitment_sha256 =
+            native_checkpoint_competitive_capabilities_commitment_v1(&impossible_sequential)
+                .unwrap();
+        assert_eq!(
+            validate_native_checkpoint_competitive_capabilities_v1(&impossible_sequential)
+                .unwrap_err()
+                .code(),
+            "mtgo_checkpoint_sequential_sideboard_capabilities_inconsistent"
+        );
+
+        let mut broad_heads_without_required_transports = capabilities.clone();
+        broad_heads_without_required_transports
+            .native_player_visible_duel_action_interface_present = true;
+        broad_heads_without_required_transports.native_pregame_interface_present = true;
+        broad_heads_without_required_transports.terminal_outcome_trained_pregame_head_present =
+            true;
+        broad_heads_without_required_transports.native_sideboard_interface_present = true;
+        broad_heads_without_required_transports.terminal_outcome_trained_sideboard_head_present =
+            true;
+        broad_heads_without_required_transports.native_changed_sideboard_action_present = true;
+        broad_heads_without_required_transports.native_unchanged_sideboard_action_present = true;
+        broad_heads_without_required_transports.capabilities_commitment_sha256 =
+            native_checkpoint_competitive_capabilities_commitment_v1(
+                &broad_heads_without_required_transports,
+            )
+            .unwrap();
+        validate_native_checkpoint_competitive_capabilities_v1(
+            &broad_heads_without_required_transports,
+        )
+        .unwrap();
+        assert!(!broad_heads_without_required_transports.player_visible_duel_action_ready_v1());
+        assert!(!broad_heads_without_required_transports.pregame_head_ready_v1());
+        assert!(!broad_heads_without_required_transports.sideboard_head_ready_v1());
+
+        broad_heads_without_required_transports
+            .native_player_visible_history_import_interface_present = true;
+        assert!(broad_heads_without_required_transports.player_visible_duel_action_ready_v1());
+        assert!(broad_heads_without_required_transports.pregame_head_ready_v1());
+        assert!(!broad_heads_without_required_transports.sideboard_head_ready_v1());
+        broad_heads_without_required_transports.native_sequential_sideboard_interface_present =
+            true;
+        assert!(broad_heads_without_required_transports.sideboard_head_ready_v1());
 
         let mut crossed = capabilities.clone();
         crossed.deployment_commitment_sha256 = fixture_digest_v1('b');

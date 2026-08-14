@@ -6983,8 +6983,7 @@ fn directive_from_driver_v1(
         &driver.step,
         driver.allowed_observed_advances_v1(),
         checkpoint.pregame_head_ready_v1() && model.public_model_owned_pregame_action_path_present,
-        checkpoint.native_duel_action_interface_present
-            && checkpoint.native_player_visible_duel_action_interface_present
+        checkpoint.player_visible_duel_action_ready_v1()
             && model.native_checkpoint_player_visible_only_duel_action_interface_present
             && model.current_duel_scorer_kernel_bookkeeping_withheld
             && model.public_model_owned_duel_action_path_present,
@@ -7587,9 +7586,11 @@ mod tests {
             deployment_commitment_sha256: digest('8'),
             native_duel_action_interface_present,
             native_player_visible_duel_action_interface_present: false,
+            native_player_visible_history_import_interface_present: false,
             native_pregame_interface_present: false,
             terminal_outcome_trained_pregame_head_present: false,
             native_sideboard_interface_present: false,
+            native_sequential_sideboard_interface_present: false,
             terminal_outcome_trained_sideboard_head_present: false,
             native_changed_sideboard_action_present: false,
             native_unchanged_sideboard_action_present: false,
