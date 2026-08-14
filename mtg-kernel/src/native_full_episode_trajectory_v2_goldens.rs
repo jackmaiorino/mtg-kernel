@@ -85,12 +85,12 @@ const ENVIRONMENT_PYTHON_REFERENCE_BYTES: &[u8] =
 const V2_ARTIFACT_RAW_LEN: usize = 251_658;
 /// The exact SHA-256 of those raw bytes.
 const V2_ARTIFACT_RAW_SHA256: &str =
-    "e6cfffe080c349ceca82ddfc6504fb61801ac07cc3e1ae57a80345296f7ec45b";
+    "771323c7d2748204666d3f17a36102768416cf471cfbd67f5a7c7decfe12defc";
 /// The exact byte length of the rebuilt portable semantic stream.
 const V2_SEMANTIC_STREAM_LEN: usize = 226_765;
 /// The exact SHA-256 of that stream.
 const V2_SEMANTIC_STREAM_SHA256: &str =
-    "19171ada77ecd142ac458365563f6e65ad9f5ba352625c77a121ce0d00bb537f";
+    "ece763620ec193fe993bdcb4848888d53cd137761fc2fa551766dcaa181c17a8";
 /// The frozen atom count of that stream: six header atoms, six atoms per
 /// positive case, one pair-positive count atom, four atoms per pair positive,
 /// one trajectory-reject count atom, three atoms per trajectory reject, one
@@ -175,8 +175,11 @@ const ACCEPTED_RUNTIME_DECK_PROTOCOL_V2: &str = "canonical-mainboard-bo1/v1";
 const ACCEPTED_RUNTIME_DECK_MATERIALIZATION_PROTOCOL_V2: &str =
     "xmage_xml_row_then_copy_ordinal/v1";
 const ACCEPTED_RUNTIME_DECK_HASH_ALGORITHM_V2: &str = "fnv1a64-serde-json-u16-array/v1";
+// Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+// 2026-08-14); see native_full_episode_trajectory_v2.rs's
+// EXPECTED_RUNTIME_DECK_CATALOG_FILE_SHA256_V2 for the full rationale.
 const ACCEPTED_RUNTIME_DECK_CATALOG_FILE_SHA256_V2: &str =
-    "5ea19e8a08f0e9c9657e9a6a90382329785f27eeabbbe066e80e7025e8ee62c0";
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
 // B2's own copies of the four V2 identity strings the artifact declares.
 const ACCEPTED_TRAJECTORY_IDENTITY_V2: &str = "mtg-kernel-native-full-episode-trajectory-sha256-v2";

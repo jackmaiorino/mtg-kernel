@@ -93,9 +93,9 @@ pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2: &str 
 /// hashes, because a V2 envelope that committed to a hash of the V2 artifact or
 /// of the V2 stream would commit to a digest computed over itself.
 pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2: &str =
-    "e6cfffe080c349ceca82ddfc6504fb61801ac07cc3e1ae57a80345296f7ec45b";
+    "771323c7d2748204666d3f17a36102768416cf471cfbd67f5a7c7decfe12defc";
 pub(crate) const NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2: &str =
-    "19171ada77ecd142ac458365563f6e65ad9f5ba352625c77a121ce0d00bb537f";
+    "ece763620ec193fe993bdcb4848888d53cd137761fc2fa551766dcaa181c17a8";
 
 /// The exact number of atoms in the frozen V2 envelope.  `finish_v2` proves
 /// this count on every constructed envelope.
@@ -276,8 +276,18 @@ const EXPECTED_RUNTIME_DECK_PROTOCOL_V2: &str = "canonical-mainboard-bo1/v1";
 const EXPECTED_RUNTIME_DECK_MATERIALIZATION_PROTOCOL_V2: &str =
     "xmage_xml_row_then_copy_ordinal/v1";
 const EXPECTED_RUNTIME_DECK_HASH_ALGORITHM_V2: &str = "fnv1a64-serde-json-u16-array/v1";
+// Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+// 2026-08-14): the runtime-decks-nine catalog landing is one of the three
+// accepted determinism-epoch causes (alongside the two 603.10-family
+// observation fixes), and determinism literals re-baseline once at the
+// merge epoch rather than carrying a dual profile here -- this module has
+// no sealed historical evidence needing backward-compatible decode the way
+// native_training_store_run_v2.rs's RunV2 records do; it is a live
+// construction-time guard only. Value is the crate's own live
+// RUNTIME_DECK_CATALOG_FILE_SHA256 (matches FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
+// in native_training_store_run_v2.rs, the same successor's own CURRENT pin).
 const EXPECTED_RUNTIME_DECK_CATALOG_FILE_SHA256_V2: &str =
-    "5ea19e8a08f0e9c9657e9a6a90382329785f27eeabbbe066e80e7025e8ee62c0";
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
 
 /// The twenty-four live-versus-expected pairs, in envelope atom order 2..=25.
 /// The left element is the current constant imported from the owning module; the
