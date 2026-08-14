@@ -2950,7 +2950,7 @@ fn competitive_deck_chooser_is_exact_two_state_visible_only_and_non_authorizing(
     for required in [
         "pre_entry_visible_deck_chooser_classifier_protocol_present: true",
         "pre_entry_visible_deck_chooser_reviewed_two_state_corpus_present: false",
-        "pre_entry_visible_deck_selection_actuator_present: false",
+        "pre_entry_visible_deck_selection_actuator_present: true",
     ] {
         assert!(
             readiness.contains(required),
@@ -2984,6 +2984,79 @@ fn competitive_deck_chooser_is_exact_two_state_visible_only_and_non_authorizing(
         assert!(
             !runtime.contains(forbidden),
             "deck-chooser runtime exposes forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn competitive_deck_selection_actuator_is_three_control_visible_confirmed_and_unratified() {
+    let source = include_str!("../src/competitive_deck_selection_control.rs");
+    let gate = include_str!("../src/probe/competitive_deck_gate_runtime.rs");
+    let chooser = include_str!("../src/probe/competitive_deck_chooser_runtime.rs");
+    let public_api = include_str!("../src/lib.rs");
+    for required in [
+        "RATIFIED_COMPETITIVE_DECK_SELECTION_AUTHORIZATION_COMMITMENT_V1: Option<&str> = None",
+        "MtgoCompetitiveDeckSelectionControlV1",
+        "SelectDeck",
+        "ExactDeckRow",
+        "SubmitSelectedDeck",
+        "prepare_next_competitive_deck_selection_control_v1",
+        "execute_prepared_competitive_deck_selection_control_v1",
+        "confirm_pending_competitive_select_deck_v1",
+        "confirm_pending_competitive_exact_deck_row_v1",
+        "confirm_pending_competitive_deck_submit_v1",
+        "reserve_direct_visible_input_gate_v1",
+        "release_confirmed_direct_visible_input_pending_v1",
+        "no_entry_choice_no_fee_no_entry_no_spending",
+    ] {
+        assert!(
+            source.contains(required),
+            "deck actuator is missing: {required}"
+        );
+    }
+    for required in [
+        "select_deck_control_target_v1",
+        "confirm_classified_competitive_deck_selection_transition_v1",
+    ] {
+        assert!(
+            gate.contains(required),
+            "deck gate join is missing: {required}"
+        );
+    }
+    for required in [
+        "exact_deck_row_control_target_v1",
+        "submit_control_target_v1",
+        "confirm_competitive_deck_submit_visible_v1",
+    ] {
+        assert!(
+            chooser.contains(required),
+            "deck chooser join is missing: {required}"
+        );
+    }
+    for required in [
+        "begin_ratified_competitive_deck_selection_session_v1",
+        "OpaqueMtgoConfirmedCompetitiveDeckSelectionV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "deck actuator public boundary is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "TcpStream",
+        "UdpSocket",
+        "reqwest",
+        "pub fn control_rect",
+        "pub fn target_x",
+        "pub fn click",
+        "pub fn enter_event",
+        "pub fn spend",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "deck actuator exposes a forbidden capability: {forbidden}"
         );
     }
 }

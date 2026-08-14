@@ -16385,6 +16385,10 @@ fn halt_gate_v3() -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn halt_direct_visible_input_gate_v1() -> Result<(), String> {
+    halt_gate_v3()
+}
+
 trait VerifiedPointerTargetV3 {
     fn hwnd_v3(&self) -> u64;
     fn process_id_v3(&self) -> u32;
@@ -16395,6 +16399,44 @@ trait VerifiedPointerTargetV3 {
     fn target_y_desktop_px_v3(&self) -> i32;
     fn park_x_desktop_px_v3(&self) -> i32;
     fn park_y_desktop_px_v3(&self) -> i32;
+}
+
+impl VerifiedPointerTargetV3 for MtgoCompetitiveEntryPointerTargetV1 {
+    fn hwnd_v3(&self) -> u64 {
+        self.hwnd
+    }
+
+    fn process_id_v3(&self) -> u32 {
+        self.process_id
+    }
+
+    fn process_start_filetime_100ns_v3(&self) -> u64 {
+        self.process_start_filetime_100ns
+    }
+
+    fn dpi_v3(&self) -> u32 {
+        self.dpi
+    }
+
+    fn client_rect_desktop_px_v3(&self) -> &crate::SignedRectV1 {
+        &self.client_rect_desktop_px
+    }
+
+    fn target_x_desktop_px_v3(&self) -> i32 {
+        self.target_x_desktop_px
+    }
+
+    fn target_y_desktop_px_v3(&self) -> i32 {
+        self.target_y_desktop_px
+    }
+
+    fn park_x_desktop_px_v3(&self) -> i32 {
+        self.park_x_desktop_px
+    }
+
+    fn park_y_desktop_px_v3(&self) -> i32 {
+        self.park_y_desktop_px
+    }
 }
 
 impl VerifiedPointerTargetV3 for PreparedPregameActuationV3 {
@@ -17114,6 +17156,12 @@ fn send_exactly_one_left_click_v3<T: VerifiedPointerTargetV3>(
         ));
     }
     Ok(cursor_park_guard.park_now())
+}
+
+pub(crate) fn send_exactly_one_competitive_deck_control_click_v1(
+    pointer_target: &MtgoCompetitiveEntryPointerTargetV1,
+) -> Result<bool, String> {
+    send_exactly_one_left_click_v3(pointer_target)
 }
 
 struct ActuatorDpiGuardV3(windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT);

@@ -5,6 +5,9 @@ use sha2::{Digest, Sha256};
 mod actuator;
 
 #[cfg(target_os = "windows")]
+mod competitive_deck_selection_control;
+
+#[cfg(target_os = "windows")]
 mod competitive_wiring_readiness;
 
 #[cfg(target_os = "windows")]
@@ -202,6 +205,24 @@ pub use actuator::{
     RatifiedMtgoCompetitivePregameAuthorizationV1,
     RatifiedMtgoCompetitiveSideboardAutomationAuthorizationV1,
     RatifiedMtgoPrivateMatchAuthorizationV3, MTGO_COMPETITIVE_AUTHORIZATION_READINESS_SCHEMA_V1,
+};
+
+#[cfg(target_os = "windows")]
+pub use competitive_deck_selection_control::{
+    begin_ratified_competitive_deck_selection_session_v1,
+    confirm_pending_competitive_deck_submit_v1, confirm_pending_competitive_exact_deck_row_v1,
+    confirm_pending_competitive_select_deck_v1,
+    execute_prepared_competitive_deck_selection_control_v1,
+    prepare_next_competitive_deck_selection_control_v1,
+    review_competitive_deck_selection_ratification_candidate_v1,
+    MtgoCompetitiveDeckSelectionControlV1, MtgoCompetitiveDeckSelectionSessionCommitmentsV1,
+    MtgoConfirmedCompetitiveDeckSelectionCommitmentsV1,
+    MtgoPendingCompetitiveDeckSelectionControlCommitmentsV1,
+    MtgoPreparedCompetitiveDeckSelectionControlCommitmentsV1,
+    MtgoReviewedCompetitiveDeckSelectionRatificationCandidateV1,
+    OpaqueMtgoCompetitiveDeckSelectionSessionV1, OpaqueMtgoConfirmedCompetitiveDeckSelectionV1,
+    OpaqueMtgoPendingCompetitiveDeckSelectionControlV1,
+    OpaqueMtgoPreparedCompetitiveDeckSelectionControlV1,
 };
 
 #[cfg(target_os = "windows")]

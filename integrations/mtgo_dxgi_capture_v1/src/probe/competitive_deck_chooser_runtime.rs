@@ -1,9 +1,12 @@
 use super::{
     competitive_entry_window_continuity_commitment_for_frame_v1,
     competitive_navigation_classifier_assets_manifest_bytes_v1,
+    confirm_classified_competitive_deck_selection_transition_v1, deck_control_target_v1,
     invoke_verified_competitive_deck_chooser_classifier_process_v1, sha256_hex_v1,
-    verify_runtime_identity_now_v1, MtgoCompetitiveNavigationFrameIdentityV1,
-    OpaqueMtgoAdmittedCompetitiveNavigationFrameV1, OpaqueMtgoClassifiedCompetitiveDeckGateV1,
+    verify_runtime_identity_now_v1, MtgoCompetitiveDeckControlTargetV1,
+    MtgoCompetitiveNavigationFrameIdentityV1, OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    OpaqueMtgoClassifiedCompetitiveDeckGateV1,
+    OpaqueMtgoConfirmedCompetitiveDeckSelectionTransitionV1,
     OpaqueMtgoVerifiedCompetitiveNavigationClassifierRuntimeV1,
 };
 use mtgo_blackbox_v1::{
@@ -186,6 +189,101 @@ impl OpaqueMtgoClassifiedCompetitiveDeckChooserV1 {
         false
     }
 
+    pub(crate) fn exact_deck_row_control_target_v1(
+        &self,
+    ) -> Result<MtgoCompetitiveDeckControlTargetV1, String> {
+        if self.commitments.state != MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection
+            || self.raw.deck_row_selected
+            || self.raw.submit_control_enabled
+        {
+            return Err(
+                "exact deck-row input requires the unselected reviewed chooser state".to_owned(),
+            );
+        }
+        deck_control_target_v1(
+            &self.current_frame,
+            &self.raw.deck_row_control_rect_client_px,
+            &self.raw.deck_row_control_region_sha256,
+            &self.commitments.classification_result_commitment_sha256,
+            self.raw.frame_id,
+            self.raw.frame_sequence,
+            b"exact_deck_row",
+        )
+    }
+
+    pub(crate) fn submit_control_target_v1(
+        &self,
+    ) -> Result<MtgoCompetitiveDeckControlTargetV1, String> {
+        if self.commitments.state != MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected
+            || !self.raw.deck_row_selected
+            || !self.raw.submit_control_enabled
+        {
+            return Err(
+                "deck Submit requires the exact selected reviewed chooser state".to_owned(),
+            );
+        }
+        deck_control_target_v1(
+            &self.current_frame,
+            &self.raw.submit_control_rect_client_px,
+            &self.raw.submit_control_region_sha256,
+            &self.commitments.classification_result_commitment_sha256,
+            self.raw.frame_id,
+            self.raw.frame_sequence,
+            b"submit_selected_deck",
+        )
+    }
+}
+
+pub(crate) struct OpaqueMtgoConfirmedCompetitiveDeckSubmitVisibleV1 {
+    _prior_chooser_frames: Vec<OpaqueMtgoAdmittedCompetitiveNavigationFrameV1>,
+    _selected_chooser_frame: OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    _target: MtgoCompetitiveEventListingTargetV1,
+    _selected_raw: MtgoVisibleCompetitiveDeckChooserV1,
+    _selected_commitments: MtgoClassifiedCompetitiveDeckChooserCommitmentsV1,
+    gate_transition: OpaqueMtgoConfirmedCompetitiveDeckSelectionTransitionV1,
+}
+
+impl OpaqueMtgoConfirmedCompetitiveDeckSubmitVisibleV1 {
+    pub(crate) fn transition_commitments_v1(
+        &self,
+    ) -> mtgo_blackbox_v1::MtgoCompetitiveDeckSelectionTransitionCommitmentsV1 {
+        self.gate_transition.commitments_v1()
+    }
+
+    pub(crate) fn after_captured_at_unix_millis_v1(&self) -> u128 {
+        self.gate_transition.after_captured_at_unix_millis_v1()
+    }
+
+    pub(crate) fn into_after_gate_v1(self) -> OpaqueMtgoClassifiedCompetitiveDeckGateV1 {
+        self.gate_transition.into_after_gate_v1()
+    }
+}
+
+pub(crate) fn confirm_competitive_deck_submit_visible_v1(
+    selected: OpaqueMtgoClassifiedCompetitiveDeckChooserV1,
+    after: OpaqueMtgoClassifiedCompetitiveDeckGateV1,
+) -> Result<OpaqueMtgoConfirmedCompetitiveDeckSubmitVisibleV1, String> {
+    if selected.state_v1() != MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected {
+        return Err("deck Submit confirmation requires the exact selected chooser".to_owned());
+    }
+    let OpaqueMtgoClassifiedCompetitiveDeckChooserV1 {
+        source_gate,
+        prior_frames,
+        current_frame,
+        target,
+        raw,
+        commitments,
+    } = selected;
+    let gate_transition =
+        confirm_classified_competitive_deck_selection_transition_v1(source_gate, after)?;
+    Ok(OpaqueMtgoConfirmedCompetitiveDeckSubmitVisibleV1 {
+        _prior_chooser_frames: prior_frames,
+        _selected_chooser_frame: current_frame,
+        _target: target,
+        _selected_raw: raw,
+        _selected_commitments: commitments,
+        gate_transition,
+    })
 }
 
 pub fn check_untrusted_competitive_deck_chooser_classifier_request_v1(

@@ -1,9 +1,11 @@
 use super::{
     bind_checked_competitive_event_listing_parts_v1,
+    competitive_entry_window_continuity_commitment_for_frame_v1,
     competitive_navigation_classifier_assets_manifest_bytes_v1,
-    invoke_verified_competitive_deck_gate_classifier_process_v1, sha256_hex_v1,
+    invoke_verified_competitive_deck_gate_classifier_process_v1,
+    resolve_admitted_competitive_navigation_pointer_target_v1, sha256_hex_v1,
     verify_runtime_identity_now_v1, MtgoClassifiedCompetitiveNavigationFrameCommitmentsV1,
-    OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    MtgoCompetitiveEntryPointerTargetV1, OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
     OpaqueMtgoClassifiedCompetitiveNavigationFrameV1,
     OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
     OpaqueMtgoSourceBoundCompetitiveEventListingV1,
@@ -12,10 +14,13 @@ use super::{
 use mtgo_blackbox_v1::{
     competitive_event_listing_target_commitment_v1,
     promote_open_entry_review_available_deck_gate_v1, validate_visible_competitive_deck_gate_v1,
+    validate_visible_competitive_deck_selection_transition_v1,
     visible_frame_region_content_sha256_v1, CheckedUntrustedMtgoCompetitiveDeckGateV1,
+    CheckedUntrustedMtgoCompetitiveDeckSelectionTransitionV1,
     CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1, MtgoCompetitiveDeckGateStateV1,
-    MtgoCompetitiveEventListingTargetV1, MtgoCompetitiveLifecyclePhaseV1, MtgoRectPxV1,
-    MtgoSizePxV1, MtgoVisibleCompetitiveDeckGateV1, ValidatedMtgoCompetitiveDeckManifestV1,
+    MtgoCompetitiveDeckSelectionTransitionCommitmentsV1, MtgoCompetitiveEventListingTargetV1,
+    MtgoCompetitiveLifecyclePhaseV1, MtgoRectPxV1, MtgoSizePxV1, MtgoVisibleCompetitiveDeckGateV1,
+    ValidatedMtgoCompetitiveDeckManifestV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -25,6 +30,8 @@ const DECK_GATE_CLASSIFIER_REQUEST_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-deck-gate-classifier-request-v1";
 const DECK_GATE_CLASSIFIER_RESULT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-deck-gate-classifier-result-v1";
+const DECK_SELECTION_CONTROL_TARGET_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-deck-selection-control-target-v1";
 const MAX_DECK_GATE_REQUEST_HEADER_BYTES_V1: usize = 1024 * 1024;
 const MAX_DECK_GATE_ASSETS_MANIFEST_BYTES_V1: usize = 16 * 1024 * 1024;
 
@@ -158,6 +165,202 @@ impl OpaqueMtgoClassifiedCompetitiveDeckGateV1 {
     pub(super) fn source_frame_v1(&self) -> &OpaqueMtgoAdmittedCompetitiveNavigationFrameV1 {
         &self.source_frame
     }
+
+    pub(crate) fn select_deck_control_target_v1(
+        &self,
+    ) -> Result<MtgoCompetitiveDeckControlTargetV1, String> {
+        if self.commitments.state != MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection
+            || !self.raw.select_deck_control_enabled
+        {
+            return Err("Select Deck requires the exact visible missing-deck state".to_owned());
+        }
+        deck_control_target_v1(
+            &self.source_frame,
+            &self.raw.select_deck_control_rect_client_px,
+            &self.raw.select_deck_control_region_sha256,
+            &self.commitments.classification_result_commitment_sha256,
+            self.raw.frame_id,
+            self.raw.frame_sequence,
+            b"select_deck",
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MtgoCompetitiveDeckControlTargetV1 {
+    pub(crate) pointer_target: MtgoCompetitiveEntryPointerTargetV1,
+    pub(crate) control_binding_commitment_sha256: String,
+    pub(crate) source_capture_commitment_sha256: String,
+    pub(crate) source_frame_id: u64,
+    pub(crate) source_frame_sequence: u64,
+    pub(crate) source_captured_at_unix_millis: u128,
+}
+
+pub(crate) fn deck_control_target_v1(
+    frame: &OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    rect: &MtgoRectPxV1,
+    region_sha256: &str,
+    classification_result_commitment_sha256: &str,
+    source_frame_id: u64,
+    source_frame_sequence: u64,
+    control_tag: &[u8],
+) -> Result<MtgoCompetitiveDeckControlTargetV1, String> {
+    let pointer_target = resolve_admitted_competitive_navigation_pointer_target_v1(
+        frame,
+        rect,
+        "competitive deck-selection control",
+    )?;
+    let frame_commitments = frame.commitments_v1();
+    let rect_json = serde_json::to_vec(rect)
+        .map_err(|error| format!("serialize deck-selection control rectangle: {error}"))?;
+    let control_binding_commitment_sha256 = commitment_v1(
+        DECK_SELECTION_CONTROL_TARGET_DOMAIN_V1,
+        &[
+            classification_result_commitment_sha256.as_bytes(),
+            frame_commitments
+                .source_capture
+                .capture_commitment_sha256
+                .as_bytes(),
+            rect_json.as_slice(),
+            region_sha256.as_bytes(),
+            control_tag,
+            b"private_pointer_from_exact_rehashed_visible_control",
+        ],
+    );
+    Ok(MtgoCompetitiveDeckControlTargetV1 {
+        pointer_target,
+        control_binding_commitment_sha256,
+        source_capture_commitment_sha256: frame_commitments
+            .source_capture
+            .capture_commitment_sha256,
+        source_frame_id,
+        source_frame_sequence,
+        source_captured_at_unix_millis: frame_commitments.source_capture.captured_at_unix_millis,
+    })
+}
+
+pub(crate) struct OpaqueMtgoConfirmedCompetitiveDeckSelectionTransitionV1 {
+    _before_source_frame: OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    _before_navigation_classification: OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    _before_raw: MtgoVisibleCompetitiveDeckGateV1,
+    _before_commitments: MtgoClassifiedCompetitiveDeckGateCommitmentsV1,
+    after_source_frame: OpaqueMtgoAdmittedCompetitiveNavigationFrameV1,
+    after_navigation_classification: OpaqueMtgoRetainedCompetitiveNavigationClassificationV1,
+    after_raw: MtgoVisibleCompetitiveDeckGateV1,
+    after_commitments: MtgoClassifiedCompetitiveDeckGateCommitmentsV1,
+    transition: CheckedUntrustedMtgoCompetitiveDeckSelectionTransitionV1,
+}
+
+impl OpaqueMtgoConfirmedCompetitiveDeckSelectionTransitionV1 {
+    pub(crate) fn commitments_v1(&self) -> MtgoCompetitiveDeckSelectionTransitionCommitmentsV1 {
+        self.transition.commitments_v1()
+    }
+
+    pub(crate) fn after_captured_at_unix_millis_v1(&self) -> u128 {
+        self.after_source_frame
+            .commitments_v1()
+            .source_capture
+            .captured_at_unix_millis
+    }
+
+    pub(crate) fn into_after_gate_v1(self) -> OpaqueMtgoClassifiedCompetitiveDeckGateV1 {
+        OpaqueMtgoClassifiedCompetitiveDeckGateV1 {
+            source_frame: self.after_source_frame,
+            navigation_classification: self.after_navigation_classification,
+            gate: self.transition.into_after_gate_v1(),
+            raw: self.after_raw,
+            commitments: self.after_commitments,
+        }
+    }
+}
+
+pub(crate) fn confirm_classified_competitive_deck_selection_transition_v1(
+    before: OpaqueMtgoClassifiedCompetitiveDeckGateV1,
+    after: OpaqueMtgoClassifiedCompetitiveDeckGateV1,
+) -> Result<OpaqueMtgoConfirmedCompetitiveDeckSelectionTransitionV1, String> {
+    let before_commitments = before.commitments_v1();
+    let after_commitments = after.commitments_v1();
+    if before_commitments.state != MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection
+        || after_commitments.state != MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected
+        || after_commitments.source_navigation.frame_sequence
+            <= before_commitments.source_navigation.frame_sequence
+        || after_commitments
+            .source_navigation
+            .source_frame
+            .source_capture
+            .captured_at_unix_millis
+            <= before_commitments
+                .source_navigation
+                .source_frame
+                .source_capture
+                .captured_at_unix_millis
+        || before_commitments
+            .source_navigation
+            .source_frame
+            .profile_commitment_sha256
+            != after_commitments
+                .source_navigation
+                .source_frame
+                .profile_commitment_sha256
+        || before_commitments
+            .source_navigation
+            .source_frame
+            .profile_admission_commitment_sha256
+            != after_commitments
+                .source_navigation
+                .source_frame
+                .profile_admission_commitment_sha256
+        || before_commitments
+            .source_navigation
+            .source_frame
+            .approved_account_alias_sha256
+            != after_commitments
+                .source_navigation
+                .source_frame
+                .approved_account_alias_sha256
+        || before_commitments.runtime_identity_commitment_sha256
+            != after_commitments.runtime_identity_commitment_sha256
+        || competitive_entry_window_continuity_commitment_for_frame_v1(
+            &before.source_frame.source_frame,
+        )? != competitive_entry_window_continuity_commitment_for_frame_v1(
+            &after.source_frame.source_frame,
+        )?
+    {
+        return Err(
+            "deck-selection Submit did not produce a distinct newer continuous exact selected-deck gate"
+                .to_owned(),
+        );
+    }
+    let OpaqueMtgoClassifiedCompetitiveDeckGateV1 {
+        source_frame: before_source_frame,
+        navigation_classification: before_navigation_classification,
+        gate: before_gate,
+        raw: before_raw,
+        commitments: before_commitments,
+    } = before;
+    let OpaqueMtgoClassifiedCompetitiveDeckGateV1 {
+        source_frame: after_source_frame,
+        navigation_classification: after_navigation_classification,
+        gate: after_gate,
+        raw: after_raw,
+        commitments: after_commitments,
+    } = after;
+    let transition =
+        validate_visible_competitive_deck_selection_transition_v1(before_gate, after_gate)
+            .map_err(|error| {
+                format!("validate exact visible deck-selection transition: {error}")
+            })?;
+    Ok(OpaqueMtgoConfirmedCompetitiveDeckSelectionTransitionV1 {
+        _before_source_frame: before_source_frame,
+        _before_navigation_classification: before_navigation_classification,
+        _before_raw: before_raw,
+        _before_commitments: before_commitments,
+        after_source_frame,
+        after_navigation_classification,
+        after_raw,
+        after_commitments,
+        transition,
+    })
 }
 
 pub fn check_untrusted_competitive_deck_gate_classifier_request_v1(
