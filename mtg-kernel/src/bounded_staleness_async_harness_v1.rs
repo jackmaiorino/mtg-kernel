@@ -32,7 +32,9 @@ use crate::async_flat_scored_rollout_v1::{
     FlatBatchScorerV1, FlatScoringBatchViewV1,
 };
 use crate::async_rollout_v2::AsyncRolloutConfigV2;
-use crate::bounded_staleness_async_v1::{BoundedStalenessConsumeErrorV1, BoundedStalenessSchedulerV1};
+use crate::bounded_staleness_async_v1::{
+    BoundedStalenessConsumeErrorV1, BoundedStalenessSchedulerV1,
+};
 use crate::rl::PlayerSeatV1;
 use std::time::{Duration, Instant};
 
@@ -227,7 +229,8 @@ pub fn run_async_arm_v1(config: &HarnessConfigV1) -> Result<ArmReportV1, Harness
             config.max_staleness_updates,
             config.total_updates,
             move |target_update, _scoring_version, _weights| {
-                let rollout_config = config_for_producer.rollout_config_for_update_v1(target_update);
+                let rollout_config =
+                    config_for_producer.rollout_config_for_update_v1(target_update);
                 let mut scorer = SmokeScorerV1;
                 let result = run_async_flat_scored_rollout_v1(rollout_config, &mut scorer)
                     .expect("smoke scorer never rejects a valid batch");
@@ -326,9 +329,7 @@ mod tests {
             report.total_episodes,
             config.total_updates * config.batch_episodes
         );
-        assert!(
-            report.max_observed_staleness.unwrap() <= u64::from(config.max_staleness_updates)
-        );
+        assert!(report.max_observed_staleness.unwrap() <= u64::from(config.max_staleness_updates));
     }
 
     #[test]
@@ -341,7 +342,10 @@ mod tests {
         // index despite the async arm's staleness/timing nondeterminism:
         // the scheduling mechanism does not corrupt or reorder content.
         assert!(report.reward_curves_match);
-        assert_eq!(report.sync.total_episodes, report.bounded_staleness_async.total_episodes);
+        assert_eq!(
+            report.sync.total_episodes,
+            report.bounded_staleness_async.total_episodes
+        );
     }
 
     #[test]

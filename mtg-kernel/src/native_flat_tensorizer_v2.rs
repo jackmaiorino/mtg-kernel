@@ -8424,8 +8424,8 @@ mod tests {
                     panic!("corpus decision {index} failed real fill: {error:?}")
                 });
             action_counts.push(owned.actions.len());
-            let checksum = encode_full_decision_skip_hash_v1(owned.view())
-                .unwrap_or_else(|error| {
+            let checksum =
+                encode_full_decision_skip_hash_v1(owned.view()).unwrap_or_else(|error| {
                     panic!("corpus decision {index} failed skip-hash fill: {error:?}")
                 });
             std::hint::black_box(checksum);

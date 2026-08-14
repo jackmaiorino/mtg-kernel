@@ -460,9 +460,7 @@ fn validate_slot_assignment_v1(
     slot: &PopulationRefreshSlotV1,
 ) -> Result<()> {
     let invalid = || {
-        PopulationRefreshManifestErrorV1::new(
-            PopulationRefreshManifestErrorKindV1::InvalidSlots,
-        )
+        PopulationRefreshManifestErrorV1::new(PopulationRefreshManifestErrorKindV1::InvalidSlots)
     };
     match index {
         0 | 1 => {
@@ -479,11 +477,15 @@ fn validate_slot_assignment_v1(
             }
         }
         2 | 3 => {
-            let lineage_index = usize::try_from((wire.refresh_index + 2) % 3)
-                .map_err(|_| invalid())?;
+            let lineage_index =
+                usize::try_from((wire.refresh_index + 2) % 3).map_err(|_| invalid())?;
             let lag = if index == 2 { 256 } else { 384 };
             if slot.source_base_seed != POPULATION_LINEAGE_SEEDS_V1[lineage_index]
-                || slot.source_generation != wire.global_generation.checked_sub(lag).ok_or_else(invalid)?
+                || slot.source_generation
+                    != wire
+                        .global_generation
+                        .checked_sub(lag)
+                        .ok_or_else(invalid)?
                 || slot.occupant_class != "policy"
             {
                 return Err(invalid());
@@ -491,8 +493,8 @@ fn validate_slot_assignment_v1(
         }
         4 | 5 => {
             let offset = u64::try_from(index - 4).map_err(|_| invalid())?;
-            let lineage_index = usize::try_from((wire.refresh_index + offset) % 3)
-                .map_err(|_| invalid())?;
+            let lineage_index =
+                usize::try_from((wire.refresh_index + offset) % 3).map_err(|_| invalid())?;
             if slot.source_base_seed != POPULATION_LINEAGE_SEEDS_V1[lineage_index]
                 || slot.source_generation != wire.global_generation
                 || slot.occupant_class != "policy"
@@ -532,53 +534,61 @@ mod tests {
             / POPULATION_REFRESH_INTERVAL_V1;
         (0..POPULATION_SLOT_COUNT_V1)
             .map(|index| {
-                let (source_base_seed, source_generation, source_run, checkpoint, sidecar, state, model) =
-                    match index {
-                        0 | 1 => (
-                            POPULATION_ANCHOR_BASE_SEEDS_V1[index],
-                            POPULATION_ANCHOR_GENERATIONS_V1[index],
-                            POPULATION_ANCHOR_RUN_SHA256S_V1[index].to_owned(),
-                            POPULATION_ANCHOR_CHECKPOINT_SHA256S_V1[index].to_owned(),
-                            POPULATION_ANCHOR_SIDECAR_SHA256S_V1[index].to_owned(),
-                            POPULATION_ANCHOR_STATE_SHA256S_V1[index].to_owned(),
-                            POPULATION_ANCHOR_MODEL_SHA256S_V1[index].to_owned(),
-                        ),
-                        2 | 3 => {
-                            let lineage = POPULATION_LINEAGE_SEEDS_V1[((refresh_index + 2) % 3) as usize];
-                            let lag = if index == 2 { 256 } else { 384 };
-                            (
-                                lineage,
-                                global_generation - lag,
-                                digest_v1(10 + index),
-                                digest_v1(20 + index),
-                                digest_v1(30 + index),
-                                digest_v1(40 + index),
-                                digest_v1(50 + index),
-                            )
-                        }
-                        4 | 5 => {
-                            let lineage = POPULATION_LINEAGE_SEEDS_V1
-                                [((refresh_index + (index - 4) as u64) % 3) as usize];
-                            (
-                                lineage,
-                                global_generation,
-                                digest_v1(10 + index),
-                                digest_v1(20 + index),
-                                digest_v1(30 + index),
-                                digest_v1(40 + index),
-                                digest_v1(50 + index),
-                            )
-                        }
-                        _ => (
-                            980_000 + index as u64,
-                            256,
+                let (
+                    source_base_seed,
+                    source_generation,
+                    source_run,
+                    checkpoint,
+                    sidecar,
+                    state,
+                    model,
+                ) = match index {
+                    0 | 1 => (
+                        POPULATION_ANCHOR_BASE_SEEDS_V1[index],
+                        POPULATION_ANCHOR_GENERATIONS_V1[index],
+                        POPULATION_ANCHOR_RUN_SHA256S_V1[index].to_owned(),
+                        POPULATION_ANCHOR_CHECKPOINT_SHA256S_V1[index].to_owned(),
+                        POPULATION_ANCHOR_SIDECAR_SHA256S_V1[index].to_owned(),
+                        POPULATION_ANCHOR_STATE_SHA256S_V1[index].to_owned(),
+                        POPULATION_ANCHOR_MODEL_SHA256S_V1[index].to_owned(),
+                    ),
+                    2 | 3 => {
+                        let lineage =
+                            POPULATION_LINEAGE_SEEDS_V1[((refresh_index + 2) % 3) as usize];
+                        let lag = if index == 2 { 256 } else { 384 };
+                        (
+                            lineage,
+                            global_generation - lag,
                             digest_v1(10 + index),
                             digest_v1(20 + index),
                             digest_v1(30 + index),
                             digest_v1(40 + index),
                             digest_v1(50 + index),
-                        ),
-                    };
+                        )
+                    }
+                    4 | 5 => {
+                        let lineage = POPULATION_LINEAGE_SEEDS_V1
+                            [((refresh_index + (index - 4) as u64) % 3) as usize];
+                        (
+                            lineage,
+                            global_generation,
+                            digest_v1(10 + index),
+                            digest_v1(20 + index),
+                            digest_v1(30 + index),
+                            digest_v1(40 + index),
+                            digest_v1(50 + index),
+                        )
+                    }
+                    _ => (
+                        980_000 + index as u64,
+                        256,
+                        digest_v1(10 + index),
+                        digest_v1(20 + index),
+                        digest_v1(30 + index),
+                        digest_v1(40 + index),
+                        digest_v1(50 + index),
+                    ),
+                };
                 PopulationRefreshSlotV1::new_v1(
                     index as u64,
                     EXPECTED_ROLES_V1[index],

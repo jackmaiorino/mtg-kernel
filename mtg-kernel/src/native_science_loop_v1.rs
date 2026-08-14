@@ -22,9 +22,7 @@ use crate::native_checkpoint_runner_v1::{
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 #[cfg(test)]
 use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
-use crate::native_population_opponent_v1::{
-    PopulationOpponentEngineV1, PopulationWeightVectorV1,
-};
+use crate::native_population_opponent_v1::{PopulationOpponentEngineV1, PopulationWeightVectorV1};
 #[cfg(test)]
 use crate::native_train_state_payload_v1::decode_native_train_state_payload_v1;
 #[cfg(test)]
@@ -464,13 +462,7 @@ pub fn run_native_science_loop_with_population_v1(
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<NativeScienceLoopReportV1> {
-    if population_opponent.is_none()
-        || run
-            .record()
-            .contracts()
-            .population_program_v1
-            .is_none()
-    {
+    if population_opponent.is_none() || run.record().contracts().population_program_v1.is_none() {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
     }
     match run_native_science_loop_with_opponents_v1(
@@ -510,16 +502,8 @@ pub fn run_native_response_exploiter_training_v1(
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<u64> {
     if population_opponent.is_none()
-        || run
-            .record()
-            .contracts()
-            .response_exploiter_v1
-            .is_none()
-        || run
-            .record()
-            .contracts()
-            .population_program_v1
-            .is_some()
+        || run.record().contracts().response_exploiter_v1.is_none()
+        || run.record().contracts().population_program_v1.is_some()
     {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
     }
@@ -897,10 +881,10 @@ fn run_native_science_loop_with_opponents_v1(
 
     Ok(NativeScienceLoopCompletionV1::Evaluated(
         NativeScienceLoopReportV1 {
-        latest_generation_index,
-        reference_run,
-        candidate_run,
-        evaluation,
+            latest_generation_index,
+            reference_run,
+            candidate_run,
+            evaluation,
         },
     ))
 }
@@ -1409,8 +1393,7 @@ mod windows_science_loop_tests {
         // instead of the uniform identity; the uniform path (MULTIRUN_LADDER
         // unset) is completely untouched.
         let ladder_enabled = env_knob_v1("MULTIRUN_LADDER", 0) != 0;
-        let population_authority_enabled =
-            env_knob_v1("MULTIRUN_POPULATION_AUTHORITY", 0) != 0;
+        let population_authority_enabled = env_knob_v1("MULTIRUN_POPULATION_AUTHORITY", 0) != 0;
         let population_runtime_enabled = env_knob_v1("MULTIRUN_POPULATION_RUNTIME", 0) != 0;
         let response_exploiter_runtime_enabled =
             env_knob_v1("MULTIRUN_RESPONSE_EXPLOITER_RUNTIME", 0) != 0;
@@ -1570,7 +1553,8 @@ mod windows_science_loop_tests {
              and exactly one of parent init (warm-start build/screen) or \
              MULTIRUN_RESPONSE_EXPLOITER_DENOVO=1 (fresh-init denovo-screen)"
         );
-        let population_engine = if population_runtime_enabled || response_exploiter_runtime_enabled {
+        let population_engine = if population_runtime_enabled || response_exploiter_runtime_enabled
+        {
             let (chain_name, roots_name) = if response_exploiter_runtime_enabled {
                 (
                     "MULTIRUN_RESPONSE_EXPLOITER_REFRESH_CHAIN",
@@ -1583,11 +1567,11 @@ mod windows_science_loop_tests {
                 )
             };
             let chain_paths: Vec<std::path::PathBuf> = std::env::var(chain_name)
-            .unwrap_or_else(|_| panic!("runtime requires {chain_name}"))
-            .split(';')
-            .filter(|value| !value.is_empty())
-            .map(std::path::PathBuf::from)
-            .collect();
+                .unwrap_or_else(|_| panic!("runtime requires {chain_name}"))
+                .split(';')
+                .filter(|value| !value.is_empty())
+                .map(std::path::PathBuf::from)
+                .collect();
             assert!(!chain_paths.is_empty(), "population refresh chain is empty");
             let mut chain = Vec::with_capacity(chain_paths.len());
             for path in chain_paths {
@@ -1625,11 +1609,11 @@ mod windows_science_loop_tests {
                 );
             }
             let slot_roots: Vec<std::path::PathBuf> = std::env::var(roots_name)
-            .unwrap_or_else(|_| panic!("runtime requires {roots_name}"))
-            .split(';')
-            .filter(|value| !value.is_empty())
-            .map(std::path::PathBuf::from)
-            .collect();
+                .unwrap_or_else(|_| panic!("runtime requires {roots_name}"))
+                .split(';')
+                .filter(|value| !value.is_empty())
+                .map(std::path::PathBuf::from)
+                .collect();
             let engine = if response_exploiter_runtime_enabled {
                 crate::native_population_runtime_resolution_v1::resolve_population_response_target_v1(
                     active,
@@ -2563,17 +2547,17 @@ mod windows_science_loop_tests {
         // it must be exactly `"P0"` or `"P1"` or the test panics rather than
         // silently falling back (deny-invalid, matching `required_env_v1`'s
         // discipline for the other required knobs above).
-        let starting_player: Option<crate::ids::PlayerId> = match std::env::var("H2H_STARTING_PLAYER")
-        {
-            Err(_) => None,
-            Ok(value) => Some(match value.as_str() {
-                "P0" => crate::ids::PlayerId::P0,
-                "P1" => crate::ids::PlayerId::P1,
-                other => panic!(
+        let starting_player: Option<crate::ids::PlayerId> =
+            match std::env::var("H2H_STARTING_PLAYER") {
+                Err(_) => None,
+                Ok(value) => Some(match value.as_str() {
+                    "P0" => crate::ids::PlayerId::P0,
+                    "P1" => crate::ids::PlayerId::P1,
+                    other => panic!(
                     "H2H_STARTING_PLAYER must be exactly \"P0\" or \"P1\" when set; got {other:?}"
                 ),
-            }),
-        };
+                }),
+            };
         assert!(
             !(wide && init_store.is_some()),
             "WIDE=1 is not supported with H2H_INIT_STORE: the wide protocol trains fresh-init only"
@@ -2996,8 +2980,7 @@ mod windows_science_loop_tests {
         use crate::native_population_runtime_resolution_v1::resolve_population_response_target_pairwise_v1;
         use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
         use crate::rl::{
-            terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1,
-            TerminalSafeCodeV2,
+            terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
         };
         use std::fs::OpenOptions;
         use std::io::Write;
@@ -3039,7 +3022,10 @@ mod windows_science_loop_tests {
             );
         } else {
             assert!(
-                matches!(candidate_gen, 0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256),
+                matches!(
+                    candidate_gen,
+                    0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256
+                ),
                 "mixture arm must be a complete exploiter or its exact promoted(2) genesis control"
             );
         }
@@ -3114,9 +3100,8 @@ mod windows_science_loop_tests {
                 .expect("response mixture target must resolve through all Store authorities"),
         );
 
-        let candidate_run_bytes =
-            fs::read(Path::new(&candidate_store_root).join("run.json"))
-                .expect("response candidate run.json must be readable");
+        let candidate_run_bytes = fs::read(Path::new(&candidate_store_root).join("run.json"))
+            .expect("response candidate run.json must be readable");
         let candidate_run =
             decode_train_run_v2(&candidate_run_bytes).expect("response candidate RunV2");
         let candidate_root =

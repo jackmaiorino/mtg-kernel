@@ -9,12 +9,13 @@
 //! derivation.
 
 use crate::async_flat_scored_rollout_v2::{
-    run_async_flat_scored_rollout_native_environment_randomization_with_population_v1,
     run_async_flat_scored_rollout_native_environment_randomization_v2,
+    run_async_flat_scored_rollout_native_environment_randomization_with_population_v1,
+    run_async_flat_scored_rollout_native_observed_v2,
     run_async_flat_scored_rollout_native_observed_with_population_v1,
-    run_async_flat_scored_rollout_native_observed_v2, AsyncFlatScoredObservedRunErrorV2,
-    AsyncFlatScoredRolloutErrorV2, AsyncFlatScoredRolloutResultV2, FlatScoredSelectedEventV2,
-    FlatScoredTerminalEventV2, FlatScoredTrajectoryObserverV2,
+    AsyncFlatScoredObservedRunErrorV2, AsyncFlatScoredRolloutErrorV2,
+    AsyncFlatScoredRolloutResultV2, FlatScoredSelectedEventV2, FlatScoredTerminalEventV2,
+    FlatScoredTrajectoryObserverV2,
 };
 use crate::async_rollout_v2::AsyncRolloutConfigV2;
 use crate::ids::PlayerId;

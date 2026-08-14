@@ -406,10 +406,8 @@ pub(crate) fn stage_ladder_checkpoint_initialization_v1(
 ) -> Result<OpponentLadderInitializationContractV1, LadderPoolResolutionErrorV1> {
     let checkpoint_ref = stage_ladder_checkpoint_ref_v1(base_dir, generation)?;
     let authority = resolve_ladder_checkpoint_authority_v1(base_dir, &checkpoint_ref)?;
-    let derived_model_parameter_sha256 = derive_genesis_model_parameter_sha256_v2_v3(
-        authority.checkpoint(),
-        authority.payload(),
-    )?;
+    let derived_model_parameter_sha256 =
+        derive_genesis_model_parameter_sha256_v2_v3(authority.checkpoint(), authority.payload())?;
     Ok(OpponentLadderInitializationContractV1 {
         source_run_sha256: checkpoint_ref.source_run_sha256,
         generation: checkpoint_ref.generation,

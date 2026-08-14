@@ -5,10 +5,9 @@
 //! complete dependency-closed run/v2 grammar, reconstructs the standalone
 //! semantics projection, and independently recomputes every run-root digest.
 
-use crate::KERNEL_VERSION;
 use crate::canonical_json_v1::{
-    CanonicalJsonErrorKindV1, CanonicalJsonErrorV1, CanonicalJsonNullPolicyV1,
-    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1,
+    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonErrorKindV1,
+    CanonicalJsonErrorV1, CanonicalJsonNullPolicyV1,
 };
 pub use crate::common_model_snapshot_v1::CommonModelSnapshotRecordV1;
 use crate::common_model_snapshot_v1::{
@@ -25,28 +24,30 @@ use crate::environment_randomization_v2::{
     ENVIRONMENT_RANDOMIZATION_PURPOSES_V2, ENVIRONMENT_RANDOMIZATION_SHUFFLE_ALGORITHM_V2,
 };
 use crate::fast_sampler::{
-    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256,
-    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256, FAST_CATEGORICAL_EXP_TABLE_SHA256,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256, FAST_CATEGORICAL_EXP_TABLE_SHA256,
     FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
 };
 use crate::native_flat_tensorizer_v2::{
     NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
 };
 use crate::native_full_episode_trajectory_v1::{
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1, NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
 };
 /// The V2 trajectory six-pin tuple is imported from its owner module rather
 /// than restated, so the classifier and the trajectory contract cannot drift.
 use crate::native_full_episode_trajectory_v2::{
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V2, NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2,
 };
 use crate::native_opponent_policy_v2::{
     FROZEN_CHECKPOINT_OPPONENT_POLICY_IDENTITY_V2, FROZEN_CHECKPOINT_OPPONENT_POLICY_MODEL_RULE_V2,
@@ -56,8 +57,8 @@ use crate::native_opponent_policy_v2::{
     OPPONENT_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2,
 };
 use crate::native_opponent_sampler_v1::{
-    NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1,
     NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1,
+    NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1,
     NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_IDENTITY_V1,
     NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_MODEL_RULE_V1, UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1,
     UNIFORM_INDEX_MODULO_U64_IDENTITY_V1,
@@ -66,7 +67,7 @@ use crate::native_policy_train_step_v1::{
     ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1, ADAM_WEIGHT_DECAY_V1,
     CANONICAL_GAUGE_PARAMETERS_V1, NATIVE_OPTIMIZER_IDENTITY_V1,
     NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1,
-    NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1, TRAIN_STEP_IDENTITY_V1, TRAINER_ALGORITHM_V1,
+    NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1, TRAINER_ALGORITHM_V1, TRAIN_STEP_IDENTITY_V1,
 };
 use crate::native_policy_value_net_v1::{
     FEATURE_CONTRACT_DIGEST_V1, FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1,
@@ -90,7 +91,7 @@ use crate::rl_session::{
     RL_SESSION_PROTOCOL_VERSION_V6, RL_SESSION_SCHEMA_VERSION, RL_SESSION_SCHEMA_VERSION_V6,
 };
 use crate::runtime_decks::{
-    RUNTIME_DECK_CATALOG_SCHEMA, RUNTIME_DECK_PROTOCOL, runtime_deck_by_id,
+    runtime_deck_by_id, RUNTIME_DECK_CATALOG_SCHEMA, RUNTIME_DECK_PROTOCOL,
 };
 use crate::strict_source_tree_attestation_v1::{
     STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1,
@@ -98,6 +99,7 @@ use crate::strict_source_tree_attestation_v1::{
     STRICT_SOURCE_TREE_RECIPE_SHA256_V1 as SOURCE_TREE_RECIPE_SHA256_V1,
 };
 use crate::surface_v2::H2_PREDICATE_VERSION;
+use crate::KERNEL_VERSION;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::error::Error;
@@ -392,8 +394,7 @@ const POPULATION_REPLAY_END_GENERATION_V1: u64 = 512;
 const POPULATION_PROGRAM_UPDATE_COUNT_V1: u64 = 1_024;
 const POPULATION_REFRESH_INTERVAL_V1: u64 = 128;
 const POPULATION_SLOT_COUNT_V1: u64 = 8;
-const POPULATION_REWARD_IDENTITY_V1: &str =
-    "terminal-wdl-win-plus-one-draw-zero-loss-minus-one/v1";
+const POPULATION_REWARD_IDENTITY_V1: &str = "terminal-wdl-win-plus-one-draw-zero-loss-minus-one/v1";
 const POPULATION_REFRESH_MANIFEST_IDENTITY_V1: &str =
     "mtg-kernel-native-scaled-selfplay-refresh-manifest/v1";
 const POPULATION_RETEST_BETA_F32_BITS_V1: &str = "3dcccccd";
@@ -454,9 +455,8 @@ const RESPONSE_EXPLOITER_ACTIVE_SLOT_INDICES_V1: [u64; 6] = [0, 1, 2, 3, 4, 5];
 const RESPONSE_EXPLOITER_EXCLUDED_SLOT_INDICES_V1: [u64; 2] = [6, 7];
 const RESPONSE_EXPLOITER_RENORMALIZATION_IDENTITY_V1: &str =
     "integer-preserving-renormalization-drop-excluded-slots-redeclare-total/v1";
-const RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_UNITS_V1: [u64; 8] = [
-    125_407, 115_542, 127_252, 127_098, 128_077, 127_916, 0, 0,
-];
+const RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_UNITS_V1: [u64; 8] =
+    [125_407, 115_542, 127_252, 127_098, 128_077, 127_916, 0, 0];
 const RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_TOTAL_UNITS_V1: u64 = 751_292;
 const RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1: u64 = 256;
 const RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1: u64 = 64;
@@ -1820,7 +1820,8 @@ const FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1: &str =
 /// above, or the live CURRENT pair re-exported from
 /// native_full_episode_trajectory_v2.rs); every hybrid rejected.
 fn full_episode_trajectory_golden_pin_is_known_v1(file_sha256: &str, stream_sha256: &str) -> bool {
-    let historical = file_sha256 == FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1
+    let historical = file_sha256
+        == FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1
         && stream_sha256 == FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1;
     let current = file_sha256 == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2
         && stream_sha256 == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2;
@@ -2818,8 +2819,7 @@ fn validate_population_program_v1(record: &TrainRunV2) -> Result<()> {
             .is_none_or(|initialization| {
                 initialization.source_run_sha256 != POPULATION_PARENT_SOURCE_RUN_SHA256_V1
                     || initialization.generation != POPULATION_PARENT_GENERATION_V1
-                    || initialization.checkpoint_sha256
-                        != POPULATION_PARENT_CHECKPOINT_SHA256_V1
+                    || initialization.checkpoint_sha256 != POPULATION_PARENT_CHECKPOINT_SHA256_V1
                     || initialization.sidecar_sha256 != POPULATION_PARENT_SIDECAR_SHA256_V1
                     || initialization.state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
                     || initialization.derived_model_parameter_sha256
@@ -2868,10 +2868,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         .iter()
         .try_fold(0_u64, |sum, weight| sum.checked_add(*weight))
         .ok_or_else(|| TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidArithmetic))?;
-    let initialization = record
-        .contracts
-        .opponent_ladder_initialization
-        .as_ref();
+    let initialization = record.contracts.opponent_ladder_initialization.as_ref();
     // Third tuple element: the role's own training-update-count/schedule-
     // length pin. For "build"/"screen"/"denovo-screen" this always coincides
     // with the shared RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1 (256),
@@ -2889,17 +2886,13 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
             RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
             RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
         )
-    } else if RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
-        .contains(&response.expected_base_seed)
-    {
+    } else if RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1.contains(&response.expected_base_seed) {
         (
             "screen",
             RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1,
             RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
         )
-    } else if RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
-        .contains(&response.expected_base_seed)
-    {
+    } else if RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1.contains(&response.expected_base_seed) {
         (
             "denovo-screen",
             RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
@@ -2916,7 +2909,8 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
     } else {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     };
-    let is_denovo = response.run_role == "denovo-screen" || response.run_role == "denovo-screen-512";
+    let is_denovo =
+        response.run_role == "denovo-screen" || response.run_role == "denovo-screen-512";
 
     // Backward-compatibility amendment: unlike `authorized_base_seeds` /
     // `authorized_screen_seeds` / `authorized_denovo_seeds` above (always
@@ -2976,15 +2970,13 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
     if response.identity != RESPONSE_EXPLOITER_IDENTITY_V1
         || response.package_commit != POPULATION_PACKAGE_COMMIT_V1
         || response.program_document_sha256 != POPULATION_PROGRAM_DOCUMENT_SHA256_V1
-        || response.target_refresh_manifest_sha256
-            != RESPONSE_EXPLOITER_TARGET_REFRESH_SHA256_V1
+        || response.target_refresh_manifest_sha256 != RESPONSE_EXPLOITER_TARGET_REFRESH_SHA256_V1
         || response.target_global_generation != RESPONSE_EXPLOITER_TARGET_GLOBAL_GENERATION_V1
         || response.source_refresh_index != RESPONSE_EXPLOITER_SOURCE_REFRESH_INDEX_V1
         || response.source_program_update != RESPONSE_EXPLOITER_SOURCE_PROGRAM_UPDATE_V1
         || response.active_slot_indices != RESPONSE_EXPLOITER_ACTIVE_SLOT_INDICES_V1
         || response.excluded_slot_indices != RESPONSE_EXPLOITER_EXCLUDED_SLOT_INDICES_V1
-        || response.renormalization_identity
-            != RESPONSE_EXPLOITER_RENORMALIZATION_IDENTITY_V1
+        || response.renormalization_identity != RESPONSE_EXPLOITER_RENORMALIZATION_IDENTITY_V1
         || response.effective_weight_units != RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_UNITS_V1
         || response.effective_weight_total_units
             != RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_TOTAL_UNITS_V1
@@ -3006,8 +2998,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
                 | RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1
         )
         || (response.run_role == "screen"
-            && response.policy_anchor_beta_f32_bits
-                != RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1)
+            && response.policy_anchor_beta_f32_bits != RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1)
         || (is_denovo
             && response.policy_anchor_beta_f32_bits != RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1)
         || (!is_denovo
@@ -3016,8 +3007,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         || record.contracts.population_program_v1.is_some()
         || record.contracts.wide_model_experiment_v1.is_some()
         || record.environment.environment_randomization_v2.is_none()
-        || record.contracts.opponent_policy.identity
-            != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
+        || record.contracts.opponent_policy.identity != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
         || record.contracts.opponent_ladder_pool.is_none()
         || record.contracts.opponent_schedule_v2.is_none()
         || record.schedule.batch_episodes != RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
@@ -4088,7 +4078,7 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     const ZERO_SHA256: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -5825,11 +5815,9 @@ mod tests {
 
         let bytes = fixture_bytes();
         decode_train_run_v2(&bytes).unwrap();
-        assert!(
-            !bytes
-                .windows(b"membership".len())
-                .any(|window| window == b"membership")
-        );
+        assert!(!bytes
+            .windows(b"membership".len())
+            .any(|window| window == b"membership"));
     }
 
     // ------------------------------------------------------------------
@@ -5944,8 +5932,7 @@ mod tests {
     #[test]
     fn hybrid_current_card_db_with_historical_catalog_sha_is_rejected() {
         let mut record = fixture_record();
-        record.environment.card_db_hash_u64_hex =
-            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1.to_owned();
+        record.environment.card_db_hash_u64_hex = FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1.to_owned();
         record.environment.runtime_catalog_sha256 = FROZEN_RUNTIME_CATALOG_SHA256_V2.to_owned();
         refresh_derived(&mut record);
         let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
@@ -6013,7 +6000,10 @@ mod tests {
             .join("../data/flat_policy_v2/python_full_features_v2.json");
         let golden_bytes = std::fs::read(&golden_path)
             .unwrap_or_else(|error| panic!("failed to read {}: {error}", golden_path.display()));
-        assert_eq!(sha256_hex(&golden_bytes), FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1);
+        assert_eq!(
+            sha256_hex(&golden_bytes),
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1
+        );
         let golden: serde_json::Value = serde_json::from_slice(&golden_bytes).unwrap();
         assert_eq!(
             golden["payload_sha256"].as_str().unwrap(),
@@ -6111,7 +6101,10 @@ mod tests {
     #[test]
     fn current_tensorizer_authority_triple_decodes_clean() {
         let mut record = fixture_record();
-        record.contracts.tensorizer.authoritative_features_source_sha256 =
+        record
+            .contracts
+            .tensorizer
+            .authoritative_features_source_sha256 =
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1.to_owned();
         record.contracts.tensorizer.fixture_sha256 =
             FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1.to_owned();
@@ -6121,7 +6114,11 @@ mod tests {
         let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
         let validated = decode_train_run_v2(&bytes).unwrap();
         assert_eq!(
-            validated.record().contracts.tensorizer.authoritative_features_source_sha256,
+            validated
+                .record()
+                .contracts
+                .tensorizer
+                .authoritative_features_source_sha256,
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
         );
     }
@@ -6134,7 +6131,11 @@ mod tests {
     fn historical_tensorizer_authority_triple_still_decodes_clean() {
         let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
         assert_eq!(
-            validated.record().contracts.tensorizer.authoritative_features_source_sha256,
+            validated
+                .record()
+                .contracts
+                .tensorizer
+                .authoritative_features_source_sha256,
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
         );
         assert_eq!(
@@ -6142,7 +6143,11 @@ mod tests {
             FROZEN_TENSORIZER_FIXTURE_SHA256_V2
         );
         assert_eq!(
-            validated.record().contracts.tensorizer.fixture_payload_sha256,
+            validated
+                .record()
+                .contracts
+                .tensorizer
+                .fixture_payload_sha256,
             FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
         );
     }
@@ -6156,7 +6161,10 @@ mod tests {
     #[test]
     fn hybrid_current_source_hash_with_historical_fixture_hashes_is_rejected() {
         let mut record = fixture_record();
-        record.contracts.tensorizer.authoritative_features_source_sha256 =
+        record
+            .contracts
+            .tensorizer
+            .authoritative_features_source_sha256 =
             FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1.to_owned();
         refresh_derived(&mut record);
         let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
@@ -6172,8 +6180,10 @@ mod tests {
     #[test]
     fn neither_known_tensorizer_authority_triple_is_rejected() {
         let mut record = fixture_record();
-        record.contracts.tensorizer.authoritative_features_source_sha256 =
-            "1".repeat(68);
+        record
+            .contracts
+            .tensorizer
+            .authoritative_features_source_sha256 = "1".repeat(68);
         // (64 hex-looking chars would also work; length is not itself
         // validated for this field, only exact equality against one of the
         // two frozen source-hash literals, so any non-matching value proves
@@ -6718,9 +6728,7 @@ mod tests {
             authorized_denovo_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
             authorized_denovo_512_seeds: Some(RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1),
             expected_base_seed,
-            run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
-                .contains(&expected_base_seed)
-            {
+            run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1.contains(&expected_base_seed) {
                 "build".to_owned()
             } else {
                 "screen".to_owned()
@@ -6756,7 +6764,9 @@ mod tests {
     /// training-update-count differ, so this stays one function rather than
     /// a duplicated sibling -- seed 971_201 takes the exact same branch and
     /// produces byte-identical output as before this amendment.
-    fn response_exploiter_denovo_fixture_for_seed(expected_base_seed: u64) -> ResponseExploiterContractV1 {
+    fn response_exploiter_denovo_fixture_for_seed(
+        expected_base_seed: u64,
+    ) -> ResponseExploiterContractV1 {
         let is_horizon_512 =
             RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1.contains(&expected_base_seed);
         let training_update_count = if is_horizon_512 {
@@ -6767,7 +6777,12 @@ mod tests {
         ResponseExploiterContractV1 {
             fresh_adam_after_weight_init_identity:
                 RESPONSE_EXPLOITER_DENOVO_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1.to_owned(),
-            run_role: if is_horizon_512 { "denovo-screen-512" } else { "denovo-screen" }.to_owned(),
+            run_role: if is_horizon_512 {
+                "denovo-screen-512"
+            } else {
+                "denovo-screen"
+            }
+            .to_owned(),
             training_update_count,
             expected_completion_generation: training_update_count,
             policy_anchor_beta_f32_bits: RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1.to_owned(),
@@ -6787,8 +6802,7 @@ mod tests {
         record.schedule.batch_episodes = RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1;
         record.schedule.checkpoint_segment_updates =
             RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
-        record.schedule.requested_successful_updates =
-            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1;
+        record.schedule.requested_successful_updates = RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1;
         record.schedule.checkpoint_episode_interval = RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
             * RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
         record.contracts.opponent_policy.identity =
@@ -6833,8 +6847,9 @@ mod tests {
         record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
         record.contracts.opponent_ladder_initialization = None;
         record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
-        record.contracts.response_exploiter_v1 =
-            Some(response_exploiter_denovo_fixture_for_seed(expected_base_seed));
+        record.contracts.response_exploiter_v1 = Some(response_exploiter_denovo_fixture_for_seed(
+            expected_base_seed,
+        ));
         refresh_derived(&mut record);
         record
     }
@@ -6869,11 +6884,9 @@ mod tests {
             validated.record().schedule.requested_successful_updates,
             POPULATION_REPLAY_END_GENERATION_V1 + POPULATION_PROGRAM_UPDATE_COUNT_V1
         );
-        assert!(
-            String::from_utf8(bytes)
-                .unwrap()
-                .contains("\"population_program_v1\":{")
-        );
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .contains("\"population_program_v1\":{"));
     }
 
     #[test]
@@ -6914,23 +6927,19 @@ mod tests {
     fn population_program_absence_preserves_legacy_bytes_and_run_hash() {
         let bytes = fixture_bytes();
         let validated = decode_train_run_v2(&bytes).unwrap();
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .population_program_v1
-                .is_none()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v1
+            .is_none());
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
         assert_eq!(
             sha256_hex(&bytes),
             "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
         );
-        assert!(
-            !String::from_utf8(bytes)
-                .unwrap()
-                .contains("population_program_v1")
-        );
+        assert!(!String::from_utf8(bytes)
+            .unwrap()
+            .contains("population_program_v1"));
     }
 
     #[test]
@@ -6958,10 +6967,7 @@ mod tests {
             .unwrap()
             .parent_generation = 383;
         refresh_derived(&mut wrong_parent_generation);
-        assert_record_error(
-            wrong_parent_generation,
-            TrainRunV2ErrorKind::InvalidLiteral,
-        );
+        assert_record_error(wrong_parent_generation, TrainRunV2ErrorKind::InvalidLiteral);
 
         for mutate in [
             |p: &mut PopulationProgramContractV1| {
@@ -6974,12 +6980,8 @@ mod tests {
             |p: &mut PopulationProgramContractV1| {
                 p.parent_checkpoint_sha256 = ZERO_SHA256.to_owned()
             },
-            |p: &mut PopulationProgramContractV1| {
-                p.parent_sidecar_sha256 = ZERO_SHA256.to_owned()
-            },
-            |p: &mut PopulationProgramContractV1| {
-                p.parent_state_sha256 = ZERO_SHA256.to_owned()
-            },
+            |p: &mut PopulationProgramContractV1| p.parent_sidecar_sha256 = ZERO_SHA256.to_owned(),
+            |p: &mut PopulationProgramContractV1| p.parent_state_sha256 = ZERO_SHA256.to_owned(),
             |p: &mut PopulationProgramContractV1| {
                 p.parent_model_parameter_sha256 = ZERO_SHA256.to_owned()
             },
@@ -7084,15 +7086,21 @@ mod tests {
             validated.record().contracts().model.architecture_identity,
             FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2
         );
-        assert!(validated.record().contracts().population_program_v1.is_none());
-        assert!(validated.record().contracts().wide_model_experiment_v1.is_none());
-        assert!(
-            validated
-                .record()
-                .environment
-                .environment_randomization_v2
-                .is_some()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v1
+            .is_none());
+        assert!(validated
+            .record()
+            .contracts()
+            .wide_model_experiment_v1
+            .is_none());
+        assert!(validated
+            .record()
+            .environment
+            .environment_randomization_v2
+            .is_some());
         assert!(String::from_utf8(bytes)
             .unwrap()
             .contains("\"response_exploiter_v1\":{"));
@@ -7133,7 +7141,11 @@ mod tests {
                     * validated.record().schedule.requested_successful_updates,
                 256 * 64
             );
-            assert!(validated.record().contracts().population_program_v1.is_none());
+            assert!(validated
+                .record()
+                .contracts()
+                .population_program_v1
+                .is_none());
             assert_eq!(
                 validated
                     .record()
@@ -7243,8 +7255,16 @@ mod tests {
             population_parent_initialization_fixture(),
         );
         let population = decode_train_run_v2(&population_bytes).unwrap();
-        assert!(population.record().contracts().population_program_v1.is_some());
-        assert!(population.record().contracts().response_exploiter_v1.is_none());
+        assert!(population
+            .record()
+            .contracts()
+            .population_program_v1
+            .is_some());
+        assert!(population
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .is_none());
     }
 
     #[test]
@@ -7381,20 +7401,22 @@ mod tests {
             |r| r.run_role = "build".to_owned(),
             |r| r.run_role = "screen".to_owned(),
             |r| r.expected_completion_generation = 4,
-            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned(),
-            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned(),
+            |r| {
+                r.policy_anchor_beta_f32_bits =
+                    RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned()
+            },
+            |r| {
+                r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned()
+            },
             |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
             |r| {
                 r.parent_source_run_sha256 = Some(POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned())
             },
             |r| r.parent_generation = Some(POPULATION_PARENT_GENERATION_V1),
             |r| {
-                r.parent_checkpoint_sha256 =
-                    Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
+                r.parent_checkpoint_sha256 = Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
             },
-            |r| {
-                r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned())
-            },
+            |r| r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned()),
             |r| r.parent_state_sha256 = Some(POPULATION_PARENT_STATE_SHA256_V1.to_owned()),
             |r| {
                 r.parent_model_parameter_sha256 =
@@ -7425,20 +7447,22 @@ mod tests {
             |r| r.run_role = "denovo-screen".to_owned(),
             |r| r.expected_completion_generation = RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
             |r| r.training_update_count = RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
-            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned(),
-            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned(),
+            |r| {
+                r.policy_anchor_beta_f32_bits =
+                    RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned()
+            },
+            |r| {
+                r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned()
+            },
             |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
             |r| {
                 r.parent_source_run_sha256 = Some(POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned())
             },
             |r| r.parent_generation = Some(POPULATION_PARENT_GENERATION_V1),
             |r| {
-                r.parent_checkpoint_sha256 =
-                    Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
+                r.parent_checkpoint_sha256 = Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
             },
-            |r| {
-                r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned())
-            },
+            |r| r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned()),
             |r| r.parent_state_sha256 = Some(POPULATION_PARENT_STATE_SHA256_V1.to_owned()),
             |r| {
                 r.parent_model_parameter_sha256 =
@@ -7506,20 +7530,16 @@ mod tests {
         assert!(response.parent_sidecar_sha256.is_none());
         assert!(response.parent_state_sha256.is_none());
         assert!(response.parent_model_parameter_sha256.is_none());
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_some()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_some());
     }
 
     /// The valid "denovo-screen-512" record (Phase 2 horizon amendment; no
@@ -7546,20 +7566,16 @@ mod tests {
         assert!(response.parent_sidecar_sha256.is_none());
         assert!(response.parent_state_sha256.is_none());
         assert!(response.parent_model_parameter_sha256.is_none());
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_some()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_some());
     }
 
     /// Builder round-trip for the authorized denovo seed, mirroring
@@ -7594,9 +7610,16 @@ mod tests {
                 .unwrap();
             assert_eq!(response.expected_base_seed, seed);
             assert_eq!(response.run_role, "denovo-screen");
-            assert!(validated.record().contracts().population_program_v1.is_none());
+            assert!(validated
+                .record()
+                .contracts()
+                .population_program_v1
+                .is_none());
             assert_eq!(
-                validated.record().contracts().opponent_ladder_initialization,
+                validated
+                    .record()
+                    .contracts()
+                    .opponent_ladder_initialization,
                 None
             );
             let text = String::from_utf8(bytes).unwrap();
@@ -7644,9 +7667,16 @@ mod tests {
             assert_eq!(response.expected_base_seed, seed);
             assert_eq!(response.run_role, "denovo-screen-512");
             assert_eq!(response.expected_completion_generation, 512);
-            assert!(validated.record().contracts().population_program_v1.is_none());
+            assert!(validated
+                .record()
+                .contracts()
+                .population_program_v1
+                .is_none());
             assert_eq!(
-                validated.record().contracts().opponent_ladder_initialization,
+                validated
+                    .record()
+                    .contracts()
+                    .opponent_ladder_initialization,
                 None
             );
             let text = String::from_utf8(bytes).unwrap();
@@ -7785,13 +7815,11 @@ mod tests {
         // which MUST keep validating (Amendment 1's explicit requirement).
         let record = ladder_record();
         let validated = validate_train_run_record_v2(record).unwrap();
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
     }
 
     #[test]
@@ -8339,13 +8367,11 @@ mod tests {
             environment.environment_trajectory_contract_v1(),
             NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
         );
-        assert!(
-            environment
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_none()
-        );
+        assert!(environment
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_none());
 
         let ladder_environment_bytes =
             test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
@@ -8370,13 +8396,11 @@ mod tests {
             ladder_environment.record().contracts().opponent_ladder_pool,
             Some(pool.clone())
         );
-        assert!(
-            ladder_environment
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
+        assert!(ladder_environment
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
 
         let ladder_init_environment_bytes =
             test_fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
@@ -8464,13 +8488,11 @@ mod tests {
 
         // This is a uniform-identity run: the ladder pool section must be
         // absent, and the uniform identities validate exactly as before.
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_none()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_none());
         assert_eq!(
             validated.record().contracts().opponent_policy.identity,
             FROZEN_OPPONENT_POLICY_IDENTITY_V2
@@ -8521,20 +8543,16 @@ mod tests {
         // present, but the init section is absent (fresh init from the
         // common model snapshot -- the shape this amendment's field must
         // not disturb).
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_some()
-        );
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_some());
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
         assert_eq!(
             validated.record().contracts().opponent_policy.identity,
             FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
@@ -8627,8 +8645,8 @@ mod tests {
     /// boundary policy for population-v2's specific case needs revisiting
     /// with real decodable evidence in hand.
     #[test]
-    fn population_v2_active_records_are_historical_catalog_identity_blocked_by_a_separate_schema_gap()
-    {
+    fn population_v2_active_records_are_historical_catalog_identity_blocked_by_a_separate_schema_gap(
+    ) {
         for (label, path) in [
             (
                 "cycle2",
@@ -8754,16 +8772,14 @@ mod tests {
 
         let redecoded = decode_train_run_v2(&bytes).unwrap();
         assert_eq!(redecoded.canonical_bytes(), bytes.as_slice());
-        assert!(
-            redecoded
-                .record()
-                .contracts()
-                .response_exploiter_v1
-                .as_ref()
-                .unwrap()
-                .authorized_denovo_512_seeds
-                .is_none()
-        );
+        assert!(redecoded
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .unwrap()
+            .authorized_denovo_512_seeds
+            .is_none());
     }
 
     // =========================================================================

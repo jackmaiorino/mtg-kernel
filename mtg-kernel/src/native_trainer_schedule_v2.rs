@@ -253,7 +253,10 @@ mod tests {
                 .map(|byte| format!("{byte:02x}"))
                 .collect::<String>()
         };
-        assert_eq!(digest, "c57de29e825f2d5bff24d370ad0f154489feef01547a7aed092c163a8801f2f9");
+        assert_eq!(
+            digest,
+            "c57de29e825f2d5bff24d370ad0f154489feef01547a7aed092c163a8801f2f9"
+        );
     }
 
     use super::*;

@@ -933,7 +933,6 @@ mod fixed_native_state_tests_v1 {
     }
 }
 
-
 #[derive(Clone, Debug, PartialEq)]
 struct ScoredCurrentDecisionV1 {
     expected: FastActorDecisionV1,
@@ -1406,7 +1405,6 @@ impl Drop for RecurrentCp7WorkerV1 {
         let _ = self.child.wait();
     }
 }
-
 
 fn recurrent_cp7_sha256_v1(path: &Path) -> Result<String, ShadowScorerStartupErrorV1> {
     let bytes = fs::read(path).map_err(|_| {
@@ -2838,20 +2836,20 @@ impl ShadowScorerServiceV1 {
         {
             return Ok(None);
         }
-            // ADAPTATION (fable/shadow-scorer-on-main-v1): the rest of
-            // this function (information-set redeterminization sampling
-            // and value-margin aggregation) is removed. It needed
-            // FastActorSessionV1::snapshot_current_actor_information_set_v1,
-            // a primitive main's rl_session.rs does not have at all
-            // (unlike the source lineage). This is provably unreachable
-            // dead code on this ported lineage regardless: the guard
-            // above already requires model.uses_structured_history_v1(),
-            // and every model scorer kept in this port returns the trait
-            // default (false) for it, since every scorer that overrode
-            // it to true depended on one of the missing structured
-            // -history/policy-residual/successor modules and was removed.
-            // Fails closed with an explicit, distinct error rather than
-            // silently miscomputing if this is ever reached.
+        // ADAPTATION (fable/shadow-scorer-on-main-v1): the rest of
+        // this function (information-set redeterminization sampling
+        // and value-margin aggregation) is removed. It needed
+        // FastActorSessionV1::snapshot_current_actor_information_set_v1,
+        // a primitive main's rl_session.rs does not have at all
+        // (unlike the source lineage). This is provably unreachable
+        // dead code on this ported lineage regardless: the guard
+        // above already requires model.uses_structured_history_v1(),
+        // and every model scorer kept in this port returns the trait
+        // default (false) for it, since every scorer that overrode
+        // it to true depended on one of the missing structured
+        // -history/policy-residual/successor modules and was removed.
+        // Fails closed with an explicit, distinct error rather than
+        // silently miscomputing if this is ever reached.
         Err("value_search_redeterminization_unavailable_on_this_lineage")
     }
 
@@ -3727,7 +3725,6 @@ pub fn run_checkpoint_shadow_stdio_v1(
     )
 }
 
-
 /// Experimental live selector for the parity-checked complete-history model.
 /// It is intentionally unavailable with trajectory exports because those
 /// schemas bind selection to direct checkpoint-policy sampling.
@@ -3754,7 +3751,6 @@ pub fn run_checkpoint_shadow_stdio_with_depth8_teacher_exports_jsonl_v1(
         Some(outcome_jsonl),
     )
 }
-
 
 /// Opt-in XMage CP7 teacher export. The destination is created exclusively;
 /// callers must promote only the file from a fully successful anchor run.

@@ -1851,7 +1851,9 @@ mod tests {
     #[test]
     #[ignore = "live CUDA verification, run explicitly"]
     fn wide_forward_cross_check_cpu_vs_cuda_v1() {
-        use crate::common_model_snapshot_v1::{build_wide_model_candidate_v1, wide_model_snapshot_paths_v1};
+        use crate::common_model_snapshot_v1::{
+            build_wide_model_candidate_v1, wide_model_snapshot_paths_v1,
+        };
 
         let (manifest_path, payload_path) = wide_model_snapshot_paths_v1();
         let (wide_model, _record) =

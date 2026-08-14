@@ -2530,8 +2530,7 @@ mod wide_tests {
     #[test]
     fn wide_authority_source_binding_accepts_both_profiles_and_rejects_hybrids() {
         let historical_sources = wide_historical_authority_sources_v1();
-        let historical_bundle =
-            WIDE_FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1.to_owned();
+        let historical_bundle = WIDE_FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1.to_owned();
         let (current_sources, current_bundle) = expected_wide_authority_sources();
         assert!(wide_authority_source_binding_is_known_v1(
             &historical_sources,
