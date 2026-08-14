@@ -48,7 +48,7 @@ The owned deck chooser contains one Modern deck. Selecting it exposes the
 exact 60-card deck contents and enables the chooser's `Submit` control. That
 Submit only confirms the deck choice and returns to the selected listing.
 
-The final selected-listing frame has the exact structural shape of
+The final selected-event frame has the exact structural shape of
 `CompatibleDeckSelected`:
 
 - the same Challenge remains selected;
@@ -61,9 +61,19 @@ gates in the current client. The third
 `OpenEntryReviewAvailable` state still requires choosing an entry option and
 therefore remains closed pending an informed owner decision.
 
+The reviewed partial corpus receipt at
+`../mtgo_dxgi_capture_v1/assets/reviewed_modern_deck_gate_partial_corpus_v1.json`
+binds both safe deck-selection states for Challenge and League. Its exact
+SHA-256 is
+`0b3f21b49f78f607ca9fe34918dae66993124eaabf82263d68d990fab45360a1`.
+The receipt requires the third state to remain absent and grants only offline
+partial-classifier reference generation. It grants no live semantic, scoring,
+input, entry, or spending authority.
+
 ## Non-claims
 
-This is a narrow live source for the Challenge selected-listing and deck-gate
-corpora. It is not a reviewed classifier result and does not populate any
+This is a narrow live source for the Challenge deck-gate corpus. It is not a
+formal selected-listing evaluation case because no enabled Open Entry Review
+control is present. It is not a reviewed classifier result and does not populate any
 production semantic or authorization root. It does not authorize an entry
 choice, Open Entry Review, event entry, spending, queueing, or a human match.

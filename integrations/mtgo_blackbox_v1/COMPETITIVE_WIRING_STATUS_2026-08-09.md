@@ -45,13 +45,23 @@ postconditions. The current visible Game Log grammar classifies that complete
 five-record public trace without exposing raw text, paths, aliases, source
 identifiers, or card names.
 
-The signed-in no-cost navigation pass also supplies one live League and one
-live Challenge selected-listing source. Challenge confirms both
+The signed-in no-cost navigation pass also supplies live League and Challenge
+selected-event deck-gate sources. Challenge confirms both
 `AwaitingCompatibleDeckSelection` and `CompatibleDeckSelected`; League
 confirms the compatible-deck-selected layout and its distinct price and
 leaderboard surface. Neither mode exposes Open Entry Review before a separate
-entry-option choice. These local previews are useful corpus sources but remain
-pending visual review and do not populate a semantic evaluation root.
+entry-option choice. Because the formal selected-listing evaluator requires an
+enabled Open Entry Review control, none of these frames is a selected-listing
+evaluation case. The local previews are useful deck-gate corpus sources but
+remain pending visual review and do not populate a semantic evaluation root.
+
+A checked-in partial receipt now binds the safe missing-deck and
+compatible-deck-selected states for both League and Challenge under exact
+source, frame, canonical-pixel, region, geometry, and identity commitments.
+Its test requires the Open Entry Review state to remain absent and keeps the
+three-state readiness flag plus every live semantic, scoring, input, entry,
+and spending authority false. The receipt is usable only for offline partial
+classifier-reference generation.
 
 Completion is still contradicted by current source and static readiness:
 

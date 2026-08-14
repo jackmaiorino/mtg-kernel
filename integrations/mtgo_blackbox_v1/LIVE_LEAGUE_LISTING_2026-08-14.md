@@ -1,4 +1,4 @@
-# Live League selected-listing calibration, 2026-08-14
+# Live League deck-gate calibration, 2026-08-14
 
 ## Scope
 
@@ -43,12 +43,23 @@ into this committed record.
 
 ## Consequence
 
-Together with `LIVE_CHALLENGE_DECK_GATE_2026-08-14.md`, this supplies one live
-source for each required selected-listing mode slice. It also confirms that
-League and Challenge have distinct content and price layouts while sharing the
-same payment-choice boundary.
+Together with `LIVE_CHALLENGE_DECK_GATE_2026-08-14.md`, this supplies live
+deck-gate sources for both event modes. It also confirms that League and
+Challenge have distinct content and price layouts while sharing the same
+payment-choice boundary.
 
-These are calibration sources, not reviewed classifier cases. The two-slice
-selected-listing semantic evaluation and its production root remain empty.
-The third deck-gate state remains closed because it requires a separate entry
-option choice.
+These are calibration sources, not reviewed classifier cases. The League frame
+is `CompatibleDeckSelected`, not a formal selected-listing evaluation case,
+because no enabled Open Entry Review control is present. The two-slice
+selected-listing semantic evaluation and its production root therefore remain
+empty. The third deck-gate state remains closed because it requires a separate
+entry option choice.
+
+The reviewed partial corpus receipt at
+`../mtgo_dxgi_capture_v1/assets/reviewed_modern_deck_gate_partial_corpus_v1.json`
+binds both safe deck-selection states for League and Challenge. Its exact
+SHA-256 is
+`0b3f21b49f78f607ca9fe34918dae66993124eaabf82263d68d990fab45360a1`.
+The checked-in test requires the Open Entry Review state to remain absent and
+all live semantic, scoring, input, entry, and spending authorities to remain
+false.

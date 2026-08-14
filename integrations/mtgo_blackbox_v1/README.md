@@ -12,9 +12,11 @@ The first live Standard spectator observations and exact non-claims are recorded
 
 The first acting-player Freeform Solitaire observation is recorded in `LIVE_SOLITAIRE_FINDINGS_2026-08-09.md`.
 
-The first live no-cost Challenge selected-listing and two-state deck-gate trace is recorded in `LIVE_CHALLENGE_DECK_GATE_2026-08-14.md`.
+The first live no-cost Challenge selected-event and two-state deck-gate trace is recorded in `LIVE_CHALLENGE_DECK_GATE_2026-08-14.md`.
 
-The first live no-cost League selected-listing trace is recorded in `LIVE_LEAGUE_LISTING_2026-08-14.md`.
+The first live no-cost League selected-event deck-gate trace is recorded in `LIVE_LEAGUE_LISTING_2026-08-14.md`.
+
+The cross-mode partial receipt is `../mtgo_dxgi_capture_v1/assets/reviewed_modern_deck_gate_partial_corpus_v1.json`. It covers the safe missing-deck and compatible-deck-selected states for both modes, records the Open Entry Review state as absent, and grants no live or entry authority.
 
 ## Live calibration preview
 
