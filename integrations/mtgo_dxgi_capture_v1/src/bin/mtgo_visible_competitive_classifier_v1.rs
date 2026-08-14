@@ -7140,27 +7140,127 @@ mod tests {
         }
     }
 
+    fn reviewed_modern_deck_chooser_corpus_v1() -> (
+        serde_json::Value,
+        MtgoCompetitiveEventListingClassifierAssetsV1,
+    ) {
+        let receipt: serde_json::Value = serde_json::from_str(include_str!(
+            "../../assets/reviewed_modern_deck_chooser_corpus_v1.json"
+        ))
+        .unwrap();
+        let assets = serde_json::from_value(receipt["classifier_assets"].clone()).unwrap();
+        (receipt, assets)
+    }
+
+    fn retarget_deck_chooser_header_v1(
+        mut header: MtgoCompetitiveDeckChooserClassifierRequestHeaderV1,
+        event_kind: MtgoCompetitiveEventKindV1,
+        visible_event_label: &str,
+    ) -> MtgoCompetitiveDeckChooserClassifierRequestHeaderV1 {
+        header.target.target_id = match event_kind {
+            MtgoCompetitiveEventKindV1::League => {
+                "reviewed-modern-league-deck-chooser-v1".to_owned()
+            }
+            MtgoCompetitiveEventKindV1::Challenge => {
+                "reviewed-modern-challenge-deck-chooser-v1".to_owned()
+            }
+        };
+        header.target.event_kind = event_kind;
+        header.target.event_display_label_sha256 = sha256_hex_v1(visible_event_label.as_bytes());
+        header.target_commitment_sha256 = target_commitment_v1(&header.target).unwrap();
+        header
+    }
+
+    fn read_reviewed_external_chooser_preview_v1(
+        png_path: &str,
+        expected_manifest_sha256: &str,
+        expected_png_sha256: &str,
+    ) -> Vec<u8> {
+        let png_path = std::path::PathBuf::from(png_path);
+        let manifest_path = png_path.parent().unwrap().join("manifest.json");
+        let manifest_bytes = std::fs::read(manifest_path).unwrap();
+        assert_eq!(sha256_hex_v1(&manifest_bytes), expected_manifest_sha256);
+        let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+        assert_eq!(manifest["status"], "pending_visual_review");
+        assert_eq!(
+            manifest["capture_backend"],
+            "system_drawing_copy_from_composed_screen_v1"
+        );
+        for field in [
+            "safe_for_semantic_evidence",
+            "safe_for_ocr",
+            "safe_for_policy_scoring",
+            "safe_for_input",
+        ] {
+            assert_eq!(manifest[field], false);
+        }
+        assert_eq!(manifest["window"]["foreground"], true);
+        assert_eq!(manifest["window"]["visible"], true);
+        assert_eq!(manifest["window"]["minimized"], false);
+        assert_eq!(manifest["window"]["cloaked"], false);
+        assert_eq!(
+            manifest["occlusion_audit"]["intersecting_windows_above_target"],
+            0
+        );
+        assert_eq!(manifest["occlusion_audit"]["cursor_inside_client"], false);
+        assert_eq!(manifest["frame"]["width"], 885);
+        assert_eq!(manifest["frame"]["height"], 734);
+        assert_eq!(
+            manifest["frame"]["sha256"]
+                .as_str()
+                .unwrap()
+                .to_ascii_lowercase(),
+            expected_png_sha256
+        );
+        let png = std::fs::read(png_path).unwrap();
+        assert_eq!(sha256_hex_v1(&png), expected_png_sha256);
+        png
+    }
+
     #[test]
-    #[ignore = "requires the external pending-review natural Modern League chooser PNG pair"]
-    fn natural_modern_league_chooser_pair_matches_exactly_one_state_per_frame() {
+    #[ignore = "requires the external reviewed Modern chooser corpus PNGs"]
+    fn reviewed_modern_chooser_corpus_matches_natural_states_and_rejects_stale_state() {
         let unselected_path = std::env::var("MTGO_LEAGUE_CHOOSER_UNSELECTED_PNG_V1").unwrap();
         let selected_path = std::env::var("MTGO_LEAGUE_CHOOSER_SELECTED_PNG_V1").unwrap();
-        let unselected_png = std::fs::read(unselected_path).unwrap();
-        let selected_png = std::fs::read(selected_path).unwrap();
-        assert_eq!(
-            sha256_hex_v1(&unselected_png),
-            "b8109095b9239aa949e7e8fa2cf5a0a4e2d701beb85ddf347e312b33f828c3c8"
+        let challenge_selected_path =
+            std::env::var("MTGO_CHALLENGE_CHOOSER_SELECTED_PNG_V1").unwrap();
+        let excluded_stale_path =
+            std::env::var("MTGO_CHALLENGE_CHOOSER_EXCLUDED_STALE_PNG_V1").unwrap();
+        let unselected_png = read_reviewed_external_chooser_preview_v1(
+            &unselected_path,
+            "6d76213e4082baf5a24a19f1b3179df9b5d808b9132865cfcbb57142191eaba0",
+            "b8109095b9239aa949e7e8fa2cf5a0a4e2d701beb85ddf347e312b33f828c3c8",
         );
-        assert_eq!(
-            sha256_hex_v1(&selected_png),
-            "b339e16b46b47b56ed1060c7f7975ce720fceb55527697ec054fa3155d0c5c41"
+        let selected_png = read_reviewed_external_chooser_preview_v1(
+            &selected_path,
+            "63acf4dd945913a0154a264326fc830033f9b6dfb3238fbfedbc65b1658110a1",
+            "b339e16b46b47b56ed1060c7f7975ce720fceb55527697ec054fa3155d0c5c41",
+        );
+        let challenge_selected_png = read_reviewed_external_chooser_preview_v1(
+            &challenge_selected_path,
+            "efeaa5e1cffe5ffc155a2abf82b12bc769d25250e35e4a8e37750ca13f0997c6",
+            "8661b4ba4c592f87f58d32df8634ff70768c1cd9da1897a6f3f5228cf745e146",
+        );
+        let excluded_stale_png = read_reviewed_external_chooser_preview_v1(
+            &excluded_stale_path,
+            "345ac87f159597fb9e60a4ac77c8c9e1d595512af0b2d36e17584f7cfadba08f",
+            "1fda5d118da4e3cd34758402e696a0d1f86735c740d5146b9c68c36b601b1892",
         );
         let (unselected_width, unselected_height, unselected_pixels) =
             decode_strict_test_png_to_bgra8_v1(&unselected_png);
         let (selected_width, selected_height, selected_pixels) =
             decode_strict_test_png_to_bgra8_v1(&selected_png);
+        let (challenge_selected_width, challenge_selected_height, challenge_selected_pixels) =
+            decode_strict_test_png_to_bgra8_v1(&challenge_selected_png);
+        let (excluded_stale_width, excluded_stale_height, excluded_stale_pixels) =
+            decode_strict_test_png_to_bgra8_v1(&excluded_stale_png);
         assert_eq!((unselected_width, unselected_height), (885, 734));
         assert_eq!((selected_width, selected_height), (885, 734));
+        assert_eq!(
+            (challenge_selected_width, challenge_selected_height),
+            (885, 734)
+        );
+        assert_eq!((excluded_stale_width, excluded_stale_height), (885, 734));
         assert_eq!(
             sha256_hex_v1(&unselected_pixels),
             "6b844c89b0b8a306a968e3779a2901f9c054a30202270aeb5639a0eeb01cb007"
@@ -7169,27 +7269,104 @@ mod tests {
             sha256_hex_v1(&selected_pixels),
             "21915bcc3f86ff9a5be9b834ebfc9877b5502950e12e377f40fe7e340523a013"
         );
-        let assets = natural_league_deck_chooser_assets_v1(
+        assert_eq!(
+            sha256_hex_v1(&challenge_selected_pixels),
+            "05a957dd0c5598ba7e2f102211a51b4b60dcec078c61c5b632c9412706f305e8"
+        );
+        assert_eq!(
+            sha256_hex_v1(&excluded_stale_pixels),
+            "b432bd9116e339fda4183c860a14deba23f5a172f951cc4a675c2141b31b0738"
+        );
+        let derived_league_assets = natural_league_deck_chooser_assets_v1(
             &unselected_pixels,
             &selected_pixels,
             unselected_width,
             unselected_height,
         );
-        for (pixels, expected_state) in [
+        let (_, assets) = reviewed_modern_deck_chooser_corpus_v1();
+        let reviewed_league_profiles = assets
+            .deck_chooser_profiles
+            .iter()
+            .filter(|profile| profile.event_kind == MtgoCompetitiveEventKindV1::League)
+            .collect::<Vec<_>>();
+        assert_eq!(reviewed_league_profiles.len(), 2);
+        for derived in &derived_league_assets.deck_chooser_profiles {
+            let reviewed = reviewed_league_profiles
+                .iter()
+                .find(|profile| profile.state == derived.state)
+                .unwrap();
+            assert_eq!(
+                reviewed.deck_label_region_rect_client_px,
+                derived.deck_label_region_rect_client_px
+            );
+            assert_eq!(
+                reviewed.unselected_deck_label_reference_sha256s,
+                derived.unselected_deck_label_reference_sha256s
+            );
+            assert_eq!(
+                reviewed.selected_deck_label_reference_sha256s,
+                derived.selected_deck_label_reference_sha256s
+            );
+            assert_eq!(
+                reviewed.unselected_deck_row_reference_sha256s,
+                derived.unselected_deck_row_reference_sha256s
+            );
+            assert_eq!(
+                reviewed.selected_deck_row_reference_sha256s,
+                derived.selected_deck_row_reference_sha256s
+            );
+            assert_eq!(
+                reviewed.unselected_selection_detail_reference_sha256s,
+                derived.unselected_selection_detail_reference_sha256s
+            );
+            assert_eq!(
+                reviewed.selected_selection_detail_reference_sha256s,
+                derived.selected_selection_detail_reference_sha256s
+            );
+            assert_eq!(
+                reviewed.disabled_submit_reference_sha256s,
+                derived.disabled_submit_reference_sha256s
+            );
+            assert_eq!(
+                reviewed.enabled_submit_reference_sha256s,
+                derived.enabled_submit_reference_sha256s
+            );
+        }
+        for (pixels, event_kind, event_label, expected_state) in [
             (
                 unselected_pixels.as_slice(),
-                MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection,
+                MtgoCompetitiveEventKindV1::League,
+                "Modern League",
+                Some(MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection),
             ),
             (
                 selected_pixels.as_slice(),
-                MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected,
+                MtgoCompetitiveEventKindV1::League,
+                "Modern League",
+                Some(MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected),
+            ),
+            (
+                challenge_selected_pixels.as_slice(),
+                MtgoCompetitiveEventKindV1::Challenge,
+                "Modern Challenge 64",
+                Some(MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected),
+            ),
+            (
+                excluded_stale_pixels.as_slice(),
+                MtgoCompetitiveEventKindV1::Challenge,
+                "Modern Challenge 64",
+                None,
             ),
         ] {
-            let header = natural_league_deck_chooser_header_v1(
-                pixels,
-                unselected_width,
-                unselected_height,
-                &assets,
+            let header = retarget_deck_chooser_header_v1(
+                natural_league_deck_chooser_header_v1(
+                    pixels,
+                    unselected_width,
+                    unselected_height,
+                    &assets,
+                ),
+                event_kind,
+                event_label,
             );
             let profiles = validate_deck_chooser_assets_v1(&assets, &header).unwrap();
             let words = recognize_words_v1(unselected_width, unselected_height, pixels).unwrap();
@@ -7206,8 +7383,72 @@ mod tests {
                     .ok()
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(matches.len(), 1);
-            assert_eq!(matches[0].chooser.state, expected_state);
+            match expected_state {
+                Some(expected_state) => {
+                    assert_eq!(matches.len(), 1);
+                    assert_eq!(matches[0].chooser.state, expected_state);
+                }
+                None => assert!(matches.is_empty()),
+            }
+        }
+    }
+
+    #[test]
+    fn reviewed_modern_chooser_receipt_covers_both_modes_without_authority() {
+        let (receipt, assets) = reviewed_modern_deck_chooser_corpus_v1();
+        assert_eq!(receipt["schema_version"], 1);
+        assert_eq!(
+            receipt["scope"],
+            "reviewed_modern_deck_chooser_two_state_corpus_v1"
+        );
+        assert_eq!(receipt["reviewed_sources"].as_array().unwrap().len(), 3);
+        assert_eq!(receipt["excluded_sources"].as_array().unwrap().len(), 1);
+        assert_eq!(receipt["excluded_sources"][0]["must_match_state_count"], 0);
+        assert_eq!(
+            receipt["excluded_sources"][0]["observed_submit_region_sha256"],
+            receipt["reference_hashes"]["exact_deck_selected"]["submit_region_sha256"]
+        );
+        assert_ne!(
+            receipt["excluded_sources"][0]["observed_submit_region_sha256"],
+            receipt["reference_hashes"]["awaiting_exact_deck_selection"]["submit_region_sha256"]
+        );
+        assert_eq!(
+            receipt["review_confirmations"]
+                ["event_kind_is_bound_by_prior_deck_gate_not_inferred_from_dialog"],
+            true
+        );
+        assert_eq!(
+            receipt["authority"]["safe_for_classifier_reference_generation"],
+            true
+        );
+        for field in [
+            "grants_live_capture",
+            "grants_policy_scoring",
+            "grants_input",
+            "grants_event_entry",
+            "grants_spending",
+        ] {
+            assert_eq!(receipt["authority"][field], false);
+        }
+
+        let pixels = vec![0_u8; 885 * 734 * 4];
+        for (event_kind, event_label) in [
+            (MtgoCompetitiveEventKindV1::League, "Modern League"),
+            (MtgoCompetitiveEventKindV1::Challenge, "Modern Challenge 64"),
+        ] {
+            let header = retarget_deck_chooser_header_v1(
+                natural_league_deck_chooser_header_v1(&pixels, 885, 734, &assets),
+                event_kind,
+                event_label,
+            );
+            let profiles = validate_deck_chooser_assets_v1(&assets, &header).unwrap();
+            assert_eq!(profiles.len(), 2);
+            assert!(profiles.iter().any(|profile| {
+                profile.state == MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection
+            }));
+            assert!(profiles.iter().any(|profile| {
+                profile.state == MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected
+            }));
         }
     }
 

@@ -2951,7 +2951,7 @@ fn competitive_deck_chooser_is_exact_two_state_visible_only_and_non_authorizing(
     }
     for required in [
         "pre_entry_visible_deck_chooser_classifier_protocol_present: true",
-        "pre_entry_visible_deck_chooser_reviewed_two_state_corpus_present: false",
+        "pre_entry_visible_deck_chooser_reviewed_two_state_corpus_present: true",
         "pre_entry_visible_deck_selection_actuator_present: true",
     ] {
         assert!(
