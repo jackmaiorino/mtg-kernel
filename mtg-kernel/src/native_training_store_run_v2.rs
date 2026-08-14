@@ -1851,6 +1851,87 @@ fn classify_catalog_profile_v1(
     }
 }
 
+/// The crate's actual live catalog-identity build constants, read fresh each
+/// call. Test builds may override the returned pair for exactly the calling
+/// thread via [`LiveCatalogBuildIdentityOverrideGuardV1`] to simulate a
+/// future catalog change (a build whose live constants have moved past the
+/// pinned CURRENT literal) without waiting for one; production builds always
+/// return the real, unmodified `KERNEL_CARDDB_HASH`/`RUNTIME_DECK_CATALOG_FILE_SHA256`.
+fn live_catalog_build_identity_v1() -> (String, String) {
+    #[cfg(test)]
+    if let Some(overridden) =
+        LIVE_CATALOG_BUILD_IDENTITY_OVERRIDE_V1.with(|cell| cell.borrow().clone())
+    {
+        return overridden;
+    }
+    (
+        format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH),
+        crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256.to_owned(),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    static LIVE_CATALOG_BUILD_IDENTITY_OVERRIDE_V1: std::cell::RefCell<Option<(String, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only per-thread override for [`live_catalog_build_identity_v1`].
+/// Installing simulates a build whose live catalog constants differ from the
+/// pinned CURRENT literal (the only way to exercise the CURRENT-profile
+/// mutation-boundary authenticity check's rejection path today, since the
+/// crate's real live constants currently equal the pinned CURRENT literal
+/// exactly -- see `current_frozen_literal_matches_the_live_build_constant`).
+/// RAII: the override is cleared on drop, including on panic, so no failed
+/// test can leak a shimmed identity into a later same-thread test.
+#[cfg(test)]
+pub(crate) struct LiveCatalogBuildIdentityOverrideGuardV1;
+
+#[cfg(test)]
+impl LiveCatalogBuildIdentityOverrideGuardV1 {
+    pub(crate) fn install(card_db_hash_u64_hex: &str, runtime_catalog_sha256: &str) -> Self {
+        LIVE_CATALOG_BUILD_IDENTITY_OVERRIDE_V1.with(|cell| {
+            *cell.borrow_mut() = Some((
+                card_db_hash_u64_hex.to_owned(),
+                runtime_catalog_sha256.to_owned(),
+            ));
+        });
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for LiveCatalogBuildIdentityOverrideGuardV1 {
+    fn drop(&mut self) {
+        LIVE_CATALOG_BUILD_IDENTITY_OVERRIDE_V1.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+    }
+}
+
+/// Live catalog-identity authenticity check for CURRENT-profile mutation
+/// boundaries (Dual-Profile Catalog Successor fix round, panel finding 1,
+/// blocker: bypass). Decode intentionally never reads the crate's live build
+/// constants (a record's catalog fields are checked only against the pinned
+/// CURRENT/HISTORICAL literal pairs in `classify_catalog_profile_v1`) -- but
+/// that alone means a hand-fabricated record whose catalog fields merely
+/// equal the pinned CURRENT literal would seal with no authenticity check
+/// anywhere, including after a future catalog change moves the crate's real
+/// live constants past that literal (the exact bypass the panel identified,
+/// symmetric to the original rev3 outage this successor exists to fix).
+/// This closes it at the two mutation boundaries (publish, resume): a
+/// CURRENT-profile record's own embedded fields must equal the crate's live
+/// constants at THIS moment, not merely the frozen pin. Returns `true` when
+/// they match. HISTORICAL-profile records never reach this function (each
+/// boundary's exhaustive match rejects them in their own arm first).
+pub(crate) fn current_profile_matches_live_build_identity_v1(
+    environment: &TrainRunEnvironmentV2,
+) -> bool {
+    let (live_card_db_hash_u64_hex, live_runtime_catalog_sha256) = live_catalog_build_identity_v1();
+    environment.card_db_hash_u64_hex == live_card_db_hash_u64_hex
+        && environment.runtime_catalog_sha256 == live_runtime_catalog_sha256
+}
+
 /// Dual-Profile Catalog Successor (collab CLAUDE #220): this function is now
 /// catalog-profile-scoped. It no longer compares the crate's live
 /// `KERNEL_CARDDB_HASH` / `RUNTIME_DECK_CATALOG_FILE_SHA256` build constants
@@ -5663,6 +5744,59 @@ mod tests {
         );
     }
 
+    /// Current-pin tripwire (fix round, panel finding 4). The two literals
+    /// below are typed independently of `FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`/
+    /// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`'s own definitions, not
+    /// derived from them, so this test cannot pass by construction the way a
+    /// self-referential comparison would.
+    ///
+    /// THE RULE: a future catalog move must add a NEW frozen profile
+    /// (a fourth literal pair, a new `NativeRunCatalogProfileV1` variant, a
+    /// new arm in `classify_catalog_profile_v1` and at every mutation
+    /// boundary) exactly the way this successor added CURRENT alongside the
+    /// untouched HISTORICAL pair. It must never overwrite
+    /// `FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`/`FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`
+    /// in place -- doing so would silently reinterpret every already-sealed
+    /// CURRENT-profile record (this successor's own science-evidence era) as
+    /// whatever the new catalog happens to be, exactly the byte-identity
+    /// violation the whole frozen-literal discipline exists to prevent. If
+    /// this test fails, someone overwrote the constant in place; the fix is
+    /// to revert that edit and instead follow the third-profile pattern.
+    #[test]
+    fn current_pin_is_not_silently_overwritten_in_place() {
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1, "64c82a261e078f1a",
+            "FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1 was overwritten in place; add a new frozen \
+             profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1,
+            "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851",
+            "FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1 was overwritten in place; add a new frozen \
+             profile instead of moving this one"
+        );
+    }
+
+    /// Direct unit coverage of `current_profile_matches_live_build_identity_v1`
+    /// (fix round, panel finding 1) in isolation, both directions, before the
+    /// fuller boundary-integration tests exercise it through
+    /// `resume_native_training_store_v2`/`publish_generation_v2`.
+    #[test]
+    fn current_profile_live_identity_check_matches_real_and_rejects_shimmed() {
+        let record = fixture_record();
+        assert!(current_profile_matches_live_build_identity_v1(
+            &record.environment
+        ));
+
+        let _shim = LiveCatalogBuildIdentityOverrideGuardV1::install(
+            "ffffffffffffffff",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        );
+        assert!(!current_profile_matches_live_build_identity_v1(
+            &record.environment
+        ));
+    }
+
     #[test]
     fn historical_fixture_decodes_clean_and_classifies_historical() {
         let validated = decode_train_run_v2(&fixture_bytes_historical()).unwrap();
@@ -8126,6 +8260,100 @@ mod tests {
             validated.record().environment.runtime_catalog_sha256,
             FROZEN_RUNTIME_CATALOG_SHA256_V2
         );
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220) fix round,
+    /// panel finding 2 (compat blocker): empirical evidence from the two
+    /// real, active population-v2 records named by the coordinator. Two
+    /// independent facts, each locked in by its own assertion below:
+    ///
+    /// (1) Both records' own `card_db_hash_u64_hex`/`runtime_catalog_sha256`
+    /// fields are read directly off the raw JSON (bypassing
+    /// `decode_train_run_v2`, which cannot reach them -- see fact 2) and are
+    /// BIT-IDENTICAL to the existing HISTORICAL frozen literals
+    /// (`FROZEN_CARD_DB_HASH_U64_HEX_V2`/`FROZEN_RUNTIME_CATALOG_SHA256_V2`).
+    /// There is no third, distinct catalog-hash value here: the population-v2
+    /// worktree that produced both records never advanced past the rev3
+    /// (two-deck) catalog identity, even though both records were minted
+    /// chronologically after the runtime-decks-nine landing on this branch's
+    /// base. `classify_catalog_profile_v1` already classifies this exact
+    /// value pair correctly (as `Historical`); no new frozen literal pair
+    /// exists to register.
+    ///
+    /// (2) `decode_train_run_v2` currently fails on BOTH real files with
+    /// `CanonicalJson(Deserialization)`, not `InvalidLiteral` and not any
+    /// catalog-profile-related classification. Root cause (confirmed by
+    /// direct inspection, not guessed): both records' `contracts` object
+    /// carries a population-v2-era section this branch's `TrainRunContractsV2`
+    /// does not define at all (`population_program_v2_cycle2` in the cycle-2
+    /// record, `population_program_v2` in the tranche-1 record; this branch
+    /// only defines `population_program_v1`), so `deny_unknown_fields`
+    /// rejects the record before canonical-JSON deserialization completes --
+    /// before `validate_environment_v2` or `classify_catalog_profile_v1` are
+    /// ever reached. This is a separate, pre-existing schema-generation gap
+    /// (the population-v2 contract-widening lane, collab CLAUDE #226: "the
+    /// v2 implementation items... land FIRST, before your run_v2 catalog
+    /// successor rebases onto those files"), not something this dual-profile
+    /// catalog work introduces or can fix by itself.
+    ///
+    /// Consequence, flagged for the coordinator rather than guessed at:
+    /// neither prescribed outcome (equals CURRENT; or differs and gets a new
+    /// third frozen literal pair) applies -- the observed value equals
+    /// HISTORICAL exactly. Once the population-v2 schema widening lands and
+    /// these records become decodable on some future branch, they will
+    /// classify `Historical` under this design and be rejected at the
+    /// science-loop/publish/resume boundaries exactly as the panel warns.
+    /// That is a real, valid forward-looking concern; resolving it now would
+    /// mean inventing a discriminating signal from schema this branch does
+    /// not have, which risks being wrong. This test locks in the current,
+    /// verified-true state as a tripwire: if it starts failing (either
+    /// assertion), that is the signal the schema widening has landed and the
+    /// boundary policy for population-v2's specific case needs revisiting
+    /// with real decodable evidence in hand.
+    #[test]
+    fn population_v2_active_records_are_historical_catalog_identity_blocked_by_a_separate_schema_gap()
+    {
+        for (label, path) in [
+            (
+                "cycle2",
+                r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json",
+            ),
+            (
+                "tranche1",
+                r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json",
+            ),
+        ] {
+            let bytes = std::fs::read(path).unwrap_or_else(|error| {
+                panic!("could not read the real population-v2 {label} run.json at {path}: {error}")
+            });
+
+            // Fact 1: the catalog identity fields, read directly off the raw
+            // JSON, equal the HISTORICAL pin exactly. No decode needed.
+            let raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                raw["environment"]["card_db_hash_u64_hex"].as_str().unwrap(),
+                FROZEN_CARD_DB_HASH_U64_HEX_V2,
+                "{label}: catalog card_db_hash_u64_hex is not the historical pin"
+            );
+            assert_eq!(
+                raw["environment"]["runtime_catalog_sha256"]
+                    .as_str()
+                    .unwrap(),
+                FROZEN_RUNTIME_CATALOG_SHA256_V2,
+                "{label}: catalog runtime_catalog_sha256 is not the historical pin"
+            );
+
+            // Fact 2: decode fails at canonical-JSON deserialization (the
+            // unknown population-v2 contract field), never reaching catalog
+            // classification at all.
+            let error = decode_train_run_v2(&bytes)
+                .expect_err(&format!("{label}: expected decode to fail (schema gap)"));
+            assert_eq!(
+                error.kind(),
+                TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization),
+                "{label}: expected the unknown-field schema gap, got a different failure"
+            );
+        }
     }
 
     /// Backward-compatibility regression for the Phase 2 512-horizon
