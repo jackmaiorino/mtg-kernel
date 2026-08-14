@@ -128,6 +128,22 @@ Hand-strength labels, matchup tables, game-one outcome, card-quality scores,
 and sideboard heuristics are not rewards. A legacy gameplay-only checkpoint is
 not auxiliary-ready merely because it can score in-game decisions.
 
+## Canonical conformance source
+
+`../mtgo_dxgi_capture_v1/fixtures/player_visible_competitive_auxiliary_heads_conformance_source_v1.json`
+is the executable game-two handoff fixture. It freezes one complete prior game
+as separate confirmed-decision and rendered-Game-Log streams, the exact
+seven-card Keep or Mulligan input, and both unchanged and inventory-conserving
+changed sideboard targets. Its tests recompute the existing adapter input and
+selection commitments plus source-only commitments that bind each current
+decision to the complete prior-game history.
+
+The fixture deployment digest is a fixture-only sentinel. The file is not a
+checkpoint package, production ratification, event session, entry decision, or
+input authority. A conforming kernel implementation must consume the history
+payload as model information, preserve the two independent clocks, and return
+the same semantic responses without importing adapter lineage.
+
 ## Adapter return path
 
 After the kernel types exist, the adapter should:

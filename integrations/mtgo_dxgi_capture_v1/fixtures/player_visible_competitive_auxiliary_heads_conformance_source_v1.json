@@ -1,0 +1,298 @@
+{
+  "schema_version": 1,
+  "fixture_id": "player-visible-competitive-auxiliary-heads-game-two-v1",
+  "fixture_deployment_commitment_sha256": "35047b64317d92c6e77598ebc5f50f1f9dff0a741fe8bcb613164be3fef0ca5b",
+  "completed_match_history": {
+    "ordering": "separate_ordered_streams_no_cross_source_total_order",
+    "games": [
+      {
+        "game_number": 1,
+        "winner": "opponent",
+        "confirmed_decisions": [
+          {
+            "within_source_position": 0,
+            "decision": {
+              "current_state": {
+                "acting_player": "seated_player",
+                "turn": 2,
+                "phase": "main1",
+                "active_player": "seated_player",
+                "priority_player": "seated_player",
+                "initiative": null,
+                "life_totals": [17, 20],
+                "mana_pools": [
+                  [0, 0, 0, 1, 0, 0],
+                  [0, 0, 0, 0, 0, 0]
+                ],
+                "hand_counts": [6, 7],
+                "library_counts": [52, 53],
+                "battlefield": [
+                  [
+                    {
+                      "object_ref": {
+                        "visible_ordinal": 0
+                      },
+                      "card_name": "Mountain",
+                      "tapped": false,
+                      "marked_damage": 0,
+                      "counters": {
+                        "plus_one_plus_one": 0,
+                        "minus_one_minus_one": 0,
+                        "minus_zero_minus_one": 0,
+                        "stun": 0,
+                        "lore": 0
+                      },
+                      "is_token": false,
+                      "visible_effective_power": null,
+                      "visible_effective_toughness": null
+                    }
+                  ],
+                  []
+                ],
+                "graveyards": [[], []],
+                "exile": [],
+                "stack": [],
+                "combat": {
+                  "attackers_declared": false,
+                  "blockers_declared": false,
+                  "ordered_attackers": [],
+                  "blocker_assignments": []
+                },
+                "visible_object_relations": [],
+                "own_hand": [
+                  {
+                    "object_ref": {
+                      "visible_ordinal": 1
+                    },
+                    "card_name": "Lightning Bolt"
+                  }
+                ],
+                "known_library_cards": [[], []],
+                "known_hand_cards": [[], []]
+              },
+              "selected_action": {
+                "action_kind": "pass",
+                "actor": "seated_player"
+              }
+            }
+          }
+        ],
+        "public_game_log_events": [
+          {
+            "within_source_position": 0,
+            "kind": "played_card",
+            "actor_role": "opponent",
+            "turn_number": 1,
+            "primary_count": null,
+            "secondary_count": null,
+            "visible_card_names": ["Island"]
+          },
+          {
+            "within_source_position": 1,
+            "kind": "cast_spell",
+            "actor_role": "opponent",
+            "turn_number": 2,
+            "primary_count": null,
+            "secondary_count": null,
+            "visible_card_names": ["Lightning Bolt"]
+          },
+          {
+            "within_source_position": 2,
+            "kind": "won_game",
+            "actor_role": "opponent",
+            "turn_number": 6,
+            "primary_count": null,
+            "secondary_count": null,
+            "visible_card_names": []
+          }
+        ]
+      }
+    ]
+  },
+  "expected_completed_match_history_source_commitment_sha256": "2bb061b7cbe7c7b2499226c8267d5a765a272e747c786a98e320936f54c51002",
+  "pregame": {
+    "model_input": {
+      "game_number": 2,
+      "play_draw": "on_draw",
+      "acting_player_games_won": 0,
+      "opponent_games_won": 1,
+      "player_known_deck_configuration": {
+        "mainboard": [
+          {
+            "visible_card_name": "Lightning Bolt",
+            "count": 4
+          },
+          {
+            "visible_card_name": "Mountain",
+            "count": 56
+          }
+        ],
+        "sideboard": [
+          {
+            "visible_card_name": "Island",
+            "count": 3
+          },
+          {
+            "visible_card_name": "Lightning Bolt",
+            "count": 12
+          }
+        ]
+      },
+      "stage": {
+        "stage": "mulligan_choice",
+        "prospective_keep_size": 6
+      },
+      "prospective_keep_size": 6,
+      "required_bottom_count": 0,
+      "selected_bottom_count": 0,
+      "ordered_visible_cards": [
+        {
+          "card_slot": 0,
+          "visible_card_name": "Mountain",
+          "selected_for_bottom": false
+        },
+        {
+          "card_slot": 1,
+          "visible_card_name": "Lightning Bolt",
+          "selected_for_bottom": false
+        },
+        {
+          "card_slot": 2,
+          "visible_card_name": "Mountain",
+          "selected_for_bottom": false
+        },
+        {
+          "card_slot": 3,
+          "visible_card_name": "Mountain",
+          "selected_for_bottom": false
+        },
+        {
+          "card_slot": 4,
+          "visible_card_name": "Lightning Bolt",
+          "selected_for_bottom": false
+        },
+        {
+          "card_slot": 5,
+          "visible_card_name": "Mountain",
+          "selected_for_bottom": false
+        },
+        {
+          "card_slot": 6,
+          "visible_card_name": "Mountain",
+          "selected_for_bottom": false
+        }
+      ],
+      "ordered_confirmed_bottom_slots": [],
+      "ordered_actions": [
+        {
+          "action": "keep_opening_hand"
+        },
+        {
+          "action": "mulligan",
+          "next_hand_size": 5
+        }
+      ]
+    },
+    "expected_model_input_commitment_sha256": "947a4cfcf8c60161c46680d901274e3c05213b992a33325d9276c9304f2a57fb",
+    "expected_source_commitment_sha256": "07bc2e5e127eada6fa1dc3225fd129d06f27755bd86610460ac4a391f5f1eb11",
+    "ordered_action_logits_f32_bits": [1073741824, 0],
+    "value_f32_bits": 1048576000,
+    "expected_selected_index": 0,
+    "expected_selected_action": {
+      "action": "keep_opening_hand"
+    },
+    "expected_checked_selection_commitment_sha256": "b0c5b9fbffce6cb81e323b7b25cd93d4d8d22b80b7af919d84152ca6b4c88ee1"
+  },
+  "sideboard": {
+    "model_input": {
+      "next_game_number": 2,
+      "acting_player_games_won": 0,
+      "opponent_games_won": 1,
+      "current_configuration": {
+        "mainboard": [
+          {
+            "visible_card_name": "Lightning Bolt",
+            "count": 4
+          },
+          {
+            "visible_card_name": "Mountain",
+            "count": 56
+          }
+        ],
+        "sideboard": [
+          {
+            "visible_card_name": "Island",
+            "count": 3
+          },
+          {
+            "visible_card_name": "Lightning Bolt",
+            "count": 12
+          }
+        ]
+      }
+    },
+    "expected_model_input_commitment_sha256": "b8c78bdcae10253491d3d1f4df53f324c1a2a11412d898d6c7c172cf7f9e2775",
+    "expected_source_commitment_sha256": "856eae19c155c81371a4a859a10668416e107f88f5bf1a04fde5005cc39ac695",
+    "value_f32_bits": 1056964608,
+    "unchanged_selection": {
+      "target_configuration": {
+        "mainboard": [
+          {
+            "visible_card_name": "Lightning Bolt",
+            "count": 4
+          },
+          {
+            "visible_card_name": "Mountain",
+            "count": 56
+          }
+        ],
+        "sideboard": [
+          {
+            "visible_card_name": "Island",
+            "count": 3
+          },
+          {
+            "visible_card_name": "Lightning Bolt",
+            "count": 12
+          }
+        ]
+      }
+    },
+    "expected_unchanged_model_selection_commitment_sha256": "219206e25447bac8b72c763c100065cfd2480676654149f4d5f3e9179215dee7",
+    "expected_unchanged_checked_selection_commitment_sha256": "cd0519f7cc89a8ebe242181e806a5353e582192091590192635057403673ad7a",
+    "changed_selection": {
+      "target_configuration": {
+        "mainboard": [
+          {
+            "visible_card_name": "Island",
+            "count": 1
+          },
+          {
+            "visible_card_name": "Lightning Bolt",
+            "count": 4
+          },
+          {
+            "visible_card_name": "Mountain",
+            "count": 55
+          }
+        ],
+        "sideboard": [
+          {
+            "visible_card_name": "Island",
+            "count": 2
+          },
+          {
+            "visible_card_name": "Lightning Bolt",
+            "count": 12
+          },
+          {
+            "visible_card_name": "Mountain",
+            "count": 1
+          }
+        ]
+      }
+    },
+    "expected_changed_model_selection_commitment_sha256": "05ebacfd294f6897eac78df24ba15d36cc2927b4c03ae3e1cf8d805c81160993",
+    "expected_changed_checked_selection_commitment_sha256": "0522feb01fe893a72ad72da872077e65c1fb4ac3d9b104376d29cff474f62f34"
+  }
+}
