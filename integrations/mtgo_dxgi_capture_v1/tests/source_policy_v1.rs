@@ -2912,6 +2912,83 @@ fn competitive_operator_bootstrap_cross_checks_resources_without_authority() {
 }
 
 #[test]
+fn competitive_deck_chooser_is_exact_two_state_visible_only_and_non_authorizing() {
+    let runtime = include_str!("../src/probe/competitive_deck_chooser_runtime.rs");
+    let classifier = include_str!("../src/bin/mtgo_visible_competitive_classifier_v1.rs");
+    let readiness = include_str!("../src/competitive_wiring_readiness.rs");
+    let public_api = include_str!("../src/lib.rs");
+    for required in [
+        "mtgo_visible_competitive_deck_chooser_v1",
+        "league_and_challenge_exact_deck_chooser_checked_untrusted_v1",
+        "AwaitingExactDeckSelection",
+        "ExactDeckSelected",
+        "classify_competitive_deck_chooser_open_state_v1",
+        "classify_competitive_deck_chooser_selected_successor_v1",
+        "source_window_continuity_commitment_sha256",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "deck-chooser runtime is missing: {required}"
+        );
+    }
+    for required in [
+        "--mtgo-visible-competitive-deck-chooser-v1",
+        "MTGO_VISIBLE_COMPETITIVE_DECK_CHOOSER_V1",
+        "deck_chooser_profiles",
+        "expected exactly one reviewed deck-chooser state match",
+        "deck-chooser target requires exactly two reviewed state profiles",
+        "deck-chooser row or Submit state differs from reviewed pixels",
+    ] {
+        assert!(
+            classifier.contains(required),
+            "deck-chooser classifier is missing: {required}"
+        );
+    }
+    for required in [
+        "pre_entry_visible_deck_chooser_classifier_protocol_present: true",
+        "pre_entry_visible_deck_chooser_reviewed_two_state_corpus_present: false",
+        "pre_entry_visible_deck_selection_actuator_present: false",
+    ] {
+        assert!(
+            readiness.contains(required),
+            "deck-chooser readiness boundary is missing: {required}"
+        );
+    }
+    for required in [
+        "MtgoCompetitiveDeckChooserClassifierRequestHeaderV1",
+        "OpaqueMtgoClassifiedCompetitiveDeckChooserV1",
+        "classify_competitive_deck_chooser_selected_successor_v1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "deck-chooser public type surface is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "mouse_event",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "TcpStream",
+        "UdpSocket",
+        "reqwest",
+        "pub fn canonical_bgra8",
+        "pub fn deck_row_control_rect",
+        "pub fn submit_control_rect",
+        "pub fn click",
+    ] {
+        assert!(
+            !runtime.contains(forbidden),
+            "deck-chooser runtime exposes forbidden capability: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn post_entry_operator_owns_resources_and_routes_every_event_branch_without_new_entry_authority() {
     let source = include_str!("../src/competitive_operator_loop.rs");
     let direct_source = include_str!("../src/probe/direct_visible_source_runtime.rs");

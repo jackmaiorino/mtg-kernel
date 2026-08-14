@@ -154,6 +154,10 @@ impl OpaqueMtgoClassifiedCompetitiveDeckGateV1 {
     pub fn permits_spending_v1(&self) -> bool {
         false
     }
+
+    pub(super) fn source_frame_v1(&self) -> &OpaqueMtgoAdmittedCompetitiveNavigationFrameV1 {
+        &self.source_frame
+    }
 }
 
 pub fn check_untrusted_competitive_deck_gate_classifier_request_v1(
