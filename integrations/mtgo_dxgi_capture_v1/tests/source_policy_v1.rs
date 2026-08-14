@@ -3804,3 +3804,55 @@ fn pre_entry_operator_retains_exact_resources_through_attended_spending_and_hand
         );
     }
 }
+
+#[test]
+fn competitive_entry_accessibility_is_visible_hit_tested_and_non_actuating() {
+    let probe = include_str!("../src/probe/visible_accessibility.rs");
+    let capture = include_str!("../src/probe.rs");
+    let classifier = include_str!("../src/probe/competitive_entry_accessibility_runtime.rs");
+
+    for required in [
+        "CurrentIsOffscreen",
+        "CurrentBoundingRectangle",
+        "ElementFromPoint",
+        "CompareElements",
+        "GetForegroundWindow",
+        "occluding_windows_above",
+    ] {
+        assert!(
+            probe.contains(required) || capture.contains(required),
+            "visible accessibility source is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "SendInput",
+        "SetCursorPos",
+        "IUIAutomationInvokePattern",
+        "GetCurrentPattern",
+        "ReadProcessMemory",
+        "WriteProcessMemory",
+        "CreateRemoteThread",
+    ] {
+        assert!(
+            !probe.contains(forbidden) && !classifier.contains(forbidden),
+            "visible accessibility classification uses a forbidden channel: {forbidden}"
+        );
+    }
+    for required in [
+        "safe_for_policy_scoring_v1(&self) -> bool",
+        "safe_for_input_v1(&self) -> bool",
+        "permits_event_entry_v1(&self) -> bool",
+        "permits_spending_v1(&self) -> bool",
+        "visible_uia_exact_center_hit_tested_no_control_pattern_no_input",
+    ] {
+        assert!(
+            classifier.contains(required),
+            "entry accessibility classifier is missing: {required}"
+        );
+    }
+    assert_eq!(
+        classifier.matches("        false\n").count(),
+        4,
+        "all four authority predicates must remain false"
+    );
+}

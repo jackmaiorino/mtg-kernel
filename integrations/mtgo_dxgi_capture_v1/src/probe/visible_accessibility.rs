@@ -556,7 +556,9 @@ impl OpaqueMtgoVisibleAccessibilityPixelCorroborationV1 {
 /// process-bound, nonempty, and fully contained in the visible MTGO client.
 /// `CurrentName` is read only after all of those checks pass. Exact matches
 /// remain diagnostic until a future single-frame composed-pixel binder
-/// corroborates the same private rectangles.
+/// corroborates the same private rectangles. The separately reviewed static
+/// entry classifier may consume only its fixed exact-label subset and exports
+/// only one bounded deck-gate state, never arbitrary names or control state.
 pub fn probe_mtgo_visible_accessibility_exact_text_v1(
     window_request: MtgoDxgiCaptureRequestV3,
     queries: Vec<MtgoVisibleAccessibilityExactTextQueryV1>,
@@ -660,6 +662,37 @@ pub fn probe_mtgo_visible_accessibility_exact_text_v1(
         }
         for (query_index, query) in queries.iter().enumerate() {
             if name == query.expected_visible_text {
+                let width = rect.width().map_err(str::to_owned)?;
+                let height = rect.height().map_err(str::to_owned)?;
+                let center = POINT {
+                    x: rect
+                        .left
+                        .checked_add(i32::try_from(width / 2).map_err(|_| {
+                            "visible UI Automation horizontal center overflow".to_owned()
+                        })?)
+                        .ok_or("visible UI Automation horizontal center overflow")?,
+                    y: rect
+                        .top
+                        .checked_add(i32::try_from(height / 2).map_err(|_| {
+                            "visible UI Automation vertical center overflow".to_owned()
+                        })?)
+                        .ok_or("visible UI Automation vertical center overflow")?,
+                };
+                let hit = unsafe {
+                    automation.ElementFromPoint(center).map_err(|error| {
+                        format!("hit-test visible UI Automation element {index}: {error}")
+                    })?
+                };
+                if !unsafe {
+                    automation
+                        .CompareElements(&element, &hit)
+                        .map_err(|error| {
+                            format!("compare hit-tested UI Automation element {index}: {error}")
+                        })?
+                        .as_bool()
+                } {
+                    continue;
+                }
                 let control_type_id = unsafe {
                     element
                         .CurrentControlType()
