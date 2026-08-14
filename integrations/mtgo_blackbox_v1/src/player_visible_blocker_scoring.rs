@@ -24,6 +24,7 @@ pub trait MtgoPlayerVisibleSingleAttackerBlockerScorerV1 {
 
 pub struct CheckedUntrustedMtgoPlayerVisibleSingleAttackerBlockerScoredStepV1 {
     progress: MtgoPlayerVisibleSingleAttackerBlockerDeliberationProgressV1,
+    model_input: MtgoPlayerVisibleSingleAttackerBlockerInclusionDecisionV1,
     response: MtgoPlayerVisibleDuelScoreResponseV1,
     selected_index: usize,
     selected_action: MtgoPlayerVisibleDuelActionV1,
@@ -32,6 +33,10 @@ pub struct CheckedUntrustedMtgoPlayerVisibleSingleAttackerBlockerScoredStepV1 {
 }
 
 impl CheckedUntrustedMtgoPlayerVisibleSingleAttackerBlockerScoredStepV1 {
+    pub fn model_input_v1(&self) -> &MtgoPlayerVisibleSingleAttackerBlockerInclusionDecisionV1 {
+        &self.model_input
+    }
+
     pub fn selected_index_v1(&self) -> usize {
         self.selected_index
     }
@@ -157,6 +162,7 @@ pub fn score_and_advance_player_visible_single_attacker_blocker_deliberation_v1<
     Ok(
         CheckedUntrustedMtgoPlayerVisibleSingleAttackerBlockerScoredStepV1 {
             progress,
+            model_input,
             response,
             selected_index,
             selected_action,

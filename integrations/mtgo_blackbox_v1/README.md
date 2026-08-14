@@ -572,6 +572,16 @@ model decision after each visible prompt or assignment. These checked values
 still contain no process, coordinate, input method, event entry, spending, or
 live authority.
 
+The combat bridge retains those staged calls as one composite confirmed
+decision. It records the exact sanitized visible input and selected visible
+choice for every model call, plus the confirmed visible transition chain, and
+joins multi-attacker rescoring only when the prior postcondition is the exact
+new source. The competitive game ledger stores that composite as one action,
+advances the actuator session once, and requires a genuinely newer observation
+before later scoring. Its kernel-facing consumer receives only the visible
+states and model choices. Capture identities, hashes, client objects, and
+physical input receipts remain private.
+
 The adapter now defines the coordinate-free half of step 6. `MtgoExternalScoringRequestV1` binds one validated decision commitment, the exact `ObservationV5`, the complete ordered `ActionSemanticV1` vector, action count, and an expected checkpoint deployment commitment. The deployment identity includes the run, checkpoint manifest, checkpoint payload, train-state, model-parameter, generation, and scorer-contract identities exposed by the native checkpoint handle.
 
 `MtgoExternalModelScoreResponseV1` returns exact f32 policy-logit and value bits bound to that request. Validation requires one finite logit per legal action and a finite value, then uses the kernel scorer's deterministic `total_cmp` argmax with lower-index ties. The resulting opaque selection can create only an offline intent for the exact source decision. It has no coordinates or live-input authority.

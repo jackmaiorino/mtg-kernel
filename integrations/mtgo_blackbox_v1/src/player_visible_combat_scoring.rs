@@ -13,21 +13,29 @@ use crate::{
     score_and_select_player_visible_multi_attacker_blocker_v1,
     CheckedUntrustedMtgoPlayerVisibleMultiAttackerBlockerExecutionStepV1, MtgoContractErrorV1,
     MtgoPlayerVisibleAttackerDeliberationProgressV1, MtgoPlayerVisibleAttackerExecutionOperationV1,
-    MtgoPlayerVisibleAttackerExecutionPlanV1, MtgoPlayerVisibleAttackerScorerV1,
+    MtgoPlayerVisibleAttackerExecutionPlanV1, MtgoPlayerVisibleAttackerInclusionDecisionV1,
+    MtgoPlayerVisibleAttackerScorerV1, MtgoPlayerVisibleDuelActionV1,
+    MtgoPlayerVisibleMultiAttackerBlockerChoiceV1,
     MtgoPlayerVisibleMultiAttackerBlockerExecutionOperationV1,
+    MtgoPlayerVisibleMultiAttackerBlockerModelDecisionV1,
     MtgoPlayerVisibleMultiAttackerBlockerScorerV1, MtgoPlayerVisibleObjectRefV1,
     MtgoPlayerVisibleSingleAttackerBlockerDeliberationProgressV1,
     MtgoPlayerVisibleSingleAttackerBlockerExecutionOperationV1,
     MtgoPlayerVisibleSingleAttackerBlockerExecutionPlanV1,
+    MtgoPlayerVisibleSingleAttackerBlockerInclusionDecisionV1,
     MtgoPlayerVisibleSingleAttackerBlockerScorerV1,
     MtgoVisibleDuelViewModelBrokerAbstentionReasonV1, MtgoVisibleDuelViewModelBrokerResultV1,
 };
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const COMBAT_SCORING_BRIDGE_DOMAIN_V1: &[u8] = b"mtgo-player-visible-combat-scoring-bridge-v1";
 const COMBAT_EXECUTION_STEP_DOMAIN_V1: &[u8] = b"mtgo-player-visible-combat-execution-step-v1";
 const COMBAT_VISIBLE_TRANSITION_DOMAIN_V1: &[u8] =
     b"mtgo-player-visible-combat-visible-transition-v1";
+const COMBAT_DECISION_TRACE_DOMAIN_V1: &[u8] = b"mtgo-player-visible-combat-decision-trace-v1";
+const COMBAT_CONFIRMED_DECISION_DOMAIN_V1: &[u8] =
+    b"mtgo-player-visible-confirmed-combat-decision-v1";
 
 /// One model implementation for each player-visible combat decision shape.
 /// Every inherited method receives a type that cannot represent raw MTGO
@@ -47,11 +55,178 @@ impl<T> MtgoPlayerVisibleCombatScorerV1 for T where
 {
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MtgoPlayerVisiblePreparedCombatKindV1 {
     AttackerPlan,
     SingleAttackerBlockerPlan,
     MultiAttackerBlockerStep,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MtgoPlayerVisibleCombatConfirmedTransitionRecordV1 {
+    pub operation: MtgoPlayerVisibleCombatSubmittedOperationV1,
+    pub before_visible_result_sha256: String,
+    pub after_visible_result_sha256: String,
+    pub confirmation_commitment_sha256: String,
+}
+
+#[derive(Serialize)]
+struct MtgoPlayerVisibleCombatDecisionTraceRecordV1 {
+    combat_kind: MtgoPlayerVisiblePreparedCombatKindV1,
+    deployment_commitment_sha256: String,
+    source_visible_state: crate::MtgoPlayerVisibleDuelStateV1,
+    source_visible_result_sha256: String,
+    model_decisions: Vec<MtgoPlayerVisibleCombatModelDecisionRecordV1>,
+    confirmed_transitions: Vec<MtgoPlayerVisibleCombatConfirmedTransitionRecordV1>,
+}
+
+/// Move-only staged combat history. It is transport neutral and contains only
+/// the same sanitized state and choices presented to the scorer. A pending
+/// trace can only join the exact newer visible prompt confirmed by the prior
+/// transition.
+pub struct CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1 {
+    record: MtgoPlayerVisibleCombatDecisionTraceRecordV1,
+    latest_visible_result_sha256: String,
+    trace_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1 {
+    pub fn trace_commitment_sha256_v1(&self) -> &str {
+        &self.trace_commitment_sha256
+    }
+
+    pub fn model_decision_count_v1(&self) -> usize {
+        self.record.model_decisions.len()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+}
+
+/// One completed combat declaration preserving the model's exact staged
+/// player-visible choices and every confirmed visible transition. Physical
+/// clicks are transition receipts, not independent model decisions.
+#[derive(Serialize)]
+pub struct CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1 {
+    record: MtgoPlayerVisibleCombatDecisionTraceRecordV1,
+    final_visible_state: crate::MtgoPlayerVisibleDuelStateV1,
+    final_visible_result_sha256: String,
+    decision_commitment_sha256: String,
+}
+
+impl CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1 {
+    pub fn combat_kind_v1(&self) -> MtgoPlayerVisiblePreparedCombatKindV1 {
+        self.record.combat_kind
+    }
+
+    pub fn source_visible_state_v1(&self) -> &crate::MtgoPlayerVisibleDuelStateV1 {
+        &self.record.source_visible_state
+    }
+
+    pub fn final_visible_state_v1(&self) -> &crate::MtgoPlayerVisibleDuelStateV1 {
+        &self.final_visible_state
+    }
+
+    pub fn model_decisions_v1(&self) -> &[MtgoPlayerVisibleCombatModelDecisionRecordV1] {
+        &self.record.model_decisions
+    }
+
+    pub fn confirmed_transitions_v1(
+        &self,
+    ) -> &[MtgoPlayerVisibleCombatConfirmedTransitionRecordV1] {
+        &self.record.confirmed_transitions
+    }
+
+    pub fn source_visible_result_sha256_v1(&self) -> &str {
+        &self.record.source_visible_result_sha256
+    }
+
+    pub fn final_visible_result_sha256_v1(&self) -> &str {
+        &self.final_visible_result_sha256
+    }
+
+    pub fn deployment_commitment_sha256_v1(&self) -> &str {
+        &self.record.deployment_commitment_sha256
+    }
+
+    pub fn decision_commitment_sha256_v1(&self) -> &str {
+        &self.decision_commitment_sha256
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
+/// One exact model call in a staged combat deliberation. Every represented
+/// value is either rendered public game state, a choice offered through the
+/// visible MTGO prompt, or adapter-local ordering context derived from those
+/// visible values. It cannot represent a client object or hidden game fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "decision_kind", rename_all = "snake_case")]
+pub enum MtgoPlayerVisibleCombatModelDecisionRecordV1 {
+    AttackerInclusion {
+        model_input: MtgoPlayerVisibleAttackerInclusionDecisionV1,
+        selected_index: u32,
+        selected_action: MtgoPlayerVisibleDuelActionV1,
+        model_input_commitment_sha256: String,
+        selection_commitment_sha256: String,
+    },
+    SingleAttackerBlockerInclusion {
+        model_input: MtgoPlayerVisibleSingleAttackerBlockerInclusionDecisionV1,
+        selected_index: u32,
+        selected_action: MtgoPlayerVisibleDuelActionV1,
+        model_input_commitment_sha256: String,
+        selection_commitment_sha256: String,
+    },
+    MultiAttackerBlockerChoice {
+        model_input: MtgoPlayerVisibleMultiAttackerBlockerModelDecisionV1,
+        selected_index: u32,
+        selected_choice: MtgoPlayerVisibleMultiAttackerBlockerChoiceV1,
+        model_input_commitment_sha256: String,
+        selection_commitment_sha256: String,
+    },
+}
+
+impl MtgoPlayerVisibleCombatModelDecisionRecordV1 {
+    pub fn selected_index_v1(&self) -> u32 {
+        match self {
+            Self::AttackerInclusion { selected_index, .. }
+            | Self::SingleAttackerBlockerInclusion { selected_index, .. }
+            | Self::MultiAttackerBlockerChoice { selected_index, .. } => *selected_index,
+        }
+    }
+
+    pub fn selection_commitment_sha256_v1(&self) -> &str {
+        match self {
+            Self::AttackerInclusion {
+                selection_commitment_sha256,
+                ..
+            }
+            | Self::SingleAttackerBlockerInclusion {
+                selection_commitment_sha256,
+                ..
+            }
+            | Self::MultiAttackerBlockerChoice {
+                selection_commitment_sha256,
+                ..
+            } => selection_commitment_sha256,
+        }
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
 }
 
 enum MtgoPlayerVisiblePreparedCombatExecutionV1 {
@@ -84,6 +259,7 @@ pub struct CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1 {
     execution_commitment_sha256: String,
     bridge_commitment_sha256: String,
     execution: MtgoPlayerVisiblePreparedCombatExecutionV1,
+    trace: CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1,
 }
 
 impl CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1 {
@@ -101,6 +277,10 @@ impl CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1 {
 
     pub fn model_selection_count_v1(&self) -> usize {
         self.model_selection_commitments_sha256.len()
+    }
+
+    pub fn model_decisions_v1(&self) -> &[MtgoPlayerVisibleCombatModelDecisionRecordV1] {
+        &self.trace.record.model_decisions
     }
 
     pub fn execution_commitment_sha256_v1(&self) -> &str {
@@ -186,7 +366,8 @@ pub enum MtgoPlayerVisibleCombatBrokerCommandV1 {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "operation_kind", rename_all = "snake_case")]
 pub enum MtgoPlayerVisibleCombatSubmittedOperationV1 {
     ToggleAttacker {
         attacker: MtgoPlayerVisibleObjectRefV1,
@@ -261,6 +442,8 @@ impl CheckedUntrustedMtgoPlayerVisibleCombatExecutionStepV1 {
 /// the same retained plan for another freshly observed monotonic step.
 pub struct CheckedUntrustedMtgoPlayerVisibleCombatTransitionV1 {
     prepared: Option<CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1>,
+    trace: Option<CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1>,
+    after_visible_state: crate::MtgoPlayerVisibleDuelStateV1,
     progress: MtgoPlayerVisibleCombatTransitionProgressV1,
     operation: MtgoPlayerVisibleCombatSubmittedOperationV1,
     before_selection_sha256: String,
@@ -303,6 +486,70 @@ impl CheckedUntrustedMtgoPlayerVisibleCombatTransitionV1 {
                 "visible_combat_transition_continuation",
                 "the confirmed transition no longer owns its prepared plan",
             )
+        })
+    }
+
+    pub fn into_pending_rescore_trace_v1(
+        mut self,
+    ) -> Result<CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1, MtgoContractErrorV1> {
+        if self.progress
+            != MtgoPlayerVisibleCombatTransitionProgressV1::AwaitFreshCombatModelDecision
+        {
+            return Err(error_v1(
+                "visible_combat_transition_rescore_trace",
+                "only a confirmed staged blocker transition may await a fresh model decision",
+            ));
+        }
+        self.trace.take().ok_or_else(|| {
+            error_v1(
+                "visible_combat_transition_rescore_trace",
+                "the confirmed transition no longer owns its decision trace",
+            )
+        })
+    }
+
+    pub fn into_confirmed_combat_decision_v1(
+        mut self,
+    ) -> Result<CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1, MtgoContractErrorV1>
+    {
+        if self.progress != MtgoPlayerVisibleCombatTransitionProgressV1::CombatDeclarationComplete {
+            return Err(error_v1(
+                "visible_combat_transition_confirmed_decision",
+                "only a visibly complete combat declaration can become confirmed history",
+            ));
+        }
+        let trace = self.trace.take().ok_or_else(|| {
+            error_v1(
+                "visible_combat_transition_confirmed_decision",
+                "the confirmed transition no longer owns its decision trace",
+            )
+        })?;
+        let record_json = serde_json::to_vec(&trace.record).map_err(|error| {
+            error_v1(
+                "visible_combat_transition_confirmed_serialization",
+                error.to_string(),
+            )
+        })?;
+        let final_state_json = serde_json::to_vec(&self.after_visible_state).map_err(|error| {
+            error_v1(
+                "visible_combat_transition_confirmed_serialization",
+                error.to_string(),
+            )
+        })?;
+        let decision_commitment_sha256 = commitment_parts_v1(
+            COMBAT_CONFIRMED_DECISION_DOMAIN_V1,
+            &[
+                &record_json,
+                &final_state_json,
+                self.after_selection_sha256.as_bytes(),
+                b"complete_player_visible_combat_transaction_no_input_authority",
+            ],
+        );
+        Ok(CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1 {
+            record: trace.record,
+            final_visible_state: self.after_visible_state,
+            final_visible_result_sha256: self.after_selection_sha256,
+            decision_commitment_sha256,
         })
     }
 
@@ -1027,6 +1274,7 @@ pub fn confirm_player_visible_combat_execution_transition_v1(
             "combat confirmation requires a different fresh sanitized result",
         ));
     }
+    let after_visible_state = result_visible_state_v1(&after)?.clone();
     let progress = validate_combat_visible_transition_v1(
         &step.prepared,
         &step.current,
@@ -1046,16 +1294,81 @@ pub fn confirm_player_visible_combat_execution_transition_v1(
             b"exact_intended_player_visible_transition_confirmed",
         ],
     );
-    let prepared = (progress == MtgoPlayerVisibleCombatTransitionProgressV1::ContinueSamePlan)
-        .then_some(step.prepared);
+    let transition_record = MtgoPlayerVisibleCombatConfirmedTransitionRecordV1 {
+        operation: step.operation,
+        before_visible_result_sha256: step.current_selection_sha256.clone(),
+        after_visible_result_sha256: after_selection_sha256.clone(),
+        confirmation_commitment_sha256: confirmation_commitment_sha256.clone(),
+    };
+    let mut source_prepared = step.prepared;
+    source_prepared
+        .trace
+        .record
+        .confirmed_transitions
+        .push(transition_record);
+    source_prepared.trace.latest_visible_result_sha256 = after_selection_sha256.clone();
+    source_prepared.trace.trace_commitment_sha256 =
+        combat_trace_commitment_sha256_v1(&source_prepared.trace.record, &after_selection_sha256)?;
+    let (prepared, trace) =
+        if progress == MtgoPlayerVisibleCombatTransitionProgressV1::ContinueSamePlan {
+            (Some(source_prepared), None)
+        } else {
+            (None, Some(source_prepared.trace))
+        };
     Ok(CheckedUntrustedMtgoPlayerVisibleCombatTransitionV1 {
         prepared,
+        trace,
+        after_visible_state,
         progress,
         operation: step.operation,
         before_selection_sha256: step.current_selection_sha256,
         after_selection_sha256,
         confirmation_commitment_sha256,
     })
+}
+
+/// Joins the exact newer staged blocker prompt to the prior confirmed combat
+/// trace. Only multi-attacker blocking has a rescore boundary in V1.
+pub fn join_player_visible_combat_rescore_trace_v1(
+    mut trace: CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1,
+    mut prepared: CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1,
+) -> Result<CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1, MtgoContractErrorV1> {
+    if trace.record.combat_kind != MtgoPlayerVisiblePreparedCombatKindV1::MultiAttackerBlockerStep
+        || prepared.kind != MtgoPlayerVisiblePreparedCombatKindV1::MultiAttackerBlockerStep
+    {
+        return Err(error_v1(
+            "visible_combat_rescore_trace_kind",
+            "only one staged multi-attacker blocker transaction may cross a rescore boundary",
+        ));
+    }
+    if trace.record.deployment_commitment_sha256 != prepared.deployment_commitment_sha256 {
+        return Err(error_v1(
+            "visible_combat_rescore_trace_deployment",
+            "all staged combat choices must come from one exact model deployment",
+        ));
+    }
+    if trace.latest_visible_result_sha256 != prepared.exact_producer_result_sha256 {
+        return Err(error_v1(
+            "visible_combat_rescore_trace_source",
+            "the rescored prompt must be the exact visible result confirmed by the prior transition",
+        ));
+    }
+    if prepared.trace.record.model_decisions.len() != 1
+        || !prepared.trace.record.confirmed_transitions.is_empty()
+    {
+        return Err(error_v1(
+            "visible_combat_rescore_trace_shape",
+            "one fresh staged blocker prompt must contribute exactly one model decision",
+        ));
+    }
+    trace
+        .record
+        .model_decisions
+        .append(&mut prepared.trace.record.model_decisions);
+    trace.trace_commitment_sha256 =
+        combat_trace_commitment_sha256_v1(&trace.record, &trace.latest_visible_result_sha256)?;
+    prepared.trace = trace;
+    Ok(prepared)
 }
 
 fn operation_commitment_sha256_v1(
@@ -1153,7 +1466,8 @@ pub fn score_and_prepare_strict_visible_combat_producer_result_v1<
             );
         }
         MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { selection } => {
-            let mut selection_commitments = Vec::with_capacity(selection.ordered_candidates.len());
+            let source_visible_state = selection.current_state.clone();
+            let mut model_decisions = Vec::with_capacity(selection.ordered_candidates.len());
             let mut progress = begin_player_visible_attacker_deliberation_v1(*selection)?;
             let plan = loop {
                 match progress {
@@ -1164,8 +1478,19 @@ pub fn score_and_prepare_strict_visible_combat_producer_result_v1<
                             deployment_commitment_sha256,
                             scorer,
                         )?;
-                        selection_commitments
-                            .push(scored.selection_commitment_sha256_v1().to_owned());
+                        model_decisions.push(
+                            MtgoPlayerVisibleCombatModelDecisionRecordV1::AttackerInclusion {
+                                model_input: scored.model_input_v1().clone(),
+                                selected_index: scored.selected_index_v1() as u32,
+                                selected_action: scored.selected_action_v1().clone(),
+                                model_input_commitment_sha256: scored
+                                    .model_input_commitment_sha256_v1()
+                                    .to_owned(),
+                                selection_commitment_sha256: scored
+                                    .selection_commitment_sha256_v1()
+                                    .to_owned(),
+                            },
+                        );
                         progress = scored.into_progress_v1();
                     }
                 }
@@ -1175,17 +1500,19 @@ pub fn score_and_prepare_strict_visible_combat_producer_result_v1<
             let execution_commitment = execution.plan_commitment_sha256_v1().to_owned();
             prepared_v1(
                 MtgoPlayerVisiblePreparedCombatKindV1::AttackerPlan,
+                source_visible_state,
                 exact_producer_result_sha256,
                 deployment_commitment_sha256,
-                selection_commitments,
+                model_decisions,
                 execution_commitment,
                 MtgoPlayerVisiblePreparedCombatExecutionV1::Attacker(execution),
-            )
+            )?
         }
         MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
             selection,
         } => {
-            let mut selection_commitments = Vec::with_capacity(selection.ordered_candidates.len());
+            let source_visible_state = selection.current_state.clone();
+            let mut model_decisions = Vec::with_capacity(selection.ordered_candidates.len());
             let mut progress =
                 begin_player_visible_single_attacker_blocker_deliberation_v1(*selection)?;
             let plan = loop {
@@ -1204,8 +1531,19 @@ pub fn score_and_prepare_strict_visible_combat_producer_result_v1<
                                 deployment_commitment_sha256,
                                 scorer,
                             )?;
-                        selection_commitments
-                            .push(scored.selection_commitment_sha256_v1().to_owned());
+                        model_decisions.push(
+                            MtgoPlayerVisibleCombatModelDecisionRecordV1::SingleAttackerBlockerInclusion {
+                                model_input: scored.model_input_v1().clone(),
+                                selected_index: scored.selected_index_v1() as u32,
+                                selected_action: scored.selected_action_v1().clone(),
+                                model_input_commitment_sha256: scored
+                                    .model_input_commitment_sha256_v1()
+                                    .to_owned(),
+                                selection_commitment_sha256: scored
+                                    .selection_commitment_sha256_v1()
+                                    .to_owned(),
+                            },
+                        );
                         progress = scored.into_progress_v1();
                     }
                 }
@@ -1217,22 +1555,33 @@ pub fn score_and_prepare_strict_visible_combat_producer_result_v1<
             let execution_commitment = execution.plan_commitment_sha256_v1().to_owned();
             prepared_v1(
                 MtgoPlayerVisiblePreparedCombatKindV1::SingleAttackerBlockerPlan,
+                source_visible_state,
                 exact_producer_result_sha256,
                 deployment_commitment_sha256,
-                selection_commitments,
+                model_decisions,
                 execution_commitment,
                 MtgoPlayerVisiblePreparedCombatExecutionV1::SingleAttackerBlocker(execution),
-            )
+            )?
         }
         MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
             selection,
         } => {
+            let source_visible_state = selection.current_state.clone();
             let choice = score_and_select_player_visible_multi_attacker_blocker_v1(
                 *selection,
                 deployment_commitment_sha256,
                 scorer,
             )?;
-            let selection_commitment = choice.selection_commitment_sha256_v1().to_owned();
+            let model_decision =
+                MtgoPlayerVisibleCombatModelDecisionRecordV1::MultiAttackerBlockerChoice {
+                    model_input: choice.model_input_v1().clone(),
+                    selected_index: choice.selected_index_v1() as u32,
+                    selected_choice: choice.selected_choice_v1().clone(),
+                    model_input_commitment_sha256: choice
+                        .model_input_commitment_sha256_v1()
+                        .to_owned(),
+                    selection_commitment_sha256: choice.selection_commitment_sha256_v1().to_owned(),
+                };
             let execution = prepare_player_visible_multi_attacker_blocker_execution_step_v1(
                 &choice,
                 exact_producer_result,
@@ -1240,20 +1589,31 @@ pub fn score_and_prepare_strict_visible_combat_producer_result_v1<
             let execution_commitment = execution.execution_step_commitment_sha256_v1().to_owned();
             prepared_v1(
                 MtgoPlayerVisiblePreparedCombatKindV1::MultiAttackerBlockerStep,
+                source_visible_state,
                 exact_producer_result_sha256,
                 deployment_commitment_sha256,
-                vec![selection_commitment],
+                vec![model_decision],
                 execution_commitment,
                 MtgoPlayerVisiblePreparedCombatExecutionV1::MultiAttackerBlocker(execution),
-            )
+            )?
         }
         MtgoVisibleDuelViewModelBrokerResultV1::VisibleBlockerTargetSelection { selection } => {
+            let source_visible_state = selection.current_state.clone();
             let choice = score_and_select_player_visible_blocker_target_v1(
                 *selection,
                 deployment_commitment_sha256,
                 scorer,
             )?;
-            let selection_commitment = choice.selection_commitment_sha256_v1().to_owned();
+            let model_decision =
+                MtgoPlayerVisibleCombatModelDecisionRecordV1::MultiAttackerBlockerChoice {
+                    model_input: choice.model_input_v1().clone(),
+                    selected_index: choice.selected_index_v1() as u32,
+                    selected_choice: choice.selected_choice_v1().clone(),
+                    model_input_commitment_sha256: choice
+                        .model_input_commitment_sha256_v1()
+                        .to_owned(),
+                    selection_commitment_sha256: choice.selection_commitment_sha256_v1().to_owned(),
+                };
             let execution = prepare_player_visible_multi_attacker_blocker_execution_step_v1(
                 &choice,
                 exact_producer_result,
@@ -1261,12 +1621,13 @@ pub fn score_and_prepare_strict_visible_combat_producer_result_v1<
             let execution_commitment = execution.execution_step_commitment_sha256_v1().to_owned();
             prepared_v1(
                 MtgoPlayerVisiblePreparedCombatKindV1::MultiAttackerBlockerStep,
+                source_visible_state,
                 exact_producer_result_sha256,
                 deployment_commitment_sha256,
-                vec![selection_commitment],
+                vec![model_decision],
                 execution_commitment,
                 MtgoPlayerVisiblePreparedCombatExecutionV1::MultiAttackerBlocker(execution),
-            )
+            )?
         }
         MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
             ..
@@ -1289,12 +1650,17 @@ pub fn score_and_prepare_strict_visible_combat_producer_result_v1<
 
 fn prepared_v1(
     kind: MtgoPlayerVisiblePreparedCombatKindV1,
+    source_visible_state: crate::MtgoPlayerVisibleDuelStateV1,
     exact_producer_result_sha256: String,
     deployment_commitment_sha256: &str,
-    model_selection_commitments_sha256: Vec<String>,
+    model_decisions: Vec<MtgoPlayerVisibleCombatModelDecisionRecordV1>,
     execution_commitment_sha256: String,
     execution: MtgoPlayerVisiblePreparedCombatExecutionV1,
-) -> CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1 {
+) -> Result<CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1, MtgoContractErrorV1> {
+    let model_selection_commitments_sha256 = model_decisions
+        .iter()
+        .map(|decision| decision.selection_commitment_sha256_v1().to_owned())
+        .collect::<Vec<_>>();
     let kind_text = match kind {
         MtgoPlayerVisiblePreparedCombatKindV1::AttackerPlan => b"attacker_plan".as_slice(),
         MtgoPlayerVisiblePreparedCombatKindV1::SingleAttackerBlockerPlan => {
@@ -1323,15 +1689,47 @@ fn prepared_v1(
     );
     let bridge_commitment_sha256 = format!("{:x}", hasher.finalize());
 
-    CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1 {
+    let trace_record = MtgoPlayerVisibleCombatDecisionTraceRecordV1 {
+        combat_kind: kind,
+        deployment_commitment_sha256: deployment_commitment_sha256.to_owned(),
+        source_visible_state,
+        source_visible_result_sha256: exact_producer_result_sha256.clone(),
+        model_decisions: model_decisions.clone(),
+        confirmed_transitions: Vec::new(),
+    };
+    let trace_commitment_sha256 =
+        combat_trace_commitment_sha256_v1(&trace_record, &exact_producer_result_sha256)?;
+
+    Ok(CheckedUntrustedMtgoPlayerVisiblePreparedCombatV1 {
         kind,
-        exact_producer_result_sha256,
+        exact_producer_result_sha256: exact_producer_result_sha256.clone(),
         deployment_commitment_sha256: deployment_commitment_sha256.to_owned(),
         model_selection_commitments_sha256,
         execution_commitment_sha256,
         bridge_commitment_sha256,
         execution,
-    }
+        trace: CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1 {
+            record: trace_record,
+            latest_visible_result_sha256: exact_producer_result_sha256,
+            trace_commitment_sha256,
+        },
+    })
+}
+
+fn combat_trace_commitment_sha256_v1(
+    record: &MtgoPlayerVisibleCombatDecisionTraceRecordV1,
+    latest_visible_result_sha256: &str,
+) -> Result<String, MtgoContractErrorV1> {
+    let record_json = serde_json::to_vec(record)
+        .map_err(|error| error_v1("visible_combat_trace_serialization", error.to_string()))?;
+    Ok(commitment_parts_v1(
+        COMBAT_DECISION_TRACE_DOMAIN_V1,
+        &[
+            &record_json,
+            latest_visible_result_sha256.as_bytes(),
+            b"staged_player_visible_model_choices_and_confirmed_transitions_only",
+        ],
+    ))
 }
 
 fn require_sha256_v1(value: &str) -> Result<(), MtgoContractErrorV1> {

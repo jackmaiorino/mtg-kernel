@@ -3,10 +3,15 @@ use crate::{
     OpaqueMtgoCompetitiveVisibleGameLogSemanticsV1,
 };
 use mtgo_blackbox_v1::{
-    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitivePlayerVisibleDecisionViewV1, MtgoPlayerVisibleConfirmedDuelDecisionV1,
-    MtgoVisibleGameLogEventKindV1, MtgoVisibleGameLogPlayerRoleV1,
-    MtgoVisibleGameLogSemanticEventViewV1,
+    CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1, MtgoCompetitiveEventKindV1,
+    MtgoCompetitivePlayerVisibleDecisionViewV1, MtgoCompetitivePlayerVisibleHistoryEntryViewV1,
+    MtgoPlayerVisibleAttackerInclusionDecisionV1, MtgoPlayerVisibleCombatModelDecisionRecordV1,
+    MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoPlayerVisibleDuelActionV1,
+    MtgoPlayerVisibleDuelStateV1, MtgoPlayerVisibleMultiAttackerBlockerChoiceV1,
+    MtgoPlayerVisibleMultiAttackerBlockerModelDecisionV1, MtgoPlayerVisiblePreparedCombatKindV1,
+    MtgoPlayerVisibleSingleAttackerBlockerInclusionDecisionV1, MtgoVisibleGameLogEventKindV1,
+    MtgoVisibleGameLogPlayerRoleV1, MtgoVisibleGameLogSemanticEventViewV1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -83,6 +88,69 @@ pub struct MtgoCompetitiveExternalPublicHistoryHeaderV1 {
 pub struct MtgoCompetitiveExternalConfirmedDecisionV1 {
     within_source_position: u64,
     player_visible_decision: MtgoPlayerVisibleConfirmedDuelDecisionV1,
+}
+
+/// One exact player-visible model call within a composite combat declaration.
+/// Commitments, capture identities, client objects, and input receipts are
+/// deliberately absent from this kernel-facing value.
+pub enum MtgoCompetitiveExternalCombatModelDecisionV1 {
+    AttackerInclusion {
+        model_input: MtgoPlayerVisibleAttackerInclusionDecisionV1,
+        selected_index: u32,
+        selected_action: MtgoPlayerVisibleDuelActionV1,
+    },
+    SingleAttackerBlockerInclusion {
+        model_input: MtgoPlayerVisibleSingleAttackerBlockerInclusionDecisionV1,
+        selected_index: u32,
+        selected_action: MtgoPlayerVisibleDuelActionV1,
+    },
+    MultiAttackerBlockerChoice {
+        model_input: MtgoPlayerVisibleMultiAttackerBlockerModelDecisionV1,
+        selected_index: u32,
+        selected_choice: MtgoPlayerVisibleMultiAttackerBlockerChoiceV1,
+    },
+}
+
+/// Narrow model-facing value for one completed combat transaction. It owns
+/// only the visible states and the exact visible choices supplied to and made
+/// by the model. Physical clicks and all adapter lineage remain private.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::MtgoCompetitiveExternalConfirmedCombatDecisionV1;
+/// fn cannot_read_combat_transport(value: &MtgoCompetitiveExternalConfirmedCombatDecisionV1) {
+///     let _ = value.decision_commitment_sha256_v1();
+///     let _ = value.source_frame_sequence_v1();
+///     let _ = value.confirmed_transitions_v1();
+/// }
+/// ```
+pub struct MtgoCompetitiveExternalConfirmedCombatDecisionV1 {
+    within_source_position: u64,
+    combat_kind: MtgoPlayerVisiblePreparedCombatKindV1,
+    source_visible_state: MtgoPlayerVisibleDuelStateV1,
+    final_visible_state: MtgoPlayerVisibleDuelStateV1,
+    model_decisions: Vec<MtgoCompetitiveExternalCombatModelDecisionV1>,
+}
+
+impl MtgoCompetitiveExternalConfirmedCombatDecisionV1 {
+    pub fn within_source_position_v1(&self) -> u64 {
+        self.within_source_position
+    }
+
+    pub fn combat_kind_v1(&self) -> MtgoPlayerVisiblePreparedCombatKindV1 {
+        self.combat_kind
+    }
+
+    pub fn source_visible_state_v1(&self) -> &MtgoPlayerVisibleDuelStateV1 {
+        &self.source_visible_state
+    }
+
+    pub fn final_visible_state_v1(&self) -> &MtgoPlayerVisibleDuelStateV1 {
+        &self.final_visible_state
+    }
+
+    pub fn model_decisions_v1(&self) -> &[MtgoCompetitiveExternalCombatModelDecisionV1] {
+        &self.model_decisions
+    }
 }
 
 impl MtgoCompetitiveExternalConfirmedDecisionV1 {
@@ -164,6 +232,13 @@ pub trait MtgoCompetitiveExternalPublicHistoryConsumerV1 {
         decision: MtgoCompetitiveExternalConfirmedDecisionV1,
     ) -> Result<(), String>;
 
+    fn consume_confirmed_combat_decision_v1(
+        &mut self,
+        _decision: MtgoCompetitiveExternalConfirmedCombatDecisionV1,
+    ) -> Result<(), String> {
+        Err("the external history consumer does not support visible combat transactions".to_owned())
+    }
+
     fn finish_confirmed_decision_stream_v1(&mut self) -> Result<(), String>;
 
     fn consume_public_game_log_event_v1(
@@ -219,6 +294,16 @@ pub trait MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1 {
         decision: MtgoCompetitiveExternalConfirmedDecisionV1,
     ) -> Result<(), String>;
 
+    fn consume_confirmed_combat_decision_v1(
+        &mut self,
+        _decision: MtgoCompetitiveExternalConfirmedCombatDecisionV1,
+    ) -> Result<(), String> {
+        Err(
+            "the external completed-history consumer does not support visible combat transactions"
+                .to_owned(),
+        )
+    }
+
     fn finish_confirmed_decision_stream_v1(&mut self) -> Result<(), String>;
 
     fn consume_public_game_log_event_v1(
@@ -248,6 +333,97 @@ where
         },
     )?;
     consumer.finish_completed_match_history_v1()
+}
+
+fn consume_ongoing_history_entry_v1<C>(
+    consumer: &mut C,
+    entry: MtgoCompetitivePlayerVisibleHistoryEntryViewV1<'_>,
+) -> Result<(), String>
+where
+    C: MtgoCompetitiveExternalPublicHistoryConsumerV1,
+{
+    match entry {
+        MtgoCompetitivePlayerVisibleHistoryEntryViewV1::OrdinaryDecision(decision) => consumer
+            .consume_confirmed_decision_v1(MtgoCompetitiveExternalConfirmedDecisionV1 {
+                within_source_position: decision.sequence_v1(),
+                player_visible_decision: decision.player_visible_decision_v1().clone(),
+            }),
+        MtgoCompetitivePlayerVisibleHistoryEntryViewV1::CombatDecision(decision) => consumer
+            .consume_confirmed_combat_decision_v1(external_combat_decision_v1(
+                decision.sequence_v1(),
+                decision.confirmed_combat_decision_v1(),
+            )),
+    }
+}
+
+fn consume_completed_history_entry_v1<C>(
+    consumer: &mut C,
+    entry: MtgoCompetitivePlayerVisibleHistoryEntryViewV1<'_>,
+) -> Result<(), String>
+where
+    C: MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
+{
+    match entry {
+        MtgoCompetitivePlayerVisibleHistoryEntryViewV1::OrdinaryDecision(decision) => consumer
+            .consume_confirmed_decision_v1(MtgoCompetitiveExternalConfirmedDecisionV1 {
+                within_source_position: decision.sequence_v1(),
+                player_visible_decision: decision.player_visible_decision_v1().clone(),
+            }),
+        MtgoCompetitivePlayerVisibleHistoryEntryViewV1::CombatDecision(decision) => consumer
+            .consume_confirmed_combat_decision_v1(external_combat_decision_v1(
+                decision.sequence_v1(),
+                decision.confirmed_combat_decision_v1(),
+            )),
+    }
+}
+
+fn external_combat_decision_v1(
+    within_source_position: u64,
+    decision: &CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1,
+) -> MtgoCompetitiveExternalConfirmedCombatDecisionV1 {
+    let model_decisions = decision
+        .model_decisions_v1()
+        .iter()
+        .map(|model_decision| match model_decision {
+            MtgoPlayerVisibleCombatModelDecisionRecordV1::AttackerInclusion {
+                model_input,
+                selected_index,
+                selected_action,
+                ..
+            } => MtgoCompetitiveExternalCombatModelDecisionV1::AttackerInclusion {
+                model_input: model_input.clone(),
+                selected_index: *selected_index,
+                selected_action: selected_action.clone(),
+            },
+            MtgoPlayerVisibleCombatModelDecisionRecordV1::SingleAttackerBlockerInclusion {
+                model_input,
+                selected_index,
+                selected_action,
+                ..
+            } => MtgoCompetitiveExternalCombatModelDecisionV1::SingleAttackerBlockerInclusion {
+                model_input: model_input.clone(),
+                selected_index: *selected_index,
+                selected_action: selected_action.clone(),
+            },
+            MtgoPlayerVisibleCombatModelDecisionRecordV1::MultiAttackerBlockerChoice {
+                model_input,
+                selected_index,
+                selected_choice,
+                ..
+            } => MtgoCompetitiveExternalCombatModelDecisionV1::MultiAttackerBlockerChoice {
+                model_input: model_input.clone(),
+                selected_index: *selected_index,
+                selected_choice: selected_choice.clone(),
+            },
+        })
+        .collect();
+    MtgoCompetitiveExternalConfirmedCombatDecisionV1 {
+        within_source_position,
+        combat_kind: decision.combat_kind_v1(),
+        source_visible_state: decision.source_visible_state_v1().clone(),
+        final_visible_state: decision.final_visible_state_v1().clone(),
+        model_decisions,
+    }
 }
 
 /// Replays the complete current player-visible history snapshot for one
@@ -289,15 +465,10 @@ impl OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1 {
 
         if let Some(decisions) = confirmed_decisions {
             for index in 0..confirmed_decision_count {
-                let decision = decisions.decision_v1(index).ok_or_else(|| {
+                let entry = decisions.entry_v1(index).ok_or_else(|| {
                     "confirmed decision stream changed while it was being visited".to_owned()
                 })?;
-                consumer.consume_confirmed_decision_v1(
-                    MtgoCompetitiveExternalConfirmedDecisionV1 {
-                        within_source_position: decision.sequence_v1(),
-                        player_visible_decision: decision.player_visible_decision_v1().clone(),
-                    },
-                )?;
+                consume_ongoing_history_entry_v1(consumer, entry)?;
             }
         }
         consumer.finish_confirmed_decision_stream_v1()?;
@@ -494,15 +665,10 @@ impl OpaqueMtgoCompetitiveCompletedMatchHistoryV1 {
                 public_event_count: memory.public_event_count_v1(),
             })?;
             for index in 0..memory.confirmed_decision_count_v1() {
-                let decision = memory.confirmed_decision_v1(index).ok_or_else(|| {
+                let entry = memory.confirmed_entry_v1(index).ok_or_else(|| {
                     "completed-match confirmed decision stream changed while visited".to_owned()
                 })?;
-                consumer.consume_confirmed_decision_v1(
-                    MtgoCompetitiveExternalConfirmedDecisionV1 {
-                        within_source_position: decision.sequence_v1(),
-                        player_visible_decision: decision.player_visible_decision_v1().clone(),
-                    },
-                )?;
+                consume_completed_history_entry_v1(consumer, entry)?;
             }
             consumer.finish_confirmed_decision_stream_v1()?;
             for index in 0..memory.public_event_count_v1() {
@@ -749,6 +915,15 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
             .and_then(|decisions| decisions.decision_v1(index))
     }
 
+    fn confirmed_entry_v1(
+        &self,
+        index: usize,
+    ) -> Option<MtgoCompetitivePlayerVisibleHistoryEntryViewV1<'_>> {
+        self.confirmed_decisions
+            .as_ref()
+            .and_then(|decisions| decisions.entry_v1(index))
+    }
+
     pub fn game_number_v1(&self) -> u8 {
         self.game_log.lineage_v1().game_number
     }
@@ -829,15 +1004,10 @@ impl OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1 {
         })?;
 
         for index in 0..self.confirmed_decision_count_v1() {
-            let decision = self.confirmed_decision_v1(index).ok_or_else(|| {
+            let entry = self.confirmed_entry_v1(index).ok_or_else(|| {
                 "confirmed decision stream changed while it was being visited".to_owned()
             })?;
-            let within_source_position = decision.sequence_v1();
-            let player_visible_decision = decision.player_visible_decision_v1().clone();
-            consumer.consume_confirmed_decision_v1(MtgoCompetitiveExternalConfirmedDecisionV1 {
-                within_source_position,
-                player_visible_decision,
-            })?;
+            consume_ongoing_history_entry_v1(consumer, entry)?;
         }
         consumer.finish_confirmed_decision_stream_v1()?;
 

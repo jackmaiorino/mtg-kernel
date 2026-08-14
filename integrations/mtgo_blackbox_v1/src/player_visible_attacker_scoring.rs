@@ -34,6 +34,7 @@ pub trait MtgoPlayerVisibleAttackerScorerV1 {
 /// ```
 pub struct CheckedUntrustedMtgoPlayerVisibleAttackerScoredStepV1 {
     progress: MtgoPlayerVisibleAttackerDeliberationProgressV1,
+    model_input: MtgoPlayerVisibleAttackerInclusionDecisionV1,
     response: MtgoPlayerVisibleDuelScoreResponseV1,
     selected_index: usize,
     selected_action: MtgoPlayerVisibleDuelActionV1,
@@ -42,6 +43,10 @@ pub struct CheckedUntrustedMtgoPlayerVisibleAttackerScoredStepV1 {
 }
 
 impl CheckedUntrustedMtgoPlayerVisibleAttackerScoredStepV1 {
+    pub fn model_input_v1(&self) -> &MtgoPlayerVisibleAttackerInclusionDecisionV1 {
+        &self.model_input
+    }
+
     pub fn selected_index_v1(&self) -> usize {
         self.selected_index
     }
@@ -169,6 +174,7 @@ pub fn score_and_advance_player_visible_attacker_deliberation_v1<
     let progress = deliberation.advance_v1(selected_index)?;
     Ok(CheckedUntrustedMtgoPlayerVisibleAttackerScoredStepV1 {
         progress,
+        model_input,
         response,
         selected_index,
         selected_action,

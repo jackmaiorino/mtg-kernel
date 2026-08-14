@@ -1,6 +1,7 @@
 use crate::{
     CheckedUntrustedMtgoCompetitiveGameplayPostconditionV1,
     CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
+    CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1,
     CheckedUntrustedMtgoPlayerVisibleGameplayPostconditionV1, MtgoCompetitiveEventKindV1,
     MtgoContractErrorV1, MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoPlayerVisibleDuelActionV1,
 };
@@ -29,6 +30,72 @@ struct MtgoCompetitivePlayerVisibleDecisionRecordV1 {
 }
 
 #[derive(Serialize)]
+struct MtgoCompetitivePlayerVisibleCombatDecisionRecordV1 {
+    sequence: u64,
+    source_frame_id: u64,
+    source_frame_sequence: u64,
+    source_visible_result_sha256: String,
+    after_frame_id: u64,
+    after_frame_sequence: u64,
+    confirmed_combat_decision: CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1,
+    decision_commitment_sha256: String,
+    visible_postcondition_commitment_sha256: String,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum MtgoCompetitivePlayerVisibleHistoryEntryRecordV1 {
+    OrdinaryDecision(MtgoCompetitivePlayerVisibleDecisionRecordV1),
+    CombatDecision(MtgoCompetitivePlayerVisibleCombatDecisionRecordV1),
+}
+
+impl MtgoCompetitivePlayerVisibleHistoryEntryRecordV1 {
+    fn sequence_v1(&self) -> u64 {
+        match self {
+            Self::OrdinaryDecision(record) => record.sequence,
+            Self::CombatDecision(record) => record.sequence,
+        }
+    }
+
+    fn source_frame_sequence_v1(&self) -> u64 {
+        match self {
+            Self::OrdinaryDecision(record) => record.source_frame_sequence,
+            Self::CombatDecision(record) => record.source_frame_sequence,
+        }
+    }
+
+    fn after_frame_sequence_v1(&self) -> u64 {
+        match self {
+            Self::OrdinaryDecision(record) => record.after_frame_sequence,
+            Self::CombatDecision(record) => record.after_frame_sequence,
+        }
+    }
+
+    fn decision_commitment_sha256_v1(&self) -> &str {
+        match self {
+            Self::OrdinaryDecision(record) => &record.decision_commitment_sha256,
+            Self::CombatDecision(record) => &record.decision_commitment_sha256,
+        }
+    }
+
+    fn selection_commitment_sha256_v1(&self) -> &str {
+        match self {
+            Self::OrdinaryDecision(record) => &record.selection_commitment_sha256,
+            Self::CombatDecision(record) => record
+                .confirmed_combat_decision
+                .decision_commitment_sha256_v1(),
+        }
+    }
+
+    fn visible_postcondition_commitment_sha256_v1(&self) -> &str {
+        match self {
+            Self::OrdinaryDecision(record) => &record.visible_postcondition_commitment_sha256,
+            Self::CombatDecision(record) => &record.visible_postcondition_commitment_sha256,
+        }
+    }
+}
+
+#[derive(Serialize)]
 struct MtgoCompetitivePlayerVisibleGameHistoryRecordV1 {
     schema_version: u32,
     history_id: String,
@@ -37,7 +104,7 @@ struct MtgoCompetitivePlayerVisibleGameHistoryRecordV1 {
     match_identity_sha256: String,
     game_number: u8,
     policy_deployment_commitment_sha256: String,
-    decisions: Vec<MtgoCompetitivePlayerVisibleDecisionRecordV1>,
+    decisions: Vec<MtgoCompetitivePlayerVisibleHistoryEntryRecordV1>,
     safe_for_model_scoring: bool,
     safe_for_input: bool,
     permits_event_entry: bool,
@@ -53,6 +120,49 @@ struct MtgoCompetitivePlayerVisibleGameHistoryRecordV1 {
 /// state source.
 pub struct MtgoCompetitivePlayerVisibleDecisionViewV1<'a> {
     record: &'a MtgoCompetitivePlayerVisibleDecisionRecordV1,
+}
+
+pub struct MtgoCompetitivePlayerVisibleCombatDecisionViewV1<'a> {
+    record: &'a MtgoCompetitivePlayerVisibleCombatDecisionRecordV1,
+}
+
+impl<'a> MtgoCompetitivePlayerVisibleCombatDecisionViewV1<'a> {
+    pub fn sequence_v1(&self) -> u64 {
+        self.record.sequence
+    }
+
+    pub fn confirmed_combat_decision_v1(
+        &self,
+    ) -> &CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1 {
+        &self.record.confirmed_combat_decision
+    }
+}
+
+pub enum MtgoCompetitivePlayerVisibleHistoryEntryViewV1<'a> {
+    OrdinaryDecision(MtgoCompetitivePlayerVisibleDecisionViewV1<'a>),
+    CombatDecision(MtgoCompetitivePlayerVisibleCombatDecisionViewV1<'a>),
+}
+
+impl MtgoCompetitivePlayerVisibleHistoryEntryViewV1<'_> {
+    pub fn sequence_v1(&self) -> u64 {
+        match self {
+            Self::OrdinaryDecision(view) => view.sequence_v1(),
+            Self::CombatDecision(view) => view.sequence_v1(),
+        }
+    }
+}
+
+pub struct MtgoCompetitivePlayerVisibleCombatHistoryContextV1 {
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: String,
+    pub match_identity_sha256: String,
+    pub game_number: u8,
+    pub policy_deployment_commitment_sha256: String,
+    pub source_frame_id: u64,
+    pub source_frame_sequence: u64,
+    pub after_frame_id: u64,
+    pub after_frame_sequence: u64,
+    pub visible_postcondition_commitment_sha256: String,
 }
 
 impl<'a> MtgoCompetitivePlayerVisibleDecisionViewV1<'a> {
@@ -124,10 +234,30 @@ impl CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1 {
         &self,
         index: usize,
     ) -> Option<MtgoCompetitivePlayerVisibleDecisionViewV1<'_>> {
-        self.record
-            .decisions
-            .get(index)
-            .map(|record| MtgoCompetitivePlayerVisibleDecisionViewV1 { record })
+        match self.record.decisions.get(index)? {
+            MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::OrdinaryDecision(record) => {
+                Some(MtgoCompetitivePlayerVisibleDecisionViewV1 { record })
+            }
+            MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::CombatDecision(_) => None,
+        }
+    }
+
+    pub fn entry_v1(
+        &self,
+        index: usize,
+    ) -> Option<MtgoCompetitivePlayerVisibleHistoryEntryViewV1<'_>> {
+        match self.record.decisions.get(index)? {
+            MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::OrdinaryDecision(record) => Some(
+                MtgoCompetitivePlayerVisibleHistoryEntryViewV1::OrdinaryDecision(
+                    MtgoCompetitivePlayerVisibleDecisionViewV1 { record },
+                ),
+            ),
+            MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::CombatDecision(record) => Some(
+                MtgoCompetitivePlayerVisibleHistoryEntryViewV1::CombatDecision(
+                    MtgoCompetitivePlayerVisibleCombatDecisionViewV1 { record },
+                ),
+            ),
+        }
     }
 
     pub(crate) fn last_after_frame_sequence_v1(&self) -> u64 {
@@ -135,7 +265,7 @@ impl CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1 {
             .decisions
             .last()
             .expect("validated visible decision history is nonempty")
-            .after_frame_sequence
+            .after_frame_sequence_v1()
     }
 
     pub fn history_commitment_sha256_v1(&self) -> &str {
@@ -172,7 +302,11 @@ pub fn begin_checked_untrusted_competitive_player_visible_game_history_v1(
         match_identity_sha256: confirmed.match_identity_sha256_v1().to_owned(),
         game_number: confirmed.game_number(),
         policy_deployment_commitment_sha256: confirmed.deployment_commitment_sha256_v1().to_owned(),
-        decisions: vec![decision_record_v1(1, &confirmed)?],
+        decisions: vec![
+            MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::OrdinaryDecision(decision_record_v1(
+                1, &confirmed,
+            )?),
+        ],
         safe_for_model_scoring: false,
         safe_for_input: false,
         permits_event_entry: false,
@@ -208,9 +342,9 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_v1(
         .decisions
         .last()
         .expect("validated history is nonempty");
-    if confirmed.source_frame_sequence_v1() < prior.after_frame_sequence
-        || confirmed.source_frame_sequence_v1() <= prior.source_frame_sequence
-        || confirmed.after_frame_sequence() <= prior.after_frame_sequence
+    if confirmed.source_frame_sequence_v1() < prior.after_frame_sequence_v1()
+        || confirmed.source_frame_sequence_v1() <= prior.source_frame_sequence_v1()
+        || confirmed.after_frame_sequence() <= prior.after_frame_sequence_v1()
     {
         return Err(error_v1(
             "competitive_player_visible_history_order",
@@ -218,9 +352,10 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_v1(
         ));
     }
     if history.record.decisions.iter().any(|decision| {
-        decision.decision_commitment_sha256 == confirmed.decision_commitment_sha256_v1()
-            || decision.selection_commitment_sha256 == confirmed.selection_commitment_sha256_v1()
-            || decision.visible_postcondition_commitment_sha256
+        decision.decision_commitment_sha256_v1() == confirmed.decision_commitment_sha256_v1()
+            || decision.selection_commitment_sha256_v1()
+                == confirmed.selection_commitment_sha256_v1()
+            || decision.visible_postcondition_commitment_sha256_v1()
                 == confirmed.confirmation_commitment_sha256()
     }) {
         return Err(error_v1(
@@ -234,10 +369,11 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_v1(
             "decision sequence overflow",
         )
     })?;
-    history
-        .record
-        .decisions
-        .push(decision_record_v1(sequence, &confirmed)?);
+    history.record.decisions.push(
+        MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::OrdinaryDecision(decision_record_v1(
+            sequence, &confirmed,
+        )?),
+    );
     finish_v1(history.record)
 }
 
@@ -257,9 +393,11 @@ pub fn begin_checked_untrusted_competitive_player_visible_game_history_from_play
         match_identity_sha256: confirmed.match_identity_sha256_v1().to_owned(),
         game_number: confirmed.game_number_v1(),
         policy_deployment_commitment_sha256: confirmed.deployment_commitment_sha256_v1().to_owned(),
-        decisions: vec![player_visible_postcondition_decision_record_v1(
-            1, &confirmed,
-        )?],
+        decisions: vec![
+            MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::OrdinaryDecision(
+                player_visible_postcondition_decision_record_v1(1, &confirmed)?,
+            ),
+        ],
         safe_for_model_scoring: false,
         safe_for_input: false,
         permits_event_entry: false,
@@ -297,9 +435,9 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_from_pla
         .decisions
         .last()
         .expect("validated history is nonempty");
-    if confirmed.source_frame_sequence_v1() < prior.after_frame_sequence
-        || confirmed.source_frame_sequence_v1() <= prior.source_frame_sequence
-        || confirmed.after_frame_sequence_v1() <= prior.after_frame_sequence
+    if confirmed.source_frame_sequence_v1() < prior.after_frame_sequence_v1()
+        || confirmed.source_frame_sequence_v1() <= prior.source_frame_sequence_v1()
+        || confirmed.after_frame_sequence_v1() <= prior.after_frame_sequence_v1()
     {
         return Err(error_v1(
             "competitive_player_visible_history_order",
@@ -307,9 +445,10 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_from_pla
         ));
     }
     if history.record.decisions.iter().any(|decision| {
-        decision.decision_commitment_sha256 == confirmed.decision_commitment_sha256_v1()
-            || decision.selection_commitment_sha256 == confirmed.selection_commitment_sha256_v1()
-            || decision.visible_postcondition_commitment_sha256
+        decision.decision_commitment_sha256_v1() == confirmed.decision_commitment_sha256_v1()
+            || decision.selection_commitment_sha256_v1()
+                == confirmed.selection_commitment_sha256_v1()
+            || decision.visible_postcondition_commitment_sha256_v1()
                 == confirmed.confirmation_commitment_sha256_v1()
     }) {
         return Err(error_v1(
@@ -323,12 +462,11 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_from_pla
             "decision sequence overflow",
         )
     })?;
-    history
-        .record
-        .decisions
-        .push(player_visible_postcondition_decision_record_v1(
-            sequence, &confirmed,
-        )?);
+    history.record.decisions.push(
+        MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::OrdinaryDecision(
+            player_visible_postcondition_decision_record_v1(sequence, &confirmed)?,
+        ),
+    );
     finish_v1(history.record)
 }
 
@@ -349,9 +487,11 @@ pub fn begin_checked_untrusted_competitive_player_visible_game_history_from_dire
         match_identity_sha256: confirmed.match_identity_sha256_v1().to_owned(),
         game_number: confirmed.game_number_v1(),
         policy_deployment_commitment_sha256: confirmed.deployment_commitment_sha256_v1().to_owned(),
-        decisions: vec![direct_visible_postcondition_decision_record_v1(
-            1, &confirmed,
-        )?],
+        decisions: vec![
+            MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::OrdinaryDecision(
+                direct_visible_postcondition_decision_record_v1(1, &confirmed)?,
+            ),
+        ],
         safe_for_model_scoring: false,
         safe_for_input: false,
         permits_event_entry: false,
@@ -390,9 +530,9 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_from_dir
         .decisions
         .last()
         .expect("validated history is nonempty");
-    if confirmed.source_frame_sequence_v1() < prior.after_frame_sequence
-        || confirmed.source_frame_sequence_v1() <= prior.source_frame_sequence
-        || confirmed.after_frame_sequence_v1() <= prior.after_frame_sequence
+    if confirmed.source_frame_sequence_v1() < prior.after_frame_sequence_v1()
+        || confirmed.source_frame_sequence_v1() <= prior.source_frame_sequence_v1()
+        || confirmed.after_frame_sequence_v1() <= prior.after_frame_sequence_v1()
     {
         return Err(error_v1(
             "competitive_player_visible_history_order",
@@ -400,9 +540,10 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_from_dir
         ));
     }
     if history.record.decisions.iter().any(|decision| {
-        decision.decision_commitment_sha256 == confirmed.decision_commitment_sha256_v1()
-            || decision.selection_commitment_sha256 == confirmed.selection_commitment_sha256_v1()
-            || decision.visible_postcondition_commitment_sha256
+        decision.decision_commitment_sha256_v1() == confirmed.decision_commitment_sha256_v1()
+            || decision.selection_commitment_sha256_v1()
+                == confirmed.selection_commitment_sha256_v1()
+            || decision.visible_postcondition_commitment_sha256_v1()
                 == confirmed.confirmation_commitment_sha256_v1()
     }) {
         return Err(error_v1(
@@ -416,13 +557,154 @@ pub fn append_checked_untrusted_competitive_player_visible_game_history_from_dir
             "decision sequence overflow",
         )
     })?;
-    history
+    history.record.decisions.push(
+        MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::OrdinaryDecision(
+            direct_visible_postcondition_decision_record_v1(sequence, &confirmed)?,
+        ),
+    );
+    finish_v1(history.record)
+}
+
+pub fn begin_checked_untrusted_competitive_player_visible_game_history_from_combat_v1(
+    history_id: &str,
+    context: MtgoCompetitivePlayerVisibleCombatHistoryContextV1,
+    confirmed: CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1,
+) -> Result<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, MtgoContractErrorV1> {
+    validate_identifier_v1(history_id)?;
+    let event_kind = context.event_kind;
+    let event_identity_sha256 = context.event_identity_sha256.clone();
+    let match_identity_sha256 = context.match_identity_sha256.clone();
+    let game_number = context.game_number;
+    let policy_deployment_commitment_sha256 = context.policy_deployment_commitment_sha256.clone();
+    let combat_record = combat_decision_record_v1(1, context, confirmed)?;
+    let record = MtgoCompetitivePlayerVisibleGameHistoryRecordV1 {
+        schema_version: MTGO_COMPETITIVE_PLAYER_VISIBLE_GAME_HISTORY_SCHEMA_V1,
+        history_id: history_id.to_owned(),
+        event_kind,
+        event_identity_sha256,
+        match_identity_sha256,
+        game_number,
+        policy_deployment_commitment_sha256,
+        decisions: vec![
+            MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::CombatDecision(combat_record),
+        ],
+        safe_for_model_scoring: false,
+        safe_for_input: false,
+        permits_event_entry: false,
+        permits_spending: false,
+    };
+    finish_v1(record)
+}
+
+pub fn append_checked_untrusted_competitive_player_visible_game_history_from_combat_v1(
+    mut history: CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    context: MtgoCompetitivePlayerVisibleCombatHistoryContextV1,
+    confirmed: CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1,
+) -> Result<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1, MtgoContractErrorV1> {
+    if history.record.decisions.len() >= MAX_PLAYER_VISIBLE_GAME_DECISIONS_V1 {
+        return Err(error_v1(
+            "competitive_player_visible_history_limit",
+            "the per-game visible decision history reached its fixed bound",
+        ));
+    }
+    if history.record.event_kind != context.event_kind
+        || history.record.event_identity_sha256 != context.event_identity_sha256
+        || history.record.match_identity_sha256 != context.match_identity_sha256
+        || history.record.game_number != context.game_number
+        || history.record.policy_deployment_commitment_sha256
+            != context.policy_deployment_commitment_sha256
+        || confirmed.deployment_commitment_sha256_v1()
+            != history.record.policy_deployment_commitment_sha256
+    {
+        return Err(error_v1(
+            "competitive_player_visible_history_lineage",
+            "confirmed combat must retain the exact event, match, game, and deployment",
+        ));
+    }
+    let prior = history
         .record
         .decisions
-        .push(direct_visible_postcondition_decision_record_v1(
-            sequence, &confirmed,
-        )?);
+        .last()
+        .expect("validated history is nonempty");
+    if context.source_frame_sequence < prior.after_frame_sequence_v1()
+        || context.source_frame_sequence <= prior.source_frame_sequence_v1()
+        || context.after_frame_sequence <= prior.after_frame_sequence_v1()
+    {
+        return Err(error_v1(
+            "competitive_player_visible_history_order",
+            "confirmed combat must form one monotonic visible frame lineage",
+        ));
+    }
+    if history.record.decisions.iter().any(|entry| {
+        entry.decision_commitment_sha256_v1() == confirmed.decision_commitment_sha256_v1()
+            || entry.visible_postcondition_commitment_sha256_v1()
+                == context.visible_postcondition_commitment_sha256
+    }) {
+        return Err(error_v1(
+            "competitive_player_visible_history_duplicate",
+            "a combat transaction or visible postcondition cannot be appended twice",
+        ));
+    }
+    let sequence = u64::try_from(history.record.decisions.len() + 1).map_err(|_| {
+        error_v1(
+            "competitive_player_visible_history_sequence",
+            "decision sequence overflow",
+        )
+    })?;
+    history.record.decisions.push(
+        MtgoCompetitivePlayerVisibleHistoryEntryRecordV1::CombatDecision(
+            combat_decision_record_v1(sequence, context, confirmed)?,
+        ),
+    );
     finish_v1(history.record)
+}
+
+fn combat_decision_record_v1(
+    sequence: u64,
+    context: MtgoCompetitivePlayerVisibleCombatHistoryContextV1,
+    confirmed: CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1,
+) -> Result<MtgoCompetitivePlayerVisibleCombatDecisionRecordV1, MtgoContractErrorV1> {
+    if context.source_frame_id == 0
+        || context.after_frame_id == 0
+        || context.source_frame_id == context.after_frame_id
+        || context.source_frame_sequence == 0
+        || context.after_frame_sequence <= context.source_frame_sequence
+        || confirmed.source_visible_state_v1().acting_player
+            != crate::MtgoPlayerRelativeRoleV1::SeatedPlayer
+    {
+        return Err(error_v1(
+            "competitive_player_visible_combat_history_source",
+            "confirmed combat source and after-frame identities are inconsistent",
+        ));
+    }
+    for digest in [
+        context.event_identity_sha256.as_str(),
+        context.match_identity_sha256.as_str(),
+        context.policy_deployment_commitment_sha256.as_str(),
+        context.visible_postcondition_commitment_sha256.as_str(),
+        confirmed.source_visible_result_sha256_v1(),
+        confirmed.final_visible_result_sha256_v1(),
+        confirmed.decision_commitment_sha256_v1(),
+    ] {
+        require_sha256_v1(digest)?;
+    }
+    if confirmed.deployment_commitment_sha256_v1() != context.policy_deployment_commitment_sha256 {
+        return Err(error_v1(
+            "competitive_player_visible_combat_history_deployment",
+            "confirmed combat belongs to another model deployment",
+        ));
+    }
+    Ok(MtgoCompetitivePlayerVisibleCombatDecisionRecordV1 {
+        sequence,
+        source_frame_id: context.source_frame_id,
+        source_frame_sequence: context.source_frame_sequence,
+        source_visible_result_sha256: confirmed.source_visible_result_sha256_v1().to_owned(),
+        after_frame_id: context.after_frame_id,
+        after_frame_sequence: context.after_frame_sequence,
+        decision_commitment_sha256: confirmed.decision_commitment_sha256_v1().to_owned(),
+        visible_postcondition_commitment_sha256: context.visible_postcondition_commitment_sha256,
+        confirmed_combat_decision: confirmed,
+    })
 }
 
 /// Checks private deployment and visible-frame continuity before an existing
@@ -466,6 +748,31 @@ pub fn validate_competitive_player_visible_game_history_for_session_v1(
         deployment_commitment_sha256,
         current_frame_sequence,
     )?;
+    validate_competitive_player_visible_game_history_session_checkpoint_v1(
+        history,
+        deployment_commitment_sha256,
+        expected_confirmed_action_count,
+        expected_last_confirmed_frame_sequence,
+    )
+}
+
+/// Checks the private deployment, count, and last confirmed sequence at an
+/// action boundary where no newer scoring frame exists yet. Unlike the
+/// scoring validator, this never asks the caller to invent a future frame.
+#[doc(hidden)]
+pub fn validate_competitive_player_visible_game_history_session_checkpoint_v1(
+    history: &CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    deployment_commitment_sha256: &str,
+    expected_confirmed_action_count: u64,
+    expected_last_confirmed_frame_sequence: u64,
+) -> Result<(), MtgoContractErrorV1> {
+    require_sha256_v1(deployment_commitment_sha256)?;
+    if history.record.policy_deployment_commitment_sha256 != deployment_commitment_sha256 {
+        return Err(error_v1(
+            "competitive_player_visible_history_session_deployment",
+            "confirmed decision history belongs to another model deployment",
+        ));
+    }
     if u64::try_from(history.record.decisions.len()).ok() != Some(expected_confirmed_action_count)
         || history.last_after_frame_sequence_v1() != expected_last_confirmed_frame_sequence
     {
@@ -641,10 +948,10 @@ fn finish_v1(
     let mut selection_ids = HashSet::new();
     let mut postconditions = HashSet::new();
     for (index, decision) in record.decisions.iter().enumerate() {
-        if usize::try_from(decision.sequence).ok() != Some(index + 1)
-            || !decision_ids.insert(decision.decision_commitment_sha256.as_str())
-            || !selection_ids.insert(decision.selection_commitment_sha256.as_str())
-            || !postconditions.insert(decision.visible_postcondition_commitment_sha256.as_str())
+        if usize::try_from(decision.sequence_v1()).ok() != Some(index + 1)
+            || !decision_ids.insert(decision.decision_commitment_sha256_v1())
+            || !selection_ids.insert(decision.selection_commitment_sha256_v1())
+            || !postconditions.insert(decision.visible_postcondition_commitment_sha256_v1())
         {
             return Err(error_v1(
                 "competitive_player_visible_history_decision_order",
@@ -889,6 +1196,13 @@ mod tests {
             after_frame_sequence + 1,
         )
         .unwrap();
+        validate_competitive_player_visible_game_history_session_checkpoint_v1(
+            &history,
+            &deployment,
+            1,
+            after_frame_sequence,
+        )
+        .unwrap();
         for (count, terminal) in [(0, after_frame_sequence), (1, after_frame_sequence + 1)] {
             assert_eq!(
                 validate_competitive_player_visible_game_history_for_session_v1(
@@ -897,6 +1211,17 @@ mod tests {
                     count,
                     terminal,
                     after_frame_sequence + 2,
+                )
+                .unwrap_err()
+                .code(),
+                "competitive_player_visible_history_session"
+            );
+            assert_eq!(
+                validate_competitive_player_visible_game_history_session_checkpoint_v1(
+                    &history,
+                    &deployment,
+                    count,
+                    terminal,
                 )
                 .unwrap_err()
                 .code(),

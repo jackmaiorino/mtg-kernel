@@ -1,6 +1,7 @@
 use crate::actuator::{
     advance_competitive_direct_visible_gameplay_session_v1,
     advance_competitive_event_monitor_in_runtime_v1, advance_competitive_event_runtime_observed_v1,
+    advance_competitive_player_visible_combat_session_v1,
     advance_competitive_player_visible_gameplay_session_v1,
     attach_competitive_event_monitor_to_runtime_v1, begin_competitive_gesture_game_session_v1,
     bind_competitive_duel_gesture_sequence_session_v1,
@@ -88,8 +89,8 @@ use crate::probe::{
     confirm_attested_direct_visible_dispatch_v1,
     corroborate_competitive_match_visible_game_log_action_v1,
     execute_attested_direct_visible_combat_step_v1, execute_attested_direct_visible_selection_v1,
-    frame_id_from_capture_commitment_v1, perceive_admitted_duel_frame_v1,
-    prepare_attested_direct_visible_combat_step_v1,
+    frame_id_from_capture_commitment_v1, join_attested_direct_visible_combat_rescore_trace_v1,
+    perceive_admitted_duel_frame_v1, prepare_attested_direct_visible_combat_step_v1,
     prepare_attested_direct_visible_competitive_before_dispatch_v1,
     prepare_opaque_competitive_duel_action_plan_v1,
     prepare_opaque_player_visible_duel_gesture_pointer_v1,
@@ -117,6 +118,7 @@ use crate::probe::{
     OpaqueMtgoCompetitiveMatchVisibleGameLogLeaseV1,
     OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
     OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
+    OpaqueMtgoConfirmedAttestedDirectVisibleCombatDecisionV1,
     OpaqueMtgoPendingAttestedDirectVisibleCombatDispatchV1,
     OpaqueMtgoPendingAttestedDirectVisibleDispatchV1, OpaqueMtgoPlayerVisibleDuelGestureIntentV1,
     OpaqueMtgoPlayerVisibleDuelGestureTargetBindingV1,
@@ -131,16 +133,21 @@ use crate::probe::{
     OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
 };
 use mtgo_blackbox_v1::{
+    append_checked_untrusted_competitive_player_visible_game_history_from_combat_v1,
     append_checked_untrusted_competitive_player_visible_game_history_from_direct_visible_postcondition_v1,
     append_checked_untrusted_competitive_player_visible_game_history_from_player_visible_postcondition_v1,
+    begin_checked_untrusted_competitive_player_visible_game_history_from_combat_v1,
     begin_checked_untrusted_competitive_player_visible_game_history_from_direct_visible_postcondition_v1,
     begin_checked_untrusted_competitive_player_visible_game_history_from_player_visible_postcondition_v1,
     validate_competitive_player_visible_game_history_for_session_v1,
+    validate_competitive_player_visible_game_history_session_checkpoint_v1,
     validate_native_checkpoint_competitive_capabilities_v1,
     CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1,
+    CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1,
     CheckedUntrustedMtgoPlayerVisibleDuelGesturePlanV1,
     CheckedUntrustedMtgoPlayerVisibleGameLogActionBaselineV1, MtgoCompetitiveEventKindV1,
-    MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1, MtgoDuelGestureStageV1,
+    MtgoCompetitiveLifecycleActionV1, MtgoCompetitiveLifecyclePhaseV1,
+    MtgoCompetitivePlayerVisibleCombatHistoryContextV1, MtgoDuelGestureStageV1,
     MtgoNativeCheckpointCompetitiveCapabilitiesV1, MtgoObservedCompetitiveLifecycleAdvanceV1,
     MtgoPlayerVisibleCombatScorerV1, MtgoPlayerVisibleCombatTransitionProgressV1,
     MtgoPlayerVisibleConfirmedDuelDecisionV1, MtgoPlayerVisibleDuelActionV1,
@@ -573,6 +580,14 @@ pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1 {
     kind: MtgoPlayerVisiblePreparedCombatKindV1,
     bridge_commitment_sha256: String,
     operator_binding_commitment_sha256: String,
+    history_start: MtgoCompetitiveVisibleCombatHistoryStartV1,
+}
+
+#[derive(Clone, Copy)]
+struct MtgoCompetitiveVisibleCombatHistoryStartV1 {
+    source_frame_id: u64,
+    source_frame_sequence: u64,
+    after_frame_sequence: u64,
 }
 
 /// Exact attended-game owner ready to submit one source-attested combat
@@ -586,6 +601,7 @@ pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatBeforeDispatc
     completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
     direct: OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1,
     operator_step_commitment_sha256: String,
+    history_start: MtgoCompetitiveVisibleCombatHistoryStartV1,
 }
 
 impl OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatBeforeDispatchV1 {
@@ -620,6 +636,7 @@ pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPendingV1 {
     completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
     pending: OpaqueMtgoPendingAttestedDirectVisibleCombatDispatchV1,
     operator_step_commitment_sha256: String,
+    history_start: MtgoCompetitiveVisibleCombatHistoryStartV1,
 }
 
 /// Result after exact visible confirmation. Same-plan continuations may submit
@@ -641,6 +658,8 @@ pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatRescoreV1 {
     confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
     completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
     observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    trace: CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1,
+    history_start: MtgoCompetitiveVisibleCombatHistoryStartV1,
     confirmation_commitment_sha256: String,
 }
 
@@ -659,12 +678,14 @@ impl OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatRescoreV1 {
 /// history record is appended. This prevents click-level confirmation from
 /// being misrepresented as an ordinary one-action decision.
 pub struct OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatConfirmedV1 {
-    _lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
-    _session: OpaqueMtgoCompetitiveGestureGameSessionV1,
-    _visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
-    _visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
-    _confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
-    _completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+    lease: OpaqueMtgoCompetitiveOperatorGameplayLeaseV1,
+    session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    visible_identity: OpaqueMtgoCompetitiveLaunchIdentityV1,
+    visible_game_log: OpaqueMtgoCompetitiveMatchVisibleGameLogSnapshotV1,
+    confirmed_history: Option<CheckedUntrustedMtgoCompetitivePlayerVisibleGameHistoryV1>,
+    completed_match_history: Option<OpaqueMtgoCompetitiveCompletedMatchHistoryV1>,
+    confirmed_combat: OpaqueMtgoConfirmedAttestedDirectVisibleCombatDecisionV1,
+    history_start: MtgoCompetitiveVisibleCombatHistoryStartV1,
     confirmation_commitment_sha256: String,
 }
 
@@ -680,6 +701,90 @@ impl OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatConfirmedV1 {
     pub fn safe_for_live_input_v1(&self) -> bool {
         false
     }
+}
+
+/// Appends the completed composite combat transaction to the exact-game
+/// player-visible history, advances the session once, and returns ordinary
+/// attended gameplay ownership. No scoring or input occurs here.
+pub fn append_competitive_operator_attended_direct_visible_combat_history_v1(
+    value: OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatConfirmedV1,
+) -> Result<OpaqueMtgoCompetitiveOperatorAttendedGameplayV1, String> {
+    let OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatConfirmedV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        confirmed_history,
+        completed_match_history,
+        confirmed_combat,
+        history_start,
+        confirmation_commitment_sha256,
+    } = value;
+    let after_frame_id = frame_id_from_capture_commitment_v1(
+        confirmed_combat.after_capture_commitment_sha256_v1(),
+        history_start.source_frame_id,
+    )?;
+    let decision_commitment_sha256 = confirmed_combat.decision_commitment_sha256_v1().to_owned();
+    let (_, confirmed) = confirmed_combat.into_parts_v1();
+    let launch_commitments = visible_identity.commitments_v1();
+    let context = MtgoCompetitivePlayerVisibleCombatHistoryContextV1 {
+        event_kind: launch_commitments.event_kind,
+        event_identity_sha256: visible_identity.event_identity_sha256_v1().to_owned(),
+        match_identity_sha256: visible_identity.match_identity_sha256_v1().to_owned(),
+        game_number: launch_commitments.game_number,
+        policy_deployment_commitment_sha256: lease
+            .resources
+            .checkpoint_deployment
+            .deployment_commitment_sha256()
+            .to_owned(),
+        source_frame_id: history_start.source_frame_id,
+        source_frame_sequence: history_start.source_frame_sequence,
+        after_frame_id,
+        after_frame_sequence: history_start.after_frame_sequence,
+        visible_postcondition_commitment_sha256: confirmation_commitment_sha256.clone(),
+    };
+    let history_id = player_visible_history_id_v1(
+        visible_identity.match_identity_sha256_v1(),
+        launch_commitments.game_number,
+    )?;
+    let confirmed_history = match confirmed_history {
+        Some(history) => {
+            append_checked_untrusted_competitive_player_visible_game_history_from_combat_v1(
+                history, context, confirmed,
+            )
+            .map_err(|error| format!("append visible combat history: {error}"))?
+        }
+        None => begin_checked_untrusted_competitive_player_visible_game_history_from_combat_v1(
+            &history_id,
+            context,
+            confirmed,
+        )
+        .map_err(|error| format!("begin visible combat history: {error}"))?,
+    };
+    let session = advance_competitive_player_visible_combat_session_v1(
+        session,
+        history_start.after_frame_sequence,
+        &decision_commitment_sha256,
+        &confirmation_commitment_sha256,
+    )?;
+    validate_competitive_player_visible_game_history_session_checkpoint_v1(
+        &confirmed_history,
+        lease
+            .resources
+            .checkpoint_deployment
+            .deployment_commitment_sha256(),
+        session.commitments_v1().confirmed_action_count,
+        session.commitments_v1().last_confirmed_frame_sequence,
+    )
+    .map_err(|error| format!("validate visible combat session history: {error}"))?;
+    Ok(OpaqueMtgoCompetitiveOperatorAttendedGameplayV1 {
+        lease,
+        session,
+        visible_identity,
+        visible_game_log,
+        completed_match_history,
+        confirmed_history: Some(confirmed_history),
+    })
 }
 
 impl OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatPreparedV1 {
@@ -3907,6 +4012,27 @@ where
         require_ratified_direct_visible_combat_source_qualification_v1(
             reviewed_qualification_commitment_sha256,
         )?;
+        let source_commitments = observation.commitments_v1();
+        let session_commitments = session.commitments_v1();
+        let launch_commitments = visible_identity.commitments_v1();
+        let source_frame_sequence = next_direct_visible_frame_sequence_v1(
+            session_commitments.valid_from_frame_sequence,
+            session_commitments.valid_through_frame_sequence,
+            session_commitments.last_confirmed_frame_sequence,
+            launch_commitments.frame_sequence,
+        )?;
+        let after_frame_sequence = source_frame_sequence
+            .checked_add(1)
+            .filter(|sequence| *sequence <= session_commitments.valid_through_frame_sequence)
+            .ok_or("visible combat needs two remaining logical frame-sequence positions")?;
+        let history_start = MtgoCompetitiveVisibleCombatHistoryStartV1 {
+            source_frame_id: frame_id_from_capture_commitment_v1(
+                &source_commitments.after_capture_commitment_sha256,
+                0,
+            )?,
+            source_frame_sequence,
+            after_frame_sequence,
+        };
         let scored = score_ratified_attested_direct_visible_combat_source_observation_v1(
             observation,
             reviewed_qualification_commitment_sha256,
@@ -3922,8 +4048,6 @@ where
             .bridge_commitment_sha256_v1()
             .ok_or("a combat-specific direct observation lacks its bridge commitment")?
             .to_owned();
-        let session_commitments = session.commitments_v1();
-        let launch_commitments = visible_identity.commitments_v1();
         let prior_history_commitment = confirmed_history
             .as_ref()
             .map(
@@ -3958,6 +4082,7 @@ where
                         kind,
                         bridge_commitment_sha256,
                         operator_binding_commitment_sha256,
+                        history_start,
                     },
                 ),
             ),
@@ -4364,6 +4489,7 @@ pub fn prepare_competitive_operator_attended_direct_visible_combat_step_v1(
         kind: _,
         bridge_commitment_sha256,
         operator_binding_commitment_sha256,
+        history_start,
     } = value;
     let direct = prepare_attested_direct_visible_combat_step_v1(scored)?;
     let operator_step_commitment_sha256 = hash_parts_v1(
@@ -4385,6 +4511,7 @@ pub fn prepare_competitive_operator_attended_direct_visible_combat_step_v1(
             completed_match_history,
             direct,
             operator_step_commitment_sha256,
+            history_start,
         },
     )
 }
@@ -4406,6 +4533,7 @@ pub fn execute_competitive_operator_attended_direct_visible_combat_step_v1(
         completed_match_history,
         direct,
         operator_step_commitment_sha256,
+        history_start,
     } = value;
     let pending = execute_attested_direct_visible_combat_step_v1(
         direct,
@@ -4423,6 +4551,7 @@ pub fn execute_competitive_operator_attended_direct_visible_combat_step_v1(
             completed_match_history,
             pending,
             operator_step_commitment_sha256,
+            history_start,
         },
     )
 }
@@ -4446,6 +4575,7 @@ pub fn confirm_competitive_operator_attended_direct_visible_combat_step_v1(
         completed_match_history,
         pending,
         operator_step_commitment_sha256,
+        history_start,
     } = value;
     let visible_game_log = refresh_competitive_match_visible_game_log_v1(
         visible_game_log.into_match_lease_v1(),
@@ -4508,6 +4638,7 @@ pub fn confirm_competitive_operator_attended_direct_visible_combat_step_v1(
                             completed_match_history,
                             direct,
                             operator_step_commitment_sha256: next_step_commitment_sha256,
+                            history_start,
                         },
                     ),
                 );
@@ -4515,7 +4646,7 @@ pub fn confirm_competitive_operator_attended_direct_visible_combat_step_v1(
             Ok(result)
         }
         MtgoPlayerVisibleCombatTransitionProgressV1::AwaitFreshCombatModelDecision => {
-            let observation = confirmed.into_fresh_observation_for_model_v1()?;
+            let (observation, trace) = confirmed.into_fresh_observation_and_trace_for_model_v1()?;
             let result = MtgoCompetitiveOperatorAttendedDirectVisibleCombatAdvanceV1::AwaitFreshModelDecision(
                 Box::new(OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatRescoreV1 {
                     lease,
@@ -4525,6 +4656,8 @@ pub fn confirm_competitive_operator_attended_direct_visible_combat_step_v1(
                     confirmed_history,
                     completed_match_history,
                     observation,
+                    trace,
+                    history_start,
                     confirmation_commitment_sha256: operator_confirmation_commitment_sha256,
                 }),
             );
@@ -4532,15 +4665,21 @@ pub fn confirm_competitive_operator_attended_direct_visible_combat_step_v1(
             Ok(result)
         }
         MtgoPlayerVisibleCombatTransitionProgressV1::CombatDeclarationComplete => {
+            let confirmed_combat = confirmed.into_confirmed_decision_v1()?;
+            if confirmed_combat.decision_commitment_sha256_v1().len() != 64 {
+                return Err("confirmed combat transaction lacks its exact commitment".to_owned());
+            }
             let result = MtgoCompetitiveOperatorAttendedDirectVisibleCombatAdvanceV1::CombatDeclarationConfirmed(
                 Box::new(
                     OpaqueMtgoCompetitiveOperatorAttendedDirectVisibleCombatConfirmedV1 {
-                        _lease: lease,
-                        _session: session,
-                        _visible_identity: visible_identity,
-                        _visible_game_log: visible_game_log,
-                        _confirmed_history: confirmed_history,
-                        _completed_match_history: completed_match_history,
+                        lease,
+                        session,
+                        visible_identity,
+                        visible_game_log,
+                        confirmed_history,
+                        completed_match_history,
+                        confirmed_combat,
+                        history_start,
                         confirmation_commitment_sha256: operator_confirmation_commitment_sha256,
                     },
                 ),
@@ -4572,6 +4711,8 @@ where
         confirmed_history,
         completed_match_history,
         observation,
+        trace,
+        history_start,
         confirmation_commitment_sha256,
     } = value;
     validate_operator_completed_history_count_v1(
@@ -4616,6 +4757,7 @@ where
         &deployment_commitment_sha256,
         scorer,
     )?;
+    let scored = join_attested_direct_visible_combat_rescore_trace_v1(scored, trace)?;
     let source_observation_commitment_sha256 =
         scored.source_observation_commitment_sha256_v1().to_owned();
     let kind = scored
@@ -4666,6 +4808,7 @@ where
             kind,
             bridge_commitment_sha256,
             operator_binding_commitment_sha256,
+            history_start,
         },
     )
 }

@@ -142,6 +142,8 @@ const COMPETITIVE_PLAYER_VISIBLE_GAMEPLAY_AUTHORITY_BINDING_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-player-visible-gameplay-authority-binding-v1";
 const COMPETITIVE_PLAYER_VISIBLE_GAMEPLAY_SESSION_ADVANCE_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-player-visible-gameplay-session-advance-v1";
+const COMPETITIVE_PLAYER_VISIBLE_COMBAT_SESSION_ADVANCE_DOMAIN_V1: &[u8] =
+    b"mtgo-competitive-player-visible-combat-session-advance-v1";
 const COMPETITIVE_DUEL_GESTURE_TRANSITION_RECEIPT_DOMAIN_V1: &[u8] =
     b"mtgo-competitive-duel-gesture-transition-receipt-v1";
 const COMPETITIVE_DUEL_GESTURE_CONTINUATION_RECEIPT_DOMAIN_V1: &[u8] =
@@ -15847,6 +15849,46 @@ pub(crate) fn advance_competitive_direct_visible_gameplay_session_v1(
         ],
     );
     session.last_confirmed_frame_sequence = visible.after_frame_sequence_v1();
+    session.confirmed_action_count = next_count;
+    Ok(session)
+}
+
+pub(crate) fn advance_competitive_player_visible_combat_session_v1(
+    mut session: OpaqueMtgoCompetitiveGestureGameSessionV1,
+    after_frame_sequence: u64,
+    combat_decision_commitment_sha256: &str,
+    visible_postcondition_commitment_sha256: &str,
+) -> Result<OpaqueMtgoCompetitiveGestureGameSessionV1, String> {
+    if after_frame_sequence <= session.last_confirmed_frame_sequence
+        || after_frame_sequence
+            > session
+                .launch
+                .pass_match_launch
+                .authorization
+                .valid_through_frame_sequence
+        || !is_sha256_v2(combat_decision_commitment_sha256)
+        || !is_sha256_v2(visible_postcondition_commitment_sha256)
+    {
+        return Err(
+            "confirmed visible combat is outside the competitive game session lifetime".to_owned(),
+        );
+    }
+    let next_count = session
+        .confirmed_action_count
+        .checked_add(1)
+        .ok_or("competitive visible combat session action count overflow")?;
+    session.session_commitment_sha256 = hash_parts_v2(
+        COMPETITIVE_PLAYER_VISIBLE_COMBAT_SESSION_ADVANCE_DOMAIN_V1,
+        &[
+            session.session_commitment_sha256.as_bytes(),
+            combat_decision_commitment_sha256.as_bytes(),
+            visible_postcondition_commitment_sha256.as_bytes(),
+            after_frame_sequence.to_be_bytes().as_slice(),
+            next_count.to_be_bytes().as_slice(),
+            b"one_complete_visible_combat_transaction_counted_once_after_final_confirmation",
+        ],
+    );
+    session.last_confirmed_frame_sequence = after_frame_sequence;
     session.confirmed_action_count = next_count;
     Ok(session)
 }

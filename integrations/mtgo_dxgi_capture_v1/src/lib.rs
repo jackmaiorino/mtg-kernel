@@ -387,14 +387,15 @@ pub use competitive_visible_match_memory::{
     append_competitive_completed_match_history_v1, begin_competitive_completed_match_history_v1,
     bind_competitive_player_visible_game_memory_v1,
     bind_match_scoped_competitive_player_visible_game_memory_v1,
-    MtgoCompetitiveExternalCompletedGameHeaderV1,
+    MtgoCompetitiveExternalCombatModelDecisionV1, MtgoCompetitiveExternalCompletedGameHeaderV1,
     MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1,
     MtgoCompetitiveExternalCompletedMatchHistoryHeaderV1,
-    MtgoCompetitiveExternalConfirmedDecisionV1, MtgoCompetitiveExternalPublicGameLogEventV1,
-    MtgoCompetitiveExternalPublicHistoryConsumerV1, MtgoCompetitiveExternalPublicHistoryHeaderV1,
-    MtgoCompetitiveExternalPublicHistoryOrderingV1, MtgoCompetitivePlayerRelativeGameWinnerV1,
-    OpaqueMtgoCompetitiveCompletedMatchHistoryV1, OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1,
-    OpaqueMtgoCompetitiveVisibleGameOutcomeV1, MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
+    MtgoCompetitiveExternalConfirmedCombatDecisionV1, MtgoCompetitiveExternalConfirmedDecisionV1,
+    MtgoCompetitiveExternalPublicGameLogEventV1, MtgoCompetitiveExternalPublicHistoryConsumerV1,
+    MtgoCompetitiveExternalPublicHistoryHeaderV1, MtgoCompetitiveExternalPublicHistoryOrderingV1,
+    MtgoCompetitivePlayerRelativeGameWinnerV1, OpaqueMtgoCompetitiveCompletedMatchHistoryV1,
+    OpaqueMtgoCompetitivePlayerVisibleGameMemoryV1, OpaqueMtgoCompetitiveVisibleGameOutcomeV1,
+    MTGO_COMPETITIVE_EXTERNAL_PUBLIC_HISTORY_SCHEMA_V1,
 };
 
 #[cfg(target_os = "windows")]

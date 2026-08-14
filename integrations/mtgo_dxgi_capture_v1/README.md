@@ -201,10 +201,14 @@ visible toggle, prompt, assignment, or completed declaration must validate
 before another step can exist. Attacker and single-attacker blocker plans can
 continue monotonically. Multi-attacker blocking must return to a fresh model
 decision after every confirmed prompt or assignment. A completed declaration
-stops at an explicit combat-history boundary rather than silently re-entering
-ordinary play without recording the aggregate model decision. The combat
-source and combat-dispatch roots are both `None`, so this wiring cannot
-currently score the running client or send input.
+is stored as one composite match-history action containing only the exact
+sanitized visible inputs and visible choices from its staged model calls. The
+game session advances once, the ledger is checked at the actual action
+boundary, and ordinary play resumes only after a genuinely newer observation.
+The kernel-facing combat callback strips frame identities, commitments, and
+physical input receipts, and it fails closed until the kernel consumer handles
+the combat value. The combat source and combat-dispatch roots are both `None`,
+so this wiring cannot currently score the running client or send input.
 
 `verify_direct_visible_source_runtime_v1` and `observe_attested_direct_visible_source_v1` supply the first opaque Windows owner for the release-pinned direct observer. The runtime verifier uses compile-time SHA-256 pins for the native broker, bootstrap, managed producer, and strict release validator. Observation consumes one admitted acting-player duel frame, invokes the broker against that exact MTGO process without passing a decision hash or selected index, bounds and strictly parses its only outward value, rehashes every runtime artifact, and immediately captures a second frame from the same process, window, output, profile, format, and geometry. Temporary stdout and stderr buffers are cleared on every return path. The move-only result retains both frames and the sanitized result but publicly exposes only fixed abstention, execution and artifact commitments, and false scoring, input, entry, and spending flags. A data-bearing result remains a qualification candidate until the no-stakes duel corpus and complete visible action surface are reviewed. The pinned observe-only live broker still compile-disables client-action dispatch.
 

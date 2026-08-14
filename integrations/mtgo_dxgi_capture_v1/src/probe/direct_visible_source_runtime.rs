@@ -15,6 +15,7 @@ use mtgo_blackbox_v1::{
     bind_refreshed_direct_visible_selection_to_competitive_match_v1,
     complete_direct_visible_gameplay_postcondition_v1,
     confirm_player_visible_combat_execution_transition_v1,
+    join_player_visible_combat_rescore_trace_v1,
     parse_and_validate_visible_duel_producer_result_v1, player_visible_duel_action_family_v1,
     prepare_direct_visible_gameplay_before_dispatch_v1,
     prepare_player_visible_combat_execution_step_v1,
@@ -24,9 +25,11 @@ use mtgo_blackbox_v1::{
     CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
     CheckedUntrustedMtgoDirectVisibleGameplayPostconditionV1,
     CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
+    CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1,
     CheckedUntrustedMtgoPlayerVisibleCombatExecutionStepV1,
     CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1,
     CheckedUntrustedMtgoPlayerVisibleCombatTransitionV1,
+    CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1,
     CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1, MtgoAuthorizationScopeV1,
     MtgoCompetitiveMatchGameplayAuthorizationV1, MtgoDirectVisibleCompetitiveObservationBracketV1,
     MtgoDirectVisibleGameplayBeforeDispatchRecordV1, MtgoDirectVisibleGameplayBeforeRegionV1,
@@ -441,9 +444,15 @@ impl OpaqueMtgoConfirmedAttestedDirectVisibleCombatTransitionV1 {
         })
     }
 
-    pub(crate) fn into_fresh_observation_for_model_v1(
+    pub(crate) fn into_fresh_observation_and_trace_for_model_v1(
         self,
-    ) -> Result<OpaqueMtgoAttestedDirectVisibleSourceObservationV1, String> {
+    ) -> Result<
+        (
+            OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+            CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1,
+        ),
+        String,
+    > {
         if self.transition.progress_v1()
             != MtgoPlayerVisibleCombatTransitionProgressV1::AwaitFreshCombatModelDecision
         {
@@ -452,8 +461,83 @@ impl OpaqueMtgoConfirmedAttestedDirectVisibleCombatTransitionV1 {
                     .to_owned(),
             );
         }
-        Ok(self.fresh_observation)
+        let trace = self
+            .transition
+            .into_pending_rescore_trace_v1()
+            .map_err(|error| format!("retain confirmed combat rescore trace: {error}"))?;
+        Ok((self.fresh_observation, trace))
     }
+
+    pub(crate) fn into_confirmed_decision_v1(
+        self,
+    ) -> Result<OpaqueMtgoConfirmedAttestedDirectVisibleCombatDecisionV1, String> {
+        if self.transition.progress_v1()
+            != MtgoPlayerVisibleCombatTransitionProgressV1::CombatDeclarationComplete
+        {
+            return Err("this combat transition is not visibly complete".to_owned());
+        }
+        let confirmed = self
+            .transition
+            .into_confirmed_combat_decision_v1()
+            .map_err(|error| format!("finalize confirmed visible combat decision: {error}"))?;
+        Ok(OpaqueMtgoConfirmedAttestedDirectVisibleCombatDecisionV1 {
+            fresh_observation: self.fresh_observation,
+            confirmed,
+        })
+    }
+}
+
+/// Complete player-visible combat transaction retained with the exact fresh
+/// attested observation that confirmed its final declared state.
+pub(crate) struct OpaqueMtgoConfirmedAttestedDirectVisibleCombatDecisionV1 {
+    fresh_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    confirmed: CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1,
+}
+
+impl OpaqueMtgoConfirmedAttestedDirectVisibleCombatDecisionV1 {
+    pub(crate) fn decision_commitment_sha256_v1(&self) -> &str {
+        self.confirmed.decision_commitment_sha256_v1()
+    }
+
+    pub(crate) fn after_capture_commitment_sha256_v1(&self) -> &str {
+        &self
+            .fresh_observation
+            .commitments
+            .after_capture_commitment_sha256
+    }
+
+    pub(crate) fn into_parts_v1(
+        self,
+    ) -> (
+        OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+        CheckedUntrustedMtgoPlayerVisibleConfirmedCombatDecisionV1,
+    ) {
+        (self.fresh_observation, self.confirmed)
+    }
+}
+
+pub(crate) fn join_attested_direct_visible_combat_rescore_trace_v1(
+    scored: OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1,
+    trace: CheckedUntrustedMtgoPlayerVisibleCombatDecisionTraceV1,
+) -> Result<OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1, String> {
+    let OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1 {
+        _observation,
+        outcome,
+    } = scored;
+    let prepared = match outcome {
+        CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Prepared(prepared) => prepared,
+        CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Abstained { .. } => {
+            return Err("an abstained combat rescore cannot join a pending transaction".to_owned())
+        }
+    };
+    let prepared = join_player_visible_combat_rescore_trace_v1(trace, prepared)
+        .map_err(|error| format!("join exact combat rescore trace: {error}"))?;
+    Ok(
+        OpaqueMtgoRatifiedAttestedDirectVisibleCombatScoringOutcomeV1 {
+            _observation,
+            outcome: CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Prepared(prepared),
+        },
+    )
 }
 
 pub(crate) fn prepare_attested_direct_visible_combat_step_v1(

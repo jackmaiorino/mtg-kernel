@@ -76,6 +76,7 @@ pub trait MtgoPlayerVisibleMultiAttackerBlockerScorerV1 {
 }
 
 pub struct CheckedUntrustedMtgoPlayerVisibleMultiAttackerBlockerChoiceV1 {
+    model_input: MtgoPlayerVisibleMultiAttackerBlockerModelDecisionV1,
     selected_index: usize,
     selected_choice: MtgoPlayerVisibleMultiAttackerBlockerChoiceV1,
     response: MtgoPlayerVisibleDuelScoreResponseV1,
@@ -84,6 +85,10 @@ pub struct CheckedUntrustedMtgoPlayerVisibleMultiAttackerBlockerChoiceV1 {
 }
 
 impl CheckedUntrustedMtgoPlayerVisibleMultiAttackerBlockerChoiceV1 {
+    pub fn model_input_v1(&self) -> &MtgoPlayerVisibleMultiAttackerBlockerModelDecisionV1 {
+        &self.model_input
+    }
+
     pub fn selected_index_v1(&self) -> usize {
         self.selected_index
     }
@@ -300,6 +305,7 @@ fn score_model_decision_v1<S: MtgoPlayerVisibleMultiAttackerBlockerScorerV1>(
     );
     Ok(
         CheckedUntrustedMtgoPlayerVisibleMultiAttackerBlockerChoiceV1 {
+            model_input,
             selected_index,
             selected_choice,
             response,
