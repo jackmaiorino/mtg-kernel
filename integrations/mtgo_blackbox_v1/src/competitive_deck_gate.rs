@@ -13,6 +13,8 @@ use sha2::{Digest, Sha256};
 pub const MTGO_COMPETITIVE_DECK_GATE_SCHEMA_V1: u32 = 1;
 const MIN_COMPETITIVE_DECK_GATE_CONFIDENCE_BPS_V1: u16 = 9_500;
 const COMPETITIVE_DECK_GATE_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-visible-competitive-deck-gate-v1";
+const COMPETITIVE_DECK_SELECTION_TRANSITION_DOMAIN_V1: &[u8] =
+    b"mtgo-visible-competitive-deck-selection-transition-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -108,6 +110,139 @@ impl CheckedUntrustedMtgoCompetitiveDeckGateV1 {
     pub fn safe_for_input_v1(&self) -> bool {
         false
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoCompetitiveDeckSelectionTransitionCommitmentsV1 {
+    pub before_observation_commitment_sha256: String,
+    pub after_observation_commitment_sha256: String,
+    pub target_commitment_sha256: String,
+    pub event_kind: MtgoCompetitiveEventKindV1,
+    pub event_identity_sha256: String,
+    pub before_frame_id: u64,
+    pub before_frame_sequence: u64,
+    pub after_frame_id: u64,
+    pub after_frame_sequence: u64,
+    pub transition_commitment_sha256: String,
+}
+
+/// One exact visible transition from the missing-deck state to the exact
+/// expected selected-deck state. This is a structural postcondition only. It
+/// cannot claim input causality, choose a deck, expose coordinates, open Entry
+/// Review, enter an event, or spend resources.
+///
+/// ```compile_fail
+/// use mtgo_blackbox_v1::CheckedUntrustedMtgoCompetitiveDeckSelectionTransitionV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<CheckedUntrustedMtgoCompetitiveDeckSelectionTransitionV1>();
+/// ```
+pub struct CheckedUntrustedMtgoCompetitiveDeckSelectionTransitionV1 {
+    _before: CheckedUntrustedMtgoCompetitiveDeckGateV1,
+    after: CheckedUntrustedMtgoCompetitiveDeckGateV1,
+    commitments: MtgoCompetitiveDeckSelectionTransitionCommitmentsV1,
+}
+
+impl CheckedUntrustedMtgoCompetitiveDeckSelectionTransitionV1 {
+    pub fn commitments_v1(&self) -> MtgoCompetitiveDeckSelectionTransitionCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_open_entry_review_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+
+    pub fn into_after_gate_v1(self) -> CheckedUntrustedMtgoCompetitiveDeckGateV1 {
+        self.after
+    }
+}
+
+pub fn validate_visible_competitive_deck_selection_transition_v1(
+    before: CheckedUntrustedMtgoCompetitiveDeckGateV1,
+    after: CheckedUntrustedMtgoCompetitiveDeckGateV1,
+) -> Result<CheckedUntrustedMtgoCompetitiveDeckSelectionTransitionV1, MtgoContractErrorV1> {
+    if before.state != MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection
+        || after.state != MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected
+    {
+        return Err(error_v1(
+            "competitive_deck_selection_transition_state",
+            "deck selection must move from the exact missing-deck state to the exact selected-deck state",
+        ));
+    }
+    if before.target != after.target
+        || before.target_commitment_sha256 != after.target_commitment_sha256
+        || before.raw.event_kind != after.raw.event_kind
+        || before.raw.event_identity_sha256 != after.raw.event_identity_sha256
+        || before.raw.event_display_label_sha256 != after.raw.event_display_label_sha256
+        || before.raw.client_bounds != after.raw.client_bounds
+    {
+        return Err(error_v1(
+            "competitive_deck_selection_transition_identity",
+            "deck selection changed the exact account, event, deck target, or client geometry",
+        ));
+    }
+    if after.raw.frame_id == before.raw.frame_id
+        || after.raw.frame_sequence <= before.raw.frame_sequence
+        || after.raw.frame_sha256 == before.raw.frame_sha256
+        || after.observation_commitment_sha256 == before.observation_commitment_sha256
+        || after.lifecycle.snapshot_commitment_sha256()
+            == before.lifecycle.snapshot_commitment_sha256()
+    {
+        return Err(error_v1(
+            "competitive_deck_selection_transition_freshness",
+            "deck selection requires a distinct newer visible lifecycle frame",
+        ));
+    }
+    let target_commitment_sha256 = before.target_commitment_sha256.clone();
+    let before_observation_commitment_sha256 = before.observation_commitment_sha256.clone();
+    let after_observation_commitment_sha256 = after.observation_commitment_sha256.clone();
+    let event_kind = before.raw.event_kind;
+    let event_identity_sha256 = before.raw.event_identity_sha256.clone();
+    let before_frame_id = before.raw.frame_id;
+    let before_frame_sequence = before.raw.frame_sequence;
+    let after_frame_id = after.raw.frame_id;
+    let after_frame_sequence = after.raw.frame_sequence;
+    let transition_commitment_sha256 = commitment_v1(
+        COMPETITIVE_DECK_SELECTION_TRANSITION_DOMAIN_V1,
+        &[
+            before_observation_commitment_sha256.as_bytes(),
+            after_observation_commitment_sha256.as_bytes(),
+            target_commitment_sha256.as_bytes(),
+            event_identity_sha256.as_bytes(),
+            before_frame_id.to_be_bytes().as_slice(),
+            before_frame_sequence.to_be_bytes().as_slice(),
+            after_frame_id.to_be_bytes().as_slice(),
+            after_frame_sequence.to_be_bytes().as_slice(),
+            b"visible_structural_postcondition_only_no_input_causality_no_entry_no_spending",
+        ],
+    );
+    Ok(CheckedUntrustedMtgoCompetitiveDeckSelectionTransitionV1 {
+        _before: before,
+        after,
+        commitments: MtgoCompetitiveDeckSelectionTransitionCommitmentsV1 {
+            before_observation_commitment_sha256,
+            after_observation_commitment_sha256,
+            target_commitment_sha256,
+            event_kind,
+            event_identity_sha256,
+            before_frame_id,
+            before_frame_sequence,
+            after_frame_id,
+            after_frame_sequence,
+            transition_commitment_sha256,
+        },
+    })
 }
 
 pub fn validate_visible_competitive_deck_gate_v1(
@@ -541,15 +676,23 @@ mod tests {
     }
 
     fn lifecycle_v1() -> CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1 {
+        lifecycle_at_v1(10, 20, 'a')
+    }
+
+    fn lifecycle_at_v1(
+        frame_id: u64,
+        frame_sequence: u64,
+        frame_hash: char,
+    ) -> CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1 {
         validate_visible_competitive_lifecycle_snapshot_v1(
             MtgoVisibleCompetitiveLifecycleSnapshotV1 {
                 schema_version: MTGO_COMPETITIVE_LIFECYCLE_SCHEMA_V1,
                 snapshot_id: "competitive-deck-gate-lifecycle-v1".to_owned(),
                 event_kind: MtgoCompetitiveEventKindV1::League,
                 phase: MtgoCompetitiveLifecyclePhaseV1::EventBrowser,
-                frame_id: 10,
-                frame_sequence: 20,
-                frame_sha256: digest('a'),
+                frame_id,
+                frame_sequence,
+                frame_sha256: digest(frame_hash),
                 client_bounds: MtgoRectPxV1 {
                     x: 0,
                     y: 0,
@@ -575,6 +718,30 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn checked_gate_v1(
+        lifecycle: CheckedUntrustedMtgoCompetitiveLifecycleSnapshotV1,
+        deck: &ValidatedMtgoCompetitiveDeckManifestV1,
+        target: MtgoCompetitiveEventListingTargetV1,
+        state: MtgoCompetitiveDeckGateStateV1,
+    ) -> CheckedUntrustedMtgoCompetitiveDeckGateV1 {
+        let mut raw = awaiting_v1(&lifecycle, deck, &target);
+        raw.observation_id = format!("competitive-deck-gate-transition-{state:?}-v1");
+        raw.state = state;
+        if state != MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection {
+            raw.missing_deck_prompt_rect_client_px = None;
+            raw.missing_deck_prompt_region_sha256 = None;
+            raw.selected_deck_label_sha256 = Some(target.deck_display_label_sha256.clone());
+            raw.selected_deck_rect_client_px = Some(MtgoRectPxV1 {
+                x: 600,
+                y: 100,
+                width: 200,
+                height: 50,
+            });
+            raw.selected_deck_region_sha256 = Some(digest('c'));
+        }
+        validate_visible_competitive_deck_gate_v1(lifecycle, deck, target, raw).unwrap()
     }
 
     fn awaiting_v1(
@@ -746,6 +913,90 @@ mod tests {
         let mut raw = awaiting_v1(&lifecycle, &deck, &target);
         raw.state = MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected;
         assert!(validate_visible_competitive_deck_gate_v1(lifecycle, &deck, target, raw).is_err());
+    }
+
+    #[test]
+    fn exact_newer_awaiting_to_selected_transition_is_structural_and_non_authorizing() {
+        let deck = deck_v1();
+        let target = target_v1(&deck);
+        let before = checked_gate_v1(
+            lifecycle_at_v1(10, 20, 'a'),
+            &deck,
+            target.clone(),
+            MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection,
+        );
+        let after = checked_gate_v1(
+            lifecycle_at_v1(11, 21, 'f'),
+            &deck,
+            target,
+            MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected,
+        );
+        let transition =
+            validate_visible_competitive_deck_selection_transition_v1(before, after).unwrap();
+        let commitments = transition.commitments_v1();
+        assert_eq!(commitments.before_frame_sequence, 20);
+        assert_eq!(commitments.after_frame_sequence, 21);
+        assert_ne!(
+            commitments.before_observation_commitment_sha256,
+            commitments.after_observation_commitment_sha256
+        );
+        assert!(!transition.safe_for_input_v1());
+        assert!(!transition.permits_open_entry_review_v1());
+        assert!(!transition.permits_event_entry_v1());
+        assert!(!transition.permits_spending_v1());
+        assert_eq!(
+            transition.into_after_gate_v1().state_v1(),
+            MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected
+        );
+    }
+
+    #[test]
+    fn deck_selection_transition_rejects_stale_wrong_state_and_crossed_target() {
+        let make = |before_sequence: u64,
+                    after_sequence: u64,
+                    after_state: MtgoCompetitiveDeckGateStateV1,
+                    crossed_target: bool| {
+            let deck = deck_v1();
+            let target = target_v1(&deck);
+            let before = checked_gate_v1(
+                lifecycle_at_v1(10, before_sequence, 'a'),
+                &deck,
+                target.clone(),
+                MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection,
+            );
+            let mut after_target = target;
+            if crossed_target {
+                after_target.target_id = "crossed-modern-league-v1".to_owned();
+            }
+            let after = checked_gate_v1(
+                lifecycle_at_v1(11, after_sequence, 'f'),
+                &deck,
+                after_target,
+                after_state,
+            );
+            validate_visible_competitive_deck_selection_transition_v1(before, after)
+        };
+        assert!(make(
+            20,
+            20,
+            MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected,
+            false
+        )
+        .is_err());
+        assert!(make(
+            20,
+            21,
+            MtgoCompetitiveDeckGateStateV1::AwaitingCompatibleDeckSelection,
+            false
+        )
+        .is_err());
+        assert!(make(
+            20,
+            21,
+            MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected,
+            true
+        )
+        .is_err());
     }
 
     #[test]
