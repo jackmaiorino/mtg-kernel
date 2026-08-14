@@ -572,11 +572,24 @@ fn run_native_science_loop_with_opponents_v1(
     // genesis, train, or evaluate work begins. This is the first statement in
     // the shared implementation so every public entry point above
     // (`run_native_science_loop_v1`, `run_native_science_loop_with_population_v1`,
-    // `run_native_response_exploiter_training_v1`) inherits it.
-    if run.catalog_profile_v1() == NativeRunCatalogProfileV1::Historical {
-        return Err(loop_error_v1(
-            NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile,
-        ));
+    // `run_native_response_exploiter_training_v1`) inherits it. Exhaustive
+    // match (fix round, panel finding 3): a future third
+    // `NativeRunCatalogProfileV1` variant fails this match at compile time
+    // rather than silently falling through an `if`/`else`, forcing an
+    // explicit decision here instead of an accidental pass-through. The live
+    // build-identity authenticity check for CURRENT (fix round, panel
+    // finding 1) lives at the publish and resume boundaries only: this
+    // function calls into both transitively (bootstrap's own genesis publish
+    // and every training window's resume), so a forged CURRENT record is
+    // still caught before any mutation, just slightly later in the call
+    // chain than a redundant check here would catch it.
+    match run.catalog_profile_v1() {
+        NativeRunCatalogProfileV1::Historical => {
+            return Err(loop_error_v1(
+                NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile,
+            ));
+        }
+        NativeRunCatalogProfileV1::Current => {}
     }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
