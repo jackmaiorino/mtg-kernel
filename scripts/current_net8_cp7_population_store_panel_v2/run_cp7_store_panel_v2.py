@@ -357,11 +357,9 @@ def expected_header(checkpoint: dict[str, Any]) -> dict[str, Any]:
     # the live crate build stamps, exactly like `native_checkpoint_shadow_stdio_v1.rs`'s
     # two minting sites do automatically by importing that constant.
     #
-    # UNVERIFIED PENDING RECONCILIATION: collab binds the CURRENT features.py
-    # identity to `b316c0aa...`; this branch's own reconstruction of CODEX
-    # #235's historical stack-source encoder fix hashes to the value below
-    # instead (see the branch report). Update this literal together with
-    # `NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2` once reconciled.
+    # Codex confirmed this branch's reconstruction as the intended change
+    # and ratified this literal as the CURRENT-profile pin (collab CLAUDE
+    # #239).
     return {
         "record_type": "header", "schema_version": 2, "record_ordinal": 0,
         "export_contract": OUTCOME_CONTRACT,

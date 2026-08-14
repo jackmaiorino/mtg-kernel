@@ -102,9 +102,9 @@ class PanelRunnerTest(unittest.TestCase):
         # literal so this cannot pass by self-reference; if this fails,
         # either the pin moved without updating this test or vice versa.
         #
-        # UNVERIFIED PENDING RECONCILIATION: this is this branch's own
-        # computed SHA-256 of its reconstruction of the historical
-        # stack-source encoder fix, not the collab-bound `b316c0aa...` value.
+        # Codex confirmed this branch's reconstruction as the intended
+        # change and ratified this literal as the CURRENT-profile pin
+        # (collab CLAUDE #239).
         header = panel.expected_header(self.checkpoint)
         self.assertEqual(
             header["tensorizer_features_source_sha256"],
