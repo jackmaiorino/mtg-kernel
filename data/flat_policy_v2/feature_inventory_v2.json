@@ -2,8 +2,8 @@
   "schema": "flat-policy-feature-inventory-v2",
   "base_inventory": {
     "schema": "flat-policy-feature-inventory-v1",
-    "source_sha256": "b24304163ec916e8a871f5fea0e5b25505251b6f275ed734033f79f9e0d95416",
-    "canonical_sha256": "f46c9fbbad3654c0d5f0f5b8ea89134b392a79b148d002dc35ab5bc3156a1220"
+    "source_sha256": "f16a2f5d26a3329cf29c1cee701b74cafb567c397d1c433d01994da15a70ab6a",
+    "canonical_sha256": "39a4287423e00de9f7c0319431cf549a9f1b8a1bc75c11ad517019fbd0ba3054"
   },
   "typed_layout": {
     "domain": "mtg-kernel-flat-policy-typed-layout-v2\u0000",
@@ -20,7 +20,7 @@
   "unchanged_contracts": {
     "mapping_sha256": "bf0347ab442bd1c81cade03899b0c1af93d9bc26468b1e8139dbfc562fa4c4b6",
     "action_ref_role_crosswalk_sha256": "6bf7f82dc855da04a368fe53cba9411c5e8be07cfa8c450c2742a39bffbab958",
-    "authoritative_features_sha256": "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+    "authoritative_features_sha256": "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c",
     "feature_contract_digest": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
     "encoding_contract_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c"
   },
