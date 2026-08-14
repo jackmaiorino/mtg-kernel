@@ -67,6 +67,12 @@ pub enum NativeScienceLoopV1ErrorKind {
     UnsupportedPlatform,
     StoreBusy,
     InputInvalid,
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220): the supplied run
+    /// classified as `NativeRunCatalogProfileV1::Historical` at decode time.
+    /// Historical-profile records stay decodable and read-only-validatable
+    /// forever, but are rejected here, before any bootstrap, genesis, train,
+    /// or evaluate work begins.
+    HistoricalCatalogProfile,
     BootstrapFailed,
     GenesisFailed,
     TrainFailed,
@@ -80,6 +86,7 @@ impl NativeScienceLoopV1ErrorKind {
     pub const fn code(self) -> &'static str {
         match self {
             Self::UnsupportedPlatform => "native-training-store-v2-unsupported-platform",
+            Self::HistoricalCatalogProfile => "native-science-loop-historical-catalog-profile",
             Self::StoreBusy => "native-training-store-busy",
             Self::InputInvalid => "native-science-loop-input-invalid",
             Self::BootstrapFailed => "native-science-loop-bootstrap-failed",
@@ -558,6 +565,19 @@ fn run_native_science_loop_with_opponents_v1(
     evaluate_after_training: bool,
 ) -> Result<NativeScienceLoopCompletionV1> {
     use crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind;
+    use crate::native_training_store_run_v2::NativeRunCatalogProfileV1;
+
+    // Dual-Profile Catalog Successor (collab CLAUDE #220), science-loop
+    // boundary: reject a historical-profile run before any bootstrap,
+    // genesis, train, or evaluate work begins. This is the first statement in
+    // the shared implementation so every public entry point above
+    // (`run_native_science_loop_v1`, `run_native_science_loop_with_population_v1`,
+    // `run_native_response_exploiter_training_v1`) inherits it.
+    if run.catalog_profile_v1() == NativeRunCatalogProfileV1::Historical {
+        return Err(loop_error_v1(
+            NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile,
+        ));
+    }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
@@ -1073,7 +1093,8 @@ mod windows_science_loop_tests {
     use crate::native_training_store_checkpoint_v3::decode_genesis_checkpoint_manifest_v2_v3;
     use crate::native_training_store_resume_v2::test_execution_config_v2;
     use crate::native_training_store_run_v2::{
-        decode_train_run_v2, test_fixture_bytes_v2, test_fixture_bytes_with_schedule_v2,
+        decode_train_run_v2, test_fixture_bytes_historical_v1, test_fixture_bytes_v2,
+        test_fixture_bytes_with_schedule_v2,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1152,6 +1173,39 @@ mod windows_science_loop_tests {
                 "{directory} must remain empty"
             );
         }
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220), science-loop
+    /// boundary: a historical-profile run is rejected with the specific
+    /// `HistoricalCatalogProfile` kind before any bootstrap, genesis, train,
+    /// or evaluate work begins -- no store directory is even created under
+    /// `parent`.
+    #[test]
+    fn historical_catalog_profile_is_rejected_before_bootstrap() {
+        let run = decode_train_run_v2(&test_fixture_bytes_historical_v1()).unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let parent = TestParentV1::new("historical-catalog-profile");
+
+        let result = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile
+        );
+        assert!(
+            !parent.parent.join("store").exists(),
+            "the boundary must reject before bootstrap creates anything"
+        );
     }
 
     /// Learning smoke at the settled K=64 operating point: train a real
