@@ -35,6 +35,7 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub public_combat_continuation_ownership_path_present: bool,
     pub public_combat_continuation_accepts_external_scorer: bool,
     pub native_checkpoint_player_visible_only_duel_action_interface_present: bool,
+    pub native_checkpoint_player_visible_history_import_interface_present: bool,
     pub current_duel_scorer_kernel_bookkeeping_withheld: bool,
     pub public_model_owned_duel_action_path_present: bool,
     pub native_checkpoint_pregame_interface_present: bool,
@@ -49,6 +50,7 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub terminal_outcome_trained_pregame_head_present: bool,
     pub public_model_owned_pregame_action_path_present: bool,
     pub native_checkpoint_sideboard_interface_present: bool,
+    pub native_checkpoint_sequential_sideboard_interface_present: bool,
     pub public_player_visible_sideboard_payload_contract_present: bool,
     pub public_player_visible_sideboard_score_binding_present: bool,
     pub sideboard_completed_history_binding_present: bool,
@@ -91,6 +93,7 @@ impl MtgoCompetitiveModelDecisionReadinessV1 {
             && self.public_combat_continuation_ownership_path_present
             && !self.public_combat_continuation_accepts_external_scorer
             && self.native_checkpoint_player_visible_only_duel_action_interface_present
+            && self.native_checkpoint_player_visible_history_import_interface_present
             && self.current_duel_scorer_kernel_bookkeeping_withheld
             && self.public_model_owned_duel_action_path_present
             && self.native_checkpoint_pregame_interface_present
@@ -102,6 +105,7 @@ impl MtgoCompetitiveModelDecisionReadinessV1 {
             && self.terminal_outcome_trained_pregame_head_present
             && self.public_model_owned_pregame_action_path_present
             && self.native_checkpoint_sideboard_interface_present
+            && self.native_checkpoint_sequential_sideboard_interface_present
             && self.public_player_visible_sideboard_payload_contract_present
             && self.public_player_visible_sideboard_score_binding_present
             && self.sideboard_completed_history_binding_present
@@ -149,6 +153,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         public_combat_continuation_ownership_path_present: true,
         public_combat_continuation_accepts_external_scorer: false,
         native_checkpoint_player_visible_only_duel_action_interface_present: false,
+        native_checkpoint_player_visible_history_import_interface_present: false,
         current_duel_scorer_kernel_bookkeeping_withheld: false,
         public_model_owned_duel_action_path_present: false,
         native_checkpoint_pregame_interface_present: false,
@@ -163,6 +168,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         terminal_outcome_trained_pregame_head_present: false,
         public_model_owned_pregame_action_path_present: false,
         native_checkpoint_sideboard_interface_present: false,
+        native_checkpoint_sequential_sideboard_interface_present: false,
         public_player_visible_sideboard_payload_contract_present: true,
         public_player_visible_sideboard_score_binding_present: true,
         sideboard_completed_history_binding_present: true,
@@ -221,6 +227,7 @@ mod tests {
         assert!(report.public_combat_continuation_ownership_path_present);
         assert!(!report.public_combat_continuation_accepts_external_scorer);
         assert!(!report.native_checkpoint_player_visible_only_duel_action_interface_present);
+        assert!(!report.native_checkpoint_player_visible_history_import_interface_present);
         assert!(!report.current_duel_scorer_kernel_bookkeeping_withheld);
         assert!(!report.public_model_owned_duel_action_path_present);
         assert!(!report.native_checkpoint_pregame_interface_present);
@@ -234,6 +241,7 @@ mod tests {
         assert!(report.checked_untrusted_pregame_semantic_resolution_present);
         assert!(!report.public_model_owned_pregame_action_path_present);
         assert!(!report.native_checkpoint_sideboard_interface_present);
+        assert!(!report.native_checkpoint_sequential_sideboard_interface_present);
         assert!(report.public_player_visible_sideboard_payload_contract_present);
         assert!(report.public_player_visible_sideboard_score_binding_present);
         assert!(report.sideboard_completed_history_binding_present);

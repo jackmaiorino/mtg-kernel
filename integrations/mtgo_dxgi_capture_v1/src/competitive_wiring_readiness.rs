@@ -146,6 +146,9 @@ pub struct MtgoCompetitiveKnownWiringGapsV1 {
     pub competitive_pregame_input_actuator_present: bool,
     pub competitive_pregame_capture_and_session_bridge_present: bool,
     pub native_checkpoint_changed_sideboard_interface_present: bool,
+    pub native_checkpoint_sequential_sideboard_interface_present: bool,
+    pub terminal_outcome_trained_sideboard_head_present: bool,
+    pub native_checkpoint_unchanged_sideboard_action_present: bool,
     pub competitive_player_visible_sideboard_payload_contract_present: bool,
     pub competitive_player_visible_sideboard_score_binding_present: bool,
     pub competitive_sideboard_completed_history_binding_present: bool,
@@ -308,6 +311,9 @@ pub fn check_competitive_wiring_static_readiness_v1() -> MtgoCompetitiveWiringSt
             competitive_pregame_input_actuator_present: true,
             competitive_pregame_capture_and_session_bridge_present: true,
             native_checkpoint_changed_sideboard_interface_present: false,
+            native_checkpoint_sequential_sideboard_interface_present: false,
+            terminal_outcome_trained_sideboard_head_present: false,
+            native_checkpoint_unchanged_sideboard_action_present: false,
             competitive_player_visible_sideboard_payload_contract_present: true,
             competitive_player_visible_sideboard_score_binding_present: true,
             competitive_sideboard_completed_history_binding_present: true,
@@ -881,6 +887,21 @@ mod tests {
             !report
                 .known_wiring_gaps
                 .native_checkpoint_changed_sideboard_interface_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .native_checkpoint_sequential_sideboard_interface_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .terminal_outcome_trained_sideboard_head_present
+        );
+        assert!(
+            !report
+                .known_wiring_gaps
+                .native_checkpoint_unchanged_sideboard_action_present
         );
         assert!(
             report
