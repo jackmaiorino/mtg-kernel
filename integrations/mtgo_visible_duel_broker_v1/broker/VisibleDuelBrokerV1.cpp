@@ -58,7 +58,7 @@ constexpr char kExpectedBootstrapSha256[] =
 constexpr char kExpectedProducerSha256[] =
     "857478e466fc3cb7e4473d069ec46837f95abfa137b815062da818859b237e60";
 constexpr char kExpectedValidatorSha256[] =
-    "942508d83653f9fbc3555174102645e70a6a6d07f445debe1221504a7ba5cb96";
+    "4e0eea73bf592a0a80aa5e42a05f191640b4f1f46d917f1b1bca80a81815334c";
 #endif
 
 struct VisibleDuelBootstrapParametersV1 {

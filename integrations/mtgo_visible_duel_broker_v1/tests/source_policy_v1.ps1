@@ -40,7 +40,7 @@ foreach ($required in @(
     'f3fef1adfd5b1b6d25a5db577f9a1b184c8b91bb98f19a13428c669266c20dc8',
     '1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b',
     '857478e466fc3cb7e4473d069ec46837f95abfa137b815062da818859b237e60',
-    '942508d83653f9fbc3555174102645e70a6a6d07f445debe1221504a7ba5cb96',
+    '4e0eea73bf592a0a80aa5e42a05f191640b4f1f46d917f1b1bca80a81815334c',
     'WotC.MtGO.Client.Model.Reference.dll',
     'AuthenticodeValidV1',
     'ExactPinnedVersionV1',
@@ -56,8 +56,8 @@ foreach ($required in @(
 foreach ($requiredBuild in @(
     'mtgo_visible_duel_live_dispatch_broker_v1.exe',
     '/DMTGO_LIVE_PINNED_V1 /DMTGO_LIVE_DISPATCH_ADMITTED_V1',
-    'c0e02fec4355083d334e667151b9354558a48c78cae77630efbd6fe40e7dc547',
-    'b67b5c4e31f65c81e26c04578655015812d1da56359314d57e95ac538e400233',
+    '3906163c2ddd56030c629df7ca6474de03fec337f9150f5e97e75663d0198a07',
+    '9e4687889cb24da07f92b97298ec5f266115e69e4494d002337435ad460a93b5',
     'native live observe-only broker differs from its release pin'
 )) {
     if (-not $buildScript.Contains($requiredBuild)) {

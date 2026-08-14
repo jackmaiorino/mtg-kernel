@@ -2047,6 +2047,7 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         "post_entry_operator_checked_untrusted_native_sideboard_scoring_present: true",
         "post_entry_operator_model_owned_sideboard_resume_present: false",
         "checkpoint_bound_model_capability_commitment_present: true",
+        "direct_source_background_stable_visible_equivalent_qualification_present: true",
         "end_to_end_operator_loop_present: false",
         "native_checkpoint_duel_action_interface_present: true",
         "player_visible_duel_decision_input_contract_present: true",
@@ -2165,6 +2166,76 @@ fn competitive_readiness_preflight_is_static_non_actuating_and_names_both_modes(
         assert!(
             model_source.contains(required) || model_binary.contains(required),
             "model-decision readiness preflight is missing: {required}"
+        );
+    }
+}
+
+#[test]
+fn background_direct_source_is_exact_visible_equivalent_and_non_actuating() {
+    let runtime = include_str!("../src/probe/direct_visible_source_runtime.rs");
+    let binary = include_str!("../src/bin/qualify_mtgo_direct_visible_background_source_v1.rs");
+    let public_api = include_str!("../src/lib.rs");
+
+    for required in [
+        "qualify_stable_background_direct_visible_source_v1",
+        "sole_pinned_mtgo_process_incarnation_v1",
+        "require_same_private_process_incarnation_v1(&before, &between)",
+        "require_same_private_process_incarnation_v1(&before, &after)",
+        "validate_stable_background_direct_visible_results_v1(&first.0, &second.0)",
+        "if first != second || first_result != second_result",
+        "parse_and_validate_visible_duel_producer_result_v1(first)",
+        "same_process_incarnation_verified_privately_and_discarded",
+        "two_exact_visible_equivalent_results_no_pixels_no_model_no_input",
+        "pub struct OpaqueMtgoStableBackgroundDirectVisibleSourceV1",
+        "pub fn requires_foreground_window_v1(&self) -> bool",
+        "pub fn requires_pixel_capture_v1(&self) -> bool",
+        "pub fn safe_for_model_scoring_v1(&self) -> bool",
+        "pub fn safe_for_input_v1(&self) -> bool",
+    ] {
+        assert!(
+            runtime.contains(required),
+            "background direct source is missing boundary: {required}"
+        );
+    }
+    for required in [
+        "mtgo-direct-visible-background-qualification-summary/v1",
+        "foreground_window_required",
+        "pixel_capture_required",
+        "sanitized_visible_projection_stable",
+        "safe_for_live_semantic_evidence",
+        "safe_for_model_scoring",
+        "safe_for_input",
+        "permits_event_entry",
+        "permits_spending",
+    ] {
+        assert!(
+            binary.contains(required),
+            "background qualification summary is missing: {required}"
+        );
+    }
+    for required in [
+        "qualify_stable_background_direct_visible_source_v1",
+        "OpaqueMtgoStableBackgroundDirectVisibleSourceV1",
+        "MtgoStableBackgroundDirectVisibleSourceCommitmentsV1",
+    ] {
+        assert!(
+            public_api.contains(required),
+            "background qualification API is missing: {required}"
+        );
+    }
+    for forbidden in [
+        "pub struct PrivateMtgoProcessIncarnationV1",
+        "pub fn process_id",
+        "process_incarnation_commitment_sha256",
+        "raw_client_object",
+        "visible_decision:",
+        "exact_result_bytes:",
+        "SendInput",
+        "SetCursorPos",
+    ] {
+        assert!(
+            !binary.contains(forbidden) && !public_api.contains(forbidden),
+            "background qualification exposes a forbidden surface: {forbidden}"
         );
     }
 }

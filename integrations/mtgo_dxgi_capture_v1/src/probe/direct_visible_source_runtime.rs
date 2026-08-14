@@ -50,22 +50,33 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use windows::core::PWSTR;
+use windows::Win32::Foundation::{CloseHandle, ERROR_NO_MORE_FILES, FILETIME, HANDLE};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+use windows::Win32::System::Threading::{
+    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
 const LIVE_BROKER_SHA256_V1: &str =
-    "c0e02fec4355083d334e667151b9354558a48c78cae77630efbd6fe40e7dc547";
+    "3906163c2ddd56030c629df7ca6474de03fec337f9150f5e97e75663d0198a07";
 const LIVE_DISPATCH_BROKER_SHA256_V1: &str =
-    "b67b5c4e31f65c81e26c04578655015812d1da56359314d57e95ac538e400233";
+    "9e4687889cb24da07f92b97298ec5f266115e69e4494d002337435ad460a93b5";
 const LIVE_BOOTSTRAP_SHA256_V1: &str =
     "1d764382d56fe27aa845acf10b92ee8b9effd79d161baeaace1294a2d01c8c9b";
 const LIVE_PRODUCER_SHA256_V1: &str =
     "857478e466fc3cb7e4473d069ec46837f95abfa137b815062da818859b237e60";
 const LIVE_VALIDATOR_SHA256_V1: &str =
-    "942508d83653f9fbc3555174102645e70a6a6d07f445debe1221504a7ba5cb96";
+    "4e0eea73bf592a0a80aa5e42a05f191640b4f1f46d917f1b1bca80a81815334c";
 const DIRECT_VISIBLE_SOURCE_RUNTIME_DOMAIN_V1: &[u8] = b"mtgo-direct-visible-source-runtime-v1";
 const DIRECT_VISIBLE_SOURCE_OBSERVATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-observation-v1";
 const DIRECT_VISIBLE_SOURCE_QUALIFICATION_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-no-stakes-qualification-v1";
+const DIRECT_VISIBLE_BACKGROUND_STABILITY_DOMAIN_V1: &[u8] =
+    b"mtgo-direct-visible-background-stability-v1";
 const DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-source-scored-refresh-v1";
 const DIRECT_VISIBLE_SOURCE_COMPETITIVE_BEFORE_DISPATCH_DOMAIN_V1: &[u8] =
@@ -1682,6 +1693,108 @@ pub struct OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
     commitments: MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1,
 }
 
+/// Public commitments for one release-pinned producer result that was observed
+/// identically across two invocations of the same MTGO process incarnation.
+/// Process identifiers and executable paths stay private. No pixel capture is
+/// required because the producer is limited to the reviewed rendered
+/// presentation surface and the strict outward visible-equivalent schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MtgoStableBackgroundDirectVisibleSourceCommitmentsV1 {
+    pub runtime_identity_commitment_sha256: String,
+    pub broker_binary_sha256: String,
+    pub producer_binary_sha256: String,
+    pub sanitized_result_sha256: String,
+    pub stability_commitment_sha256: String,
+}
+
+/// Move-only background-safe qualification of the direct visible source.
+///
+/// The exact sanitized result is retained privately and has no extraction,
+/// model-scoring, dispatch, event-entry, or spending conversion. This type
+/// proves only that two consecutive observe-only producer invocations returned
+/// the same strict visible-equivalent result from one pinned process
+/// incarnation while the release artifacts remained unchanged.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoStableBackgroundDirectVisibleSourceV1;
+/// fn require_clone<T: Clone>() {}
+/// require_clone::<OpaqueMtgoStableBackgroundDirectVisibleSourceV1>();
+/// ```
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoStableBackgroundDirectVisibleSourceV1;
+/// fn cannot_extract_or_act(value: OpaqueMtgoStableBackgroundDirectVisibleSourceV1) {
+///     let _ = value.visible_decision();
+///     let _ = value.process_id();
+///     value.dispatch();
+/// }
+/// ```
+pub struct OpaqueMtgoStableBackgroundDirectVisibleSourceV1 {
+    _exact_result_bytes: ZeroingVecV1,
+    result: MtgoVisibleDuelViewModelBrokerResultV1,
+    commitments: MtgoStableBackgroundDirectVisibleSourceCommitmentsV1,
+}
+
+impl OpaqueMtgoStableBackgroundDirectVisibleSourceV1 {
+    pub fn commitments_v1(&self) -> MtgoStableBackgroundDirectVisibleSourceCommitmentsV1 {
+        self.commitments.clone()
+    }
+
+    pub fn abstention_reason_v1(&self) -> Option<MtgoVisibleDuelViewModelBrokerAbstentionReasonV1> {
+        match self.result {
+            MtgoVisibleDuelViewModelBrokerResultV1::Abstained { reason } => Some(reason),
+            MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleAttackerSelection { .. }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerSelection {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleSingleAttackerBlockerExecutionState {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleMultiAttackerBlockerSelection {
+                ..
+            }
+            | MtgoVisibleDuelViewModelBrokerResultV1::VisibleBlockerTargetSelection { .. } => None,
+        }
+    }
+
+    pub fn producer_execution_attested_v1(&self) -> bool {
+        true
+    }
+
+    pub fn sanitized_visible_projection_stable_v1(&self) -> bool {
+        true
+    }
+
+    pub fn requires_foreground_window_v1(&self) -> bool {
+        false
+    }
+
+    pub fn requires_pixel_capture_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_live_semantic_evidence_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_model_scoring_v1(&self) -> bool {
+        false
+    }
+
+    pub fn safe_for_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
+        false
+    }
+}
+
 impl OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
     pub fn commitments_v1(&self) -> MtgoQualifiedDirectVisibleSourceObservationCommitmentsV1 {
         self.commitments.clone()
@@ -2392,6 +2505,212 @@ pub fn qualify_attested_direct_visible_source_current_duel_v1(
             qualification_commitment_sha256,
         },
     })
+}
+
+/// Runs the release-pinned observe-only producer twice against the sole MTGO
+/// process without capturing pixels or requiring the client to be foreground.
+///
+/// This route reflects the permission boundary: transport may be direct, but
+/// the outward value must still be exactly the strict rendered-UI-equivalent
+/// schema. The broker independently verifies the signed client and all pinned
+/// deployment files around each invocation. Rust additionally requires one
+/// unchanged process incarnation, unchanged local runtime artifacts, and
+/// byte-identical strictly parsed results across both invocations.
+///
+/// The returned value is qualification-only. It cannot reach a model or input
+/// until a separate reviewed visible-equivalence ratification promotes this
+/// exact transport.
+pub fn qualify_stable_background_direct_visible_source_v1(
+    runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    broker_timeout_ms: u32,
+) -> Result<OpaqueMtgoStableBackgroundDirectVisibleSourceV1, String> {
+    if !(100..=30_000).contains(&broker_timeout_ms) {
+        return Err(
+            "background direct-source broker timeout is outside the supported range".to_owned(),
+        );
+    }
+    verify_runtime_identity_now_v1(runtime)?;
+    let before = sole_pinned_mtgo_process_incarnation_v1()?;
+    let first = invoke_observe_only_broker_v1(
+        runtime,
+        before.process_id,
+        Duration::from_millis(u64::from(broker_timeout_ms)),
+    )?;
+    verify_runtime_identity_now_v1(runtime)?;
+    let between = sole_pinned_mtgo_process_incarnation_v1()?;
+    require_same_private_process_incarnation_v1(&before, &between)?;
+    let second = invoke_observe_only_broker_v1(
+        runtime,
+        between.process_id,
+        Duration::from_millis(u64::from(broker_timeout_ms)),
+    )?;
+    verify_runtime_identity_now_v1(runtime)?;
+    let after = sole_pinned_mtgo_process_incarnation_v1()?;
+    require_same_private_process_incarnation_v1(&before, &after)?;
+
+    let result = validate_stable_background_direct_visible_results_v1(&first.0, &second.0)?;
+    let sanitized_result_sha256 = sha256_hex_v1(&first.0);
+    let stability_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_BACKGROUND_STABILITY_DOMAIN_V1,
+        &[
+            runtime
+                .commitments
+                .runtime_identity_commitment_sha256
+                .as_bytes(),
+            sanitized_result_sha256.as_bytes(),
+            sanitized_result_sha256.as_bytes(),
+            b"same_process_incarnation_verified_privately_and_discarded",
+            b"two_exact_visible_equivalent_results_no_pixels_no_model_no_input",
+        ],
+    );
+    Ok(OpaqueMtgoStableBackgroundDirectVisibleSourceV1 {
+        _exact_result_bytes: first,
+        result,
+        commitments: MtgoStableBackgroundDirectVisibleSourceCommitmentsV1 {
+            runtime_identity_commitment_sha256: runtime
+                .commitments
+                .runtime_identity_commitment_sha256
+                .clone(),
+            broker_binary_sha256: runtime.commitments.broker_binary_sha256.clone(),
+            producer_binary_sha256: runtime.commitments.producer_binary_sha256.clone(),
+            sanitized_result_sha256,
+            stability_commitment_sha256,
+        },
+    })
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct PrivateMtgoProcessIncarnationV1 {
+    process_id: u32,
+    process_start_filetime_100ns: u64,
+    executable_sha256: String,
+}
+
+struct PrivateProcessHandleV1(HANDLE);
+
+impl Drop for PrivateProcessHandleV1 {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
+fn sole_pinned_mtgo_process_incarnation_v1() -> Result<PrivateMtgoProcessIncarnationV1, String> {
+    let snapshot = PrivateProcessHandleV1(
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
+            .map_err(|error| format!("snapshot MTGO processes: {error}"))?,
+    );
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    unsafe { Process32FirstW(snapshot.0, &mut entry) }
+        .map_err(|error| format!("read first process entry: {error}"))?;
+    let mut process_ids = Vec::new();
+    loop {
+        if utf16_nul_v1(&entry.szExeFile).eq_ignore_ascii_case("MTGO.exe") {
+            process_ids.push(entry.th32ProcessID);
+        }
+        match unsafe { Process32NextW(snapshot.0, &mut entry) } {
+            Ok(()) => {}
+            Err(error) if error.code() == ERROR_NO_MORE_FILES.to_hresult() => break,
+            Err(error) => return Err(format!("read next process entry: {error}")),
+        }
+    }
+    if process_ids.len() != 1 || process_ids[0] == 0 {
+        return Err("background direct source requires exactly one MTGO process".to_owned());
+    }
+    inspect_pinned_mtgo_process_incarnation_v1(process_ids[0])
+}
+
+fn inspect_pinned_mtgo_process_incarnation_v1(
+    process_id: u32,
+) -> Result<PrivateMtgoProcessIncarnationV1, String> {
+    let process = PrivateProcessHandleV1(
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
+            .map_err(|error| format!("open MTGO process identity: {error}"))?,
+    );
+    let mut path_utf16 = vec![0u16; 32_768];
+    let mut path_length = path_utf16.len() as u32;
+    unsafe {
+        QueryFullProcessImageNameW(
+            process.0,
+            PROCESS_NAME_WIN32,
+            PWSTR(path_utf16.as_mut_ptr()),
+            &mut path_length,
+        )
+    }
+    .map_err(|error| format!("read MTGO process image: {error}"))?;
+    path_utf16.truncate(path_length as usize);
+    let process_image = PathBuf::from(String::from_utf16(&path_utf16).map_err(|_| {
+        "background direct-source MTGO process image is not valid UTF-16".to_owned()
+    })?);
+    if process_image
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| !value.eq_ignore_ascii_case("MTGO.exe"))
+        .unwrap_or(true)
+    {
+        return Err("background direct-source process image is not MTGO.exe".to_owned());
+    }
+    let executable_sha256 = hash_bounded_file_v1(&process_image, "MTGO process image")?;
+    if executable_sha256 != PINNED_MTGO_EXECUTABLE_SHA256_V1 {
+        return Err(
+            "background direct-source MTGO executable differs from the release pin".to_owned(),
+        );
+    }
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    unsafe { GetProcessTimes(process.0, &mut creation, &mut exit, &mut kernel, &mut user) }
+        .map_err(|error| format!("read MTGO process start identity: {error}"))?;
+    let process_start_filetime_100ns =
+        ((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64;
+    if process_start_filetime_100ns == 0 {
+        return Err("background direct-source MTGO process start identity is zero".to_owned());
+    }
+    Ok(PrivateMtgoProcessIncarnationV1 {
+        process_id,
+        process_start_filetime_100ns,
+        executable_sha256,
+    })
+}
+
+fn require_same_private_process_incarnation_v1(
+    expected: &PrivateMtgoProcessIncarnationV1,
+    observed: &PrivateMtgoProcessIncarnationV1,
+) -> Result<(), String> {
+    if expected != observed {
+        return Err("background direct-source MTGO process incarnation changed".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_stable_background_direct_visible_results_v1(
+    first: &[u8],
+    second: &[u8],
+) -> Result<MtgoVisibleDuelViewModelBrokerResultV1, String> {
+    let first_result = parse_and_validate_visible_duel_producer_result_v1(first)
+        .map_err(|_| "first background direct-source result is not strictly visible-only")?;
+    let second_result = parse_and_validate_visible_duel_producer_result_v1(second)
+        .map_err(|_| "second background direct-source result is not strictly visible-only")?;
+    if first != second || first_result != second_result {
+        return Err(
+            "background direct-source rendered presentation changed between observations"
+                .to_owned(),
+        );
+    }
+    Ok(first_result)
+}
+
+fn utf16_nul_v1(value: &[u16]) -> String {
+    let length = value
+        .iter()
+        .position(|code_unit| *code_unit == 0)
+        .unwrap_or(value.len());
+    String::from_utf16_lossy(&value[..length])
 }
 
 fn verify_exact_artifact_v1(
@@ -3136,6 +3455,58 @@ mod tests {
                 &[b"initial", b"refreshed", b"selection", b"changed"],
             )
         );
+        let background = commitment_v1(
+            DIRECT_VISIBLE_BACKGROUND_STABILITY_DOMAIN_V1,
+            &[b"runtime", b"process", b"first", b"second"],
+        );
+        assert_eq!(background.len(), 64);
+        assert_ne!(background, qualification);
+        assert_ne!(
+            background,
+            commitment_v1(
+                DIRECT_VISIBLE_BACKGROUND_STABILITY_DOMAIN_V1,
+                &[b"runtime", b"process", b"first", b"changed"],
+            )
+        );
+    }
+
+    #[test]
+    fn background_direct_source_requires_two_exact_strict_visible_results() {
+        let first = serde_json::to_vec(&MtgoVisibleDuelViewModelBrokerResultV1::Abstained {
+            reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1::ProjectionIncomplete,
+        })
+        .unwrap();
+        let parsed = validate_stable_background_direct_visible_results_v1(&first, &first).unwrap();
+        assert!(matches!(
+            parsed,
+            MtgoVisibleDuelViewModelBrokerResultV1::Abstained {
+                reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1::ProjectionIncomplete
+            }
+        ));
+
+        let changed = serde_json::to_vec(&MtgoVisibleDuelViewModelBrokerResultV1::Abstained {
+            reason: MtgoVisibleDuelViewModelBrokerAbstentionReasonV1::DuelSurfaceUnavailable,
+        })
+        .unwrap();
+        assert!(validate_stable_background_direct_visible_results_v1(&first, &changed).is_err());
+
+        let mut unknown = first.clone();
+        unknown.pop();
+        unknown.extend_from_slice(br#",\"hidden_client_id\":7}"#);
+        assert!(validate_stable_background_direct_visible_results_v1(&unknown, &unknown).is_err());
+    }
+
+    #[test]
+    fn background_process_join_rejects_any_incarnation_change() {
+        let original = PrivateMtgoProcessIncarnationV1 {
+            process_id: 17,
+            process_start_filetime_100ns: 23,
+            executable_sha256: "a".repeat(64),
+        };
+        require_same_private_process_incarnation_v1(&original, &original).unwrap();
+        let mut changed = original.clone();
+        changed.process_start_filetime_100ns += 1;
+        assert!(require_same_private_process_incarnation_v1(&original, &changed).is_err());
     }
 
     #[test]
