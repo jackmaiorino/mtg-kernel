@@ -109,6 +109,11 @@ exact retained completed-game player-visible history and then runs every local
 decision through that same scorer instance while retaining the event request
 and final selection together. It therefore closes the adapter-owned history
 handoff without exposing transport or hidden client state.
+`score_checked_untrusted_competitive_operator_native_sideboard_deliberation_v1`
+also carries every post-entry operator resource and the next-game Game Log
+baseline through that flow. Because its scorer is caller supplied, its result
+deliberately exposes no target or operator recovery. A separate concrete
+loaded-checkpoint path remains required for production.
 
 The older whole-target `MtgoCompetitiveNativeSideboardScoreResponseV1` remains
 an offline compatibility fixture. It cannot satisfy native model provenance or

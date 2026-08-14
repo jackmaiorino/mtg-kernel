@@ -59,6 +59,11 @@ use crate::competitive_auxiliary_model_scoring::{
     OpaqueMtgoScoredCompetitiveNativeSideboardRequestV1,
 };
 use crate::competitive_model_decision_readiness::check_competitive_model_decision_readiness_v1;
+use crate::competitive_native_sideboard_deliberation::{
+    score_competitive_native_sideboard_request_deliberation_v1,
+    MtgoCompetitiveNativeSideboardDeliberationScorerV1,
+    OpaqueMtgoScoredCompetitiveNativeSideboardDeliberationRequestV1,
+};
 use crate::competitive_operator_bootstrap::{
     MtgoCompetitiveOperatorResourceCommitmentsV1,
     MtgoCompetitiveOperatorResourcesDuringSideboardV1, MtgoCompetitiveOperatorResourcesPartsV1,
@@ -2053,6 +2058,27 @@ pub struct OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
     prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
 }
 
+/// Checked-untrusted proof that the exact post-entry operator request imported
+/// its complete visible history and completed one bounded sequential
+/// sideboard deliberation. The generic scorer cannot recover the retained
+/// event owner or final target and cannot send input.
+///
+/// ```compile_fail
+/// use mtgo_dxgi_capture_v1::OpaqueMtgoSequentiallyScoredCompetitiveOperatorNativeSideboardV1;
+/// fn cannot_resume(value: OpaqueMtgoSequentiallyScoredCompetitiveOperatorNativeSideboardV1) {
+///     let _ = value.into_operator();
+///     let _ = value.target_configuration_v1();
+///     let _ = value.submit_sideboard();
+/// }
+/// ```
+pub struct OpaqueMtgoSequentiallyScoredCompetitiveOperatorNativeSideboardV1 {
+    _resources: MtgoCompetitiveOperatorResourcesDuringSideboardV1,
+    _resource_commitments: MtgoCompetitiveOperatorResourceCommitmentsV1,
+    scored_request: OpaqueMtgoScoredCompetitiveNativeSideboardDeliberationRequestV1,
+    _next_game_log_baseline: OpaqueMtgoCompetitiveVisibleGameLogBaselineV1,
+    _prior_operator: MtgoCompetitivePostEntryOperatorCommitmentsV1,
+}
+
 /// Move-only proof that the full post-entry ownership chain survived one
 /// checked-untrusted sideboard score and exact manifest-backed semantic
 /// resolution. Adapter-local card IDs remain private and no drag, Submit Deck,
@@ -2259,6 +2285,52 @@ impl OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1 {
     }
 
     pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+}
+
+impl OpaqueMtgoSequentiallyScoredCompetitiveOperatorNativeSideboardV1 {
+    pub fn model_input_commitment_sha256_v1(&self) -> &str {
+        self.scored_request.model_input_commitment_sha256_v1()
+    }
+
+    pub fn deployment_commitment_sha256_v1(&self) -> &str {
+        self.scored_request.deployment_commitment_sha256_v1()
+    }
+
+    pub fn model_selection_commitment_sha256_v1(&self) -> &str {
+        self.scored_request.model_selection_commitment_sha256_v1()
+    }
+
+    pub fn trace_commitment_sha256_v1(&self) -> &str {
+        self.scored_request.trace_commitment_sha256_v1()
+    }
+
+    pub fn decisions_consumed_v1(&self) -> u8 {
+        self.scored_request.decisions_consumed_v1()
+    }
+
+    pub fn no_changes_selected_v1(&self) -> bool {
+        self.scored_request.no_changes_selected_v1()
+    }
+
+    pub fn safe_for_live_input_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_session_recovery_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_sideboard_submission_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_event_entry_v1(&self) -> bool {
+        false
+    }
+
+    pub fn permits_spending_v1(&self) -> bool {
         false
     }
 }
@@ -3530,6 +3602,59 @@ pub fn score_checked_untrusted_competitive_operator_native_sideboard_v1<
         next_game_log_baseline,
         prior_operator,
     })
+}
+
+/// Runs the exact post-entry sideboard owner through the bounded sequential
+/// scorer contract. The same scorer imports the retained completed-game
+/// player-visible history and handles every local decision. Because the scorer
+/// is caller supplied, the result remains checked-untrusted and has no target
+/// or operator recovery path.
+pub fn score_checked_untrusted_competitive_operator_native_sideboard_deliberation_v1<S>(
+    value: OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoSequentiallyScoredCompetitiveOperatorNativeSideboardV1, String>
+where
+    S: MtgoCompetitiveNativeSideboardDeliberationScorerV1
+        + MtgoCompetitiveExternalCompletedMatchHistoryConsumerV1<Output = ()>,
+{
+    validate_operator_native_sideboard_scoring_v1(&OperatorNativeSideboardScoringIdentityV1 {
+        resource_bundle_commitment_sha256: value
+            .resource_commitments
+            .resource_bundle_commitment_sha256
+            .clone(),
+        prior_resource_bundle_commitment_sha256: value
+            .prior_operator
+            .resource_bundle_commitment_sha256
+            .clone(),
+        request_deployment_commitment_sha256: value.deployment_commitment_sha256_v1().to_owned(),
+        loaded_checkpoint_deployment_commitment_sha256: value
+            .resources
+            .checkpoint_deployment
+            .deployment_commitment_sha256()
+            .to_owned(),
+    })?;
+    let deployment_commitment_sha256 = value.deployment_commitment_sha256_v1().to_owned();
+    let OpaqueMtgoCompetitiveOperatorNativeSideboardRequestV1 {
+        resources,
+        resource_commitments,
+        request,
+        next_game_log_baseline,
+        prior_operator,
+    } = value;
+    let scored_request = score_competitive_native_sideboard_request_deliberation_v1(
+        request,
+        &deployment_commitment_sha256,
+        scorer,
+    )?;
+    Ok(
+        OpaqueMtgoSequentiallyScoredCompetitiveOperatorNativeSideboardV1 {
+            _resources: resources,
+            _resource_commitments: resource_commitments,
+            scored_request,
+            _next_game_log_baseline: next_game_log_baseline,
+            _prior_operator: prior_operator,
+        },
+    )
 }
 
 /// Carries every retained post-entry resource through exact manifest-backed

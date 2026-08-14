@@ -362,6 +362,7 @@ pub use competitive_operator_loop::{
     return_confirmed_competitive_post_entry_operator_player_visible_gameplay_v1,
     score_checked_untrusted_competitive_operator_attended_native_pregame_v1,
     score_checked_untrusted_competitive_operator_native_pregame_v1,
+    score_checked_untrusted_competitive_operator_native_sideboard_deliberation_v1,
     score_checked_untrusted_competitive_operator_native_sideboard_v1,
     select_competitive_post_entry_operator_player_visible_gameplay_action_v1,
     select_next_competitive_post_entry_operator_player_visible_gameplay_action_v1,
@@ -410,6 +411,7 @@ pub use competitive_operator_loop::{
     OpaqueMtgoScoredCompetitiveOperatorAttendedNativePregameV1,
     OpaqueMtgoScoredCompetitiveOperatorNativePregameV1,
     OpaqueMtgoScoredCompetitiveOperatorNativeSideboardV1,
+    OpaqueMtgoSequentiallyScoredCompetitiveOperatorNativeSideboardV1,
 };
 #[cfg(target_os = "windows")]
 pub use competitive_pre_entry_operator::{

@@ -56,6 +56,7 @@ pub struct MtgoCompetitiveModelDecisionReadinessV1 {
     pub checked_untrusted_sideboard_manifest_resolution_present: bool,
     pub public_player_visible_sideboard_sequential_deliberation_contract_present: bool,
     pub completed_visible_history_to_sequential_sideboard_scorer_bridge_present: bool,
+    pub post_entry_operator_sequential_sideboard_owner_present: bool,
     pub whole_target_sideboard_response_satisfies_native_model_provenance: bool,
     pub terminal_outcome_trained_sideboard_head_present: bool,
     pub public_model_owned_changed_sideboard_path_present: bool,
@@ -106,6 +107,7 @@ impl MtgoCompetitiveModelDecisionReadinessV1 {
             && self.sideboard_completed_history_binding_present
             && self.public_player_visible_sideboard_sequential_deliberation_contract_present
             && self.completed_visible_history_to_sequential_sideboard_scorer_bridge_present
+            && self.post_entry_operator_sequential_sideboard_owner_present
             && !self.whole_target_sideboard_response_satisfies_native_model_provenance
             && self.terminal_outcome_trained_sideboard_head_present
             && self.public_model_owned_changed_sideboard_path_present
@@ -168,6 +170,7 @@ pub fn check_competitive_model_decision_readiness_v1() -> MtgoCompetitiveModelDe
         checked_untrusted_sideboard_manifest_resolution_present: true,
         public_player_visible_sideboard_sequential_deliberation_contract_present: true,
         completed_visible_history_to_sequential_sideboard_scorer_bridge_present: true,
+        post_entry_operator_sequential_sideboard_owner_present: true,
         whole_target_sideboard_response_satisfies_native_model_provenance: false,
         terminal_outcome_trained_sideboard_head_present: false,
         public_model_owned_changed_sideboard_path_present: false,
@@ -238,6 +241,7 @@ mod tests {
         assert!(report.checked_untrusted_sideboard_manifest_resolution_present);
         assert!(report.public_player_visible_sideboard_sequential_deliberation_contract_present);
         assert!(report.completed_visible_history_to_sequential_sideboard_scorer_bridge_present);
+        assert!(report.post_entry_operator_sequential_sideboard_owner_present);
         assert!(!report.whole_target_sideboard_response_satisfies_native_model_provenance);
         assert!(!report.public_model_owned_changed_sideboard_path_present);
         assert!(!report.public_model_owned_unchanged_sideboard_path_present);
