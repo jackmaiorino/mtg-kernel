@@ -157,16 +157,56 @@ sources only. The generic competitive pregame response contract already
 represents `required_bottom_count = 1` and `selected_bottom_count = 0`, but the
 reviewed capture profile and evaluated runtime for that state remain missing.
 
+## Bottom-one Select and Done calibration trace
+
+After a fresh signed-in identity check, the same no-cost Solitaire game remained
+paused at the zero-selected, bottom-one prompt. The installed client reported
+product and file version `3.4.158.4691`; the pinned executable hash and signer
+identity were unchanged. An exact visible-text query found one bottom-one
+prompt, one Cancel control, and zero Done controls. Its sanitized report
+commitment is
+`9b7c7125ef1687adb037dffeb64c82b2b70b3e2a8e42d94c99f5ba19f57cf911`.
+The current composed-desktop calibration frame has SHA-256
+`b18cb0c4c431ab208e83c0ee005b2e9615ad9f940041093a9d8857bef3a9d9c4`.
+
+The exact accessibility names used for ordinary hand-card play did not match
+the bottoming cards, so no accessibility target was guessed. The full visible
+frame was reviewed, and one supervised click selected the visibly leftmost
+Island at client point `(380, 785)`. The newer frame showed six remaining
+cards, the unchanged bottom-one prompt, and both Done and Cancel. The exact
+visible-text report commitment is
+`5af61bee461d2471b1eb6264dfb7b0078994ec490ae49a816780ab28fc81b8a9`,
+and the selected-state frame SHA-256 is
+`aee789bea0cddc946eae12b6922d2140a7e240096855204e7a4473a8e448d192`.
+
+One supervised click then selected the visibly rendered Done control at client
+point `(55, 170)`. On the newer state, the bottom-one prompt, Done, and Cancel
+were all absent, and one exact visible Combat control was present. The rendered
+Game Log also stated that the player put a card on the bottom of the library
+and began the game with six cards in hand. The final exact visible-text report
+commitment is
+`fcc0c3b48d017fd9bbe9d574e84f48e50de520d391334a1facc42a72b2c9ca0e`,
+and the first-main frame SHA-256 is
+`ff64f1fe4ae041c14f4b5b68296d504416c8aeed583e88f3c511e68777a21845`.
+
+All three images remain local pending-review calibration previews and are
+explicitly unsafe for semantic evidence, OCR, policy scoring, or input. This
+trace confirms the player-visible Select, Done, and action-specific
+postcondition shapes for bottom-one practice wiring. It does not ratify the
+production capture backend, choose a competitive action, or grant event-entry
+authority.
+
 ## Nonclaims
 
 This check proves the current signed client, exact rebuilt observer chain,
 one-player navigation, one visible land-play postcondition, one complete
 one-player turn boundary, one reviewed positive `Combat` catalog case, live
-positive `Keep` and `Mulligan` accessibility matches, and fail-closed
-two-player projection requirement. The relogin repeat additionally proves that
-the pinned observer and validator remain reproducible and return the same
-abstention in a fresh one-player Custom Match. It does not qualify the
-accessibility catalog, a data-bearing two-player observation, model scoring,
-ordinary or combat dispatch, a competitive pregame classifier, match-history
-import, event entry, or spending. All production source and dispatch
-ratification roots remain empty.
+positive `Keep` and `Mulligan` accessibility matches, one complete visible
+bottom-one Select and Done transition, and fail-closed two-player projection
+requirement. The relogin repeat additionally proves that the pinned observer
+and validator remain reproducible and return the same abstention in a fresh
+one-player Custom Match. It does not qualify the accessibility catalog, a
+data-bearing two-player observation, model scoring, ordinary or combat
+dispatch, a competitive pregame classifier, match-history import, event entry,
+or spending. All production source and dispatch ratification roots remain
+empty.
