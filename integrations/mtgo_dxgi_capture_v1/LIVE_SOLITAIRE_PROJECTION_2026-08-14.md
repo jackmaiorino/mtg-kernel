@@ -196,6 +196,23 @@ postcondition shapes for bottom-one practice wiring. It does not ratify the
 production capture backend, choose a competitive action, or grant event-entry
 authority.
 
+The legacy process-epoch Game Log probe then rejected because this long-lived
+MTGO process had created three persisted logs rather than its required sole
+candidate. A diagnostic selected only the uniquely most recently modified
+process-epoch log and passed it to the path- and text-withholding semantic
+summary command. The first run identified one exact grammar defect:
+`visible_game_log_count`. The rendered bottoming record uses `a card`, while
+the parser admitted only number words such as `one card`.
+
+The grammar now accepts `a` as one only in the singular bottomed-opening-hand
+record; `a cards` still rejects. On the same private source, the sanitized
+summary then reported five classified and zero unsupported or unclassified
+records: one joined-game, one mulligan, one bottomed-opening-hand, one
+turn-started, and one draw event. It emitted no raw text, aliases, source IDs,
+card names, or paths, and remained unsafe for model scoring and input. The
+unique-latest selection was a calibration diagnostic, not a replacement for
+the competitive Pairing Ready baseline and match-scoped Game Log lease.
+
 ## Nonclaims
 
 This check proves the current signed client, exact rebuilt observer chain,

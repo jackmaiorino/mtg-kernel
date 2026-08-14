@@ -18,6 +18,7 @@ struct VisibleGameLogSemanticSummaryV1 {
     unsupported_source_record_count: usize,
     classified_source_record_count: usize,
     unclassified_source_record_count: usize,
+    semantic_rejection_code_counts: BTreeMap<String, usize>,
     event_kind_counts: BTreeMap<&'static str, usize>,
     raw_visible_text_emitted: bool,
     player_aliases_emitted: bool,
@@ -62,6 +63,7 @@ fn run_v1() -> Result<VisibleGameLogSemanticSummaryV1, String> {
     let mut classified_source_record_count = 0_usize;
     let mut unclassified_source_record_count = 0_usize;
     let mut unsupported_source_record_count = 0_usize;
+    let mut semantic_rejection_code_counts = BTreeMap::new();
     let mut event_kind_counts = BTreeMap::new();
     for path in paths {
         let path = PathBuf::from(path);
@@ -93,13 +95,19 @@ fn run_v1() -> Result<VisibleGameLogSemanticSummaryV1, String> {
             acting_player_alias,
         ) {
             Ok(semantics) => semantics,
-            Err(_) => {
+            Err(error) => {
                 semantically_unsupported_file_count = semantically_unsupported_file_count
                     .checked_add(1)
                     .ok_or("unsupported file count overflow")?;
                 unsupported_source_record_count = unsupported_source_record_count
                     .checked_add(source.record_count_v1())
                     .ok_or("unsupported source record count overflow")?;
+                let count = semantic_rejection_code_counts
+                    .entry(error.code().to_owned())
+                    .or_insert(0_usize);
+                *count = count
+                    .checked_add(1)
+                    .ok_or("semantic rejection code count overflow")?;
                 continue;
             }
         };
@@ -133,6 +141,7 @@ fn run_v1() -> Result<VisibleGameLogSemanticSummaryV1, String> {
         unsupported_source_record_count,
         classified_source_record_count,
         unclassified_source_record_count,
+        semantic_rejection_code_counts,
         event_kind_counts,
         raw_visible_text_emitted: false,
         player_aliases_emitted: false,

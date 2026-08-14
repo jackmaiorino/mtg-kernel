@@ -325,13 +325,16 @@ fn classify_record_v1(
             }
         }
     } else if let Some((actor, rest)) = text.split_once(" puts ") {
-        if let Some((bottomed, opening)) = rest
+        if let Some((bottomed, opening, singular_bottomed_card)) = rest
             .strip_suffix(" card in hand.")
             .or_else(|| rest.strip_suffix(" cards in hand."))
             .and_then(split_bottomed_opening_counts_v1)
         {
             actor_role = Some(role_for_actor_v1(actor, acting_player_alias, opponent_alias)?);
-            primary_count = Some(parse_number_word_v1(bottomed)?);
+            primary_count = Some(parse_bottomed_count_phrase_v1(
+                bottomed,
+                singular_bottomed_card,
+            )?);
             secondary_count = Some(parse_card_count_phrase_v1(opening)?);
             kind = Some(MtgoVisibleGameLogEventKindV1::BottomedOpeningHand);
         }
@@ -486,12 +489,25 @@ fn strip_card_count_suffix_v1<'a>(value: &'a str, tail: &str) -> Option<&'a str>
         .or_else(|| value.strip_suffix(&format!(" card{tail}")))
 }
 
-fn split_bottomed_opening_counts_v1(value: &str) -> Option<(&str, &str)> {
+fn split_bottomed_opening_counts_v1(value: &str) -> Option<(&str, &str, bool)> {
     value
         .split_once(" cards on the bottom of their library and begins the game with ")
+        .map(|(bottomed, opening)| (bottomed, opening, false))
         .or_else(|| {
-            value.split_once(" card on the bottom of their library and begins the game with ")
+            value
+                .split_once(" card on the bottom of their library and begins the game with ")
+                .map(|(bottomed, opening)| (bottomed, opening, true))
         })
+}
+
+fn parse_bottomed_count_phrase_v1(
+    value: &str,
+    singular_bottomed_card: bool,
+) -> Result<u8, MtgoContractErrorV1> {
+    if singular_bottomed_card && value == "a" {
+        return Ok(1);
+    }
+    parse_number_word_v1(value)
 }
 
 fn parse_card_count_phrase_v1(value: &str) -> Result<u8, MtgoContractErrorV1> {
@@ -704,6 +720,35 @@ mod tests {
         );
         assert_eq!(event.primary_count_v1(), Some(1));
         assert_eq!(event.secondary_count_v1(), Some(6));
+    }
+
+    #[test]
+    fn rendered_article_bottomed_card_wording_is_typed_exactly() {
+        let source = source_v1(&[
+            "@PUnbuckledPie puts a card on the bottom of their library and begins the game with six cards in hand.",
+        ]);
+        let projection =
+            classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(&source, "UnbuckledPie")
+                .unwrap();
+        let event = projection.event_v1(0).unwrap();
+        assert_eq!(
+            event.kind_v1(),
+            MtgoVisibleGameLogEventKindV1::BottomedOpeningHand
+        );
+        assert_eq!(event.primary_count_v1(), Some(1));
+        assert_eq!(event.secondary_count_v1(), Some(6));
+    }
+
+    #[test]
+    fn article_with_plural_bottomed_card_wording_rejects() {
+        let source = source_v1(&[
+            "@PUnbuckledPie puts a cards on the bottom of their library and begins the game with six cards in hand.",
+        ]);
+        let error =
+            classify_checked_untrusted_mtgo_visible_game_log_semantics_v1(&source, "UnbuckledPie")
+                .err()
+                .unwrap();
+        assert_eq!(error.code(), "visible_game_log_count");
     }
 
     #[test]
