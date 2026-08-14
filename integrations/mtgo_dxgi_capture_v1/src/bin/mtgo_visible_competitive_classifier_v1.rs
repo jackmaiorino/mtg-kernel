@@ -569,7 +569,8 @@ struct MtgoCompetitiveDeckChooserProfileV1 {
     unselected_selection_detail_reference_sha256s: Vec<String>,
     selected_selection_detail_reference_sha256s: Vec<String>,
     submit_control_rect_client_px: MtgoRectPxV1,
-    submit_control_reference_sha256s: Vec<String>,
+    disabled_submit_reference_sha256s: Vec<String>,
+    enabled_submit_reference_sha256s: Vec<String>,
     confidence_bps: u16,
 }
 
@@ -2990,7 +2991,11 @@ fn classify_deck_chooser_from_words_v1(
     } else {
         &profile.unselected_selection_detail_reference_sha256s
     };
-    let submit_references = &profile.submit_control_reference_sha256s;
+    let submit_references = if selected {
+        &profile.enabled_submit_reference_sha256s
+    } else {
+        &profile.disabled_submit_reference_sha256s
+    };
     if row_references
         .binary_search(&deck_row_control_region_sha256)
         .is_err()
@@ -3038,7 +3043,7 @@ fn classify_deck_chooser_from_words_v1(
         selection_detail_region_sha256,
         submit_control_rect_client_px: profile.submit_control_rect_client_px.clone(),
         submit_control_region_sha256,
-        submit_control_visible: true,
+        submit_control_enabled: selected,
         confidence_bps: profile.confidence_bps,
     };
     Ok(MtgoCompetitiveDeckChooserClassifierProcessResponseV1 {
@@ -3712,20 +3717,27 @@ fn validate_deck_chooser_assets_v1<'a>(
             selected,
         )?;
         validate_sorted_references_v1(
-            &profile.submit_control_reference_sha256s,
-            "deck-chooser visible Submit references",
-            true,
+            &profile.disabled_submit_reference_sha256s,
+            "deck-chooser disabled Submit references",
+            !selected,
+        )?;
+        validate_sorted_references_v1(
+            &profile.enabled_submit_reference_sha256s,
+            "deck-chooser enabled Submit references",
+            selected,
         )?;
         if (selected
             && (!profile.unselected_deck_row_reference_sha256s.is_empty()
                 || !profile
                     .unselected_selection_detail_reference_sha256s
-                    .is_empty()))
+                    .is_empty()
+                || !profile.disabled_submit_reference_sha256s.is_empty()))
             || (!selected
                 && (!profile.selected_deck_row_reference_sha256s.is_empty()
                     || !profile
                         .selected_selection_detail_reference_sha256s
-                        .is_empty()))
+                        .is_empty()
+                    || !profile.enabled_submit_reference_sha256s.is_empty()))
         {
             return Err("deck-chooser profile mixes selected and unselected states".to_owned());
         }
@@ -6741,7 +6753,11 @@ mod tests {
             } else {
                 digest(if selected { 'd' } else { 'e' })
             };
-            let state_submit_hash = submit_hash.clone();
+            let state_submit_hash = if matching {
+                submit_hash.clone()
+            } else {
+                digest(if selected { '6' } else { '7' })
+            };
             let state_detail_hash = if matching {
                 detail_hash.clone()
             } else {
@@ -6782,7 +6798,16 @@ mod tests {
                     Vec::new()
                 },
                 submit_control_rect_client_px: submit_control_rect_client_px.clone(),
-                submit_control_reference_sha256s: vec![state_submit_hash],
+                disabled_submit_reference_sha256s: if selected {
+                    Vec::new()
+                } else {
+                    vec![state_submit_hash.clone()]
+                },
+                enabled_submit_reference_sha256s: if selected {
+                    vec![state_submit_hash]
+                } else {
+                    Vec::new()
+                },
                 confidence_bps: 9_500,
             }
         })
@@ -6874,7 +6899,10 @@ mod tests {
             assert_eq!(matches.len(), 1);
             let response = matches.remove(0);
             assert_eq!(response.chooser.state, state);
-            assert_eq!(response.chooser.submit_control_visible, true);
+            assert_eq!(
+                response.chooser.submit_control_enabled,
+                state == MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected
+            );
             assert_eq!(
                 response.chooser.deck_row_selected,
                 state == MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected

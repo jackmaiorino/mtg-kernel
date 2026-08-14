@@ -88,7 +88,7 @@ pub struct MtgoVisibleCompetitiveDeckChooserV1 {
     pub selection_detail_region_sha256: String,
     pub submit_control_rect_client_px: MtgoRectPxV1,
     pub submit_control_region_sha256: String,
-    pub submit_control_visible: bool,
+    pub submit_control_enabled: bool,
     pub confidence_bps: u16,
 }
 
@@ -196,7 +196,7 @@ impl OpaqueMtgoClassifiedCompetitiveDeckChooserV1 {
     ) -> Result<MtgoCompetitiveDeckControlTargetV1, String> {
         if self.commitments.state != MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection
             || self.raw.deck_row_selected
-            || !self.raw.submit_control_visible
+            || self.raw.submit_control_enabled
         {
             return Err(
                 "exact deck-row input requires the unselected reviewed chooser state".to_owned(),
@@ -218,7 +218,7 @@ impl OpaqueMtgoClassifiedCompetitiveDeckChooserV1 {
     ) -> Result<MtgoCompetitiveDeckControlTargetV1, String> {
         if self.commitments.state != MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected
             || !self.raw.deck_row_selected
-            || !self.raw.submit_control_visible
+            || !self.raw.submit_control_enabled
         {
             return Err(
                 "deck Submit requires the exact selected reviewed chooser state".to_owned(),
@@ -457,18 +457,14 @@ pub fn check_untrusted_competitive_deck_chooser_pixels_v1(
     }
     match raw.state {
         MtgoCompetitiveDeckChooserStateV1::AwaitingExactDeckSelection => {
-            if raw.deck_row_selected || !raw.submit_control_visible {
-                return Err(
-                    "awaiting deck-chooser state requires an unselected row and visible Submit"
-                        .to_owned(),
-                );
+            if raw.deck_row_selected || raw.submit_control_enabled {
+                return Err("awaiting deck-chooser state cannot expose enabled Submit".to_owned());
             }
         }
         MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected => {
-            if !raw.deck_row_selected || !raw.submit_control_visible {
+            if !raw.deck_row_selected || !raw.submit_control_enabled {
                 return Err(
-                    "selected deck-chooser state requires selected row and visible Submit"
-                        .to_owned(),
+                    "selected deck-chooser state requires selected row and Submit".to_owned(),
                 );
             }
         }
@@ -1042,7 +1038,7 @@ mod tests {
             selection_detail_region_sha256: region_hash(&detail_rect),
             submit_control_rect_client_px: submit_rect.clone(),
             submit_control_region_sha256: region_hash(&submit_rect),
-            submit_control_visible: true,
+            submit_control_enabled: selected,
             confidence_bps: 10_000,
         };
         FixtureV1 {
@@ -1119,7 +1115,7 @@ mod tests {
     #[test]
     fn contradictory_state_region_hash_and_geometry_fail_closed() {
         let mut fixture = fixture_v1(MtgoCompetitiveDeckChooserStateV1::ExactDeckSelected);
-        fixture.raw.submit_control_visible = false;
+        fixture.raw.submit_control_enabled = false;
         assert!(check_untrusted_competitive_deck_chooser_pixels_v1(
             &fixture.header,
             &fixture.raw,
