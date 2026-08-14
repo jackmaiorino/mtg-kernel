@@ -12,6 +12,8 @@ The first live Standard spectator observations and exact non-claims are recorded
 
 The first acting-player Freeform Solitaire observation is recorded in `LIVE_SOLITAIRE_FINDINGS_2026-08-09.md`.
 
+The first live no-cost Challenge selected-listing and two-state deck-gate trace is recorded in `LIVE_CHALLENGE_DECK_GATE_2026-08-14.md`.
+
 ## Live calibration preview
 
 `scripts/capture_visible_mtgo_preview_v1.ps1` creates only a local, composed-desktop calibration preview. It crops the visible desktop to the MTGO client area. It does not use direct window capture, UI Automation, process memory, network data, client logs, hidden client state, or input.
