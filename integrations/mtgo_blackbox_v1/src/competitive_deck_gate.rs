@@ -16,14 +16,16 @@ const COMPETITIVE_DECK_GATE_COMMITMENT_DOMAIN_V1: &[u8] = b"mtgo-visible-competi
 pub enum MtgoCompetitiveDeckGateStateV1 {
     AwaitingCompatibleDeckSelection,
     CompatibleDeckSelected,
+    OpenEntryReviewAvailable,
 }
 
 /// One selected League or Challenge listing before Open Entry Review.
 ///
 /// The live client can show entry choices while still withholding the Open
-/// Entry Review control behind a compatible-deck selection. This record keeps
-/// that intermediate state distinct from a listing that is actually ready to
-/// open. Every field is derived only from the rendered Event Browser surface.
+/// Entry Review control behind both compatible-deck and entry-option gates.
+/// This record keeps each rendered intermediate state distinct from a listing
+/// that is actually ready to open. Every field is derived only from the
+/// rendered Event Browser surface.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MtgoVisibleCompetitiveDeckGateV1 {
@@ -81,7 +83,7 @@ impl CheckedUntrustedMtgoCompetitiveDeckGateV1 {
     }
 
     pub fn ready_for_open_entry_review_v1(&self) -> bool {
-        self.state == MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected
+        self.state == MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable
     }
 
     pub fn permits_open_deck_chooser_v1(&self) -> bool {
@@ -232,13 +234,34 @@ pub fn validate_visible_competitive_deck_gate_v1(
                 || raw.selected_deck_label_sha256.is_none()
                 || raw.selected_deck_rect_client_px.is_none()
                 || raw.selected_deck_region_sha256.is_none()
+                || raw.open_entry_review_control_rect_client_px.is_some()
+                || raw.open_entry_review_control_region_sha256.is_some()
+                || raw.open_entry_review_control_enabled
+            {
+                return Err(error_v1(
+                    "competitive_deck_gate_selected_state",
+                    "selected-deck state requires one visible selected deck and no Open Entry Review control",
+                ));
+            }
+            evidence_rects.push(
+                raw.selected_deck_rect_client_px
+                    .as_ref()
+                    .expect("checked above"),
+            );
+        }
+        MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable => {
+            if raw.missing_deck_prompt_rect_client_px.is_some()
+                || raw.missing_deck_prompt_region_sha256.is_some()
+                || raw.selected_deck_label_sha256.is_none()
+                || raw.selected_deck_rect_client_px.is_none()
+                || raw.selected_deck_region_sha256.is_none()
                 || raw.open_entry_review_control_rect_client_px.is_none()
                 || raw.open_entry_review_control_region_sha256.is_none()
                 || !raw.open_entry_review_control_enabled
             {
                 return Err(error_v1(
-                    "competitive_deck_gate_ready_state",
-                    "ready state requires one visible selected deck and one enabled Open Entry Review control",
+                    "competitive_deck_gate_review_available_state",
+                    "review-available state requires one visible selected deck and one enabled Open Entry Review control",
                 ));
             }
             evidence_rects.push(
@@ -541,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn awaiting_and_ready_states_are_distinct_and_non_authorizing() {
+    fn awaiting_selected_and_review_available_states_are_distinct_and_non_authorizing() {
         let deck = deck_v1();
         let target = target_v1(&deck);
         let lifecycle = lifecycle_v1();
@@ -566,35 +589,66 @@ mod tests {
         let deck = deck_v1();
         let target = target_v1(&deck);
         let lifecycle = lifecycle_v1();
-        let mut ready = awaiting_v1(&lifecycle, &deck, &target);
-        ready.observation_id = "competitive-deck-gate-ready-v1".to_owned();
-        ready.state = MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected;
-        ready.missing_deck_prompt_rect_client_px = None;
-        ready.missing_deck_prompt_region_sha256 = None;
-        ready.selected_deck_label_sha256 = Some(digest('9'));
-        ready.selected_deck_rect_client_px = Some(MtgoRectPxV1 {
+        let mut selected = awaiting_v1(&lifecycle, &deck, &target);
+        selected.observation_id = "competitive-deck-gate-selected-v1".to_owned();
+        selected.state = MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected;
+        selected.missing_deck_prompt_rect_client_px = None;
+        selected.missing_deck_prompt_region_sha256 = None;
+        selected.selected_deck_label_sha256 = Some(digest('9'));
+        selected.selected_deck_rect_client_px = Some(MtgoRectPxV1 {
             x: 600,
             y: 100,
             width: 200,
             height: 50,
         });
-        ready.selected_deck_region_sha256 = Some(digest('c'));
-        ready.open_entry_review_control_rect_client_px = Some(MtgoRectPxV1 {
+        selected.selected_deck_region_sha256 = Some(digest('c'));
+        let selected =
+            validate_visible_competitive_deck_gate_v1(lifecycle, &deck, target, selected).unwrap();
+        assert_eq!(
+            selected.state_v1(),
+            MtgoCompetitiveDeckGateStateV1::CompatibleDeckSelected
+        );
+        assert!(!selected.ready_for_open_entry_review_v1());
+        assert!(!selected.permits_open_entry_review_v1());
+        assert!(!selected.safe_for_input_v1());
+        assert_ne!(
+            awaiting.observation_commitment_sha256_v1(),
+            selected.observation_commitment_sha256_v1()
+        );
+
+        let deck = deck_v1();
+        let target = target_v1(&deck);
+        let lifecycle = lifecycle_v1();
+        let mut review_available = awaiting_v1(&lifecycle, &deck, &target);
+        review_available.observation_id = "competitive-deck-gate-review-available-v1".to_owned();
+        review_available.state = MtgoCompetitiveDeckGateStateV1::OpenEntryReviewAvailable;
+        review_available.missing_deck_prompt_rect_client_px = None;
+        review_available.missing_deck_prompt_region_sha256 = None;
+        review_available.selected_deck_label_sha256 = Some(digest('9'));
+        review_available.selected_deck_rect_client_px = Some(MtgoRectPxV1 {
+            x: 600,
+            y: 100,
+            width: 200,
+            height: 50,
+        });
+        review_available.selected_deck_region_sha256 = Some(digest('c'));
+        review_available.open_entry_review_control_rect_client_px = Some(MtgoRectPxV1 {
             x: 900,
             y: 100,
             width: 200,
             height: 50,
         });
-        ready.open_entry_review_control_region_sha256 = Some(digest('d'));
-        ready.open_entry_review_control_enabled = true;
-        let ready =
-            validate_visible_competitive_deck_gate_v1(lifecycle, &deck, target, ready).unwrap();
-        assert!(ready.ready_for_open_entry_review_v1());
-        assert!(!ready.permits_open_entry_review_v1());
-        assert!(!ready.safe_for_input_v1());
+        review_available.open_entry_review_control_region_sha256 = Some(digest('d'));
+        review_available.open_entry_review_control_enabled = true;
+        let review_available =
+            validate_visible_competitive_deck_gate_v1(lifecycle, &deck, target, review_available)
+                .unwrap();
+        assert!(review_available.ready_for_open_entry_review_v1());
+        assert!(!review_available.permits_open_entry_review_v1());
+        assert!(!review_available.safe_for_input_v1());
         assert_ne!(
-            awaiting.observation_commitment_sha256_v1(),
-            ready.observation_commitment_sha256_v1()
+            selected.observation_commitment_sha256_v1(),
+            review_available.observation_commitment_sha256_v1()
         );
     }
 

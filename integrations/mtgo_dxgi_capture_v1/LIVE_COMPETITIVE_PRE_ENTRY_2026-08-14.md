@@ -20,7 +20,9 @@ Deck chooser behavior:
 - `SelectDeckButton` opened `Modern Decks`, with `Submit` disabled because no compatible deck was selected.
 - `Import Deck` opened the standard `Select Deck(s)` file dialog and then an `Import Deck(s)` review dialog.
 - The import dialog defaulted its format to Standard even though it was opened from the Modern chooser. The format had to be visibly changed to Modern.
-- A temporary 60-basic-land import did not become selectable in the Modern chooser. The temporary file was removed. Deck ownership, MTGO card-variant identity, import acceptance, and format eligibility therefore need a dedicated visible calibration rather than assumption.
+- The imported 60-basic-land deck appeared under Modern in Collection after the import dialog closed. Returning to the Modern Challenge deck chooser showed the exact deck label. Selecting it visibly changed `Submit` from disabled to enabled.
+- Invoking that visible `Submit` selected the deck for the event. `Please Select a Deck` disappeared and the exact deck label appeared on the event surface.
+- Open Entry Review still did not appear after compatible deck selection. The ticket and play-point entry choices remained a separate gate. No entry option was selected, and the temporary import file was removed.
 
 Safety finding:
 
@@ -31,6 +33,7 @@ Adapter consequence:
 `MtgoVisibleCompetitiveDeckGateV1` now distinguishes:
 
 - `awaiting_compatible_deck_selection`: visible selected event, enabled deck chooser, visible missing-deck prompt, and no Open Entry Review control.
-- `compatible_deck_selected`: visible selected deck and visible enabled Open Entry Review control, with the missing-deck prompt absent.
+- `compatible_deck_selected`: visible selected deck, missing-deck prompt absent, and Open Entry Review still unavailable.
+- `open_entry_review_available`: visible selected deck and visible enabled Open Entry Review control, with the missing-deck prompt absent.
 
-The contract is coordinate-private after validation and grants no input, entry, or spending authority. Production still needs a reviewed classifier corpus for both states and a separately authorized exact-deck selection actuator with a visible postcondition before the existing selected-listing classifier can run.
+The contract is coordinate-private after validation and grants no input, entry, or spending authority. Production still needs a reviewed classifier corpus for all three states and a separately authorized exact-deck selection actuator with a visible postcondition before the entry-option and Open Entry Review stages can be calibrated.
