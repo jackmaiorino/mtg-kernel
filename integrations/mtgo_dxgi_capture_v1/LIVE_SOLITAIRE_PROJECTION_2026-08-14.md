@@ -128,6 +128,35 @@ The MTGO process remained responsive. This repeats the intended fail-closed
 one-player behavior and also identifies that the attended capture qualifier is
 duel-only rather than a general practice-surface qualifier.
 
+## Six-card Keep calibration source
+
+The same no-cost game supplied one missing practice-only transition without
+entering an event or playing a human. One exact visible enabled
+`MulliganButton` was invoked from the reviewed seven-card opening prompt. The
+first expected postcondition sentence was incorrect, so no further input was
+sent until a new review-only capture and an exact visible-text query confirmed
+the actual six-card prompt:
+
+`Mulligan to five cards or keep six of these? (Cards not kept will be put onto the bottom of your library.)`
+
+That pending-review frame has SHA-256
+`f6a7d7b985d25b8d1f607ddba85eb11cd5e444bb90a70632062fbdd92afe58dc`.
+One exact visible enabled `KeepButton` was then invoked. The initial check
+incorrectly expected a visible Done control, so input again stopped until a
+second review-only capture and exact visible-text query confirmed the actual
+zero-selected, bottom-one state:
+
+`Put a card on the bottom of your library. (Click Done to proceed. The last card clicked will be the bottom card of your library.)`
+
+That pending-review frame has SHA-256
+`fbffec826a8367e0d41ceba219e8c98e64596ba5c0ba6bb27c494557d82bd9cb`.
+It visibly contains Cancel, no Keep or Mulligan control, and seven cards. Done
+is absent until one card is selected. The two captures remain explicitly unsafe
+for semantic evidence, OCR, policy scoring, or input. They are calibration
+sources only. The generic competitive pregame response contract already
+represents `required_bottom_count = 1` and `selected_bottom_count = 0`, but the
+reviewed capture profile and evaluated runtime for that state remain missing.
+
 ## Nonclaims
 
 This check proves the current signed client, exact rebuilt observer chain,
@@ -138,5 +167,6 @@ two-player projection requirement. The relogin repeat additionally proves that
 the pinned observer and validator remain reproducible and return the same
 abstention in a fresh one-player Custom Match. It does not qualify the
 accessibility catalog, a data-bearing two-player observation, model scoring,
-ordinary or combat dispatch, match-history import, event entry, or spending.
-All production source and dispatch ratification roots remain empty.
+ordinary or combat dispatch, a competitive pregame classifier, match-history
+import, event entry, or spending. All production source and dispatch
+ratification roots remain empty.
