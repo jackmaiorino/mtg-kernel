@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "fixture_id": "player-visible-flat-v2-common-facts-control-change-v1",
+  "model_input": {
+    "current_state": {
+      "acting_player": "seated_player",
+      "turn": 4,
+      "phase": "main1",
+      "active_player": "seated_player",
+      "priority_player": "seated_player",
+      "initiative": null,
+      "life_totals": [20, 17],
+      "mana_pools": [
+        [0, 0, 0, 1, 0, 0],
+        [0, 0, 0, 0, 0, 0]
+      ],
+      "hand_counts": [1, 0],
+      "library_counts": [52, 53],
+      "battlefield": [
+        [
+          {
+            "object_ref": {
+              "visible_ordinal": 0
+            },
+            "card_name": "Mountain",
+            "tapped": false,
+            "marked_damage": 0,
+            "counters": {
+              "plus_one_plus_one": 0,
+              "minus_one_minus_one": 0,
+              "minus_zero_minus_one": 0,
+              "stun": 0,
+              "lore": 0
+            },
+            "is_token": false,
+            "visible_effective_power": null,
+            "visible_effective_toughness": null
+          }
+        ],
+        []
+      ],
+      "graveyards": [[], []],
+      "exile": [],
+      "stack": [],
+      "combat": {
+        "attackers_declared": false,
+        "blockers_declared": false,
+        "ordered_attackers": [],
+        "blocker_assignments": []
+      },
+      "visible_object_relations": [],
+      "own_hand": [
+        {
+          "object_ref": {
+            "visible_ordinal": 1
+          },
+          "card_name": "Lightning Bolt"
+        }
+      ],
+      "known_library_cards": [[], []],
+      "known_hand_cards": [[], []]
+    },
+    "ordered_legal_actions": [
+      {
+        "action_kind": "pass",
+        "actor": "seated_player"
+      },
+      {
+        "action_kind": "cast_spell",
+        "actor": "seated_player",
+        "source": {
+          "visible_ordinal": 1
+        }
+      }
+    ]
+  },
+  "expected_input_commitment_sha256": "e4b2c70e529a03b80775fb6e5861428e19a7bec98333e3c85c19d08e4597e4bf",
+  "synthetic_simulator_setup": {
+    "control_changed_card_name": "Mountain",
+    "physical_owner": "opponent",
+    "rendered_controller_partition": "seated_player",
+    "model_input_contains_physical_owner": false
+  },
+  "expected_flat_v2": {
+    "globals": {
+      "acting_player": "self_player",
+      "phase": "main1",
+      "active_player": "self_player",
+      "priority_player": "self_player",
+      "initiative": "none",
+      "stack_nonempty": false
+    },
+    "object_rows": [
+      {
+        "model_object_index": 0,
+        "visible_ordinal": 1,
+        "card_name": "Lightning Bolt",
+        "group": "self_hand",
+        "owner": "self_player",
+        "controller": "none",
+        "zone": "hand",
+        "card_token_source": "exact_case_sensitive_card_name_catalog_lookup"
+      },
+      {
+        "model_object_index": 1,
+        "visible_ordinal": 0,
+        "card_name": "Mountain",
+        "group": "self_battlefield",
+        "owner": "none",
+        "controller": "self_player",
+        "zone": "battlefield",
+        "card_token_source": "exact_case_sensitive_card_name_catalog_lookup"
+      }
+    ],
+    "action_rows": [
+      {
+        "action_index": 0,
+        "kind": "pass",
+        "source_visible_ordinal": null,
+        "source_model_object_index": null
+      },
+      {
+        "action_index": 1,
+        "kind": "cast_spell",
+        "source_visible_ordinal": 1,
+        "source_model_object_index": 0
+      }
+    ],
+    "expected_empty_slices": [
+      "relations",
+      "ability_uses",
+      "goads",
+      "completed_dungeons",
+      "effect_subtype_changes",
+      "context_path_elements"
+    ],
+    "control_changed_battlefield_owner_difference_class": "fixed_neutral_unavailable_value",
+    "allowed_parity_difference_classes": [
+      "player_visible_value_preserved",
+      "printed_catalog_compatibility_value",
+      "fixed_neutral_unavailable_value",
+      "deliberate_decision_local_identity_replacement"
+    ]
+  }
+}

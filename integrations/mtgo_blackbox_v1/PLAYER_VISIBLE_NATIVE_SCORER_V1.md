@@ -102,6 +102,22 @@ commitments, client objects, or physical input receipts.
 
 For the existing non-recurrent checkpoint, `replace_public_history_v1` validates and commits the two streams but the score must report `public_history_used_by_model_v1() == false`. A future recurrent head can report true only after its training and deployment identity bind that input contract.
 
+## Executable conformance source
+
+`fixtures/player_visible_flat_v2_conformance_source_v1.json` is the canonical
+adapter-owned source packet for the first kernel parity test. It deserializes as
+the exact sanitized duel input, pins the commitment and legal-action order, and
+separately records the expected Flat V2 row order. Its synthetic control-changed
+permanent is displayed in the seated-player battlefield partition while the
+expected compatibility row keeps `owner=None` and `controller=SelfPlayer`.
+The synthetic simulator-only ownership note is test setup and is absent from
+the model input.
+
+This fixture does not claim parity by itself. The future kernel-owned scorer
+test must encode it, compare the resulting Flat V2 packet with the simulator
+packet for the common facts, and classify every delta with the four frozen
+categories in the fixture.
+
 ## Required tests
 
 1. The scorer type cannot be constructed from public fields and has no input or session conversion.
