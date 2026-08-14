@@ -2184,6 +2184,8 @@ fn background_direct_source_is_exact_visible_equivalent_and_non_actuating() {
         "validate_stable_background_direct_visible_results_v1(&first.0, &second.0)",
         "if first != second || first_result != second_result",
         "parse_and_validate_visible_duel_producer_result_v1(first)",
+        "GetSystemWindowsDirectoryW",
+        "broker_argument_path_v1",
         "same_process_incarnation_verified_privately_and_discarded",
         "two_exact_visible_equivalent_results_no_pixels_no_model_no_input",
         "pub struct OpaqueMtgoStableBackgroundDirectVisibleSourceV1",
@@ -2191,12 +2193,29 @@ fn background_direct_source_is_exact_visible_equivalent_and_non_actuating() {
         "pub fn requires_pixel_capture_v1(&self) -> bool",
         "pub fn safe_for_model_scoring_v1(&self) -> bool",
         "pub fn safe_for_input_v1(&self) -> bool",
+        "RATIFIED_BACKGROUND_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None",
+        "RATIFIED_BACKGROUND_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1",
+        "score_ratified_stable_background_direct_visible_source_observation_v1",
+        "score_ratified_stable_background_direct_visible_combat_source_observation_v1",
+        "refresh_ratified_stable_background_direct_visible_selection_v1",
+        "refresh_ratified_stable_background_direct_visible_combat_step_v1",
+        "PrivateMtgoInitialDirectVisibleObservationV1::StableBackground",
+        "background_visible_result_exactly_reobserved_foreground_before_input",
+        "refreshed_observation.exact_result_bytes.0",
+        "!= initial_observation._exact_result_bytes.0",
     ] {
         assert!(
             runtime.contains(required),
             "background direct source is missing boundary: {required}"
         );
     }
+    assert_eq!(
+        runtime
+            .matches(".env(\"SystemRoot\", &windows_directory)")
+            .count(),
+        3,
+        "every observe and dispatch broker must receive only the OS-derived SystemRoot"
+    );
     for required in [
         "mtgo-direct-visible-background-qualification-summary/v1",
         "foreground_window_required",
@@ -2236,6 +2255,30 @@ fn background_direct_source_is_exact_visible_equivalent_and_non_actuating() {
         assert!(
             !binary.contains(forbidden) && !public_api.contains(forbidden),
             "background qualification exposes a forbidden surface: {forbidden}"
+        );
+    }
+    for forbidden in [
+        "std::env::var_os(\"SystemRoot\")",
+        ".envs(std::env::vars_os())",
+    ] {
+        assert!(
+            !runtime.contains(forbidden),
+            "background broker inherited caller environment: {forbidden}"
+        );
+    }
+    for private_only in [
+        "score_ratified_stable_background_direct_visible_source_observation_v1",
+        "score_ratified_stable_background_direct_visible_combat_source_observation_v1",
+        "refresh_ratified_stable_background_direct_visible_selection_v1",
+        "refresh_ratified_stable_background_direct_visible_combat_step_v1",
+    ] {
+        assert!(
+            runtime.contains(&format!("pub(crate) fn {private_only}")),
+            "background scorer or foreground rebound is not crate-private: {private_only}"
+        );
+        assert!(
+            !public_api.contains(private_only),
+            "caller-supplied background scorer escaped the crate: {private_only}"
         );
     }
 }

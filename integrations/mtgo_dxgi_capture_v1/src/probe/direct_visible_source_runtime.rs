@@ -43,8 +43,10 @@ use mtgo_blackbox_v1::{
 };
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -55,6 +57,7 @@ use windows::Win32::Foundation::{CloseHandle, ERROR_NO_MORE_FILES, FILETIME, HAN
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
+use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
 use windows::Win32::System::Threading::{
     GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION,
@@ -89,6 +92,9 @@ const DIRECT_VISIBLE_COMBAT_DISPATCH_RECEIPT_DOMAIN_V1: &[u8] =
     b"mtgo-direct-visible-combat-dispatch-receipt-v1";
 const RATIFIED_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
 const RATIFIED_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
+const RATIFIED_BACKGROUND_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> = None;
+const RATIFIED_BACKGROUND_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1: Option<&str> =
+    None;
 const RATIFIED_DIRECT_VISIBLE_DISPATCH_RUNTIME_COMMITMENT_V1: Option<&str> = None;
 const RATIFIED_DIRECT_VISIBLE_COMBAT_DISPATCH_RUNTIME_COMMITMENT_V1: Option<&str> = None;
 const PINNED_MTGO_EXECUTABLE_SHA256_V1: &str =
@@ -623,8 +629,13 @@ impl OpaqueMtgoRatifiedAttestedDirectVisibleScoringOutcomeV1 {
 /// Qualification-only selected action re-observed through the exact pinned
 /// producer. The private type cannot carry caller-selected logits into an
 /// externally callable live dispatch route.
+enum PrivateMtgoInitialDirectVisibleObservationV1 {
+    Attested(OpaqueMtgoAttestedDirectVisibleSourceObservationV1),
+    StableBackground(OpaqueMtgoStableBackgroundDirectVisibleSourceV1),
+}
+
 pub struct OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
-    _initial_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    _initial_observation: PrivateMtgoInitialDirectVisibleObservationV1,
     _refreshed_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
     selection: CheckedUntrustedMtgoRefreshedDirectVisibleSelectionV1,
     commitments: MtgoRefreshedAttestedDirectVisibleSelectionCommitmentsV1,
@@ -649,7 +660,7 @@ pub struct OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
 /// }
 /// ```
 pub(crate) struct OpaqueMtgoAttestedDirectVisibleCompetitiveBeforeDispatchV1 {
-    _initial_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
+    _initial_observation: PrivateMtgoInitialDirectVisibleObservationV1,
     _refreshed_observation: OpaqueMtgoAttestedDirectVisibleSourceObservationV1,
     _corroborating_perception: OpaqueMtgoAdmittedDuelPerceptionV1,
     checked: CheckedUntrustedMtgoDirectVisibleGameplayBeforeDispatchV1,
@@ -763,6 +774,101 @@ pub fn score_ratified_attested_direct_visible_combat_source_observation_v1<
             outcome,
         },
     )
+}
+
+/// Dormant background-source bridge into an ordinary player-visible scorer.
+/// The scorer remains caller-supplied and this function remains crate-private.
+/// Production use additionally requires a future opaque loaded-checkpoint
+/// scorer and a reviewed data-bearing background qualification commitment.
+pub(crate) fn score_ratified_stable_background_direct_visible_source_observation_v1<
+    S: MtgoPlayerVisibleDuelScorerV1,
+>(
+    observation: OpaqueMtgoStableBackgroundDirectVisibleSourceV1,
+    reviewed_qualification_commitment_sha256: &str,
+    deployment_commitment_sha256: &str,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoRatifiedStableBackgroundDirectVisibleScoringOutcomeV1, String> {
+    require_ratified_background_direct_visible_source_qualification_v1(
+        reviewed_qualification_commitment_sha256,
+    )?;
+    let outcome = score_and_select_strict_visible_duel_producer_result_v1(
+        &observation._exact_result_bytes.0,
+        deployment_commitment_sha256,
+        scorer,
+    )
+    .map_err(|error| format!("score stable background visible observation: {error}"))?;
+    Ok(
+        OpaqueMtgoRatifiedStableBackgroundDirectVisibleScoringOutcomeV1 {
+            observation,
+            outcome,
+        },
+    )
+}
+
+/// Dormant background-source bridge into the unified combat scorer. The
+/// resulting plan cannot prepare a broker operation until a fresh foreground
+/// source-attested result proves the exact same visible presentation bytes.
+pub(crate) fn score_ratified_stable_background_direct_visible_combat_source_observation_v1<
+    S: MtgoPlayerVisibleCombatScorerV1,
+>(
+    observation: OpaqueMtgoStableBackgroundDirectVisibleSourceV1,
+    reviewed_qualification_commitment_sha256: &str,
+    deployment_commitment_sha256: &str,
+    scorer: &mut S,
+) -> Result<OpaqueMtgoRatifiedStableBackgroundDirectVisibleCombatScoringOutcomeV1, String> {
+    require_ratified_background_direct_visible_combat_source_qualification_v1(
+        reviewed_qualification_commitment_sha256,
+    )?;
+    let outcome = score_and_prepare_strict_visible_combat_producer_result_v1(
+        &observation._exact_result_bytes.0,
+        deployment_commitment_sha256,
+        scorer,
+    )
+    .map_err(|error| format!("score stable background visible combat observation: {error}"))?;
+    Ok(
+        OpaqueMtgoRatifiedStableBackgroundDirectVisibleCombatScoringOutcomeV1 {
+            observation,
+            outcome,
+        },
+    )
+}
+
+pub(crate) fn require_ratified_background_direct_visible_source_qualification_v1(
+    reviewed_qualification_commitment_sha256: &str,
+) -> Result<(), String> {
+    let Some(ratified) = RATIFIED_BACKGROUND_DIRECT_VISIBLE_SOURCE_QUALIFICATION_COMMITMENT_V1
+    else {
+        return Err(
+            "the production background visible-source qualification root is empty".to_owned(),
+        );
+    };
+    if reviewed_qualification_commitment_sha256 != ratified {
+        return Err(
+            "the reviewed background visible-source qualification commitment is not ratified"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn require_ratified_background_direct_visible_combat_source_qualification_v1(
+    reviewed_qualification_commitment_sha256: &str,
+) -> Result<(), String> {
+    let Some(ratified) =
+        RATIFIED_BACKGROUND_DIRECT_VISIBLE_COMBAT_SOURCE_QUALIFICATION_COMMITMENT_V1
+    else {
+        return Err(
+            "the production background visible combat-source qualification root is empty"
+                .to_owned(),
+        );
+    };
+    if reviewed_qualification_commitment_sha256 != ratified {
+        return Err(
+            "the reviewed background visible combat-source qualification commitment is not ratified"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn require_ratified_direct_visible_combat_source_qualification_v1(
@@ -887,10 +993,154 @@ pub fn refresh_ratified_attested_direct_visible_selection_v1(
         scored_refresh_commitment_sha256,
     };
     Ok(OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
-        _initial_observation: initial_observation,
+        _initial_observation: PrivateMtgoInitialDirectVisibleObservationV1::Attested(
+            initial_observation,
+        ),
         _refreshed_observation: refreshed_observation,
         selection,
         commitments,
+    })
+}
+
+/// Converts a ratified background ordinary selection into the existing
+/// foreground-attested refresh owner. The current producer result must be
+/// exactly the same visible-equivalent bytes that the model scored. The later
+/// pixel corroboration and dispatch gates are unchanged.
+pub(crate) fn refresh_ratified_stable_background_direct_visible_selection_v1(
+    scored: OpaqueMtgoRatifiedStableBackgroundDirectVisibleScoringOutcomeV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+) -> Result<OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1, String> {
+    let OpaqueMtgoRatifiedStableBackgroundDirectVisibleScoringOutcomeV1 {
+        observation: initial_observation,
+        outcome,
+    } = scored;
+    let CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1::Selected(selection) = outcome else {
+        return Err(
+            "an abstained background visible observation has no selection to refresh".to_owned(),
+        );
+    };
+    let initial_commitments = initial_observation.commitments_v1();
+    if initial_commitments.runtime_identity_commitment_sha256
+        != runtime.commitments.runtime_identity_commitment_sha256
+        || initial_commitments.broker_binary_sha256 != runtime.commitments.broker_binary_sha256
+        || initial_commitments.producer_binary_sha256 != runtime.commitments.producer_binary_sha256
+    {
+        return Err("background selection and foreground observer runtime differ".to_owned());
+    }
+    let before_frame = capture_admitted_mtgo_duel_visible_frame_v1(profile, capture_timeout_ms)?;
+    let refreshed_observation = observe_attested_direct_visible_source_v1(
+        before_frame,
+        profile,
+        runtime,
+        capture_timeout_ms,
+        broker_timeout_ms,
+    )?;
+    let refreshed_commitments = refreshed_observation.commitments_v1();
+    if refreshed_commitments.runtime_identity_commitment_sha256
+        != initial_commitments.runtime_identity_commitment_sha256
+        || refreshed_commitments.broker_binary_sha256 != initial_commitments.broker_binary_sha256
+        || refreshed_commitments.producer_binary_sha256
+            != initial_commitments.producer_binary_sha256
+    {
+        return Err("background selection and fresh foreground observation differ".to_owned());
+    }
+    let selection = refresh_direct_visible_selection_before_dispatch_v1(
+        *selection,
+        &refreshed_observation.exact_result_bytes.0,
+    )
+    .map_err(|error| format!("refresh background visible selection in foreground: {error}"))?;
+    let scored_refresh_commitment_sha256 = commitment_v1(
+        DIRECT_VISIBLE_SOURCE_SCORED_REFRESH_DOMAIN_V1,
+        &[
+            initial_commitments.stability_commitment_sha256.as_bytes(),
+            refreshed_commitments
+                .observation_commitment_sha256
+                .as_bytes(),
+            selection.selection_commitment_sha256_v1().as_bytes(),
+            selection.refresh_commitment_sha256_v1().as_bytes(),
+            b"background_visible_result_exactly_reobserved_foreground_before_input",
+        ],
+    );
+    let commitments = MtgoRefreshedAttestedDirectVisibleSelectionCommitmentsV1 {
+        runtime_identity_commitment_sha256: initial_commitments.runtime_identity_commitment_sha256,
+        initial_observation_commitment_sha256: initial_commitments.stability_commitment_sha256,
+        refreshed_observation_commitment_sha256: refreshed_commitments
+            .observation_commitment_sha256,
+        selection_commitment_sha256: selection.selection_commitment_sha256_v1().to_owned(),
+        refresh_commitment_sha256: selection.refresh_commitment_sha256_v1().to_owned(),
+        scored_refresh_commitment_sha256,
+    };
+    Ok(OpaqueMtgoRefreshedAttestedDirectVisibleSelectionV1 {
+        _initial_observation: PrivateMtgoInitialDirectVisibleObservationV1::StableBackground(
+            initial_observation,
+        ),
+        _refreshed_observation: refreshed_observation,
+        selection,
+        commitments,
+    })
+}
+
+/// Rebinds a ratified background combat plan to a fresh foreground-attested
+/// producer result. Exact byte equality is required before the existing
+/// source-bound combat step can be constructed.
+pub(crate) fn refresh_ratified_stable_background_direct_visible_combat_step_v1(
+    scored: OpaqueMtgoRatifiedStableBackgroundDirectVisibleCombatScoringOutcomeV1,
+    profile: &AdmittedMtgoDuelPerceptionProfileV1,
+    runtime: &OpaqueMtgoVerifiedDirectVisibleSourceRuntimeV1,
+    capture_timeout_ms: u32,
+    broker_timeout_ms: u32,
+) -> Result<OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1, String> {
+    let OpaqueMtgoRatifiedStableBackgroundDirectVisibleCombatScoringOutcomeV1 {
+        observation: initial_observation,
+        outcome,
+    } = scored;
+    let prepared = match outcome {
+        CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Prepared(prepared) => prepared,
+        CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1::Abstained { .. } => {
+            return Err(
+                "an abstained background combat observation cannot prepare input".to_owned(),
+            );
+        }
+    };
+    let initial_commitments = initial_observation.commitments_v1();
+    if initial_commitments.runtime_identity_commitment_sha256
+        != runtime.commitments.runtime_identity_commitment_sha256
+        || initial_commitments.broker_binary_sha256 != runtime.commitments.broker_binary_sha256
+        || initial_commitments.producer_binary_sha256 != runtime.commitments.producer_binary_sha256
+    {
+        return Err("background combat plan and foreground observer runtime differ".to_owned());
+    }
+    let before_frame = capture_admitted_mtgo_duel_visible_frame_v1(profile, capture_timeout_ms)?;
+    let refreshed_observation = observe_attested_direct_visible_source_v1(
+        before_frame,
+        profile,
+        runtime,
+        capture_timeout_ms,
+        broker_timeout_ms,
+    )?;
+    let refreshed_commitments = refreshed_observation.commitments_v1();
+    if refreshed_commitments.runtime_identity_commitment_sha256
+        != initial_commitments.runtime_identity_commitment_sha256
+        || refreshed_commitments.broker_binary_sha256 != initial_commitments.broker_binary_sha256
+        || refreshed_commitments.producer_binary_sha256
+            != initial_commitments.producer_binary_sha256
+        || refreshed_observation.exact_result_bytes.0 != initial_observation._exact_result_bytes.0
+    {
+        return Err(
+            "background combat plan is not the exact fresh foreground visible result".to_owned(),
+        );
+    }
+    let checked = prepare_player_visible_combat_execution_step_v1(
+        prepared,
+        &refreshed_observation.exact_result_bytes.0,
+    )
+    .map_err(|error| format!("prepare refreshed background combat step: {error}"))?;
+    Ok(OpaqueMtgoAttestedDirectVisibleCombatBeforeDispatchV1 {
+        source_observation: refreshed_observation,
+        checked,
     })
 }
 
@@ -1793,6 +2043,22 @@ impl OpaqueMtgoStableBackgroundDirectVisibleSourceV1 {
     pub fn permits_spending_v1(&self) -> bool {
         false
     }
+}
+
+/// Qualification-only ordinary selection retaining the exact stable
+/// background source. This remains crate-private because its scorer is
+/// caller-supplied and cannot be a production policy owner.
+pub(crate) struct OpaqueMtgoRatifiedStableBackgroundDirectVisibleScoringOutcomeV1 {
+    observation: OpaqueMtgoStableBackgroundDirectVisibleSourceV1,
+    outcome: CheckedUntrustedMtgoDirectVisibleScoringOutcomeV1,
+}
+
+/// Qualification-only combat plan retaining the exact stable background
+/// source. A fresh foreground source-attested observation is mandatory before
+/// the plan can enter the existing combat dispatch preparation chain.
+pub(crate) struct OpaqueMtgoRatifiedStableBackgroundDirectVisibleCombatScoringOutcomeV1 {
+    observation: OpaqueMtgoStableBackgroundDirectVisibleSourceV1,
+    outcome: CheckedUntrustedMtgoPlayerVisibleCombatScoringOutcomeV1,
 }
 
 impl OpaqueMtgoQualifiedDirectVisibleSourceObservationV1 {
@@ -2713,6 +2979,55 @@ fn utf16_nul_v1(value: &[u16]) -> String {
     String::from_utf16_lossy(&value[..length])
 }
 
+fn trusted_system_windows_directory_v1() -> Result<OsString, String> {
+    let mut buffer = vec![0u16; 32_768];
+    let length = unsafe { GetSystemWindowsDirectoryW(Some(&mut buffer)) } as usize;
+    if length == 0 || length >= buffer.len() || buffer[..length].contains(&0) {
+        return Err("read trusted Windows system directory".to_owned());
+    }
+    Ok(OsString::from_wide(&buffer[..length]))
+}
+
+fn broker_argument_path_v1(path: &Path) -> Result<PathBuf, String> {
+    let encoded = path.as_os_str().encode_wide().collect::<Vec<_>>();
+    let verbatim_prefix = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    let verbatim_unc_prefix = [
+        b'\\' as u16,
+        b'\\' as u16,
+        b'?' as u16,
+        b'\\' as u16,
+        b'U' as u16,
+        b'N' as u16,
+        b'C' as u16,
+        b'\\' as u16,
+    ];
+    let normalized = if encoded.starts_with(&verbatim_unc_prefix) {
+        let mut value = vec![b'\\' as u16, b'\\' as u16];
+        value.extend_from_slice(&encoded[verbatim_unc_prefix.len()..]);
+        value
+    } else if encoded.starts_with(&verbatim_prefix) {
+        let value = encoded[verbatim_prefix.len()..].to_vec();
+        let drive_letter = value.first().copied().is_some_and(|unit| {
+            (b'A' as u16..=b'Z' as u16).contains(&unit)
+                || (b'a' as u16..=b'z' as u16).contains(&unit)
+        });
+        if value.len() < 3 || !drive_letter || value[1] != b':' as u16 || value[2] != b'\\' as u16 {
+            return Err("verified broker artifact has an unsupported verbatim path".to_owned());
+        }
+        value
+    } else {
+        encoded
+    };
+    if normalized.is_empty() || normalized.contains(&0) {
+        return Err("verified broker artifact path is empty or contains NUL".to_owned());
+    }
+    let path = PathBuf::from(OsString::from_wide(&normalized));
+    if !path.is_absolute() {
+        return Err("verified broker artifact path is not absolute".to_owned());
+    }
+    Ok(path)
+}
+
 fn verify_exact_artifact_v1(
     path: &Path,
     expected_file_name: &str,
@@ -2847,15 +3162,19 @@ fn invoke_observe_only_broker_v1(
     process_id: u32,
     timeout: Duration,
 ) -> Result<ZeroingVecV1, String> {
+    let windows_directory = trusted_system_windows_directory_v1()?;
+    let bootstrap_path = broker_argument_path_v1(&runtime.bootstrap_path)?;
+    let producer_path = broker_argument_path_v1(&runtime.producer_path)?;
+    let validator_path = broker_argument_path_v1(&runtime.validator_path)?;
     let mut child = Command::new(&runtime.broker_path)
         .arg("--pid")
         .arg(process_id.to_string())
         .arg("--bootstrap")
-        .arg(&runtime.bootstrap_path)
+        .arg(bootstrap_path)
         .arg("--producer")
-        .arg(&runtime.producer_path)
+        .arg(producer_path)
         .arg("--validator")
-        .arg(&runtime.validator_path)
+        .arg(validator_path)
         .current_dir(
             runtime
                 .broker_path
@@ -2863,6 +3182,7 @@ fn invoke_observe_only_broker_v1(
                 .ok_or("direct-source broker has no parent directory")?,
         )
         .env_clear()
+        .env("SystemRoot", &windows_directory)
         .creation_flags(CREATE_NO_WINDOW_V1)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -2878,7 +3198,7 @@ fn invoke_observe_only_broker_v1(
         .take()
         .ok_or("release-pinned direct-source broker has no stderr")?;
     let started = Instant::now();
-    let (status, stdout, stdout_truncated, stderr_truncated) = thread::scope(|scope| {
+    let (status, stdout, stderr, stdout_truncated, stderr_truncated) = thread::scope(|scope| {
         let stdout_reader =
             scope.spawn(|| read_bounded_and_drain_v1(&mut stdout, MAX_BROKER_STDOUT_BYTES_V1));
         let stderr_reader =
@@ -2903,10 +3223,9 @@ fn invoke_observe_only_broker_v1(
         let (stderr, stderr_truncated) = stderr_reader
             .join()
             .map_err(|_| "direct-source broker stderr reader panicked".to_owned())??;
-        drop(stderr);
-        Ok::<_, String>((status, stdout, stdout_truncated, stderr_truncated))
+        Ok::<_, String>((status, stdout, stderr, stdout_truncated, stderr_truncated))
     })?;
-    validate_broker_process_result_v1(status, stdout, stdout_truncated, stderr_truncated)
+    validate_broker_process_result_v1(status, stdout, stderr, stdout_truncated, stderr_truncated)
 }
 
 fn invoke_dispatch_broker_v1(
@@ -2925,15 +3244,19 @@ fn invoke_dispatch_broker_v1(
     {
         return Err("direct-visible dispatch arguments are invalid".to_owned());
     }
+    let windows_directory = trusted_system_windows_directory_v1()?;
+    let bootstrap_path = broker_argument_path_v1(&runtime.bootstrap_path)?;
+    let producer_path = broker_argument_path_v1(&runtime.producer_path)?;
+    let validator_path = broker_argument_path_v1(&runtime.validator_path)?;
     let mut child = Command::new(&runtime.broker_path)
         .arg("--pid")
         .arg(process_id.to_string())
         .arg("--bootstrap")
-        .arg(&runtime.bootstrap_path)
+        .arg(bootstrap_path)
         .arg("--producer")
-        .arg(&runtime.producer_path)
+        .arg(producer_path)
         .arg("--validator")
-        .arg(&runtime.validator_path)
+        .arg(validator_path)
         .arg("--decision-sha256")
         .arg(decision_sha256)
         .arg("--selected-index")
@@ -2945,6 +3268,7 @@ fn invoke_dispatch_broker_v1(
                 .ok_or("direct-visible dispatch broker has no parent directory")?,
         )
         .env_clear()
+        .env("SystemRoot", &windows_directory)
         .creation_flags(CREATE_NO_WINDOW_V1)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -2960,7 +3284,7 @@ fn invoke_dispatch_broker_v1(
         .take()
         .ok_or("release-pinned direct-visible dispatch broker has no stderr")?;
     let started = Instant::now();
-    let (status, stdout, stdout_truncated, stderr_truncated) = thread::scope(|scope| {
+    let (status, stdout, stderr, stdout_truncated, stderr_truncated) = thread::scope(|scope| {
         let stdout_reader =
             scope.spawn(|| read_bounded_and_drain_v1(&mut stdout, MAX_BROKER_STDOUT_BYTES_V1));
         let stderr_reader =
@@ -2985,10 +3309,9 @@ fn invoke_dispatch_broker_v1(
         let (stderr, stderr_truncated) = stderr_reader
             .join()
             .map_err(|_| "direct-visible dispatch stderr reader panicked".to_owned())??;
-        drop(stderr);
-        Ok::<_, String>((status, stdout, stdout_truncated, stderr_truncated))
+        Ok::<_, String>((status, stdout, stderr, stdout_truncated, stderr_truncated))
     })?;
-    validate_broker_process_result_v1(status, stdout, stdout_truncated, stderr_truncated)
+    validate_broker_process_result_v1(status, stdout, stderr, stdout_truncated, stderr_truncated)
 }
 
 fn invoke_combat_dispatch_broker_v1(
@@ -3001,16 +3324,20 @@ fn invoke_combat_dispatch_broker_v1(
         return Err("direct-visible combat dispatch process is invalid".to_owned());
     }
     let combat_arguments = combat_dispatch_arguments_v1(command)?;
+    let windows_directory = trusted_system_windows_directory_v1()?;
+    let bootstrap_path = broker_argument_path_v1(&runtime.bootstrap_path)?;
+    let producer_path = broker_argument_path_v1(&runtime.producer_path)?;
+    let validator_path = broker_argument_path_v1(&runtime.validator_path)?;
     let mut child = Command::new(&runtime.broker_path);
     child
         .arg("--pid")
         .arg(process_id.to_string())
         .arg("--bootstrap")
-        .arg(&runtime.bootstrap_path)
+        .arg(bootstrap_path)
         .arg("--producer")
-        .arg(&runtime.producer_path)
+        .arg(producer_path)
         .arg("--validator")
-        .arg(&runtime.validator_path);
+        .arg(validator_path);
     for argument in combat_arguments {
         child.arg(argument);
     }
@@ -3022,6 +3349,7 @@ fn invoke_combat_dispatch_broker_v1(
                 .ok_or("direct-visible combat dispatch broker has no parent directory")?,
         )
         .env_clear()
+        .env("SystemRoot", &windows_directory)
         .creation_flags(CREATE_NO_WINDOW_V1)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -3038,7 +3366,7 @@ fn invoke_combat_dispatch_broker_v1(
         .take()
         .ok_or("release-pinned direct-visible combat broker has no stderr")?;
     let started = Instant::now();
-    let (status, stdout, stdout_truncated, stderr_truncated) = thread::scope(|scope| {
+    let (status, stdout, stderr, stdout_truncated, stderr_truncated) = thread::scope(|scope| {
         let stdout_reader =
             scope.spawn(|| read_bounded_and_drain_v1(&mut stdout, MAX_BROKER_STDOUT_BYTES_V1));
         let stderr_reader =
@@ -3063,10 +3391,9 @@ fn invoke_combat_dispatch_broker_v1(
         let (stderr, stderr_truncated) = stderr_reader
             .join()
             .map_err(|_| "direct-visible combat dispatch stderr reader panicked".to_owned())??;
-        drop(stderr);
-        Ok::<_, String>((status, stdout, stdout_truncated, stderr_truncated))
+        Ok::<_, String>((status, stdout, stderr, stdout_truncated, stderr_truncated))
     })?;
-    validate_broker_process_result_v1(status, stdout, stdout_truncated, stderr_truncated)
+    validate_broker_process_result_v1(status, stdout, stderr, stdout_truncated, stderr_truncated)
 }
 
 fn combat_dispatch_arguments_v1(
@@ -3182,22 +3509,67 @@ fn combat_dispatch_arguments_v1(
 fn validate_broker_process_result_v1(
     status: ExitStatus,
     output: ZeroingVecV1,
+    stderr: ZeroingVecV1,
     output_truncated: bool,
     stderr_truncated: bool,
 ) -> Result<ZeroingVecV1, String> {
+    let payload_length = output
+        .0
+        .strip_suffix(b"\r\n")
+        .map(|value| value.len())
+        .or_else(|| output.0.strip_suffix(b"\n").map(|value| value.len()));
     if !status.success()
         || output.0.is_empty()
         || output_truncated
         || stderr_truncated
-        || output.0.last() != Some(&b'\n')
-        || output.0[..output.0.len().saturating_sub(1)].contains(&b'\n')
-        || output.0.contains(&b'\r')
+        || !stderr.0.is_empty()
+        || payload_length.is_none_or(|length| {
+            length == 0
+                || output.0[..length].contains(&b'\n')
+                || output.0[..length].contains(&b'\r')
+        })
     {
-        return Err("release-pinned direct-source broker failed closed".to_owned());
+        return Err(match safe_broker_failure_code_v1(&stderr.0) {
+            Some(code) => format!("release-pinned direct-source broker failed closed: {code}"),
+            None => "release-pinned direct-source broker failed closed".to_owned(),
+        });
     }
     let mut output = output;
-    output.0.pop();
+    output
+        .0
+        .truncate(payload_length.expect("validated terminal line ending"));
     Ok(output)
+}
+
+fn safe_broker_failure_code_v1(stderr: &[u8]) -> Option<&'static str> {
+    const PREFIX: &[u8] = b"mtgo_visible_duel_broker_v1:";
+    const CODES: &[&str] = &[
+        "arguments",
+        "input_validation",
+        "live_dispatch_not_admitted",
+        "channel_name",
+        "channel_create",
+        "channel_map",
+        "process_open",
+        "target_not_synthetic_host",
+        "live_identity_pre",
+        "bootstrap_write",
+        "bootstrap_load",
+        "bootstrap_entry",
+        "parameter_copy",
+        "parameter_write",
+        "producer_invoke",
+        "output_validation",
+        "live_identity_post",
+    ];
+    let line = stderr
+        .strip_suffix(b"\r\n")
+        .or_else(|| stderr.strip_suffix(b"\n"))?
+        .strip_prefix(PREFIX)?;
+    CODES
+        .iter()
+        .copied()
+        .find(|candidate| line == candidate.as_bytes())
 }
 
 fn validate_same_duel_observation_lineage_v1(
@@ -3510,6 +3882,22 @@ mod tests {
     }
 
     #[test]
+    fn broker_arguments_use_non_verbatim_absolute_windows_paths() {
+        assert_eq!(
+            broker_argument_path_v1(Path::new(r"\\?\C:\mtgo\broker.exe")).unwrap(),
+            PathBuf::from(r"C:\mtgo\broker.exe")
+        );
+        assert_eq!(
+            broker_argument_path_v1(Path::new(r"\\?\UNC\server\share\broker.exe")).unwrap(),
+            PathBuf::from(r"\\server\share\broker.exe")
+        );
+        assert!(broker_argument_path_v1(Path::new(r"\\?\Volume{abcd}\broker.exe")).is_err());
+        let windows_directory = PathBuf::from(trusted_system_windows_directory_v1().unwrap());
+        assert!(windows_directory.is_absolute());
+        assert!(windows_directory.is_dir());
+    }
+
+    #[test]
     fn combat_routing_is_kind_only_and_excludes_ordinary_and_abstained_results() {
         let ordinary = MtgoVisibleDuelViewModelBrokerResultV1::VisibleDecision {
             decision: Box::new(visible_decision_v1(
@@ -3563,6 +3951,69 @@ mod tests {
             require_ratified_direct_visible_combat_source_qualification_v1(&"a".repeat(64))
                 .is_err()
         );
+        assert!(
+            require_ratified_background_direct_visible_source_qualification_v1(&"a".repeat(64))
+                .is_err()
+        );
+        assert!(
+            require_ratified_background_direct_visible_combat_source_qualification_v1(
+                &"a".repeat(64)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn fixed_broker_diagnostics_never_forward_arbitrary_stderr() {
+        assert_eq!(
+            safe_broker_failure_code_v1(b"mtgo_visible_duel_broker_v1:bootstrap_entry\r\n"),
+            Some("bootstrap_entry")
+        );
+        assert_eq!(
+            safe_broker_failure_code_v1(b"mtgo_visible_duel_broker_v1:producer_invoke\n"),
+            Some("producer_invoke")
+        );
+        assert_eq!(
+            safe_broker_failure_code_v1(b"mtgo_visible_duel_broker_v1:hidden_state=7\r\n"),
+            None
+        );
+        assert_eq!(safe_broker_failure_code_v1(b"arbitrary stderr\r\n"), None);
+    }
+
+    #[test]
+    fn broker_result_accepts_one_terminal_windows_or_unix_line_ending() {
+        let success_status = || {
+            Command::new("cmd.exe")
+                .args(["/d", "/c", "exit", "0"])
+                .status()
+                .unwrap()
+        };
+        let windows = validate_broker_process_result_v1(
+            success_status(),
+            ZeroingVecV1(b"{}\r\n".to_vec()),
+            ZeroingVecV1(Vec::new()),
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(windows.0, b"{}");
+        let unix = validate_broker_process_result_v1(
+            success_status(),
+            ZeroingVecV1(b"{}\n".to_vec()),
+            ZeroingVecV1(Vec::new()),
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(unix.0, b"{}");
+        assert!(validate_broker_process_result_v1(
+            success_status(),
+            ZeroingVecV1(b"{\r}\r\n".to_vec()),
+            ZeroingVecV1(Vec::new()),
+            false,
+            false,
+        )
+        .is_err());
     }
 
     #[test]

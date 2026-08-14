@@ -34,7 +34,9 @@ pub struct MtgoCompetitiveVisibleHistoryReadinessV1 {
     pub direct_source_live_abstention_qualification_passed: bool,
     pub direct_source_audited_broker_runtime_present: bool,
     pub direct_source_background_stable_visible_equivalent_qualification_present: bool,
-    pub direct_source_live_producer_attestation_present: bool,
+    pub direct_source_background_live_stable_abstention_passed: bool,
+    pub direct_source_background_foreground_rebind_present: bool,
+    pub direct_source_live_data_bearing_producer_attestation_present: bool,
     pub visible_accessibility_requires_pixel_corroboration: bool,
     pub visible_accessibility_fixed_known_label_catalog_present: bool,
     pub visible_accessibility_fixed_known_label_pixel_corroboration_present: bool,
@@ -112,7 +114,9 @@ pub fn check_competitive_visible_history_readiness_v1() -> MtgoCompetitiveVisibl
         direct_source_live_abstention_qualification_passed: true,
         direct_source_audited_broker_runtime_present: true,
         direct_source_background_stable_visible_equivalent_qualification_present: true,
-        direct_source_live_producer_attestation_present: false,
+        direct_source_background_live_stable_abstention_passed: true,
+        direct_source_background_foreground_rebind_present: true,
+        direct_source_live_data_bearing_producer_attestation_present: false,
         visible_accessibility_requires_pixel_corroboration: true,
         visible_accessibility_fixed_known_label_catalog_present: true,
         visible_accessibility_fixed_known_label_pixel_corroboration_present: true,
@@ -194,7 +198,9 @@ mod tests {
         assert!(report.direct_source_live_abstention_qualification_passed);
         assert!(report.direct_source_audited_broker_runtime_present);
         assert!(report.direct_source_background_stable_visible_equivalent_qualification_present);
-        assert!(!report.direct_source_live_producer_attestation_present);
+        assert!(report.direct_source_background_live_stable_abstention_passed);
+        assert!(report.direct_source_background_foreground_rebind_present);
+        assert!(!report.direct_source_live_data_bearing_producer_attestation_present);
         assert!(report.visible_accessibility_requires_pixel_corroboration);
         assert!(report.visible_accessibility_fixed_known_label_catalog_present);
         assert!(report.visible_accessibility_fixed_known_label_pixel_corroboration_present);
