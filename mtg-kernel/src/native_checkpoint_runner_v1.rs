@@ -559,6 +559,9 @@ pub fn run_native_checkpoint_v1(
 /// reached from a training run record or any non-test/non-eval-tooling
 /// caller.
 #[cfg(test)]
+// Callers live in Windows-gated test modules; dead on non-Windows targets
+// only, so the lint stays active where the callers exist.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn run_native_checkpoint_with_ladder_opponent_eval_v1(
     run: &ValidatedTrainRunV2,
     checkpoint: &CheckpointManifestV3,

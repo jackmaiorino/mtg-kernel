@@ -3571,6 +3571,9 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
 /// record that decodes clean but must be rejected at the science-loop,
 /// publisher, and resume boundaries.
 #[cfg(test)]
+// Callers live in Windows-gated test modules; dead on non-Windows targets
+// only, so the lint stays active where the callers exist.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn test_fixture_bytes_historical_v1() -> Vec<u8> {
     tests::fixture_bytes_historical()
 }
