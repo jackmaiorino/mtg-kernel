@@ -11,7 +11,7 @@
   },
   "authority": {
     "audit_dependency_path": "python/tools/audit_feature_coverage_collision_v1.py",
-    "audit_dependency_sha256": "c73c0d3ebedc3ba53753991ededeb6dc4e290284b7c714f3042cc11b36556c0c",
+    "audit_dependency_sha256": "3bea5cec426b66081e6382a19b890a54d118bb6844034ece526ab22d61454f18",
     "encoding_contract_fingerprint": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
     "feature_contract_fingerprint": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
     "static_tool_path": "python/tools/audit_action_ingress_static_admission_v1.py",
@@ -3720,7 +3720,7 @@
     "observation coverage is not an admission criterion",
     "no game-strength, generalization, robustness, human-play, or pro-level-play claim"
   ],
-  "payload_sha256": "59cd485a83fe70779a77fc0d5a2b81443c21ff20d364c99a9c2b529a82b7e1cf",
+  "payload_sha256": "043e04b9c91809ded019ddfb9ad061d13d5d228d4058e4183c4ff1f00eff804b",
   "schema": "mtg-kernel-action-ingress-static-admission/v1",
   "status": "STATIC-ADMITTED",
   "structured_aliases": {
