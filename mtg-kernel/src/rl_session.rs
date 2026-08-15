@@ -1734,9 +1734,14 @@ fn flat_validate_origin_decision_v1(
             plot_actions,
         } => {
             let mut mana_action_count = 0_usize;
+            let mut choices = crate::mana::ManaColorSetV1::new();
             for object in mana_abilities {
-                let choices =
-                    crate::engine::available_mana_ability_choices(*player, *object, state);
+                crate::engine::available_mana_ability_choices_into(
+                    *player,
+                    *object,
+                    state,
+                    &mut choices,
+                );
                 if choices.is_empty() {
                     return Err(invalid());
                 }
@@ -1781,12 +1786,16 @@ fn flat_validate_origin_decision_v1(
                 cursor += 1;
             }
             for object in mana_abilities {
-                let choices =
-                    crate::engine::available_mana_ability_choices(*player, *object, state);
+                crate::engine::available_mana_ability_choices_into(
+                    *player,
+                    *object,
+                    state,
+                    &mut choices,
+                );
                 if choices.is_empty() {
                     return Err(invalid());
                 }
-                for &choice in &choices {
+                for &choice in choices.as_slice() {
                     let cost_targets =
                         crate::engine::mana_ability_cost_targets(*player, *object, state);
                     if cost_targets.is_empty() {

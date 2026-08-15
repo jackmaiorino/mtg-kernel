@@ -34,7 +34,7 @@ use crate::effect::{
     CreatureFilter, CreatureSacrificeFilter, EffectCond, EffectOp, ImpulseDuration,
     LibraryCardFilter, ObjectRef, PlayerRef, TargetRef,
 };
-use crate::mana::{Cost, ManaColor, Pip};
+use crate::mana::{Cost, ManaColor, ManaColorSetV1, Pip};
 use crate::state::Zone;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -1180,19 +1180,34 @@ impl CardDef {
             && self.mana_ability_def.is_none()
     }
 
+    /// Non-allocating core of [`Self::primary_mana_ability_choices`]. Writes
+    /// into `out` instead of returning an owned `Vec`, for hot paths (such as
+    /// flat-action validation) that must not touch the heap. `out` is
+    /// appended to, not cleared, so a fresh `ManaColorSetV1` is expected.
+    pub(crate) fn primary_mana_ability_choices_into(
+        &self,
+        chosen_color: Option<ManaColor>,
+        out: &mut ManaColorSetV1,
+    ) {
+        for &color in self.mana_ability_choices {
+            out.push(color);
+        }
+        if self.mana_ability_includes_chosen_color {
+            if let Some(color) = chosen_color {
+                if !out.contains(color) {
+                    out.push(color);
+                }
+            }
+        }
+    }
+
     /// Exact colors the primary printed mana ability can currently produce.
     /// Chosen-color lands remain fail closed until their entry choice has
     /// populated the incarnation-local object state.
     pub fn primary_mana_ability_choices(&self, chosen_color: Option<ManaColor>) -> Vec<ManaColor> {
-        let mut choices = self.mana_ability_choices.to_vec();
-        if self.mana_ability_includes_chosen_color {
-            if let Some(color) = chosen_color {
-                if !choices.contains(&color) {
-                    choices.push(color);
-                }
-            }
-        }
-        choices
+        let mut choices = ManaColorSetV1::new();
+        self.primary_mana_ability_choices_into(chosen_color, &mut choices);
+        choices.as_slice().to_vec()
     }
 
     /// Every currently legal color across all printed mana abilities.

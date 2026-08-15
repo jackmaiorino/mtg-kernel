@@ -49,7 +49,7 @@ use crate::effect::{
 };
 use crate::event::{self, ActiveReplacement, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
-use crate::mana::{self, Cost, ManaColor};
+use crate::mana::{self, Cost, ManaColor, ManaColorSetV1};
 use crate::state::{
     stack_target_contract_is_structurally_valid, AbilityKindV4, AbilitySourceContractV4,
     CastMethodV4, FinalizedCastBindingV1, GameState, InitiativeTriggerKindV1,
@@ -4870,9 +4870,88 @@ fn rich_mana_ability_is_payable(
             true
         }
         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
+            // The allocating candidate enumeration must stay behind the two
+            // cheap checks: the flat-encode zero-allocation contract counts
+            // on the short-circuit (tests/flat_action_allocation.rs).
             !(object.tapped
-                || mana_ability_cost_targets(player, source, state).is_empty()
-                || def.has_type(CardType::Creature) && object.summoning_sick)
+                || def.has_type(CardType::Creature) && object.summoning_sick
+                || mana_ability_cost_targets(player, source, state).is_empty())
+        }
+    }
+}
+
+/// Non-allocating core of [`available_mana_ability_choices`]. Writes into
+/// `out` (which it resets first) instead of returning an owned `Vec`, for hot
+/// paths (such as flat-action validation) that must not touch the heap. Same
+/// selection logic and ordering as the `Vec`-returning wrapper.
+pub(crate) fn available_mana_ability_choices_into(
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+    out: &mut ManaColorSetV1,
+) {
+    *out = ManaColorSetV1::new();
+    let Some(object) = state.objects.try_get(source) else {
+        return;
+    };
+    if object.controller != player
+        || object.zone != Zone::Battlefield
+        || !state.players[player.index()].battlefield.contains(&source)
+    {
+        return;
+    }
+    let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
+        return;
+    };
+    if !def.has_mana_ability() {
+        return;
+    }
+
+    let mut primary = ManaColorSetV1::new();
+    def.primary_mana_ability_choices_into(object.v4.chosen_color, &mut primary);
+    let primary_payable = if let Some(rich) = def.mana_ability_def {
+        rich_mana_ability_is_payable(player, source, 0, rich, None, state)
+    } else {
+        !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
+    };
+    if primary_payable {
+        for &color in primary.as_slice() {
+            out.push(color);
+        }
+    }
+
+    let primary_ability_count =
+        if def.mana_ability_def.is_some() || def.mana_ability_includes_chosen_color {
+            u16::from(!primary.is_empty())
+        } else {
+            match u16::try_from(def.mana_ability_choices.len()) {
+                Ok(count) => count,
+                Err(_) => {
+                    *out = ManaColorSetV1::new();
+                    return;
+                }
+            }
+        };
+    for (index, additional) in def.additional_mana_abilities.iter().enumerate() {
+        let Ok(index) = u16::try_from(index) else {
+            *out = ManaColorSetV1::new();
+            return;
+        };
+        if rich_mana_ability_is_payable(
+            player,
+            source,
+            primary_ability_count + index,
+            additional.ability,
+            Some(additional.mana_cost),
+            state,
+        ) {
+            for &color in additional.colors {
+                if out.contains(color) {
+                    *out = ManaColorSetV1::new();
+                    return;
+                }
+                out.push(color);
+            }
         }
     }
 }
@@ -4885,66 +4964,9 @@ pub(crate) fn available_mana_ability_choices(
     source: ObjectId,
     state: &GameState,
 ) -> Vec<ManaColor> {
-    let Some(object) = state.objects.try_get(source) else {
-        return Vec::new();
-    };
-    if object.controller != player
-        || object.zone != Zone::Battlefield
-        || !state.players[player.index()].battlefield.contains(&source)
-    {
-        return Vec::new();
-    }
-    let Some(def) = card_def::CARD_DEFS.get(object.card_def as usize) else {
-        return Vec::new();
-    };
-    if !def.has_mana_ability() {
-        return Vec::new();
-    }
-
-    let mut choices = Vec::new();
-    let primary = def.primary_mana_ability_choices(object.v4.chosen_color);
-    let primary_payable = if let Some(rich) = def.mana_ability_def {
-        rich_mana_ability_is_payable(player, source, 0, rich, None, state)
-    } else {
-        !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
-    };
-    if primary_payable {
-        choices.extend(primary);
-    }
-
-    let primary_ability_count =
-        if def.mana_ability_def.is_some() || def.mana_ability_includes_chosen_color {
-            u16::from(
-                !def.primary_mana_ability_choices(object.v4.chosen_color)
-                    .is_empty(),
-            )
-        } else {
-            match u16::try_from(def.mana_ability_choices.len()) {
-                Ok(count) => count,
-                Err(_) => return Vec::new(),
-            }
-        };
-    for (index, additional) in def.additional_mana_abilities.iter().enumerate() {
-        let Ok(index) = u16::try_from(index) else {
-            return Vec::new();
-        };
-        if rich_mana_ability_is_payable(
-            player,
-            source,
-            primary_ability_count + index,
-            additional.ability,
-            Some(additional.mana_cost),
-            state,
-        ) {
-            for &color in additional.colors {
-                if choices.contains(&color) {
-                    return Vec::new();
-                }
-                choices.push(color);
-            }
-        }
-    }
-    choices
+    let mut choices = ManaColorSetV1::new();
+    available_mana_ability_choices_into(player, source, state, &mut choices);
+    choices.as_slice().to_vec()
 }
 
 fn mana_ability_use_count(state: &GameState, source: ObjectId, ability_index: u16) -> u16 {

@@ -58,6 +58,56 @@ impl ManaColor {
     }
 }
 
+/// Fixed-capacity, non-allocating set of mana colors. Bounded by
+/// `ManaColor::ALL.len()`, which every printed mana ability stays within, so
+/// capacity is never exceeded in practice. Exists so hot paths that must not
+/// touch the heap (such as flat-action validation) can compute the same
+/// small color sets that `CardDef::primary_mana_ability_choices` and
+/// `engine::available_mana_ability_choices` return as an owned `Vec`
+/// elsewhere.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ManaColorSetV1 {
+    colors: [ManaColor; ManaColorSetV1::CAPACITY],
+    len: u8,
+}
+
+impl ManaColorSetV1 {
+    const CAPACITY: usize = ManaColor::ALL.len();
+
+    pub(crate) fn new() -> Self {
+        Self {
+            colors: [ManaColor::W; ManaColorSetV1::CAPACITY],
+            len: 0,
+        }
+    }
+
+    /// Appends `color`. Every real caller stays within `CAPACITY` colors
+    /// (see the type doc); the bounds guard only prevents a panic if that
+    /// invariant is ever violated instead of silently corrupting state.
+    pub(crate) fn push(&mut self, color: ManaColor) {
+        if usize::from(self.len) < ManaColorSetV1::CAPACITY {
+            self.colors[usize::from(self.len)] = color;
+            self.len += 1;
+        }
+    }
+
+    pub(crate) fn as_slice(&self) -> &[ManaColor] {
+        &self.colors[..usize::from(self.len)]
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        usize::from(self.len)
+    }
+
+    pub(crate) fn contains(&self, color: ManaColor) -> bool {
+        self.as_slice().contains(&color)
+    }
+}
+
 /// Deterministic policy for spending already-floating mana on generic
 /// requirements. Magic permits any color, so the choice is strategically
 /// observable whenever multiple colors remain. XMage's `ManaCostImpl`
