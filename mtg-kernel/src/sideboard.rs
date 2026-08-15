@@ -1097,7 +1097,7 @@ fn validate_postboard_game_index_v1(game_index: u8) -> Result<(), SideboardError
     Ok(())
 }
 
-fn canonicalize_card_counts_v1(rows: &mut Vec<CardCountV1>) -> Result<(), SideboardErrorV1> {
+fn canonicalize_card_counts_v1(rows: &mut [CardCountV1]) -> Result<(), SideboardErrorV1> {
     rows.sort_unstable();
     for row in rows.iter() {
         if row.count == 0 {

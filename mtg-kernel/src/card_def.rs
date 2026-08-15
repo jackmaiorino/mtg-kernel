@@ -343,8 +343,9 @@ impl Subtype {
 }
 
 /// What a spell/ability needs targeted at cast/activation time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TargetSpec {
+    #[default]
     None,
     /// Exactly 1 target: any creature on either battlefield, or either
     /// player.
@@ -476,12 +477,6 @@ pub enum TargetSpec {
     /// announcing player. Appended for Masked Vandal and Troublemaker Ouphe
     /// without changing any existing target identity.
     OpponentArtifactOrEnchantmentPermanent,
-}
-
-impl Default for TargetSpec {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl TargetSpec {

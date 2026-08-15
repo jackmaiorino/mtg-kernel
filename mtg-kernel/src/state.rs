@@ -1878,7 +1878,7 @@ impl GameState {
         let owner = library_shuffle_owner(owner)?;
         let authorization = match &self.randomness {
             GameRandomnessState::Legacy(rng) => LibraryShuffleAuthorization::Legacy {
-                expected_rng: rng.clone(),
+                expected_rng: *rng,
             },
             GameRandomnessState::EnvironmentV2(v2) => {
                 let physical_owner = physical_owner_v2_exact(owner)?;
@@ -1932,7 +1932,7 @@ impl GameState {
                 if rng != expected_rng {
                     return Err(LibraryShuffleError::TokenStateMismatch);
                 }
-                let mut next_rng = expected_rng.clone();
+                let mut next_rng = *expected_rng;
                 let mut library = self.players[owner.index()].library.clone();
                 for i in (1..library.len()).rev() {
                     let j = (next_rng.next_u64() % (i as u64 + 1)) as usize;
@@ -3132,7 +3132,7 @@ mod tests {
             .expect("legacy one-shot succeeds");
         // Historical algorithm replayed by hand on the twin state.
         {
-            let mut rng = manual.legacy_rng().expect("legacy").clone();
+            let mut rng = *manual.legacy_rng().expect("legacy");
             let library = &mut manual.players[PlayerId::P0.index()].library;
             for i in (1..library.len()).rev() {
                 let j = (rng.next_u64() % (i as u64 + 1)) as usize;

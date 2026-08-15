@@ -461,8 +461,8 @@ pub fn apply_replacements(
             .active_replacements
             .iter()
             .find(|r| {
-                !proposed.touched_by().contains(&r.id)
-                    && !(damage_cannot_be_prevented
+                !(proposed.touched_by().contains(&r.id)
+                    || damage_cannot_be_prevented
                         && matches!(
                             &r.kind,
                             ReplacementEffectKind::PreventNextDamage { .. }
@@ -954,6 +954,7 @@ fn permanent_enters_battlefield_tapped(
 /// Stack" (casting) is deliberately not reachable here: putting a spell on
 /// the stack is an engine action (see `engine::begin_cast`), never
 /// something a card's own effect program does.
+#[allow(clippy::too_many_arguments)]
 fn commit_zone_change(
     state: &mut GameState,
     id: ObjectId,
@@ -1254,7 +1255,7 @@ fn remove_from_zone(state: &mut GameState, owner: PlayerId, id: ObjectId, zone: 
             state.stack.retain(|item| {
                 item.kind != StackItemKind::Spell
                     || item.source != id
-                    || item.v4.source_contract.map_or(true, |contract| {
+                    || item.v4.source_contract.is_none_or(|contract| {
                         contract.zone_change_count != live_generation
                     })
             });

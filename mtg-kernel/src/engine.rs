@@ -4864,15 +4864,15 @@ fn rich_mana_ability_is_payable(
     }
     match rich.cost {
         ManaAbilityCostDef::TapSelf | ManaAbilityCostDef::TapAndSacrificeSelf => {
-            !object.tapped && !(def.has_type(CardType::Creature) && object.summoning_sick)
+            !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
         }
         ManaAbilityCostDef::SacrificeSelf | ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf => {
             true
         }
         ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature => {
-            !object.tapped
-                && !(def.has_type(CardType::Creature) && object.summoning_sick)
-                && !mana_ability_cost_targets(player, source, state).is_empty()
+            !(object.tapped
+                || mana_ability_cost_targets(player, source, state).is_empty()
+                || def.has_type(CardType::Creature) && object.summoning_sick)
         }
     }
 }
@@ -4906,7 +4906,7 @@ pub(crate) fn available_mana_ability_choices(
     let primary_payable = if let Some(rich) = def.mana_ability_def {
         rich_mana_ability_is_payable(player, source, 0, rich, None, state)
     } else {
-        !object.tapped && !(def.has_type(CardType::Creature) && object.summoning_sick)
+        !(object.tapped || def.has_type(CardType::Creature) && object.summoning_sick)
     };
     if primary_payable {
         choices.extend(primary);
@@ -7741,49 +7741,48 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
         });
     }
 
-    if activation_tap_cost_subtype(ability.cost).is_some() {
-        if pending.object_cost_chosen.is_empty() {
-            let candidates = payable_activation_cost_object_candidates(
-                pending.controller,
+    if activation_tap_cost_subtype(ability.cost).is_some() && pending.object_cost_chosen.is_empty()
+    {
+        let candidates = payable_activation_cost_object_candidates(
+            pending.controller,
+            pending.source,
+            ability.cost,
+            state,
+        );
+        if candidates.is_empty() {
+            state.engine.halted = Some((
+                UnsupportedMechanic::InvalidEffectContinuation,
                 pending.source,
-                ability.cost,
-                state,
-            );
-            if candidates.is_empty() {
-                state.engine.halted = Some((
-                    UnsupportedMechanic::InvalidEffectContinuation,
-                    pending.source,
-                ));
-                return Some(Decision::Halted {
-                    mechanic: UnsupportedMechanic::InvalidEffectContinuation,
-                    source: pending.source,
-                });
-            }
-            if candidates.len() == 1 {
-                let chosen = candidates[0];
-                let object = state.objects.get(chosen);
-                let binding = EffectObjectBinding {
-                    object: chosen,
-                    expected_zone: Zone::Battlefield,
-                    expected_zone_change_count: object.zone_change_count,
-                };
-                state
-                    .engine
-                    .pending_activation
-                    .as_mut()
-                    .expect("validated activation remains staged")
-                    .object_cost_chosen
-                    .push(binding);
-                return drain_pending_activation_or_decide(state);
-            }
-            return Some(Decision::ChooseCostTargets {
-                player: pending.controller,
+            ));
+            return Some(Decision::Halted {
+                mechanic: UnsupportedMechanic::InvalidEffectContinuation,
                 source: pending.source,
-                cost_kind: CostKind::TapPermanents,
-                remaining: 1,
-                candidates,
             });
         }
+        if candidates.len() == 1 {
+            let chosen = candidates[0];
+            let object = state.objects.get(chosen);
+            let binding = EffectObjectBinding {
+                object: chosen,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: object.zone_change_count,
+            };
+            state
+                .engine
+                .pending_activation
+                .as_mut()
+                .expect("validated activation remains staged")
+                .object_cost_chosen
+                .push(binding);
+            return drain_pending_activation_or_decide(state);
+        }
+        return Some(Decision::ChooseCostTargets {
+            player: pending.controller,
+            source: pending.source,
+            cost_kind: CostKind::TapPermanents,
+            remaining: 1,
+            candidates,
+        });
     }
 
     if pending.cost_discard_paid.is_none() {
@@ -10075,7 +10074,6 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     let mut subtype_ids = object.v4.effective_subtype_ids.clone();
     subtype_ids.extend(
         attached_equipment_profiles(state, id)
-            .into_iter()
             .filter_map(|(_, equipment)| equipment.add_subtype.map(|subtype| subtype.stable_id())),
     );
     subtype_ids.sort_unstable();
