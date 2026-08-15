@@ -15,6 +15,21 @@ impl fmt::Display for ObjectId {
     }
 }
 
+/// Identity of one particular stack incarnation. Unlike [`ObjectId`], this
+/// changes whenever the same physical source is cast or activated again.
+/// Zero is reserved for legacy/default-constructed test state; engine-created
+/// stack items always receive a positive, monotonically increasing value.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+pub struct StackItemId(pub u64);
+
+impl fmt::Display for StackItemId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "stack#{}", self.0)
+    }
+}
+
 /// Either player. The kernel only ever simulates 1v1 games.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub u8);

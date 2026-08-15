@@ -15,6 +15,7 @@
   "cards": [
     {
       "name": "Annul",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -43,6 +44,7 @@
     },
     {
       "name": "Avenging Hunter",
+      "engine_capability": "full",
       "mana_cost": "{4}{G}",
       "mana_value": 5,
       "colors": [
@@ -73,6 +75,7 @@
     },
     {
       "name": "Azorius Guildgate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -105,6 +108,7 @@
     },
     {
       "name": "Basilisk Gate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -136,6 +140,7 @@
     },
     {
       "name": "Bind the Monster",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -166,6 +171,7 @@
     },
     {
       "name": "Black Mage's Rod",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -199,6 +205,7 @@
     },
     {
       "name": "Blood Fountain",
+      "engine_capability": "full",
       "mana_cost": "{B}",
       "mana_value": 1,
       "colors": [
@@ -293,6 +300,7 @@
     },
     {
       "name": "Breath Weapon",
+      "engine_capability": "full",
       "mana_cost": "{2}{R}",
       "mana_value": 3,
       "colors": [
@@ -356,6 +364,7 @@
     },
     {
       "name": "Cast Down",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -383,6 +392,7 @@
     },
     {
       "name": "Cast into the Fire",
+      "engine_capability": "full",
       "mana_cost": "{1}{R}",
       "mana_value": 2,
       "colors": [
@@ -441,6 +451,7 @@
     },
     {
       "name": "Citadel Gate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -475,6 +486,7 @@
     },
     {
       "name": "Cleansing Wildfire",
+      "engine_capability": "full",
       "mana_cost": "{1}{R}",
       "mana_value": 2,
       "colors": [
@@ -567,6 +579,7 @@
     },
     {
       "name": "Cryogen Relic",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -712,6 +725,7 @@
     },
     {
       "name": "Drossforge Bridge",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -744,6 +758,7 @@
     },
     {
       "name": "Duress",
+      "engine_capability": "full",
       "mana_cost": "{B}",
       "mana_value": 1,
       "colors": [
@@ -771,6 +786,7 @@
     },
     {
       "name": "Dust to Dust",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}{W}",
       "mana_value": 3,
       "colors": [
@@ -798,6 +814,7 @@
     },
     {
       "name": "Elvish Mystic",
+      "engine_capability": "full",
       "mana_cost": "{G}",
       "mana_value": 1,
       "colors": [
@@ -860,6 +877,7 @@
     },
     {
       "name": "Envelop",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -887,6 +905,7 @@
     },
     {
       "name": "Eviscerator's Insight",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -946,6 +965,7 @@
     },
     {
       "name": "Extract a Confession",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -973,6 +993,7 @@
     },
     {
       "name": "Faerie Miscreant",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -1004,6 +1025,7 @@
     },
     {
       "name": "Faerie Seer",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -1065,6 +1087,7 @@
     },
     {
       "name": "Fanatical Offering",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -1153,6 +1176,7 @@
     },
     {
       "name": "Force Spike",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -1211,6 +1235,7 @@
     },
     {
       "name": "Fyndhorn Elves",
+      "engine_capability": "full",
       "mana_cost": "{G}",
       "mana_value": 1,
       "colors": [
@@ -1275,6 +1300,7 @@
     },
     {
       "name": "Generous Ent",
+      "engine_capability": "full",
       "mana_cost": "{5}{G}",
       "mana_value": 6,
       "colors": [
@@ -1300,12 +1326,14 @@
       "mechanics": [
         "etb_trigger",
         "token_creation",
-        "cycling"
+        "cycling",
+        "reach"
       ],
       "java_file": "Mage.Sets/src/mage/cards/g/GenerousEnt.java"
     },
     {
       "name": "Gingerbread Cabin",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -1401,6 +1429,7 @@
     },
     {
       "name": "Gorilla Shaman",
+      "engine_capability": "full",
       "mana_cost": "{R}",
       "mana_value": 1,
       "colors": [
@@ -1492,6 +1521,7 @@
     },
     {
       "name": "Guardian of the Guildpact",
+      "engine_capability": "full",
       "mana_cost": "{3}{W}",
       "mana_value": 4,
       "colors": [
@@ -1520,6 +1550,7 @@
     },
     {
       "name": "Gut Shot",
+      "engine_capability": "full",
       "mana_cost": "{R/P}",
       "mana_value": 1,
       "colors": [
@@ -1579,6 +1610,7 @@
     },
     {
       "name": "Harrier Strix",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -1611,6 +1643,7 @@
     },
     {
       "name": "Heap Gate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -1680,6 +1713,7 @@
     },
     {
       "name": "Humbling Elder",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -1711,6 +1745,7 @@
     },
     {
       "name": "Hunter's Blowgun",
+      "engine_capability": "full",
       "mana_cost": "{1}",
       "mana_value": 1,
       "colors": [],
@@ -1773,6 +1808,7 @@
     },
     {
       "name": "Ichor Wellspring",
+      "engine_capability": "full",
       "mana_cost": "{2}",
       "mana_value": 2,
       "colors": [],
@@ -1799,6 +1835,7 @@
     },
     {
       "name": "Idyllic Beachfront",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -1864,6 +1901,7 @@
     },
     {
       "name": "Journey to Nowhere",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -1893,6 +1931,7 @@
     },
     {
       "name": "Krark-Clan Shaman",
+      "engine_capability": "full",
       "mana_cost": "{R}",
       "mana_value": 1,
       "colors": [
@@ -1979,10 +2018,12 @@
       "mechanics": [
         "card_selection"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/l/LeadTheStampede.java"
     },
     {
       "name": "Lembas",
+      "engine_capability": "full",
       "mana_cost": "{2}",
       "mana_value": 2,
       "colors": [],
@@ -2043,6 +2084,7 @@
     },
     {
       "name": "Llanowar Elves",
+      "engine_capability": "full",
       "mana_cost": "{G}",
       "mana_value": 1,
       "colors": [
@@ -2106,6 +2148,7 @@
     },
     {
       "name": "Makeshift Munitions",
+      "engine_capability": "full",
       "mana_cost": "{1}{R}",
       "mana_value": 2,
       "colors": [
@@ -2171,6 +2214,7 @@
     },
     {
       "name": "Masked Vandal",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -2231,6 +2275,7 @@
     },
     {
       "name": "Mistvault Bridge",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -2262,6 +2307,7 @@
     },
     {
       "name": "Monstrous Emergence",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -2290,6 +2336,7 @@
     },
     {
       "name": "Moon-Circuit Hacker",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -2386,6 +2433,7 @@
     },
     {
       "name": "Myr Enforcer",
+      "engine_capability": "full",
       "mana_cost": "{7}",
       "mana_value": 7,
       "colors": [],
@@ -2413,6 +2461,7 @@
     },
     {
       "name": "Nihil Spellbomb",
+      "engine_capability": "full",
       "mana_cost": "{1}",
       "mana_value": 1,
       "colors": [],
@@ -2442,6 +2491,7 @@
     },
     {
       "name": "Ninja of the Deep Hours",
+      "engine_capability": "full",
       "mana_cost": "{3}{U}",
       "mana_value": 4,
       "colors": [
@@ -2472,6 +2522,7 @@
     },
     {
       "name": "Nyxborn Hydra",
+      "engine_capability": "full",
       "mana_cost": "{X}{G}",
       "mana_value": 1,
       "colors": [
@@ -2507,6 +2558,7 @@
     },
     {
       "name": "Of One Mind",
+      "engine_capability": "full",
       "mana_cost": "{2}{U}",
       "mana_value": 3,
       "colors": [
@@ -2534,6 +2586,7 @@
     },
     {
       "name": "Outlaw Medic",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -2565,6 +2618,7 @@
     },
     {
       "name": "Piracy Charm",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -2681,10 +2735,12 @@
         "tribal_synergy",
         "tap_ability"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/p/PriestOfTitania.java"
     },
     {
       "name": "Prismatic Strands",
+      "engine_capability": "full",
       "mana_cost": "{2}{W}",
       "mana_value": 3,
       "colors": [
@@ -2713,6 +2769,7 @@
     },
     {
       "name": "Pulse of Murasa",
+      "engine_capability": "full",
       "mana_cost": "{2}{G}",
       "mana_value": 3,
       "colors": [
@@ -2801,6 +2858,7 @@
         "activated_ability",
         "alt_cost"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/q/QuirionRanger.java"
     },
     {
@@ -2860,6 +2918,7 @@
     },
     {
       "name": "Reckoner's Bargain",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -2920,6 +2979,7 @@
     },
     {
       "name": "Refurbished Familiar",
+      "engine_capability": "full",
       "mana_cost": "{3}{B}",
       "mana_value": 4,
       "colors": [
@@ -2955,6 +3015,7 @@
     },
     {
       "name": "Relic of Progenitus",
+      "engine_capability": "full",
       "mana_cost": "{1}",
       "mana_value": 1,
       "colors": [],
@@ -2984,6 +3045,7 @@
     },
     {
       "name": "Sacred Cat",
+      "engine_capability": "full",
       "mana_cost": "{W}",
       "mana_value": 1,
       "colors": [
@@ -3013,6 +3075,7 @@
     },
     {
       "name": "Saiba Cryptomancer",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -3043,6 +3106,7 @@
     },
     {
       "name": "Sea Gate",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3107,6 +3171,7 @@
     },
     {
       "name": "Seat of the Synod",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3135,6 +3200,7 @@
     },
     {
       "name": "Silverbluff Bridge",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3166,6 +3232,7 @@
     },
     {
       "name": "Slagwoods Bridge",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3197,6 +3264,7 @@
     },
     {
       "name": "Sleep of the Dead",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -3225,6 +3293,7 @@
     },
     {
       "name": "Snap",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -3317,6 +3386,7 @@
     },
     {
       "name": "Spell Pierce",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -3343,6 +3413,7 @@
     },
     {
       "name": "Spellstutter Sprite",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -3375,6 +3446,7 @@
     },
     {
       "name": "Spinewoods Paladin",
+      "engine_capability": "full",
       "mana_cost": "{4}{G}",
       "mana_value": 5,
       "colors": [
@@ -3408,6 +3480,7 @@
     },
     {
       "name": "Squadron Hawk",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -3438,6 +3511,7 @@
     },
     {
       "name": "Steel Sabotage",
+      "engine_capability": "full",
       "mana_cost": "{U}",
       "mana_value": 1,
       "colors": [
@@ -3499,6 +3573,7 @@
     },
     {
       "name": "The Modern Age",
+      "engine_capability": "full",
       "mana_cost": "{1}{U}",
       "mana_value": 2,
       "colors": [
@@ -3559,6 +3634,7 @@
     },
     {
       "name": "Thoughtcast",
+      "engine_capability": "full",
       "mana_cost": "{4}{U}",
       "mana_value": 5,
       "colors": [
@@ -3586,6 +3662,7 @@
     },
     {
       "name": "Thraben Charm",
+      "engine_capability": "full",
       "mana_cost": "{1}{W}",
       "mana_value": 2,
       "colors": [
@@ -3643,10 +3720,12 @@
         "tribal_synergy",
         "tap_ability"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/t/TimberwatchElf.java"
     },
     {
       "name": "Tolarian Terror",
+      "engine_capability": "full",
       "mana_cost": "{6}{U}",
       "mana_value": 7,
       "colors": [
@@ -3676,6 +3755,7 @@
     },
     {
       "name": "Toxin Analysis",
+      "engine_capability": "full",
       "mana_cost": "{B}",
       "mana_value": 1,
       "colors": [
@@ -3705,6 +3785,7 @@
     },
     {
       "name": "Troublemaker Ouphe",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -3738,6 +3819,7 @@
     },
     {
       "name": "Twisted Landscape",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3768,6 +3850,7 @@
     },
     {
       "name": "Unexpected Fangs",
+      "engine_capability": "full",
       "mana_cost": "{1}{B}",
       "mana_value": 2,
       "colors": [
@@ -3794,6 +3877,7 @@
     },
     {
       "name": "Vault of Whispers",
+      "engine_capability": "full",
       "mana_cost": "",
       "mana_value": 0,
       "colors": [],
@@ -3823,6 +3907,7 @@
     },
     {
       "name": "Vitu-Ghazi Inspector",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -3889,6 +3974,7 @@
     },
     {
       "name": "Weather the Storm",
+      "engine_capability": "full",
       "mana_cost": "{1}{G}",
       "mana_value": 2,
       "colors": [
@@ -3941,6 +4027,7 @@
         "tap_ability",
         "activated_ability"
       ],
+      "engine_capability": "full",
       "java_file": "Mage.Sets/src/mage/cards/w/Wellwisher.java"
     },
     {
@@ -3975,12 +4062,10 @@
     },
     {
       "name": "Writhing Chrysalis",
+      "engine_capability": "full",
       "mana_cost": "{2}{R}{G}",
       "mana_value": 4,
-      "colors": [
-        "R",
-        "G"
-      ],
+      "colors": [],
       "types": [
         "Creature"
       ],
@@ -4125,26 +4210,851 @@
         "flying"
       ],
       "java_file": "Mage/src/main/java/mage/game/permanent/token/BirdIllusionToken.java"
+    },
+    {
+      "name": "Elves of Deep Shadow",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elf",
+        "Druid"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [
+        "B"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "mana_dork",
+        "tap_ability",
+        "self_damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/e/ElvesOfDeepShadow.java"
+    },
+    {
+      "name": "Lotus Petal",
+      "engine_capability": "full",
+      "mana_cost": "{0}",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "mana_ability",
+        "sacrifice_cost",
+        "any_color_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LotusPetal.java"
+    },
+    {
+      "name": "Overgrown Battlement",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 4,
+      "is_land": false,
+      "produces_mana": [
+        "G"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "mana_ability",
+        "tap_ability",
+        "dynamic_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/o/OvergrownBattlement.java"
+    },
+    {
+      "name": "Saruli Caretaker",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dryad"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "mana_ability",
+        "tap_ability",
+        "tap_other_creature_cost",
+        "any_color_mana"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SaruliCaretaker.java"
+    },
+    {
+      "name": "Tinder Wall",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant",
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [
+        "R"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "mana_ability",
+        "sacrifice_cost",
+        "activated_ability",
+        "blocking_filter",
+        "damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TinderWall.java"
+    },
+    {
+      "name": "Wall of Roots",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant",
+        "Wall"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [
+        "G"
+      ],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "defender",
+        "mana_ability",
+        "put_counter_cost",
+        "once_per_turn"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/w/WallOfRoots.java"
+    },
+    {
+      "name": "Sagu Wildling",
+      "engine_capability": "full",
+      "mana_cost": "{4}{G}",
+      "mana_value": 5,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Dragon"
+      ],
+      "supertypes": [],
+      "power": 3,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "life_gain",
+        "omen",
+        "library_search",
+        "shuffle"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SaguWildling.java"
+    },
+    {
+      "name": "Troll of Khazad-dum",
+      "engine_capability": "full",
+      "mana_cost": "{5}{B}",
+      "mana_value": 6,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Troll"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "cycling",
+        "block_restriction"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/t/TrollOfKhazadDum.java"
+    },
+    {
+      "name": "Food Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Food"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_cost",
+        "life_gain"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/FoodToken.java"
+    },
+    {
+      "name": "Gatecreeper Vine",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Plant"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "defender",
+        "etb_trigger",
+        "library_search",
+        "reveal",
+        "shuffle"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/g/GatecreeperVine.java"
+    },
+    {
+      "name": "Healer of the Glade",
+      "engine_capability": "full",
+      "mana_cost": "{G}",
+      "mana_value": 1,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Elemental"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "simple",
+      "mechanics": [
+        "etb_trigger",
+        "life_gain"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/h/HealerOfTheGlade.java"
+    },
+    {
+      "name": "Map Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Map"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_cost",
+        "tap_ability",
+        "explore",
+        "counter",
+        "reveal"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/MapToken.java"
+    },
+    {
+      "name": "Sacred Cat Embalmed Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "W"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Cat",
+        "Zombie"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "lifelink",
+        "embalm"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/s/SacredCat.java"
+    },
+    {
+      "name": "Treasure Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Treasure"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [
+        "W",
+        "U",
+        "B",
+        "R",
+        "G"
+      ],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "mana_ability",
+        "tap_ability",
+        "sacrifice_cost",
+        "any_color_mana"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/TreasureToken.java"
+    },
+    {
+      "name": "Balustrade Spy",
+      "engine_capability": "full",
+      "mana_cost": "{3}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Vampire",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 3,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "flying",
+        "etb_trigger",
+        "target_player",
+        "reveal_until_land",
+        "mill"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/b/BalustradeSpy.java"
+    },
+    {
+      "name": "Dread Return",
+      "engine_capability": "full",
+      "mana_cost": "{2}{B}{B}",
+      "mana_value": 4,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "graveyard_target",
+        "return_to_battlefield",
+        "flashback",
+        "sacrifice_cost"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/d/DreadReturn.java"
+    },
+    {
+      "name": "Land Grant",
+      "engine_capability": "full",
+      "mana_cost": "{1}{G}",
+      "mana_value": 2,
+      "colors": [
+        "G"
+      ],
+      "types": [
+        "Sorcery"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "alternative_cost",
+        "reveal_hand",
+        "library_search",
+        "reveal",
+        "shuffle"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LandGrant.java"
+    },
+    {
+      "name": "Lotleth Giant",
+      "engine_capability": "full",
+      "mana_cost": "{6}{B}",
+      "mana_value": 7,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Zombie",
+        "Giant"
+      ],
+      "supertypes": [],
+      "power": 6,
+      "toughness": 5,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "moderate",
+      "mechanics": [
+        "etb_trigger",
+        "target_opponent",
+        "graveyard_count",
+        "damage"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/l/LotlethGiant.java"
+    },
+    {
+      "name": "Eldrazi Spawn Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Eldrazi",
+        "Spawn"
+      ],
+      "supertypes": [],
+      "power": 0,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [
+        "C"
+      ],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "mana_ability",
+        "sacrifice_cost",
+        "colorless_mana"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/EldraziSpawnToken.java"
+    },
+    {
+      "name": "Faerie Macabre",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}{B}",
+      "mana_value": 3,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Faerie",
+        "Rogue"
+      ],
+      "supertypes": [],
+      "power": 2,
+      "toughness": 2,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "moderate",
+      "mechanics": [
+        "flying",
+        "activated_ability",
+        "hand_ability",
+        "discard_self_cost",
+        "up_to_two_targets",
+        "graveyard_target",
+        "exile"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FaerieMacabre.java"
+    },
+    {
+      "name": "Flaring Pain",
+      "engine_capability": "full",
+      "mana_cost": "{1}{R}",
+      "mana_value": 2,
+      "colors": [
+        "R"
+      ],
+      "types": [
+        "Instant"
+      ],
+      "subtypes": [],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "moderate",
+      "mechanics": [
+        "damage_cant_be_prevented",
+        "until_end_of_turn",
+        "flashback"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FlaringPain.java"
+    },
+    {
+      "name": "Fume Spitter",
+      "engine_capability": "full",
+      "mana_cost": "{B}",
+      "mana_value": 1,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Phyrexian",
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": true,
+      "complexity": "moderate",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_self_cost",
+        "target_creature",
+        "minus_one_minus_one_counter"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/f/FumeSpitter.java"
+    },
+    {
+      "name": "Mesmeric Fiend",
+      "engine_capability": "full",
+      "mana_cost": "{1}{B}",
+      "mana_value": 2,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Nightmare",
+        "Horror"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "sideboard_only": false,
+      "complexity": "complex",
+      "mechanics": [
+        "etb_trigger",
+        "leaves_battlefield_trigger",
+        "target_opponent",
+        "reveal_hand",
+        "choose_nonland_card",
+        "linked_exile",
+        "return_to_hand"
+      ],
+      "java_file": "Mage.Sets/src/mage/cards/m/MesmericFiend.java"
+    },
+    {
+      "name": "Hero Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Hero"
+      ],
+      "supertypes": [],
+      "power": 1,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "job_select"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/HeroToken.java"
+    },
+    {
+      "name": "Clue Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [],
+      "types": [
+        "Artifact"
+      ],
+      "subtypes": [
+        "Clue"
+      ],
+      "supertypes": [],
+      "power": null,
+      "toughness": null,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "activated_ability",
+        "sacrifice_cost",
+        "draw_card"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/ClueArtifactToken.java"
+    },
+    {
+      "name": "Skeleton Token",
+      "engine_capability": "full",
+      "mana_cost": "",
+      "mana_value": 0,
+      "colors": [
+        "B"
+      ],
+      "types": [
+        "Creature"
+      ],
+      "subtypes": [
+        "Skeleton"
+      ],
+      "supertypes": [],
+      "power": 4,
+      "toughness": 1,
+      "is_land": false,
+      "produces_mana": [],
+      "decks": [],
+      "is_token": true,
+      "sideboard_only": false,
+      "complexity": "simple",
+      "mechanics": [
+        "token_creation",
+        "menace"
+      ],
+      "java_file": "Mage/src/main/java/mage/game/permanent/token/SkeletonMenaceToken.java"
     }
   ],
-  "unresolved": [
-    "Balustrade Spy",
-    "Dread Return",
-    "Elves of Deep Shadow",
-    "Faerie Macabre",
-    "Flaring Pain",
-    "Fume Spitter",
-    "Gatecreeper Vine",
-    "Healer of the Glade",
-    "Land Grant",
-    "Lotleth Giant",
-    "Lotus Petal",
-    "Mesmeric Fiend",
-    "Overgrown Battlement",
-    "Sagu Wildling",
-    "Saruli Caretaker",
-    "Tinder Wall",
-    "Troll of Khazad-dum",
-    "Wall of Roots"
-  ]
+  "unresolved": []
 }

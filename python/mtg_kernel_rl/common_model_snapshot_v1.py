@@ -106,6 +106,31 @@ AUTHORITY_SOURCE_PATHS_V1 = (
     "python/mtg_kernel_rl/common_model_snapshot_v1.py",
 )
 
+# Feature-Encoder Successor (collab CLAUDE #221/#239, Python twin of the
+# mtg-kernel/src/common_model_snapshot_v1.rs dual-profile widen): the CP7
+# scorer-of-record manifest (data/common_model_snapshot_v1/manifest.json) is
+# engine-parity-pinned on its own frozen copy and out of scope for the
+# rewrite (CODEX #235); it keeps the pre-fix features.py byte identity
+# forever and must keep loading. These four literals are that manifest's own
+# recorded authority.sources[].sha256/source_bundle_sha256 values,
+# independently typed (not derived from AUTHORITY_SOURCE_PATHS_V1 or from
+# each other): model.py/determinism.py/common_model_snapshot_v1.py are
+# byte-identical between the frozen manifest and this branch's live files
+# (verified directly), so the manifest's own recorded bundle hash IS the
+# historical bundle hash; no reconstruction of an unrecoverable file was
+# needed. See `_authority_source_binding_is_known` for the whole-tuple,
+# hybrid-rejecting classifier built from these, mirroring the Rust sibling's
+# `authority_source_binding_is_known_v1` shape exactly.
+FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1 = (
+    "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59",
+    "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+    "45bd3ad1efb8b3ecb697961655fa51ce8e23efd2b11b3ecee8f7ef9bd29c4f35",
+    "8b6b20e0ca0118fced0eeb80794050663c23cfac0fb80608d899cd9c3e59484d",
+)
+FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1 = (
+    "78f0a0409b91df169ab895d4328ba525564cf62135e8fb0be9f0f3ece9e77e87"
+)
+
 # (name, shape, element_offset, element_count)
 EXPECTED_PARAMETER_LAYOUT_V1: tuple[tuple[str, tuple[int, ...], int, int], ...] = (
     ("card_embedding.weight", (65537, 16), 0, 1048592),
@@ -362,6 +387,37 @@ def _source_records(repo_root: Path) -> tuple[list[dict[str, str]], str]:
         records.append({"path": relative, "sha256": digest})
         framed.extend(_frame(relative, bytes.fromhex(digest)))
     return records, _sha256(bytes(framed))
+
+
+def _historical_authority_sources() -> list[dict[str, str]]:
+    """The frozen HISTORICAL authority-source tuple, built fresh each call
+    from `FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1` (never from live file
+    bytes -- the pre-fix features.py bytes are not on disk on this branch)."""
+    return [
+        {"path": path, "sha256": digest}
+        for path, digest in zip(
+            AUTHORITY_SOURCE_PATHS_V1, FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1
+        )
+    ]
+
+
+def _authority_source_binding_is_known(
+    sources: Any, bundle_sha256: Any, repo_root: Path
+) -> bool:
+    """The one closed authority-source-binding classifier (Feature-Encoder
+    Successor), mirroring the Rust sibling `authority_source_binding_is_known_v1`
+    exactly: exactly two complete tuples are admissible (the frozen
+    HISTORICAL sources/source_bundle_sha256 pair, or the live CURRENT pair
+    computed fresh via `_source_records`); every hybrid -- a `sources` list
+    from one profile paired with a `source_bundle_sha256` from the other --
+    is rejected."""
+    current_sources, current_bundle = _source_records(repo_root)
+    historical = (
+        sources == _historical_authority_sources()
+        and bundle_sha256 == FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1
+    )
+    current = sources == current_sources and bundle_sha256 == current_bundle
+    return historical or current
 
 
 def _runtime_configuration() -> dict[str, Any]:
@@ -688,22 +744,19 @@ def _validate_manifest_schema(manifest: dict[str, Any], payload_bytes: bytes, re
     expected_runtime_digest = _sha256(canonical_json_bytes(AUTHORITY_RUNTIME_CONFIGURATION_V1))
     _require_str(authority["runtime_configuration_sha256"], expected_runtime_digest, "runtime digest")
     _require_str(authority["source_bundle_contract"], SOURCE_BUNDLE_CONTRACT_V1, "source bundle contract")
-    current_sources, current_bundle = _source_records(repo_root)
     if type(authority["sources"]) is not list or len(authority["sources"]) != len(
-        current_sources
+        AUTHORITY_SOURCE_PATHS_V1
     ):
         raise CommonModelSnapshotErrorV1("authority source list mismatch")
     for index, source in enumerate(authority["sources"]):
-        source = _require_exact_keys(source, {"path", "sha256"}, f"authority.sources[{index}]")
-        _require_str(source["path"], current_sources[index]["path"], f"authority source {index} path")
-        _require_str(
-            source["sha256"],
-            current_sources[index]["sha256"],
-            f"authority source {index} digest",
-        )
-    if authority["sources"] != current_sources:
-        raise CommonModelSnapshotErrorV1("authority source hashes drifted")
-    _require_str(authority["source_bundle_sha256"], current_bundle, "source bundle")
+        _require_exact_keys(source, {"path", "sha256"}, f"authority.sources[{index}]")
+    # Feature-Encoder Successor (collab CLAUDE #221/#239): accepts either the
+    # frozen HISTORICAL or live CURRENT authority-source binding as a whole;
+    # see `_authority_source_binding_is_known`.
+    if not _authority_source_binding_is_known(
+        authority["sources"], authority["source_bundle_sha256"], repo_root
+    ):
+        raise CommonModelSnapshotErrorV1("authority source binding mismatch")
 
     payload = _require_exact_keys(
         manifest["payload"],
@@ -1050,10 +1103,52 @@ def portable_check_v1(repo_root: Path | None = None) -> ValidatedCommonModelSnap
     return validate_snapshot_files_v1(manifest_path, payload_path, repo_root=root)
 
 
+def _manifest_bytes_with_authority_sources(
+    manifest_bytes: bytes, sources: list[dict[str, str]], source_bundle_sha256: str
+) -> bytes:
+    """Rebuild manifest bytes with the given authority source bindings
+    injected and the integrity fields recomputed, exactly as the generator
+    would have produced them had it seen those sources."""
+
+    manifest = json.loads(manifest_bytes.decode("utf-8"))
+    manifest["authority"]["sources"] = copy.deepcopy(sources)
+    manifest["authority"]["source_bundle_sha256"] = source_bundle_sha256
+    core_sha256 = _manifest_core_sha256(manifest)
+    manifest["integrity"]["manifest_core_sha256"] = core_sha256
+    manifest["integrity"]["snapshot_sha256"] = _snapshot_sha256(
+        core_sha256, manifest["payload"]["sha256"]
+    )
+    return canonical_json_bytes(manifest) + b"\n"
+
+
 def authority_check_v1(repo_root: Path | None = None) -> ValidatedCommonModelSnapshotV1:
     root = _repo_root() if repo_root is None else Path(repo_root).resolve()
     committed = portable_check_v1(root)
     generated_manifest, generated_payload = generate_authority_snapshot_v1(root)
-    if generated_manifest != committed.manifest_file_bytes or generated_payload != committed.payload_bytes:
-        raise CommonModelSnapshotErrorV1("authority regeneration is not byte-identical")
-    return committed
+    if generated_manifest == committed.manifest_file_bytes and generated_payload == committed.payload_bytes:
+        return committed
+    # Dual-profile split (merge-epoch successor, mirrors
+    # `_authority_source_binding_is_known`): the committed snapshot is the
+    # FROZEN historical authority and is never regenerated in place, while
+    # the live authority sources move forward with the epoch. The committed
+    # artifact is accepted iff its authority section equals the frozen
+    # HISTORICAL bindings, whole-tuple, and a fresh regeneration with those
+    # bindings injected reproduces the committed manifest byte-exactly. That
+    # proves the payload and every non-authority manifest field still
+    # regenerate bit-identically; the only tolerated delta is the recorded
+    # source bindings themselves.
+    authority = committed.manifest["authority"]
+    historical_sources = _historical_authority_sources()
+    if (
+        generated_payload == committed.payload_bytes
+        and authority["sources"] == historical_sources
+        and authority["source_bundle_sha256"] == FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1
+        and _manifest_bytes_with_authority_sources(
+            generated_manifest,
+            historical_sources,
+            FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1,
+        )
+        == committed.manifest_file_bytes
+    ):
+        return committed
+    raise CommonModelSnapshotErrorV1("authority regeneration is not byte-identical")

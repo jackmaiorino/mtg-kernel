@@ -1937,6 +1937,18 @@ mod tests {
             build_genesis_checkpoint_manifest_v2_v3, derive_genesis_weights_only_payload_v2_v3,
         };
 
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V1),
+        ) {
+            return;
+        }
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_PILOT_POOL_JSON_V1),
+        ) {
+            return;
+        }
+
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
 
@@ -1976,6 +1988,18 @@ mod tests {
             test_fixture_bytes_with_schedule_and_base_seed_ladder_init_v2,
             OpponentLadderPoolContractV1,
         };
+
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V1),
+        ) {
+            return;
+        }
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_PILOT_POOL_JSON_V1),
+        ) {
+            return;
+        }
 
         let fixture = ladder_init_fixture_v1();
 

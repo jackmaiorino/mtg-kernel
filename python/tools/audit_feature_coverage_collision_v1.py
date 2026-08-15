@@ -24,6 +24,11 @@ from typing import Any, Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FEATURES_PATH = REPO_ROOT / "python" / "mtg_kernel_rl" / "features.py"
+# The sealed action-feature golden's recorded authority; frozen forever
+# (see the dual-profile comment at the acceptance site).
+HISTORICAL_FEATURES_AUTHORITY_SHA256 = (
+    "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb"
+)
 FULL_GOLDEN_PATH = (
     REPO_ROOT / "data" / "flat_policy_v2" / "python_full_features_v2.json"
 )
@@ -733,7 +738,17 @@ def _validate_authorities(
     for label, document in (("full", full), ("action", action)):
         if document.get("authority") != "python/mtg_kernel_rl/features.py":
             raise AuditError(f"{label}: unexpected feature authority path")
-        if document.get("authority_sha256") != features_sha:
+        # Dual-profile split (merge-epoch successor): the action-feature
+        # golden is sealed evidence, never regenerated in place, and records
+        # the HISTORICAL features.py authority; the live authority moved
+        # forward with the epoch. Its case bytes are proven to regenerate
+        # bit-identically from the live encoder by
+        # generate_python_action_features_v2_goldens.py --check, so the
+        # audit may consume them under either authority recording. The
+        # full-feature golden was regenerated at the epoch and must always
+        # match the live authority exactly.
+        accepted = (features_sha, HISTORICAL_FEATURES_AUTHORITY_SHA256) if label == "action" else (features_sha,)
+        if document.get("authority_sha256") not in accepted:
             raise AuditError(f"{label}: frozen feature authority SHA-256 mismatch")
         contracts = document.get("python_contracts")
         expected_contracts = {

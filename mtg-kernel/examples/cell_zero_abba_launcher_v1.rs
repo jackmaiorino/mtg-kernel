@@ -78,6 +78,7 @@ struct EvidenceWorstValueV1 {
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 struct EvidenceRecordV1 {
     schema: String,
     evidence_status: String,

@@ -36,6 +36,9 @@ use crate::native_policy_value_net_v1::{
     NativePolicyValueErrorV1,
     NativePolicyValueModelConfigV1,
     NativePolicyValueNetV1,
+    // Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings;
+    // see the W_EXPECTED_PARAMETER_SHAPES table below.
+    NativePolicyValueNetWideV1,
     ValidatedCountsV1,
     ACTION_FEATURE_DIM_V1,
     ACTION_REF_FEATURE_DIM_V1,
@@ -47,9 +50,6 @@ use crate::native_policy_value_net_v1::{
     OBJECT_GROUP_COUNT_V1,
     PARAMETER_COUNT_V1,
     STATE_DIM_V1,
-    // Capacity-experiment wide-net (kernel-policy-value-net-8w128) siblings;
-    // see the W_EXPECTED_PARAMETER_SHAPES table below.
-    NativePolicyValueNetWideV1,
     W_CARD_EMBEDDING_DIM_V1,
     W_HIDDEN_DIM_V1,
     W_PARAMETER_COUNT_V1,

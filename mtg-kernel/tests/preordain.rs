@@ -65,6 +65,54 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
     id
 }
 
+/// Consumes exactly one priority round: P0's `CastSpellOrPass`, then P1's,
+/// each answered with `Pass`. Two consecutive passes resolve the top of the
+/// stack, so calling this once resolves whatever is currently on top (a
+/// cast spell) and calling it again resolves whatever that left behind (a
+/// freshly queued triggered ability), matching the fixed number of real
+/// priority rounds each staged program needs -- not an unbounded "keep
+/// passing" loop, which would silently walk straight through an
+/// automatically-completing resolution (e.g. an empty-library scry that
+/// never pauses) into the next turn's phases.
+fn pass_priority_round(state: &mut GameState) {
+    assert!(matches!(
+        engine::advance_until_decision(state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        }
+    ));
+    engine::step(state, Action::Pass).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P1,
+            ..
+        }
+    ));
+    engine::step(state, Action::Pass).unwrap();
+}
+
+/// Stages a scry (optionally followed by a draw) so the caller's own
+/// `advance_until_decision` reaches the scry decision. `triggered_stack_
+/// item_expected_target_spec`'s definition-ownership gate (engine.rs) now
+/// requires a `TriggeredAbility` stack item's inline effect to be a literal
+/// match to a registered `TriggeredAbilityDef` on its source. This 165-card
+/// pool has exactly three cards that ever emit `EffectOp::Scry`: Faerie
+/// Seer's ETB trigger (`Scry { count: 2 }` alone), Preordain's own spell
+/// (`Sequence([Scry { count: 2 }, DrawCards { count: 1 }])`), and Lembas's
+/// ETB trigger (`Sequence([Scry { count: 1 }, DrawCards { count: 1 }])`,
+/// never a bare one-card scry). `count == 2` therefore casts the real
+/// matching card through the engine's real cast path (Faerie Seer when
+/// `draw_after` is false, Preordain -- the same registered program
+/// `ready_registered_preordain` exercises -- when it is true) and drives
+/// priority to the point where the caller's `advance_until_decision`
+/// resolves it into the scry decision, exactly as real play produces it.
+/// Every other `count` (only `3`, from `scry_three_fails_before_prefix_
+/// binding_reveal_or_state_mutation`) has no definition-owned source at
+/// all in this pool; that test only requires the fail-closed halt the
+/// definition-ownership gate itself now produces, so the original
+/// hand-built stack item is kept unchanged for it.
 fn ready_scry(
     library_names: &[&str],
     count: u8,
@@ -80,39 +128,67 @@ fn ready_scry(
     state.step = Step::Main1;
     state.active_player = PlayerId::P0;
     state.priority_player = PlayerId::P0;
-    let source = put_object(&mut state, PlayerId::P0, "Island", Zone::Battlefield);
-    let scry = EffectOp::Scry {
-        player: PlayerRef::Controller,
-        count,
-    };
-    let program = if draw_after {
-        EffectOp::Sequence(vec![
-            scry,
-            EffectOp::DrawCards {
-                player: PlayerRef::Controller,
-                count: 1,
-            },
-        ])
-    } else {
-        scry
-    };
-    state.stack.push(StackItem {
-        kind: StackItemKind::TriggeredAbility,
-        source,
-        controller: PlayerId::P0,
-        targets: Vec::new(),
-        is_copy: false,
-        inline_effect: Some(program),
-        discarded: Vec::new(),
-        is_flashback: false,
-        mode_chosen: 0,
-        madness_offer: false,
-        kicked: false,
-        v4: StackStateV4::default(),
-    });
-    state.engine.priority_passes = [true, true];
     let library = state.players[0].library.clone();
-    (state, source, library)
+    let island = put_object(&mut state, PlayerId::P0, "Island", Zone::Battlefield);
+
+    if count != 2 {
+        let scry = EffectOp::Scry {
+            player: PlayerRef::Controller,
+            count,
+        };
+        let program = if draw_after {
+            EffectOp::Sequence(vec![
+                scry,
+                EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: 1,
+                },
+            ])
+        } else {
+            scry
+        };
+        state.stack.push(StackItem {
+            kind: StackItemKind::TriggeredAbility,
+            source: island,
+            controller: PlayerId::P0,
+            targets: Vec::new(),
+            is_copy: false,
+            inline_effect: Some(program),
+            discarded: Vec::new(),
+            is_flashback: false,
+            mode_chosen: 0,
+            madness_offer: false,
+            kicked: false,
+            v4: StackStateV4 {
+                ability_source_contract: Some(mtg_kernel::state::AbilitySourceContractV4::capture(
+                    &state, island,
+                )),
+                ..StackStateV4::default()
+            },
+        });
+        state.engine.priority_passes = [true, true];
+        return (state, island, library);
+    }
+
+    if draw_after {
+        // Preordain is itself the stack item that resolves into the scry
+        // decision (or, with an empty library, straight past it): one
+        // priority round.
+        let preordain = put_object(&mut state, PlayerId::P0, "Preordain", Zone::Hand);
+        engine::step(&mut state, Action::CastSpell(preordain)).unwrap();
+        pass_priority_round(&mut state);
+        (state, preordain, library)
+    } else {
+        // Faerie Seer's ETB trigger is a second, separately-queued stack
+        // item: one priority round resolves the creature spell (queuing the
+        // trigger), a second resolves that trigger into the scry decision
+        // (or, with an empty library, straight past it).
+        let seer = put_object(&mut state, PlayerId::P0, "Faerie Seer", Zone::Hand);
+        engine::step(&mut state, Action::CastSpell(seer)).unwrap();
+        pass_priority_round(&mut state);
+        pass_priority_round(&mut state);
+        (state, seer, library)
+    }
 }
 
 fn ready_registered_preordain(
@@ -414,14 +490,20 @@ fn scry_subset_is_unordered_and_schema_v4_actions_are_objects_then_finish() {
         first_actions,
         vec![
             (
+                // Incidental: the stable id folds in the ability source
+                // object, so moving the scry decision's source from a
+                // synthetic Island to the real Faerie Seer card (see
+                // ready_scry) changes these literal hashes; the decision
+                // shape they identify (the two scried objects, then Finish)
+                // is unchanged.
                 Some(library[0]),
-                "legal-action-v4:a25cd7023c960182".to_string(),
+                "legal-action-v4:65e5906d5621bdc3".to_string(),
             ),
             (
                 Some(library[1]),
-                "legal-action-v4:dfeeb53c7ee14fdb".to_string(),
+                "legal-action-v4:54780d9cb60b8bc2".to_string(),
             ),
-            (None, "legal-action-v4:86298a1f5d115bfe".to_string()),
+            (None, "legal-action-v4:3d0cd129687231eb".to_string()),
         ],
         "literal stable IDs freeze semantic object/Finish mapping, not AIRL indices"
     );
@@ -667,22 +749,83 @@ fn scry_private_choices_redact_identities_and_update_knowledge_once() {
         "ambiguous private prefix facts vanish while untouched-tail facts shift by one"
     );
 
-    let (mut one, _, one_library) = ready_scry(&FOUR[..3], 1, false);
-    one.reveal_library_top(PlayerId::P1, PlayerId::P0, 3);
-    engine::advance_until_decision(&mut one);
-    choose(&mut one, one_library[0]);
-    engine::advance_until_decision(&mut one);
+    // Lembas's real ETB trigger is a definition-owned one-card scry:
+    // `Sequence([Scry { count: 1 }, DrawCards { count: 1 }])` (see
+    // `lembas_etb_effect` in trigger.rs). `GameState::apply_scry_result`
+    // (state.rs) keys its `prefix_len == 1` identity-preservation branch
+    // purely on the bound scry prefix's length, not on what the calling
+    // program does afterward, so that branch fires exactly the same way here
+    // as it did for the hand-built bare `EffectOp::Scry { count: 1 }` this
+    // block used to stage. This drives a real Lembas through the ordinary
+    // cast path (paying its own `{2}` mana cost) so the source's stack
+    // provenance is definition-owned, exactly like this file's other
+    // modernized fixtures.
+    //
+    // Choosing the lone scry candidate completes the whole staged
+    // `EffectContinuation` -- draw included -- before the engine's public
+    // `step`/`advance_until_decision` API returns another decision, so the
+    // scry-only intermediate library/knowledge state is not observable here.
+    // The assertion below is therefore the honest composition of two
+    // separately-proven laws: the scry's identity-preserving keep/bottom
+    // branch, then the ordinary draw-time removal/shift
+    // (`GameState::note_library_removal`) applied on top of it.
+    let lembas_library_defs = FOUR[..3]
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
+    let lembas_p1_library = [card_id("Snow-Covered Forest")];
+    let mut lembas_state = GameState::new_from_libraries(
+        &lembas_library_defs,
+        &lembas_p1_library,
+        card_name,
+        0x5052_454F_5244_4C42,
+    );
+    lembas_state.step = Step::Main1;
+    lembas_state.active_player = PlayerId::P0;
+    lembas_state.priority_player = PlayerId::P0;
+    let lembas_library = lembas_state.players[0].library.clone();
+    // Lembas costs {2}: two untapped generic sources, mirroring the single
+    // Island `ready_scry` puts down for Preordain/Faerie Seer's {U}.
+    put_object(&mut lembas_state, PlayerId::P0, "Island", Zone::Battlefield);
+    put_object(&mut lembas_state, PlayerId::P0, "Island", Zone::Battlefield);
+    let lembas = put_object(&mut lembas_state, PlayerId::P0, "Lembas", Zone::Hand);
+    lembas_state.reveal_library_top(PlayerId::P1, PlayerId::P0, 3);
+
+    engine::step(&mut lembas_state, Action::CastSpell(lembas)).unwrap();
+    // One priority round resolves the Lembas artifact spell onto the
+    // battlefield (queuing its ETB trigger); a second resolves that trigger
+    // into the scry decision, exactly like `ready_scry`'s Faerie Seer path.
+    pass_priority_round(&mut lembas_state);
+    pass_priority_round(&mut lembas_state);
+    let scry_decision = engine::advance_until_decision(&mut lembas_state);
+    assert_scry_decision(&scry_decision, lembas, 0, 0, 1, &lembas_library[..1], true);
+
+    // Same keep-or-bottom choice the original block made: bottom the one
+    // scried card.
+    choose(&mut lembas_state, lembas_library[0]);
+    assert!(matches!(
+        engine::advance_until_decision(&mut lembas_state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    // What the trailing draw consumed: it drew the card scry left on top
+    // (lembas_library[1]) and left the bottomed card (lembas_library[0])
+    // beneath the untouched tail (lembas_library[2]).
+    assert_eq!(lembas_state.players[0].hand, vec![lembas_library[1]]);
     assert_eq!(
-        one.known_library_cards(PlayerId::P1, PlayerId::P0)
+        lembas_state.players[0].library,
+        vec![lembas_library[2], lembas_library[0]]
+    );
+    assert_eq!(
+        lembas_state
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
             .iter()
             .map(|entry| (entry.position, entry.object))
             .collect::<Vec<_>>(),
-        vec![
-            (0, one_library[1]),
-            (1, one_library[2]),
-            (2, one_library[0])
-        ],
-        "a one-card scry preserves already-known deterministic identities exactly"
+        vec![(0, lembas_library[2]), (1, lembas_library[0])],
+        "a one-card scry preserves already-known deterministic identities \
+         exactly; the trailing draw then removes the fact for the card it \
+         drew and shifts the remaining known identities shallower by one, \
+         like any other draw"
     );
 }
 

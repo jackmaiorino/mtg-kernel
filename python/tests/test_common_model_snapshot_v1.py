@@ -74,6 +74,58 @@ class CommonModelSnapshotV1Tests(unittest.TestCase):
             records=["record"],
         )
 
+    def test_authority_source_historical_literals_are_not_silently_overwritten_in_place(
+        self,
+    ) -> None:
+        # Feature-Encoder Successor (collab CLAUDE #221/#239, Python twin of
+        # the Rust dual-profile widen): tripwire for the frozen HISTORICAL
+        # authority-source literals. Typed independently of the constants'
+        # own definitions, so this cannot pass by self-reference. The CP7
+        # scorer-of-record manifest this profile exists to keep loading is
+        # engine-parity-pinned and out of scope for any rewrite; a future
+        # features.py change must add a fourth authority-source profile
+        # alongside this one, never overwrite it in place.
+        self.assertEqual(
+            snapshot.FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1,
+            (
+                "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59",
+                "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+                "45bd3ad1efb8b3ecb697961655fa51ce8e23efd2b11b3ecee8f7ef9bd29c4f35",
+                "8b6b20e0ca0118fced0eeb80794050663c23cfac0fb80608d899cd9c3e59484d",
+            ),
+        )
+        self.assertEqual(
+            snapshot.FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1,
+            "78f0a0409b91df169ab895d4328ba525564cf62135e8fb0be9f0f3ece9e77e87",
+        )
+
+    def test_authority_source_binding_accepts_both_profiles_and_rejects_hybrids(
+        self,
+    ) -> None:
+        historical_sources = snapshot._historical_authority_sources()
+        historical_bundle = snapshot.FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1
+        current_sources, current_bundle = snapshot._source_records(self.repo_root)
+        self.assertTrue(
+            snapshot._authority_source_binding_is_known(
+                historical_sources, historical_bundle, self.repo_root
+            )
+        )
+        self.assertTrue(
+            snapshot._authority_source_binding_is_known(
+                current_sources, current_bundle, self.repo_root
+            )
+        )
+        self.assertFalse(
+            snapshot._authority_source_binding_is_known(
+                current_sources, historical_bundle, self.repo_root
+            )
+        )
+        self.assertFalse(
+            snapshot._authority_source_binding_is_known(
+                historical_sources, current_bundle, self.repo_root
+            )
+        )
+
     def test_portable_check_does_not_invoke_seeded_initializer(self) -> None:
         with mock.patch.object(
             KernelPolicyValueNet,

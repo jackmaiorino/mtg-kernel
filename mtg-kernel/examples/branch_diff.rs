@@ -652,11 +652,18 @@ fn decision_candidates(
             keys.dedup();
             Some(("ACTIVATE_ABILITY_OR_SPELL".to_string(), keys))
         }
-        SurfaceDecision::Decision(Decision::ChooseTargets { legal_targets, .. }) => {
+        SurfaceDecision::Decision(Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        }) => {
             let mut keys: Vec<String> = legal_targets
                 .iter()
                 .map(|t| target_name(state, t, p0_name, p1_name))
                 .collect();
+            if *can_finish {
+                keys.push("DONE".to_string());
+            }
             keys.sort();
             Some(("SELECT_TARGETS".to_string(), keys))
         }
@@ -715,11 +722,18 @@ fn fixed_continuation_action(decision: &SurfaceDecision) -> Result<SurfaceAction
         SurfaceDecision::Decision(Decision::CastSpellOrPass { .. }) => {
             Ok(SurfaceAction::Action(Action::Pass))
         }
-        SurfaceDecision::Decision(Decision::ChooseTargets { legal_targets, .. }) => {
-            let t = *legal_targets
-                .first()
-                .ok_or("continuation:no-legal-targets")?;
-            Ok(SurfaceAction::Action(Action::ChooseTarget(t)))
+        SurfaceDecision::Decision(Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        }) => {
+            if let Some(&target) = legal_targets.first() {
+                Ok(SurfaceAction::Action(Action::ChooseTarget(target)))
+            } else if *can_finish {
+                Ok(SurfaceAction::Action(Action::FinishEffectSelection))
+            } else {
+                Err("continuation:no-legal-targets".to_string())
+            }
         }
         SurfaceDecision::Decision(Decision::ChooseCostTargets { candidates, .. }) => {
             let id = *candidates

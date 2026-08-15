@@ -83,6 +83,20 @@ fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -
     id
 }
 
+/// Stages Lorien Revealed's own hand-zone Islandcycling activation to the
+/// point where it is on the stack, both players have passed priority, and
+/// the caller's own `advance_until_decision` resolves it into the search
+/// decision. `triggered_stack_item_expected_target_spec`'s definition-
+/// ownership gate (engine.rs) now requires every `TriggeredAbility` stack
+/// item's inline effect to be a literal match to a registered
+/// `TriggeredAbilityDef` on its source; no card in this pool registers a
+/// trigger for `SearchLibraryToHand { LandWithSubtype(Island) }` (it is
+/// Lorien Revealed's own *activated*-ability effect, not a trigger), so a
+/// hand-built `TriggeredAbility` item can never satisfy that gate. Driving
+/// the real cycling activation instead reaches the identical search
+/// decision the way actual play produces it, through the same
+/// `ActivateAbility` + pass/pass sequence `generated_typecycling_resolves_
+/// select_and_finish_end_to_end` already exercises.
 fn ready_inline_search(names: &[&str], seed: u64) -> (GameState, ObjectId, Vec<ObjectId>) {
     let library_defs = names.iter().map(|name| card_id(name)).collect::<Vec<_>>();
     let mut state = GameState::new_from_libraries(
@@ -94,27 +108,33 @@ fn ready_inline_search(names: &[&str], seed: u64) -> (GameState, ObjectId, Vec<O
     state.step = Step::Main1;
     state.active_player = PlayerId::P0;
     state.priority_player = PlayerId::P0;
-    let source = put_object(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
-    state.stack.push(StackItem {
-        kind: StackItemKind::TriggeredAbility,
-        source,
-        controller: PlayerId::P0,
-        targets: Vec::new(),
-        is_copy: false,
-        inline_effect: Some(EffectOp::SearchLibraryToHand {
-            player: PlayerRef::Controller,
-            filter: LibraryCardFilter::LandWithSubtype(Subtype::Island),
-        }),
-        discarded: Vec::new(),
-        is_flashback: false,
-        mode_chosen: 0,
-        madness_offer: false,
-        kicked: false,
-        v4: StackStateV4::default(),
-    });
-    state.engine.priority_passes = [true, true];
     let library = state.players[0].library.clone();
-    (state, source, library)
+    // A Mountain, not an Island, pays cycling's generic {1}: several tests
+    // in this file stage Island-named search candidates in the hidden
+    // library and assert the opponent's projection never contains "Island"
+    // (search_candidates_are_physical_sorted_private_stable_and_finish_
+    // last); a public battlefield land sharing that name would otherwise
+    // give the same substring a legitimate, unrelated reason to appear.
+    put_object(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
+    let lorien = put_object(&mut state, PlayerId::P0, "Lorien Revealed", Zone::Hand);
+    engine::step(&mut state, Action::ActivateAbility(lorien, 0)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        }
+    ));
+    engine::step(&mut state, Action::Pass).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P1,
+            ..
+        }
+    ));
+    engine::step(&mut state, Action::Pass).unwrap();
+    (state, lorien, library)
 }
 
 fn ready_main(names: &[&str], seed: u64) -> GameState {
@@ -697,7 +717,12 @@ fn finish_with_matches_and_zero_match_or_empty_library_all_still_shuffle() {
     assert_eq!(no_match_actions.len(), 1);
     assert_eq!(
         no_match_actions[0].record.stable_id,
-        "legal-action-v4:3ae395f28a70411e"
+        // Incidental: the stable id folds in the ability source object, so
+        // moving the search decision's source from a synthetic Mountain to
+        // the real Lorien Revealed card (see ready_inline_search) changes
+        // this literal hash; the decision shape it identifies (Finish with
+        // an empty legal-target set) is unchanged.
+        "legal-action-v4:b864d92066ff4194"
     );
     assert!(matches!(
         no_match_actions[0].record.semantic,

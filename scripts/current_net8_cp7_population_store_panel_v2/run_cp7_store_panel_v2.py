@@ -348,13 +348,25 @@ def environment(database_root: Path, model: dict[str, Any], *,
 
 
 def expected_header(checkpoint: dict[str, Any]) -> dict[str, Any]:
+    # Feature-Encoder Successor (collab CLAUDE #221, folding CODEX #235):
+    # this panel drives a freshly built checkpoint binary each run and
+    # validates its own freshly produced outcome-jsonl headers, so this is
+    # the CURRENT-only live value (CURRENT-ONLY REBIND per the branch audit
+    # table), not a dual-profile field -- it must track whatever
+    # native_flat_tensorizer_v2::NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2
+    # the live crate build stamps, exactly like `native_checkpoint_shadow_stdio_v1.rs`'s
+    # two minting sites do automatically by importing that constant.
+    #
+    # Codex confirmed this branch's reconstruction as the intended change
+    # and ratified this literal as the CURRENT-profile pin (collab CLAUDE
+    # #239).
     return {
         "record_type": "header", "schema_version": 2, "record_ordinal": 0,
         "export_contract": OUTCOME_CONTRACT,
         "selection_source": "candidate_checkpoint_policy",
         "tensorizer_identity": "mtg-kernel-python-encoded-decision-tensor-contract-v2",
         "tensorizer_features_source_sha256":
-            "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+            "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c",
         "model_input_commitment":
             "mtg-kernel-checkpoint-shadow-model-input-framed-sha256/v1",
         "checkpoint": checkpoint,

@@ -30,10 +30,25 @@ GENERATOR_PATH = TOOLS / "generate_native_full_episode_trajectory_v2_goldens.py"
 ARTIFACT_PATH = DATA / "native_full_episode_trajectory_v2_goldens.json"
 V1_ARTIFACT_PATH = DATA / "native_full_episode_trajectory_v1_goldens.json"
 
+# Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+# 2026-08-14; landed on this branch as commit 40a0fad, "Re-baseline
+# native_full_episode_trajectory_v2's catalog-identity pins"): the
+# runtime-decks-nine catalog landing is one of the three accepted
+# determinism-epoch causes, so the golden generator's own
+# RUNTIME_DECK_CATALOG_FILE_SHA256 moved and the golden was regenerated
+# (case counts and byte lengths unchanged; only the hash cascade moved).
+# The Rust side already carries these exact values
+# (NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2 /
+# ..._GOLDEN_STREAM_SHA256_V2 in native_full_episode_trajectory_v2.rs and
+# native_full_episode_trajectory_v2_goldens.rs); only this Python-side pin
+# had not been updated to match. Byte counts are unaffected (same
+# ARTIFACT_BYTES/STREAM_BYTES), and .gitattributes pins `*.json text
+# eol=lf`, so both hashes below are confirmed identical on ubuntu-24.04
+# and windows-2025 CI (no platform/EOL divergence to reconcile).
 ARTIFACT_BYTES = 251658
-ARTIFACT_SHA256 = "e6cfffe080c349ceca82ddfc6504fb61801ac07cc3e1ae57a80345296f7ec45b"
+ARTIFACT_SHA256 = "1a79f8153fe8adb7d984609d5e510f8e9f2f9e37358ed42744873ae4fd743672"
 STREAM_BYTES = 226765
-STREAM_SHA256 = "19171ada77ecd142ac458365563f6e65ad9f5ba352625c77a121ce0d00bb537f"
+STREAM_SHA256 = "554003d75532a26d50ff6599cd909223176926773dce21efcd9895e41e51cb8e"
 
 V1_ARTIFACT_SHA256 = "502a1b4ba296fdc4b2f4e8fd61cc5b4d64f152c9b84b4e11a85967f76c3bde8b"
 V1_STREAM_SHA256 = "f5230cbbc0b87735e7aa14c89ce31e41ce769de3f4292cafe63dad4733168d7a"

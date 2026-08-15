@@ -140,6 +140,25 @@ WIDE_AUTHORITY_SOURCE_PATHS_V1 = (
     "python/mtg_kernel_rl/wide_model_snapshot_v1.py",
 )
 
+# Feature-Encoder Successor (collab CLAUDE #221/#239): wide-snapshot sibling
+# of common_model_snapshot_v1.py's historical/current widen. The wide
+# manifest (data/wide_model_snapshot_w128/manifest.json) is the Stage-3
+# capacity-experiment diagnostic snapshot, also frozen and out of scope for
+# the rewrite; its own recorded authority.sources[].sha256/
+# source_bundle_sha256 are the four literals below (model.py/determinism.py/
+# wide_model_snapshot_v1.py verified byte-identical between that manifest
+# and this branch's live files; only features.py's recorded hash differs,
+# matching the historical pin).
+WIDE_FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1 = (
+    "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59",
+    "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+    "45bd3ad1efb8b3ecb697961655fa51ce8e23efd2b11b3ecee8f7ef9bd29c4f35",
+    "9f7520edcaae80fdd6478f0cf7f2fb8035a56efb7ce2860e36b2ad3b511afb5d",
+)
+WIDE_FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1 = (
+    "85446eae753b1055d3dedeb56b7080a49327eeee52e492b74f42a0cfde52cb8b"
+)
+
 # (name, shape, element_offset, element_count) -- computed at
 # hidden_dim=128, card_embedding_dim=32, all other dims unchanged from the
 # frozen contract. Verified against a live torch construction; see
@@ -318,6 +337,31 @@ def _wide_source_records(repo_root: Path) -> tuple[list[dict[str, str]], str]:
         records.append({"path": relative, "sha256": digest})
         framed.extend(_frame(relative, bytes.fromhex(digest)))
     return records, _sha256(bytes(framed))
+
+
+def _wide_historical_authority_sources() -> list[dict[str, str]]:
+    """Wide-snapshot sibling of common_model_snapshot_v1's
+    `_historical_authority_sources`."""
+    return [
+        {"path": path, "sha256": digest}
+        for path, digest in zip(
+            WIDE_AUTHORITY_SOURCE_PATHS_V1, WIDE_FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1
+        )
+    ]
+
+
+def _wide_authority_source_binding_is_known(
+    sources: Any, bundle_sha256: Any, repo_root: Path
+) -> bool:
+    """Wide-snapshot sibling of `_authority_source_binding_is_known`; same
+    whole-tuple, hybrid-rejecting shape."""
+    current_sources, current_bundle = _wide_source_records(repo_root)
+    historical = (
+        sources == _wide_historical_authority_sources()
+        and bundle_sha256 == WIDE_FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1
+    )
+    current = sources == current_sources and bundle_sha256 == current_bundle
+    return historical or current
 
 
 def _wide_layout_projection(parameters: list[dict[str, Any]]) -> dict[str, Any]:
@@ -612,20 +656,19 @@ def _validate_wide_manifest_schema(
     expected_runtime_digest = _sha256(canonical_json_bytes(AUTHORITY_RUNTIME_CONFIGURATION_V1))
     _require_str(authority["runtime_configuration_sha256"], expected_runtime_digest, "runtime digest")
     _require_str(authority["source_bundle_contract"], SOURCE_BUNDLE_CONTRACT_V1, "source bundle contract")
-    current_sources, current_bundle = _wide_source_records(repo_root)
-    if type(authority["sources"]) is not list or len(authority["sources"]) != len(current_sources):
+    if type(authority["sources"]) is not list or len(authority["sources"]) != len(
+        WIDE_AUTHORITY_SOURCE_PATHS_V1
+    ):
         raise WideModelSnapshotErrorV1("wide authority source list mismatch")
     for index, source in enumerate(authority["sources"]):
-        source = _require_exact_keys(source, {"path", "sha256"}, f"authority.sources[{index}]")
-        _require_str(source["path"], current_sources[index]["path"], f"authority source {index} path")
-        _require_str(
-            source["sha256"],
-            current_sources[index]["sha256"],
-            f"authority source {index} digest",
-        )
-    if authority["sources"] != current_sources:
-        raise WideModelSnapshotErrorV1("wide authority source hashes drifted")
-    _require_str(authority["source_bundle_sha256"], current_bundle, "source bundle")
+        _require_exact_keys(source, {"path", "sha256"}, f"authority.sources[{index}]")
+    # Feature-Encoder Successor (collab CLAUDE #221/#239): accepts either the
+    # frozen HISTORICAL or live CURRENT authority-source binding as a whole;
+    # see `_wide_authority_source_binding_is_known`.
+    if not _wide_authority_source_binding_is_known(
+        authority["sources"], authority["source_bundle_sha256"], repo_root
+    ):
+        raise WideModelSnapshotErrorV1("wide authority source binding mismatch")
 
     payload = _require_exact_keys(
         manifest["payload"],

@@ -4380,36 +4380,54 @@ mod tests {
         // another.
         #[cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"))]
         {
+            // Re-baselined once per the owner ruling on record (collab
+            // CLAUDE #236, 2026-08-14): this witness is over real training
+            // on real observations, so it moves with the two accepted
+            // 603.10-family observation fixes and the nine-deck catalog
+            // landing, same as PR #44's original capture moved this value
+            // once before. The three scheduler-topology-invariance checks
+            // immediately above this witness comparison (train state, model
+            // digest, loss tuple, narrow vs wide) are UNCHANGED and still
+            // pass, so topology invariance itself -- the property this test
+            // exists to guard -- is intact; only the absolute PR #44
+            // reference values moved. Values are this test's own
+            // live-computed witness, read directly from a failing run
+            // (never hand-typed). This is the one re-baselined literal in
+            // this round most worth extra scrutiny under the full replay
+            // verification gate (rally_mirror_v2 + burn_mirror_v6) that
+            // runs after this round, since it is a genuine numerical
+            // (not just structural) result.
             (
                 "x86_64-pc-windows-msvc",
                 BurnPairNumericalWitnessV1 {
                     train_state_sha256: [
-                        250, 165, 172, 135, 179, 143, 5, 205, 138, 114, 252, 103, 138, 241, 177,
-                        197, 117, 96, 251, 190, 79, 49, 165, 11, 15, 249, 71, 182, 127, 49, 170,
-                        141,
+                        55, 212, 85, 76, 98, 50, 182, 141, 225, 231, 66, 98, 154, 58, 94, 178, 108,
+                        164, 50, 190, 62, 32, 102, 182, 143, 237, 199, 75, 14, 178, 180, 35,
                     ],
                     model_digest_after:
-                        "5dcf4eff6f0bce4d5c38f9d3eeb84f0a33afd9db67a8969dfc4360b9df35d443",
-                    policy_sum_bits: 1_111_603_742,
-                    value_sum_bits: 1_121_934_211,
-                    loss_bits: 1_064_195_456,
+                        "d120d07dffda68bd7a207eaa9172ca2762ddad936c9d8bf56122584ee261e9c0",
+                    policy_sum_bits: 1_111_823_260,
+                    value_sum_bits: 1_121_905_000,
+                    loss_bits: 1_064_304_203,
                 },
             )
         }
         #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
         {
+            // Linux pin re-based at the merge epoch under the accepted Rally
+            // ruling; witnessed by the 40/40 replay gate.
             (
                 "x86_64-unknown-linux-gnu",
                 BurnPairNumericalWitnessV1 {
                     train_state_sha256: [
-                        123, 200, 0, 83, 51, 3, 54, 216, 47, 5, 112, 187, 4, 74, 137, 69, 67, 101,
-                        49, 78, 192, 135, 162, 81, 61, 143, 123, 166, 225, 191, 172, 17,
+                        145, 196, 208, 109, 105, 2, 26, 238, 24, 185, 93, 196, 99, 141, 82, 82, 56,
+                        74, 19, 66, 173, 118, 92, 130, 48, 132, 138, 91, 186, 200, 164, 216,
                     ],
                     model_digest_after:
-                        "40eafa2be6624d0126e5aaf704441034f6186799c4235f7b7c513b7d3628f06d",
-                    policy_sum_bits: 1_111_603_742,
-                    value_sum_bits: 1_121_934_212,
-                    loss_bits: 1_064_195_457,
+                        "d76bae630ed24fc4a7ce533031ecffb63ee04e714e4047775f1765f6ea95eb8e",
+                    policy_sum_bits: 1_111_823_260,
+                    value_sum_bits: 1_121_905_000,
+                    loss_bits: 1_064_304_203,
                 },
             )
         }
@@ -4787,22 +4805,27 @@ mod tests {
             "cc8205d35f68b9d961a4115b7029b2c394f9ee9a981887284e46410b5a90991c"
         );
         assert_eq!(narrow_evidence.changed_non_gauge_parameter_count, 32);
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): observation-derived, same rationale as the
+        // numerical witness above.
         assert_eq!(
             narrow_evidence.episodes[0]
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                218, 58, 252, 127, 21, 185, 50, 121, 19, 64, 114, 39, 237, 157, 11, 206, 2, 100,
-                249, 37, 3, 248, 145, 82, 102, 176, 154, 247, 122, 191, 134, 7,
+                206, 204, 202, 83, 211, 229, 60, 79, 178, 67, 28, 33, 251, 247, 221, 162, 116, 116,
+                169, 215, 228, 160, 65, 144, 30, 135, 83, 123, 92, 60, 227, 185,
             ]
         );
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): observation-derived, same rationale as above.
         assert_eq!(
             narrow_evidence.episodes[1]
                 .full_trajectory_receipt
                 .trajectory_sha256(),
             [
-                0, 225, 21, 221, 53, 228, 140, 20, 20, 160, 25, 212, 244, 84, 87, 177, 246, 163,
-                191, 9, 245, 195, 100, 216, 166, 134, 107, 212, 163, 200, 224, 119,
+                162, 131, 253, 244, 77, 73, 235, 205, 77, 158, 173, 180, 1, 20, 164, 57, 130, 181,
+                15, 208, 117, 142, 3, 104, 207, 50, 221, 194, 231, 238, 51, 94,
             ]
         );
 
@@ -5695,6 +5718,11 @@ mod tests {
         // Frozen V2 outer goldens: the deterministic distinct-deck pair's
         // exact inner and outer digests, pinned as literals so outer-envelope
         // drift is a fail-closed rejection rather than a silent re-freeze.
+        //
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): this is a live Rally+Burn replay, so its
+        // digests move with the two accepted 603.10-family observation
+        // fixes and the nine-deck catalog landing.
         let digest_hexes: Vec<(String, String)> = evidence
             .episodes
             .iter()
@@ -5714,12 +5742,12 @@ mod tests {
             digest_hexes,
             [
                 (
-                    "ebd9ea5f032da7614c7be7c279cf20195ae30d1f8d3c8c82f0e89190f06bbae7".to_owned(),
-                    "ba6a186f425cc565163e3029f25912a6897bba11094fe918936c3a2120030b92".to_owned(),
+                    "03cbfef4e13926e27cdbcb0ec0864d9d830d50f235522224943b222b5fa6101d".to_owned(),
+                    "2218bdf0e39836dbaca0d6c08d2b82aacc237534bd32430472edb9a6d5ad6f66".to_owned(),
                 ),
                 (
-                    "8409a4c296401c52474d67d40e15ee1e37dbd59a50024ccd910be70ba6dad2c3".to_owned(),
-                    "2a43305e9711c169eb3687d0ef8d87b687ef833888a7bcf21cec7b0ad3b52e2e".to_owned(),
+                    "0462ea3dfdad0787f2eac9be68ea38e29a58510b0167148489806b02bb6d94ed".to_owned(),
+                    "0c4f922282ddd153fd722a7c98130e2679543d47124c4f994a3d809587e2ad7b".to_owned(),
                 ),
             ],
             "the distinct-deck V2 pair goldens drifted"

@@ -25,9 +25,13 @@ BASE_GOLDENS = ROOT / "data" / "flat_policy_v1" / "goldens_v1.json"
 BASE_LAYOUT = ROOT / "mtg-kernel" / "src" / "flat_policy_v1.rs"
 OVERLAY_LAYOUT = ROOT / "mtg-kernel" / "src" / "flat_policy_v2.rs"
 CARD_DEF_SOURCE = ROOT / "mtg-kernel" / "src" / "card_def.rs"
-# Frozen by mtg-kernel/src/card_def.rs::card_db_hash_v5_is_frozen and checked
+# Frozen by mtg-kernel/src/card_def.rs::card_db_hash_v32_is_frozen and checked
 # again by the Rust production-commitment golden test.
-KERNEL_CARDDB_HASH = 0xA06F_A956_6106_F0EA
+KERNEL_CARDDB_HASH = 0x64C8_2A26_1E07_8F1A
+# The cross-version comparison is a historical byte fixture, not a current
+# card-database commitment. Keep both sides on the exact v5 authority under
+# which its frozen V1/V2 commitment literals were ratified.
+FROZEN_COMPARISON_CARDDB_HASH = 0xA06F_A956_6106_F0EA
 ACTION_REF_INTERNAL_ENTRIES = [
     {"role": "source", "rust_internal_id": 0, "python_projection_id": 0},
     {"role": "candidate", "rust_internal_id": 1, "python_projection_id": 1},
@@ -724,7 +728,7 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
     v1_header = _header(
         b"mtg-kernel-flat-action-candidate-order-v1\0",
         (1, 1, 1, 1),
-        card_db_hash,
+        FROZEN_COMPARISON_CARDDB_HASH,
         0,
         1,
         1,
@@ -736,7 +740,15 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
         + _serialize_ref_v1(legacy_ref, legacy_object)
         + _serialize_action(0, legacy_action)
     )
-    v2_header = _header(domain, (2, 1, 2, 2), card_db_hash, 0, 1, 1, 1)
+    v2_header = _header(
+        domain,
+        (2, 1, 2, 2),
+        FROZEN_COMPARISON_CARDDB_HASH,
+        0,
+        1,
+        1,
+        1,
+    )
     v2_stream = (
         v2_header
         + _serialize_object_v2(0, legacy_object)
@@ -746,7 +758,7 @@ def _action_commitment_goldens(action_contract: dict[str, Any], card_db_hash: in
     return {
         "serialization_authority": "python_struct_little_endian_v1",
         "card_db_hash_authority": {
-            "source": "mtg-kernel/src/card_def.rs::card_db_hash_v5_is_frozen",
+            "source": "mtg-kernel/src/card_def.rs::card_db_hash_v32_is_frozen",
             "value_hex": f"{card_db_hash:016x}",
         },
         "serializer_stress_v2": serializer_stress,

@@ -57,7 +57,7 @@
     "rust_internal_width": 8,
     "schema": "flat-policy-action-ref-role-crosswalk-v1"
   },
-  "card_catalog_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77",
+  "card_catalog_sha256": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc",
   "encoding_contract_digest": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
   "enum_maps": {
     "action_kind": {
@@ -318,9 +318,9 @@
       "this_turn": 1
     }
   },
-  "inventory_sha256": "f46c9fbbad3654c0d5f0f5b8ea89134b392a79b148d002dc35ab5bc3156a1220",
+  "inventory_sha256": "39a4287423e00de9f7c0319431cf549a9f1b8a1bc75c11ad517019fbd0ba3054",
   "mapping_sha256": "bf0347ab442bd1c81cade03899b0c1af93d9bc26468b1e8139dbfc562fa4c4b6",
-  "payload_sha256": "4a5d642efa83594718afda869264f93460c188b230baf0f8b38acadfccdd7990",
+  "payload_sha256": "8cd52024381bf8c642299acb25407fc5e8393d1a268983ee970d89e4f75e2de3",
   "producer_parent_commit": "3de6d2c450d4d32f120f70034324bfc72e1e3339",
   "runtime_fixture_cases": [
     {
@@ -344,7 +344,7 @@
         "Burn"
       ],
       "episode_id": 90001,
-      "model_typed_debug_sha256": "114064faa1124cfcfa001ce7c5aee2e0476d8abeff0ff04d8bc28466721d25ea",
+      "model_typed_debug_sha256": "385c56399cfd52e593613b7826b363c31bdd50916fca7f0db2f5f39fef3a6b0c",
       "name": "burn_seed_11_initial",
       "seed": 11
     },
@@ -369,7 +369,7 @@
         "Rally"
       ],
       "episode_id": 90002,
-      "model_typed_debug_sha256": "a81c187c11f01a5badb874fbed5b614e54e19f8e1f17a934ddf79542e611141a",
+      "model_typed_debug_sha256": "b97e9417ac54c2bc92895be5228bc31284969f26848392755c0fc25d38e34aaf",
       "name": "rally_seed_23_initial",
       "seed": 23
     },
@@ -394,7 +394,7 @@
         "Rally"
       ],
       "episode_id": 90003,
-      "model_typed_debug_sha256": "0b8ae94495af98072c619690776cbbcfcf5f27caa1605f99fd54bd01ffb5bc00",
+      "model_typed_debug_sha256": "7bcadc3cd61e34231cd4868826fade9df6fa7d5f61148f1809d550cf655f88eb",
       "name": "burn_rally_seed_37_initial",
       "seed": 37
     },
@@ -418,7 +418,7 @@
         "Burn"
       ],
       "episode_id": 90101,
-      "model_typed_debug_sha256": "f1610a65d2d85d505596f5695bf550385cd93bcec44788a9e0bb04e4186df35c",
+      "model_typed_debug_sha256": "df03cc21e0995ab752402740c6382e6bed97719d4679e206bcaf87900f18565d",
       "name": "burn_seed_81701_first_relation",
       "seed": 81701,
       "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1"
@@ -443,7 +443,7 @@
         "Rally"
       ],
       "episode_id": 90102,
-      "model_typed_debug_sha256": "17ef7729a5598e60b9e4f6c11cbc0b6414cdf71ceba58a62d02f09e0b086e34f",
+      "model_typed_debug_sha256": "2f8bd97a8696ce53c37fa4618454cbc036a355bb628d1814d423966bed0bdcd0",
       "name": "rally_seed_81702_first_relation",
       "seed": 81702,
       "selection_policy": "splitmix64_mod_width_include_true_for_combat_v1"

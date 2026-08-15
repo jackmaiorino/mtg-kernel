@@ -33,7 +33,11 @@ use crate::native_flat_tensorizer_v2::NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2
 
 pub(crate) const CARD_VOCAB_V1: usize = 136;
 pub(crate) const HISTORY_LENGTH_V1: usize = 16;
+// Reserved alongside the removed bounded-value-search branch noted above;
+// kept for the ported struct's dimension math even though nothing reads it.
+#[allow(dead_code)]
 pub(crate) const HISTORY_ROLE_DIM_V1: usize = 2;
+#[allow(dead_code)]
 pub(crate) const HISTORY_FEATURE_DIM_V1: usize =
     NATIVE_FLAT_ACTION_EXPLICIT_FEATURE_DIM_V2 + HISTORY_ROLE_DIM_V1 + CARD_VOCAB_V1;
 
@@ -65,6 +69,8 @@ impl NativeStructuredHistoryEntryV1 {
         })
     }
 
+    // Reserved alongside the removed bounded-value-search branch noted above.
+    #[allow(dead_code)]
     pub(crate) fn actor_relative_features_v1(&self, acting_player: u8) -> Result<Vec<f32>, ()> {
         if acting_player > 1 {
             return Err(());

@@ -52,6 +52,7 @@ struct CardJson {
     #[serde(default)]
     engine_capability: EngineCapabilityJson,
     mana_cost: String,
+    mana_value: u16,
     #[serde(default)]
     types: Vec<String>,
     #[serde(default)]
@@ -65,6 +66,8 @@ struct CardJson {
     produces_mana: Vec<String>,
     #[serde(default)]
     colors: Vec<String>,
+    #[serde(default)]
+    mechanics: Vec<String>,
     decks: Vec<String>,
     /// A permanent token (e.g. Blood), not itself a deck card: exempt from
     /// the empty-deck-coverage check (see `main`'s validation loop) and
@@ -1847,20 +1850,78 @@ fn runtime_decks_codegen(
     const EXPECTED_MATERIALIZATION: &str = "xmage_xml_row_then_copy_ordinal/v1";
     const EXPECTED_CARD_ID_ASSIGNMENT: &str = "zero_based_data_cards_v1_json_cards_array_index/v1";
     const EXPECTED_DECK_HASH_ALGORITHM: &str = "fnv1a64-serde-json-u16-array/v1";
-    const EXPECTED_DECKS: [(&str, u32, &str, &str, u64); 2] = [
+    const EXPECTED_DECKS: [(&str, u32, &str, &str, usize, u64); 9] = [
+        (
+            "Wildfire",
+            1,
+            "oracle/xmage/decks/Pauper/Deck - Jund Wildfire.dek",
+            "cff35798ff724888a9e5a4520dd55e70b0c628a55908697aa116089d8fd980a5",
+            22,
+            0x552acb5fc9631d3b,
+        ),
         (
             "Rally",
             2,
             "oracle/xmage/decks/Pauper/Deck - Mono Red Rally.dek",
             "4b5019bd08f9387aeabebdca0d90aaa10dfd75fc75ed3a87c95a2fabf4dba834",
+            14,
             0x0c9f01c2544412bf,
+        ),
+        (
+            "Affinity",
+            3,
+            "oracle/xmage/decks/Pauper/Deck - Grixis Affinity.dek",
+            "4a41135ac6d14960e75ddce8e9980c0505c0b71a9c08a2e10578a10d2fcf8801",
+            22,
+            0xff4bf00deadf8821,
+        ),
+        (
+            "Elves",
+            4,
+            "oracle/xmage/decks/Pauper/Deck - Elves.dek",
+            "6b040933c9b3506536e7dc71c94dcaf5f16c7ade43a3d0f7f9b240be6deb0d87",
+            14,
+            0x6a187257d6d37346,
+        ),
+        (
+            "Spy",
+            5,
+            "oracle/xmage/decks/Pauper/Deck - Spy Combo.dek",
+            "f08177d5ed133b18312f59649d1155e15b5074ababeaabcdf3f31ded650308ba",
+            21,
+            0xcd2afdfee3573675,
         ),
         (
             "Burn",
             6,
             "oracle/xmage/decks/Pauper/Deck - Mono-Red Burn.dek",
             "4ebba6b42bb27a0ea55001cee133aada81f0dffd8661b46b012fc5026675aa32",
+            12,
             0x5fdb7b92986b6fc1,
+        ),
+        (
+            "Terror",
+            7,
+            "oracle/xmage/decks/Pauper/Deck - Mono-Blue Terror.dek",
+            "8ba22b67b843bc49a421e1c2814c4dd24a04ab2b45131ec7876a8312115a9fda",
+            14,
+            0xfd6f1a4aceaa157b,
+        ),
+        (
+            "CawGates",
+            8,
+            "oracle/xmage/decks/Pauper/Deck - Caw-Gates.dek",
+            "72c2bbf76a7fd219349a0ad81c44dc6166b4a797a1f66fe9b5a5de79aa6cdc14",
+            20,
+            0x25c1916a4d20c08e,
+        ),
+        (
+            "Faeries",
+            9,
+            "oracle/xmage/decks/Pauper/Deck - Mono-Blue Faeries.dek",
+            "8cb962c4ccee6a5f8c0c70fc27c17d13323d13606c82b9b12b8985aa87e0f344",
+            14,
+            0xd7a47ab2fa78dbaa,
         ),
     ];
 
@@ -1911,8 +1972,17 @@ fn runtime_decks_codegen(
 
     let mut generated_decks = Vec::with_capacity(catalog.decks.len());
     let mut seen_ids = HashSet::new();
-    for (deck, &(expected_id, expected_pool_order, expected_path, expected_sha, expected_hash)) in
-        catalog.decks.iter().zip(EXPECTED_DECKS.iter())
+    for (
+        deck,
+        &(
+            expected_id,
+            expected_pool_order,
+            expected_path,
+            expected_sha,
+            expected_unique_count,
+            expected_hash,
+        ),
+    ) in catalog.decks.iter().zip(EXPECTED_DECKS.iter())
     {
         if !seen_ids.insert(deck.id.as_str()) {
             panic!("runtime_decks_v1.json: duplicate deck id {:?}", deck.id);
@@ -2015,10 +2085,13 @@ fn runtime_decks_codegen(
             unique_names.insert(copy.name.as_str());
             card_ids.push(copy.card_id);
         }
-        if unique_names.len() != deck.unique_mainboard_cards {
+        if deck.unique_mainboard_cards != expected_unique_count
+            || unique_names.len() != expected_unique_count
+        {
             panic!(
-                "runtime_decks_v1.json: deck {:?} declares {} unique mainboard cards, materialization has {}",
+                "runtime_decks_v1.json: deck {:?} must have exactly {} unique mainboard cards, declared {}, materialization has {}",
                 deck.id,
+                expected_unique_count,
                 deck.unique_mainboard_cards,
                 unique_names.len()
             );
@@ -2138,12 +2211,9 @@ fn parse_runtime_deck_hash(deck_id: &str, value: &str) -> u64 {
         .unwrap_or_else(|_| panic!("runtime_decks_v1.json: deck {deck_id:?} hash is invalid"))
 }
 
-/// The Mono-Red Burn cards that get a real effect program. Relic of
-/// Progenitus is the sole remaining deferred card -- present in `CARD_DEFS`
-/// with correct metadata, not castable, per the kernel's fail-closed
-/// invariant -- graveyard-card targeting doesn't fit any `TargetSpec` shape
-/// built so far and it's sideboard-only, so it's lower priority than the 5
-/// cards this increment adds.
+/// Generated special-case recipes shared by the fully supported nine-deck
+/// Pauper pool. Cards without a special recipe are still admitted only through
+/// their explicit full-capability registry metadata and generated definitions.
 #[derive(Clone, Copy)]
 enum Special {
     None,
@@ -2184,6 +2254,9 @@ enum Special {
         draw: i32,
         discard: i32,
     },
+    /// Each opponent sacrifices a creature, restricted to greatest power
+    /// when this exact cast collected evidence.
+    ExtractAConfession,
     /// Grab the Prize: draw two cards, then (if the card discarded to pay
     /// the mandatory additional cost -- see `additional_cost_for` --
     /// wasn't a land) deal 2 damage to the opponent.
@@ -2198,9 +2271,29 @@ enum Special {
     /// turn (Searing Blaze).
     SearingBlaze,
     /// Counter target spell, with the target pool selected independently
-    /// from the shared generated counter effect. Counterspell accepts any
-    /// spell; Dispel accepts only instant spells.
+    /// from the shared generated counter effect.
     CounterTarget(StackSpellFilter),
+    /// Counter a target spell unless its controller pays a fixed generic
+    /// amount. Target eligibility remains definition data rather than a
+    /// runtime card-name branch.
+    CounterUnlessPaysGeneric {
+        filter: StackSpellFilter,
+        generic: u8,
+    },
+    /// Choose one: counter target artifact spell, or return target artifact
+    /// permanent to its owner's hand.
+    SteelSabotage,
+    /// Choose one: grant target creature islandwalk; give target creature
+    /// +2/-1; or have target player discard a card.
+    PiracyCharm,
+    /// Choose one: deal one damage to each of up to two target creatures, or
+    /// exile target artifact.
+    CastIntoTheFire,
+    /// Exile exactly two target artifact permanents.
+    DustToDust,
+    /// Choose one: dynamic creature-count damage, destroy an enchantment, or
+    /// exile any number of target players' graveyards.
+    ThrabenCharm,
     /// Symmetric Elemental Blast recipe. `checked_color` is the color the
     /// target must have; `filter_timing` distinguishes the Elemental Blasts'
     /// targeting restriction from Pyroblast/Hydroblast's resolution-time
@@ -2231,6 +2324,12 @@ enum Special {
     /// during resolution, so it is the first real consumer of the generic
     /// resumable `EffectOp::Choice` interpreter.
     WindingWay,
+    /// Privately look at the top `look` cards, choose any number of cards of
+    /// `card_type` for hand, and put the rest on the bottom in any order.
+    LookTopSelectByTypeToHandBottomRest {
+        look: u8,
+        card_type: &'static str,
+    },
     /// Mill `mill` cards from `player`'s library, then draw `draw` cards.
     /// Mental Note mills its controller without targeting; Thought Scour
     /// mills its chosen player in target slot zero. Both use the same
@@ -2266,6 +2365,75 @@ enum Special {
     /// Target nonland permanent; its owner chooses whether the exact bound
     /// incarnation goes second from top or on the bottom of their library.
     DeemInferior,
+    /// Tap target creature and mark that exact battlefield incarnation to
+    /// skip its current controller's next untap. Sleep of the Dead is the
+    /// first consumer.
+    TapAndSkipNextUntap,
+    /// Destroy target nonlegendary creature. Cast Down is the first
+    /// consumer of the append-only target filter and shared destroy leaf.
+    DestroyNonlegendaryCreature,
+    /// Return target creature or land card from a graveyard to its owner's
+    /// hand, then the controller gains a fixed amount of life. Pulse of
+    /// Murasa is the first consumer.
+    ReturnCreatureOrLandFromGraveyardAndGainLife {
+        amount: u8,
+    },
+    /// Deal one simultaneous damage batch to every creature other than the
+    /// excluded subtype. Breath Weapon excludes Dragons and deals two.
+    DamageEachCreatureWithoutSubtype {
+        amount: i32,
+        excluded_subtype: &'static str,
+    },
+    /// Draw cards, then create one named token.
+    DrawThenCreateToken {
+        draw: u8,
+        token: &'static str,
+    },
+    /// Gain life equal to the frozen mana value of the paid sacrifice, then
+    /// draw cards.
+    GainPaidCostManaValueThenDraw {
+        draw: u8,
+    },
+    /// Return target creature card from the controller's graveyard to the
+    /// battlefield. Dread Return's flashback cost is modeled independently.
+    ReturnOwnGraveyardCreatureToBattlefield,
+    /// Search the controller's library for a Forest card, reveal it, put it
+    /// into hand, then shuffle. Land Grant's conditional hand-reveal
+    /// alternative cost is modeled independently.
+    SearchForestToHand,
+    /// Put one +1/+1 counter and one lifelink keyword counter on target
+    /// creature. Unexpected Fangs is the first consumer.
+    AddPlusOnePlusOneAndLifelinkCounters,
+    /// Aura permanent spell that enters attached to its creature target.
+    BindTheMonster,
+    /// Return target creature, then choose up to two controlled lands to
+    /// untap during the same resolution.
+    Snap,
+    /// Damage cannot be prevented this turn. Flaring Pain's flashback cost
+    /// is modeled independently by `flashback_for`.
+    DamageCannotBePreventedThisTurn,
+    /// Choose a color, then prevent all damage from sources of that color
+    /// this turn. Its flashback tap cost is modeled independently.
+    PrismaticStrands,
+    /// Destroy target land, offer its resolution-time controller an optional
+    /// basic-land search to the battlefield tapped, then draw a card.
+    CleansingWildfire,
+    /// Reveal target opponent's hand and choose a noncreature, nonland card
+    /// from it for that player to discard.
+    Duress,
+    /// Target creature gains deathtouch and lifelink until end of turn, then
+    /// the controller investigates.
+    ToxinAnalysis,
+    /// Gain three life. The card's CastSelf Storm trigger is defined in the
+    /// shared trigger table.
+    WeatherTheStorm,
+    /// Deal damage to target creature equal to the resolution-time power,
+    /// or last known battlefield power, of the creature chosen or revealed
+    /// for the spell's mandatory additional cost.
+    MonstrousEmergence,
+    /// An X creature that enters with X counters. Bestow is modeled by the
+    /// independently generated `CardDef::bestow` characteristics.
+    NyxbornHydra,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -2278,6 +2446,10 @@ enum MillPlayer {
 enum StackSpellFilter {
     Any,
     Instant,
+    ArtifactOrEnchantment,
+    Sorcery,
+    Noncreature,
+    Artifact,
 }
 
 impl MillPlayer {
@@ -2294,6 +2466,23 @@ impl StackSpellFilter {
         match self {
             StackSpellFilter::Any => "any",
             StackSpellFilter::Instant => "instant",
+            StackSpellFilter::ArtifactOrEnchantment => "artifact_or_enchantment",
+            StackSpellFilter::Sorcery => "sorcery",
+            StackSpellFilter::Noncreature => "noncreature",
+            StackSpellFilter::Artifact => "artifact",
+        }
+    }
+
+    fn target_spec(self) -> &'static str {
+        match self {
+            StackSpellFilter::Any => "TargetSpec::AnySpellOnStack",
+            StackSpellFilter::Instant => "TargetSpec::InstantSpellOnStack",
+            StackSpellFilter::ArtifactOrEnchantment => {
+                "TargetSpec::ArtifactOrEnchantmentSpellOnStack"
+            }
+            StackSpellFilter::Sorcery => "TargetSpec::SorcerySpellOnStack",
+            StackSpellFilter::Noncreature => "TargetSpec::NoncreatureSpellOnStack",
+            StackSpellFilter::Artifact => "TargetSpec::ArtifactSpellOnStack",
         }
     }
 }
@@ -2371,11 +2560,25 @@ impl Special {
             Special::DrawThenDiscard { draw, discard } => {
                 format!("draw_then_discard:{draw}:{discard}")
             }
+            Special::ExtractAConfession => "extract_a_confession".to_string(),
             Special::GrabThePrize => "grab_the_prize".to_string(),
             Special::HighwayRobbery => "highway_robbery".to_string(),
             Special::SearingBlaze => "searing_blaze".to_string(),
             Special::CounterTarget(filter) => {
                 format!("counter_target:{}", filter.canonical_token())
+            }
+            Special::CounterUnlessPaysGeneric { filter, generic } => format!(
+                "counter_unless_pays_generic:{}:{generic}",
+                filter.canonical_token()
+            ),
+            Special::SteelSabotage => "steel_sabotage:counter_or_bounce_artifact".to_string(),
+            Special::PiracyCharm => "piracy_charm:islandwalk_or_pump_or_discard".to_string(),
+            Special::CastIntoTheFire => {
+                "cast_into_the_fire:damage_up_to_two_creatures_or_exile_artifact".to_string()
+            }
+            Special::DustToDust => "dust_to_dust:exile_exactly_two_artifacts".to_string(),
+            Special::ThrabenCharm => {
+                "thraben_charm:creature_count_damage_or_destroy_enchantment_or_exile_target_graveyards".to_string()
             }
             Special::ColorBlast {
                 checked_color,
@@ -2390,6 +2593,9 @@ impl Special {
             Special::RallyAtTheHornburg => "rally_at_the_hornburg".to_string(),
             Special::RecklessImpulse => "reckless_impulse".to_string(),
             Special::WindingWay => "winding_way".to_string(),
+            Special::LookTopSelectByTypeToHandBottomRest { look, card_type } => {
+                format!("look_top_select_by_type_to_hand_bottom_rest:{look}:{card_type}")
+            }
             Special::MillThenDraw { player, mill, draw } => {
                 format!("mill_then_draw:{}:{mill}:{draw}", player.canonical_token())
             }
@@ -2403,6 +2609,49 @@ impl Special {
                 format!("scry_then_draw:{scry}:{draw}")
             }
             Special::DeemInferior => "deem_inferior".to_string(),
+            Special::TapAndSkipNextUntap => "tap_and_skip_next_untap".to_string(),
+            Special::DestroyNonlegendaryCreature => "destroy_nonlegendary_creature".to_string(),
+            Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => {
+                format!("return_creature_or_land_from_graveyard_and_gain_life:{amount}")
+            }
+            Special::DamageEachCreatureWithoutSubtype {
+                amount,
+                excluded_subtype,
+            } => format!("damage_each_creature_without_subtype:{amount}:{excluded_subtype}"),
+            Special::DrawThenCreateToken { draw, token } => {
+                format!("draw_then_create_token:{draw}:{token}")
+            }
+            Special::GainPaidCostManaValueThenDraw { draw } => {
+                format!("gain_paid_cost_mana_value_then_draw:{draw}")
+            }
+            Special::ReturnOwnGraveyardCreatureToBattlefield => {
+                "return_own_graveyard_creature_to_battlefield".to_string()
+            }
+            Special::SearchForestToHand => "search_forest_to_hand".to_string(),
+            Special::AddPlusOnePlusOneAndLifelinkCounters => {
+                "add_plus_one_plus_one_and_lifelink_counters".to_string()
+            }
+            Special::BindTheMonster => "bind_the_monster:aura_creature".to_string(),
+            Special::Snap => "snap:bounce_then_untap_up_to_two_lands".to_string(),
+            Special::DamageCannotBePreventedThisTurn => {
+                "damage_cannot_be_prevented_this_turn".to_string()
+            }
+            Special::PrismaticStrands => {
+                "prismatic_strands:choose_color_prevent_source_damage_this_turn".to_string()
+            }
+            Special::CleansingWildfire => {
+                "cleansing_wildfire:destroy_land_optional_basic_tapped_draw".to_string()
+            }
+            Special::Duress => "duress:reveal_opponent_hand_choose_noncreature_nonland_discard"
+                .to_string(),
+            Special::ToxinAnalysis => {
+                "toxin_analysis:deathtouch_lifelink_eot_investigate".to_string()
+            }
+            Special::WeatherTheStorm => "weather_the_storm:gain_three:storm".to_string(),
+            Special::MonstrousEmergence => {
+                "monstrous_emergence:chosen_creature_power_damage".to_string()
+            }
+            Special::NyxbornHydra => "nyxborn_hydra:x_counters_bestow".to_string(),
         }
     }
 }
@@ -2413,28 +2662,90 @@ enum AbilityCostRecipe {
         colored: Option<&'static str>,
         generic: u8,
     },
+    VariableMana {
+        generic: u8,
+        x_count: u8,
+    },
     Tap,
     DiscardCards(u8),
     DiscardSelf,
     SacrificeSelf,
+    ReturnControlledLandWithSubtype(&'static str),
+    ExileSelf,
+    TapOtherUntappedControlledPermanentWithSubtype(&'static str),
+    SacrificeControlled {
+        count: u8,
+        filter: PermanentFilterRecipe,
+    },
+    ReturnControlledUnblockedAttacker,
+    /// An arbitrary printed mana cost parsed by the same canonical cost
+    /// grammar as spell costs. Twisted Landscape's Cycling is the first
+    /// multicolor consumer.
+    ManaCost(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AbilityEffectRecipe {
     DrawCards(u8),
+    GainLife(u8),
     CreateToken(&'static str),
+    DamageTarget(u8),
+    MoveAllTargetsToHand,
+    ExploreTarget,
+    DealDamageAnyTarget(i32),
+    DamageAllCreatures {
+        amount: i32,
+        filter: CreatureEffectFilterRecipe,
+    },
+    ExileTargetPlayersGraveyard,
+    ExileOneFromTargetPlayersGraveyard,
+    ExileAllGraveyardsThenDraw(u8),
     /// The interpreter currently supports exactly this typecycling search
     /// contract. Keeping all semantic knobs in the recipe makes codegen fail
     /// closed if a future caller asks for a different cardinality/reveal/
     /// shuffle shape without first extending `EffectOp`.
     SearchLibraryToHand {
-        card_type: &'static str,
-        subtype: &'static str,
+        filter: LibrarySearchFilterRecipe,
         min_targets: u8,
         max_targets: u8,
         reveal_selected: bool,
         shuffle: bool,
     },
+    UntapTarget,
+    GainLifeBattlefieldSubtypeCount(&'static str),
+    PumpTargetBattlefieldSubtypeCount(&'static str),
+    PumpTargetByControlledSubtypeCount(&'static str),
+    AttachSourceToTarget,
+    AddStunCounterToOptionalTarget,
+    DestroyTarget,
+    DrawThenDiscard {
+        draw: u8,
+        discard: u8,
+    },
+    PutSourceOntoBattlefieldTappedAndAttacking,
+    MoveAllTargetsToExile,
+    AddMinusOneMinusOneCounter,
+    SearchLibraryToBattlefieldTapped {
+        filter: LibrarySearchFilterRecipe,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PermanentFilterRecipe {
+    Artifact,
+    ArtifactOrCreature,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CreatureEffectFilterRecipe {
+    WithoutKeyword(&'static str),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LibrarySearchFilterRecipe {
+    LandWithSubtype(&'static str),
+    BasicLand,
+    BasicLandWithAnySubtype([&'static str; 3]),
 }
 
 #[derive(Clone, Copy)]
@@ -2443,6 +2754,9 @@ struct ActivatedAbilityRecipe {
     effect: AbilityEffectRecipe,
     activation_zone: &'static str,
     sorcery_speed_only: bool,
+    target_spec: &'static str,
+    activation_target_filter: &'static str,
+    max_activations_per_turn: Option<u8>,
 }
 
 fn special_for(name: &str) -> Special {
@@ -2451,21 +2765,46 @@ fn special_for(name: &str) -> Special {
         // mana ability is rules text, not intrinsic to a basic land type.
         "Great Furnace" => Special::GreatFurnace,
         "Lorien Revealed" => Special::DrawCards(3),
+        "Thoughtcast" => Special::DrawCards(2),
+        "Of One Mind" => Special::DrawCards(2),
+        "Eviscerator's Insight" => Special::DrawCards(2),
+        "Fanatical Offering" => Special::DrawThenCreateToken {
+            draw: 2,
+            token: "Map Token",
+        },
+        "Reckoner's Bargain" => Special::GainPaidCostManaValueThenDraw { draw: 2 },
         "Lightning Bolt" => Special::BurnAnyTarget(3),
         "Fiery Temper" => Special::BurnAnyTarget(3),
         "Fireblast" => Special::BurnAnyTarget(4),
         "Lava Dart" => Special::BurnAnyTarget(1),
+        "Gut Shot" => Special::BurnAnyTarget(1),
         "Chain Lightning" => Special::ChainLightning,
         "Deep Analysis" => Special::TargetPlayerDraw { draw: 2 },
         "Faithless Looting" => Special::DrawThenDiscard {
             draw: 2,
             discard: 2,
         },
+        "Extract a Confession" => Special::ExtractAConfession,
         "Grab the Prize" => Special::GrabThePrize,
         "Highway Robbery" => Special::HighwayRobbery,
         "Searing Blaze" => Special::SearingBlaze,
         "Counterspell" => Special::CounterTarget(StackSpellFilter::Any),
         "Dispel" => Special::CounterTarget(StackSpellFilter::Instant),
+        "Annul" => Special::CounterTarget(StackSpellFilter::ArtifactOrEnchantment),
+        "Envelop" => Special::CounterTarget(StackSpellFilter::Sorcery),
+        "Force Spike" => Special::CounterUnlessPaysGeneric {
+            filter: StackSpellFilter::Any,
+            generic: 1,
+        },
+        "Spell Pierce" => Special::CounterUnlessPaysGeneric {
+            filter: StackSpellFilter::Noncreature,
+            generic: 2,
+        },
+        "Steel Sabotage" => Special::SteelSabotage,
+        "Piracy Charm" => Special::PiracyCharm,
+        "Cast into the Fire" => Special::CastIntoTheFire,
+        "Dust to Dust" => Special::DustToDust,
+        "Thraben Charm" => Special::ThrabenCharm,
         "Blue Elemental Blast" => Special::ColorBlast {
             checked_color: BlastColor::Red,
             filter_timing: BlastFilterTiming::Targeting,
@@ -2487,6 +2826,10 @@ fn special_for(name: &str) -> Special {
         "Rally at the Hornburg" => Special::RallyAtTheHornburg,
         "Reckless Impulse" => Special::RecklessImpulse,
         "Winding Way" => Special::WindingWay,
+        "Lead the Stampede" => Special::LookTopSelectByTypeToHandBottomRest {
+            look: 5,
+            card_type: "Creature",
+        },
         "Mental Note" => Special::MillThenDraw {
             player: MillPlayer::Controller,
             mill: 2,
@@ -2501,6 +2844,26 @@ fn special_for(name: &str) -> Special {
         "Brainstorm" => Special::DrawThenPutHandOnLibraryTop { draw: 3, put: 2 },
         "Preordain" => Special::ScryThenDraw { scry: 2, draw: 1 },
         "Deem Inferior" => Special::DeemInferior,
+        "Sleep of the Dead" => Special::TapAndSkipNextUntap,
+        "Cast Down" => Special::DestroyNonlegendaryCreature,
+        "Pulse of Murasa" => Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount: 6 },
+        "Breath Weapon" => Special::DamageEachCreatureWithoutSubtype {
+            amount: 2,
+            excluded_subtype: "Dragon",
+        },
+        "Dread Return" => Special::ReturnOwnGraveyardCreatureToBattlefield,
+        "Land Grant" => Special::SearchForestToHand,
+        "Unexpected Fangs" => Special::AddPlusOnePlusOneAndLifelinkCounters,
+        "Bind the Monster" => Special::BindTheMonster,
+        "Snap" => Special::Snap,
+        "Flaring Pain" => Special::DamageCannotBePreventedThisTurn,
+        "Prismatic Strands" => Special::PrismaticStrands,
+        "Cleansing Wildfire" => Special::CleansingWildfire,
+        "Duress" => Special::Duress,
+        "Toxin Analysis" => Special::ToxinAnalysis,
+        "Weather the Storm" => Special::WeatherTheStorm,
+        "Monstrous Emergence" => Special::MonstrousEmergence,
+        "Nyxborn Hydra" => Special::NyxbornHydra,
         _ => Special::None,
     }
 }
@@ -2543,17 +2906,34 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::DrawThenDiscard { draw, discard } => {
             format!("target=None;spell=DrawThenDiscard(Controller,{draw},{discard});mana=None")
         }
+        Special::ExtractAConfession => {
+            "target=None;spell=SacrificeCreature(Opponent,GreatestPowerIfCollectEvidence6);mana=None"
+                .to_string()
+        }
         Special::GrabThePrize => "target=None;spell=GrabThePrize;mana=None".to_string(),
         Special::HighwayRobbery => "target=None;spell=HighwayRobbery;mana=None".to_string(),
         Special::SearingBlaze => {
             "target=PlayerThenTheirCreature;spell=SearingBlaze;mana=None".to_string()
         }
-        Special::CounterTarget(StackSpellFilter::Any) => {
-            "target=AnySpellOnStack;spell=CounterTarget;mana=None".to_string()
+        Special::CounterTarget(filter) => format!(
+            "target={};spell=CounterTarget;mana=None",
+            filter
+                .target_spec()
+                .trim_start_matches("TargetSpec::")
+        ),
+        Special::CounterUnlessPaysGeneric { filter, generic } => format!(
+            "target={};spell=CounterTargetUnlessPaysGeneric({generic});mana=None",
+            filter
+                .target_spec()
+                .trim_start_matches("TargetSpec::")
+        ),
+        Special::SteelSabotage => {
+            "target=ArtifactSpellOnStack;spell=CounterTarget;mode2=ReturnArtifactPermanentToOwnersHand;mana=None".to_string()
         }
-        Special::CounterTarget(StackSpellFilter::Instant) => {
-            "target=InstantSpellOnStack;spell=CounterTarget;mana=None".to_string()
-        }
+        Special::PiracyCharm => "target=Creature;spell=GrantIslandwalk;mode2=PumpTarget(2,-1);mode3=DiscardCards(Target0,1);mana=None".to_string(),
+        Special::CastIntoTheFire => "target=UpToTwoCreatures;spell=DamageAllTargets(1);mode2=MoveAllTargets(Exile);mana=None".to_string(),
+        Special::DustToDust => "target=ExactlyTwoArtifactPermanents;spell=ExileAllArtifactTargets;mana=None".to_string(),
+        Special::ThrabenCharm => "target=Creature;spell=DealDamageByControlledCreatureCount(2);mode2=DestroyEnchantment;mode3=ExileTargetPlayersGraveyards;mana=None".to_string(),
         Special::ColorBlast {
             checked_color,
             filter_timing: BlastFilterTiming::Targeting,
@@ -2577,6 +2957,9 @@ fn effect_recipe_for(card: &CardJson) -> String {
         Special::RallyAtTheHornburg => "target=None;spell=RallyAtTheHornburg;mana=None".to_string(),
         Special::RecklessImpulse => "target=None;spell=RecklessImpulse;mana=None".to_string(),
         Special::WindingWay => "target=None;spell=WindingWay;mana=None".to_string(),
+        Special::LookTopSelectByTypeToHandBottomRest { look, card_type } => format!(
+            "target=None;spell=LookTopSelectByTypeToHandBottomRest(Controller,{look},{card_type});mana=None"
+        ),
         Special::MillThenDraw { player, mill, draw } => {
             let (target, player) = match player {
                 MillPlayer::Controller => ("None", "Controller"),
@@ -2594,6 +2977,51 @@ fn effect_recipe_for(card: &CardJson) -> String {
             format!("target=None;spell=ScryThenDraw(Controller,{scry},{draw});mana=None")
         }
         Special::DeemInferior => "target=NonlandPermanent;spell=PutObjectInOwnersLibrarySecondOrBottom(Target0);mana=None".to_string(),
+        Special::TapAndSkipNextUntap => {
+            "target=Creature;spell=Sequence(TapObject(Target0),SkipNextUntap(Target0));mana=None"
+                .to_string()
+        }
+        Special::DestroyNonlegendaryCreature => {
+            "target=NonlegendaryCreature;spell=DestroyObject(Target0);mana=None".to_string()
+        }
+        Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => format!(
+            "target=CreatureOrLandCardInGraveyard;spell=ReturnTargetToOwnersHandThenGainLife({amount});mana=None"
+        ),
+        Special::DamageEachCreatureWithoutSubtype {
+            amount,
+            excluded_subtype,
+        } => format!(
+            "target=None;spell=DamageEachCreatureWithoutSubtype({amount},{excluded_subtype});mana=None"
+        ),
+        Special::DrawThenCreateToken { draw, token } => {
+            format!("target=None;spell=DrawThenCreateToken(Controller,{draw},{token});mana=None")
+        }
+        Special::GainPaidCostManaValueThenDraw { draw } => {
+            format!("target=None;spell=GainPaidCostManaValueThenDraw(Controller,{draw});mana=None")
+        }
+        Special::ReturnOwnGraveyardCreatureToBattlefield => "target=CreatureCardInOwnGraveyard;spell=MoveObject(Target0,Battlefield);mana=None".to_string(),
+        Special::SearchForestToHand => "target=None;spell=SearchLibraryToHand(Controller,LandWithSubtype(Forest));mana=None".to_string(),
+        Special::AddPlusOnePlusOneAndLifelinkCounters => "target=Creature;spell=AddCounters(Target0,+1/+1=1,lifelink=1);mana=None".to_string(),
+        Special::BindTheMonster => {
+            "target=Creature;spell=PutSourceOntoBattlefieldAttachedToTarget(Target0);mana=None"
+                .to_string()
+        }
+        Special::Snap => {
+            "target=Creature;spell=Sequence(ReturnTargetToOwnersHand,UntapUpToLands(Controller,2));mana=None"
+                .to_string()
+        }
+        Special::DamageCannotBePreventedThisTurn => {
+            "target=None;spell=DamageCannotBePreventedThisTurn;mana=None".to_string()
+        }
+        Special::PrismaticStrands => "target=None;spell=PreventDamageFromChosenColorUntilEndOfTurn;mana=None".to_string(),
+        Special::CleansingWildfire => "target=Land;spell=Sequence(DestroyTargetLandThenMaySearchBasicTapped(Target0),DrawCards(Controller,1));mana=None".to_string(),
+        Special::Duress => "target=TargetOpponent;spell=RevealTargetHandChooseNoncreatureNonlandDiscard(Target0);mana=None".to_string(),
+        Special::ToxinAnalysis => "target=Creature;spell=Sequence(GrantKeywordsTargetUntilEndOfTurn(Target0,Deathtouch|Lifelink),CreateToken(ClueToken));mana=None".to_string(),
+        Special::WeatherTheStorm => {
+            "target=None;spell=GainLife(Controller,3);trigger=CastSelf:Storm;mana=None".to_string()
+        }
+        Special::MonstrousEmergence => "target=Creature;spell=DealDamageToTargetEqualToChosenCostCreaturePower;mana=None".to_string(),
+        Special::NyxbornHydra => "target=None;spell=PutSourceOntoBattlefieldWithXPlusOneCounters;bestow=Creature:XGG;mana=None".to_string(),
     }
 }
 
@@ -2605,12 +3033,170 @@ fn effect_recipe_for(card: &CardJson) -> String {
 /// or "as long as you control an artifact") and temporary/derived, so it is
 /// deliberately NOT here -- see `engine::static_self_boost_for` and
 /// `EffectOp::PumpControlled`'s `grant_haste` instead.
-fn keywords_for(name: &str) -> &'static str {
+fn keywords_for(card: &CardJson) -> String {
+    let mut keywords = Vec::new();
+    if card
+        .mechanics
+        .iter()
+        .any(|mechanic| mechanic == "indestructible")
+    {
+        keywords.push("Keywords::INDESTRUCTIBLE");
+    }
+    if card.mechanics.iter().any(|mechanic| mechanic == "defender") {
+        keywords.push("Keywords::DEFENDER");
+    }
+    match card.name.as_str() {
+        "Masked Meower" | "Clockwork Percussionist" => keywords.push("Keywords::HASTE"),
+        "Sneaky Snacker"
+        | "Bird Illusion Token"
+        | "Faerie Miscreant"
+        | "Faerie Seer"
+        | "Faerie Macabre"
+        | "Harrier Strix"
+        | "Refurbished Familiar"
+        | "Sagu Wildling"
+        | "Squadron Hawk"
+        | "Balustrade Spy"
+        | "Spellstutter Sprite" => keywords.push("Keywords::FLYING"),
+        "Generous Ent" | "Writhing Chrysalis" | "Vitu-Ghazi Inspector" => {
+            keywords.push("Keywords::REACH")
+        }
+        "Spinewoods Paladin" | "Avenging Hunter" => keywords.push("Keywords::TRAMPLE"),
+        "Outlaw Medic" | "Sacred Cat" | "Sacred Cat Embalmed Token" => {
+            keywords.push("Keywords::LIFELINK")
+        }
+        "Guardian of the Guildpact" => keywords.push("Keywords::PROTECTION_FROM_MONOCOLORED"),
+        "Samurai Token" => keywords.push("Keywords::VIGILANCE"),
+        _ => {}
+    }
+    if card.name == "Nyxborn Hydra" {
+        keywords.push("Keywords::REACH");
+        keywords.push("Keywords::TRAMPLE");
+    }
+    if card.name == "Skeleton Token" {
+        keywords.push("Keywords::MENACE");
+    }
+    if matches!(
+        card.name.as_str(),
+        "Humbling Elder" | "Saiba Cryptomancer" | "Spellstutter Sprite"
+    ) {
+        keywords.push("Keywords::FLASH");
+    }
+    if card.name == "Saiba Cryptomancer" {
+        keywords.push("Keywords::HEXPROOF");
+    }
+    if keywords.is_empty() {
+        "Keywords::NONE".to_string()
+    } else if keywords.len() == 1 {
+        keywords[0].to_string()
+    } else {
+        format!(
+            "Keywords({})",
+            keywords
+                .iter()
+                .map(|keyword| format!("{keyword}.0"))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        )
+    }
+}
+
+/// Whether the registry describes an activated mana ability rather than
+/// one-shot production such as Burning-Tree Emissary's ETB trigger. Richer
+/// activated costs are carried by `mana_ability_def_for`; ordinary sources
+/// continue to use the legacy tap-and-add-one substrate.
+fn has_activated_mana_ability(card: &CardJson) -> bool {
+    card.mechanics
+        .iter()
+        .any(|mechanic| mechanic == "mana_ability")
+        // Burning-Tree Emissary's produced mana belongs to its ETB trigger,
+        // not an activated mana ability. Other permanents can legitimately
+        // have both an ETB trigger and a printed mana ability.
+        && card.name != "Burning-Tree Emissary"
+}
+
+/// Fixed colors of the primary printed mana ability. Chosen-color Gates
+/// expose only their fixed white/blue option here; the chosen option is
+/// materialized from object state. Heap Gate's paid any-color ability is an
+/// additional rich definition, leaving its free colorless ability primary.
+fn primary_mana_ability_colors(card: &CardJson) -> Vec<&str> {
+    match card.name.as_str() {
+        "Citadel Gate" => vec!["W"],
+        "Sea Gate" => vec!["U"],
+        "Heap Gate" => vec!["C"],
+        _ => card.produces_mana.iter().map(String::as_str).collect(),
+    }
+}
+
+fn mana_ability_includes_chosen_color(name: &str) -> bool {
+    matches!(name, "Citadel Gate" | "Sea Gate")
+}
+
+fn as_enters_choose_color_other_than(name: &str) -> &'static str {
     match name {
-        "Masked Meower" | "Clockwork Percussionist" => "Keywords::HASTE",
-        "Sneaky Snacker" | "Bird Illusion Token" => "Keywords::FLYING",
-        "Samurai Token" => "Keywords::VIGILANCE",
-        _ => "Keywords::NONE",
+        "Citadel Gate" => "Some(ManaColor::W)",
+        "Sea Gate" => "Some(ManaColor::U)",
+        _ => "None",
+    }
+}
+
+fn additional_mana_abilities_for(name: &str) -> &'static str {
+    match name {
+        "Heap Gate" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
+        _ => "&[]",
+    }
+}
+
+fn object_name_for(name: &str) -> &str {
+    match name {
+        "Sacred Cat Embalmed Token" => "Sacred Cat",
+        _ => name,
+    }
+}
+
+fn transform_face_for(name: &str) -> &'static str {
+    match name {
+        "The Modern Age" => "Some(TransformFaceDef { name: \"Vector Glider\", types: &[CardType::Enchantment, CardType::Creature], subtypes: &[Subtype::Spirit], colors: &[ManaColor::U], power: Some(2), toughness: Some(3), keywords: Keywords::FLYING })",
+        _ => "None",
+    }
+}
+
+fn saga_for(name: &str) -> &'static str {
+    match name {
+        "The Modern Age" => "Some(SagaDef { chapter_effects: &[saga_chapter_modern_age_loot, saga_chapter_modern_age_loot, saga_chapter_modern_age_transform] })",
+        _ => "None",
+    }
+}
+
+/// Source for a single printed mana ability that is not exactly tap-and-add
+/// one. The runtime interprets these definitions generically and the same
+/// source fragment is included in the card-database identity below.
+fn mana_ability_def_for(name: &str) -> &'static str {
+    match name {
+        "Elves of Deep Shadow" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 1, max_activations_per_turn: None })",
+        "Lotus Petal" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
+        "Overgrown Battlement" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::ControlledCreaturesWithKeyword(Keywords::DEFENDER), controller_damage: 0, max_activations_per_turn: None })",
+        "Priest of Titania" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Dynamic(DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::Elf)), controller_damage: 0, max_activations_per_turn: None })",
+        "Saruli Caretaker" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelfAndOtherUntappedControlledCreature, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
+        "Tinder Wall" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
+        "Wall of Roots" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::PutMinus0Minus1CounterOnSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: Some(1) })",
+        "Treasure Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapAndSacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
+        "Eldrazi Spawn Token" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::SacrificeSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None })",
+        _ => "None",
+    }
+}
+
+fn enters_battlefield_tapped(card: &CardJson) -> bool {
+    card.mechanics
+        .iter()
+        .any(|mechanic| mechanic == "enters_tapped")
+        && card.name != "Gingerbread Cabin"
+}
+
+fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
+    match name {
+        "Gingerbread Cabin" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Forest, minimum_count: 3 })",
+        _ => "None",
     }
 }
 
@@ -2630,6 +3216,7 @@ fn kicker_cost_for(name: &str) -> String {
 fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Fireblast" => "Some(&[CostComponent::SacrificeLands(2)])",
+        "Land Grant" => "Some(&[CostComponent::RevealHandIfNoCardsWithType(CardType::Land)])",
         _ => "None",
     }
 }
@@ -2640,7 +3227,26 @@ fn alt_cost_for(name: &str) -> &'static str {
 fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Grab the Prize" => "Some(&[CostComponent::DiscardCards(1)])",
+        "Fanatical Offering" | "Reckoner's Bargain" | "Eviscerator's Insight" => {
+            "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::ArtifactOrCreature }])"
+        }
+        "Monstrous Emergence" => {
+            "Some(&[CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand])"
+        }
         _ => "None",
+    }
+}
+
+fn bestow_for(name: &str) -> String {
+    match name {
+        "Nyxborn Hydra" => {
+            let (pips, generic, x_count) = parse_cost("{X}{G}{G}");
+            format!(
+                "Some(BestowDef {{ cost: Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}, target_spec: TargetSpec::Creature }})",
+                pips.join(", ")
+            )
+        }
+        _ => "None".to_string(),
     }
 }
 
@@ -2668,6 +3274,39 @@ fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
+        "Eviscerator's Insight" => {
+            let (pips, generic, x_count) = parse_cost("{4}{B}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
+        "Dread Return" => "Some(FlashbackDef { cost: &[CostComponent::SacrificeControlled { count: 3, filter: PermanentFilter::Creature }] })".to_string(),
+        "Flaring Pain" => {
+            let (pips, generic, x_count) = parse_cost("{R}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})] }})",
+                pips.join(", ")
+            )
+        }
+        "Prismatic Strands" => "Some(FlashbackDef { cost: &[CostComponent::TapUntappedControlledPermanent(PermanentFilterDef::CreatureWithColor(ManaColor::W))] })".to_string(),
+        _ => "None".to_string(),
+    }
+}
+
+/// `Some` ordered escape-cost definition. Sleep of the Dead pays `{2}{U}`
+/// and exiles three other cards from its owner's graveyard. The source is
+/// excluded by the shared cast-cost candidate contract, not by a card-name
+/// branch in the engine.
+fn escape_for(name: &str) -> String {
+    match name {
+        "Sleep of the Dead" => {
+            let (pips, generic, x_count) = parse_cost("{2}{U}");
+            format!(
+                "Some(EscapeDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::ExileOtherCardsFromOwnGraveyard(3)] }})",
+                pips.join(", ")
+            )
+        }
         _ => "None".to_string(),
     }
 }
@@ -2685,6 +3324,92 @@ fn flashback_for(name: &str) -> String {
 /// then resolve the reusable typed library search.
 fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
+        "Faerie Macabre" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::DiscardSelf],
+            effect: AbilityEffectRecipe::MoveAllTargetsToExile,
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "UpToTwoCardsInGraveyards",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Fume Spitter" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::AddMinusOneMinusOneCounter,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Krark-Clan Shaman" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::SacrificeControlled {
+                count: 1,
+                filter: PermanentFilterRecipe::Artifact,
+            }],
+            effect: AbilityEffectRecipe::DamageAllCreatures {
+                amount: 1,
+                filter: CreatureEffectFilterRecipe::WithoutKeyword("FLYING"),
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Makeshift Munitions" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::SacrificeControlled {
+                    count: 1,
+                    filter: PermanentFilterRecipe::ArtifactOrCreature,
+                },
+            ],
+            effect: AbilityEffectRecipe::DealDamageAnyTarget(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "AnyTarget",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Nihil Spellbomb" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
+            effect: AbilityEffectRecipe::ExileTargetPlayersGraveyard,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "AnyPlayer",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Relic of Progenitus" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Tap],
+                effect: AbilityEffectRecipe::ExileOneFromTargetPlayersGraveyard,
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "AnyPlayer",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[
+                    AbilityCostRecipe::Mana {
+                        colored: None,
+                        generic: 1,
+                    },
+                    AbilityCostRecipe::ExileSelf,
+                ],
+                effect: AbilityEffectRecipe::ExileAllGraveyardsThenDraw(1),
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
         "Masked Meower" => &[ActivatedAbilityRecipe {
             cost: &[
                 AbilityCostRecipe::DiscardCards(1),
@@ -2693,6 +3418,9 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             effect: AbilityEffectRecipe::DrawCards(1),
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Blood Token" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2707,6 +3435,88 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             effect: AbilityEffectRecipe::DrawCards(1),
             activation_zone: "Battlefield",
             sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Food Token" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::GainLife(3),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Lembas" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::GainLife(3),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Clue Token" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::DrawCards(1),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Map Token" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::ExploreTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Blood Fountain" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("B"),
+                    generic: 3,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::MoveAllTargetsToHand,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "UpToTwoCreatureCardsInOwnGraveyard",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Experimental Synthesizer" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2719,6 +3529,9 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             effect: AbilityEffectRecipe::CreateToken("Samurai Token"),
             activation_zone: "Battlefield",
             sorcery_speed_only: true,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
         "Lorien Revealed" => &[ActivatedAbilityRecipe {
             cost: &[
@@ -2729,8 +3542,7 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
                 AbilityCostRecipe::DiscardSelf,
             ],
             effect: AbilityEffectRecipe::SearchLibraryToHand {
-                card_type: "Land",
-                subtype: "Island",
+                filter: LibrarySearchFilterRecipe::LandWithSubtype("Island"),
                 min_targets: 0,
                 max_targets: 1,
                 reveal_selected: true,
@@ -2738,7 +3550,263 @@ fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe
             },
             activation_zone: "Hand",
             sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
         }],
+        "Generous Ent" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::DiscardSelf,
+            ],
+            effect: AbilityEffectRecipe::SearchLibraryToHand {
+                filter: LibrarySearchFilterRecipe::LandWithSubtype("Forest"),
+                min_targets: 0,
+                max_targets: 1,
+                reveal_selected: true,
+                shuffle: true,
+            },
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Troll of Khazad-dum" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::DiscardSelf,
+            ],
+            effect: AbilityEffectRecipe::SearchLibraryToHand {
+                filter: LibrarySearchFilterRecipe::LandWithSubtype("Swamp"),
+                min_targets: 0,
+                max_targets: 1,
+                reveal_selected: true,
+                shuffle: true,
+            },
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Tinder Wall" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("R"),
+                    generic: 0,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::DamageTarget(2),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "CreatureBlockedBySource",
+            max_activations_per_turn: None,
+        }],
+        "Quirion Ranger" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::ReturnControlledLandWithSubtype("Forest")],
+            effect: AbilityEffectRecipe::UntapTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: Some(1),
+        }],
+        "Timberwatch Elf" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount("Elf"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Wellwisher" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Tap],
+            effect: AbilityEffectRecipe::GainLifeBattlefieldSubtypeCount("Elf"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Basilisk Gate" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 2,
+                },
+                AbilityCostRecipe::Tap,
+            ],
+            effect: AbilityEffectRecipe::PumpTargetByControlledSubtypeCount("Gate"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "Creature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Heap Gate" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: None,
+                    generic: 1,
+                },
+                AbilityCostRecipe::Tap,
+                AbilityCostRecipe::TapOtherUntappedControlledPermanentWithSubtype("Gate"),
+            ],
+            effect: AbilityEffectRecipe::CreateToken("Treasure Token"),
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Sacred Cat" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("W"),
+                    generic: 0,
+                },
+                AbilityCostRecipe::ExileSelf,
+            ],
+            effect: AbilityEffectRecipe::CreateToken("Sacred Cat Embalmed Token"),
+            activation_zone: "Graveyard",
+            sorcery_speed_only: true,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Black Mage's Rod" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 3,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Hunter's Blowgun" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: None,
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::AttachSourceToTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: true,
+            target_spec: "ControlledCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Cryogen Relic" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("U"),
+                    generic: 1,
+                },
+                AbilityCostRecipe::SacrificeSelf,
+            ],
+            effect: AbilityEffectRecipe::AddStunCounterToOptionalTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "UpToOneTappedCreature",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Gorilla Shaman" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::VariableMana {
+                generic: 1,
+                x_count: 2,
+            }],
+            effect: AbilityEffectRecipe::DestroyTarget,
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "NoncreatureArtifactPermanent",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Harrier Strix" => &[ActivatedAbilityRecipe {
+            cost: &[AbilityCostRecipe::Mana {
+                colored: Some("U"),
+                generic: 2,
+            }],
+            effect: AbilityEffectRecipe::DrawThenDiscard {
+                draw: 1,
+                discard: 1,
+            },
+            activation_zone: "Battlefield",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Moon-Circuit Hacker" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("U"),
+                    generic: 0,
+                },
+                AbilityCostRecipe::ReturnControlledUnblockedAttacker,
+            ],
+            effect: AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking,
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Ninja of the Deep Hours" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::Mana {
+                    colored: Some("U"),
+                    generic: 1,
+                },
+                AbilityCostRecipe::ReturnControlledUnblockedAttacker,
+            ],
+            effect: AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking,
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        "Twisted Landscape" => &[
+            ActivatedAbilityRecipe {
+                cost: &[AbilityCostRecipe::Tap, AbilityCostRecipe::SacrificeSelf],
+                effect: AbilityEffectRecipe::SearchLibraryToBattlefieldTapped {
+                    filter: LibrarySearchFilterRecipe::BasicLandWithAnySubtype([
+                        "Swamp", "Mountain", "Forest",
+                    ]),
+                },
+                activation_zone: "Battlefield",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+            ActivatedAbilityRecipe {
+                cost: &[
+                    AbilityCostRecipe::ManaCost("{B}{R}{G}"),
+                    AbilityCostRecipe::DiscardSelf,
+                ],
+                effect: AbilityEffectRecipe::DrawCards(1),
+                activation_zone: "Hand",
+                sorcery_speed_only: false,
+                target_spec: "None",
+                activation_target_filter: "TargetSpecOnly",
+                max_activations_per_turn: None,
+            },
+        ],
         _ => &[],
     }
 }
@@ -2753,12 +3821,37 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
                 "CostComponent::Mana(Cost {{ pips: &[{pips}], generic: {generic}, x_count: 0 }})"
             )
         }
+        AbilityCostRecipe::VariableMana { generic, x_count } => format!(
+            "CostComponent::Mana(Cost {{ pips: &[], generic: {generic}, x_count: {x_count} }})"
+        ),
         AbilityCostRecipe::Tap => "CostComponent::Tap".to_string(),
         AbilityCostRecipe::DiscardCards(count) => {
             format!("CostComponent::DiscardCards({count})")
         }
         AbilityCostRecipe::DiscardSelf => "CostComponent::DiscardSelf".to_string(),
         AbilityCostRecipe::SacrificeSelf => "CostComponent::SacrificeSelf".to_string(),
+        AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => format!(
+            "CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::LandWithSubtype(Subtype::{subtype}))"
+        ),
+        AbilityCostRecipe::ExileSelf => "CostComponent::ExileSelf".to_string(),
+        AbilityCostRecipe::TapOtherUntappedControlledPermanentWithSubtype(subtype) => format!(
+            "CostComponent::TapOtherUntappedControlledPermanentWithSubtype({})",
+            subtype_variant(subtype)
+        ),
+        AbilityCostRecipe::SacrificeControlled { count, filter } => format!(
+            "CostComponent::SacrificeControlled {{ count: {count}, filter: {} }}",
+            permanent_filter_src(filter)
+        ),
+        AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
+            "CostComponent::ReturnControlledUnblockedAttackerToOwnersHand".to_string()
+        }
+        AbilityCostRecipe::ManaCost(cost) => {
+            let (pips, generic, x_count) = parse_cost(cost);
+            format!(
+                "CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }})",
+                pips.join(", ")
+            )
+        }
     }
 }
 
@@ -2767,26 +3860,148 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::Mana { colored, generic } => {
             format!("mana:{}:{generic}:0", colored.unwrap_or("-"))
         }
+        AbilityCostRecipe::VariableMana { generic, x_count } => {
+            format!("mana:-:{generic}:{x_count}")
+        }
         AbilityCostRecipe::Tap => "tap".to_string(),
         AbilityCostRecipe::DiscardCards(count) => format!("discard_cards:{count}"),
         AbilityCostRecipe::DiscardSelf => "discard_self".to_string(),
         AbilityCostRecipe::SacrificeSelf => "sacrifice_self".to_string(),
+        AbilityCostRecipe::ReturnControlledLandWithSubtype(subtype) => {
+            format!("return_controlled_land_with_subtype:{subtype}")
+        }
+        AbilityCostRecipe::ExileSelf => "exile_self".to_string(),
+        AbilityCostRecipe::TapOtherUntappedControlledPermanentWithSubtype(subtype) => {
+            format!("tap_other_untapped_controlled_subtype:{subtype}")
+        }
+        AbilityCostRecipe::SacrificeControlled { count, filter } => {
+            format!(
+                "sacrifice_controlled:{count}:{}",
+                permanent_filter_token(filter)
+            )
+        }
+        AbilityCostRecipe::ReturnControlledUnblockedAttacker => {
+            "return_controlled_unblocked_attacker".to_string()
+        }
+        AbilityCostRecipe::ManaCost(cost) => format!("mana_cost:{cost}"),
+    }
+}
+
+fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
+    match filter {
+        PermanentFilterRecipe::Artifact => "PermanentFilter::Artifact",
+        PermanentFilterRecipe::ArtifactOrCreature => "PermanentFilter::ArtifactOrCreature",
+    }
+}
+
+fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
+    match filter {
+        PermanentFilterRecipe::Artifact => "artifact",
+        PermanentFilterRecipe::ArtifactOrCreature => "artifact_or_creature",
     }
 }
 
 fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
     match effect {
         AbilityEffectRecipe::DrawCards(count) => format!("draw_cards:{count}"),
+        AbilityEffectRecipe::GainLife(amount) => format!("gain_life:{amount}"),
         AbilityEffectRecipe::CreateToken(name) => format!("create_token:{name}"),
+        AbilityEffectRecipe::DamageTarget(amount) => format!("damage_target:{amount}"),
+        AbilityEffectRecipe::MoveAllTargetsToHand => "move_all_targets_to_hand".to_string(),
+        AbilityEffectRecipe::ExploreTarget => "explore_target".to_string(),
+        AbilityEffectRecipe::DealDamageAnyTarget(amount) => {
+            format!("deal_damage_any_target:{amount}")
+        }
+        AbilityEffectRecipe::DamageAllCreatures { amount, filter } => format!(
+            "damage_all_creatures:{amount}:{}",
+            creature_effect_filter_token(filter)
+        ),
+        AbilityEffectRecipe::ExileTargetPlayersGraveyard => {
+            "exile_target_players_graveyard".to_string()
+        }
+        AbilityEffectRecipe::ExileOneFromTargetPlayersGraveyard => {
+            "exile_one_from_target_players_graveyard".to_string()
+        }
+        AbilityEffectRecipe::ExileAllGraveyardsThenDraw(draw) => {
+            format!("exile_all_graveyards_then_draw:{draw}")
+        }
         AbilityEffectRecipe::SearchLibraryToHand {
-            card_type,
-            subtype,
+            filter,
             min_targets,
             max_targets,
             reveal_selected,
             shuffle,
         } => format!(
-            "search_library_to_hand:{card_type}:{subtype}:min={min_targets}:max={max_targets}:reveal={reveal_selected}:shuffle={shuffle}"
+            "search_library_to_hand:{}:min={min_targets}:max={max_targets}:reveal={reveal_selected}:shuffle={shuffle}",
+            library_search_filter_token(filter)
+        ),
+        AbilityEffectRecipe::UntapTarget => "untap_target".to_string(),
+        AbilityEffectRecipe::GainLifeBattlefieldSubtypeCount(subtype) => {
+            format!("gain_life:battlefield_subtype_count:{subtype}")
+        }
+        AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount(subtype) => {
+            format!("pump_target:battlefield_subtype_count:{subtype}")
+        }
+        AbilityEffectRecipe::PumpTargetByControlledSubtypeCount(subtype) => {
+            format!("pump_target_by_controlled_subtype_count:{subtype}")
+        }
+        AbilityEffectRecipe::AttachSourceToTarget => "attach_source_to_target".to_string(),
+        AbilityEffectRecipe::AddStunCounterToOptionalTarget => {
+            "add_stun_counter_to_optional_target".to_string()
+        }
+        AbilityEffectRecipe::DestroyTarget => "destroy_target".to_string(),
+        AbilityEffectRecipe::DrawThenDiscard { draw, discard } => {
+            format!("draw_then_discard:{draw}:{discard}")
+        }
+        AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking => {
+            "put_source_onto_battlefield_tapped_and_attacking".to_string()
+        }
+        AbilityEffectRecipe::MoveAllTargetsToExile => {
+            "move_all_targets_to_exile".to_string()
+        }
+        AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
+            "add_minus_one_minus_one_counter".to_string()
+        }
+        AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
+            "search_library_to_battlefield_tapped:{}",
+            library_search_filter_token(filter)
+        ),
+    }
+}
+
+fn creature_effect_filter_token(filter: CreatureEffectFilterRecipe) -> String {
+    match filter {
+        CreatureEffectFilterRecipe::WithoutKeyword(keyword) => {
+            format!("without_keyword:{}", keyword.to_ascii_lowercase())
+        }
+    }
+}
+
+fn library_search_filter_token(filter: LibrarySearchFilterRecipe) -> String {
+    match filter {
+        LibrarySearchFilterRecipe::LandWithSubtype(subtype) => {
+            format!("land_with_subtype:{subtype}")
+        }
+        LibrarySearchFilterRecipe::BasicLand => "basic_land".to_string(),
+        LibrarySearchFilterRecipe::BasicLandWithAnySubtype(subtypes) => {
+            format!("basic_land_with_any_subtype:{}", subtypes.join("|"))
+        }
+    }
+}
+
+fn library_search_filter_src(filter: LibrarySearchFilterRecipe) -> String {
+    match filter {
+        LibrarySearchFilterRecipe::LandWithSubtype(subtype) => {
+            format!("LibraryCardFilter::LandWithSubtype(Subtype::{subtype})")
+        }
+        LibrarySearchFilterRecipe::BasicLand => "LibraryCardFilter::BasicLand".to_string(),
+        LibrarySearchFilterRecipe::BasicLandWithAnySubtype(subtypes) => format!(
+            "LibraryCardFilter::BasicLandWithAnySubtype([{}])",
+            subtypes
+                .iter()
+                .map(|subtype| subtype_variant(subtype))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
     }
 }
@@ -2794,22 +4009,100 @@ fn ability_effect_token(effect: AbilityEffectRecipe) -> String {
 fn ability_effect_fn_name(effect: AbilityEffectRecipe) -> String {
     match effect {
         AbilityEffectRecipe::DrawCards(count) => format!("ability_effect_draw_{count}"),
+        AbilityEffectRecipe::GainLife(amount) => format!("ability_effect_gain_life_{amount}"),
         AbilityEffectRecipe::CreateToken("Samurai Token") => {
             "ability_effect_create_samurai_token".to_string()
+        }
+        AbilityEffectRecipe::CreateToken("Treasure Token") => {
+            "ability_effect_create_treasure_token".to_string()
+        }
+        AbilityEffectRecipe::CreateToken("Sacred Cat Embalmed Token") => {
+            "ability_effect_create_sacred_cat_embalmed_token".to_string()
         }
         AbilityEffectRecipe::CreateToken(name) => {
             panic!("no generated activated-ability token function for {name:?}")
         }
+        AbilityEffectRecipe::DamageTarget(amount) => {
+            format!("ability_effect_damage_target_{amount}")
+        }
+        AbilityEffectRecipe::MoveAllTargetsToHand => {
+            "ability_effect_move_all_targets_to_hand".to_string()
+        }
+        AbilityEffectRecipe::ExploreTarget => "ability_effect_explore_target".to_string(),
+        AbilityEffectRecipe::DealDamageAnyTarget(amount) => {
+            format!("ability_effect_deal_damage_any_target_{amount}")
+        }
+        AbilityEffectRecipe::DamageAllCreatures {
+            amount,
+            filter: CreatureEffectFilterRecipe::WithoutKeyword(keyword),
+        } => format!(
+            "ability_effect_damage_all_creatures_without_{}_{}",
+            keyword.to_ascii_lowercase(),
+            amount
+        ),
+        AbilityEffectRecipe::ExileTargetPlayersGraveyard => {
+            "ability_effect_exile_target_players_graveyard".to_string()
+        }
+        AbilityEffectRecipe::ExileOneFromTargetPlayersGraveyard => {
+            "ability_effect_exile_one_from_target_players_graveyard".to_string()
+        }
+        AbilityEffectRecipe::ExileAllGraveyardsThenDraw(draw) => {
+            format!("ability_effect_exile_all_graveyards_then_draw_{draw}")
+        }
         AbilityEffectRecipe::SearchLibraryToHand {
-            card_type: "Land",
-            subtype: "Island",
+            filter: LibrarySearchFilterRecipe::LandWithSubtype(subtype),
             min_targets: 0,
             max_targets: 1,
             reveal_selected: true,
             shuffle: true,
-        } => "ability_effect_islandcycle".to_string(),
+        } => format!("ability_effect_{}cycle", subtype.to_ascii_lowercase()),
+        AbilityEffectRecipe::SearchLibraryToHand {
+            filter: LibrarySearchFilterRecipe::BasicLand,
+            min_targets: 0,
+            max_targets: 1,
+            reveal_selected: true,
+            shuffle: true,
+        } => "omen_effect_search_basic_land".to_string(),
         AbilityEffectRecipe::SearchLibraryToHand { .. } => panic!(
-            "SearchLibraryToHand currently supports only optional single Land/Island reveal+shuffle"
+            "SearchLibraryToHand currently supports only optional single-card reveal+shuffle"
+        ),
+        AbilityEffectRecipe::UntapTarget => "ability_effect_untap_target".to_string(),
+        AbilityEffectRecipe::GainLifeBattlefieldSubtypeCount(subtype) => format!(
+            "ability_effect_gain_life_battlefield_{}_count",
+            subtype.to_ascii_lowercase()
+        ),
+        AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount(subtype) => format!(
+            "ability_effect_pump_target_battlefield_{}_count",
+            subtype.to_ascii_lowercase()
+        ),
+        AbilityEffectRecipe::PumpTargetByControlledSubtypeCount(subtype) => format!(
+            "ability_effect_pump_target_by_controlled_{}_count",
+            subtype.to_ascii_lowercase()
+        ),
+        AbilityEffectRecipe::AttachSourceToTarget => {
+            "ability_effect_attach_source_to_target".to_string()
+        }
+        AbilityEffectRecipe::AddStunCounterToOptionalTarget => {
+            "ability_effect_add_stun_counter_to_optional_target".to_string()
+        }
+        AbilityEffectRecipe::DestroyTarget => "ability_effect_destroy_target".to_string(),
+        AbilityEffectRecipe::DrawThenDiscard { draw, discard } => {
+            format!("ability_effect_draw_{draw}_then_discard_{discard}")
+        }
+        AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking => {
+            "ability_effect_put_source_onto_battlefield_tapped_and_attacking".to_string()
+        }
+        AbilityEffectRecipe::MoveAllTargetsToExile => {
+            "ability_effect_move_all_targets_to_exile".to_string()
+        }
+        AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
+            "ability_effect_add_minus_one_minus_one_counter".to_string()
+        }
+        AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => format!(
+            "ability_effect_search_{}_to_battlefield_tapped",
+            library_search_filter_token(filter)
+                .replace([':', '|'], "_")
+                .to_ascii_lowercase()
         ),
     }
 }
@@ -2832,8 +4125,14 @@ fn activated_abilities_for(name: &str) -> String {
             let effect = ability_effect_fn_name(recipe.effect);
             let zone = recipe.activation_zone;
             let sorcery = recipe.sorcery_speed_only;
+            let target_spec = recipe.target_spec;
+            let activation_target_filter = recipe.activation_target_filter;
+            let max_activations_per_turn = match recipe.max_activations_per_turn {
+                Some(limit) => format!("Some({limit})"),
+                None => "None".to_string(),
+            };
             format!(
-                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::None, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery} }}"
+                "ActivatedAbilityDef {{ cost: &[{costs}], target_spec: TargetSpec::{target_spec}, effect: {effect}, activation_zone: Zone::{zone}, sorcery_speed_only: {sorcery}, activation_target_filter: ActivationTargetFilter::{activation_target_filter}, max_activations_per_turn: {max_activations_per_turn} }}"
             )
         })
         .collect::<Vec<_>>()
@@ -2853,9 +4152,14 @@ fn activated_abilities_token(name: &str) -> String {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "zone={};sorcery={};target=none;cost=[{}];effect={}",
+                "zone={};sorcery={};target={};activation_filter={};max_per_turn={};cost=[{}];effect={}",
                 recipe.activation_zone.to_ascii_lowercase(),
                 recipe.sorcery_speed_only,
+                recipe.target_spec.to_ascii_lowercase(),
+                recipe.activation_target_filter.to_ascii_lowercase(),
+                recipe
+                    .max_activations_per_turn
+                    .map_or_else(|| "-".to_string(), |limit| limit.to_string()),
                 costs,
                 ability_effect_token(recipe.effect)
             )
@@ -2870,6 +4174,7 @@ fn activated_abilities_token(name: &str) -> String {
 fn plot_cost_for(name: &str) -> String {
     match name {
         "Highway Robbery" => cost_src("{1}{R}"),
+        "Spinewoods Paladin" => cost_src("{3}{G}"),
         _ => "None".to_string(),
     }
 }
@@ -2902,7 +4207,56 @@ fn mode2_for(name: &str) -> String {
             "Some(ModeDef {{ target_spec: TargetSpec::AnyPermanent, effect: mode2_effect_destroy_target_permanent_if_{} }})",
             checked_color.suffix()
         ),
+        Special::SteelSabotage => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_return_target_permanent_to_owners_hand })".to_string(),
+        Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: mode2_effect_piracy_charm_pump })".to_string(),
+        Special::CastIntoTheFire => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: mode2_effect_cast_into_the_fire_exile_artifact })".to_string(),
+        Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::EnchantmentPermanent, effect: mode2_effect_thraben_charm_destroy_enchantment })".to_string(),
         _ => "None".to_string(),
+    }
+}
+
+/// Optional third printed mode, using the same stable mode index carried by
+/// pending casts and stack items.
+fn mode3_for(name: &str) -> String {
+    match special_for(name) {
+        Special::PiracyCharm => "Some(ModeDef { target_spec: TargetSpec::AnyPlayer, effect: mode3_effect_piracy_charm_discard })".to_string(),
+        Special::ThrabenCharm => "Some(ModeDef { target_spec: TargetSpec::UpToTwoPlayers, effect: mode3_effect_thraben_charm_exile_graveyards })".to_string(),
+        _ => "None".to_string(),
+    }
+}
+
+/// Alternative spell characteristics for Omen cards. Sagu Wildling's
+/// Roost Seek half is a green sorcery that searches for a basic land; the
+/// shared engine cast-method path owns its successful source shuffle.
+fn omen_for(name: &str) -> String {
+    match name {
+        "Sagu Wildling" => {
+            "Some(OmenDef { cost: Cost { pips: &[Pip::Colored(ManaColor::G)], generic: 0, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: omen_effect_search_basic_land })".to_string()
+        }
+        _ => "None".to_string(),
+    }
+}
+
+fn omen_effect_recipe_for(name: &str) -> Option<AbilityEffectRecipe> {
+    match name {
+        "Sagu Wildling" => Some(AbilityEffectRecipe::SearchLibraryToHand {
+            filter: LibrarySearchFilterRecipe::BasicLand,
+            min_targets: 0,
+            max_targets: 1,
+            reveal_selected: true,
+            shuffle: true,
+        }),
+        _ => None,
+    }
+}
+
+/// Minimum number of creatures required to block one attacker. The engine
+/// treats zero/one as ordinary blocking and enforces larger values against
+/// the complete declaration, with Troll of Khazad-dum requiring three.
+fn minimum_blockers_for(name: &str) -> u8 {
+    match name {
+        "Troll of Khazad-dum" => 3,
+        _ => 1,
     }
 }
 
@@ -2919,13 +4273,105 @@ fn cost_src(mana_cost: &str) -> String {
 
 fn generic_cost_reduction_for(name: &str) -> &'static str {
     match name {
-        "Cryptic Serpent" => {
+        "Myr Enforcer" | "Thoughtcast" | "Refurbished Familiar" => {
+            "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]) })"
+        }
+        "Cryptic Serpent" | "Tolarian Terror" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerGraveyardAnyType(&[CardType::Instant, CardType::Sorcery]) })"
         }
         "Deem Inferior" => {
             "Some(GenericCostReductionDef { generic_per_count: 1, count: DynamicCountDef::ControllerDrawsThisTurn })"
         }
+        "Of One Mind" => {
+            "Some(GenericCostReductionDef { generic_per_count: 2, count: DynamicCountDef::ControllerHasCreatureWithAndWithoutSubtype(Subtype::Human) })"
+        }
         _ => "None",
+    }
+}
+
+fn ward_cost_for(name: &str) -> &'static str {
+    match name {
+        "Tolarian Terror" => "Some(WardCostDef::Generic(2))",
+        _ => "None",
+    }
+}
+
+fn equipment_for(name: &str) -> &'static str {
+    match name {
+        "Black Mage's Rod" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 1, job_select: true })",
+        "Hunter's Blowgun" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::DEATHTOUCH, other_turn_keywords: Keywords::REACH, noncreature_spell_damage_to_each_opponent: 0, job_select: false })",
+        _ => "None",
+    }
+}
+
+fn attachment_for(name: &str) -> &'static str {
+    match name {
+        "Bind the Monster" => "Some(AttachmentDef::AuraCreature { prevents_untap: true })",
+        _ => "None",
+    }
+}
+
+fn optional_additional_cost_for(name: &str) -> &'static str {
+    match name {
+        "Extract a Confession" | "Vitu-Ghazi Inspector" => {
+            "Some(OptionalAdditionalCostDef::CollectEvidence { minimum_mana_value: 6 })"
+        }
+        "Troublemaker Ouphe" => "Some(OptionalAdditionalCostDef::Bargain)",
+        _ => "None",
+    }
+}
+
+fn changeling_for(name: &str) -> bool {
+    name == "Masked Vandal"
+}
+
+/// Stable semantic binding for definition-owned triggered abilities. Runtime
+/// construction lives in trigger.rs, while this token makes each selected
+/// event, target, and effect part of the generated card database identity.
+fn trigger_recipe_for(name: &str) -> &'static str {
+    match name {
+        "Guttersnipe" => "cast_instant_or_sorcery:damage_opponent:2",
+        "Murmuring Mystic" => "cast_instant_or_sorcery:create_bird_illusion",
+        "Voldaren Epicure" => "etb:damage_opponent:1:create_blood",
+        "Generous Ent" => "etb:create_food",
+        "Blood Fountain" => "etb:create_blood",
+        "Sagu Wildling" | "Healer of the Glade" | "Spinewoods Paladin" => "etb:gain_life:3",
+        "Gatecreeper Vine" => "etb:search_basic_land_or_gate_to_hand",
+        "Sneaky Snacker" => "third_draw:return_source_to_battlefield_tapped",
+        "Burning-Tree Emissary" => "etb:add_r_g",
+        "Clockwork Percussionist" => "dies:impulse_top_one_until_owners_next_turn",
+        "Ichor Wellspring" => "etb_and_dies:draw:1",
+        "Experimental Synthesizer" => "etb_and_leaves:impulse_top_one_end_of_turn",
+        "Goblin Bushwhacker" => "etb_if_kicked:pump_controlled_creatures:1:0:haste",
+        "Faerie Miscreant" => "etb_if_another_same_definition:draw:1",
+        "Faerie Seer" => "etb:scry:2",
+        "Outlaw Medic" => "dies:draw:1",
+        "Refurbished Familiar" => "etb:opponent_discard_else_draw",
+        "Squadron Hawk" => "etb:search_up_to_three_same_definition_reveal_shuffle",
+        "Bind the Monster" => "etb:tap_attached_then_attached_deals_power_to_aura_controller",
+        "Harrier Strix" => "etb:target_any_permanent:tap",
+        "Humbling Elder" => "etb:target_opponent_creature:pump:-2:0:eot",
+        "Moon-Circuit Hacker" => {
+            "combat_damage_player:may_draw:discard_unless_source_entered_this_turn:lki"
+        }
+        "Ninja of the Deep Hours" => "combat_damage_player:may_draw:1",
+        "Saiba Cryptomancer" => "etb:target_creature:backup_1:hexproof",
+        "Spellstutter Sprite" => "etb:target_spell_mv_at_most_controlled_faerie_count:counter",
+        "Lembas" => {
+            "etb:scry:1:draw:1;left_battlefield_to_graveyard:shuffle_source_into_owners_library"
+        }
+        "Weather the Storm" => "cast_self:storm_copies:frozen_turn_cast_count",
+        "Masked Vandal" => {
+            "etb:target_opponent_artifact_or_enchantment:may_exile_controller_creature_card_then_exile_target"
+        }
+        "Troublemaker Ouphe" => {
+            "etb_if_bargained:target_opponent_artifact_or_enchantment:exile_target"
+        }
+        "Vitu-Ghazi Inspector" => {
+            "etb_if_collect_evidence_6:target_creature:plus_one_counter:gain_life_2"
+        }
+        "Avenging Hunter" => "etb:take_initiative:undercity",
+        _ => "none",
     }
 }
 
@@ -3010,6 +4456,49 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    for card in cards {
+        match special_for(&card.name) {
+            Special::DrawThenCreateToken { draw, token } => {
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    let token = crate::card_def::card_id_by_name({token:?}).expect(\"{token} in CARD_DEFS\");").unwrap();
+                writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},").unwrap();
+                writeln!(out, "        EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }},").unwrap();
+                writeln!(out, "    ]))").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
+            Special::GainPaidCostManaValueThenDraw { draw } => {
+                let function = card.name.to_ascii_lowercase().replace([' ', '\''], "_");
+                writeln!(out, "fn spell_effect_{function}() -> Option<EffectOp> {{").unwrap();
+                writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::GainLifeEqualToPaidCostManaValue {{ player: PlayerRef::Controller }},").unwrap();
+                writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},").unwrap();
+                writeln!(out, "    ]))").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
+            _ => {}
+        }
+    }
+
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::AddPlusOnePlusOneAndLifelinkCounters
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_add_plus_one_plus_one_and_lifelink_counters() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::AddCountersToTarget {{ target_index: 0, optional: false, plus1_plus1: 1, lifelink: 1, stun: 0 }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     // Shared/one-off effect-program functions. Function *pointers* (not
     // owned EffectOp values) are what make a `static [CardDef; N]` array
     // possible: EffectOp contains Vec/Box and can't live in a const
@@ -3025,8 +4514,8 @@ fn codegen(cards: &[CardJson]) -> String {
     ] {
         let used = cards.iter().any(|card| {
             card.engine_capability != EngineCapabilityJson::NoEffect
-                && (intrinsic_basic_mana_color(card) == Some(color)
-                    || (color == "R" && matches!(special_for(&card.name), Special::GreatFurnace)))
+                && has_activated_mana_ability(card)
+                && card.produces_mana.iter().any(|produced| produced == color)
         });
         if !used {
             continue;
@@ -3053,6 +4542,122 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::ExtractAConfession))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_extract_a_confession() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
+        writeln!(out, "        cond: EffectCond::OptionalAdditionalCostPaid(OptionalAdditionalCostDef::CollectEvidence {{ minimum_mana_value: 6 }}),").unwrap();
+        writeln!(out, "        then: Box::new(EffectOp::SacrificeCreature {{ player: PlayerRef::Opponent, filter: CreatureSacrificeFilter::GreatestPower }}),").unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::SacrificeCreature {{ player: PlayerRef::Opponent, filter: CreatureSacrificeFilter::Any }}),").unwrap();
+        writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::BindTheMonster))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_bind_the_monster() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::PutSourceOntoBattlefieldAttachedToTarget {{ target: ObjectRef::Target(0) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::Snap))
+    {
+        writeln!(out, "fn spell_effect_snap() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Hand }},"
+        )
+        .unwrap();
+        writeln!(out, "        EffectOp::UntapUpToLands {{ chooser: PlayerRef::Controller, max_targets: 2 }},").unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::CleansingWildfire))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_cleansing_wildfire() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        EffectOp::DestroyTargetLandThenMaySearchBasicTapped {{ object: ObjectRef::Target(0) }},").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::Duress))
+    {
+        writeln!(out, "fn spell_effect_duress() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::RevealTargetHandChooseNoncreatureNonlandDiscard {{ player: PlayerRef::Target(0) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::ToxinAnalysis))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_toxin_analysis() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    let clue = crate::card_def::card_id_by_name(\"Clue Token\").expect(\"Clue Token in CARD_DEFS\");").unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(out, "        EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::DEATHTOUCH | Keywords::LIFELINK }},").unwrap();
+        writeln!(out, "        EffectOp::CreateToken {{ token_def: clue, controller: PlayerRef::Controller }},").unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::WeatherTheStorm))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_weather_the_storm() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    Some(EffectOp::GainLife {{ player: PlayerRef::Controller, amount: 3 }})"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     // Emit each structured activated-ability effect once. These are the same
     // recipes used for CardDef source and the v3 card-database hash tokens,
     // so a cost/zone/effect change cannot update one surface and leave the
@@ -3062,6 +4667,11 @@ fn codegen(cards: &[CardJson]) -> String {
         for recipe in activated_ability_recipes_for(&card.name) {
             if !activated_effects.contains(&recipe.effect) {
                 activated_effects.push(recipe.effect);
+            }
+        }
+        if let Some(effect) = omen_effect_recipe_for(&card.name) {
+            if !activated_effects.contains(&effect) {
+                activated_effects.push(effect);
             }
         }
     }
@@ -3076,22 +4686,152 @@ fn codegen(cards: &[CardJson]) -> String {
                 )
                 .unwrap();
             }
+            AbilityEffectRecipe::GainLife(amount) => {
+                writeln!(
+                    out,
+                    "    EffectOp::GainLife {{ player: PlayerRef::Controller, amount: {amount} }}"
+                )
+                .unwrap();
+            }
             AbilityEffectRecipe::CreateToken(name) => {
                 writeln!(out, "    let token = crate::card_def::card_id_by_name({name:?}).expect(\"{name} in CARD_DEFS\");").unwrap();
                 writeln!(out, "    EffectOp::CreateToken {{ token_def: token, controller: PlayerRef::Controller }}").unwrap();
             }
+            AbilityEffectRecipe::DamageTarget(amount) => {
+                writeln!(
+                    out,
+                    "    EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: {amount} }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::MoveAllTargetsToHand => {
+                writeln!(
+                    out,
+                    "    EffectOp::MoveAllTargets {{ to_zone: Zone::Hand }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::ExploreTarget => {
+                writeln!(
+                    out,
+                    "    EffectOp::ExploreTarget {{ object: ObjectRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::DealDamageAnyTarget(amount) => {
+                writeln!(
+                    out,
+                    "    EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: {amount} }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::DamageAllCreatures {
+                amount,
+                filter: CreatureEffectFilterRecipe::WithoutKeyword(keyword),
+            } => {
+                writeln!(out, "    EffectOp::DamageAllCreatures {{ filter: CreatureFilter::WithoutKeyword(Keywords::{keyword}), amount: {amount} }}").unwrap();
+            }
+            AbilityEffectRecipe::ExileTargetPlayersGraveyard => {
+                writeln!(
+                    out,
+                    "    EffectOp::ExilePlayersGraveyard {{ player: PlayerRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::ExileOneFromTargetPlayersGraveyard => {
+                writeln!(
+                    out,
+                    "    EffectOp::ExileOneFromPlayersGraveyard {{ player: PlayerRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::ExileAllGraveyardsThenDraw(draw) => {
+                writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::ExileAllGraveyards,").unwrap();
+                writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},").unwrap();
+                writeln!(out, "    ])").unwrap();
+            }
             AbilityEffectRecipe::SearchLibraryToHand {
-                card_type: "Land",
-                subtype,
+                filter,
                 min_targets: 0,
                 max_targets: 1,
                 reveal_selected: true,
                 shuffle: true,
             } => {
-                writeln!(out, "    EffectOp::SearchLibraryToHand {{ player: PlayerRef::Controller, filter: LibraryCardFilter::LandWithSubtype(Subtype::{subtype}) }}").unwrap();
+                let filter = library_search_filter_src(filter);
+                writeln!(out, "    EffectOp::SearchLibraryToHand {{ player: PlayerRef::Controller, filter: {filter} }}").unwrap();
             }
             AbilityEffectRecipe::SearchLibraryToHand { .. } => {
                 unreachable!("ability_effect_fn_name rejects unsupported search recipes")
+            }
+            AbilityEffectRecipe::UntapTarget => {
+                writeln!(
+                    out,
+                    "    EffectOp::UntapObject {{ object: ObjectRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::GainLifeBattlefieldSubtypeCount(subtype) => {
+                writeln!(out, "    EffectOp::GainLifeDynamic {{ player: PlayerRef::Controller, amount: DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::{subtype}) }}").unwrap();
+            }
+            AbilityEffectRecipe::PumpTargetBattlefieldSubtypeCount(subtype) => {
+                writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::{subtype}), toughness: DynamicValueDef::BattlefieldPermanentsWithSubtype(Subtype::{subtype}) }}").unwrap();
+            }
+            AbilityEffectRecipe::PumpTargetByControlledSubtypeCount(subtype) => {
+                writeln!(
+                    out,
+                    "    EffectOp::PumpTargetByControlledSubtypeCount {{ target: ObjectRef::Target(0), subtype: {} }}",
+                    subtype_variant(subtype)
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::AttachSourceToTarget => {
+                writeln!(
+                    out,
+                    "    EffectOp::AttachSourceToTarget {{ object: ObjectRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::AddStunCounterToOptionalTarget => {
+                writeln!(out, "    EffectOp::AddCountersToTarget {{ target_index: 0, optional: true, plus1_plus1: 0, lifelink: 0, stun: 1 }}").unwrap();
+            }
+            AbilityEffectRecipe::DestroyTarget => {
+                writeln!(
+                    out,
+                    "    EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::DrawThenDiscard { draw, discard } => {
+                writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+                writeln!(out, "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: {draw} }},").unwrap();
+                writeln!(out, "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: {discard} }},").unwrap();
+                writeln!(out, "    ])").unwrap();
+            }
+            AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking => {
+                writeln!(
+                    out,
+                    "    EffectOp::PutSourceOntoBattlefieldTappedAndAttacking"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::MoveAllTargetsToExile => {
+                writeln!(
+                    out,
+                    "    EffectOp::MoveAllTargets {{ to_zone: Zone::Exile }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::AddMinusOneMinusOneCounter => {
+                writeln!(
+                    out,
+                    "    EffectOp::AddMinusOneMinusOneCounter {{ object: ObjectRef::Target(0) }}"
+                )
+                .unwrap();
+            }
+            AbilityEffectRecipe::SearchLibraryToBattlefieldTapped { filter } => {
+                let filter = library_search_filter_src(filter);
+                writeln!(out, "    EffectOp::SearchLibraryToBattlefieldTapped {{ player: PlayerRef::Controller, filter: {filter} }}").unwrap();
             }
         }
         writeln!(out, "}}").unwrap();
@@ -3263,6 +5003,29 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out).unwrap();
     }
 
+    let mut typed_top_partition_shapes = Vec::new();
+    for card in cards {
+        if let Special::LookTopSelectByTypeToHandBottomRest { look, card_type } =
+            special_for(&card.name)
+        {
+            let shape = (look, card_type);
+            if !typed_top_partition_shapes.contains(&shape) {
+                typed_top_partition_shapes.push(shape);
+            }
+        }
+    }
+    for (look, card_type) in typed_top_partition_shapes {
+        let suffix = card_type.to_ascii_lowercase();
+        writeln!(
+            out,
+            "fn spell_effect_look_top_{look}_select_{suffix}_to_hand_bottom_rest() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::LookTopSelectByTypeToHandBottomRest {{ player: PlayerRef::Controller, count: {look}, card_type: CardType::{card_type} }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     let mut look_reorder_may_shuffle_then_draw_shapes = Vec::new();
     for card in cards {
         if let Special::LookReorderMayShuffleThenDraw { look, draw } = special_for(&card.name) {
@@ -3371,6 +5134,113 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "    Some(EffectOp::PutObjectInOwnersLibrarySecondOrBottom {{ object: ObjectRef::Target(0) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::TapAndSkipNextUntap))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_tap_and_skip_next_untap() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::TapObject {{ object: ObjectRef::Target(0) }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::SkipNextUntap {{ object: ObjectRef::Target(0) }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::DestroyNonlegendaryCreature
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_destroy_nonlegendary_creature() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Conditional {{").unwrap();
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
+        writeln!(out, "    }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    let mut graveyard_return_life_amounts = Vec::new();
+    for card in cards {
+        if let Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } =
+            special_for(&card.name)
+        {
+            if !graveyard_return_life_amounts.contains(&amount) {
+                graveyard_return_life_amounts.push(amount);
+            }
+        }
+    }
+    for amount in graveyard_return_life_amounts {
+        writeln!(
+            out,
+            "fn spell_effect_return_creature_or_land_from_graveyard_and_gain_life_{amount}() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Hand }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::GainLife {{ player: PlayerRef::Controller, amount: {amount} }},"
+        )
+        .unwrap();
+        writeln!(out, "    ]))").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    let mut damage_without_subtype_shapes = Vec::new();
+    for card in cards {
+        if let Special::DamageEachCreatureWithoutSubtype {
+            amount,
+            excluded_subtype,
+        } = special_for(&card.name)
+        {
+            let shape = (amount, excluded_subtype);
+            if !damage_without_subtype_shapes.contains(&shape) {
+                damage_without_subtype_shapes.push(shape);
+            }
+        }
+    }
+    for (amount, excluded_subtype) in damage_without_subtype_shapes {
+        let subtype = subtype_variant(excluded_subtype);
+        let suffix = excluded_subtype.to_ascii_lowercase();
+        writeln!(out, "fn spell_effect_damage_each_creature_without_{suffix}_{amount}() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::DamageEachCreatureWithoutSubtype {{ amount: {amount}, excluded_subtype: {subtype} }})").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -3581,6 +5451,153 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 
+    let mut counter_unless_generics = cards
+        .iter()
+        .filter_map(|card| match special_for(&card.name) {
+            Special::CounterUnlessPaysGeneric { generic, .. } => Some(generic),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    counter_unless_generics.sort_unstable();
+    counter_unless_generics.dedup();
+    for generic in counter_unless_generics {
+        writeln!(
+            out,
+            "fn spell_effect_counter_target_unless_pays_generic_{generic}() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    Some(EffectOp::CounterTargetUnlessPaysGeneric {{ target: TargetRef::Target(0), generic: {generic} }})"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::SteelSabotage))
+    {
+        writeln!(
+            out,
+            "fn mode2_effect_return_target_permanent_to_owners_hand() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(out, "    EffectOp::Conditional {{").unwrap();
+        writeln!(
+            out,
+            "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
+        )
+        .unwrap();
+        writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Hand }}),").unwrap();
+        writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
+        writeln!(out, "    }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::PiracyCharm))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_piracy_charm_islandwalk() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::GrantKeywordTargetUntilEndOfTurn {{ object: ObjectRef::Target(0), keyword: Keywords::ISLANDWALK }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(out, "fn mode2_effect_piracy_charm_pump() -> EffectOp {{").unwrap();
+        writeln!(out, "    EffectOp::PumpTargetUntilEndOfTurnDynamic {{ target: TargetRef::Target(0), power: DynamicValueDef::Fixed(2), toughness: DynamicValueDef::Fixed(-1) }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(out, "fn mode3_effect_piracy_charm_discard() -> EffectOp {{").unwrap();
+        writeln!(
+            out,
+            "    EffectOp::DiscardCards {{ player: PlayerRef::Target(0), count: 1 }}"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::CastIntoTheFire))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_cast_into_the_fire_damage() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::DamageAllTargets {{ amount: 1 }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(
+            out,
+            "fn mode2_effect_cast_into_the_fire_exile_artifact() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    EffectOp::MoveAllTargets {{ to_zone: Zone::Exile }}"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::DustToDust))
+    {
+        writeln!(out, "fn spell_effect_dust_to_dust() -> Option<EffectOp> {{").unwrap();
+        writeln!(out, "    Some(EffectOp::ExileAllArtifactTargets)").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::ThrabenCharm))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_thraben_charm_damage() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::DealDamageByControlledCreatureCount {{ target: TargetRef::Target(0), multiplier: 2 }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(
+            out,
+            "fn mode2_effect_thraben_charm_destroy_enchantment() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+
+        writeln!(
+            out,
+            "fn mode3_effect_thraben_charm_exile_graveyards() -> EffectOp {{"
+        )
+        .unwrap();
+        writeln!(out, "    EffectOp::ExileTargetPlayersGraveyards").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
     if cards
         .iter()
         .any(|c| matches!(special_for(&c.name), Special::ColorBlast { .. }))
@@ -3635,7 +5652,11 @@ fn codegen(cards: &[CardJson]) -> String {
             "        cond: EffectCond::TargetInZone(0, Zone::Battlefield),"
         )
         .unwrap();
-        writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Graveyard }}),").unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
         writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
         writeln!(out, "    }}").unwrap();
         writeln!(out, "}}").unwrap();
@@ -3659,7 +5680,11 @@ fn codegen(cards: &[CardJson]) -> String {
         )
         .unwrap();
         writeln!(out, "        ),").unwrap();
-        writeln!(out, "        then: Box::new(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Graveyard }}),").unwrap();
+        writeln!(
+            out,
+            "        then: Box::new(EffectOp::DestroyObject {{ object: ObjectRef::Target(0) }}),"
+        )
+        .unwrap();
         writeln!(out, "        else_: Box::new(EffectOp::Sequence(vec![])),").unwrap();
         writeln!(out, "    }}").unwrap();
         writeln!(out, "}}").unwrap();
@@ -3701,6 +5726,122 @@ fn codegen(cards: &[CardJson]) -> String {
             "    Some(EffectOp::DealDamage {{ target: TargetRef::Target(0), amount: {amount} }})"
         )
         .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::ReturnOwnGraveyardCreatureToBattlefield
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_return_own_graveyard_creature_to_battlefield() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::MoveObject {{ object: ObjectRef::Target(0), to_zone: Zone::Battlefield }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::SearchForestToHand))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_search_forest_to_hand() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::SearchLibraryToHand {{ player: PlayerRef::Controller, filter: LibraryCardFilter::LandWithSubtype(Subtype::Forest) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards.iter().any(|card| {
+        matches!(
+            special_for(&card.name),
+            Special::DamageCannotBePreventedThisTurn
+        )
+    }) {
+        writeln!(
+            out,
+            "fn spell_effect_damage_cannot_be_prevented_this_turn() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::DamageCannotBePreventedThisTurn)").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::PrismaticStrands))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_prismatic_strands() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::PreventDamageFromChosenColorUntilEndOfTurn {{ player: PlayerRef::Controller }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::MonstrousEmergence))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_monstrous_emergence() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(out, "    Some(EffectOp::DealDamageToTargetEqualToChosenCostCreaturePower {{ target: TargetRef::Target(0) }})").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards
+        .iter()
+        .any(|card| matches!(special_for(&card.name), Special::NyxbornHydra))
+    {
+        writeln!(
+            out,
+            "fn spell_effect_nyxborn_hydra() -> Option<EffectOp> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    Some(EffectOp::PutSourceOntoBattlefieldWithXPlusOneCounters)"
+        )
+        .unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if cards.iter().any(|card| {
+        card.name == "The Modern Age" && card.engine_capability != EngineCapabilityJson::NoEffect
+    }) {
+        writeln!(out, "fn saga_chapter_modern_age_loot() -> EffectOp {{").unwrap();
+        writeln!(out, "    EffectOp::Sequence(vec![").unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DrawCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        EffectOp::DiscardCards {{ player: PlayerRef::Controller, count: 1 }},"
+        )
+        .unwrap();
+        writeln!(out, "    ])").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+        writeln!(out, "fn saga_chapter_modern_age_transform() -> EffectOp {{").unwrap();
+        writeln!(out, "    EffectOp::TransformSagaSource").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
@@ -3787,6 +5928,11 @@ fn codegen(cards: &[CardJson]) -> String {
                 format!("spell_effect_draw_then_discard_{draw}_{discard}"),
                 "no_effect".to_string(),
             ),
+            Special::ExtractAConfession => (
+                "TargetSpec::None",
+                "spell_effect_extract_a_confession".to_string(),
+                "no_effect".to_string(),
+            ),
             Special::GrabThePrize => (
                 "TargetSpec::None",
                 "spell_effect_grab_the_prize".to_string(),
@@ -3802,14 +5948,39 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_searing_blaze".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::CounterTarget(StackSpellFilter::Any) => (
-                "TargetSpec::AnySpellOnStack",
+            Special::CounterTarget(filter) => (
+                filter.target_spec(),
                 "spell_effect_counter_target".to_string(),
                 "no_effect".to_string(),
             ),
-            Special::CounterTarget(StackSpellFilter::Instant) => (
-                "TargetSpec::InstantSpellOnStack",
+            Special::SteelSabotage => (
+                StackSpellFilter::Artifact.target_spec(),
                 "spell_effect_counter_target".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::PiracyCharm => (
+                "TargetSpec::Creature",
+                "spell_effect_piracy_charm_islandwalk".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::CastIntoTheFire => (
+                "TargetSpec::UpToTwoCreatures",
+                "spell_effect_cast_into_the_fire_damage".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::DustToDust => (
+                "TargetSpec::ExactlyTwoArtifactPermanents",
+                "spell_effect_dust_to_dust".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::ThrabenCharm => (
+                "TargetSpec::Creature",
+                "spell_effect_thraben_charm_damage".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::CounterUnlessPaysGeneric { filter, generic } => (
+                filter.target_spec(),
+                format!("spell_effect_counter_target_unless_pays_generic_{generic}"),
                 "no_effect".to_string(),
             ),
             Special::ColorBlast {
@@ -3853,6 +6024,14 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_winding_way".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::LookTopSelectByTypeToHandBottomRest { look, card_type } => (
+                "TargetSpec::None",
+                format!(
+                    "spell_effect_look_top_{look}_select_{}_to_hand_bottom_rest",
+                    card_type.to_ascii_lowercase()
+                ),
+                "no_effect".to_string(),
+            ),
             Special::LookReorderMayShuffleThenDraw { look, draw } => (
                 "TargetSpec::None",
                 format!("spell_effect_look_reorder_may_shuffle_then_draw_{look}_{draw}"),
@@ -3873,6 +6052,45 @@ fn codegen(cards: &[CardJson]) -> String {
                 "spell_effect_deem_inferior".to_string(),
                 "no_effect".to_string(),
             ),
+            Special::TapAndSkipNextUntap => (
+                "TargetSpec::Creature",
+                "spell_effect_tap_and_skip_next_untap".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::DestroyNonlegendaryCreature => (
+                "TargetSpec::NonlegendaryCreature",
+                "spell_effect_destroy_nonlegendary_creature".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::ReturnCreatureOrLandFromGraveyardAndGainLife { amount } => (
+                "TargetSpec::CreatureOrLandCardInGraveyard",
+                format!(
+                    "spell_effect_return_creature_or_land_from_graveyard_and_gain_life_{amount}"
+                ),
+                "no_effect".to_string(),
+            ),
+            Special::DamageEachCreatureWithoutSubtype {
+                amount,
+                excluded_subtype,
+            } => (
+                "TargetSpec::None",
+                format!(
+                    "spell_effect_damage_each_creature_without_{}_{}",
+                    excluded_subtype.to_ascii_lowercase(),
+                    amount
+                ),
+                "no_effect".to_string(),
+            ),
+            Special::DrawThenCreateToken { .. } | Special::GainPaidCostManaValueThenDraw { .. } => {
+                (
+                    "TargetSpec::None",
+                    format!(
+                        "spell_effect_{}",
+                        c.name.to_ascii_lowercase().replace([' ', '\''], "_")
+                    ),
+                    "no_effect".to_string(),
+                )
+            }
             Special::MillThenDraw { player, mill, draw } => {
                 let (target_spec, player_suffix) = match player {
                     MillPlayer::Controller => ("TargetSpec::None", "controller"),
@@ -3884,6 +6102,71 @@ fn codegen(cards: &[CardJson]) -> String {
                     "no_effect".to_string(),
                 )
             }
+            Special::ReturnOwnGraveyardCreatureToBattlefield => (
+                "TargetSpec::CreatureCardInOwnGraveyard",
+                "spell_effect_return_own_graveyard_creature_to_battlefield".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::SearchForestToHand => (
+                "TargetSpec::None",
+                "spell_effect_search_forest_to_hand".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::AddPlusOnePlusOneAndLifelinkCounters => (
+                "TargetSpec::Creature",
+                "spell_effect_add_plus_one_plus_one_and_lifelink_counters".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::BindTheMonster => (
+                "TargetSpec::Creature",
+                "spell_effect_bind_the_monster".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::Snap => (
+                "TargetSpec::Creature",
+                "spell_effect_snap".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::DamageCannotBePreventedThisTurn => (
+                "TargetSpec::None",
+                "spell_effect_damage_cannot_be_prevented_this_turn".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::PrismaticStrands => (
+                "TargetSpec::None",
+                "spell_effect_prismatic_strands".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::CleansingWildfire => (
+                "TargetSpec::Land",
+                "spell_effect_cleansing_wildfire".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::Duress => (
+                "TargetSpec::TargetOpponent",
+                "spell_effect_duress".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::ToxinAnalysis => (
+                "TargetSpec::Creature",
+                "spell_effect_toxin_analysis".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::WeatherTheStorm => (
+                "TargetSpec::None",
+                "spell_effect_weather_the_storm".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::MonstrousEmergence => (
+                "TargetSpec::Creature",
+                "spell_effect_monstrous_emergence".to_string(),
+                "no_effect".to_string(),
+            ),
+            Special::NyxbornHydra => (
+                "TargetSpec::None",
+                "spell_effect_nyxborn_hydra".to_string(),
+                "no_effect".to_string(),
+            ),
         };
 
         let executable = c.engine_capability != EngineCapabilityJson::NoEffect;
@@ -3891,18 +6174,23 @@ fn codegen(cards: &[CardJson]) -> String {
             spell_effect_src = "spell_effect_ordinary_permanent".to_string();
         }
 
-        let intrinsic_basic_color = intrinsic_basic_mana_color(c);
-        if let (true, Some(color)) = (executable, intrinsic_basic_color) {
+        // Keep the historical function-pointer program for single-color
+        // sources. Multi-color sources expose one action per printed mana
+        // ability through `CardDef::mana_ability_choices` below.
+        let mana_ability_colors = if executable && has_activated_mana_ability(c) {
+            primary_mana_ability_colors(c)
+        } else {
+            Vec::new()
+        };
+        if mana_ability_colors.len() == 1 {
+            let color = mana_ability_colors[0];
             let suffix = color.to_ascii_lowercase();
-            // Validate the metadata symbol through the same closed color set
-            // used to render `CardDef::produces_mana` before naming the
-            // generated one-color ability.
             color_variant(color);
             mana_ability_src = format!("mana_ability_add_{suffix}");
         }
 
         let has_spell_program = spell_effect_src != "no_effect";
-        let has_mana_program = mana_ability_src != "no_effect";
+        let has_mana_program = !mana_ability_colors.is_empty();
         if executable && !c.is_token {
             if c.is_land && !has_mana_program {
                 panic!(
@@ -3943,6 +6231,8 @@ fn codegen(cards: &[CardJson]) -> String {
             generic_cost_reduction_for(&c.name)
         )
         .unwrap();
+        writeln!(out, "        ward_cost: {},", ward_cost_for(&c.name)).unwrap();
+        writeln!(out, "        equipment: {},", equipment_for(&c.name)).unwrap();
         writeln!(out, "        types: &[{types_src}],").unwrap();
         writeln!(out, "        subtypes: &[{subtypes_src}],").unwrap();
         writeln!(out, "        supertypes: &[{supertypes_src}],").unwrap();
@@ -3952,7 +6242,7 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        produces_mana: &[{produces_src}],").unwrap();
         writeln!(out, "        colors: &[{colors_src}],").unwrap();
         writeln!(out, "        target_spec: {target_spec_src},").unwrap();
-        writeln!(out, "        keywords: {},", keywords_for(&c.name)).unwrap();
+        writeln!(out, "        keywords: {},", keywords_for(c)).unwrap();
         writeln!(out, "        spell_effect: {spell_effect_src},").unwrap();
         writeln!(out, "        mana_ability: {mana_ability_src},").unwrap();
         writeln!(out, "        alt_cost: {},", alt_cost_for(&c.name)).unwrap();
@@ -3973,7 +6263,127 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        plot_cost: {},", plot_cost_for(&c.name)).unwrap();
         writeln!(out, "        madness_cost: {},", madness_cost_for(&c.name)).unwrap();
         writeln!(out, "        mode2: {},", mode2_for(&c.name)).unwrap();
+        writeln!(out, "        mode3: {},", mode3_for(&c.name)).unwrap();
         writeln!(out, "        is_token: {},", c.is_token).unwrap();
+        writeln!(out, "        escape: {},", escape_for(&c.name)).unwrap();
+        let mana_ability_choices_src = mana_ability_colors
+            .iter()
+            .map(|color| format!("ManaColor::{}", color_variant(color)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            out,
+            "        mana_ability_choices: &[{mana_ability_choices_src}],"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        enters_battlefield_tapped: {},",
+            executable && enters_battlefield_tapped(c)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        mana_ability_def: {},",
+            if executable {
+                mana_ability_def_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        minimum_blockers: {},",
+            minimum_blockers_for(&c.name)
+        )
+        .unwrap();
+        writeln!(out, "        omen: {},", omen_for(&c.name)).unwrap();
+        writeln!(out, "        mana_value: {},", c.mana_value).unwrap();
+        writeln!(
+            out,
+            "        mana_ability_includes_chosen_color: {},",
+            executable && mana_ability_includes_chosen_color(&c.name)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        as_enters_choose_color_other_than: {},",
+            if executable {
+                as_enters_choose_color_other_than(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        additional_mana_abilities: {},",
+            if executable {
+                additional_mana_abilities_for(&c.name)
+            } else {
+                "&[]"
+            }
+        )
+        .unwrap();
+        writeln!(out, "        object_name: {:?},", object_name_for(&c.name)).unwrap();
+        writeln!(
+            out,
+            "        enters_battlefield_tapped_unless: {},",
+            if executable {
+                enters_battlefield_tapped_unless_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(out, "        attachment: {},", attachment_for(&c.name)).unwrap();
+        writeln!(
+            out,
+            "        transform_face: {},",
+            if executable {
+                transform_face_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        saga: {},",
+            if executable {
+                saga_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        optional_additional_cost: {},",
+            if executable {
+                optional_additional_cost_for(&c.name)
+            } else {
+                "None"
+            }
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        changeling: {},",
+            executable && changeling_for(&c.name)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "        bestow: {},",
+            if executable {
+                bestow_for(&c.name)
+            } else {
+                "None".to_string()
+            }
+        )
+        .unwrap();
         writeln!(out, "    }},").unwrap();
     }
     writeln!(out, "];").unwrap();
@@ -3991,18 +6401,22 @@ fn codegen(cards: &[CardJson]) -> String {
     writeln!(out).unwrap();
 
     // ---- content + executable-recipe hash ------------------------------
-    // v5 hashes every generated CardDef selector plus semantic tokens from
+    // v30 hashes every generated CardDef selector plus semantic tokens from
     // the same `Special` and structured activated-ability recipes that emit
     // executable definitions. Lorien's Draw3/search and Deep Analysis's
-    // target-player draw/ordered flashback remain bound alongside each
-    // Blast's checked color and targeting-versus-resolution filter timing.
+    // target-player draw/ordered flashback and Sleep's ordered Escape cost
+    // remain bound alongside each Blast's checked color and
+    // targeting-versus-resolution filter timing. Wildfire utility effects,
+    // typed battlefield searches, Storm, and Clue remain bound too.
     // Metadata-only registry fields (timestamps, java_file paths, complexity
     // tags) remain intentionally outside the contract.
-    let mut canon = String::from("kernel_carddb/v5\n");
+    let mut canon = String::from("kernel_carddb/v32\n");
     for c in cards {
         canon.push_str(&c.name);
         canon.push('|');
         canon.push_str(&c.mana_cost);
+        canon.push('|');
+        canon.push_str(&c.mana_value.to_string());
         canon.push('|');
         canon.push_str(&c.types.join(","));
         canon.push('|');
@@ -4035,11 +6449,121 @@ fn codegen(cards: &[CardJson]) -> String {
         // addition/removal equally visible.
         canon.push_str(generic_cost_reduction_for(&c.name));
         canon.push('|');
+        canon.push_str(ward_cost_for(&c.name));
+        canon.push('|');
+        canon.push_str("equipment=");
+        canon.push_str(equipment_for(&c.name));
+        canon.push('|');
         // Reuse the exact generated source fragments plus the stable spell
         // recipe token. This covers every field selected by the generator for
         // `CardDef`; runtime primitive implementation changes remain pinned
         // separately by the source revision.
-        canon.push_str(keywords_for(&c.name));
+        canon.push_str(&keywords_for(c));
+        canon.push('|');
+        canon.push_str("mana_ability_choices=");
+        if c.engine_capability != EngineCapabilityJson::NoEffect && has_activated_mana_ability(c) {
+            canon.push_str(&primary_mana_ability_colors(c).join(","));
+        }
+        canon.push('|');
+        canon.push_str("enters_battlefield_tapped=");
+        canon.push_str(
+            if c.engine_capability != EngineCapabilityJson::NoEffect && enters_battlefield_tapped(c)
+            {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        canon.push('|');
+        canon.push_str("mana_ability_def=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            mana_ability_def_for(&c.name)
+        } else {
+            "None"
+        });
+        canon.push('|');
+        canon.push_str("mana_ability_includes_chosen_color=");
+        canon.push_str(
+            if c.engine_capability != EngineCapabilityJson::NoEffect
+                && mana_ability_includes_chosen_color(&c.name)
+            {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        canon.push('|');
+        canon.push_str("as_enters_choose_color_other_than=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            as_enters_choose_color_other_than(&c.name)
+        } else {
+            "None"
+        });
+        canon.push('|');
+        canon.push_str("additional_mana_abilities=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            additional_mana_abilities_for(&c.name)
+        } else {
+            "&[]"
+        });
+        canon.push('|');
+        canon.push_str("object_name=");
+        canon.push_str(object_name_for(&c.name));
+        canon.push('|');
+        canon.push_str("enters_battlefield_tapped_unless=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            enters_battlefield_tapped_unless_for(&c.name)
+        } else {
+            "None"
+        });
+        canon.push('|');
+        canon.push_str("attachment=");
+        canon.push_str(attachment_for(&c.name));
+        canon.push('|');
+        canon.push_str("transform_face=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            transform_face_for(&c.name)
+        } else {
+            "None"
+        });
+        canon.push('|');
+        canon.push_str("saga=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            saga_for(&c.name)
+        } else {
+            "None"
+        });
+        canon.push('|');
+        canon.push_str("optional_additional_cost=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            optional_additional_cost_for(&c.name)
+        } else {
+            "None"
+        });
+        canon.push('|');
+        canon.push_str("changeling=");
+        canon.push_str(
+            if c.engine_capability != EngineCapabilityJson::NoEffect && changeling_for(&c.name) {
+                "true"
+            } else {
+                "false"
+            },
+        );
+        canon.push('|');
+        canon.push_str("bestow=");
+        let bestow = if c.engine_capability != EngineCapabilityJson::NoEffect {
+            bestow_for(&c.name)
+        } else {
+            "None".to_string()
+        };
+        canon.push_str(&bestow);
+        canon.push('|');
+        canon.push_str("trigger=");
+        canon.push_str(if c.engine_capability != EngineCapabilityJson::NoEffect {
+            trigger_recipe_for(&c.name)
+        } else {
+            "none"
+        });
         canon.push('|');
         canon.push_str(alt_cost_for(&c.name));
         canon.push('|');
@@ -4057,6 +6581,21 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str(&mode2_for(&c.name));
         canon.push('|');
+        canon.push_str(&mode3_for(&c.name));
+        canon.push('|');
+        canon.push_str("minimum_blockers=");
+        canon.push_str(&minimum_blockers_for(&c.name).to_string());
+        canon.push('|');
+        canon.push_str("omen=");
+        canon.push_str(&omen_for(&c.name));
+        canon.push('|');
+        canon.push_str("omen_effect=");
+        if let Some(effect) = omen_effect_recipe_for(&c.name) {
+            canon.push_str(&ability_effect_token(effect));
+        } else {
+            canon.push_str("none");
+        }
+        canon.push('|');
         canon.push_str(&effect_recipe_for(c));
         canon.push('|');
         canon.push_str(&c.decks.join(","));
@@ -4066,6 +6605,9 @@ fn codegen(cards: &[CardJson]) -> String {
         canon.push('|');
         canon.push_str("activated=");
         canon.push_str(&activated_abilities_token(&c.name));
+        canon.push('|');
+        canon.push_str("escape=");
+        canon.push_str(&escape_for(&c.name));
         canon.push('\n');
     }
     let hash = fnv1a64(canon.as_bytes());
@@ -4107,6 +6649,7 @@ fn supertype_variant(t: &str) -> &'static str {
     match t {
         "Basic" => "Basic",
         "Snow" => "Snow",
+        "Legendary" => "Legendary",
         other => panic!("cards_v1.json: unknown supertype {other:?}"),
     }
 }
@@ -4177,6 +6720,20 @@ fn subtype_variant(t: &str) -> &'static str {
         "Wizard" => "Subtype::Wizard",
         "Zombie" => "Subtype::Zombie",
         "Illusion" => "Subtype::Illusion",
+        "Dryad" => "Subtype::Dryad",
+        "Plant" => "Subtype::Plant",
+        "Wall" => "Subtype::Wall",
+        "Troll" => "Subtype::Troll",
+        "Elemental" => "Subtype::Elemental",
+        "Map" => "Subtype::Map",
+        "Treasure" => "Subtype::Treasure",
+        "Giant" => "Subtype::Giant",
+        "Spawn" => "Subtype::Spawn",
+        "Phyrexian" => "Subtype::Phyrexian",
+        "Horror" => "Subtype::Horror",
+        "Nightmare" => "Subtype::Nightmare",
+        "Clue" => "Subtype::Clue",
+        "Skeleton" => "Subtype::Skeleton",
         other => panic!("cards_v1.json: unknown subtype {other:?}"),
     }
 }

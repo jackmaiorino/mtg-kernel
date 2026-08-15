@@ -90,10 +90,10 @@ RESET_STREAM_IDENTITY = (
     "-portable-vector-stream-sha256-v1"
 )
 RESET_GOLDENS_FILE_SHA256 = (
-    "ab002901a598d40732d39f9b0f21abaa2b7445e63b1c14d45a44b7900f6b739b"
+    "18ec6cd138a76bce1bf06c6b794fe169fbe8d83c0a9265d0ff99119a4c4a16bc"
 )
 RESET_STREAM_SHA256 = (
-    "15d312141f8d96f079684dd64b58b5bab803086a78ac9687e3c14aab91e0a3c9"
+    "97f8eeff002ec15f3e30f58fd1f1e477a8abf1db3a38e25aaeb810f87da2a085"
 )
 
 # ------------------------------ frozen trainer schedule and runtime catalog
@@ -114,7 +114,7 @@ RUNTIME_DECK_PROTOCOL = "canonical-mainboard-bo1/v1"
 RUNTIME_DECK_MATERIALIZATION_PROTOCOL = "xmage_xml_row_then_copy_ordinal/v1"
 RUNTIME_DECK_HASH_ALGORITHM = "fnv1a64-serde-json-u16-array/v1"
 RUNTIME_DECK_CATALOG_FILE_SHA256 = (
-    "5ea19e8a08f0e9c9657e9a6a90382329785f27eeabbbe066e80e7025e8ee62c0"
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851"
 )
 FROZEN_RUNTIME_DECKS = {
     "Burn": 0x5FDB_7B92_986B_6FC1,

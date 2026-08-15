@@ -1542,8 +1542,8 @@ mod tests {
             );
             assert_eq!(
                 state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v6",
-                "v6 diagnostic identity"
+                "fnv1a64-serde-json-game-state-envelope-v9",
+                "v9 diagnostic identity"
             );
         }
     }

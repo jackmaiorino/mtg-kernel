@@ -204,6 +204,8 @@ pub(crate) struct LadderCheckpointAuthorityV1 {
 }
 
 #[derive(Debug)]
+// Boxing would change construction sites in determinism-adjacent code; accepted.
+#[allow(clippy::large_enum_variant)]
 enum LadderCheckpointManifestSourceV1 {
     Genesis {
         checkpoint: CheckpointManifestV3,
@@ -406,10 +408,8 @@ pub(crate) fn stage_ladder_checkpoint_initialization_v1(
 ) -> Result<OpponentLadderInitializationContractV1, LadderPoolResolutionErrorV1> {
     let checkpoint_ref = stage_ladder_checkpoint_ref_v1(base_dir, generation)?;
     let authority = resolve_ladder_checkpoint_authority_v1(base_dir, &checkpoint_ref)?;
-    let derived_model_parameter_sha256 = derive_genesis_model_parameter_sha256_v2_v3(
-        authority.checkpoint(),
-        authority.payload(),
-    )?;
+    let derived_model_parameter_sha256 =
+        derive_genesis_model_parameter_sha256_v2_v3(authority.checkpoint(), authority.payload())?;
     Ok(OpponentLadderInitializationContractV1 {
         source_run_sha256: checkpoint_ref.source_run_sha256,
         generation: checkpoint_ref.generation,
@@ -847,6 +847,12 @@ mod tests {
     #[test]
     fn stage_ladder_checkpoint_ref_v1_matches_the_real_pilot_pool_json_primary_entry() {
         const POOL_PRIMARY_STORE_ROOT: &str = r"D:\mtg-kernel-ladder-pilot-20260725\pool\primary";
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(POOL_PRIMARY_STORE_ROOT),
+        ) {
+            return;
+        }
         let staged =
             stage_ladder_checkpoint_ref_v1(std::path::Path::new(POOL_PRIMARY_STORE_ROOT), 256)
                 .expect("real pilot pool primary checkpoint must resolve to a staged ref");

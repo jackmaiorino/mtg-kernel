@@ -4100,6 +4100,15 @@ mod tests {
             spell,
             mtg_kernel::state::CastMethodV4::Normal,
         );
+        // A real cast's stack placeholder always gets a fresh, unique,
+        // nonzero `StackItemId` from the same counter every other stack
+        // push draws from (`engine::next_stack_item_id`, private to the
+        // crate; mirrored here the same way it increments-then-wraps).
+        // `validate_pending_cast` rejects `StackItemId::default()` (0) or a
+        // ambiguous non-unique id as "no unique stack incarnation", which a
+        // pre-invariant fixture left unset.
+        state.engine.next_stack_item_id += 1;
+        let stack_item_id = mtg_kernel::ids::StackItemId(state.engine.next_stack_item_id);
         state.stack.push(mtg_kernel::state::StackItem {
             kind: mtg_kernel::state::StackItemKind::Spell,
             source: spell,
@@ -4113,6 +4122,7 @@ mod tests {
             madness_offer: false,
             kicked: false,
             v4: mtg_kernel::state::StackStateV4 {
+                stack_item_id,
                 source_contract: Some(source_contract),
                 ..mtg_kernel::state::StackStateV4::spell(mtg_kernel::state::CastMethodV4::Normal)
             },
@@ -4126,6 +4136,7 @@ mod tests {
             target_contracts: vec![mtg_kernel::state::StackTargetContractV4::Player(
                 PlayerId::P1,
             )],
+            target_selection_finished: false,
             is_flashback: false,
             cast_mode: None,
             additional_cost_discarded: Some(Vec::new()),
@@ -4133,6 +4144,12 @@ mod tests {
             origin_zone: Zone::Hand,
             sacrifice_chosen: Vec::new(),
             kicked: Some(false),
+            optional_additional_cost_paid: Some(false),
+            optional_additional_cost_chosen: Vec::new(),
+            optional_additional_cost_selection_finished: false,
+            x_value: Some(0),
+            chosen_creature_cost_zone: None,
+            chosen_creature_cost: None,
         });
 
         let rec = decision_record_ex(
@@ -4309,6 +4326,15 @@ mod tests {
         state.active_player = PlayerId::P0;
         state.priority_player = PlayerId::P0;
 
+        // A real trigger always carries its exact source incarnation
+        // (`push_trigger_onto_stack`'s real construction captures this via
+        // `AbilitySourceContractV4::capture` before the trigger ever reaches
+        // `pending_triggers`); a synthetic fixture has to do the same, or
+        // `validate_pending_trigger_identity` halts the drain path with
+        // "pending trigger source provenance is missing or parallel".
+        let g1_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&state, g1);
+        let g2_contract = mtg_kernel::state::AbilitySourceContractV4::capture(&state, g2);
+
         let pending = vec![
             PendingTrigger {
                 controller: PlayerId::P0,
@@ -4319,6 +4345,14 @@ mod tests {
                 },
                 is_madness_offer: false,
                 kicked: false,
+                target_spec: mtg_kernel::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(g1_contract),
+                granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             },
             PendingTrigger {
                 controller: PlayerId::P0,
@@ -4329,6 +4363,14 @@ mod tests {
                 },
                 is_madness_offer: false,
                 kicked: false,
+                target_spec: mtg_kernel::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(g2_contract),
+                granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             },
         ];
         // `check_trigger_commutativity` (like its one real call site in
@@ -4347,46 +4389,101 @@ mod tests {
         }
     }
 
-    /// Proves the detector actually *works*, not just "always says yes":
-    /// a synthetic same-controller pair (`LoseLife 20` then `GainLife 25`
-    /// on the same player, starting at 20 life) is genuinely order-
-    /// dependent through the 704.5a state-based loss check -- resolving
-    /// the life-loss trigger *first* drops the player to 0 and marks
-    /// `has_lost = true` (a real, and in actual play game-ending, SBA)
-    /// before the life-gain trigger ever runs; resolving life-gain first
-    /// means the player never dips to 0 at all. Both orders land on the
-    /// same final life total (25) but disagree on `has_lost` -- exactly
-    /// the kind of divergence `canonical_snapshot` (which captures
-    /// `has_lost`) must catch and a life-total-only comparison would miss.
+    /// Proves the detector actually *works*, not just "always says yes".
+    ///
+    /// The original version of this test paired an invented `LoseLife
+    /// 20`/`GainLife 25` effect on a `Guttersnipe` source -- neither effect
+    /// is anything `Guttersnipe` (or any card in this 162-card pool) really
+    /// triggers, which the now-enforced `triggered_stack_item_expected_
+    /// target_spec` definition-ownership check (every `PendingTrigger`
+    /// placed on the stack must match one of its source's registered
+    /// `TriggeredAbilityDef`s, `engine.rs`'s "triggered stack item effect
+    /// is not definition-owned") rejects outright. No card in this pool
+    /// grants its own controller a triggered life *loss*, so the exact
+    /// 704.5a life-total race can no longer be built from real cards --
+    /// this reworked version proves the identical point (order changes
+    /// `has_lost`, not just a value that's the same either way) through
+    /// 704.5c instead, using two real, decision-free triggered effects:
+    /// Ichor Wellspring's real ETB `DrawCards{Controller, 1}` and Clockwork
+    /// Percussionist's real dies trigger `ImpulseDraw{count: 1,
+    /// UntilOwnersNextTurn}` (`ichor_wellspring_draw_effect`/
+    /// `clockwork_percussionist_dies_effect` in `trigger.rs`, both
+    /// definition-owned by construction). With the controller's library
+    /// holding exactly one card: resolving the draw *first* consumes that
+    /// card normally (no loss), so the impulse-exile that follows finds an
+    /// empty library and is a documented no-op (`ImpulseDraw`'s own "library
+    /// ran dry partway through -- not a draw, no loss condition"); resolving
+    /// the impulse-exile *first* consumes the lone card instead, so the draw
+    /// that follows attempts to draw from an empty library and 704.5c's
+    /// `drew_from_empty` SBA sets `has_lost = true`. Both orders leave the
+    /// library empty either way, but disagree on `has_lost` -- exactly the
+    /// kind of divergence `canonical_snapshot` (which captures `has_lost`)
+    /// must catch and a library-size-only comparison would miss. (The two
+    /// permutations' snapshots also differ in whether the lone card ends up
+    /// in hand or exile -- a real, secondary divergence alongside the
+    /// intended `has_lost` one, not a confound with it.)
     #[test]
     fn a_synthetic_order_dependent_pair_is_correctly_flagged_noncommutative() {
-        let mut state = GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1);
-        let src = dummy_object(&mut state, PlayerId::P0, "Guttersnipe");
+        let mountain = card_def::card_id_by_name("Mountain").unwrap();
+        let mut state = GameState::new_from_libraries(
+            &[mountain],
+            &[],
+            |c| CARD_DEFS[c as usize].name.to_string(),
+            1,
+        );
+        let ichor_wellspring = dummy_object(&mut state, PlayerId::P0, "Ichor Wellspring");
+        let clockwork_percussionist =
+            dummy_object(&mut state, PlayerId::P0, "Clockwork Percussionist");
         state.step = mtg_kernel::state::Step::Main1;
         state.active_player = PlayerId::P0;
         state.priority_player = PlayerId::P0;
-        assert_eq!(state.players[0].life, 20);
+        assert_eq!(
+            state.players[0].library.len(),
+            1,
+            "exactly one card to draw or exile"
+        );
+
+        let ichor_wellspring_contract =
+            mtg_kernel::state::AbilitySourceContractV4::capture(&state, ichor_wellspring);
+        let clockwork_percussionist_contract =
+            mtg_kernel::state::AbilitySourceContractV4::capture(&state, clockwork_percussionist);
 
         let pending = vec![
             PendingTrigger {
                 controller: PlayerId::P0,
-                source: src,
-                effect: mtg_kernel::effect::EffectOp::LoseLife {
+                source: ichor_wellspring,
+                effect: mtg_kernel::effect::EffectOp::DrawCards {
                     player: mtg_kernel::effect::PlayerRef::Controller,
-                    amount: 20,
+                    count: 1,
                 },
                 is_madness_offer: false,
                 kicked: false,
+                target_spec: mtg_kernel::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(ichor_wellspring_contract),
+                granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             },
             PendingTrigger {
                 controller: PlayerId::P0,
-                source: src,
-                effect: mtg_kernel::effect::EffectOp::GainLife {
-                    player: mtg_kernel::effect::PlayerRef::Controller,
-                    amount: 25,
+                source: clockwork_percussionist,
+                effect: mtg_kernel::effect::EffectOp::ImpulseDraw {
+                    count: 1,
+                    duration: mtg_kernel::effect::ImpulseDuration::UntilOwnersNextTurn,
                 },
                 is_madness_offer: false,
                 kicked: false,
+                target_spec: mtg_kernel::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: Some(clockwork_percussionist_contract),
+                granted_by: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             },
         ];
         state.engine.pending_triggers = pending.clone();
@@ -4395,7 +4492,7 @@ mod tests {
                 assert!(detail.contains("has_lost=true"), "expected one permutation to show the SBA-loss branch, got: {detail}");
                 assert!(detail.contains("has_lost=false"), "expected the other permutation to show the no-loss branch, got: {detail}");
             }
-            other => panic!("expected Noncommutative (this pair is genuinely order-dependent through 704.5a), got a different verdict: {}", matches!(other, CommutativityCheck::Commutative)),
+            other => panic!("expected Noncommutative (this pair is genuinely order-dependent through 704.5c), got a different verdict: {}", matches!(other, CommutativityCheck::Commutative)),
         }
     }
 }

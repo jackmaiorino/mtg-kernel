@@ -31,43 +31,9 @@ EXPECTED_SPECS = (
     ("Faeries", "Faeries", "Deck - Mono-Blue Faeries.dek", "8cb962c4ccee6a5f8c0c70fc27c17d13323d13606c82b9b12b8985aa87e0f344"),
 )
 
-MISSING_SPY_RECORDS = {
-    "Balustrade Spy",
-    "Dread Return",
-    "Elves of Deep Shadow",
-    "Faerie Macabre",
-    "Flaring Pain",
-    "Fume Spitter",
-    "Gatecreeper Vine",
-    "Healer of the Glade",
-    "Land Grant",
-    "Lotleth Giant",
-    "Lotus Petal",
-    "Mesmeric Fiend",
-    "Overgrown Battlement",
-    "Sagu Wildling",
-    "Saruli Caretaker",
-    "Tinder Wall",
-    "Troll of Khazad-dum",
-    "Wall of Roots",
-}
+MISSING_SPY_RECORDS: set[str] = set()
 
-MISSING_SPY_MAIN = {
-    "Balustrade Spy": 4,
-    "Dread Return": 2,
-    "Elves of Deep Shadow": 2,
-    "Gatecreeper Vine": 3,
-    "Land Grant": 4,
-    "Lotleth Giant": 2,
-    "Lotus Petal": 2,
-    "Mesmeric Fiend": 2,
-    "Overgrown Battlement": 4,
-    "Sagu Wildling": 4,
-    "Saruli Caretaker": 4,
-    "Tinder Wall": 2,
-    "Troll of Khazad-dum": 1,
-    "Wall of Roots": 3,
-}
+MISSING_SPY_MAIN: dict[str, int] = {}
 
 
 def load(path: Path):
@@ -253,15 +219,35 @@ class PauperPoolManifestTest(unittest.TestCase):
         ]
         self.assertEqual(
             [(order, spec.deck_id) for order, spec in runtime_specs],
-            [(2, "Rally"), (6, "Burn")],
+            [
+                (1, "Wildfire"),
+                (2, "Rally"),
+                (3, "Affinity"),
+                (4, "Elves"),
+                (5, "Spy"),
+                (6, "Burn"),
+                (7, "Terror"),
+                (8, "CawGates"),
+                (9, "Faeries"),
+            ],
         )
         self.assertEqual(
             [deck["id"] for deck in self.runtime_decks["decks"]],
-            ["Rally", "Burn"],
+            [
+                "Wildfire",
+                "Rally",
+                "Affinity",
+                "Elves",
+                "Spy",
+                "Burn",
+                "Terror",
+                "CawGates",
+                "Faeries",
+            ],
         )
         self.assertEqual(
             [deck["canonical_pool_order"] for deck in self.runtime_decks["decks"]],
-            [2, 6],
+            list(range(1, 10)),
         )
 
         registry_ids = {
@@ -269,10 +255,27 @@ class PauperPoolManifestTest(unittest.TestCase):
             for card_id, card in enumerate(self.registry["cards"])
         }
         expected_hashes = {
+            "Wildfire": "0x552acb5fc9631d3b",
             "Rally": "0x0c9f01c2544412bf",
+            "Affinity": "0xff4bf00deadf8821",
+            "Elves": "0x6a187257d6d37346",
+            "Spy": "0xcd2afdfee3573675",
             "Burn": "0x5fdb7b92986b6fc1",
+            "Terror": "0xfd6f1a4aceaa157b",
+            "CawGates": "0x25c1916a4d20c08e",
+            "Faeries": "0xd7a47ab2fa78dbaa",
         }
-        expected_unique = {"Rally": 14, "Burn": 12}
+        expected_unique = {
+            "Wildfire": 22,
+            "Rally": 14,
+            "Affinity": 22,
+            "Elves": 14,
+            "Spy": 21,
+            "Burn": 12,
+            "Terror": 14,
+            "CawGates": 20,
+            "Faeries": 14,
+        }
         for deck, (canonical_pool_order, spec) in zip(
             self.runtime_decks["decks"], runtime_specs, strict=True
         ):
@@ -469,11 +472,8 @@ class PauperPoolManifestTest(unittest.TestCase):
                 expected_membership.setdefault(name, []).append(Path(deck["source_path"]).name)
         registry_cards = {row["name"]: row for row in self.registry["cards"]}
         non_tokens = {name for name, row in registry_cards.items() if not row.get("is_token", False)}
-        self.assertEqual(non_tokens, pool_names - MISSING_SPY_RECORDS)
-        self.assertEqual(
-            self.registry["unresolved"],
-            sorted(MISSING_SPY_RECORDS, key=lambda name: name.encode("utf-8")),
-        )
+        self.assertEqual(non_tokens, pool_names)
+        self.assertEqual(self.registry["unresolved"], [])
         for name in non_tokens:
             self.assertEqual(registry_cards[name]["decks"], expected_membership[name], name)
         for token_name in (
@@ -481,6 +481,12 @@ class PauperPoolManifestTest(unittest.TestCase):
             "Human Soldier Token",
             "Samurai Token",
             "Bird Illusion Token",
+            "Food Token",
+            "Map Token",
+            "Sacred Cat Embalmed Token",
+            "Treasure Token",
+            "Eldrazi Spawn Token",
+            "Skeleton Token",
         ):
             self.assertTrue(registry_cards[token_name]["is_token"])
             self.assertEqual(registry_cards[token_name]["decks"], [])
@@ -492,13 +498,31 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(
             spy_declared,
             {
+                "Balustrade Spy",
+                "Dread Return",
+                "Faerie Macabre",
+                "Flaring Pain",
                 "Forest",
+                "Elves of Deep Shadow",
+                "Fume Spitter",
+                "Gatecreeper Vine",
                 "Generous Ent",
+                "Healer of the Glade",
                 "Lead the Stampede",
+                "Land Grant",
+                "Lotus Petal",
+                "Lotleth Giant",
                 "Masked Vandal",
+                "Mesmeric Fiend",
+                "Overgrown Battlement",
                 "Quirion Ranger",
+                "Saruli Caretaker",
+                "Sagu Wildling",
                 "Swamp",
+                "Tinder Wall",
+                "Troll of Khazad-dum",
                 "Vitu-Ghazi Inspector",
+                "Wall of Roots",
                 "Winding Way",
             },
         )
@@ -515,8 +539,8 @@ class PauperPoolManifestTest(unittest.TestCase):
         spy_main = roster_from_zone(spy["mainboard"])
         missing_main = {name: spy_main[name] for name in MISSING_SPY_MAIN}
         self.assertEqual(missing_main, MISSING_SPY_MAIN)
-        self.assertEqual(len(missing_main), 14)
-        self.assertEqual(sum(missing_main.values()), 39)
+        self.assertEqual(len(missing_main), 0)
+        self.assertEqual(sum(missing_main.values()), 0)
         for row in missing_rows.values():
             self.assertEqual(row["declared_decks"], [])
             self.assertEqual(row["expected_decks"], ["Deck - Spy Combo.dek"])
@@ -551,22 +575,22 @@ class PauperPoolManifestTest(unittest.TestCase):
             self.support["totals"],
             {
                 "pool_cards": 150,
-                "full_cards": 45,
+                "full_cards": 150,
                 "partial_cards": 0,
-                "no_effect_cards": 105,
-                "token_dependencies": 4,
+                "no_effect_cards": 0,
+                "token_dependencies": 12,
             },
         )
         expected_copy_totals = [
-            {"deck_id": "Wildfire", "full": 7, "partial": 0, "no_effect": 53, "total": 60},
+            {"deck_id": "Wildfire", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Rally", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Affinity", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
-            {"deck_id": "Elves", "full": 17, "partial": 0, "no_effect": 43, "total": 60},
-            {"deck_id": "Spy", "full": 8, "partial": 0, "no_effect": 52, "total": 60},
+            {"deck_id": "Affinity", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
+            {"deck_id": "Elves", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
+            {"deck_id": "Spy", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
             {"deck_id": "Burn", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
-            {"deck_id": "Terror", "full": 54, "partial": 0, "no_effect": 6, "total": 60},
-            {"deck_id": "CawGates", "full": 16, "partial": 0, "no_effect": 44, "total": 60},
-            {"deck_id": "Faeries", "full": 24, "partial": 0, "no_effect": 36, "total": 60},
+            {"deck_id": "Terror", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
+            {"deck_id": "CawGates", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
+            {"deck_id": "Faeries", "full": 60, "partial": 0, "no_effect": 0, "total": 60},
         ]
         self.assertEqual(self.support["deck_mainboard_copy_totals"], expected_copy_totals)
         self.assertEqual(
@@ -599,6 +623,72 @@ class PauperPoolManifestTest(unittest.TestCase):
         }
         self.assertEqual(set(promoted), {"Mental Note", "Thought Scour"})
         for row in promoted.values():
+            self.assertEqual(row["support_status"], "full")
+            self.assertEqual(row["blockers"], [])
+        affinity_promoted = {
+            row["name"]: row
+            for row in self.support["cards"]
+            if row["name"] in {"Myr Enforcer", "Thoughtcast"}
+        }
+        self.assertEqual(set(affinity_promoted), {"Myr Enforcer", "Thoughtcast"})
+        for row in affinity_promoted.values():
+            self.assertEqual(row["support_status"], "full")
+            self.assertEqual(row["blockers"], [])
+        elves_promoted = {
+            row["name"]: row
+            for row in self.support["cards"]
+            if row["name"]
+            in {
+                "Lead the Stampede",
+                "Priest of Titania",
+                "Quirion Ranger",
+                "Timberwatch Elf",
+                "Wellwisher",
+            }
+        }
+        self.assertEqual(
+            set(elves_promoted),
+            {
+                "Lead the Stampede",
+                "Priest of Titania",
+                "Quirion Ranger",
+                "Timberwatch Elf",
+                "Wellwisher",
+            },
+        )
+        for row in elves_promoted.values():
+            self.assertEqual(row["support_status"], "full")
+            self.assertEqual(row["blockers"], [])
+        caw_gates_promoted_names = {
+            "Basilisk Gate",
+            "Citadel Gate",
+            "Heap Gate",
+            "Sacred Cat",
+            "Sea Gate",
+            "Squadron Hawk",
+        }
+        caw_gates_promoted = {
+            row["name"]: row
+            for row in self.support["cards"]
+            if row["name"] in caw_gates_promoted_names
+        }
+        self.assertEqual(set(caw_gates_promoted), caw_gates_promoted_names)
+        for row in caw_gates_promoted.values():
+            self.assertEqual(row["support_status"], "full")
+            self.assertEqual(row["blockers"], [])
+        artifact_control_promoted_names = {
+            "Krark-Clan Shaman",
+            "Makeshift Munitions",
+            "Nihil Spellbomb",
+            "Relic of Progenitus",
+        }
+        artifact_control_promoted = {
+            row["name"]: row
+            for row in self.support["cards"]
+            if row["name"] in artifact_control_promoted_names
+        }
+        self.assertEqual(set(artifact_control_promoted), artifact_control_promoted_names)
+        for row in artifact_control_promoted.values():
             self.assertEqual(row["support_status"], "full")
             self.assertEqual(row["blockers"], [])
         ponder = next(row for row in self.support["cards"] if row["name"] == "Ponder")
@@ -638,6 +728,16 @@ class PauperPoolManifestTest(unittest.TestCase):
         self.assertEqual(cryptic_serpent["sideboard"], [])
         self.assertEqual(cryptic_serpent["support_status"], "full")
         self.assertEqual(cryptic_serpent["blockers"], [])
+        tolarian_terror = next(
+            row for row in self.support["cards"] if row["name"] == "Tolarian Terror"
+        )
+        self.assertEqual(
+            tolarian_terror["mainboard"],
+            [{"deck_id": "Terror", "copies": 4}],
+        )
+        self.assertEqual(tolarian_terror["sideboard"], [])
+        self.assertEqual(tolarian_terror["support_status"], "full")
+        self.assertEqual(tolarian_terror["blockers"], [])
         deem_inferior = next(
             row for row in self.support["cards"] if row["name"] == "Deem Inferior"
         )
@@ -721,7 +821,7 @@ class PauperPoolManifestTest(unittest.TestCase):
             [
                 {
                     "name": "Blood Token",
-                    "required_by": ["Voldaren Epicure"],
+                    "required_by": ["Voldaren Epicure", "Blood Fountain"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],
@@ -752,6 +852,86 @@ class PauperPoolManifestTest(unittest.TestCase):
                 {
                     "name": "Bird Illusion Token",
                     "required_by": ["Murmuring Mystic"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Food Token",
+                    "required_by": ["Generous Ent", "Gingerbread Cabin"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Map Token",
+                    "required_by": ["Fanatical Offering"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Sacred Cat Embalmed Token",
+                    "required_by": ["Sacred Cat"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Treasure Token",
+                    "required_by": ["Heap Gate"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Eldrazi Spawn Token",
+                    "required_by": ["Writhing Chrysalis"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Hero Token",
+                    "required_by": ["Black Mage's Rod"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Clue Token",
+                    "required_by": ["Toxin Analysis"],
+                    "registry_status": "present",
+                    "expected_decks": [],
+                    "declared_decks": [],
+                    "registry_membership_matches": True,
+                    "support_status": "full",
+                    "blockers": [],
+                },
+                {
+                    "name": "Skeleton Token",
+                    "required_by": ["Avenging Hunter"],
                     "registry_status": "present",
                     "expected_decks": [],
                     "declared_decks": [],

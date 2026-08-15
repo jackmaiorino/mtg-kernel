@@ -139,6 +139,19 @@ pub enum NativeTrainingStorePublisherV2ErrorKind {
     StoreBusy,
     RootInvalid,
     InputInvalid,
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220): the supplied run
+    /// classified as `NativeRunCatalogProfileV1::Historical` at decode time.
+    /// Historical-profile records stay decodable and read-only-validatable
+    /// forever, but publication (genesis or a trained segment) rejects them
+    /// here, before any lock or filesystem mutation.
+    HistoricalCatalogProfile,
+    /// Dual-Profile Catalog Successor fix round (panel finding 1, blocker:
+    /// bypass): the supplied run classified `Current` at decode time, but its
+    /// embedded catalog fields do not equal the crate's live build constants
+    /// at this moment. Closes the bypass where a record merely claiming the
+    /// pinned CURRENT literal (rather than being authored by a build whose
+    /// live identity actually equals it right now) could still publish.
+    CurrentCatalogProfileLiveMismatch,
     StageCorruption,
     PublicationFailed,
     ImmutableFinalMismatchCorruption,
@@ -152,6 +165,12 @@ impl NativeTrainingStorePublisherV2ErrorKind {
             Self::UnsupportedPlatform => "native-training-store-v2-unsupported-platform",
             Self::StoreBusy => "native-training-store-busy",
             Self::RootInvalid => "native-training-store-publisher-root-invalid",
+            Self::HistoricalCatalogProfile => {
+                "native-training-store-publisher-historical-catalog-profile"
+            }
+            Self::CurrentCatalogProfileLiveMismatch => {
+                "native-training-store-publisher-current-catalog-profile-live-mismatch"
+            }
             Self::InputInvalid => "native-training-store-publisher-input-invalid",
             Self::StageCorruption => "native-training-store-publisher-stage-corruption",
             Self::PublicationFailed => "native-training-store-publisher-publication-failed",
@@ -478,6 +497,35 @@ fn publish_generation_v2(
     input: &GenerationPublicationInputV2<'_>,
     mut hook: impl FnMut(PublisherBoundaryV2) -> PublisherResult<()>,
 ) -> PublisherResult<NativeTrainingPersistenceReceiptV2> {
+    // Dual-Profile Catalog Successor (collab CLAUDE #220), publisher
+    // boundary: reject a historical-profile run before any other check,
+    // lock, or filesystem mutation. Both `publish_genesis_generation_v2` and
+    // `publish_prepared_segment_v2` funnel through this shared function, so
+    // this one check covers both. Exhaustive match (fix round, panel finding
+    // 3): a future third profile variant fails this match at compile time
+    // rather than silently publishing under it. The CURRENT arm (fix round,
+    // panel finding 1, blocker: bypass) additionally requires the record's
+    // own catalog fields to equal the crate's live build constants at this
+    // moment, not merely the pinned CURRENT literal -- closing the gap where
+    // a record merely claiming that literal, authored by a build whose real
+    // identity has since moved past it, could still publish.
+    use crate::native_training_store_run_v2::{
+        current_profile_matches_live_build_identity_v1, NativeRunCatalogProfileV1,
+    };
+    match run.catalog_profile_v1() {
+        NativeRunCatalogProfileV1::Historical => {
+            return Err(publisher_error_v2(
+                NativeTrainingStorePublisherV2ErrorKind::HistoricalCatalogProfile,
+            ));
+        }
+        NativeRunCatalogProfileV1::Current => {
+            if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
+                return Err(publisher_error_v2(
+                    NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch,
+                ));
+            }
+        }
+    }
     validate_publication_input_v2(run, &parent, input)?;
     let scheduled = scheduled_immutables_v2(input)?;
 
@@ -751,6 +799,12 @@ fn map_store_validation_error_v2(
         }
         NativeTrainingStoreResumeV2ErrorKind::StageCorruption => {
             NativeTrainingStorePublisherV2ErrorKind::StageCorruption
+        }
+        NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile => {
+            NativeTrainingStorePublisherV2ErrorKind::HistoricalCatalogProfile
+        }
+        NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch => {
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
         }
         NativeTrainingStoreResumeV2ErrorKind::RunInvalid
         | NativeTrainingStoreResumeV2ErrorKind::ScheduleInvalid
@@ -1370,7 +1424,10 @@ mod windows_publisher_tests {
         identity_v2, open_no_follow_v2, FILE_SHARE_DELETE_V2, FILE_SHARE_READ_V2,
         FILE_SHARE_WRITE_V2, GENERIC_READ_V2,
     };
-    use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+    use crate::native_training_store_run_v2::{
+        decode_train_run_v2, test_fixture_bytes_historical_v1, test_fixture_bytes_v2,
+        NativeRunCatalogProfileV1,
+    };
     use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
     use std::collections::BTreeMap;
     use std::fs;
@@ -1625,6 +1682,101 @@ mod windows_publisher_tests {
         )
         .unwrap();
         (checkpoint, boundary)
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220), publisher
+    /// boundary: a historical-profile run is rejected with the specific
+    /// `HistoricalCatalogProfile` kind before any lock or filesystem
+    /// mutation -- neither `run.json` nor `latest.json` is ever created.
+    #[test]
+    fn publish_genesis_rejects_a_historical_catalog_profile_run_before_any_mutation() {
+        let store = TestStoreV2::with_skeleton("historical-catalog-profile");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_historical_v1()).unwrap();
+        let executor = fresh_executor_v2(&run);
+        let genesis = genesis_authorities_v2(&run, &executor);
+
+        let result = publish_genesis_v2(&root, &run, &genesis);
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::HistoricalCatalogProfile
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
+    /// Dual-Profile Catalog Successor fix round (panel finding 1, blocker:
+    /// bypass), publisher boundary: a CURRENT-profile run whose embedded
+    /// catalog fields do not equal the crate's live build constants at this
+    /// moment is rejected with the specific `CurrentCatalogProfileLiveMismatch`
+    /// kind before any lock or filesystem mutation. Simulates a future
+    /// catalog move via the run_v2 module's own per-thread test shim (the
+    /// crate's real live constants cannot be changed from a test): the
+    /// record still claims the pinned CURRENT literal (and so still
+    /// classifies `Current`), but the shimmed "live" identity has moved
+    /// past it.
+    #[test]
+    fn publish_genesis_rejects_a_current_catalog_profile_run_whose_live_identity_has_moved() {
+        use crate::native_training_store_run_v2::LiveCatalogBuildIdentityOverrideGuardV1;
+
+        let store = TestStoreV2::with_skeleton("current-catalog-profile-live-mismatch");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        assert_eq!(run.catalog_profile_v1(), NativeRunCatalogProfileV1::Current);
+        let executor = fresh_executor_v2(&run);
+        let genesis = genesis_authorities_v2(&run, &executor);
+
+        let _shim = LiveCatalogBuildIdentityOverrideGuardV1::install(
+            "ffffffffffffffff",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        );
+
+        let result = publish_genesis_v2(&root, &run, &genesis);
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStorePublisherV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run).exists());
+        assert!(!final_path_v2(&root, NativeTrainingStoreFinalNameV2::Latest).exists());
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220) acceptance
+    /// evidence: construct a NEW-catalog CURRENT-profile record (the default
+    /// `test_fixture_bytes_v2()` fixture, which embeds the live nine-deck
+    /// catalog identity), seal it to a temp store through the real genesis
+    /// publisher, decode `run.json` back off disk independent of the
+    /// in-memory record, and fully validate the resulting store -- the whole
+    /// construct/seal/decode/validate cycle, not just a bare decode.
+    #[test]
+    fn current_profile_record_round_trips_through_construct_seal_decode_validate() {
+        use crate::native_training_store_resume_v2::validate_native_training_store_v2;
+
+        let store = TestStoreV2::with_skeleton("current-catalog-profile-round-trip");
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store.path()).unwrap();
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        assert_eq!(run.catalog_profile_v1(), NativeRunCatalogProfileV1::Current);
+
+        let executor = fresh_executor_v2(&run);
+        let genesis = genesis_authorities_v2(&run, &executor);
+        let receipt = publish_genesis_v2(&root, &run, &genesis).unwrap();
+        assert_eq!(receipt.generation_index(), 0);
+
+        let reread_run_bytes =
+            fs::read(final_path_v2(&root, NativeTrainingStoreFinalNameV2::Run)).unwrap();
+        let redecoded = decode_train_run_v2(&reread_run_bytes).unwrap();
+        assert_eq!(redecoded.canonical_bytes(), run.canonical_bytes());
+        assert_eq!(
+            redecoded.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Current
+        );
+
+        // Full read-only store validation, the same mechanism used to verify
+        // the real sealed historical stores, now against a freshly-sealed
+        // CURRENT one.
+        let state = validate_native_training_store_v2(&root, &redecoded).unwrap();
+        assert_eq!(state.latest_generation_index(), 0);
     }
 
     #[test]

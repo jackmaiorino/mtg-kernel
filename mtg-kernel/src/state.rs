@@ -4,22 +4,30 @@
 //! `state_hash` and the determinism test below).
 
 use crate::card_def::TargetSpec;
-use crate::ids::{Arena, ObjectId, PlayerId};
+use crate::ids::{Arena, ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 
 pub const STARTING_LIFE: i32 = 20;
 
+fn i16_is_zero(value: &i16) -> bool {
+    *value == 0
+}
+
+fn bool_is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// Exact diagnostic full-state hash contract written into privileged audit
 /// artifacts. The algorithm is FNV-1a-64 over the compact UTF-8 JSON bytes of
-/// `DiagnosticStateHashEnvelopeV5` below.
+/// `DiagnosticStateHashEnvelopeV8` below.
 ///
 /// Changing the envelope, JSON representation, or digest algorithm requires a
 /// new constant value and an audit-artifact schema bump. Policy artifacts do
 /// not contain this privileged full-state diagnostic.
-pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v5";
-pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 5;
+pub const DIAGNOSTIC_STATE_HASH_ALGORITHM: &str = "fnv1a64-serde-json-game-state-envelope-v8";
+pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Zone {
@@ -94,6 +102,14 @@ pub struct ObjectStateV4 {
     /// this marker; only a zone change or the affected controller's next
     /// untap step consumes it.
     pub skip_next_untap: bool,
+    /// Whether any currently marked damage was dealt by a source with
+    /// deathtouch. This is cleared at cleanup and on every zone change.
+    #[serde(default, skip_serializing_if = "bool_is_false")]
+    pub deathtouch_damage: bool,
+    /// Incarnation-local Lifelink keyword counters. This remains private v4
+    /// state so the frozen public `Counters` shape does not change.
+    #[serde(default, skip_serializing_if = "i16_is_zero")]
+    pub lifelink_keyword_counters: i16,
     /// Sorted by `(player, expires_at_turn)`.
     pub goaded_by: Vec<GoadStateV4>,
     pub attached_to: Option<ObjectLinkV4>,
@@ -111,6 +127,12 @@ pub struct ObjectStateV4 {
     /// (or vice versa) by changing only redundant stack fields. Every
     /// ordinary zone change clears it through `reset_for_zone_change`.
     pub spell_cast_origin: Option<SpellCastOriginV4>,
+    /// Independently owned dynamic choices frozen only after a physical
+    /// spell's costs commit. The stack item carries the same X and chosen
+    /// creature reference; keeping this copy on the source incarnation lets
+    /// restored state reject a unilateral rewrite of either value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
 }
 
 impl ObjectStateV4 {
@@ -121,6 +143,13 @@ impl ObjectStateV4 {
             .iter()
             .map(|subtype| subtype.stable_id())
             .collect();
+        if def.changeling {
+            subtype_ids.extend(
+                crate::card_def::Subtype::CREATURE_TYPES
+                    .iter()
+                    .map(|subtype| subtype.stable_id()),
+            );
+        }
         subtype_ids.sort_unstable();
         subtype_ids.dedup();
         ObjectStateV4 {
@@ -132,13 +161,19 @@ impl ObjectStateV4 {
             entered_battlefield_turn: None,
             ability_uses_this_turn: Vec::new(),
             skip_next_untap: false,
+            deathtouch_damage: false,
+            lifelink_keyword_counters: 0,
             goaded_by: Vec::new(),
             attached_to: None,
             exiled_by: None,
-            ward_generic: 0,
+            ward_generic: match def.ward_cost {
+                Some(crate::card_def::WardCostDef::Generic(amount)) => u16::from(amount),
+                None => 0,
+            },
             minimum_blockers_override: None,
             landwalk_mask: 0,
             spell_cast_origin: None,
+            finalized_cast_binding: None,
         }
     }
 
@@ -244,6 +279,73 @@ pub struct DungeonStateV4 {
     pub room_id: Option<u16>,
     /// Sorted, unique stable dungeon ids.
     pub completed_dungeons: Vec<u16>,
+}
+
+pub const UNDERCITY_DUNGEON_ID_V1: u16 = 1;
+
+/// Stable room identity for the one exact dungeon currently supported by
+/// the Pauper pool. The numeric ids are also stored in `DungeonStateV4`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum UndercityRoomV1 {
+    SecretEntrance,
+    Forge,
+    LostWell,
+    Trap,
+    Arena,
+    Stash,
+    Archives,
+    Catacombs,
+    ThroneOfTheDeadThree,
+}
+
+impl UndercityRoomV1 {
+    pub const fn stable_id(self) -> u16 {
+        match self {
+            UndercityRoomV1::SecretEntrance => 1,
+            UndercityRoomV1::Forge => 2,
+            UndercityRoomV1::LostWell => 3,
+            UndercityRoomV1::Trap => 4,
+            UndercityRoomV1::Arena => 5,
+            UndercityRoomV1::Stash => 6,
+            UndercityRoomV1::Archives => 7,
+            UndercityRoomV1::Catacombs => 8,
+            UndercityRoomV1::ThroneOfTheDeadThree => 9,
+        }
+    }
+
+    pub fn from_stable_id(id: u16) -> Option<Self> {
+        Some(match id {
+            1 => UndercityRoomV1::SecretEntrance,
+            2 => UndercityRoomV1::Forge,
+            3 => UndercityRoomV1::LostWell,
+            4 => UndercityRoomV1::Trap,
+            5 => UndercityRoomV1::Arena,
+            6 => UndercityRoomV1::Stash,
+            7 => UndercityRoomV1::Archives,
+            8 => UndercityRoomV1::Catacombs,
+            9 => UndercityRoomV1::ThroneOfTheDeadThree,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum InitiativeTriggerKindV1 {
+    CombatTransfer,
+    VentureAfterTaking,
+    VentureAtUpkeep,
+    UndercityRoom(UndercityRoomV1),
+}
+
+/// Self-indexed provenance for one global Initiative or Undercity trigger.
+/// The matching committed marker and historical designation source must both
+/// survive snapshot/restore unchanged before this binding can reach a stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct InitiativeTriggerBindingV1 {
+    pub history_index: u32,
+    pub player: PlayerId,
+    pub source: AbilitySourceContractV4,
+    pub kind: InitiativeTriggerKindV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -362,6 +464,7 @@ pub enum SpellCastRouteV4 {
         plotted_turn: u32,
     },
     Madness,
+    GraveyardEscape,
 }
 
 /// Incarnation-local cast provenance stored on the physical source object
@@ -394,9 +497,11 @@ pub struct SpellCopyOriginV4 {
     pub parent_was_copy: bool,
 }
 
-/// Exact source identity owned by a spell stack item. Abilities and triggers
-/// carry `None`; every spell, including a transient cast placeholder and a
-/// virtual copy, carries `Some` captured after its source entered the stack.
+/// Exact source identity owned by a spell stack item. A triggered ability
+/// created by that spell while it remains on the stack carries the same
+/// contract as producer provenance; other abilities carry `None`. Every
+/// spell, including a transient cast placeholder and a virtual copy, carries
+/// `Some` captured after its source entered the stack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StackSourceContractV4 {
     pub source: ObjectId,
@@ -408,6 +513,10 @@ pub struct StackSourceContractV4 {
     pub spell_copy_origin: Option<SpellCopyOriginV4>,
     pub spell_cast_origin: Option<SpellCastOriginV4>,
     pub cast_method: CastMethodV4,
+    /// Duplicate of the source object's finalized dynamic cast choices.
+    /// Pending placeholders and virtual copies retain `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finalized_cast_binding: Option<FinalizedCastBindingV1>,
 }
 
 impl StackSourceContractV4 {
@@ -427,6 +536,7 @@ impl StackSourceContractV4 {
             spell_copy_origin: object.spell_copy_origin,
             spell_cast_origin: object.v4.spell_cast_origin,
             cast_method,
+            finalized_cast_binding: object.v4.finalized_cast_binding,
         }
     }
 }
@@ -460,6 +570,54 @@ impl MadnessOfferSourceContractV4 {
     }
 }
 
+/// Frozen source identity for a non-Madness triggered or activated ability.
+/// The physical card may legally change zones, or even be cast again, while
+/// the ability remains on the stack. This contract authenticates the
+/// definition, owner, controller, zone, generation, and attachment at
+/// creation without requiring the historical incarnation to remain live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AbilitySourceContractV4 {
+    pub source: ObjectId,
+    pub card_def: u16,
+    pub owner: PlayerId,
+    pub controller: PlayerId,
+    pub zone: Zone,
+    pub zone_change_count: u32,
+    /// Exact host relation at trigger or activation creation. This is LKI,
+    /// not a claim that the source remains attached while the ability waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached_to: Option<ObjectLinkV4>,
+}
+
+impl AbilitySourceContractV4 {
+    pub fn capture(state: &GameState, source: ObjectId) -> AbilitySourceContractV4 {
+        let object = state.objects.get(source);
+        AbilitySourceContractV4 {
+            source,
+            card_def: object.card_def,
+            owner: object.owner,
+            controller: object.controller,
+            zone: object.zone,
+            zone_change_count: object.zone_change_count,
+            attached_to: object.v4.attached_to,
+        }
+    }
+}
+
+/// One card exiled by an exact historical source incarnation and still
+/// eligible for that incarnation's linked leave-the-battlefield return.
+/// The source may move while its leave trigger waits, and the exiled arena
+/// id may later represent a different incarnation, so both generations are
+/// frozen independently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LinkedExileRecordV4 {
+    pub source: AbilitySourceContractV4,
+    pub exiled: ObjectId,
+    pub exiled_card_def: u16,
+    pub exiled_owner: PlayerId,
+    pub exiled_zone_change_count: u32,
+}
+
 /// Historical identity of one object used to pay a cost. It belongs to the
 /// stack incarnation and must not follow the arena object through later zone
 /// changes.
@@ -477,6 +635,24 @@ pub struct PaidCostRefV4 {
     /// visible to both seats; hidden destinations retain only observers who
     /// actually knew that exact incarnation.
     pub visible_to_mask: u8,
+    /// Last-known effective power for a cost that explicitly binds a chosen
+    /// creature. Battlefield bindings are refreshed immediately before that
+    /// exact incarnation leaves; hand-card bindings retain printed power.
+    /// Other costs leave this absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power_lki: Option<i32>,
+}
+
+/// Dynamic cast choices whose exact values must remain independently bound
+/// to a physical spell's source incarnation. The optional creature reference
+/// is used by additional costs that choose a controlled creature or reveal a
+/// creature card from hand; its power is refreshed as LKI immediately before
+/// that exact battlefield incarnation leaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FinalizedCastBindingV1 {
+    pub x_value: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen_creature_cost: Option<PaidCostRefV4>,
 }
 
 /// Historical contract for one announced stack target. Unlike the live
@@ -545,8 +721,15 @@ pub fn stack_target_contract_is_structurally_valid(
     let shape_is_valid = matches!(
         (spec, target_index, contract),
         (
-            TargetSpec::AnyPlayer | TargetSpec::AnyTarget | TargetSpec::PlayerThenTheirCreature,
+            TargetSpec::AnyPlayer
+                | TargetSpec::AnyTarget
+                | TargetSpec::PlayerThenTheirCreature
+                | TargetSpec::TargetOpponent,
             0,
+            StackTargetContractV4::Player(_),
+        ) | (
+            TargetSpec::UpToTwoPlayers,
+            0 | 1,
             StackTargetContractV4::Player(_),
         ) | (
             TargetSpec::PlayerThenTheirCreature,
@@ -561,17 +744,60 @@ pub fn stack_target_contract_is_structurally_valid(
                 | TargetSpec::BluePermanent
                 | TargetSpec::RedPermanent
                 | TargetSpec::NonlandPermanent
-                | TargetSpec::Creature,
+                | TargetSpec::Creature
+                | TargetSpec::CreatureOtherThanSource
+                | TargetSpec::NonlegendaryCreature
+                | TargetSpec::ArtifactPermanent
+                | TargetSpec::EnchantmentPermanent
+                | TargetSpec::ControlledCreature
+                | TargetSpec::OpponentControlledCreature
+                | TargetSpec::UpToOneTappedCreature
+                | TargetSpec::NoncreatureArtifactPermanent
+                | TargetSpec::Land
+                | TargetSpec::OpponentArtifactOrEnchantmentPermanent,
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Battlefield,
                 ..
             },
         ) | (
+            TargetSpec::UpToTwoCreatures | TargetSpec::ExactlyTwoArtifactPermanents,
+            0 | 1,
+            StackTargetContractV4::Object {
+                zone: Zone::Battlefield,
+                ..
+            },
+        ) | (
+            TargetSpec::CreatureOrLandCardInGraveyard | TargetSpec::CreatureCardInOwnGraveyard,
+            0,
+            StackTargetContractV4::Object {
+                zone: Zone::Graveyard,
+                ..
+            },
+        ) | (
+            TargetSpec::UpToTwoCreatureCardsInOwnGraveyard,
+            0 | 1,
+            StackTargetContractV4::Object {
+                zone: Zone::Graveyard,
+                ..
+            },
+        ) | (
+            TargetSpec::UpToTwoCardsInGraveyards,
+            0 | 1,
+            StackTargetContractV4::Object {
+                zone: Zone::Graveyard,
+                ..
+            },
+        ) | (
             TargetSpec::AnySpellOnStack
                 | TargetSpec::InstantSpellOnStack
                 | TargetSpec::BlueSpellOnStack
-                | TargetSpec::RedSpellOnStack,
+                | TargetSpec::RedSpellOnStack
+                | TargetSpec::ArtifactOrEnchantmentSpellOnStack
+                | TargetSpec::SorcerySpellOnStack
+                | TargetSpec::NoncreatureSpellOnStack
+                | TargetSpec::ArtifactSpellOnStack
+                | TargetSpec::SpellManaValueAtMostControlledSubtypes { .. },
             0,
             StackTargetContractV4::Object {
                 zone: Zone::Stack,
@@ -614,13 +840,19 @@ pub fn stack_target_contract_is_structurally_valid(
 /// carry an explicit method (ordinary casts are `Some(Normal)`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct StackStateV4 {
+    /// Private deterministic identity of this exact stack incarnation.
+    /// Public stack and policy schemas deliberately continue to use their
+    /// frozen positional representation.
+    #[serde(default)]
+    pub stack_item_id: StackItemId,
     pub cast_method: Option<CastMethodV4>,
     pub face_index: u8,
     pub x_value: u16,
     pub paid_cost_refs: Vec<PaidCostRefV4>,
-    /// Exact source incarnation for a spell stack item. This is internal
-    /// full-state provenance and intentionally does not alter public stack,
-    /// observation, action, or policy schemas.
+    /// Exact source incarnation for a spell stack item, also copied onto a
+    /// triggered ability produced by that spell before it leaves the stack.
+    /// This is internal full-state provenance and intentionally does not
+    /// alter public stack, observation, action, or policy schemas.
     #[serde(default)]
     pub source_contract: Option<StackSourceContractV4>,
     /// Exact exiled source incarnation for a Madness-offer triggered ability.
@@ -642,6 +874,27 @@ pub struct StackStateV4 {
     /// resolution; public stack/action schemas remain unchanged.
     #[serde(default)]
     pub activated_ability_index: Option<u8>,
+    /// Exact hidden-zone source incarnation revealed for an activated
+    /// ability. Ninjutsu freezes this link while the ability is on the
+    /// stack; if that incarnation leaves the hand, resolution has no effect.
+    /// Other abilities retain `None`.
+    #[serde(default)]
+    pub hidden_ability_source: Option<ObjectLinkV4>,
+    /// Historical source incarnation for a definition-owned triggered or
+    /// activated ability. Unlike a spell source, it need not remain live in
+    /// its captured zone while the ability waits or resolves.
+    #[serde(default)]
+    pub ability_source_contract: Option<AbilitySourceContractV4>,
+    /// Exact Equipment incarnation that granted a triggered ability to this
+    /// stack item's source creature. Only attachment-granted triggers use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_by: Option<AbilitySourceContractV4>,
+    /// Optional additional cost actually paid for this exact cast or the
+    /// triggered ability produced by it. Internal cast provenance only;
+    /// existing public stack schemas continue to expose the associated
+    /// physical payments through `paid_cost_refs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optional_additional_cost_paid: Option<crate::card_def::OptionalAdditionalCostDef>,
 }
 
 impl StackStateV4 {
@@ -1013,6 +1266,7 @@ impl PaidCostRefV4 {
             zone: object.zone,
             zone_change_count: object.zone_change_count,
             visible_to_mask,
+            power_lki: None,
         }
     }
 
@@ -1246,6 +1500,17 @@ impl GameState {
                 .is_some_and(|link| link.object == object)
             {
                 candidate.v4.attached_to = None;
+                let definition = &crate::card_def::CARD_DEFS[candidate.card_def as usize];
+                if definition.bestow.is_some() {
+                    let mut subtype_ids = definition
+                        .subtypes
+                        .iter()
+                        .map(|subtype| subtype.stable_id())
+                        .collect::<Vec<_>>();
+                    subtype_ids.sort_unstable();
+                    subtype_ids.dedup();
+                    candidate.v4.effective_subtype_ids = subtype_ids;
+                }
             }
             if candidate
                 .v4
@@ -1259,6 +1524,96 @@ impl GameState {
         moving.attachments.clear();
         moving.v4.attached_to = None;
         moving.v4.exiled_by = None;
+    }
+
+    /// Checks the exact two-way attachment graph. Restored state must never
+    /// accept a dangling, stale, duplicate, or asymmetric relation.
+    pub fn validate_attachment_relations(&self) -> Result<(), ObjectId> {
+        for (id, object) in self.objects.iter() {
+            if object.zone != Zone::Battlefield
+                && (object.v4.attached_to.is_some() || !object.attachments.is_empty())
+            {
+                return Err(id);
+            }
+            if let Some(link) = object.v4.attached_to {
+                let Some(host) = self.objects.try_get(link.object) else {
+                    return Err(id);
+                };
+                if object.zone != Zone::Battlefield
+                    || host.zone != Zone::Battlefield
+                    || host.zone_change_count != link.zone_change_count
+                    || host
+                        .attachments
+                        .iter()
+                        .filter(|&&source| source == id)
+                        .count()
+                        != 1
+                {
+                    return Err(id);
+                }
+            }
+            for (index, &source) in object.attachments.iter().enumerate() {
+                if object.attachments[..index].contains(&source) {
+                    return Err(id);
+                }
+                let Some(attachment) = self.objects.try_get(source) else {
+                    return Err(id);
+                };
+                if object.zone != Zone::Battlefield
+                    || attachment.zone != Zone::Battlefield
+                    || attachment.v4.attached_to
+                        != Some(ObjectLinkV4 {
+                            object: id,
+                            zone_change_count: object.zone_change_count,
+                        })
+                {
+                    return Err(source);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Reattaches one exact source incarnation to one exact host incarnation.
+    /// The caller owns target legality; this helper owns only the generic
+    /// two-way attachment contract.
+    pub(crate) fn attach_object_exact(
+        &mut self,
+        source: ObjectId,
+        source_zone_change_count: u32,
+        target: ObjectId,
+        target_zone_change_count: u32,
+    ) -> Result<(), ObjectId> {
+        self.validate_attachment_relations()?;
+        if source == target {
+            return Err(source);
+        }
+        let Some(source_live) = self.objects.try_get(source) else {
+            return Err(source);
+        };
+        let Some(target_live) = self.objects.try_get(target) else {
+            return Err(target);
+        };
+        if source_live.zone != Zone::Battlefield
+            || source_live.zone_change_count != source_zone_change_count
+            || target_live.zone != Zone::Battlefield
+            || target_live.zone_change_count != target_zone_change_count
+        {
+            return Err(source);
+        }
+        for (_, candidate) in self.objects.iter_mut() {
+            candidate.attachments.retain(|&attached| attached != source);
+        }
+        self.objects.get_mut(source).v4.attached_to = None;
+        self.objects.get_mut(source).v4.attached_to = Some(ObjectLinkV4 {
+            object: target,
+            zone_change_count: target_zone_change_count,
+        });
+        let attachments = &mut self.objects.get_mut(target).attachments;
+        attachments.push(source);
+        attachments.sort_unstable();
+        attachments.dedup();
+        self.validate_attachment_relations()
     }
 
     /// Returns the acting observer's currently valid, position-sorted facts
@@ -1522,9 +1877,9 @@ impl GameState {
         use crate::environment_randomization_v2 as env2;
         let owner = library_shuffle_owner(owner)?;
         let authorization = match &self.randomness {
-            GameRandomnessState::Legacy(rng) => LibraryShuffleAuthorization::Legacy {
-                expected_rng: rng.clone(),
-            },
+            GameRandomnessState::Legacy(rng) => {
+                LibraryShuffleAuthorization::Legacy { expected_rng: *rng }
+            }
             GameRandomnessState::EnvironmentV2(v2) => {
                 let physical_owner = physical_owner_v2_exact(owner)?;
                 let ordinal = v2.next_live_shuffle_ordinal(physical_owner);
@@ -1577,7 +1932,7 @@ impl GameState {
                 if rng != expected_rng {
                     return Err(LibraryShuffleError::TokenStateMismatch);
                 }
-                let mut next_rng = expected_rng.clone();
+                let mut next_rng = *expected_rng;
                 let mut library = self.players[owner.index()].library.clone();
                 for i in (1..library.len()).rev() {
                     let j = (next_rng.next_u64() % (i as u64 + 1)) as usize;
@@ -1774,9 +2129,16 @@ impl GameState {
         self.forget_hand_object(id);
         self.clear_object_relations(id);
         let turn = self.turn;
+        let enters_battlefield_tapped = crate::card_def::CARD_DEFS
+            [self.objects.get(id).card_def as usize]
+            .enters_battlefield_tapped;
         let obj = self.objects.get_mut(id);
         obj.zone = Zone::Battlefield;
+        obj.tapped = enters_battlefield_tapped;
         obj.summoning_sick = true;
+        obj.damage = 0;
+        obj.counters = Counters::default();
+        obj.attachments.clear();
         obj.zone_change_count += 1;
         obj.v4
             .reset_for_zone_change(obj.card_def, Zone::Battlefield, turn);
@@ -1802,8 +2164,8 @@ impl GameState {
     }
 
     /// The exact frozen algorithm identity of `diagnostic_state_hash` for
-    /// this state's randomness representation: the legacy v5 constant on a
-    /// legacy state, the environment-v2 v6 constant on a v2 state.
+    /// this state's randomness representation: the legacy v8 constant on a
+    /// legacy state, the environment-v2 v9 constant on a v2 state.
     pub fn diagnostic_state_hash_algorithm(&self) -> &'static str {
         match &self.randomness {
             GameRandomnessState::Legacy(_) => DIAGNOSTIC_STATE_HASH_ALGORITHM,
@@ -1838,36 +2200,38 @@ impl Hasher for Fnv1a64 {
 }
 
 #[derive(Serialize)]
-struct DiagnosticStateHashEnvelopeV5<'a> {
+struct DiagnosticStateHashEnvelopeV8<'a> {
     schema_version: u32,
     state: &'a GameState,
 }
 
-/// Separately typed v6 identity for environment-v2 states. The v5 constants
-/// and envelope are untouched; legacy states keep byte-identical v5 output.
+/// Separately typed v9 identity for environment-v2 states. Final Pauper-pool
+/// Initiative, Undercity, Bestow, X, and chosen-cost bindings change the full
+/// serialized state for both randomness modes, so legacy advances from v7 to
+/// v8 and environment-v2 advances from v8 to v9.
 pub const DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2: &str =
-    "fnv1a64-serde-json-game-state-envelope-v6";
-pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2: u32 = 6;
+    "fnv1a64-serde-json-game-state-envelope-v9";
+pub const DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2: u32 = 9;
 
 #[derive(Serialize)]
-struct DiagnosticStateHashEnvelopeV6<'a> {
+struct DiagnosticStateHashEnvelopeV9<'a> {
     schema_version: u32,
     state: &'a GameState,
 }
 
 fn diagnostic_state_hash_bytes(state: &GameState) -> Vec<u8> {
     match &state.randomness {
-        GameRandomnessState::Legacy(_) => serde_json::to_vec(&DiagnosticStateHashEnvelopeV5 {
+        GameRandomnessState::Legacy(_) => serde_json::to_vec(&DiagnosticStateHashEnvelopeV8 {
             schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION,
             state,
         })
         .expect("GameState diagnostic hash envelope must serialize"),
         GameRandomnessState::EnvironmentV2(_) => {
-            serde_json::to_vec(&DiagnosticStateHashEnvelopeV6 {
+            serde_json::to_vec(&DiagnosticStateHashEnvelopeV9 {
                 schema_version: DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2,
                 state,
             })
-            .expect("GameState v6 diagnostic hash envelope must serialize")
+            .expect("GameState v9 diagnostic hash envelope must serialize")
         }
     }
 }
@@ -2124,9 +2488,11 @@ mod tests {
         state
     }
 
-    /// Gate 1 of environment-v2 step 2: the sealed legacy bytes. The exact
-    /// pre-change GameState JSON, diagnostic envelope bytes, and frozen hash
-    /// must remain byte-identical through any representation work.
+    /// Gate 1 of environment-v2 step 2: the sealed historical bytes. The
+    /// captured v5 GameState JSON and diagnostic envelope remain immutable,
+    /// while additive state fields may make the current serializer emit a
+    /// successor representation. The historical JSON must still deserialize
+    /// to the same semantic legacy state under defaults.
     #[test]
     fn legacy_randomization_bytes_are_sealed() {
         let artifact_text = crate::environment_randomization_v2::LEGACY_STATE_BYTES_V1;
@@ -2171,34 +2537,37 @@ mod tests {
             artifact["schema"].as_str().expect("schema"),
             "mtg-kernel-legacy-randomization-bytes/v1"
         );
-        let state = legacy_capture_state();
-        let live_state_json =
-            serde_json::to_string(&state).expect("legacy capture state serializes");
+        let historical_state_json = artifact["state_json"].as_str().expect("state_json");
+        let restored: GameState =
+            serde_json::from_str(historical_state_json).expect("historical state remains readable");
         assert_eq!(
-            live_state_json,
-            artifact["state_json"].as_str().expect("state_json"),
-            "legacy GameState JSON bytes changed"
+            restored,
+            legacy_capture_state(),
+            "historical defaults no longer recover the canonical legacy state"
         );
-        let live_envelope =
-            String::from_utf8(diagnostic_state_hash_bytes(&state)).expect("envelope is ascii");
+        let historical_envelope =
+            format!(r#"{{"schema_version":5,"state":{historical_state_json}}}"#);
         assert_eq!(
-            live_envelope,
+            historical_envelope,
             artifact["diagnostic_envelope_json"]
                 .as_str()
                 .expect("envelope json"),
-            "legacy diagnostic envelope bytes changed"
+            "sealed v5 diagnostic envelope bytes changed"
         );
         assert_eq!(
-            format!("{:016x}", state.diagnostic_state_hash()),
+            format!("{:016x}", fnv1a64(historical_envelope.as_bytes())),
             artifact["diagnostic_hash_hex"].as_str().expect("hash hex"),
-            "legacy diagnostic hash changed"
+            "sealed v5 diagnostic hash changed"
         );
         assert_eq!(
-            format!("{:016x}", state.state_hash()),
             artifact["state_hash_hex"].as_str().expect("state hash hex"),
-            "legacy hot-path state_hash changed (Hash derivation drift)"
+            "edb76411c96ff4ee",
+            "sealed historical hot-path hash changed"
         );
-        assert_eq!(state.diagnostic_state_hash(), 0x8650_30b6_0d41_3489);
+        assert_eq!(
+            artifact["diagnostic_hash_hex"].as_str().expect("hash hex"),
+            "865030b60d413489"
+        );
     }
 
     fn v2_capture_state(root: u64) -> GameState {
@@ -2763,7 +3132,7 @@ mod tests {
             .expect("legacy one-shot succeeds");
         // Historical algorithm replayed by hand on the twin state.
         {
-            let mut rng = manual.legacy_rng().expect("legacy").clone();
+            let mut rng = *manual.legacy_rng().expect("legacy");
             let library = &mut manual.players[PlayerId::P0.index()].library;
             for i in (1..library.len()).rev() {
                 let j = (rng.next_u64() % (i as u64 + 1)) as usize;
@@ -2847,14 +3216,14 @@ mod tests {
     fn v2_diagnostic_envelope_and_hash_sensitivity() {
         let base = v2_capture_state(11);
         let bytes = diagnostic_state_hash_bytes(&base);
-        assert!(bytes.starts_with(b"{\"schema_version\":6,\"state\":{"));
+        assert!(bytes.starts_with(b"{\"schema_version\":9,\"state\":{"));
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ALGORITHM_ENVIRONMENT_V2,
-            "fnv1a64-serde-json-game-state-envelope-v6"
+            "fnv1a64-serde-json-game-state-envelope-v9"
         );
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION_ENVIRONMENT_V2,
-            6
+            9
         );
         let text = String::from_utf8(bytes).expect("ascii envelope");
         assert!(text.contains("\"environment_randomization_v2\":"));
@@ -2904,13 +3273,13 @@ mod tests {
     fn diagnostic_state_hash_algorithm_dispatches_per_representation() {
         assert_eq!(
             legacy_capture_state().diagnostic_state_hash_algorithm(),
-            "fnv1a64-serde-json-game-state-envelope-v5",
-            "legacy states report the frozen v5 algorithm"
+            "fnv1a64-serde-json-game-state-envelope-v8",
+            "legacy states report the v8 algorithm"
         );
         assert_eq!(
             v2_capture_state(3).diagnostic_state_hash_algorithm(),
-            "fnv1a64-serde-json-game-state-envelope-v6",
-            "environment-v2 states report the v6 algorithm"
+            "fnv1a64-serde-json-game-state-envelope-v9",
+            "environment-v2 states report the v9 algorithm"
         );
     }
 
@@ -2923,13 +3292,13 @@ mod tests {
 
         assert_eq!(
             DIAGNOSTIC_STATE_HASH_ALGORITHM,
-            "fnv1a64-serde-json-game-state-envelope-v5"
+            "fnv1a64-serde-json-game-state-envelope-v8"
         );
-        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 5);
+        assert_eq!(DIAGNOSTIC_STATE_HASH_ENVELOPE_SCHEMA_VERSION, 8);
         assert!(
-            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":5,\"state\":{")
+            diagnostic_state_hash_bytes(&state).starts_with(b"{\"schema_version\":8,\"state\":{")
         );
-        assert_eq!(state.diagnostic_state_hash(), 0x8650_30b6_0d41_3489);
+        assert_eq!(state.diagnostic_state_hash(), 0xa921_902d_e1a8_d8ce);
     }
 
     /// Draws to different players don't interact, so interleaving order
@@ -2993,6 +3362,7 @@ mod tests {
             target_spec: crate::card_def::TargetSpec::None,
             targets_chosen: Vec::new(),
             target_contracts: Vec::new(),
+            target_selection_finished: false,
             is_flashback: false,
             cast_mode: Some(crate::engine::CastMode::Normal),
             additional_cost_discarded: Some(Vec::new()),
@@ -3000,6 +3370,12 @@ mod tests {
             origin_zone: Zone::Hand,
             sacrifice_chosen: Vec::new(),
             kicked: Some(false),
+            optional_additional_cost_paid: Some(false),
+            optional_additional_cost_chosen: Vec::new(),
+            optional_additional_cost_selection_finished: false,
+            x_value: Some(0),
+            chosen_creature_cost_zone: None,
+            chosen_creature_cost: None,
         });
         let ordinary_contract = state.diagnostic_state_hash();
         state

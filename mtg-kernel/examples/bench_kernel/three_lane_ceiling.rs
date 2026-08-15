@@ -453,7 +453,11 @@ fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
             + activatable_abilities.len()
             + plot_actions.len()
             + 1),
-        Decision::ChooseTargets { legal_targets, .. } => Ok(legal_targets.len()),
+        Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } => Ok(legal_targets.len() + usize::from(*can_finish)),
         Decision::ChooseCostTargets { candidates, .. } => Ok(candidates.len()),
         Decision::ChooseCastMode { options, .. } => Ok(options.len()),
         Decision::ChooseKicker { .. }
@@ -461,7 +465,7 @@ fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
         | Decision::ChooseSpellCopyPayment { .. }
         | Decision::ChooseSpellCopyRetarget { .. }
         | Decision::ChooseMadnessCast { .. } => Ok(2),
-        Decision::ChooseSpellMode { mode_count, .. } => Ok(*mode_count as usize),
+        Decision::ChooseSpellMode { legal_modes, .. } => Ok(legal_modes.len()),
         Decision::ChooseEffectOption { option_count, .. } => Ok(*option_count as usize),
         Decision::ChooseEffectTargets {
             legal_targets,
@@ -541,11 +545,19 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
                 return Err("cast-or-pass policy index out of range".into());
             }
         }
-        Decision::ChooseTargets { legal_targets, .. } => Action::ChooseTarget(
-            *legal_targets
-                .get(index)
-                .ok_or_else(|| "target policy index out of range".to_string())?,
-        ),
+        Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } => {
+            if let Some(&target) = legal_targets.get(index) {
+                Action::ChooseTarget(target)
+            } else if *can_finish && index == legal_targets.len() {
+                Action::FinishEffectSelection
+            } else {
+                return Err("target policy index out of range".to_string());
+            }
+        }
         Decision::ChooseCostTargets { candidates, .. } => Action::ChooseCostTarget(
             *candidates
                 .get(index)
@@ -557,9 +569,11 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
                 .ok_or_else(|| "cast-mode policy index out of range".to_string())?,
         ),
         Decision::ChooseKicker { .. } => Action::ChooseKicker(index == 1),
-        Decision::ChooseSpellMode { mode_count, .. } if index < *mode_count as usize => {
-            Action::ChooseSpellMode(index as u8)
-        }
+        Decision::ChooseSpellMode { legal_modes, .. } => Action::ChooseSpellMode(
+            *legal_modes
+                .get(index)
+                .ok_or_else(|| "spell-mode policy index out of range".to_string())?,
+        ),
         Decision::ChooseEffectOption { option_count, .. } if index < *option_count as usize => {
             Action::ChooseEffectOption(index as u16)
         }
@@ -601,7 +615,6 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
         | Decision::DeclareBlockers { .. }
         | Decision::GameOver { .. }
         | Decision::Halted { .. }
-        | Decision::ChooseSpellMode { .. }
         | Decision::ChooseEffectOption { .. }
         | Decision::Discard { .. } => return Err("noncombat policy index out of range".into()),
     };

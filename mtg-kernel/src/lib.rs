@@ -2,8 +2,8 @@
 
 //! Experimental, deterministic, resumable game core for a fixed Pauper pool.
 //!
-//! Scope: exactly the pinned nine-deck Pauper pool (150 unique roster names;
-//! 132 currently registered deck cards plus required tokens). The
+//! Scope: exactly the pinned nine-deck Pauper pool (150 unique roster names,
+//! all fully supported, plus 12 required token definitions). The
 //! Java XMage engine remains the reference implementation and claim surface.
 //! This kernel is intended to reduce rules-engine cost in training and search
 //! workloads; an end-to-end training speedup over XMage has not yet been
@@ -37,6 +37,8 @@ pub mod async_flat_scored_rollout_v1;
 pub mod async_flat_scored_rollout_v2;
 pub mod async_rollout;
 pub mod async_rollout_v2;
+pub mod bo3_match;
+pub mod bo3_session;
 pub mod bounded_staleness_async_harness_v1;
 pub mod bounded_staleness_async_production_v1;
 pub mod bounded_staleness_async_v1;
@@ -73,11 +75,22 @@ pub(crate) mod native_flat_cpu_reference_v1;
 // deliberately not a production or performance backend.
 #[allow(dead_code)]
 pub(crate) mod native_policy_value_net_v1;
+// Shared cfg(test) helper: gates tests that read machine-local sealed
+// evidence (real, already-published run/store artifacts under absolute
+// D:\ / C:\ paths) so they skip cleanly on hosted CI runners instead of
+// panicking with NotFound, while staying strict on the science host.
+#[cfg(test)]
+pub(crate) mod native_test_support_local_evidence_v1;
 // Pure in-memory bridge from already-validated Store authorities and exact
 // train-state bytes to a private, immutable native inference model.
 pub mod native_checkpoint_inference_v1;
 // Strict JSONL bridge from one exact checkpoint inference authority to the
-// production FastActor/FlatScoredFamilyV2 decision path.
+// production FastActor/FlatScoredFamilyV2 decision path. Carries a large
+// amount of scaffolding (CP7/XMage teacher-outcome record shapes, bounded
+// value search, depth8 search) left in place by the fable/shadow-scorer-
+// on-main-v1 port for future reactivation rather than deleted; allowed
+// at module scope instead of item-by-item.
+#[allow(dead_code)]
 pub mod native_checkpoint_shadow_stdio_v1;
 // Trimmed port (fable/shadow-scorer-on-main-v1): only the
 // NativeStructuredHistoryEntryV1 record and its supporting constants, which
@@ -239,6 +252,7 @@ pub(crate) mod private_physical_trajectory_v2;
 pub mod rl;
 pub mod rl_session;
 pub mod runtime_decks;
+pub mod sideboard;
 pub mod snapshot;
 pub mod state;
 /// Frozen committed-source-tree capture for science workload preflight and

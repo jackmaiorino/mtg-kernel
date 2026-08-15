@@ -4126,8 +4126,38 @@ mod tests {
     fn sync_path_reproduces_mains_golden_store_hash() {
         use sha2::Digest;
 
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): the merge-epoch baseline here means pristine
+        // pre-PR-98 main (commit e930890), before the two accepted
+        // 603.10-family observation fixes and the nine-deck catalog landing
+        // that PR-98 carries. Pre/post-merge bit-comparability ends at the
+        // merge epoch by design, so this test's literal premise (bit-identical
+        // to pre-epoch main) is superseded, not violated: the byte LENGTH
+        // below is unchanged (still verifies no structural/additive-field
+        // perturbation, this test's other stated purpose), and only the
+        // digest -- which is sensitive to the observation content the
+        // epoch deliberately changed -- moved. Values are this test's own
+        // live-computed digests, read directly from a failing run (never
+        // hand-typed).
+        //
+        // This digest carries the same per-target libm last-bit sensitivity
+        // as the trained-group witness above (`prepare_update_v2` runs a
+        // real training step here too, not just structural assembly):
+        // pre-epoch main produced
+        // "73e1af55771e8b8876fba629a21dafb0f8d657e04ab3f790465db60e6ddb8ec8"
+        // and that value is still exactly correct on this branch's other
+        // reviewed target (x86_64-pc-windows-msvc, confirmed green in CI);
+        // only the x86_64-unknown-linux-gnu value moved at the merge epoch,
+        // so this constant is now per-target the same way
+        // `recorded_burn_pair_numerical_witness_v1` (native_trainer_v1.rs)
+        // already is. The linux-gnu delta below is the accepted epoch
+        // re-baseline, replay-verified (40/40, zero divergence).
+        #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
         const MAIN_GOLDEN_SHA256_V1: &str =
-            "d0413353fbb7298c47646adfc56d6d43a22e83cb59f874731973177e4ad00f61";
+            "befacadb1ed7cc774587779c087bcd6c429d83fc500ca1744d01b685e1300ddc";
+        #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64")))]
+        const MAIN_GOLDEN_SHA256_V1: &str =
+            "73e1af55771e8b8876fba629a21dafb0f8d657e04ab3f790465db60e6ddb8ec8";
         const MAIN_GOLDEN_LEN_V1: usize = 78_190;
 
         let run_bytes = test_fixture_bytes_v2();
@@ -4160,8 +4190,9 @@ mod tests {
         assert_eq!(
             lower_hex_raw32_v1(digest),
             MAIN_GOLDEN_SHA256_V1,
-            "the synchronous path's Store hash must match origin/main exactly: this branch's \
-             additive fields must not perturb a single byte of ordinary synchronous output"
+            "the synchronous path's Store hash must match the merge-epoch baseline exactly: \
+             this branch's additive fields must not perturb a single byte of ordinary \
+             synchronous output"
         );
     }
 
@@ -4574,22 +4605,42 @@ mod tests {
         // pre-C2 baseline checkout on this exact target.
         #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
         {
+            // Re-based at the merge epoch under the owner-accepted ruling
+            // (collab CLAUDE #236/#241), values read from the hosted
+            // linux-gnu CI runs 31855835633 and 31863359780, witnessed by
+            // the 40/40 replay gate. Compared as one tuple so any future
+            // drift reports every pinned quantity in a single failing run.
             let canonical_sha256: [u8; 32] = Sha256::digest(group.canonical_bytes()).into();
-            assert_eq!(
+            let observed = (
                 lower_hex_raw32_v1(canonical_sha256),
-                "0644682ac8697833c7498449c6f170019df70f2c9fbfba2bb73c283b7cc93dd3",
-                "the legacy update group canonical bytes drifted from the pre-C2 baseline"
+                lower_hex_raw32_v1(group.update_evidence_sha256()),
+                group.canonical_bytes().len(),
+            );
+            let pinned = (
+                "befacadb1ed7cc774587779c087bcd6c429d83fc500ca1744d01b685e1300ddc".to_owned(),
+                "48ea5707a925e904e876747abddebbacfee4fad8f0dcf8b345da017eabd0be63".to_owned(),
+                78_190usize,
             );
             assert_eq!(
-                lower_hex_raw32_v1(group.update_evidence_sha256()),
-                "f3f2e325d2afebd3792ecbfd72c4e50cfb1f455d849918fa34a61db255cbbe37",
-                "the legacy update evidence digest drifted from the pre-C2 baseline"
+                observed, pinned,
+                "the legacy update group linux-gnu pins drifted from the merge-epoch baseline"
             );
-            assert_eq!(group.canonical_bytes().len(), 78_190);
         }
         // The episode projection carries counts, seeds, deck bindings, and
         // trajectory digests but no float bits, so this pre-C2 pin is
         // platform-independent.
+        //
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): deck bindings and trajectory digests are
+        // exactly the fields the two accepted 603.10-family observation
+        // fixes and the nine-deck catalog landing move; the pre-C2 store-
+        // format baseline itself is otherwise undisturbed. Value is this
+        // test's own live-computed digest, read directly from a failing
+        // run (never hand-typed). The Linux-gnu-only whole-group byte pin
+        // above (lines gated by #[cfg(target_os = "linux", ...)]) is the
+        // same class of literal but could not be verified or re-baselined
+        // from this Windows host; it needs the identical treatment on a
+        // Linux target before this test is fully current there.
         let value: Value = serde_json::from_slice(group.canonical_bytes()).unwrap();
         let episodes_cj =
             to_canonical_json_bytes_v1(&value["evidence"]["episodes"], episode_null_policy_v1())
@@ -4597,7 +4648,7 @@ mod tests {
         let episodes_sha256: [u8; 32] = Sha256::digest(&episodes_cj).into();
         assert_eq!(
             lower_hex_raw32_v1(episodes_sha256),
-            "a250bc19d5ce9a756e89c1e40abaaf59b532eead9ad8fd748c60b8b4221f70b3",
+            "2002effe9f1cc7a88d896dffeacb157cab00201a9c401ca9530c1b3338cc1372",
             "the legacy episode projection drifted from the pre-C2 baseline"
         );
     }
@@ -4664,8 +4715,7 @@ mod tests {
         };
         let facts = executor.intrinsic_checkpoint_facts_v2().unwrap();
         let mut candidate = executor.begin_segment_candidate_v2().unwrap();
-        let transition = candidate.prepare_transition_v2(facts, true).unwrap();
-        transition
+        candidate.prepare_transition_v2(facts, true).unwrap()
     }
 
     /// Live C2 Store diagonal: all eight homogeneous run/transition/receipt

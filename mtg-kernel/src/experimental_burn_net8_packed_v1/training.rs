@@ -1626,6 +1626,7 @@ pub(crate) struct DenseGroupLossPlanV1 {
     max_actions: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_dense_group_loss_plan_v1(
     host: &HostPackingWorkspace,
     selected_action_indices: &[usize],
@@ -3881,8 +3882,10 @@ mod tests {
         let anchor_rows: [&[f32]; 3] =
             [&singleton_parent, &two_action_parent, &three_action_parent];
 
-        let mut host = HostPackingWorkspace::default();
-        host.action_offsets = vec![0, 1, 3, 6];
+        let host = HostPackingWorkspace {
+            action_offsets: vec![0, 1, 3, 6],
+            ..Default::default()
+        };
         let plan = build_dense_group_loss_plan_v1(
             &host,
             &[0, 0, 0],

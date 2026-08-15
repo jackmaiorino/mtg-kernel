@@ -84,6 +84,66 @@ const AUTHORITY_SOURCE_BYTES_V1: [&[u8]; 4] = [
     include_bytes!("../../python/mtg_kernel_rl/common_model_snapshot_v1.py"),
 ];
 
+// Feature-Encoder Successor (collab CLAUDE #221/#239): `AUTHORITY_SOURCE_BYTES_V1`
+// above is a LIVE `include_bytes!` read of the four source files, so
+// `expected_authority_sources()` (which hashes it) permanently tracks the
+// CURRENT source identity -- it moved forward with the historical
+// stack-source encoder fix exactly as `KERNEL_CARDDB_HASH` does for the
+// catalog identity. The CP7 scorer-of-record manifest
+// (`data/common_model_snapshot_v1/manifest.json`) is engine-parity-pinned on
+// its own frozen copy and stays out of scope for the rewrite (CODEX #235):
+// it keeps the pre-fix features.py byte identity forever and must keep
+// loading. The four literals below are that manifest's own recorded
+// `authority.sources[].sha256`/`source_bundle_sha256` values, independently
+// typed (not derived from `AUTHORITY_SOURCE_BYTES_V1` or from each other):
+// model.py/determinism.py/common_model_snapshot_v1.py are byte-identical
+// between the frozen manifest and this branch's live files (verified
+// directly), so the manifest's own recorded bundle hash IS the historical
+// bundle hash; no git-archaeology reconstruction of an unrecoverable file
+// was needed. See `authority_source_binding_is_known_v1` for the
+// whole-tuple, hybrid-rejecting classifier built from these.
+const FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1: [&str; 4] = [
+    "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59",
+    "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+    "45bd3ad1efb8b3ecb697961655fa51ce8e23efd2b11b3ecee8f7ef9bd29c4f35",
+    "8b6b20e0ca0118fced0eeb80794050663c23cfac0fb80608d899cd9c3e59484d",
+];
+const FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1: &str =
+    "78f0a0409b91df169ab895d4328ba525564cf62135e8fb0be9f0f3ece9e77e87";
+
+/// The frozen HISTORICAL authority-source tuple, built fresh each call from
+/// [`FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1`] (never from live file
+/// bytes -- the pre-fix features.py bytes are not on disk on this branch).
+fn historical_authority_sources_v1() -> Vec<AuthoritySourceV1> {
+    AUTHORITY_SOURCE_PATHS_V1
+        .iter()
+        .zip(FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1)
+        .map(|(path, sha256)| AuthoritySourceV1 {
+            path: (*path).to_owned(),
+            sha256: sha256.to_owned(),
+        })
+        .collect()
+}
+
+/// The one closed authority-source-binding classifier (Feature-Encoder
+/// Successor), mirroring `classify_catalog_profile_v1`'s shape exactly:
+/// exactly two complete tuples are admissible (the frozen HISTORICAL
+/// `sources`/`source_bundle_sha256` pair, or the live CURRENT pair computed
+/// fresh via `expected_authority_sources()`); every hybrid -- a `sources`
+/// list from one profile paired with a `source_bundle_sha256` from the
+/// other -- is rejected.
+fn authority_source_binding_is_known_v1(
+    sources: &[AuthoritySourceV1],
+    bundle_sha256: &str,
+) -> bool {
+    let historical_sources = historical_authority_sources_v1();
+    let (current_sources, current_bundle) = expected_authority_sources();
+    let historical = sources == historical_sources.as_slice()
+        && bundle_sha256 == FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1;
+    let current = sources == current_sources.as_slice() && bundle_sha256 == current_bundle;
+    historical || current
+}
+
 #[derive(Clone, Copy)]
 struct ExpectedParameterV1 {
     name: &'static str,
@@ -1137,10 +1197,13 @@ fn validate_snapshot_bytes(
             "authority runtime binding mismatch",
         ));
     }
-    let (expected_sources, expected_bundle) = expected_authority_sources();
-    if manifest.authority.sources != expected_sources
-        || manifest.authority.source_bundle_sha256 != expected_bundle
-    {
+    // Feature-Encoder Successor (collab CLAUDE #221/#239): accepts either the
+    // frozen HISTORICAL or live CURRENT authority-source binding as a whole;
+    // see `authority_source_binding_is_known_v1`.
+    if !authority_source_binding_is_known_v1(
+        &manifest.authority.sources,
+        &manifest.authority.source_bundle_sha256,
+    ) {
         return Err(CommonModelSnapshotErrorV1::contract(
             "authority source binding mismatch",
         ));
@@ -1532,6 +1595,49 @@ const WIDE_AUTHORITY_SOURCE_BYTES_V1: [&[u8]; 4] = [
     include_bytes!("../../python/mtg_kernel_rl/determinism.py"),
     include_bytes!("../../python/mtg_kernel_rl/wide_model_snapshot_v1.py"),
 ];
+
+// Feature-Encoder Successor (collab CLAUDE #221/#239): the wide-snapshot
+// sibling of the historical/current authority-source widen above. The wide
+// manifest (`data/wide_model_snapshot_w128/manifest.json`) is the Stage-3
+// capacity-experiment diagnostic snapshot, also frozen and out of scope for
+// the rewrite; its own recorded `authority.sources[].sha256`/
+// `source_bundle_sha256` are the four literals below (model.py/
+// determinism.py/wide_model_snapshot_v1.py verified byte-identical between
+// that manifest and this branch's live files; only features.py's recorded
+// hash differs, matching the historical pin).
+const WIDE_FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1: [&str; 4] = [
+    "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59",
+    "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+    "45bd3ad1efb8b3ecb697961655fa51ce8e23efd2b11b3ecee8f7ef9bd29c4f35",
+    "9f7520edcaae80fdd6478f0cf7f2fb8035a56efb7ce2860e36b2ad3b511afb5d",
+];
+const WIDE_FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1: &str =
+    "85446eae753b1055d3dedeb56b7080a49327eeee52e492b74f42a0cfde52cb8b";
+
+fn wide_historical_authority_sources_v1() -> Vec<AuthoritySourceV1> {
+    WIDE_AUTHORITY_SOURCE_PATHS_V1
+        .iter()
+        .zip(WIDE_FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1)
+        .map(|(path, sha256)| AuthoritySourceV1 {
+            path: (*path).to_owned(),
+            sha256: sha256.to_owned(),
+        })
+        .collect()
+}
+
+/// Wide-snapshot sibling of `authority_source_binding_is_known_v1`; same
+/// whole-tuple, hybrid-rejecting shape.
+fn wide_authority_source_binding_is_known_v1(
+    sources: &[AuthoritySourceV1],
+    bundle_sha256: &str,
+) -> bool {
+    let historical_sources = wide_historical_authority_sources_v1();
+    let (current_sources, current_bundle) = expected_wide_authority_sources();
+    let historical = sources == historical_sources.as_slice()
+        && bundle_sha256 == WIDE_FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1;
+    let current = sources == current_sources.as_slice() && bundle_sha256 == current_bundle;
+    historical || current
+}
 
 const WIDE_EXPECTED_PARAMETER_LAYOUT_V1: [ExpectedParameterV1; WIDE_PARAMETER_TENSOR_COUNT_V1] = [
     ExpectedParameterV1 {
@@ -2010,10 +2116,13 @@ fn validate_wide_snapshot_bytes(
             "wide authority runtime binding mismatch",
         ));
     }
-    let (expected_sources, expected_bundle) = expected_wide_authority_sources();
-    if manifest.authority.sources != expected_sources
-        || manifest.authority.source_bundle_sha256 != expected_bundle
-    {
+    // Feature-Encoder Successor (collab CLAUDE #221/#239): accepts either the
+    // frozen HISTORICAL or live CURRENT authority-source binding as a whole;
+    // see `wide_authority_source_binding_is_known_v1`.
+    if !wide_authority_source_binding_is_known_v1(
+        &manifest.authority.sources,
+        &manifest.authority.source_bundle_sha256,
+    ) {
         return Err(CommonModelSnapshotErrorV1::contract(
             "wide authority source binding mismatch",
         ));
@@ -2393,6 +2502,54 @@ mod wide_tests {
         let _ = error;
     }
 
+    /// Wide-snapshot sibling of
+    /// `authority_source_historical_literals_are_not_silently_overwritten_in_place`.
+    #[test]
+    fn wide_authority_source_historical_literals_are_not_silently_overwritten_in_place() {
+        assert_eq!(
+            WIDE_FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1,
+            [
+                "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59",
+                "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+                "45bd3ad1efb8b3ecb697961655fa51ce8e23efd2b11b3ecee8f7ef9bd29c4f35",
+                "9f7520edcaae80fdd6478f0cf7f2fb8035a56efb7ce2860e36b2ad3b511afb5d",
+            ],
+            "WIDE_FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1 was overwritten in place; add a \
+             new frozen profile instead of moving this one"
+        );
+        assert_eq!(
+            WIDE_FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1,
+            "85446eae753b1055d3dedeb56b7080a49327eeee52e492b74f42a0cfde52cb8b",
+            "WIDE_FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1 was overwritten in place; \
+             add a new frozen profile instead of moving this one"
+        );
+    }
+
+    /// Wide-snapshot sibling of
+    /// `authority_source_binding_accepts_both_profiles_and_rejects_hybrids`.
+    #[test]
+    fn wide_authority_source_binding_accepts_both_profiles_and_rejects_hybrids() {
+        let historical_sources = wide_historical_authority_sources_v1();
+        let historical_bundle = WIDE_FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1.to_owned();
+        let (current_sources, current_bundle) = expected_wide_authority_sources();
+        assert!(wide_authority_source_binding_is_known_v1(
+            &historical_sources,
+            &historical_bundle
+        ));
+        assert!(wide_authority_source_binding_is_known_v1(
+            &current_sources,
+            &current_bundle
+        ));
+        assert!(!wide_authority_source_binding_is_known_v1(
+            &current_sources,
+            &historical_bundle
+        ));
+        assert!(!wide_authority_source_binding_is_known_v1(
+            &historical_sources,
+            &current_bundle
+        ));
+    }
+
     #[test]
     fn wide_snapshot_is_rejected_by_the_frozen_loader() {
         let (manifest_path, payload_path) = wide_model_snapshot_paths_v1();
@@ -2497,6 +2654,67 @@ mod tests {
         assert_eq!(state.first_moment_snapshot_v1(), first);
         assert_eq!(state.second_moment_snapshot_v1(), second);
         assert_eq!(state.adam_step_v1(), step);
+    }
+
+    /// Feature-Encoder Successor (collab CLAUDE #221/#239): tripwire for the
+    /// frozen HISTORICAL authority-source literals, same discipline as
+    /// `native_training_store_run_v2`'s `current_pin_is_not_silently_overwritten_in_place`.
+    /// The literals below are typed independently of the constants' own
+    /// definitions, so this cannot pass by self-reference. The CP7
+    /// scorer-of-record manifest this profile exists to keep loading is
+    /// engine-parity-pinned and out of scope for any rewrite; a future
+    /// features.py change must add a fourth authority-source profile
+    /// alongside this one, never overwrite it in place.
+    #[test]
+    fn authority_source_historical_literals_are_not_silently_overwritten_in_place() {
+        assert_eq!(
+            FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1,
+            [
+                "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59",
+                "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+                "45bd3ad1efb8b3ecb697961655fa51ce8e23efd2b11b3ecee8f7ef9bd29c4f35",
+                "8b6b20e0ca0118fced0eeb80794050663c23cfac0fb80608d899cd9c3e59484d",
+            ],
+            "FROZEN_AUTHORITY_SOURCE_HASHES_HISTORICAL_V1 was overwritten in place; add a new \
+             frozen profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1,
+            "78f0a0409b91df169ab895d4328ba525564cf62135e8fb0be9f0f3ece9e77e87",
+            "FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1 was overwritten in place; add a \
+             new frozen profile instead of moving this one"
+        );
+    }
+
+    /// Direct unit coverage of `authority_source_binding_is_known_v1`: both
+    /// the frozen HISTORICAL tuple (the checked-in CP7 manifest's own
+    /// values) and the live CURRENT tuple (computed fresh from
+    /// `AUTHORITY_SOURCE_BYTES_V1`) are accepted; every hybrid -- `sources`
+    /// from one profile paired with `source_bundle_sha256` from the other --
+    /// is rejected. Mutation target: collapsing either `||` arm would fail
+    /// one of the first two assertions; widening past whole-tuple matching
+    /// (independent per-field acceptance) would fail the last two.
+    #[test]
+    fn authority_source_binding_accepts_both_profiles_and_rejects_hybrids() {
+        let historical_sources = historical_authority_sources_v1();
+        let historical_bundle = FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1.to_owned();
+        let (current_sources, current_bundle) = expected_authority_sources();
+        assert!(authority_source_binding_is_known_v1(
+            &historical_sources,
+            &historical_bundle
+        ));
+        assert!(authority_source_binding_is_known_v1(
+            &current_sources,
+            &current_bundle
+        ));
+        assert!(!authority_source_binding_is_known_v1(
+            &current_sources,
+            &historical_bundle
+        ));
+        assert!(!authority_source_binding_is_known_v1(
+            &historical_sources,
+            &current_bundle
+        ));
     }
 
     #[test]

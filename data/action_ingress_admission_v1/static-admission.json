@@ -11,11 +11,11 @@
   },
   "authority": {
     "audit_dependency_path": "python/tools/audit_feature_coverage_collision_v1.py",
-    "audit_dependency_sha256": "c73c0d3ebedc3ba53753991ededeb6dc4e290284b7c714f3042cc11b36556c0c",
+    "audit_dependency_sha256": "3bea5cec426b66081e6382a19b890a54d118bb6844034ece526ab22d61454f18",
     "encoding_contract_fingerprint": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
     "feature_contract_fingerprint": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
     "static_tool_path": "python/tools/audit_action_ingress_static_admission_v1.py",
-    "static_tool_sha256": "3f2d8f5a1960c417953d5365fc092aaf8ebdcea28805e2b31665cae2d8cf519a"
+    "static_tool_sha256": "395e1768c006013624c9aa229130f6e03c8633d2a0b7507c0f0d5c1cbf1e7e81"
   },
   "canonical_equivalences": {
     "expected_groups": [
@@ -3695,7 +3695,7 @@
   "inputs": [
     {
       "path": "python/mtg_kernel_rl/features.py",
-      "sha256": "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb"
+      "sha256": "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c"
     },
     {
       "path": "python/mtg_kernel_rl/model.py",
@@ -3720,7 +3720,7 @@
     "observation coverage is not an admission criterion",
     "no game-strength, generalization, robustness, human-play, or pro-level-play claim"
   ],
-  "payload_sha256": "65f171c88260f2397614d947809b1e54f196d52a6df1c0b7d0faa57bbabf47aa",
+  "payload_sha256": "043e04b9c91809ded019ddfb9ad061d13d5d228d4058e4183c4ff1f00eff804b",
   "schema": "mtg-kernel-action-ingress-static-admission/v1",
   "status": "STATIC-ADMITTED",
   "structured_aliases": {

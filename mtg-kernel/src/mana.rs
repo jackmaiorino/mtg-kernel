@@ -58,6 +58,56 @@ impl ManaColor {
     }
 }
 
+/// Fixed-capacity, non-allocating set of mana colors. Bounded by
+/// `ManaColor::ALL.len()`, which every printed mana ability stays within, so
+/// capacity is never exceeded in practice. Exists so hot paths that must not
+/// touch the heap (such as flat-action validation) can compute the same
+/// small color sets that `CardDef::primary_mana_ability_choices` and
+/// `engine::available_mana_ability_choices` return as an owned `Vec`
+/// elsewhere.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ManaColorSetV1 {
+    colors: [ManaColor; ManaColorSetV1::CAPACITY],
+    len: u8,
+}
+
+impl ManaColorSetV1 {
+    const CAPACITY: usize = ManaColor::ALL.len();
+
+    pub(crate) fn new() -> Self {
+        Self {
+            colors: [ManaColor::W; ManaColorSetV1::CAPACITY],
+            len: 0,
+        }
+    }
+
+    /// Appends `color`. Every real caller stays within `CAPACITY` colors
+    /// (see the type doc); the bounds guard only prevents a panic if that
+    /// invariant is ever violated instead of silently corrupting state.
+    pub(crate) fn push(&mut self, color: ManaColor) {
+        if usize::from(self.len) < ManaColorSetV1::CAPACITY {
+            self.colors[usize::from(self.len)] = color;
+            self.len += 1;
+        }
+    }
+
+    pub(crate) fn as_slice(&self) -> &[ManaColor] {
+        &self.colors[..usize::from(self.len)]
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        usize::from(self.len)
+    }
+
+    pub(crate) fn contains(&self, color: ManaColor) -> bool {
+        self.as_slice().contains(&color)
+    }
+}
+
 /// Deterministic policy for spending already-floating mana on generic
 /// requirements. Magic permits any color, so the choice is strategically
 /// observable whenever multiple colors remain. XMage's `ManaCostImpl`
@@ -139,6 +189,35 @@ pub fn can_pay(
     let sources = gather_sources(player, state);
     let pool = state.players[player.index()].mana_pool;
     solve(cost, x_value, pool, &sources)
+        .filter(|plan| plan.life_paid <= state.players[player.index()].life)
+}
+
+/// Owned-pip counterpart to `can_pay` for serialized resolution-time costs.
+/// Card definitions keep `Cost` pips static, while a suspended effect owns
+/// its color vector and therefore borrows it only for this solver call.
+pub fn can_pay_owned(
+    pips: &[Pip],
+    generic: u8,
+    player: PlayerId,
+    state: &GameState,
+) -> Option<PaymentPlan> {
+    let sources = gather_sources(player, state);
+    let pool = state.players[player.index()].mana_pool;
+    let mut plan = PaymentPlan::default();
+    let mut pool_remaining = pool;
+    let mut used = vec![false; sources.len()];
+    if !solve_pips(pips, 0, &sources, &mut used, &mut pool_remaining, &mut plan)
+        || !pay_generic(
+            u32::from(generic),
+            &sources,
+            &mut used,
+            &mut pool_remaining,
+            &mut plan,
+        )
+    {
+        return None;
+    }
+    (plan.life_paid <= state.players[player.index()].life).then_some(plan)
 }
 
 /// Like `can_pay`, but checks/solves 2+ costs *together* against the same
@@ -157,7 +236,7 @@ pub fn can_pay_combined(
     let pool = state.players[player.index()].mana_pool;
     let combined_pips: Vec<Pip> = costs.iter().flat_map(|c| c.pips.iter().copied()).collect();
     let generic: u32 = costs.iter().map(|c| c.generic as u32).sum();
-    let extra_x: u32 = costs.iter().map(|c| c.x_count as u32).sum();
+    let x_count: u32 = costs.iter().map(|c| c.x_count as u32).sum();
 
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
@@ -173,7 +252,7 @@ pub fn can_pay_combined(
         return None;
     }
     if !pay_generic(
-        generic + extra_x + x_value as u32,
+        generic + x_count * u32::from(x_value),
         &sources,
         &mut used,
         &mut pool_remaining,
@@ -181,7 +260,7 @@ pub fn can_pay_combined(
     ) {
         return None;
     }
-    Some(plan)
+    (plan.life_paid <= state.players[player.index()].life).then_some(plan)
 }
 
 pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
@@ -192,28 +271,57 @@ pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
             continue;
         }
         let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
-        // `CardDef::produces_mana` (from `cards_v1.json`) describes every
-        // color a card's rules text can ever add to the pool, including a
-        // one-time triggered/ETB effect (Burning-Tree Emissary's "When this
-        // enters, add {R}{G}") -- it is *not* a promise that the permanent
-        // itself has a repeatable, tappable mana ability. Only
-        // `CardDef::mana_ability` being `Some` (Mountain, Great Furnace)
-        // means "tap this for mana" is actually legal; gathering by
-        // `produces_mana` alone let the solver silently tap (and mark
-        // summoning-sickness-irrelevant, haste-irrelevant) a *creature* as
-        // if it were a land. Root-caused adding Rally's Burning-Tree
-        // Emissary: with this bug, the mana solver could pick it to help
-        // pay a later cost, tapping it and making it illegally unable to
-        // attack afterward even though nothing in its own text lets anyone
-        // tap it for mana more than once, on ETB, automatically.
-        if def.mana_ability_program().is_some() {
+        // `produces_mana` also covers one-shot production such as
+        // Burning-Tree Emissary's ETB trigger. The generated
+        // primary mana-choice contract is the narrower repeatable tap-source
+        // contract, including an incarnation-local chosen color. A creature
+        // source also obeys summoning sickness for the tap symbol in its
+        // activation cost.
+        if def.is_automatic_payment_mana_source()
+            && !(def.has_type(crate::card_def::CardType::Creature) && obj.summoning_sick)
+        {
             sources.push(ManaSource {
                 id,
-                choices: def.produces_mana.to_vec(),
+                choices: def.primary_mana_ability_choices(obj.v4.chosen_color),
             });
         }
     }
     sources
+}
+
+/// Solves a mana cost while reserving permanents for other components of the
+/// same cost. Heap Gate uses this to reserve both itself and the other Gate
+/// that must remain untapped until the complete cost is paid.
+pub fn can_pay_excluding_sources(
+    cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+    excluded: &[ObjectId],
+) -> Option<PaymentPlan> {
+    let sources = gather_sources(player, state)
+        .into_iter()
+        .filter(|source| !excluded.contains(&source.id))
+        .collect::<Vec<_>>();
+    solve(
+        cost,
+        x_value,
+        state.players[player.index()].mana_pool,
+        &sources,
+    )
+    .filter(|plan| plan.life_paid <= state.players[player.index()].life)
+}
+
+/// One-source convenience wrapper for paid mana abilities whose own tap cost
+/// must not also pay their mana component.
+pub fn can_pay_excluding_source(
+    cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+    excluded: ObjectId,
+) -> Option<PaymentPlan> {
+    can_pay_excluding_sources(cost, x_value, player, state, &[excluded])
 }
 
 /// Exact backtracking solve. Colored/hybrid/phyrexian pips are satisfied
@@ -244,7 +352,7 @@ pub fn solve(
         return None;
     }
 
-    let generic_needed = cost.generic as u32 + x_value as u32;
+    let generic_needed = u32::from(cost.generic) + u32::from(cost.x_count) * u32::from(x_value);
     if !pay_generic(
         generic_needed,
         sources,
@@ -494,6 +602,20 @@ mod tests {
             x_count: 1,
         };
         let sources = vec![src(0, &[ManaColor::R]), src(1, &[ManaColor::R])];
+        assert!(solve(&cost, 2, [0; 6], &sources).is_some());
+        assert!(solve(&cost, 3, [0; 6], &sources).is_none());
+    }
+
+    #[test]
+    fn repeated_x_symbols_each_add_the_chosen_value() {
+        let cost = Cost {
+            pips: &[],
+            generic: 1,
+            x_count: 2,
+        };
+        let sources = (0..5)
+            .map(|id| src(id, &[ManaColor::R]))
+            .collect::<Vec<_>>();
         assert!(solve(&cost, 2, [0; 6], &sources).is_some());
         assert!(solve(&cost, 3, [0; 6], &sources).is_none());
     }

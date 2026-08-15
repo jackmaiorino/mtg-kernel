@@ -5,21 +5,21 @@
     "pool_path": "data/pauper_pool_v1.json",
     "pool_raw_sha256": "527c7c2df7a26c6c07efc1a569105ec0a97ec8f1743d9bf4a83c3b37abb56d4e",
     "registry_path": "data/cards_v1.json",
-    "registry_raw_sha256": "16d308da032026442994649291453846e2c857842542795092df12530011fd77"
+    "registry_raw_sha256": "af9d725658d238a6a1b0c99b52c12ff6823bdcaf8147a77556ee2e3b0b67d6bc"
   },
   "totals": {
     "pool_cards": 150,
-    "full_cards": 45,
+    "full_cards": 150,
     "partial_cards": 0,
-    "no_effect_cards": 105,
-    "token_dependencies": 4
+    "no_effect_cards": 0,
+    "token_dependencies": 12
   },
   "deck_mainboard_copy_totals": [
     {
       "deck_id": "Wildfire",
-      "full": 7,
+      "full": 60,
       "partial": 0,
-      "no_effect": 53,
+      "no_effect": 0,
       "total": 60
     },
     {
@@ -31,23 +31,23 @@
     },
     {
       "deck_id": "Affinity",
-      "full": 8,
+      "full": 60,
       "partial": 0,
-      "no_effect": 52,
+      "no_effect": 0,
       "total": 60
     },
     {
       "deck_id": "Elves",
-      "full": 17,
+      "full": 60,
       "partial": 0,
-      "no_effect": 43,
+      "no_effect": 0,
       "total": 60
     },
     {
       "deck_id": "Spy",
-      "full": 8,
+      "full": 60,
       "partial": 0,
-      "no_effect": 52,
+      "no_effect": 0,
       "total": 60
     },
     {
@@ -59,23 +59,23 @@
     },
     {
       "deck_id": "Terror",
-      "full": 54,
+      "full": 60,
       "partial": 0,
-      "no_effect": 6,
+      "no_effect": 0,
       "total": 60
     },
     {
       "deck_id": "CawGates",
-      "full": 16,
+      "full": 60,
       "partial": 0,
-      "no_effect": 44,
+      "no_effect": 0,
       "total": 60
     },
     {
       "deck_id": "Faeries",
-      "full": 24,
+      "full": 60,
       "partial": 0,
-      "no_effect": 36,
+      "no_effect": 0,
       "total": 60
     }
   ],
@@ -83,7 +83,8 @@
     {
       "name": "Blood Token",
       "required_by": [
-        "Voldaren Epicure"
+        "Voldaren Epicure",
+        "Blood Fountain"
       ],
       "registry_status": "present",
       "expected_decks": [],
@@ -127,6 +128,103 @@
       "registry_membership_matches": true,
       "support_status": "full",
       "blockers": []
+    },
+    {
+      "name": "Food Token",
+      "required_by": [
+        "Generous Ent",
+        "Gingerbread Cabin"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Map Token",
+      "required_by": [
+        "Fanatical Offering"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Sacred Cat Embalmed Token",
+      "required_by": [
+        "Sacred Cat"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Treasure Token",
+      "required_by": [
+        "Heap Gate"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Eldrazi Spawn Token",
+      "required_by": [
+        "Writhing Chrysalis"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Hero Token",
+      "required_by": [
+        "Black Mage's Rod"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Clue Token",
+      "required_by": [
+        "Toxin Analysis"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
+    },
+    {
+      "name": "Skeleton Token",
+      "required_by": [
+        "Avenging Hunter"
+      ],
+      "registry_status": "present",
+      "expected_decks": [],
+      "declared_decks": [],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     }
   ],
   "cards": [
@@ -153,10 +251,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Avenging Hunter",
@@ -175,10 +271,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Azorius Guildgate",
@@ -197,10 +291,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Balustrade Spy",
@@ -211,17 +303,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Basilisk Gate",
@@ -240,10 +331,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Bind the Monster",
@@ -262,10 +351,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Black Mage's Rod",
@@ -284,10 +371,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Blood Fountain",
@@ -312,10 +397,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Blue Elemental Blast",
@@ -404,10 +487,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Burning-Tree Emissary",
@@ -446,10 +527,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Cast into the Fire",
@@ -468,10 +547,8 @@
         "Deck - Mono Red Rally.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Chain Lightning",
@@ -510,10 +587,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Cleansing Wildfire",
@@ -532,10 +607,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Clockwork Percussionist",
@@ -606,10 +679,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Cryptic Serpent",
@@ -717,17 +788,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Drossforge Bridge",
@@ -752,10 +822,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Duress",
@@ -774,10 +842,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Dust to Dust",
@@ -796,10 +862,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Elves of Deep Shadow",
@@ -810,17 +874,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Elvish Mystic",
@@ -839,10 +902,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "End the Festivities",
@@ -892,10 +953,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Eviscerator's Insight",
@@ -914,10 +973,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Experimental Synthesizer",
@@ -956,10 +1013,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Faerie Macabre",
@@ -970,17 +1025,16 @@
           "copies": 2
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Faerie Miscreant",
@@ -999,10 +1053,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Faerie Seer",
@@ -1021,10 +1073,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Faithless Looting",
@@ -1069,10 +1119,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Fiery Temper",
@@ -1123,17 +1171,16 @@
           "copies": 1
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Force Spike",
@@ -1152,10 +1199,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Forest",
@@ -1192,17 +1237,16 @@
           "copies": 2
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Fyndhorn Elves",
@@ -1221,10 +1265,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Galvanic Blast",
@@ -1261,17 +1303,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Generous Ent",
@@ -1296,10 +1337,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Gingerbread Cabin",
@@ -1318,10 +1357,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Goblin Bushwhacker",
@@ -1380,10 +1417,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Grab the Prize",
@@ -1448,10 +1483,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Gut Shot",
@@ -1470,10 +1503,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Guttersnipe",
@@ -1512,10 +1543,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Healer of the Glade",
@@ -1526,17 +1555,16 @@
           "copies": 4
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Heap Gate",
@@ -1555,10 +1583,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Highway Robbery",
@@ -1597,10 +1623,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Hunter's Blowgun",
@@ -1619,10 +1643,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Hydroblast",
@@ -1685,10 +1707,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Idyllic Beachfront",
@@ -1707,10 +1727,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Island",
@@ -1761,10 +1779,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Krark-Clan Shaman",
@@ -1794,10 +1810,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Land Grant",
@@ -1808,17 +1822,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lava Dart",
@@ -1863,10 +1876,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lembas",
@@ -1885,10 +1896,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lightning Bolt",
@@ -1933,10 +1942,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lorien Revealed",
@@ -1973,17 +1980,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Lotus Petal",
@@ -1994,17 +2000,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Makeshift Munitions",
@@ -2029,10 +2034,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Masked Meower",
@@ -2082,10 +2085,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Mental Note",
@@ -2121,17 +2122,16 @@
           "copies": 2
         }
       ],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Mistvault Bridge",
@@ -2150,10 +2150,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Monstrous Emergence",
@@ -2172,10 +2170,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Moon-Circuit Hacker",
@@ -2194,10 +2190,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Mountain",
@@ -2268,10 +2262,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Nihil Spellbomb",
@@ -2296,10 +2288,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Ninja of the Deep Hours",
@@ -2318,10 +2308,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Nyxborn Hydra",
@@ -2346,10 +2334,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Of One Mind",
@@ -2368,10 +2354,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Outlaw Medic",
@@ -2390,10 +2374,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Overgrown Battlement",
@@ -2404,17 +2386,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Piracy Charm",
@@ -2433,10 +2414,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Ponder",
@@ -2495,10 +2474,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Prismatic Strands",
@@ -2517,10 +2494,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Pulse of Murasa",
@@ -2546,10 +2521,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Pyroblast",
@@ -2612,10 +2585,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Rally at the Hornburg",
@@ -2674,10 +2645,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Red Elemental Blast",
@@ -2734,10 +2703,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Relic of Progenitus",
@@ -2762,10 +2729,8 @@
         "Deck - Mono-Red Burn.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Sacred Cat",
@@ -2784,10 +2749,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Sagu Wildling",
@@ -2798,17 +2761,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Saiba Cryptomancer",
@@ -2827,10 +2789,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Saruli Caretaker",
@@ -2841,17 +2801,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Sea Gate",
@@ -2870,10 +2829,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Searing Blaze",
@@ -2918,10 +2875,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Silverbluff Bridge",
@@ -2940,10 +2895,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Slagwoods Bridge",
@@ -2962,10 +2915,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Sleep of the Dead",
@@ -2984,10 +2935,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Snap",
@@ -3006,10 +2955,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Sneaky Snacker",
@@ -3068,10 +3015,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Spellstutter Sprite",
@@ -3090,10 +3035,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Spinewoods Paladin",
@@ -3112,10 +3055,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Squadron Hawk",
@@ -3134,10 +3075,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Steel Sabotage",
@@ -3156,10 +3095,8 @@
         "Deck - Mono-Blue Faeries.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Swamp",
@@ -3215,10 +3152,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Thought Scour",
@@ -3257,10 +3192,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Thraben Charm",
@@ -3279,10 +3212,8 @@
         "Deck - Caw-Gates.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Timberwatch Elf",
@@ -3301,10 +3232,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Tinder Wall",
@@ -3315,17 +3244,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Tolarian Terror",
@@ -3344,10 +3272,8 @@
         "Deck - Mono-Blue Terror.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Toxin Analysis",
@@ -3372,10 +3298,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Troll of Khazad-dum",
@@ -3386,17 +3310,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Troublemaker Ouphe",
@@ -3415,10 +3338,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Twisted Landscape",
@@ -3437,10 +3358,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Unexpected Fangs",
@@ -3459,10 +3378,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Vault of Whispers",
@@ -3487,10 +3404,8 @@
         "Deck - Grixis Affinity.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Vitu-Ghazi Inspector",
@@ -3515,10 +3430,8 @@
         "Deck - Spy Combo.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Voldaren Epicure",
@@ -3555,17 +3468,16 @@
         }
       ],
       "sideboard": [],
-      "registry_status": "missing",
+      "registry_status": "present",
       "expected_decks": [
         "Deck - Spy Combo.dek"
       ],
-      "declared_decks": [],
-      "registry_membership_matches": false,
-      "support_status": "no_effect",
-      "blockers": [
-        "missing_registry_record",
-        "no_effect_program"
-      ]
+      "declared_decks": [
+        "Deck - Spy Combo.dek"
+      ],
+      "registry_membership_matches": true,
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Weather the Storm",
@@ -3584,10 +3496,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Wellwisher",
@@ -3606,10 +3516,8 @@
         "Deck - Elves.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     },
     {
       "name": "Winding Way",
@@ -3654,10 +3562,8 @@
         "Deck - Jund Wildfire.dek"
       ],
       "registry_membership_matches": true,
-      "support_status": "no_effect",
-      "blockers": [
-        "no_effect_program"
-      ]
+      "support_status": "full",
+      "blockers": []
     }
   ]
 }

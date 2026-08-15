@@ -1706,6 +1706,7 @@ mod tests {
         // Every common live environment fact, mutated one at a time, rejects
         // under both run modes; both indices of each two-element deck array
         // are mutated individually.
+        #[allow(clippy::type_complexity)]
         let common_mutations: Vec<(&str, Box<dyn Fn(&mut TrainRunEnvironmentV2)>)> = vec![
             (
                 "card_db_hash",
@@ -1751,6 +1752,7 @@ mod tests {
         // Every non-Legacy captured declaration rejects under both run
         // modes: the guard's captured declaration must stay the exact live
         // Legacy tuple even when the run itself is V2.
+        #[allow(clippy::type_complexity)]
         let declaration_mutations: Vec<(&str, Box<dyn Fn(&mut TrainRunEnvironmentV2)>)> = vec![
             (
                 "captured protocol_version",

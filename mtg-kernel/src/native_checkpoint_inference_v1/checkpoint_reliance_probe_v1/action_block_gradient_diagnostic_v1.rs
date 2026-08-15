@@ -458,8 +458,12 @@ pub(super) fn derive_half_parameters_v1(
         .values
         .chunks_exact_mut(ACTION_ENCODER_COLUMNS_V1)
     {
-        for column in ACTION_HASH_BEGIN_V1..ACTION_HASH_END_V1 {
-            row[column] = double_round_trip_v1(row[column])?;
+        for value in row
+            .iter_mut()
+            .take(ACTION_HASH_END_V1)
+            .skip(ACTION_HASH_BEGIN_V1)
+        {
+            *value = double_round_trip_v1(*value)?;
         }
     }
     Ok(half)
@@ -477,8 +481,12 @@ pub(super) fn halve_action_encoder_digest_columns_v1(
         .values
         .chunks_exact_mut(ACTION_ENCODER_COLUMNS_V1)
     {
-        for column in ACTION_HASH_BEGIN_V1..ACTION_HASH_END_V1 {
-            row[column] = halve_round_trip_v1(row[column])?;
+        for value in row
+            .iter_mut()
+            .take(ACTION_HASH_END_V1)
+            .skip(ACTION_HASH_BEGIN_V1)
+        {
+            *value = halve_round_trip_v1(*value)?;
         }
     }
     Ok(restored)
@@ -508,8 +516,12 @@ pub(super) fn pure_half_digest_transform_v1(
 ) -> Result<NativeFlatDecisionTensorV2, ScalingValidityErrorV1> {
     let mut half = repaired_full.clone();
     for row in half.action_features.chunks_exact_mut(ACTION_FEATURE_DIM_V1) {
-        for column in ACTION_HASH_BEGIN_V1..ACTION_HASH_END_V1 {
-            row[column] = halve_round_trip_v1(row[column])?;
+        for value in row
+            .iter_mut()
+            .take(ACTION_HASH_END_V1)
+            .skip(ACTION_HASH_BEGIN_V1)
+        {
+            *value = halve_round_trip_v1(*value)?;
         }
     }
     Ok(half)
@@ -1204,6 +1216,7 @@ fn validate_preflight_receipt_v1(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_join_binding_v1(
     observed: FlatDecisionBindingV2,
     retained: FlatDecisionBindingV2,
@@ -2831,11 +2844,7 @@ pub(super) fn frame_tape_v1(
     }
     // Derived, not asserted: every validation stratum needs a real learner
     // physical decision group.
-    if validation
-        .groups_per_stratum_v1()
-        .iter()
-        .any(|count| *count == 0)
-    {
+    if validation.groups_per_stratum_v1().contains(&0) {
         return Err(TapeFramingErrorV1::EmptyStratumGroup);
     }
 
@@ -3612,10 +3621,7 @@ impl ActualTreatmentV1 {
         }
     }
 
-    fn tensor_v1<'a>(
-        self,
-        lineage: &'a RetainedTreatmentLineageV1,
-    ) -> &'a NativeFlatDecisionTensorV2 {
+    fn tensor_v1(self, lineage: &RetainedTreatmentLineageV1) -> &NativeFlatDecisionTensorV2 {
         match self {
             Self::Full => lineage.full_tensor_v1(),
             Self::Half => lineage.half_tensor_v1(),
@@ -5120,7 +5126,7 @@ fn evaluate_held_out_loss_v1(
                 .ok_or(HeldOutEvaluationErrorV1::NonFinite)?;
         }
     }
-    if counts.iter().any(|count| *count == 0) {
+    if counts.contains(&0) {
         return Err(HeldOutEvaluationErrorV1::EmptyStratum);
     }
     let mut means = [0.0f32; 4];
@@ -5182,11 +5188,7 @@ fn frame_formal_unit_tape_v1(
         expected_deck_hashes,
         validation,
     )?;
-    if validation
-        .groups_per_stratum_v1()
-        .iter()
-        .any(|count| *count == 0)
-    {
+    if validation.groups_per_stratum_v1().contains(&0) {
         return Err(TapeFramingErrorV1::EmptyStratumGroup);
     }
     let mut writer = FramedWriterV1::new_v1(FORMAL_UNIT_TAPE_SCHEMA_V1);
@@ -5597,6 +5599,10 @@ struct ValidatedPreflightProvenanceV1 {
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 impl PreflightProvenanceGuardV1 {
+    // This is a runtime guard: it must still panic if this function is ever
+    // called from a debug build, so it stays a plain assert! rather than a
+    // const block, which would instead fail every debug compile outright.
+    #[allow(clippy::assertions_on_constants)]
     fn begin_v1() -> Self {
         assert!(!cfg!(debug_assertions), "live preflight requires --release");
         assert_eq!(
@@ -6131,6 +6137,9 @@ fn persist_preflight_artifacts_v1(bundle: ValidatedPreflightPublicationBundleV1)
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 #[test]
 #[ignore = "authorized seed-949999 Pool3 GPU1 preflight; native Windows/MSVC, dedicated process, and explicit invocation required"]
+// Runtime platform guard for an explicitly-invoked live test: must still
+// panic if run on the wrong platform rather than fail to compile there.
+#[allow(clippy::assertions_on_constants)]
 fn action_block_gradient_preflight_seed949999_gpu1_v1() {
     assert!(
         cfg!(all(
@@ -6797,6 +6806,9 @@ impl FormalStagingPublicationV1 {
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 #[test]
 #[ignore = "authorized single-shot six-unit formal HALF measurement; native Windows/MSVC, dedicated process, and explicit invocation required"]
+// Runtime platform guard for an explicitly-invoked live test: must still
+// panic if run on the wrong platform rather than fail to compile there.
+#[allow(clippy::assertions_on_constants)]
 fn action_block_gradient_formal_six_unit_gpu1_v1() {
     assert!(
         cfg!(all(
@@ -6966,6 +6978,7 @@ fn fixture_owned_inputs_v1(actions: &[FlatScorerActionCoreV2]) -> FlatOwnedScori
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn raw_environment_receipt_v1(
     episode_id: u64,
     deck_ids: &SessionDeckIdsV1,
@@ -7697,7 +7710,7 @@ fn join_rollout_positive_and_fail_closed_wiring_v1() {
     );
 
     let mut duplicate_receipt = join_fixture_v1();
-    duplicate_receipt.observed.receipts[1] = duplicate_receipt.observed.receipts[0].clone();
+    duplicate_receipt.observed.receipts[1] = duplicate_receipt.observed.receipts[0];
     assert_join_error_v1(
         join_rollout_v1(
             &duplicate_receipt.authority,
@@ -7899,9 +7912,12 @@ impl JoinFixtureV1 {
 fn joined_frame_is_preflight_sealed_neutral_and_lineage_complete_v1() {
     let (authority, deck_ids, deck_hashes, tape) = joined_fixture_v1();
     let frame = frame_joined_tape_v1(&authority, &deck_ids, deck_hashes, &tape).unwrap();
+    // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+    // 2026-08-14): joined_fixture_v1 carries live deck_ids/deck_hashes, so
+    // this serializer golden moves with the nine-deck catalog landing.
     assert_eq!(
         frame.sha256_v1(),
-        "be0bcb28622dc79ee0824cdebbbf2f0b65d3da9d6f324e9404c9cd67aec09aac",
+        "d6812f9e689c56911b38426ee17eddf00d400e94ee3ff8aa3ebf8d2310e00970",
         "the complete compact joined-body fixture is a frozen serializer golden"
     );
     assert!(frame
@@ -8151,6 +8167,10 @@ fn every_validation_stratum_is_non_empty_v1() {
 }
 
 #[test]
+// This runtime-style assert deliberately matches its neighboring
+// assert_eq! frozen-bit-pattern checks in this test rather than moving to
+// a const block; accepted.
+#[allow(clippy::assertions_on_constants)]
 fn frozen_scale_and_authority_bits_decode_exactly_v1() {
     assert_eq!(f32::from_bits(HALF_DIGEST_SCALE_BITS_V1), 0.5f32);
     assert_eq!(f32::from_bits(DOUBLE_WEIGHT_SCALE_BITS_V1), 2.0f32);
@@ -8175,8 +8195,8 @@ fn exact_half_and_double_round_trips_hold_on_normal_values_v1() {
         1.0f32,
         -1.0f32,
         0.0f32,
-        33.84172446829393f32,
-        9.348080156950672f32,
+        33.841_724_f32,
+        9.348_08_f32,
         f32::MIN_POSITIVE,
         1.5e-38f32,
         3.4e38f32,
@@ -10267,7 +10287,7 @@ fn derived_deltas_v1(
 fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() {
     let gradients = native_stream_fixture_v1(0.5);
     let before = native_stream_fixture_v1(1.0);
-    let after = native_stream_fixture_v1(1.0009765625);
+    let after = native_stream_fixture_v1(1.000_976_6);
     let deltas = derived_deltas_v1(&before, &after);
     let moments = native_stream_fixture_v1(2.0);
 

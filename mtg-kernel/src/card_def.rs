@@ -4,18 +4,11 @@
 //! validation (duplicate names / empty deck coverage / schema-version
 //! mismatch all fail the build).
 //!
-//! Mono-Red Burn's 21 cards all carry a real `spell_effect`/`mana_ability`
-//! program as of this increment: basic Mountain, the 4 "N damage to any
-//! target" burn spells (Lightning Bolt, Fiery Temper, Fireblast, Lava
-//! Dart), the 4 creatures as vanilla bodies (Guttersnipe, Masked Meower,
-//! Voldaren Epicure, Sneaky Snacker -- keyword abilities/triggers ignored,
-//! they're just a castable body), Faithless Looting, Grab the Prize,
-//! Highway Robbery (+ Plot), Fiery Temper's Madness, Searing Blaze
-//! (landfall + 2 related targets), and the four elemental/hydro/pyro Blasts
-//! (modal, color-checked counter/destroy). Relic of Progenitus is the one
-//! remaining deferred card -- graveyard-card targeting doesn't fit any
-//! existing `TargetSpec` shape and is sideboard-only, so it's lower
-//! priority; see `still_deferred_burn_cards_are_out_of_scope_this_increment`.
+//! Every card in the pinned nine-deck Pauper pool carries a complete engine
+//! program. Burn includes its alternate costs, Madness, Plot, landfall,
+//! modal Blasts, creature abilities, and graveyard interaction. Relic of
+//! Progenitus uses effect-level graveyard selection for its targeted
+//! single-card exile and implements both activated abilities.
 //! Definitions without an explicit registry `engine_capability` remain
 //! `NoEffect`. Supported ordinary permanents and intrinsic basic-land mana
 //! are generated from metadata only after that capability gate, so registry
@@ -23,7 +16,7 @@
 //!
 //! Mono Red Rally's 18 cards (6 shared with Burn: Lightning Bolt, Mountain,
 //! Red Elemental Blast, Relic of Progenitus, Searing Blaze, Voldaren
-//! Epicure) are implemented as of the Rally increment: Burning-Tree
+//! Epicure) are implemented: Burning-Tree
 //! Emissary (ETB mana), Chain Lightning (mandatory damage plus the complete
 //! recursive pay/copy/retarget loop -- see `effect::EffectOp::
 //! OfferAffectedPlayerSpellCopy` and `engine::PendingSpellCopy`), Clockwork
@@ -34,16 +27,14 @@
 //! Blast (Metalcraft), Goblin Bushwhacker (Kicker-gated team pump/haste),
 //! Goblin Tomb Raider (static self-boost), Great Furnace (a second Mountain),
 //! Rally at the Hornburg (tokens + Human haste), and Reckless Impulse
-//! (impulse draw). Cast into the Fire remains deferred (sideboard-only,
-//! modal with a 0-2 variable-count target mode this kernel's `TargetSpec`
-//! shape doesn't support) -- see `local-training/kernel_oracle/rally/
-//! coverage_ledger.md` for the full per-card ledger.
+//! (impulse draw). Cast into the Fire implements both modes, including its
+//! up-to-two artifact exile selection.
 
 use crate::effect::{
-    CreatureFilter, EffectCond, EffectOp, ImpulseDuration, LibraryCardFilter, ObjectRef, PlayerRef,
-    TargetRef,
+    CreatureFilter, CreatureSacrificeFilter, EffectCond, EffectOp, ImpulseDuration,
+    LibraryCardFilter, ObjectRef, PlayerRef, TargetRef,
 };
-use crate::mana::{Cost, ManaColor, Pip};
+use crate::mana::{Cost, ManaColor, ManaColorSetV1, Pip};
 use crate::state::Zone;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -62,6 +53,10 @@ pub enum CardType {
 pub enum Supertype {
     Basic,
     Snow,
+    /// Appended for exact nonlegendary target filtering. No current pool
+    /// permanent is legendary, but the filter must remain correct as the
+    /// registry grows.
+    Legendary,
 }
 
 /// Fail-closed engine readiness for one registry definition. This is
@@ -180,20 +175,177 @@ pub enum Subtype {
     /// Appended for Bird Illusion Token. Existing stable ids are never
     /// renumbered when the closed pool gains another supported subtype.
     Illusion,
+    /// Appended for Saruli Caretaker. Existing stable ids remain unchanged.
+    Dryad,
+    /// Appended for Tinder Wall and Wall of Roots.
+    Plant,
+    /// Appended for Overgrown Battlement, Tinder Wall, and Wall of Roots.
+    Wall,
+    /// Appended for Troll of Khazad-dum. Existing stable ids remain fixed.
+    Troll,
+    /// Appended for Healer of the Glade. Existing stable ids remain fixed.
+    Elemental,
+    /// Appended for Map Token. Existing stable ids remain fixed.
+    Map,
+    /// Appended for the reusable Treasure token created by Heap Gate.
+    Treasure,
+    /// Appended for Lotleth Giant. Existing stable ids remain fixed.
+    Giant,
+    /// Appended for the reusable Eldrazi Spawn token created by Writhing
+    /// Chrysalis. Existing subtype ids remain unchanged.
+    Spawn,
+    /// Appended for Fume Spitter. Existing stable ids remain fixed.
+    Phyrexian,
+    /// Appended for Fume Spitter and Mesmeric Fiend.
+    Horror,
+    /// Appended for Mesmeric Fiend. Existing stable ids remain fixed.
+    Nightmare,
+    /// Appended for the reusable Clue token created by Investigate.
+    /// Existing stable subtype ids remain unchanged.
+    Clue,
+    /// Appended for the 4/1 black Skeleton token created by Undercity's
+    /// Catacombs room. Existing stable ids remain fixed.
+    Skeleton,
 }
 
 impl Subtype {
+    /// Every creature type represented by the checked-in pool, in stable-id
+    /// order. Case-distinct registry spellings remain separate because their
+    /// existing ids and subtype queries are intentionally preserved.
+    pub const CREATURE_TYPES: &'static [Subtype] = &[
+        Subtype::Ape,
+        Subtype::BirdAllCaps,
+        Subtype::Bird,
+        Subtype::Cat,
+        Subtype::Detective,
+        Subtype::Dragon,
+        Subtype::Drone,
+        Subtype::Druid,
+        Subtype::Eldrazi,
+        Subtype::Elf,
+        Subtype::FaerieAllCaps,
+        Subtype::Faerie,
+        Subtype::Goblin,
+        Subtype::HumanAllCaps,
+        Subtype::Hero,
+        Subtype::Human,
+        Subtype::Hydra,
+        Subtype::Knight,
+        Subtype::Monk,
+        Subtype::Moonfolk,
+        Subtype::Monkey,
+        Subtype::Myr,
+        Subtype::NinjaAllCaps,
+        Subtype::Ninja,
+        Subtype::Ouphe,
+        Subtype::Pirate,
+        Subtype::RogueAllCaps,
+        Subtype::Ranger,
+        Subtype::Rat,
+        Subtype::Rogue,
+        Subtype::Serpent,
+        Subtype::Samurai,
+        Subtype::Shaman,
+        Subtype::Shapeshifter,
+        Subtype::Soldier,
+        Subtype::Spider,
+        Subtype::Spirit,
+        Subtype::Toy,
+        Subtype::Treefolk,
+        Subtype::Vampire,
+        Subtype::WizardAllCaps,
+        Subtype::Warrior,
+        Subtype::Wizard,
+        Subtype::Zombie,
+        Subtype::Illusion,
+        Subtype::Dryad,
+        Subtype::Plant,
+        Subtype::Wall,
+        Subtype::Troll,
+        Subtype::Elemental,
+        Subtype::Giant,
+        Subtype::Spawn,
+        Subtype::Phyrexian,
+        Subtype::Horror,
+        Subtype::Nightmare,
+    ];
+
     /// Schema-v4 observation id. Existing discriminants are append-only:
     /// feature encoders may sort and embed these ids without depending on
     /// source spelling or locale-sensitive string ordering.
     pub const fn stable_id(self) -> u16 {
         self as u16
     }
+
+    /// Whether this closed-pool subtype is a creature type. Changeling
+    /// materializes every true entry into an object's effective subtype set;
+    /// card, artifact, enchantment, and land subtypes remain excluded.
+    pub const fn is_creature_type(self) -> bool {
+        matches!(
+            self,
+            Subtype::Ape
+                | Subtype::BirdAllCaps
+                | Subtype::Bird
+                | Subtype::Cat
+                | Subtype::Detective
+                | Subtype::Dragon
+                | Subtype::Drone
+                | Subtype::Druid
+                | Subtype::Eldrazi
+                | Subtype::Elf
+                | Subtype::FaerieAllCaps
+                | Subtype::Faerie
+                | Subtype::Goblin
+                | Subtype::HumanAllCaps
+                | Subtype::Hero
+                | Subtype::Human
+                | Subtype::Hydra
+                | Subtype::Knight
+                | Subtype::Monk
+                | Subtype::Moonfolk
+                | Subtype::Monkey
+                | Subtype::Myr
+                | Subtype::NinjaAllCaps
+                | Subtype::Ninja
+                | Subtype::Ouphe
+                | Subtype::Pirate
+                | Subtype::RogueAllCaps
+                | Subtype::Ranger
+                | Subtype::Rat
+                | Subtype::Rogue
+                | Subtype::Serpent
+                | Subtype::Samurai
+                | Subtype::Shaman
+                | Subtype::Shapeshifter
+                | Subtype::Soldier
+                | Subtype::Spider
+                | Subtype::Spirit
+                | Subtype::Toy
+                | Subtype::Treefolk
+                | Subtype::Vampire
+                | Subtype::WizardAllCaps
+                | Subtype::Warrior
+                | Subtype::Wizard
+                | Subtype::Zombie
+                | Subtype::Illusion
+                | Subtype::Dryad
+                | Subtype::Plant
+                | Subtype::Wall
+                | Subtype::Troll
+                | Subtype::Elemental
+                | Subtype::Giant
+                | Subtype::Spawn
+                | Subtype::Phyrexian
+                | Subtype::Horror
+                | Subtype::Nightmare
+        )
+    }
 }
 
 /// What a spell/ability needs targeted at cast/activation time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TargetSpec {
+    #[default]
     None,
     /// Exactly 1 target: any creature on either battlefield, or either
     /// player.
@@ -243,6 +395,134 @@ pub enum TargetSpec {
     /// every pre-existing target-spec discriminant and serialized snapshot
     /// identity remains stable.
     Creature,
+    /// Exactly 1 target: a creature without the Legendary supertype.
+    /// Appended for Cast Down without changing any earlier target identity.
+    NonlegendaryCreature,
+    /// Exactly 1 target: an artifact or enchantment spell on the stack
+    /// (Annul). Appended so every pre-existing target-spec discriminant and
+    /// serialized snapshot identity remains stable.
+    ArtifactOrEnchantmentSpellOnStack,
+    /// Exactly 1 target: a sorcery spell on the stack (Envelop). Appended
+    /// for the same identity-preservation reason.
+    SorcerySpellOnStack,
+    /// Exactly 1 target: a noncreature spell on the stack (Spell Pierce).
+    /// Type filtering happens at targeting time and is rechecked at
+    /// resolution through the shared stack-target contract.
+    NoncreatureSpellOnStack,
+    /// Exactly 1 target: an artifact spell on the stack (Steel Sabotage's
+    /// first mode).
+    ArtifactSpellOnStack,
+    /// Exactly 1 target: an artifact permanent on either battlefield (Steel
+    /// Sabotage's second mode).
+    ArtifactPermanent,
+    /// Exactly 1 target: a creature or land card in either graveyard.
+    /// Appended for Pulse of Murasa without changing any earlier target
+    /// identity.
+    CreatureOrLandCardInGraveyard,
+    /// Exactly one creature controlled by the activating player. Map
+    /// Token's Explore ability is the first consumer.
+    ControlledCreature,
+    /// Zero, one, or two creature cards in the activating player's own
+    /// graveyard. Blood Fountain may legally announce none.
+    UpToTwoCreatureCardsInOwnGraveyard,
+    /// Zero, one, or two distinct battlefield creatures. Cast into the
+    /// Fire's damage mode is the first consumer.
+    UpToTwoCreatures,
+    /// Exactly two distinct artifact permanents. Dust to Dust requires both
+    /// targets to be announced even though either may later become illegal.
+    ExactlyTwoArtifactPermanents,
+    /// Exactly one enchantment permanent. Thraben Charm's second mode is the
+    /// first consumer.
+    EnchantmentPermanent,
+    /// Zero, one, or two distinct players. The kernel is strictly two-player,
+    /// so this is the complete bounded form of "any number of target players."
+    UpToTwoPlayers,
+    /// Exactly one creature card in the targeting player's own graveyard.
+    /// Appended for Dread Return without changing any earlier target identity.
+    CreatureCardInOwnGraveyard,
+    /// Exactly the targeting player's opponent. Appended for targeted ETB
+    /// abilities such as Lotleth Giant in this strictly two-player kernel.
+    TargetOpponent,
+    /// Exactly one creature controlled by an opponent of the announcing
+    /// player. Humbling Elder is the first consumer.
+    OpponentControlledCreature,
+    /// Exactly one spell whose printed mana value is no greater than the
+    /// number of permanents the announcing player controls with either of
+    /// the named effective subtypes. The two-subtype form preserves the
+    /// registry's case-distinct Faerie spellings without making the rules
+    /// query card-name-specific.
+    SpellManaValueAtMostControlledSubtypes {
+        first: Subtype,
+        second: Option<Subtype>,
+    },
+    /// Zero, one, or two distinct cards in either player's graveyard.
+    /// Faerie Macabre may legally announce no target, and its two targets
+    /// may come from different graveyards.
+    UpToTwoCardsInGraveyards,
+    /// Exactly one battlefield creature other than the targeting spell or
+    /// ability's own source incarnation. Journey to Nowhere is the first
+    /// consumer. The source-relative exclusion is applied by the caller so
+    /// the stable target vocabulary remains card-name-neutral.
+    CreatureOtherThanSource,
+    /// Zero or one tapped creature on either battlefield. Cryogen Relic may
+    /// activate without a target, but any selected target must be tapped.
+    UpToOneTappedCreature,
+    /// Exactly one noncreature artifact permanent. Gorilla Shaman derives X
+    /// from this target's printed mana value.
+    NoncreatureArtifactPermanent,
+    /// Exactly one land permanent on either battlefield. Appended for
+    /// Cleansing Wildfire without changing any earlier target identity.
+    Land,
+    /// Exactly one artifact or enchantment controlled by an opponent of the
+    /// announcing player. Appended for Masked Vandal and Troublemaker Ouphe
+    /// without changing any existing target identity.
+    OpponentArtifactOrEnchantmentPermanent,
+}
+
+impl TargetSpec {
+    /// Stable append-only identity used by tests and semantic tooling. This
+    /// remains explicit now that the grammar includes a parameterized target
+    /// filter and Rust no longer permits a direct enum-to-integer cast.
+    pub const fn stable_id(self) -> u8 {
+        match self {
+            TargetSpec::None => 0,
+            TargetSpec::AnyTarget => 1,
+            TargetSpec::PlayerThenTheirCreature => 2,
+            TargetSpec::AnySpellOnStack => 3,
+            TargetSpec::InstantSpellOnStack => 4,
+            TargetSpec::BlueSpellOnStack => 5,
+            TargetSpec::AnyPermanent => 6,
+            TargetSpec::BluePermanent => 7,
+            TargetSpec::AnyPlayer => 8,
+            TargetSpec::RedSpellOnStack => 9,
+            TargetSpec::RedPermanent => 10,
+            TargetSpec::NonlandPermanent => 11,
+            TargetSpec::Creature => 12,
+            TargetSpec::NonlegendaryCreature => 13,
+            TargetSpec::ArtifactOrEnchantmentSpellOnStack => 14,
+            TargetSpec::SorcerySpellOnStack => 15,
+            TargetSpec::NoncreatureSpellOnStack => 16,
+            TargetSpec::ArtifactSpellOnStack => 17,
+            TargetSpec::ArtifactPermanent => 18,
+            TargetSpec::CreatureOrLandCardInGraveyard => 19,
+            TargetSpec::ControlledCreature => 20,
+            TargetSpec::UpToTwoCreatureCardsInOwnGraveyard => 21,
+            TargetSpec::UpToTwoCreatures => 22,
+            TargetSpec::ExactlyTwoArtifactPermanents => 23,
+            TargetSpec::EnchantmentPermanent => 24,
+            TargetSpec::UpToTwoPlayers => 25,
+            TargetSpec::CreatureCardInOwnGraveyard => 26,
+            TargetSpec::TargetOpponent => 27,
+            TargetSpec::OpponentControlledCreature => 28,
+            TargetSpec::SpellManaValueAtMostControlledSubtypes { .. } => 29,
+            TargetSpec::UpToTwoCardsInGraveyards => 30,
+            TargetSpec::CreatureOtherThanSource => 31,
+            TargetSpec::UpToOneTappedCreature => 32,
+            TargetSpec::NoncreatureArtifactPermanent => 33,
+            TargetSpec::Land => 34,
+            TargetSpec::OpponentArtifactOrEnchantmentPermanent => 35,
+        }
+    }
 }
 
 /// Combat-relevant keyword abilities, as a bitset. Only `Flying`/`Reach`
@@ -271,6 +551,10 @@ impl Keywords {
     pub const HEXPROOF: Keywords = Keywords(1 << 11);
     pub const INDESTRUCTIBLE: Keywords = Keywords(1 << 12);
     pub const PROTECTION_FROM_MONOCOLORED: Keywords = Keywords(1 << 13);
+    pub const ISLANDWALK: Keywords = Keywords(1 << 14);
+    /// The permanent spell may be cast whenever its controller has
+    /// priority, using the same timing permission as an instant.
+    pub const FLASH: Keywords = Keywords(1 << 15);
 
     pub const fn has(self, other: Keywords) -> bool {
         self.0 & other.0 != 0
@@ -303,6 +587,32 @@ impl std::ops::BitOr for Keywords {
     }
 }
 
+/// Typed filter for a chosen permanent paid as an activation cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermanentFilterDef {
+    /// A permanent with both the Land card type and the named effective
+    /// subtype. Control is checked independently from the ownership-oriented
+    /// battlefield vectors.
+    LandWithSubtype(Subtype),
+    /// A permanent with the Creature card type and the named effective
+    /// color. Control and untapped status are checked independently by the
+    /// cost component that consumes this filter.
+    CreatureWithColor(ManaColor),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermanentFilter {
+    /// A controlled permanent whose definition has either the Artifact or
+    /// Creature card type. Artifact creatures and artifact lands match once.
+    ArtifactOrCreature,
+    /// A controlled artifact permanent. Artifact creatures and artifact
+    /// lands match, while permanents without the Artifact type do not.
+    Artifact,
+    /// A controlled permanent with the Creature card type. Appended for
+    /// Dread Return's flashback cost.
+    Creature,
+}
+
 /// One component of a composite cost. Composable (a real cost is `&'static
 /// [CostComponent]`) rather than card-shaped, matching the `EffectOp`
 /// philosophy in `effect.rs`: "sacrifice 2 Mountains" is
@@ -325,12 +635,14 @@ pub enum CostComponent {
     DiscardSelf,
     /// Discard `n` cards from hand, chosen by the payer (`engine::Decision::Discard`).
     DiscardCards(u8),
-    /// Sacrifice `n` controlled lands. This pool's only land is Mountain,
-    /// so "sacrifice a land" and "sacrifice a Mountain" coincide; which
-    /// specific lands are picked is not a real decision (they're
-    /// interchangeable) so it's resolved the same deterministic way the
-    /// mana solver auto-picks tap sources -- see `engine::sacrifice_lands`.
+    /// Sacrifice `n` controlled lands. Exact lands are staged one at a time
+    /// through `engine::Decision::ChooseCostTargets`; the public
+    /// `PendingCast::sacrifice_chosen` compatibility field also carries the
+    /// mutually-exclusive Escape graveyard selection family.
     SacrificeLands(u8),
+    /// Sacrifice `count` controlled permanents matching `filter`, announced
+    /// one at a time through `Decision::ChooseCostTargets`.
+    SacrificeControlled { count: u8, filter: PermanentFilter },
     /// An ordinary mana payment, solved by `mana::solve` same as a spell's
     /// printed cost.
     Mana(Cost),
@@ -338,6 +650,58 @@ pub enum CostComponent {
     /// non-mana component, so the payer must have at least this much life and
     /// may legally pay down to exactly zero.
     PayLife(u8),
+    /// Exile `n` other cards from the payer's own graveyard. The source is
+    /// excluded even before 601.2a moves it to the stack, and the exact cards
+    /// are staged through `engine::Decision::ChooseCostTargets` before any
+    /// mana or zone-change payment commits. Escape is the first consumer.
+    ExileOtherCardsFromOwnGraveyard(u8),
+    /// Return exactly one controlled permanent matching `filter` to its
+    /// owner's hand. The physical object is selected through the generic
+    /// cost-target staging before any payment commits. Appended for Quirion
+    /// Ranger without changing any existing cost recipe identity.
+    ReturnControlledPermanentToOwnersHand(PermanentFilterDef),
+    /// Tap one other untapped permanent the payer controls with the named
+    /// effective subtype. The physical object is chosen during activation
+    /// staging and paid atomically with the remaining components.
+    TapOtherUntappedControlledPermanentWithSubtype(Subtype),
+    /// Tap one untapped permanent the payer controls matching the typed
+    /// filter. Unlike the preceding activation-only form, this component
+    /// may appear in an alternative casting cost such as flashback.
+    TapUntappedControlledPermanent(PermanentFilterDef),
+    /// Reveal the payer's complete hand, but only if it contains no card of
+    /// the named type. The reveal itself is the cost, so it happens during
+    /// payment after the spell has left hand for the stack. Land Grant is
+    /// the first consumer.
+    RevealHandIfNoCardsWithType(CardType),
+    /// Return one controlled unblocked attacking creature to its owner's
+    /// hand. This component also owns ninjutsu's exact post-blockers combat
+    /// timing gate, so hand-zone abilities using it cannot be offered in an
+    /// ordinary priority window.
+    ReturnControlledUnblockedAttackerToOwnersHand,
+    /// As an additional casting cost, choose either one creature the caster
+    /// controls or one creature card in their hand. A hand choice is
+    /// publicly revealed and the exact incarnation is frozen on the spell.
+    ChooseControlledCreatureOrRevealCreatureCardFromHand,
+}
+
+/// Optional additional costs chosen while announcing a spell. The selected
+/// physical cards or permanents are staged separately in `engine::PendingCast`
+/// and paid atomically with the spell's other costs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OptionalAdditionalCostDef {
+    /// Exile any number of cards from the caster's own graveyard whose
+    /// printed mana values total at least this amount.
+    CollectEvidence { minimum_mana_value: u16 },
+    /// Sacrifice one controlled artifact, enchantment, or token.
+    Bargain,
+}
+
+/// Static rules carried by a permanent while it is attached. The host link
+/// itself is incarnation-bound in `ObjectStateV4::attached_to`; this
+/// definition describes what a valid attachment requires and grants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentDef {
+    AuraCreature { prevents_untap: bool },
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -349,10 +713,18 @@ pub struct FlashbackDef {
     pub cost: &'static [CostComponent],
 }
 
+/// The ordered alternative cost for casting a card from its owner's
+/// graveyard via escape (702.138). Unlike flashback, escape does not replace
+/// where the spell goes when it later leaves the stack; its graveyard exile
+/// component is paid while casting and is represented explicitly here.
+pub struct EscapeDef {
+    pub cost: &'static [CostComponent],
+}
+
 /// A non-mana activated ability (605/602 use the stack, unlike a mana
-/// ability). Permanent abilities and hand-zone Cycling/typecycling share the
-/// same no-target, inline-`EffectOp` stack representation (see
-/// `state::StackItem::inline_effect`).
+/// ability). Permanent abilities, hand-zone Cycling/typecycling, and
+/// graveyard abilities such as Embalm share the same no-target,
+/// inline-`EffectOp` stack representation (see `state::StackItem::inline_effect`).
 pub struct ActivatedAbilityDef {
     pub cost: &'static [CostComponent],
     pub target_spec: TargetSpec,
@@ -370,31 +742,140 @@ pub struct ActivatedAbilityDef {
     /// uses. `false` for Masked Meower's and the Blood token's abilities,
     /// which have no such restriction in their Java source.
     pub sorcery_speed_only: bool,
+    /// Additional activation-time target restriction layered on top of
+    /// `target_spec`. This is definition data so combat-relative targets such
+    /// as "a creature this source is blocking" do not become card-name
+    /// branches in the engine. Resolution rechecks this filter together with
+    /// the ordinary target specification and incarnation contract.
+    pub activation_target_filter: ActivationTargetFilter,
+    /// Printed per-turn activation limit, counted on this source incarnation.
+    /// `None` means unrestricted. Appended for Quirion Ranger without
+    /// changing any existing ability selector.
+    pub max_activations_per_turn: Option<u8>,
 }
 
-/// A spell's alternative mode (the four Blast cards' "Choose one --"
-/// destroy mode): its own target shape and its own resolution program,
-/// entirely independent of the card's primary
-/// `CardDef::target_spec`/`CardDef::spell_effect`. `engine::Decision::
-/// ChooseSpellMode` picks between the primary mode (index 0) and this one
-/// (index 1) before targeting begins, for any card with `CardDef::mode2 ==
-/// Some(_)`.
+/// A source-relative restriction that applies while announcing a non-mana
+/// activated ability. Appended as a separate vocabulary so serialized
+/// `TargetSpec` discriminants remain untouched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivationTargetFilter {
+    TargetSpecOnly,
+    CreatureBlockedBySource,
+}
+
+/// Cost paid by one printed mana ability. Special mana costs live here rather
+/// than in `CostComponent` because they resolve without the stack and may need
+/// an object choice in the same atomic action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManaAbilityCostDef {
+    TapSelf,
+    SacrificeSelf,
+    TapSelfAndOtherUntappedControlledCreature,
+    PutMinus0Minus1CounterOnSelf,
+    /// Treasure's printed `{T}, Sacrifice this artifact` cost. Keeping the
+    /// combined cost atomic prevents either half from being approximated.
+    TapAndSacrificeSelf,
+}
+
+/// Amount of the chosen color added by a mana ability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManaAbilityAmountDef {
+    Fixed(u8),
+    ControlledCreaturesWithKeyword(Keywords),
+    /// Evaluate one shared board-dependent value at activation resolution.
+    /// Appended for Priest of Titania without renumbering existing variants.
+    Dynamic(DynamicValueDef),
+}
+
+/// A reusable integer derived from current game state. All consumers sample
+/// this at effect or mana-ability resolution, never at announcement time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum DynamicValueDef {
+    /// Count every battlefield permanent, regardless of controller, whose
+    /// effective subtype set contains the named subtype.
+    BattlefieldPermanentsWithSubtype(Subtype),
+    /// A literal signed value routed through the same exact-incarnation
+    /// duration machinery as board-dependent pumps.
+    Fixed(i32),
+    /// Count cards of the named type in the evaluating controller's
+    /// graveyard. The controller is supplied by the effect or mana-ability
+    /// context at the moment the value is sampled.
+    ControllerGraveyardCardsWithType(CardType),
+}
+
+/// Reusable definition for a single printed mana ability whose cost, amount,
+/// or side effect is richer than the legacy tap-and-add-one substrate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManaAbilityDef {
+    pub cost: ManaAbilityCostDef,
+    pub amount: ManaAbilityAmountDef,
+    pub controller_damage: u8,
+    pub max_activations_per_turn: Option<u8>,
+}
+
+/// An additional printed mana ability beyond a card's legacy primary
+/// tap-for-one choice set. Its color choices must be disjoint from every
+/// other printed mana ability on the same card so the stable
+/// source-plus-color action identifies exactly one ability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdditionalManaAbilityDef {
+    pub colors: &'static [ManaColor],
+    pub mana_cost: Cost,
+    pub ability: ManaAbilityDef,
+}
+
+/// A data-owned conditional entry rule layered on top of the ordinary
+/// `enters_battlefield_tapped` flag. The entering permanent itself is
+/// excluded from the count, matching "other" in the printed condition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntersBattlefieldTappedUnlessDef {
+    pub controller_controls_other_subtype: Subtype,
+    pub minimum_count: u8,
+}
+
+/// One alternative mode of a spell, with its own target shape and resolution
+/// program. `engine::Decision::ChooseSpellMode` selects the printed index
+/// before targeting begins.
 pub struct ModeDef {
     pub target_spec: TargetSpec,
     pub effect: fn() -> EffectOp,
 }
 
+/// The alternative spell characteristics of an Omen card. The physical
+/// card remains one front-face object in every non-stack zone; choosing this
+/// definition while casting changes only the spell's cost, card types,
+/// targeting, resolution program, and successful stack departure.
+pub struct OmenDef {
+    pub cost: Cost,
+    pub types: &'static [CardType],
+    pub target_spec: TargetSpec,
+    pub effect: fn() -> EffectOp,
+}
+
+/// Bestow's alternative spell characteristics. Form zero remains the
+/// ordinary creature spell; this form is an Aura spell with its own X cost
+/// and creature target.
+pub struct BestowDef {
+    pub cost: Cost,
+    pub target_spec: TargetSpec,
+}
+
 /// A deterministic value sampled while deriving a spell's total generic
 /// mana cost. Kept data-driven and card-name-neutral so the same cast-cost
-/// path can serve graveyard reducers (Cryptic Serpent/Tolarian Terror) and
-/// turn counters (Deem Inferior) without teaching the engine individual
-/// card names.
+/// path can serve battlefield reducers (Affinity), graveyard reducers
+/// (Cryptic Serpent/Tolarian Terror), and turn counters (Deem Inferior)
+/// without teaching the engine individual card names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DynamicCountDef {
+    /// Count permanents the caster controls that have any listed card type.
+    ControllerBattlefieldAnyType(&'static [CardType]),
     /// Count cards in the caster's graveyard that have any listed type.
     ControllerGraveyardAnyType(&'static [CardType]),
     /// Count cards the caster has drawn during the current turn.
     ControllerDrawsThisTurn,
+    /// One iff the controller has both a creature with the named subtype
+    /// and a creature without it. Of One Mind uses Human.
+    ControllerHasCreatureWithAndWithoutSubtype(Subtype),
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -405,6 +886,50 @@ pub struct GenericCostReductionDef {
     pub count: DynamicCountDef,
 }
 
+/// Printed Ward payments supported by the reusable opponent-target trigger.
+/// New colored or nonmana costs require their own explicit variant rather
+/// than an approximation through generic mana.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WardCostDef {
+    Generic(u8),
+}
+
+/// Alternate battlefield characteristics for a transforming permanent's
+/// back face. The physical card definition and stable card id remain those
+/// of the front face; live characteristic queries select this immutable
+/// record from `ObjectStateV4::face_index`.
+pub struct TransformFaceDef {
+    pub name: &'static str,
+    pub types: &'static [CardType],
+    pub subtypes: &'static [Subtype],
+    pub colors: &'static [ManaColor],
+    pub power: Option<i16>,
+    pub toughness: Option<i16>,
+    pub keywords: Keywords,
+}
+
+/// Ordered chapter programs for a Saga. Index zero is chapter I. A Saga's
+/// final chapter is therefore `chapter_effects.len()`; the engine uses the
+/// same definition both to create chapter triggers and to apply the final-
+/// chapter state-based action.
+pub struct SagaDef {
+    pub chapter_effects: &'static [fn() -> EffectOp],
+}
+
+/// Reusable static and triggered grants produced by an attached Equipment.
+/// The attachment relation itself is incarnation-bound in `state.rs`; this
+/// definition contains only printed characteristics and granted abilities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EquipmentDef {
+    pub power_delta: i16,
+    pub toughness_delta: i16,
+    pub add_subtype: Option<Subtype>,
+    pub controller_turn_keywords: Keywords,
+    pub other_turn_keywords: Keywords,
+    pub noncreature_spell_damage_to_each_opponent: u8,
+    pub job_select: bool,
+}
+
 pub struct CardDef {
     pub name: &'static str,
     pub capability: CardCapability,
@@ -412,6 +937,12 @@ pub struct CardDef {
     /// A spell-local generic cost reducer evaluated by the shared cast
     /// legality/payment pipeline. `None` for cards without this text.
     pub generic_cost_reduction: Option<GenericCostReductionDef>,
+    /// Static Ward cost materialized when an opposing spell or ability
+    /// finishes targeting this permanent. `None` means no implemented Ward.
+    pub ward_cost: Option<WardCostDef>,
+    /// Printed Equipment behavior shared by attachments, effective
+    /// characteristics, cast triggers, and RL continuous-effect projection.
+    pub equipment: Option<EquipmentDef>,
     pub types: &'static [CardType],
     /// This card's creature/land/artifact subtypes (105.1's subtype line),
     /// e.g. `[Subtype::Human, Subtype::Shaman]` for Burning-Tree Emissary --
@@ -439,7 +970,9 @@ pub struct CardDef {
     /// implemented this increment (present in the table, not castable).
     pub spell_effect: fn() -> Option<EffectOp>,
     /// Program run when the card's mana ability is activated. `None` = no
-    /// mana ability (or not implemented).
+    /// mana ability (or not implemented). This legacy function-pointer form
+    /// represents single-color abilities. `mana_ability_choices` below is
+    /// authoritative for multi-color permanents.
     pub mana_ability: fn() -> Option<EffectOp>,
     /// `Some` iff this card has an alternative cost you may pay instead of
     /// its mana cost (Fireblast). Choosing between them is a real decision
@@ -477,17 +1010,138 @@ pub struct CardDef {
     /// `Some` iff this spell is modal with a second mode (the Blast cards'
     /// destroy mode) -- see `ModeDef`'s doc.
     pub mode2: Option<ModeDef>,
+    /// Optional third printed mode. Piracy Charm is the first consumer.
+    pub mode3: Option<ModeDef>,
     /// A permanent token (`cards_v1.json`'s own `is_token`, e.g. Blood),
     /// never itself a deck card -- read by `trigger::sba_fixed_point` for
     /// 111.8/704.5d ("if a token is in a zone other than the battlefield,
     /// it ceases to exist -- this is a state-based action"). Only `Blood
     /// Token` this increment.
     pub is_token: bool,
+    /// `Some` iff this card can be cast from its owner's graveyard for an
+    /// escape cost. Appended independently from `flashback` because the two
+    /// mechanics have different stack-departure contracts.
+    pub escape: Option<EscapeDef>,
+    /// Exact colors available from this permanent's repeatable tap-for-mana
+    /// abilities. This is deliberately distinct from `produces_mana`, which
+    /// also includes one-shot production such as Burning-Tree Emissary's ETB
+    /// trigger. Appended to preserve prior generated field identities.
+    pub mana_ability_choices: &'static [ManaColor],
+    /// Whether this permanent enters the battlefield tapped. The shared
+    /// zone-change commit path enforces this for every battlefield entry.
+    pub enters_battlefield_tapped: bool,
+    /// A single printed mana ability whose rules are not exactly "tap this:
+    /// add one of the selected color." `None` preserves the legacy automatic
+    /// payment path for basics, artifact lands, bridges, and ordinary mana
+    /// creatures.
+    pub mana_ability_def: Option<ManaAbilityDef>,
+    /// Minimum number of creatures required to block this attacker once it
+    /// is blocked. Zero and one both mean the ordinary one-or-more rule;
+    /// Troll of Khazad-dum is the first value above one (three).
+    pub minimum_blockers: u8,
+    /// Alternative Omen spell characteristics, if any. Appended so all
+    /// pre-existing generated `CardDef` field identities stay fixed.
+    pub omen: Option<OmenDef>,
+    /// Printed mana value from the registry. This remains constant even when
+    /// Affinity or another reducer changes the amount actually paid.
+    pub mana_value: u16,
+    /// True iff the primary printed mana ability can add the color stored in
+    /// `ObjectStateV4::chosen_color` in addition to its fixed choices.
+    pub mana_ability_includes_chosen_color: bool,
+    /// An as-this-enters choice excluding the named color. The engine stages
+    /// the choice before the permanent moves to the battlefield.
+    pub as_enters_choose_color_other_than: Option<ManaColor>,
+    /// Additional printed mana abilities with costs richer than the primary
+    /// legacy tap-for-one shape. Appended so all earlier CardDef fields and
+    /// generated bindings retain their identities.
+    pub additional_mana_abilities: &'static [AdditionalManaAbilityDef],
+    /// Public copiable object name when it differs from the registry's
+    /// unique lookup label. Embalm tokens copy the source card's name while
+    /// retaining a distinct generated definition id.
+    pub object_name: &'static str,
+    /// A conditional replacement for unconditional tapped entry. `None`
+    /// preserves the existing `enters_battlefield_tapped` behavior.
+    pub enters_battlefield_tapped_unless: Option<EntersBattlefieldTappedUnlessDef>,
+    /// A permanent spell that enters attached uses this definition both for
+    /// attachment state-based actions and for continuous host restrictions.
+    /// Appended so every existing generated field identity remains fixed.
+    pub attachment: Option<AttachmentDef>,
+    /// Alternate battlefield face, if this card can transform. Appended so
+    /// all existing generated field identities remain fixed.
+    pub transform_face: Option<TransformFaceDef>,
+    /// Ordered Saga chapter programs. Appended independently from subtype
+    /// metadata because not every card with a printed Saga subtype is
+    /// necessarily executable.
+    pub saga: Option<SagaDef>,
+    /// Optional cast-time additional cost, if any. Appended so all existing
+    /// generated field identities remain fixed.
+    pub optional_additional_cost: Option<OptionalAdditionalCostDef>,
+    /// True iff the object has Changeling and therefore every creature type
+    /// in the closed subtype registry. Appended independently from ordinary
+    /// printed subtypes so Shapeshifter remains visible as printed metadata.
+    pub changeling: bool,
+    /// Alternative Bestow spell characteristics. Appended so every earlier
+    /// generated field identity remains stable.
+    pub bestow: Option<BestowDef>,
 }
 
 impl CardDef {
     pub fn has_type(&self, t: CardType) -> bool {
         self.types.contains(&t)
+    }
+
+    pub fn types_for_face(&self, face_index: u8) -> &'static [CardType] {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.types;
+            }
+        }
+        self.types
+    }
+
+    pub fn subtypes_for_face(&self, face_index: u8) -> &'static [Subtype] {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.subtypes;
+            }
+        }
+        self.subtypes
+    }
+
+    pub fn colors_for_face(&self, face_index: u8) -> &'static [ManaColor] {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.colors;
+            }
+        }
+        self.colors
+    }
+
+    pub fn power_for_face(&self, face_index: u8) -> Option<i16> {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.power;
+            }
+        }
+        self.power
+    }
+
+    pub fn toughness_for_face(&self, face_index: u8) -> Option<i16> {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.toughness;
+            }
+        }
+        self.toughness
+    }
+
+    pub fn keywords_for_face(&self, face_index: u8) -> Keywords {
+        if face_index == 1 {
+            if let Some(face) = &self.transform_face {
+                return face.keywords;
+            }
+        }
+        self.keywords
     }
 
     pub fn is_castable(&self) -> bool {
@@ -503,9 +1157,132 @@ impl CardDef {
     }
 
     pub fn mana_ability_program(&self) -> Option<EffectOp> {
-        self.is_executable()
+        (self.is_executable() && self.mana_ability_choices.len() == 1)
             .then(|| (self.mana_ability)())
             .flatten()
+    }
+
+    pub fn has_mana_ability(&self) -> bool {
+        self.is_executable()
+            && (!self.mana_ability_choices.is_empty()
+                || self.mana_ability_includes_chosen_color
+                || !self.additional_mana_abilities.is_empty())
+    }
+
+    /// Automatic spell-cost payment may only tap sources whose entire printed
+    /// mana ability is the legacy tap-and-add-one program. Richer abilities
+    /// remain fully playable through explicit mana actions, preventing the
+    /// solver from silently skipping sacrifice, damage, counter, or object
+    /// costs.
+    pub fn is_automatic_payment_mana_source(&self) -> bool {
+        self.is_executable()
+            && !self.mana_ability_choices.is_empty()
+            && self.mana_ability_def.is_none()
+    }
+
+    /// Non-allocating core of [`Self::primary_mana_ability_choices`]. Writes
+    /// into `out` instead of returning an owned `Vec`, for hot paths (such as
+    /// flat-action validation) that must not touch the heap. `out` is
+    /// appended to, not cleared, so a fresh `ManaColorSetV1` is expected.
+    pub(crate) fn primary_mana_ability_choices_into(
+        &self,
+        chosen_color: Option<ManaColor>,
+        out: &mut ManaColorSetV1,
+    ) {
+        for &color in self.mana_ability_choices {
+            out.push(color);
+        }
+        if self.mana_ability_includes_chosen_color {
+            if let Some(color) = chosen_color {
+                if !out.contains(color) {
+                    out.push(color);
+                }
+            }
+        }
+    }
+
+    /// Exact colors the primary printed mana ability can currently produce.
+    /// Chosen-color lands remain fail closed until their entry choice has
+    /// populated the incarnation-local object state.
+    pub fn primary_mana_ability_choices(&self, chosen_color: Option<ManaColor>) -> Vec<ManaColor> {
+        let mut choices = ManaColorSetV1::new();
+        self.primary_mana_ability_choices_into(chosen_color, &mut choices);
+        choices.as_slice().to_vec()
+    }
+
+    /// Every currently legal color across all printed mana abilities.
+    pub fn all_mana_ability_choices(&self, chosen_color: Option<ManaColor>) -> Vec<ManaColor> {
+        let mut choices = self.primary_mana_ability_choices(chosen_color);
+        for additional in self.additional_mana_abilities {
+            for &color in additional.colors {
+                if !choices.contains(&color) {
+                    choices.push(color);
+                }
+            }
+        }
+        choices
+    }
+
+    /// Stable printed-ability index used by per-turn limits and public
+    /// provenance. A rich definition represents one printed ability even when
+    /// that ability offers several colors; legacy dual lands retain one index
+    /// per separately printed color ability.
+    pub fn mana_ability_index(
+        &self,
+        choice: ManaColor,
+        chosen_color: Option<ManaColor>,
+    ) -> Option<u16> {
+        let primary = self.primary_mana_ability_choices(chosen_color);
+        if let Some(choice_index) = primary.iter().position(|candidate| *candidate == choice) {
+            return Some(
+                if self.mana_ability_def.is_some() || self.mana_ability_includes_chosen_color {
+                    0
+                } else {
+                    u16::try_from(choice_index).ok()?
+                },
+            );
+        }
+        let primary_ability_count =
+            if self.mana_ability_def.is_some() || self.mana_ability_includes_chosen_color {
+                u16::from(!primary.is_empty())
+            } else {
+                u16::try_from(primary.len()).ok()?
+            };
+        let mut found = None;
+        for (index, additional) in self.additional_mana_abilities.iter().enumerate() {
+            if additional.colors.contains(&choice) {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(primary_ability_count + u16::try_from(index).ok()?);
+            }
+        }
+        found
+    }
+
+    /// Builds the exact tap-and-add program for one printed mana ability.
+    /// A dual land has two legal programs, each adding exactly one mana.
+    pub fn mana_ability_program_for(
+        &self,
+        choice: ManaColor,
+        chosen_color: Option<ManaColor>,
+    ) -> Option<EffectOp> {
+        (self.is_executable()
+            && self.mana_ability_def.is_none()
+            && self
+                .primary_mana_ability_choices(chosen_color)
+                .contains(&choice))
+        .then(|| {
+            EffectOp::Sequence(vec![
+                EffectOp::TapObject {
+                    object: ObjectRef::ThisSource,
+                },
+                EffectOp::AddMana {
+                    player: PlayerRef::Controller,
+                    colors: vec![choice],
+                },
+            ])
+        })
     }
 
     pub const fn is_playable_land(&self) -> bool {
@@ -602,15 +1379,13 @@ mod tests {
 
     #[test]
     fn card_defs_len_matches_pool() {
-        // 132 real pool cards + 4 tokens (Blood, created by Voldaren
-        // Epicure's ETB trigger; Human Soldier Token/Samurai Token, created
-        // by Rally at the Hornburg/Experimental Synthesizer; Bird Illusion
-        // Token, created by Murmuring Mystic -- see `trigger.rs`/`build.rs`).
-        assert_eq!(CARD_DEFS.len(), 136);
+        // Hero Token remains id 159 and Clue Token remains id 160. Skeleton
+        // Token is appended as id 161 without renumbering earlier ids.
+        assert_eq!(CARD_DEFS.len(), 162);
     }
 
     #[test]
-    fn creature_target_spec_is_append_only() {
+    fn target_spec_variants_are_append_only() {
         let stable_ordinals = [
             (TargetSpec::None, 0),
             (TargetSpec::AnyTarget, 1),
@@ -625,26 +1400,54 @@ mod tests {
             (TargetSpec::RedPermanent, 10),
             (TargetSpec::NonlandPermanent, 11),
             (TargetSpec::Creature, 12),
+            (TargetSpec::NonlegendaryCreature, 13),
+            (TargetSpec::ArtifactOrEnchantmentSpellOnStack, 14),
+            (TargetSpec::SorcerySpellOnStack, 15),
+            (TargetSpec::NoncreatureSpellOnStack, 16),
+            (TargetSpec::ArtifactSpellOnStack, 17),
+            (TargetSpec::ArtifactPermanent, 18),
+            (TargetSpec::CreatureOrLandCardInGraveyard, 19),
+            (TargetSpec::ControlledCreature, 20),
+            (TargetSpec::UpToTwoCreatureCardsInOwnGraveyard, 21),
+            (TargetSpec::UpToTwoCreatures, 22),
+            (TargetSpec::ExactlyTwoArtifactPermanents, 23),
+            (TargetSpec::EnchantmentPermanent, 24),
+            (TargetSpec::UpToTwoPlayers, 25),
+            (TargetSpec::CreatureCardInOwnGraveyard, 26),
+            (TargetSpec::TargetOpponent, 27),
+            (TargetSpec::OpponentControlledCreature, 28),
+            (
+                TargetSpec::SpellManaValueAtMostControlledSubtypes {
+                    first: Subtype::Faerie,
+                    second: Some(Subtype::FaerieAllCaps),
+                },
+                29,
+            ),
+            (TargetSpec::UpToTwoCardsInGraveyards, 30),
+            (TargetSpec::CreatureOtherThanSource, 31),
+            (TargetSpec::UpToOneTappedCreature, 32),
+            (TargetSpec::NoncreatureArtifactPermanent, 33),
+            (TargetSpec::Land, 34),
+            (TargetSpec::OpponentArtifactOrEnchantmentPermanent, 35),
         ];
         for (target_spec, ordinal) in stable_ordinals {
-            assert_eq!(target_spec as u8, ordinal);
+            assert_eq!(target_spec.stable_id(), ordinal);
         }
         assert_eq!(
-            serde_json::to_string(&TargetSpec::Creature).unwrap(),
-            "\"Creature\""
+            serde_json::to_string(&TargetSpec::CreatureOrLandCardInGraveyard).unwrap(),
+            "\"CreatureOrLandCardInGraveyard\""
         );
         assert_eq!(
-            serde_json::from_str::<TargetSpec>("\"Creature\"").unwrap(),
-            TargetSpec::Creature
+            serde_json::from_str::<TargetSpec>("\"CreatureOrLandCardInGraveyard\"").unwrap(),
+            TargetSpec::CreatureOrLandCardInGraveyard
         );
     }
 
     #[test]
-    fn card_db_hash_v5_is_frozen() {
-        // Version 5 keeps the complete generated-selector grammar while
-        // adding Deem Inferior's nonland target, draw reducer, and generic
-        // owner-library placement recipe.
-        assert_eq!(KERNEL_CARDDB_HASH, 0xa06f_a956_6106_f0ea);
+    fn card_db_hash_v32_is_frozen() {
+        // Version 32 appends the final pool trio and Skeleton token after the
+        // combined optional-cost root without renumbering prior definitions.
+        assert_eq!(KERNEL_CARDDB_HASH, 0x64c8_2a26_1e07_8f1a);
     }
 
     #[test]
@@ -692,6 +1495,79 @@ mod tests {
     }
 
     #[test]
+    fn affinity_cards_share_the_artifact_reducer_and_keep_their_own_programs() {
+        let reducer = Some(GenericCostReductionDef {
+            generic_per_count: 1,
+            count: DynamicCountDef::ControllerBattlefieldAnyType(&[CardType::Artifact]),
+        });
+
+        let enforcer = &CARD_DEFS[card_id_by_name("Myr Enforcer").unwrap() as usize];
+        assert_eq!(enforcer.capability, CardCapability::Full);
+        assert_eq!(enforcer.cost.generic, 7);
+        assert!(enforcer.cost.pips.is_empty());
+        assert_eq!(enforcer.generic_cost_reduction, reducer);
+        assert_eq!(enforcer.types, &[CardType::Artifact, CardType::Creature]);
+        assert_eq!((enforcer.power, enforcer.toughness), (Some(4), Some(4)));
+        assert!(matches!(
+            (enforcer.spell_effect)(),
+            Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        ));
+
+        let thoughtcast = &CARD_DEFS[card_id_by_name("Thoughtcast").unwrap() as usize];
+        assert_eq!(thoughtcast.capability, CardCapability::Full);
+        assert_eq!(thoughtcast.cost.generic, 4);
+        assert_eq!(thoughtcast.cost.pips, &[Pip::Colored(ManaColor::U)]);
+        assert_eq!(thoughtcast.generic_cost_reduction, reducer);
+        assert_eq!(thoughtcast.types, &[CardType::Sorcery]);
+        assert_eq!(
+            (thoughtcast.spell_effect)(),
+            Some(EffectOp::DrawCards {
+                player: PlayerRef::Controller,
+                count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn tolarian_terror_composes_the_shared_reducer_and_generic_ward() {
+        let def = &CARD_DEFS[card_id_by_name("Tolarian Terror").unwrap() as usize];
+        assert_eq!(def.capability, CardCapability::Full);
+        assert_eq!(def.cost.generic, 6);
+        assert_eq!(def.cost.pips, &[Pip::Colored(ManaColor::U)]);
+        assert_eq!((def.power, def.toughness), (Some(5), Some(5)));
+        assert_eq!(
+            def.generic_cost_reduction,
+            Some(GenericCostReductionDef {
+                generic_per_count: 1,
+                count: DynamicCountDef::ControllerGraveyardAnyType(&[
+                    CardType::Instant,
+                    CardType::Sorcery,
+                ]),
+            })
+        );
+        assert_eq!(def.ward_cost, Some(WardCostDef::Generic(2)));
+        assert!(def.is_castable());
+    }
+
+    #[test]
+    fn ward_costs_fail_closed_outside_the_static_generic_creature_shape() {
+        for def in CARD_DEFS.iter().filter(|def| def.ward_cost.is_some()) {
+            assert!(def.is_castable(), "{} is not executable", def.name);
+            assert!(
+                def.has_type(CardType::Creature),
+                "{} is not a creature",
+                def.name
+            );
+            match def.ward_cost.unwrap() {
+                WardCostDef::Generic(amount) => assert_ne!(amount, 0, "{} has Ward 0", def.name),
+            }
+        }
+    }
+
+    #[test]
     fn generic_reducers_fail_closed_outside_the_certified_printed_cost_shape() {
         for def in CARD_DEFS
             .iter()
@@ -721,6 +1597,7 @@ mod tests {
                 def.name
             );
             assert!(def.flashback.is_none(), "{} has flashback", def.name);
+            assert!(def.escape.is_none(), "{} has escape", def.name);
             assert!(def.plot_cost.is_none(), "{} has plot", def.name);
             assert!(def.madness_cost.is_none(), "{} has madness", def.name);
         }
@@ -770,7 +1647,7 @@ mod tests {
             .iter()
             .filter(|def| def.capability == CardCapability::Full)
             .count();
-        assert_eq!(full, 49, "45 deck cards plus four required tokens");
+        assert_eq!(full, 162, "150 pool cards plus twelve required tokens");
         assert_eq!(
             CARD_DEFS
                 .iter()
@@ -783,19 +1660,27 @@ mod tests {
             .map(|name| card_id_by_name(name).expect("card in registry"));
         assert!(preflight_fully_supported_deck(&supported).is_ok());
         assert!(preflight_fully_supported_deck(&[card_id_by_name("Winding Way").unwrap()]).is_ok());
-        let unsupported = ["Island", "Tolarian Terror"]
-            .map(|name| card_id_by_name(name).expect("card in registry"));
-        let err = preflight_fully_supported_deck(&unsupported)
-            .expect_err("Tolarian Terror is still deferred");
-        assert!(matches!(
-            err,
-            DeckPreflightError::NotFullySupported {
-                index: 1,
-                name: "Tolarian Terror",
-                capability: CardCapability::NoEffect,
-                ..
-            }
-        ));
+        assert!(preflight_fully_supported_deck(&[
+            card_id_by_name("Island").unwrap(),
+            card_id_by_name("Tolarian Terror").unwrap(),
+        ])
+        .is_ok());
+        if let Some(unsupported_id) = CARD_DEFS
+            .iter()
+            .position(|def| !def.is_token && def.capability == CardCapability::NoEffect)
+        {
+            let unsupported = [card_id_by_name("Island").unwrap(), unsupported_id as u16];
+            let err = preflight_fully_supported_deck(&unsupported)
+                .expect_err("a no-effect card must remain fail closed");
+            assert!(matches!(
+                err,
+                DeckPreflightError::NotFullySupported {
+                    index: 1,
+                    capability: CardCapability::NoEffect,
+                    ..
+                }
+            ));
+        }
         assert!(preflight_fully_supported_deck(&[
             card_id_by_name("Island").unwrap(),
             card_id_by_name("Mountain").unwrap(),
@@ -866,19 +1751,21 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_permanents_and_nonbasic_mana_metadata_remain_inert() {
-        let terror = &CARD_DEFS[card_id_by_name("Tolarian Terror").unwrap() as usize];
-        assert!(terror.has_type(CardType::Creature));
-        assert!(!terror.is_executable());
-        assert!(!terror.is_castable());
-        assert!((terror.spell_effect)().is_none());
+    fn supported_hunter_and_nonbasic_mana_metadata_are_exact() {
+        let hunter = &CARD_DEFS[card_id_by_name("Avenging Hunter").unwrap() as usize];
+        assert!(hunter.has_type(CardType::Creature));
+        assert!(hunter.is_executable());
+        assert!(hunter.is_castable());
+        assert!(hunter.keywords.has(Keywords::TRAMPLE));
+        assert_eq!(
+            (hunter.spell_effect)(),
+            Some(EffectOp::MoveObject {
+                object: ObjectRef::ThisSource,
+                to_zone: Zone::Battlefield,
+            })
+        );
 
-        for name in [
-            "Burning-Tree Emissary",
-            "Azorius Guildgate",
-            "Twisted Landscape",
-            "Vault of Whispers",
-        ] {
+        for name in ["Burning-Tree Emissary", "Azorius Guildgate"] {
             let def = &CARD_DEFS[card_id_by_name(name).unwrap() as usize];
             assert!(
                 !def.produces_mana.is_empty(),
@@ -889,6 +1776,21 @@ mod tests {
                 "metadata alone must not grant {name} a tappable mana ability"
             );
         }
+
+        let landscape = &CARD_DEFS[card_id_by_name("Twisted Landscape").unwrap() as usize];
+        assert_eq!(landscape.produces_mana, &[ManaColor::C]);
+        assert_eq!(
+            landscape.mana_ability_program(),
+            Some(EffectOp::Sequence(vec![
+                EffectOp::TapObject {
+                    object: ObjectRef::ThisSource,
+                },
+                EffectOp::AddMana {
+                    player: PlayerRef::Controller,
+                    colors: vec![ManaColor::C],
+                },
+            ]))
+        );
     }
 
     #[test]
@@ -938,23 +1840,27 @@ mod tests {
     }
 
     #[test]
-    fn non_burn_deck_card_has_no_effect_this_increment() {
-        // Annul (Mono-Blue Faeries/Terror) is in the pool but out of scope
-        // for this increment: present, not castable.
-        let id = card_id_by_name("Annul").expect("Annul in pool");
-        let def = &CARD_DEFS[id as usize];
-        assert!(!def.is_castable());
+    fn pauper_counterspell_wave_is_fully_supported() {
+        for name in [
+            "Annul",
+            "Envelop",
+            "Force Spike",
+            "Spell Pierce",
+            "Steel Sabotage",
+        ] {
+            let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in pool"));
+            assert!(CARD_DEFS[id as usize].has_full_support(), "{name}");
+            assert!(CARD_DEFS[id as usize].is_castable(), "{name}");
+        }
     }
 
     #[test]
-    fn still_deferred_burn_cards_are_out_of_scope_this_increment() {
-        // Relic of Progenitus needs graveyard-card targeting, which doesn't
-        // fit any `TargetSpec` shape built so far, and it's sideboard-only
-        // -- present in `CARD_DEFS` with correct metadata, not castable,
-        // per the kernel's fail-closed invariant.
+    fn relic_of_progenitus_is_enabled() {
         let name = "Relic of Progenitus";
         let id = card_id_by_name(name).unwrap_or_else(|| panic!("{name} in pool"));
-        assert!(!CARD_DEFS[id as usize].is_castable(), "{name}");
+        let def = &CARD_DEFS[id as usize];
+        assert!(def.is_castable(), "{name}");
+        assert_eq!(def.activated_abilities.len(), 2, "{name}");
     }
 
     #[test]
@@ -1246,11 +2152,16 @@ mod tests {
     }
 
     #[test]
-    fn cast_into_the_fire_remains_deferred_this_increment() {
-        // Sideboard-only, modal with a 0-2 variable-count target mode this
-        // kernel's `TargetSpec` shape doesn't support -- see the module doc.
+    fn cast_into_the_fire_uses_the_variable_target_modal_program() {
         let id = card_id_by_name("Cast into the Fire").expect("Cast into the Fire in pool");
-        assert!(!CARD_DEFS[id as usize].is_castable());
+        let def = &CARD_DEFS[id as usize];
+        assert_eq!(def.capability, CardCapability::Full);
+        assert!(def.is_castable());
+        assert_eq!(def.target_spec, TargetSpec::UpToTwoCreatures);
+        assert_eq!(
+            (def.spell_effect)(),
+            Some(EffectOp::DamageAllTargets { amount: 1 })
+        );
     }
 
     #[test]

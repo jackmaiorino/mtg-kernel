@@ -1806,12 +1806,23 @@ mod tests {
     use std::sync::OnceLock;
     use std::time::Duration;
 
+    // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+    // 2026-08-14): the genesis manifest embeds run-authority fields
+    // sensitive to the nine-deck catalog landing and/or the two accepted
+    // 603.10-family observation fixes. Value is this test's own
+    // live-computed digest, read directly from a failing run (never
+    // hand-typed).
     const GENESIS_MANIFEST_SHA256_GOLDEN_V3: &str =
-        "2ae7e16e7e1f52478b1d8fc12d88ff4bc1bfcfaa4855273db4fdffabb2bc8286";
+        "719d3edde1584b20cd8fb97caadbcd3e4d0af0a33d0759fd5be5aac30109d03f";
     const GENESIS_PAYLOAD_SHA256_GOLDEN_V1: &str =
         "3c83802885e13c118ebcf870de2d3c9f2209e9e9c47b66a8dac5e5232d1c9c43";
+    // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+    // 2026-08-14): observation-derived, same rationale as
+    // GENESIS_MANIFEST_SHA256_GOLDEN_V3 above (and matches
+    // native_checkpoint_runner_v1.rs's logical_state_sha256 re-baseline,
+    // same underlying fixture scenario).
     const GENESIS_LOGICAL_STATE_SHA256_GOLDEN_V1: &str =
-        "4306c612de240410aaf5f1603562bf659a49102a740b1ff3de9b71adff68d0bd";
+        "69e6a7d0fdbccd6013bd1d2a4f49baa42ef30e8f3218d8076c9388020bfad974";
     const GENESIS_TRAIN_STATE_SHA256_GOLDEN_V1: &str =
         "5854b477e2ce22dda199b5c9442824a339acd15d7eb8666f19895aa0d7c53c26";
 
@@ -2038,6 +2049,17 @@ mod tests {
         decode_train_run_v2(&ladder_init_fixture_v3().run_bytes).unwrap()
     }
 
+    /// Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+    /// Shared gate for every test below that depends on `ladder_init_fixture_v3()`
+    /// (both of its real evidence roots), called before that fixture is touched.
+    fn ladder_init_evidence_present_v3() -> bool {
+        crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V3),
+        ) && crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_PILOT_POOL_JSON_V3),
+        )
+    }
+
     fn trained_context_v3(update_count: usize) -> UpdateEvidenceChainContextV1 {
         let base = fixture_v3();
         let trained = trained_fixture_v3();
@@ -2184,6 +2206,12 @@ mod tests {
     #[test]
     fn genesis_authoring_rejects_a_real_trained_payload_structurally() {
         const REAL_TRAINED_STATE_PATH: &str = r"D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store\checkpoints\update-00000032.state.f32le";
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_TRAINED_STATE_PATH),
+        ) {
+            return;
+        }
         let real_payload = std::fs::read(REAL_TRAINED_STATE_PATH).unwrap_or_else(|error| {
             panic!(
                 "could not read the real trained state fixture at {REAL_TRAINED_STATE_PATH}: {error}"
@@ -2912,6 +2940,10 @@ mod tests {
     /// how well-formed the supplied reference/payload otherwise are.
     #[test]
     fn genesis_initialization_v2_requires_the_init_section_present() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v3() {
+            return;
+        }
         let ladder_fixture = ladder_init_fixture_v3();
         let payload =
             derive_genesis_weights_only_payload_v2_v3(&ladder_fixture.reference_payload).unwrap();
@@ -2957,6 +2989,10 @@ mod tests {
     /// round-trips through decode.
     #[test]
     fn genesis_initialization_v2_inherits_weights_bit_exact_and_zeros_moments() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v3() {
+            return;
+        }
         let fixture = ladder_init_fixture_v3();
         let run = ladder_init_run_v3();
         let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
@@ -2998,6 +3034,10 @@ mod tests {
 
     #[test]
     fn genesis_initialization_v2_rejects_parameter_drift_from_reference() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v3() {
+            return;
+        }
         let fixture = ladder_init_fixture_v3();
         let run = ladder_init_run_v3();
         let mut payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
@@ -3026,6 +3066,10 @@ mod tests {
     /// by the branch, not merely re-implemented compatibly.
     #[test]
     fn genesis_initialization_v2_rejects_nonzero_moments_in_both_branches() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v3() {
+            return;
+        }
         let moment_offset = NATIVE_TRAIN_STATE_PAYLOAD_SECTIONS_V1[1].offset_bytes
             + tensor_offset_v1("object_encoder.0.weight");
 
@@ -3069,6 +3113,10 @@ mod tests {
     /// still dispatches through the untouched V1 path, byte for byte.
     #[test]
     fn decode_genesis_checkpoint_manifest_dispatch_v2_v3_accepts_a_self_contained_v2_genesis() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v3() {
+            return;
+        }
         let fixture = ladder_init_fixture_v3();
         let run = ladder_init_run_v3();
         let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)
@@ -3115,6 +3163,10 @@ mod tests {
             OpponentLadderPoolContractV1,
         };
 
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v3() {
+            return;
+        }
         let fixture = ladder_init_fixture_v3();
         let mut wrong_init = ladder_init_run_v3()
             .record()
@@ -3187,6 +3239,10 @@ mod tests {
     /// DIFFERENT run) rather than silently accepting it.
     #[test]
     fn decode_genesis_checkpoint_manifest_dispatch_v2_v3_rejects_a_v2_payload_for_a_v1_record() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v3() {
+            return;
+        }
         let fixture = ladder_init_fixture_v3();
         let ladder_run = ladder_init_run_v3();
         let payload = derive_genesis_weights_only_payload_v2_v3(&fixture.reference_payload)

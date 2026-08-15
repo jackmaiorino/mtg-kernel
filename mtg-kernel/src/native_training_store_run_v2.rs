@@ -5,12 +5,10 @@
 //! complete dependency-closed run/v2 grammar, reconstructs the standalone
 //! semantics projection, and independently recomputes every run-root digest.
 
-use crate::KERNEL_VERSION;
 use crate::canonical_json_v1::{
-    CanonicalJsonErrorKindV1, CanonicalJsonErrorV1, CanonicalJsonNullPolicyV1,
-    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1,
+    from_canonical_json_bytes_v1, to_canonical_json_bytes_v1, CanonicalJsonErrorKindV1,
+    CanonicalJsonErrorV1, CanonicalJsonNullPolicyV1,
 };
-use crate::card_def::KERNEL_CARDDB_HASH;
 pub use crate::common_model_snapshot_v1::CommonModelSnapshotRecordV1;
 use crate::common_model_snapshot_v1::{
     AUTHORITY_RUNTIME_IDENTITY_V1, BASE_SEED_V1, INITIALIZER_IDENTITY_V1, MODEL_INIT_SEED_V1,
@@ -26,30 +24,28 @@ use crate::environment_randomization_v2::{
     ENVIRONMENT_RANDOMIZATION_PURPOSES_V2, ENVIRONMENT_RANDOMIZATION_SHUFFLE_ALGORITHM_V2,
 };
 use crate::fast_sampler::{
-    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256,
-    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256, FAST_CATEGORICAL_EXP_TABLE_SHA256,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTORS_FILE_SHA256,
+    FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256, FAST_CATEGORICAL_EXP_TABLE_SHA256,
     FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
 };
-use crate::native_flat_tensorizer_v2::{
-    NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
-    NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2, NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2,
-    NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
-};
+use crate::native_flat_tensorizer_v2::NATIVE_FLAT_TENSORIZER_IDENTITY_V2;
 use crate::native_full_episode_trajectory_v1::{
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1, NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V1,
+    NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V1,
 };
 /// The V2 trajectory six-pin tuple is imported from its owner module rather
 /// than restated, so the classifier and the trajectory contract cannot drift.
 use crate::native_full_episode_trajectory_v2::{
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2,
-    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V2, NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_SCHEMA_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
+    NATIVE_FULL_EPISODE_TRAJECTORY_IDENTITY_V2,
 };
 use crate::native_opponent_policy_v2::{
     FROZEN_CHECKPOINT_OPPONENT_POLICY_IDENTITY_V2, FROZEN_CHECKPOINT_OPPONENT_POLICY_MODEL_RULE_V2,
@@ -59,8 +55,8 @@ use crate::native_opponent_policy_v2::{
     OPPONENT_LADDER_POOL_WEIGHT_UNIFORM_FLOOR_V2,
 };
 use crate::native_opponent_sampler_v1::{
-    NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1,
     NATIVE_OPPONENT_SAMPLER_VECTORS_FILE_SHA256_V1,
+    NATIVE_OPPONENT_SAMPLER_VECTOR_STREAM_SHA256_V1,
     NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_IDENTITY_V1,
     NATIVE_TRAINER_UNIFORM_OPPONENT_POLICY_MODEL_RULE_V1, UNIFORM_INDEX_MODULO_U64_ALGORITHM_V1,
     UNIFORM_INDEX_MODULO_U64_IDENTITY_V1,
@@ -69,7 +65,7 @@ use crate::native_policy_train_step_v1::{
     ADAM_BETA1_V1, ADAM_BETA2_V1, ADAM_EPSILON_V1, ADAM_WEIGHT_DECAY_V1,
     CANONICAL_GAUGE_PARAMETERS_V1, NATIVE_OPTIMIZER_IDENTITY_V1,
     NATIVE_POLICY_TRAIN_STEP_NUMERICAL_BACKEND_IDENTITY_V1,
-    NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1, TRAIN_STEP_IDENTITY_V1, TRAINER_ALGORITHM_V1,
+    NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1, TRAINER_ALGORITHM_V1, TRAIN_STEP_IDENTITY_V1,
 };
 use crate::native_policy_value_net_v1::{
     FEATURE_CONTRACT_DIGEST_V1, FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1,
@@ -93,8 +89,7 @@ use crate::rl_session::{
     RL_SESSION_PROTOCOL_VERSION_V6, RL_SESSION_SCHEMA_VERSION, RL_SESSION_SCHEMA_VERSION_V6,
 };
 use crate::runtime_decks::{
-    RUNTIME_DECK_CATALOG_FILE_SHA256, RUNTIME_DECK_CATALOG_SCHEMA, RUNTIME_DECK_PROTOCOL,
-    runtime_deck_by_id,
+    runtime_deck_by_id, RUNTIME_DECK_CATALOG_SCHEMA, RUNTIME_DECK_PROTOCOL,
 };
 use crate::strict_source_tree_attestation_v1::{
     STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1,
@@ -102,6 +97,7 @@ use crate::strict_source_tree_attestation_v1::{
     STRICT_SOURCE_TREE_RECIPE_SHA256_V1 as SOURCE_TREE_RECIPE_SHA256_V1,
 };
 use crate::surface_v2::H2_PREDICATE_VERSION;
+use crate::KERNEL_VERSION;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::error::Error;
@@ -130,6 +126,12 @@ const FROZEN_SOURCE_TREE_RECIPE_SHA256_V2: &str =
     "13ab31b8e4810d683007182d1b5fc3b76db0b9761c877a6e78880c0cadf3fece";
 const FROZEN_SOURCE_TREE_RECIPE_BYTE_COUNT_V2: u64 = 5_847;
 
+// Dual-Profile Catalog Successor (collab CLAUDE #220): the numeric u64 form
+// is no longer compared against any live build constant at decode time (see
+// `validate_frozen_rev3_authorities_v2`'s doc comment), so it is otherwise
+// unused; retained byte-identical as part of the permanent historical
+// authority record rather than deleted.
+#[allow(dead_code)]
 const FROZEN_CARD_DB_HASH_U64_V2: u64 = 0xa06f_a956_6106_f0ea;
 const FROZEN_CARD_DB_HASH_U64_HEX_V2: &str = "a06fa9566106f0ea";
 const FROZEN_RUNTIME_CATALOG_SCHEMA_V2: &str = "kernel_runtime_decks/v1";
@@ -139,6 +141,25 @@ const FROZEN_RUNTIME_CATALOG_SHA256_V2: &str =
 const FROZEN_RALLY_DECK_ID_V2: &str = "Rally";
 const FROZEN_RALLY_DECK_HASH_U64_V2: u64 = 0x0c9f_01c2_5444_12bf;
 const FROZEN_RALLY_DECK_HASH_U64_HEX_V2: &str = "0c9f01c2544412bf";
+
+// CURRENT catalog profile (Dual-Profile Catalog Successor, collab CLAUDE
+// #220): the live nine-deck catalog identity as of the runtime-decks-nine
+// landing, pinned as its own frozen authority parallel to and independent of
+// the FROZEN_CARD_DB_HASH_U64_V2 / FROZEN_RUNTIME_CATALOG_SHA256_V2
+// (historical/rev3) literals above, which stay untouched forever. Only the
+// two catalog *content* identities differ between the two profiles --
+// `RUNTIME_DECK_CATALOG_SCHEMA`/`RUNTIME_DECK_PROTOCOL` (format) and the
+// Rally deck's own hash are unchanged and shared by both profiles, so they
+// are not restated here. See `classify_catalog_profile_v1` for the
+// mutually-exclusive, hybrid-rejecting classifier that selects between the
+// two tuples, and `validate_environment_v2`/`validate_frozen_rev3_authorities_v2`
+// for why neither tuple is checked against the crate's live build constants
+// at decode time (only construction/mutation call sites read live constants,
+// and they always do so directly, never through a frozen pin).
+const FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1: &str = "64c82a261e078f1a";
+const FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1: &str =
+    "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851";
+
 const FROZEN_PROTOCOL_V2: &str = "kernel_rl_jsonl";
 const FROZEN_PROTOCOL_VERSION_V2: u32 = 5;
 const FROZEN_SCHEMA_VERSION_V2: u32 = 5;
@@ -240,12 +261,67 @@ const FROZEN_WIDE_DIAGNOSTIC_LABEL_V1: &str = "WIDE-DIAGNOSTIC-NON-EVIDENCE";
 
 const FROZEN_TRAINER_IDENTITY_V2: &str = "mtg-kernel-native-even-batch-trainer-v2";
 const FROZEN_TENSORIZER_IDENTITY_V2: &str = "mtg-kernel-python-encoded-decision-tensor-contract-v2";
+// Feature-Encoder Successor (collab CLAUDE #221, folding CODEX #235's
+// historical stack-source encoder fix into the versioned feature-authority
+// successor): the HISTORICAL tensorizer-authority triple, byte-identical
+// forever. Every already-sealed RunV2 record captured before this successor
+// landed carries these three values in `contracts.tensorizer` and must keep
+// decoding. Independently typed from `native_flat_tensorizer_v2`'s own
+// constants on purpose (this module's own frozen mirror, same discipline as
+// every other FROZEN_*_V2 pin), not derived from them.
 const FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2: &str =
     "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb";
 const FROZEN_TENSORIZER_FIXTURE_SHA256_V2: &str =
     "5dbece4f903a09260a499295d866c7e6ff4283f9de83f842224511f977ae8a97";
 const FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2: &str =
     "2f87d49106806a402148fc8b115a54ac94713eb717f45f897eff57a3bd1184ec";
+
+// CURRENT tensorizer-authority triple (Feature-Encoder Successor): the live
+// values as of the historical stack-source encoder fix and its golden
+// regeneration (`python/tools/generate_python_full_features_v2_goldens.py`
+// against the fixed features.py), pinned as their own frozen authority
+// parallel to and independent of the three HISTORICAL literals above, which
+// stay untouched forever. `feature_contract_digest`/`feature_encoding_digest`
+// are unchanged by the fix (same declared dimensions, same contract/encoding
+// digests for both profiles), so only these three tensorizer fields get a
+// CURRENT sibling. See `tensorizer_authority_triple_is_known_v1` for the
+// whole-tuple, hybrid-rejecting classifier, mirroring
+// `classify_catalog_profile_v1`'s shape exactly.
+//
+// Codex confirmed this branch's reconstruction as the intended change and
+// ratified the source-hash literal below as the CURRENT-profile pin
+// (collab CLAUDE #239); the fixture/payload literals are downstream of it.
+const FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1: &str =
+    "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c";
+const FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1: &str =
+    "edd8c255d65b0f1eba17b029da2d0e4aa5f9600243e9e390cd105c0b32b92812";
+const FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1: &str =
+    "728a702e364a83b14f539c0fc9441aac5d272be4a776cbee9a08d343ed4cf69c";
+
+/// The one closed tensorizer-authority classifier (Feature-Encoder
+/// Successor), mirroring `classify_catalog_profile_v1`'s shape exactly:
+/// exactly two complete triples are admissible (all-HISTORICAL or
+/// all-CURRENT); every hybrid, including a triple that matches one field's
+/// literal from one profile and another field's literal from the other, is
+/// rejected. The three fields move together because the fixture and its
+/// payload hash are both generated FROM the source the source-hash field
+/// names, so a coherent record's triple is never partial.
+fn tensorizer_authority_triple_is_known_v1(
+    authoritative_features_source_sha256: &str,
+    fixture_sha256: &str,
+    fixture_payload_sha256: &str,
+) -> bool {
+    let historical = authoritative_features_source_sha256
+        == FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
+        && fixture_sha256 == FROZEN_TENSORIZER_FIXTURE_SHA256_V2
+        && fixture_payload_sha256 == FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2;
+    let current = authoritative_features_source_sha256
+        == FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
+        && fixture_sha256 == FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1
+        && fixture_payload_sha256 == FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1;
+    historical || current
+}
+
 const FROZEN_LOSS_IDENTITY_V2: &str = "terminal_reinforce_value/v3";
 const FROZEN_TRAIN_STEP_IDENTITY_V2: &str = "native-policy-value-cpu-train-step-v1";
 const FROZEN_NUMERICAL_BACKEND_IDENTITY_V2: &str =
@@ -316,8 +392,7 @@ const POPULATION_REPLAY_END_GENERATION_V1: u64 = 512;
 const POPULATION_PROGRAM_UPDATE_COUNT_V1: u64 = 1_024;
 const POPULATION_REFRESH_INTERVAL_V1: u64 = 128;
 const POPULATION_SLOT_COUNT_V1: u64 = 8;
-const POPULATION_REWARD_IDENTITY_V1: &str =
-    "terminal-wdl-win-plus-one-draw-zero-loss-minus-one/v1";
+const POPULATION_REWARD_IDENTITY_V1: &str = "terminal-wdl-win-plus-one-draw-zero-loss-minus-one/v1";
 const POPULATION_REFRESH_MANIFEST_IDENTITY_V1: &str =
     "mtg-kernel-native-scaled-selfplay-refresh-manifest/v1";
 const POPULATION_RETEST_BETA_F32_BITS_V1: &str = "3dcccccd";
@@ -378,9 +453,8 @@ const RESPONSE_EXPLOITER_ACTIVE_SLOT_INDICES_V1: [u64; 6] = [0, 1, 2, 3, 4, 5];
 const RESPONSE_EXPLOITER_EXCLUDED_SLOT_INDICES_V1: [u64; 2] = [6, 7];
 const RESPONSE_EXPLOITER_RENORMALIZATION_IDENTITY_V1: &str =
     "integer-preserving-renormalization-drop-excluded-slots-redeclare-total/v1";
-const RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_UNITS_V1: [u64; 8] = [
-    125_407, 115_542, 127_252, 127_098, 128_077, 127_916, 0, 0,
-];
+const RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_UNITS_V1: [u64; 8] =
+    [125_407, 115_542, 127_252, 127_098, 128_077, 127_916, 0, 0];
 const RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_TOTAL_UNITS_V1: u64 = 751_292;
 const RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1: u64 = 256;
 const RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1: u64 = 64;
@@ -1364,6 +1438,10 @@ pub struct ValidatedTrainRunV2 {
     /// Private on purpose: no caller may construct, override, or widen it, and
     /// the only way to obtain one is to decode a complete, coherent record.
     environment_trajectory_contract: NativeRunEnvironmentTrajectoryContractV1,
+    /// The closed catalog-identity profile classification decided at decode
+    /// time (Dual-Profile Catalog Successor, collab CLAUDE #220). Private for
+    /// the same reason as `environment_trajectory_contract` above.
+    catalog_profile: NativeRunCatalogProfileV1,
 }
 
 /// The closed trajectory-contract classification of a validated run.
@@ -1380,6 +1458,27 @@ pub(crate) enum NativeRunEnvironmentTrajectoryContractV1 {
     EnvironmentRandomizationV2,
 }
 
+/// The closed catalog-identity profile classification of a validated run
+/// (Dual-Profile Catalog Successor, collab CLAUDE #220).
+///
+/// Sealed and crate-private. A record is exactly one of these two, decided by
+/// a complete-tuple match (`card_db_hash_u64_hex`, `runtime_catalog_sha256`)
+/// against exactly one of two disjoint frozen literal pairs at decode time in
+/// [`classify_catalog_profile_v1`]; there is no third state, no default, and
+/// every hybrid (neither pair, or a value from one field's pair paired with
+/// the other field's opposite pair) is rejected. `Historical` pins the frozen
+/// rev3 two-deck catalog forever, byte-identical, and stays readable: a
+/// historical record decodes and validates cleanly. `Current` pins the live
+/// nine-deck catalog as of the runtime-decks-nine landing. Callers that must
+/// admit only live science-loop authority (science-loop use, publication,
+/// resume) reject `Historical` with a specific error at their own boundary;
+/// this module itself never refuses to decode or validate either profile.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeRunCatalogProfileV1 {
+    Historical,
+    Current,
+}
+
 impl ValidatedTrainRunV2 {
     pub fn record(&self) -> &TrainRunV2 {
         &self.record
@@ -1392,6 +1491,17 @@ impl ValidatedTrainRunV2 {
         &self,
     ) -> NativeRunEnvironmentTrajectoryContractV1 {
         self.environment_trajectory_contract
+    }
+
+    /// The catalog-identity profile this record was classified as at decode
+    /// time. Crate-private and by value, same discipline as
+    /// `environment_trajectory_contract_v1`: read-only evidence, not a
+    /// switch. Callers that must admit only live science-loop authority
+    /// (science-loop use, publication, resume) use this to reject
+    /// `NativeRunCatalogProfileV1::Historical` at their own boundary with
+    /// their own specific error.
+    pub(crate) fn catalog_profile_v1(&self) -> NativeRunCatalogProfileV1 {
+        self.catalog_profile
     }
 
     pub fn canonical_bytes(&self) -> &[u8] {
@@ -1635,9 +1745,10 @@ fn validate_decoded_train_run_v2(
 
     validate_cross_bindings_v2(&record)?;
 
-    // One closed classification, after all shared environment/contracts/
+    // Two closed classifications, after all shared environment/contracts/
     // cross-binding validation and before standalone-semantics reconstruction.
     let environment_trajectory_contract = classify_environment_trajectory_contract_v1(&record)?;
+    let catalog_profile = classify_catalog_profile_v1(&record.environment)?;
 
     let expected_core = reconstruct_standalone_semantics_core_v2(&record, requested_episode_count)?;
     if record.contracts.standalone_semantics.core != expected_core {
@@ -1670,7 +1781,49 @@ fn validate_decoded_train_run_v2(
         identity_bundle_sha256,
         standalone_semantics_sha256,
         environment_trajectory_contract,
+        catalog_profile,
     })
+}
+
+// Feature-Encoder Successor fix round (regression found by full-suite bisect,
+// 2026-08-14): `NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2` /
+// `_GOLDEN_STREAM_SHA256_V2` are LIVE constants imported from
+// native_full_episode_trajectory_v2.rs, re-baselined once there (per the
+// owner ruling, collab CLAUDE #236) when its own catalog-identity literals
+// moved. That module has no sealed evidence of its own reading through this
+// pin, so a straight re-baseline was correct for it -- but
+// `classify_environment_trajectory_contract_v1` below compares a REAL
+// record's OWN embedded `trajectory.cross_language_goldens_file_sha256` /
+// `_golden_stream_sha256` fields against these same live constants
+// unconditionally, and real, already-sealed RunV2 evidence (confirmed via
+// direct inspection of the real denovo-screen-256 store) carries the
+// PRE-epoch value in those fields. Re-baselining the live constants without
+// widening this decode-time comparison reproduced the exact "outage" class
+// the whole dual-profile discipline exists to prevent: a real store that
+// decoded before this branch's changes stopped decoding after them. The two
+// frozen HISTORICAL literals below are the pre-epoch values (verified
+// against that real record directly, and matching this file's own git
+// history before the golden regeneration commits); the CURRENT side stays
+// the live import, unconditionally, exactly as the golden regeneration
+// commits left it.
+const FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1: &str =
+    "e6cfffe080c349ceca82ddfc6504fb61801ac07cc3e1ae57a80345296f7ec45b";
+const FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1: &str =
+    "19171ada77ecd142ac458365563f6e65ad9f5ba352625c77a121ce0d00bb537f";
+
+/// Whole-pair, hybrid-rejecting classifier for the full-episode-trajectory
+/// golden pin embedded in `contracts.trajectory`, mirroring this file's own
+/// `tensorizer_authority_triple_is_known_v1`/`classify_catalog_profile_v1`
+/// shape: exactly two complete pairs admissible (the frozen HISTORICAL pair
+/// above, or the live CURRENT pair re-exported from
+/// native_full_episode_trajectory_v2.rs); every hybrid rejected.
+fn full_episode_trajectory_golden_pin_is_known_v1(file_sha256: &str, stream_sha256: &str) -> bool {
+    let historical = file_sha256
+        == FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1
+        && stream_sha256 == FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1;
+    let current = file_sha256 == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2
+        && stream_sha256 == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2;
+    historical || current
 }
 
 /// The one closed trajectory-contract classifier.
@@ -1723,10 +1876,10 @@ fn classify_environment_trajectory_contract_v1(
                     == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V2
                 && trajectory.cross_language_golden_stream_identity
                     == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_IDENTITY_V2
-                && trajectory.cross_language_goldens_file_sha256
-                    == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2
-                && trajectory.cross_language_golden_stream_sha256
-                    == NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2;
+                && full_episode_trajectory_golden_pin_is_known_v1(
+                    &trajectory.cross_language_goldens_file_sha256,
+                    &trajectory.cross_language_golden_stream_sha256,
+                );
             if v2_pins && v2_versions && environment_randomization_section_is_exact_v2(section) {
                 Ok(NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2)
             } else {
@@ -1760,16 +1913,151 @@ fn environment_randomization_section_is_exact_v2(
         && section.cross_language_goldens_file_sha256 == ENVIRONMENT_RANDOMIZATION_GOLDENS_SHA256_V1
 }
 
+/// The one closed catalog-identity profile classifier (Dual-Profile Catalog
+/// Successor, collab CLAUDE #220).
+///
+/// Exactly two complete tuples are admissible: the record's own
+/// `card_db_hash_u64_hex` and `runtime_catalog_sha256` fields must equal
+/// EITHER both HISTORICAL frozen rev3 literals (`FROZEN_CARD_DB_HASH_U64_HEX_V2`,
+/// `FROZEN_RUNTIME_CATALOG_SHA256_V2`, byte-identical forever) OR both CURRENT
+/// frozen literals (`FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`,
+/// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`, pinned to the live nine-deck
+/// catalog as of the runtime-decks-nine landing); every other combination,
+/// including a hybrid that matches one field's literal from one tuple and the
+/// other field's literal from the other tuple, is rejected. This mirrors
+/// `classify_environment_trajectory_contract_v1`'s own shape (whole-tuple
+/// selection before any partial-field tolerance, every hybrid rejected) but
+/// is a distinct, independent classification: a record's trajectory contract
+/// and its catalog profile vary independently.
+fn classify_catalog_profile_v1(
+    environment: &TrainRunEnvironmentV2,
+) -> Result<NativeRunCatalogProfileV1> {
+    let historical = environment.card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_V2
+        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_V2;
+    let current = environment.card_db_hash_u64_hex == FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+        && environment.runtime_catalog_sha256 == FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1;
+    match (historical, current) {
+        (true, false) => Ok(NativeRunCatalogProfileV1::Historical),
+        (false, true) => Ok(NativeRunCatalogProfileV1::Current),
+        _ => Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral)),
+    }
+}
+
+/// The crate's actual live catalog-identity build constants, read fresh each
+/// call. Test builds may override the returned pair for exactly the calling
+/// thread via [`LiveCatalogBuildIdentityOverrideGuardV1`] to simulate a
+/// future catalog change (a build whose live constants have moved past the
+/// pinned CURRENT literal) without waiting for one; production builds always
+/// return the real, unmodified `KERNEL_CARDDB_HASH`/`RUNTIME_DECK_CATALOG_FILE_SHA256`.
+fn live_catalog_build_identity_v1() -> (String, String) {
+    #[cfg(test)]
+    if let Some(overridden) =
+        LIVE_CATALOG_BUILD_IDENTITY_OVERRIDE_V1.with(|cell| cell.borrow().clone())
+    {
+        return overridden;
+    }
+    (
+        format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH),
+        crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256.to_owned(),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    static LIVE_CATALOG_BUILD_IDENTITY_OVERRIDE_V1: std::cell::RefCell<Option<(String, String)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Test-only per-thread override for [`live_catalog_build_identity_v1`].
+/// Installing simulates a build whose live catalog constants differ from the
+/// pinned CURRENT literal (the only way to exercise the CURRENT-profile
+/// mutation-boundary authenticity check's rejection path today, since the
+/// crate's real live constants currently equal the pinned CURRENT literal
+/// exactly -- see `current_frozen_literal_matches_the_live_build_constant`).
+/// RAII: the override is cleared on drop, including on panic, so no failed
+/// test can leak a shimmed identity into a later same-thread test.
+#[cfg(test)]
+pub(crate) struct LiveCatalogBuildIdentityOverrideGuardV1;
+
+#[cfg(test)]
+impl LiveCatalogBuildIdentityOverrideGuardV1 {
+    pub(crate) fn install(card_db_hash_u64_hex: &str, runtime_catalog_sha256: &str) -> Self {
+        LIVE_CATALOG_BUILD_IDENTITY_OVERRIDE_V1.with(|cell| {
+            *cell.borrow_mut() = Some((
+                card_db_hash_u64_hex.to_owned(),
+                runtime_catalog_sha256.to_owned(),
+            ));
+        });
+        Self
+    }
+}
+
+#[cfg(test)]
+impl Drop for LiveCatalogBuildIdentityOverrideGuardV1 {
+    fn drop(&mut self) {
+        LIVE_CATALOG_BUILD_IDENTITY_OVERRIDE_V1.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+    }
+}
+
+/// Live catalog-identity authenticity check for CURRENT-profile mutation
+/// boundaries (Dual-Profile Catalog Successor fix round, panel finding 1,
+/// blocker: bypass). Decode intentionally never reads the crate's live build
+/// constants (a record's catalog fields are checked only against the pinned
+/// CURRENT/HISTORICAL literal pairs in `classify_catalog_profile_v1`) -- but
+/// that alone means a hand-fabricated record whose catalog fields merely
+/// equal the pinned CURRENT literal would seal with no authenticity check
+/// anywhere, including after a future catalog change moves the crate's real
+/// live constants past that literal (the exact bypass the panel identified,
+/// symmetric to the original rev3 outage this successor exists to fix).
+/// This closes it at the two mutation boundaries (publish, resume): a
+/// CURRENT-profile record's own embedded fields must equal the crate's live
+/// constants at THIS moment, not merely the frozen pin. Returns `true` when
+/// they match. HISTORICAL-profile records never reach this function (each
+/// boundary's exhaustive match rejects them in their own arm first).
+pub(crate) fn current_profile_matches_live_build_identity_v1(
+    environment: &TrainRunEnvironmentV2,
+) -> bool {
+    let (live_card_db_hash_u64_hex, live_runtime_catalog_sha256) = live_catalog_build_identity_v1();
+    environment.card_db_hash_u64_hex == live_card_db_hash_u64_hex
+        && environment.runtime_catalog_sha256 == live_runtime_catalog_sha256
+}
+
+/// Dual-Profile Catalog Successor (collab CLAUDE #220): this function is now
+/// catalog-profile-scoped. It no longer compares the crate's live
+/// `KERNEL_CARDDB_HASH` / `RUNTIME_DECK_CATALOG_FILE_SHA256` build constants
+/// against the frozen rev3 (`FROZEN_CARD_DB_HASH_U64_V2` /
+/// `FROZEN_RUNTIME_CATALOG_SHA256_V2`) literals at all -- that ambient
+/// live-owner check is removed here (previously two `||` arms of this same
+/// function). Two disjoint reasons, one per profile: for a HISTORICAL-profile
+/// decode, the crate's live catalog constants moved permanently to the
+/// nine-deck identity with the runtime-decks-nine landing, so requiring them
+/// to still equal the frozen rev3 pin would make every historical record
+/// permanently undecodable, destroying regression evidence rather than
+/// gating it (the exact catch the historical-decoder ruling made the first
+/// time this pattern came up); for a CURRENT-profile decode, this module
+/// deliberately performs no live-build-constant check at decode time at all
+/// -- only construction/mutation call sites (production capture) read the
+/// live constants, and they always do so directly, never through a decode-
+/// time pin, per the design's "live checks at construction/mutation time
+/// only" binding. Catalog-identity exactness for BOTH profiles is instead
+/// independently enforced against the record's own embedded
+/// `card_db_hash_u64_hex`/`runtime_catalog_sha256` fields by
+/// `classify_catalog_profile_v1`, which every decode still calls and which
+/// rejects every hybrid. Every other literal check below is untouched and
+/// unconditional: none of these other authorities differ between the two
+/// catalog profiles, so they continue to gate both exactly as before. The
+/// frozen literals themselves (rev3 and the two catalog format constants
+/// shared by both profiles) are byte-identical to before this change.
 fn validate_frozen_rev3_authorities_v2() -> Result<()> {
     let rally = runtime_deck_by_id(CANONICAL_RALLY_DECK_ID)
         .ok_or_else(|| TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral))?;
     if SOURCE_TREE_RECIPE_IDENTITY_V1 != FROZEN_SOURCE_TREE_RECIPE_IDENTITY_V2
         || SOURCE_TREE_RECIPE_SHA256_V1 != FROZEN_SOURCE_TREE_RECIPE_SHA256_V2
         || STRICT_SOURCE_TREE_RECIPE_BYTE_COUNT_V1 != FROZEN_SOURCE_TREE_RECIPE_BYTE_COUNT_V2
-        || KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2
         || RUNTIME_DECK_CATALOG_SCHEMA != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
         || RUNTIME_DECK_PROTOCOL != FROZEN_RUNTIME_CATALOG_PROTOCOL_V2
-        || RUNTIME_DECK_CATALOG_FILE_SHA256 != FROZEN_RUNTIME_CATALOG_SHA256_V2
         || CANONICAL_RALLY_DECK_ID != FROZEN_RALLY_DECK_ID_V2
         || rally.runtime_deck_hash != FROZEN_RALLY_DECK_HASH_U64_V2
         || RL_SESSION_PROTOCOL_NAME != FROZEN_PROTOCOL_V2
@@ -1798,11 +2086,25 @@ fn validate_frozen_rev3_authorities_v2() -> Result<()> {
         || NONCLAIM_V1 != FROZEN_SNAPSHOT_NONCLAIM_V2
         || NATIVE_TRAINER_CONTRACT_IDENTITY_V2 != FROZEN_TRAINER_IDENTITY_V2
         || NATIVE_FLAT_TENSORIZER_IDENTITY_V2 != FROZEN_TENSORIZER_IDENTITY_V2
-        || NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2
-            != FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
-        || NATIVE_FLAT_TENSORIZER_FIXTURE_SHA256_V2 != FROZEN_TENSORIZER_FIXTURE_SHA256_V2
-        || NATIVE_FLAT_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
-            != FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
+        // Feature-Encoder Successor (collab CLAUDE #221): the three live
+        // `NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2` /
+        // `_FIXTURE_SHA256_V2` / `_FIXTURE_PAYLOAD_SHA256_V2` constants now
+        // permanently track the CURRENT tensorizer-authority triple (moved
+        // forward with the historical stack-source encoder fix and its
+        // golden regeneration), so an unconditional equality check against
+        // the HISTORICAL-only `FROZEN_TENSORIZER_*_V2` mirrors here would
+        // make every live build fail this function permanently -- the same
+        // outage class the Dual-Profile Catalog Successor fixed for
+        // `KERNEL_CARDDB_HASH`/`FROZEN_CARD_DB_HASH_U64_V2`. The record-field
+        // check (`validate_contracts_v2`, via
+        // `tensorizer_authority_triple_is_known_v1`) is the authority for
+        // this axis now; no live-build-constant check runs at decode time.
+        // See `current_profile_matches_live_build_identity_v1` for the
+        // equivalent catalog-axis mutation-boundary authenticity check; an
+        // analogous check for this axis is a reasonable follow-up fix-round
+        // item but is not required to prevent decode outages (unlike
+        // catalog identity, mixing historical/current
+        // feature-encoder-profile records in the science loop is safe).
         || u64::try_from(PARAMETER_COUNT_V1).ok() != Some(FROZEN_PARAMETER_ELEMENT_COUNT_V2)
         || TRAINER_ALGORITHM_V1 != FROZEN_LOSS_IDENTITY_V2
         || TRAIN_STEP_IDENTITY_V1 != FROZEN_TRAIN_STEP_IDENTITY_V2
@@ -1992,13 +2294,25 @@ fn validate_runtime_v2(runtime: &TrainRunRuntimeV2, toolchain: &TrainRunToolchai
     Ok(())
 }
 
+/// Dual-Profile Catalog Successor (collab CLAUDE #220): the live-owner block
+/// below no longer pins `KERNEL_CARDDB_HASH`/`RUNTIME_DECK_CATALOG_FILE_SHA256`
+/// against the historical rev3 literal, and the record-field block no longer
+/// pins `environment.card_db_hash_u64_hex`/`environment.runtime_catalog_sha256`
+/// against it either -- both catalog *content* identities are deliberately
+/// carved out of this function entirely (for both profiles, at decode time)
+/// and delegated whole to `classify_catalog_profile_v1`, exactly the same
+/// delegation shape this function already uses for
+/// `environment.protocol_version`/`environment.schema_version` (owned by
+/// `classify_environment_trajectory_contract_v1`, see the comment below).
+/// See `validate_frozen_rev3_authorities_v2` for the full reasoning; every
+/// other literal here (catalog *format* schema/protocol, the Rally deck's own
+/// hash, protocol name, kernel/surface/policy-surface versions) is unchanged
+/// and unconditional, since none of those differ between catalog profiles.
 fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
     let rally = runtime_deck_by_id(CANONICAL_RALLY_DECK_ID)
         .ok_or_else(|| TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral))?;
-    if KERNEL_CARDDB_HASH != FROZEN_CARD_DB_HASH_U64_V2
-        || RUNTIME_DECK_CATALOG_SCHEMA != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
+    if RUNTIME_DECK_CATALOG_SCHEMA != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
         || RUNTIME_DECK_PROTOCOL != FROZEN_RUNTIME_CATALOG_PROTOCOL_V2
-        || RUNTIME_DECK_CATALOG_FILE_SHA256 != FROZEN_RUNTIME_CATALOG_SHA256_V2
         || CANONICAL_RALLY_DECK_ID != FROZEN_RALLY_DECK_ID_V2
         || rally.runtime_deck_hash != FROZEN_RALLY_DECK_HASH_U64_V2
         || RL_SESSION_PROTOCOL_NAME != FROZEN_PROTOCOL_V2
@@ -2010,10 +2324,10 @@ fn validate_environment_v2(environment: &TrainRunEnvironmentV2) -> Result<()> {
     {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     }
-    if environment.card_db_hash_u64_hex != FROZEN_CARD_DB_HASH_U64_HEX_V2
-        || environment.runtime_catalog_schema != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
+    if environment.runtime_catalog_schema != FROZEN_RUNTIME_CATALOG_SCHEMA_V2
         || environment.runtime_catalog_protocol != FROZEN_RUNTIME_CATALOG_PROTOCOL_V2
-        || environment.runtime_catalog_sha256 != FROZEN_RUNTIME_CATALOG_SHA256_V2
+        // `environment.card_db_hash_u64_hex` and `environment.runtime_catalog_sha256`
+        // are deliberately not pinned here; see the function doc comment.
         || environment.deck_ids != [FROZEN_RALLY_DECK_ID_V2, FROZEN_RALLY_DECK_ID_V2]
         || environment.deck_hashes_u64_hex
             != [
@@ -2234,11 +2548,14 @@ fn validate_contracts_v2(contracts: &TrainRunContractsV2) -> Result<()> {
         || contracts.tensorizer.identity != FROZEN_TENSORIZER_IDENTITY_V2
         || contracts.tensorizer.feature_contract_digest != FROZEN_FEATURE_CONTRACT_DIGEST_V2
         || contracts.tensorizer.feature_encoding_digest != FROZEN_FEATURE_ENCODING_DIGEST_V2
-        || contracts.tensorizer.authoritative_features_source_sha256
-            != FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
-        || contracts.tensorizer.fixture_sha256 != FROZEN_TENSORIZER_FIXTURE_SHA256_V2
-        || contracts.tensorizer.fixture_payload_sha256
-            != FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
+        // Feature-Encoder Successor (collab CLAUDE #221): accepts either the
+        // HISTORICAL or CURRENT tensorizer-authority triple as a whole; see
+        // `tensorizer_authority_triple_is_known_v1`.
+        || !tensorizer_authority_triple_is_known_v1(
+            &contracts.tensorizer.authoritative_features_source_sha256,
+            &contracts.tensorizer.fixture_sha256,
+            &contracts.tensorizer.fixture_payload_sha256,
+        )
         || contracts.loss.identity != FROZEN_LOSS_IDENTITY_V2
         || contracts.train_step.identity != FROZEN_TRAIN_STEP_IDENTITY_V2
         || !matches!(
@@ -2500,8 +2817,7 @@ fn validate_population_program_v1(record: &TrainRunV2) -> Result<()> {
             .is_none_or(|initialization| {
                 initialization.source_run_sha256 != POPULATION_PARENT_SOURCE_RUN_SHA256_V1
                     || initialization.generation != POPULATION_PARENT_GENERATION_V1
-                    || initialization.checkpoint_sha256
-                        != POPULATION_PARENT_CHECKPOINT_SHA256_V1
+                    || initialization.checkpoint_sha256 != POPULATION_PARENT_CHECKPOINT_SHA256_V1
                     || initialization.sidecar_sha256 != POPULATION_PARENT_SIDECAR_SHA256_V1
                     || initialization.state_sha256 != POPULATION_PARENT_STATE_SHA256_V1
                     || initialization.derived_model_parameter_sha256
@@ -2550,10 +2866,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         .iter()
         .try_fold(0_u64, |sum, weight| sum.checked_add(*weight))
         .ok_or_else(|| TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidArithmetic))?;
-    let initialization = record
-        .contracts
-        .opponent_ladder_initialization
-        .as_ref();
+    let initialization = record.contracts.opponent_ladder_initialization.as_ref();
     // Third tuple element: the role's own training-update-count/schedule-
     // length pin. For "build"/"screen"/"denovo-screen" this always coincides
     // with the shared RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1 (256),
@@ -2571,17 +2884,13 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
             RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
             RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
         )
-    } else if RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
-        .contains(&response.expected_base_seed)
-    {
+    } else if RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1.contains(&response.expected_base_seed) {
         (
             "screen",
             RESPONSE_EXPLOITER_SCREEN_COMPLETION_GENERATION_V1,
             RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
         )
-    } else if RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
-        .contains(&response.expected_base_seed)
-    {
+    } else if RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1.contains(&response.expected_base_seed) {
         (
             "denovo-screen",
             RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
@@ -2598,7 +2907,8 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
     } else {
         return Err(TrainRunV2Error::new(TrainRunV2ErrorKind::InvalidLiteral));
     };
-    let is_denovo = response.run_role == "denovo-screen" || response.run_role == "denovo-screen-512";
+    let is_denovo =
+        response.run_role == "denovo-screen" || response.run_role == "denovo-screen-512";
 
     // Backward-compatibility amendment: unlike `authorized_base_seeds` /
     // `authorized_screen_seeds` / `authorized_denovo_seeds` above (always
@@ -2658,15 +2968,13 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
     if response.identity != RESPONSE_EXPLOITER_IDENTITY_V1
         || response.package_commit != POPULATION_PACKAGE_COMMIT_V1
         || response.program_document_sha256 != POPULATION_PROGRAM_DOCUMENT_SHA256_V1
-        || response.target_refresh_manifest_sha256
-            != RESPONSE_EXPLOITER_TARGET_REFRESH_SHA256_V1
+        || response.target_refresh_manifest_sha256 != RESPONSE_EXPLOITER_TARGET_REFRESH_SHA256_V1
         || response.target_global_generation != RESPONSE_EXPLOITER_TARGET_GLOBAL_GENERATION_V1
         || response.source_refresh_index != RESPONSE_EXPLOITER_SOURCE_REFRESH_INDEX_V1
         || response.source_program_update != RESPONSE_EXPLOITER_SOURCE_PROGRAM_UPDATE_V1
         || response.active_slot_indices != RESPONSE_EXPLOITER_ACTIVE_SLOT_INDICES_V1
         || response.excluded_slot_indices != RESPONSE_EXPLOITER_EXCLUDED_SLOT_INDICES_V1
-        || response.renormalization_identity
-            != RESPONSE_EXPLOITER_RENORMALIZATION_IDENTITY_V1
+        || response.renormalization_identity != RESPONSE_EXPLOITER_RENORMALIZATION_IDENTITY_V1
         || response.effective_weight_units != RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_UNITS_V1
         || response.effective_weight_total_units
             != RESPONSE_EXPLOITER_EFFECTIVE_WEIGHT_TOTAL_UNITS_V1
@@ -2688,8 +2996,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
                 | RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1
         )
         || (response.run_role == "screen"
-            && response.policy_anchor_beta_f32_bits
-                != RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1)
+            && response.policy_anchor_beta_f32_bits != RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1)
         || (is_denovo
             && response.policy_anchor_beta_f32_bits != RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1)
         || (!is_denovo
@@ -2698,8 +3005,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         || record.contracts.population_program_v1.is_some()
         || record.contracts.wide_model_experiment_v1.is_some()
         || record.environment.environment_randomization_v2.is_none()
-        || record.contracts.opponent_policy.identity
-            != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
+        || record.contracts.opponent_policy.identity != FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
         || record.contracts.opponent_ladder_pool.is_none()
         || record.contracts.opponent_schedule_v2.is_none()
         || record.schedule.batch_episodes != RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
@@ -3258,6 +3564,20 @@ pub(crate) fn test_fixture_bytes_v2() -> Vec<u8> {
     tests::fixture_bytes()
 }
 
+/// The HISTORICAL-profile sibling of [`test_fixture_bytes_v2`]: a coherent
+/// record carrying the frozen rev3 catalog literals instead of the live
+/// nine-deck ones. Test-only: used by the dual-profile decode-acceptance and
+/// boundary-rejection suites (this module and its consumers) to exercise a
+/// record that decodes clean but must be rejected at the science-loop,
+/// publisher, and resume boundaries.
+#[cfg(test)]
+// Callers live in Windows-gated test modules; dead on non-Windows targets
+// only, so the lint stays active where the callers exist.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn test_fixture_bytes_historical_v1() -> Vec<u8> {
+    tests::fixture_bytes_historical()
+}
+
 /// A coherent, fully reminted environment randomization V2 record. Test-only:
 /// the diagonal and genuine-execution suites use it as the validated V2 run
 /// authority.
@@ -3463,6 +3783,9 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_
 /// population-program authority before reminting the run digests.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
+// Reserved test-fixture helper for a not-yet-written population-program
+// regression case; kept alongside the currently exercised fixtures.
+#[allow(dead_code)]
 pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
     backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
     batch_episodes: u64,
@@ -3759,7 +4082,7 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_wide_ladder_v2(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     const ZERO_SHA256: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -3944,10 +4267,18 @@ mod tests {
                 "build_profile": "release"
             },
             "environment": {
-                "card_db_hash_u64_hex": FROZEN_CARD_DB_HASH_U64_HEX_V2,
+                // Dual-Profile Catalog Successor (collab CLAUDE #220): the
+                // default fixture builds a CURRENT-profile record (live
+                // nine-deck catalog identity), matching what production
+                // capture actually mints today, so every test built on top
+                // of `fixture_record()` exercises the live science-loop/
+                // publish/resume paths unrejected. `fixture_record_historical()`
+                // below overrides these two fields back to the HISTORICAL
+                // (rev3) literals for the dedicated dual-profile tests.
+                "card_db_hash_u64_hex": FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1,
                 "runtime_catalog_schema": FROZEN_RUNTIME_CATALOG_SCHEMA_V2,
                 "runtime_catalog_protocol": FROZEN_RUNTIME_CATALOG_PROTOCOL_V2,
-                "runtime_catalog_sha256": FROZEN_RUNTIME_CATALOG_SHA256_V2,
+                "runtime_catalog_sha256": FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1,
                 "deck_ids": [FROZEN_RALLY_DECK_ID_V2, FROZEN_RALLY_DECK_ID_V2],
                 "deck_hashes_u64_hex": [FROZEN_RALLY_DECK_HASH_U64_HEX_V2, FROZEN_RALLY_DECK_HASH_U64_HEX_V2],
                 "protocol": FROZEN_PROTOCOL_V2,
@@ -4130,6 +4461,28 @@ mod tests {
         let mut record = TrainRunV2::from(wire);
         refresh_derived(&mut record);
         record
+    }
+
+    /// The dedicated HISTORICAL-profile sibling of `fixture_record()`: the
+    /// exact same coherent record, with the two catalog-content fields
+    /// overridden back to the frozen rev3 literals (byte-identical to what
+    /// every fixture built before the runtime-decks-nine landing carried).
+    /// Used only by the dual-profile decode-acceptance and boundary-rejection
+    /// tests; every other test keeps using the CURRENT-profile default.
+    pub(super) fn fixture_record_historical() -> TrainRunV2 {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex = FROZEN_CARD_DB_HASH_U64_HEX_V2.to_owned();
+        record.environment.runtime_catalog_sha256 = FROZEN_RUNTIME_CATALOG_SHA256_V2.to_owned();
+        refresh_derived(&mut record);
+        record
+    }
+
+    pub(super) fn fixture_bytes_historical() -> Vec<u8> {
+        to_canonical_json_bytes_v1(
+            &fixture_record_historical(),
+            CanonicalJsonNullPolicyV1::Forbid,
+        )
+        .unwrap()
     }
 
     fn refresh_derived(record: &mut TrainRunV2) {
@@ -5384,8 +5737,12 @@ mod tests {
         validate_frozen_rev3_authorities_v2().unwrap();
 
         // The fixture is assembled from the frozen RunV2 literals, not from
-        // production owners. Successful decode therefore exercises the
-        // independent owner-to-frozen and record-to-frozen checks together.
+        // production owners (with the sole deliberate exception of the two
+        // catalog-content fields, which `fixture_record()` now sets to the
+        // CURRENT-profile literals -- see `classify_catalog_profile_v1` and
+        // the dedicated dual-profile tests below for that axis). Successful
+        // decode therefore exercises the independent owner-to-frozen and
+        // record-to-frozen checks together for every other authority.
         let record = fixture_record();
         assert_eq!(
             record.source.source_tree_recipe_byte_count,
@@ -5393,7 +5750,7 @@ mod tests {
         );
         assert_eq!(
             record.environment.runtime_catalog_sha256,
-            FROZEN_RUNTIME_CATALOG_SHA256_V2
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
         );
         assert_eq!(
             record.contracts.tensorizer,
@@ -5462,10 +5819,384 @@ mod tests {
 
         let bytes = fixture_bytes();
         decode_train_run_v2(&bytes).unwrap();
-        assert!(
-            !bytes
-                .windows(b"membership".len())
-                .any(|window| window == b"membership")
+        assert!(!bytes
+            .windows(b"membership".len())
+            .any(|window| window == b"membership"));
+    }
+
+    // ------------------------------------------------------------------
+    // Dual-Profile Catalog Successor (collab CLAUDE #220)
+    // ------------------------------------------------------------------
+
+    /// Canary: the new CURRENT-profile frozen literals must equal today's
+    /// live build constants exactly. If this ever fails, either the crate's
+    /// card database/runtime catalog changed again (needs a new profile) or
+    /// the frozen literals were typed wrong when this successor landed.
+    #[test]
+    fn current_frozen_literal_matches_the_live_build_constant() {
+        use crate::card_def::KERNEL_CARDDB_HASH;
+        use crate::runtime_decks::RUNTIME_DECK_CATALOG_FILE_SHA256;
+        assert_eq!(
+            format!("{KERNEL_CARDDB_HASH:016x}"),
+            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+        );
+        assert_eq!(
+            RUNTIME_DECK_CATALOG_FILE_SHA256,
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
+        );
+    }
+
+    /// Current-pin tripwire (fix round, panel finding 4). The two literals
+    /// below are typed independently of `FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`/
+    /// `FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`'s own definitions, not
+    /// derived from them, so this test cannot pass by construction the way a
+    /// self-referential comparison would.
+    ///
+    /// THE RULE: a future catalog move must add a NEW frozen profile
+    /// (a fourth literal pair, a new `NativeRunCatalogProfileV1` variant, a
+    /// new arm in `classify_catalog_profile_v1` and at every mutation
+    /// boundary) exactly the way this successor added CURRENT alongside the
+    /// untouched HISTORICAL pair. It must never overwrite
+    /// `FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1`/`FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1`
+    /// in place -- doing so would silently reinterpret every already-sealed
+    /// CURRENT-profile record (this successor's own science-evidence era) as
+    /// whatever the new catalog happens to be, exactly the byte-identity
+    /// violation the whole frozen-literal discipline exists to prevent. If
+    /// this test fails, someone overwrote the constant in place; the fix is
+    /// to revert that edit and instead follow the third-profile pattern.
+    #[test]
+    fn current_pin_is_not_silently_overwritten_in_place() {
+        assert_eq!(
+            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1, "64c82a261e078f1a",
+            "FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1 was overwritten in place; add a new frozen \
+             profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1,
+            "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851",
+            "FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1 was overwritten in place; add a new frozen \
+             profile instead of moving this one"
+        );
+    }
+
+    /// Direct unit coverage of `current_profile_matches_live_build_identity_v1`
+    /// (fix round, panel finding 1) in isolation, both directions, before the
+    /// fuller boundary-integration tests exercise it through
+    /// `resume_native_training_store_v2`/`publish_generation_v2`.
+    #[test]
+    fn current_profile_live_identity_check_matches_real_and_rejects_shimmed() {
+        let record = fixture_record();
+        assert!(current_profile_matches_live_build_identity_v1(
+            &record.environment
+        ));
+
+        let _shim = LiveCatalogBuildIdentityOverrideGuardV1::install(
+            "ffffffffffffffff",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        );
+        assert!(!current_profile_matches_live_build_identity_v1(
+            &record.environment
+        ));
+    }
+
+    #[test]
+    fn historical_fixture_decodes_clean_and_classifies_historical() {
+        let validated = decode_train_run_v2(&fixture_bytes_historical()).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+        assert_eq!(
+            validated.record().environment.card_db_hash_u64_hex,
+            FROZEN_CARD_DB_HASH_U64_HEX_V2
+        );
+        assert_eq!(
+            validated.record().environment.runtime_catalog_sha256,
+            FROZEN_RUNTIME_CATALOG_SHA256_V2
+        );
+    }
+
+    #[test]
+    fn current_fixture_decodes_clean_and_classifies_current() {
+        let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Current
+        );
+        assert_eq!(
+            validated.record().environment.card_db_hash_u64_hex,
+            FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1
+        );
+        assert_eq!(
+            validated.record().environment.runtime_catalog_sha256,
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1
+        );
+    }
+
+    #[test]
+    fn hybrid_current_card_db_with_historical_catalog_sha_is_rejected() {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex = FROZEN_CARD_DB_HASH_U64_HEX_CURRENT_V1.to_owned();
+        record.environment.runtime_catalog_sha256 = FROZEN_RUNTIME_CATALOG_SHA256_V2.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
+    #[test]
+    fn hybrid_historical_card_db_with_current_catalog_sha_is_rejected() {
+        let mut record = fixture_record_historical();
+        record.environment.runtime_catalog_sha256 =
+            FROZEN_RUNTIME_CATALOG_SHA256_CURRENT_V1.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
+    #[test]
+    fn neither_known_catalog_literal_pair_is_rejected() {
+        let mut record = fixture_record();
+        record.environment.card_db_hash_u64_hex = "1111111111111111".to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Feature-Encoder Successor (collab CLAUDE #221, folding CODEX #235)
+    // ------------------------------------------------------------------
+    //
+    // `fixture_record()`'s tensorizer section is deliberately left at the
+    // HISTORICAL `authoritative_features_source_sha256` (unlike the catalog
+    // dual-profile work, which switched `fixture_record()`'s default to
+    // CURRENT): this file has multiple hardcoded digests
+    // (`independent_digest_references_and_goldens_match` above, and others)
+    // that are recomputed BY RUNNING the test suite whenever
+    // `fixture_record()`'s bytes change, which the no-cargo-until-GO
+    // constraint on this branch does not allow. The tests below build their
+    // own CURRENT-profile variant locally instead, exactly as the
+    // hybrid-rejection tests above do for the catalog axis.
+
+    /// Canary: the CURRENT tensorizer-authority triple must equal today's
+    /// live values exactly -- the source-hash literal against the live
+    /// `native_flat_tensorizer_v2` module constant, and the fixture/payload
+    /// literals against a fresh read of the regenerated golden file itself
+    /// (not against `native_flat_tensorizer_v2`'s own constants, which are
+    /// this same triple's independently-typed twin, not its source of
+    /// truth). If this fails, either a literal was typed inconsistently, the
+    /// golden was regenerated without updating these pins, or vice versa.
+    #[test]
+    fn tensorizer_current_frozen_triple_matches_the_live_golden() {
+        assert_eq!(
+            crate::native_flat_tensorizer_v2::NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2,
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
+        );
+        let golden_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../data/flat_policy_v2/python_full_features_v2.json");
+        let golden_bytes = std::fs::read(&golden_path)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", golden_path.display()));
+        assert_eq!(
+            sha256_hex(&golden_bytes),
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1
+        );
+        let golden: serde_json::Value = serde_json::from_slice(&golden_bytes).unwrap();
+        assert_eq!(
+            golden["payload_sha256"].as_str().unwrap(),
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1
+        );
+    }
+
+    /// Current-pin tripwire, same discipline as
+    /// `current_pin_is_not_silently_overwritten_in_place`: the three literals
+    /// below are typed independently of the constants' own definitions, so
+    /// this cannot pass by self-reference. A future features.py change must
+    /// add a fourth tensorizer-authority triple alongside this one, never
+    /// overwrite it in place.
+    ///
+    /// Codex confirmed this branch's reconstruction as the intended change
+    /// and ratified the source-hash literal as the CURRENT-profile pin
+    /// (collab CLAUDE #239); the fixture/payload literals are downstream of
+    /// it.
+    #[test]
+    fn tensorizer_current_triple_is_not_silently_overwritten_in_place() {
+        assert_eq!(
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1,
+            "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c",
+            "FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1 was overwritten in place; add a \
+             new frozen profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1,
+            "edd8c255d65b0f1eba17b029da2d0e4aa5f9600243e9e390cd105c0b32b92812",
+            "FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1 was overwritten in place; add a new \
+             frozen profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1,
+            "728a702e364a83b14f539c0fc9441aac5d272be4a776cbee9a08d343ed4cf69c",
+            "FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1 was overwritten in place; add a \
+             new frozen profile instead of moving this one"
+        );
+    }
+
+    /// Regression tripwire for the real denovo-screen-256 decode outage
+    /// (found by full-suite bisect, 2026-08-14): the two literals below are
+    /// typed independently of `FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1`/
+    /// `_GOLDEN_STREAM_SHA256_HISTORICAL_V1`'s own definitions, so this
+    /// cannot pass by self-reference. A future full-episode-trajectory
+    /// golden regeneration must add a third pair alongside this one and the
+    /// live CURRENT pair, never overwrite this HISTORICAL pair in place --
+    /// doing so would reproduce the exact outage this fix closed.
+    #[test]
+    fn full_episode_trajectory_historical_pin_is_not_silently_overwritten_in_place() {
+        assert_eq!(
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1,
+            "e6cfffe080c349ceca82ddfc6504fb61801ac07cc3e1ae57a80345296f7ec45b",
+            "FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1 was overwritten in \
+             place; add a new frozen profile instead of moving this one"
+        );
+        assert_eq!(
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1,
+            "19171ada77ecd142ac458365563f6e65ad9f5ba352625c77a121ce0d00bb537f",
+            "FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1 was overwritten in \
+             place; add a new frozen profile instead of moving this one"
+        );
+    }
+
+    /// Direct unit coverage of `full_episode_trajectory_golden_pin_is_known_v1`:
+    /// both the frozen HISTORICAL pair (the real denovo-screen-256 store's
+    /// own embedded values) and the live CURRENT pair (re-exported from
+    /// native_full_episode_trajectory_v2.rs) are accepted; every hybrid is
+    /// rejected.
+    #[test]
+    fn full_episode_trajectory_golden_pin_accepts_both_profiles_and_rejects_hybrids() {
+        assert!(full_episode_trajectory_golden_pin_is_known_v1(
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1,
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1,
+        ));
+        assert!(full_episode_trajectory_golden_pin_is_known_v1(
+            NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
+            NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
+        ));
+        assert!(!full_episode_trajectory_golden_pin_is_known_v1(
+            NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V2,
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_HISTORICAL_V1,
+        ));
+        assert!(!full_episode_trajectory_golden_pin_is_known_v1(
+            FROZEN_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_HISTORICAL_V1,
+            NATIVE_FULL_EPISODE_TRAJECTORY_GOLDEN_STREAM_SHA256_V2,
+        ));
+    }
+
+    /// A record whose tensorizer contract carries the full CURRENT triple
+    /// decodes clean. This is the acceptance half of the dual-profile widen:
+    /// new captures from a crate built with the historical stack-source
+    /// encoder fix and the regenerated golden must not hit the outage
+    /// `classify_catalog_profile_v1`'s sibling design was built to prevent.
+    #[test]
+    fn current_tensorizer_authority_triple_decodes_clean() {
+        let mut record = fixture_record();
+        record
+            .contracts
+            .tensorizer
+            .authoritative_features_source_sha256 =
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1.to_owned();
+        record.contracts.tensorizer.fixture_sha256 =
+            FROZEN_TENSORIZER_FIXTURE_SHA256_CURRENT_V1.to_owned();
+        record.contracts.tensorizer.fixture_payload_sha256 =
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_CURRENT_V1.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(
+            validated
+                .record()
+                .contracts
+                .tensorizer
+                .authoritative_features_source_sha256,
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1
+        );
+    }
+
+    /// The historical-default fixture (unmodified `fixture_record()`) still
+    /// decodes clean under the widened check -- the historical triple was
+    /// never removed, only joined by the current one. Every already-sealed
+    /// RunV2 evidence store keeps decoding.
+    #[test]
+    fn historical_tensorizer_authority_triple_still_decodes_clean() {
+        let validated = decode_train_run_v2(&fixture_bytes()).unwrap();
+        assert_eq!(
+            validated
+                .record()
+                .contracts
+                .tensorizer
+                .authoritative_features_source_sha256,
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_V2
+        );
+        assert_eq!(
+            validated.record().contracts.tensorizer.fixture_sha256,
+            FROZEN_TENSORIZER_FIXTURE_SHA256_V2
+        );
+        assert_eq!(
+            validated
+                .record()
+                .contracts
+                .tensorizer
+                .fixture_payload_sha256,
+            FROZEN_TENSORIZER_FIXTURE_PAYLOAD_SHA256_V2
+        );
+    }
+
+    /// A hybrid triple (CURRENT source hash paired with HISTORICAL fixture
+    /// hashes) is rejected, exactly mirroring the catalog axis's
+    /// `hybrid_current_card_db_with_historical_catalog_sha_is_rejected`.
+    /// Mutation target: weakening `tensorizer_authority_triple_is_known_v1`
+    /// from whole-tuple matching to independent per-field matching would
+    /// make this test fail.
+    #[test]
+    fn hybrid_current_source_hash_with_historical_fixture_hashes_is_rejected() {
+        let mut record = fixture_record();
+        record
+            .contracts
+            .tensorizer
+            .authoritative_features_source_sha256 =
+            FROZEN_TENSORIZER_AUTHORITY_SOURCE_SHA256_CURRENT_V1.to_owned();
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
+        );
+    }
+
+    /// Neither known triple: rejected. Mutation target for the widen itself
+    /// -- collapsing `tensorizer_authority_triple_is_known_v1` to `true`
+    /// would make this test fail.
+    #[test]
+    fn neither_known_tensorizer_authority_triple_is_rejected() {
+        let mut record = fixture_record();
+        record
+            .contracts
+            .tensorizer
+            .authoritative_features_source_sha256 = "1".repeat(68);
+        // (64 hex-looking chars would also work; length is not itself
+        // validated for this field, only exact equality against one of the
+        // two frozen source-hash literals, so any non-matching value proves
+        // the point.)
+        refresh_derived(&mut record);
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert_eq!(
+            decode_train_run_v2(&bytes).unwrap_err().kind(),
+            TrainRunV2ErrorKind::InvalidLiteral
         );
     }
 
@@ -5496,17 +6227,24 @@ mod tests {
         assert_eq!(semantics, record.contracts.standalone_semantics.sha256);
         assert_eq!(identity, record.contracts.identity_bundle_sha256);
         assert_eq!(run_bytes, fixture_bytes());
+        // Dual-Profile Catalog Successor (collab CLAUDE #220): these three
+        // digests are recomputed here because `fixture_record()` now embeds
+        // the CURRENT-profile catalog literals (see that function's doc
+        // comment); the digests themselves are unrelated to catalog identity
+        // otherwise, so a value change here is expected and is not itself
+        // evidence of anything beyond the fixture's own environment fields
+        // changing.
         assert_eq!(
             semantics,
-            "2b2b65d958f74e631a5ca995410af641dda25505db65550f08c94c04c910cdbe"
+            "affcfccc974e48a0da001147812e6ce0f0d106b6d1c8b4a545b8e5512185c8e0"
         );
         assert_eq!(
             identity,
-            "b42a00d17ffe03b3e4221985587a24f56227658a73cd5a48c671c6b013842eed"
+            "f118e0a86ab58a145279ec0f4fb7446d1c67adeb7a968eb7d67aa4763d7bf323"
         );
         assert_eq!(
             sha256_hex(&run_bytes),
-            "dae0b647887ef07ffe6e307490a96bfff69a22b29d69f8d1d9c3f96eb484846f"
+            "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
         );
     }
 
@@ -5854,7 +6592,7 @@ mod tests {
     }
 
     fn hex64(fill: char) -> String {
-        std::iter::repeat(fill).take(64).collect()
+        std::iter::repeat_n(fill, 64).collect()
     }
 
     fn valid_ladder_checkpoint_ref(fill: char, generation: u64) -> OpponentLadderCheckpointRefV1 {
@@ -5994,9 +6732,7 @@ mod tests {
             authorized_denovo_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
             authorized_denovo_512_seeds: Some(RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1),
             expected_base_seed,
-            run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
-                .contains(&expected_base_seed)
-            {
+            run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1.contains(&expected_base_seed) {
                 "build".to_owned()
             } else {
                 "screen".to_owned()
@@ -6032,7 +6768,9 @@ mod tests {
     /// training-update-count differ, so this stays one function rather than
     /// a duplicated sibling -- seed 971_201 takes the exact same branch and
     /// produces byte-identical output as before this amendment.
-    fn response_exploiter_denovo_fixture_for_seed(expected_base_seed: u64) -> ResponseExploiterContractV1 {
+    fn response_exploiter_denovo_fixture_for_seed(
+        expected_base_seed: u64,
+    ) -> ResponseExploiterContractV1 {
         let is_horizon_512 =
             RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1.contains(&expected_base_seed);
         let training_update_count = if is_horizon_512 {
@@ -6043,7 +6781,12 @@ mod tests {
         ResponseExploiterContractV1 {
             fresh_adam_after_weight_init_identity:
                 RESPONSE_EXPLOITER_DENOVO_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1.to_owned(),
-            run_role: if is_horizon_512 { "denovo-screen-512" } else { "denovo-screen" }.to_owned(),
+            run_role: if is_horizon_512 {
+                "denovo-screen-512"
+            } else {
+                "denovo-screen"
+            }
+            .to_owned(),
             training_update_count,
             expected_completion_generation: training_update_count,
             policy_anchor_beta_f32_bits: RESPONSE_EXPLOITER_DENOVO_BETA_F32_BITS_V1.to_owned(),
@@ -6063,8 +6806,7 @@ mod tests {
         record.schedule.batch_episodes = RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1;
         record.schedule.checkpoint_segment_updates =
             RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
-        record.schedule.requested_successful_updates =
-            RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1;
+        record.schedule.requested_successful_updates = RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1;
         record.schedule.checkpoint_episode_interval = RESPONSE_EXPLOITER_EPISODES_PER_UPDATE_V1
             * RESPONSE_EXPLOITER_CHECKPOINT_SEGMENT_UPDATES_V1;
         record.contracts.opponent_policy.identity =
@@ -6109,8 +6851,9 @@ mod tests {
         record.contracts.opponent_ladder_pool = Some(valid_ladder_pool_fixture());
         record.contracts.opponent_ladder_initialization = None;
         record.contracts.opponent_schedule_v2 = Some(valid_opponent_schedule_v2_fixture());
-        record.contracts.response_exploiter_v1 =
-            Some(response_exploiter_denovo_fixture_for_seed(expected_base_seed));
+        record.contracts.response_exploiter_v1 = Some(response_exploiter_denovo_fixture_for_seed(
+            expected_base_seed,
+        ));
         refresh_derived(&mut record);
         record
     }
@@ -6145,11 +6888,9 @@ mod tests {
             validated.record().schedule.requested_successful_updates,
             POPULATION_REPLAY_END_GENERATION_V1 + POPULATION_PROGRAM_UPDATE_COUNT_V1
         );
-        assert!(
-            String::from_utf8(bytes)
-                .unwrap()
-                .contains("\"population_program_v1\":{")
-        );
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .contains("\"population_program_v1\":{"));
     }
 
     #[test]
@@ -6190,23 +6931,19 @@ mod tests {
     fn population_program_absence_preserves_legacy_bytes_and_run_hash() {
         let bytes = fixture_bytes();
         let validated = decode_train_run_v2(&bytes).unwrap();
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .population_program_v1
-                .is_none()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v1
+            .is_none());
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
         assert_eq!(
             sha256_hex(&bytes),
-            "dae0b647887ef07ffe6e307490a96bfff69a22b29d69f8d1d9c3f96eb484846f"
+            "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
         );
-        assert!(
-            !String::from_utf8(bytes)
-                .unwrap()
-                .contains("population_program_v1")
-        );
+        assert!(!String::from_utf8(bytes)
+            .unwrap()
+            .contains("population_program_v1"));
     }
 
     #[test]
@@ -6234,10 +6971,7 @@ mod tests {
             .unwrap()
             .parent_generation = 383;
         refresh_derived(&mut wrong_parent_generation);
-        assert_record_error(
-            wrong_parent_generation,
-            TrainRunV2ErrorKind::InvalidLiteral,
-        );
+        assert_record_error(wrong_parent_generation, TrainRunV2ErrorKind::InvalidLiteral);
 
         for mutate in [
             |p: &mut PopulationProgramContractV1| {
@@ -6250,12 +6984,8 @@ mod tests {
             |p: &mut PopulationProgramContractV1| {
                 p.parent_checkpoint_sha256 = ZERO_SHA256.to_owned()
             },
-            |p: &mut PopulationProgramContractV1| {
-                p.parent_sidecar_sha256 = ZERO_SHA256.to_owned()
-            },
-            |p: &mut PopulationProgramContractV1| {
-                p.parent_state_sha256 = ZERO_SHA256.to_owned()
-            },
+            |p: &mut PopulationProgramContractV1| p.parent_sidecar_sha256 = ZERO_SHA256.to_owned(),
+            |p: &mut PopulationProgramContractV1| p.parent_state_sha256 = ZERO_SHA256.to_owned(),
             |p: &mut PopulationProgramContractV1| {
                 p.parent_model_parameter_sha256 = ZERO_SHA256.to_owned()
             },
@@ -6360,15 +7090,21 @@ mod tests {
             validated.record().contracts().model.architecture_identity,
             FROZEN_MODEL_ARCHITECTURE_IDENTITY_V2
         );
-        assert!(validated.record().contracts().population_program_v1.is_none());
-        assert!(validated.record().contracts().wide_model_experiment_v1.is_none());
-        assert!(
-            validated
-                .record()
-                .environment
-                .environment_randomization_v2
-                .is_some()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v1
+            .is_none());
+        assert!(validated
+            .record()
+            .contracts()
+            .wide_model_experiment_v1
+            .is_none());
+        assert!(validated
+            .record()
+            .environment
+            .environment_randomization_v2
+            .is_some());
         assert!(String::from_utf8(bytes)
             .unwrap()
             .contains("\"response_exploiter_v1\":{"));
@@ -6409,7 +7145,11 @@ mod tests {
                     * validated.record().schedule.requested_successful_updates,
                 256 * 64
             );
-            assert!(validated.record().contracts().population_program_v1.is_none());
+            assert!(validated
+                .record()
+                .contracts()
+                .population_program_v1
+                .is_none());
             assert_eq!(
                 validated
                     .record()
@@ -6498,7 +7238,7 @@ mod tests {
         assert!(legacy.record().contracts().response_exploiter_v1.is_none());
         assert_eq!(
             sha256_hex(&legacy_bytes),
-            "dae0b647887ef07ffe6e307490a96bfff69a22b29d69f8d1d9c3f96eb484846f"
+            "b99df8567b9ec40dff2d12db221c5e9af66d531c6dbf252dbf3eeae789387e8e"
         );
         assert!(!String::from_utf8(legacy_bytes)
             .unwrap()
@@ -6519,8 +7259,16 @@ mod tests {
             population_parent_initialization_fixture(),
         );
         let population = decode_train_run_v2(&population_bytes).unwrap();
-        assert!(population.record().contracts().population_program_v1.is_some());
-        assert!(population.record().contracts().response_exploiter_v1.is_none());
+        assert!(population
+            .record()
+            .contracts()
+            .population_program_v1
+            .is_some());
+        assert!(population
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .is_none());
     }
 
     #[test]
@@ -6657,20 +7405,22 @@ mod tests {
             |r| r.run_role = "build".to_owned(),
             |r| r.run_role = "screen".to_owned(),
             |r| r.expected_completion_generation = 4,
-            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned(),
-            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned(),
+            |r| {
+                r.policy_anchor_beta_f32_bits =
+                    RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned()
+            },
+            |r| {
+                r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned()
+            },
             |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
             |r| {
                 r.parent_source_run_sha256 = Some(POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned())
             },
             |r| r.parent_generation = Some(POPULATION_PARENT_GENERATION_V1),
             |r| {
-                r.parent_checkpoint_sha256 =
-                    Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
+                r.parent_checkpoint_sha256 = Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
             },
-            |r| {
-                r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned())
-            },
+            |r| r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned()),
             |r| r.parent_state_sha256 = Some(POPULATION_PARENT_STATE_SHA256_V1.to_owned()),
             |r| {
                 r.parent_model_parameter_sha256 =
@@ -6701,20 +7451,22 @@ mod tests {
             |r| r.run_role = "denovo-screen".to_owned(),
             |r| r.expected_completion_generation = RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
             |r| r.training_update_count = RESPONSE_EXPLOITER_TRAINING_UPDATE_COUNT_V1,
-            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned(),
-            |r| r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned(),
+            |r| {
+                r.policy_anchor_beta_f32_bits =
+                    RESPONSE_EXPLOITER_INITIAL_BETA_F32_BITS_V1.to_owned()
+            },
+            |r| {
+                r.policy_anchor_beta_f32_bits = RESPONSE_EXPLOITER_RETRY_BETA_F32_BITS_V1.to_owned()
+            },
             |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
             |r| {
                 r.parent_source_run_sha256 = Some(POPULATION_PARENT_SOURCE_RUN_SHA256_V1.to_owned())
             },
             |r| r.parent_generation = Some(POPULATION_PARENT_GENERATION_V1),
             |r| {
-                r.parent_checkpoint_sha256 =
-                    Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
+                r.parent_checkpoint_sha256 = Some(POPULATION_PARENT_CHECKPOINT_SHA256_V1.to_owned())
             },
-            |r| {
-                r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned())
-            },
+            |r| r.parent_sidecar_sha256 = Some(POPULATION_PARENT_SIDECAR_SHA256_V1.to_owned()),
             |r| r.parent_state_sha256 = Some(POPULATION_PARENT_STATE_SHA256_V1.to_owned()),
             |r| {
                 r.parent_model_parameter_sha256 =
@@ -6782,20 +7534,16 @@ mod tests {
         assert!(response.parent_sidecar_sha256.is_none());
         assert!(response.parent_state_sha256.is_none());
         assert!(response.parent_model_parameter_sha256.is_none());
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_some()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_some());
     }
 
     /// The valid "denovo-screen-512" record (Phase 2 horizon amendment; no
@@ -6822,20 +7570,16 @@ mod tests {
         assert!(response.parent_sidecar_sha256.is_none());
         assert!(response.parent_state_sha256.is_none());
         assert!(response.parent_model_parameter_sha256.is_none());
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_some()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_some());
     }
 
     /// Builder round-trip for the authorized denovo seed, mirroring
@@ -6870,9 +7614,16 @@ mod tests {
                 .unwrap();
             assert_eq!(response.expected_base_seed, seed);
             assert_eq!(response.run_role, "denovo-screen");
-            assert!(validated.record().contracts().population_program_v1.is_none());
+            assert!(validated
+                .record()
+                .contracts()
+                .population_program_v1
+                .is_none());
             assert_eq!(
-                validated.record().contracts().opponent_ladder_initialization,
+                validated
+                    .record()
+                    .contracts()
+                    .opponent_ladder_initialization,
                 None
             );
             let text = String::from_utf8(bytes).unwrap();
@@ -6920,9 +7671,16 @@ mod tests {
             assert_eq!(response.expected_base_seed, seed);
             assert_eq!(response.run_role, "denovo-screen-512");
             assert_eq!(response.expected_completion_generation, 512);
-            assert!(validated.record().contracts().population_program_v1.is_none());
+            assert!(validated
+                .record()
+                .contracts()
+                .population_program_v1
+                .is_none());
             assert_eq!(
-                validated.record().contracts().opponent_ladder_initialization,
+                validated
+                    .record()
+                    .contracts()
+                    .opponent_ladder_initialization,
                 None
             );
             let text = String::from_utf8(bytes).unwrap();
@@ -7061,13 +7819,11 @@ mod tests {
         // which MUST keep validating (Amendment 1's explicit requirement).
         let record = ladder_record();
         let validated = validate_train_run_record_v2(record).unwrap();
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
     }
 
     #[test]
@@ -7615,13 +8371,11 @@ mod tests {
             environment.environment_trajectory_contract_v1(),
             NativeRunEnvironmentTrajectoryContractV1::EnvironmentRandomizationV2
         );
-        assert!(
-            environment
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_none()
-        );
+        assert!(environment
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_none());
 
         let ladder_environment_bytes =
             test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_v2(
@@ -7646,13 +8400,11 @@ mod tests {
             ladder_environment.record().contracts().opponent_ladder_pool,
             Some(pool.clone())
         );
-        assert!(
-            ladder_environment
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
+        assert!(ladder_environment
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
 
         let ladder_init_environment_bytes =
             test_fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
@@ -7721,6 +8473,13 @@ mod tests {
         const STORED_RUN_SHA256: &str =
             "47bc46634de718439ea93fbad105cbf96a6339913856805dccca87773760e7ef";
 
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
         let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
             panic!("could not read the real S1 mirror run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
         });
@@ -7731,15 +8490,20 @@ mod tests {
         assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
 
+        // Dual-Profile Catalog Successor (collab CLAUDE #220): this real,
+        // pre-nine-deck store must classify HISTORICAL, not merely decode.
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+
         // This is a uniform-identity run: the ladder pool section must be
         // absent, and the uniform identities validate exactly as before.
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_none()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_none());
         assert_eq!(
             validated.record().contracts().opponent_policy.identity,
             FROZEN_OPPONENT_POLICY_IDENTITY_V2
@@ -7766,6 +8530,13 @@ mod tests {
         const STORED_RUN_SHA256: &str =
             "6a78ae91b616c8f42ccfe9907ff82bdc1b0cd8ed693fd19bcc9e0783ba71e425";
 
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
         let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
             panic!(
                 "could not read the real ladder pilot run.json fixture at {REAL_RUN_JSON_PATH}: {error}"
@@ -7779,28 +8550,181 @@ mod tests {
         assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
 
+        // Dual-Profile Catalog Successor (collab CLAUDE #220): this real,
+        // pre-nine-deck store must classify HISTORICAL, not merely decode.
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+
         // This is a ladder-identity, FRESH-INIT run: the pool section is
         // present, but the init section is absent (fresh init from the
         // common model snapshot -- the shape this amendment's field must
         // not disturb).
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_pool
-                .is_some()
-        );
-        assert!(
-            validated
-                .record()
-                .contracts()
-                .opponent_ladder_initialization
-                .is_none()
-        );
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_pool
+            .is_some());
+        assert!(validated
+            .record()
+            .contracts()
+            .opponent_ladder_initialization
+            .is_none());
         assert_eq!(
             validated.record().contracts().opponent_policy.identity,
             FROZEN_LADDER_OPPONENT_POLICY_IDENTITY_V2
         );
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220) acceptance
+    /// evidence: the coordinator-designated ladder pilot store root
+    /// (`pool3\primary`, distinct from the `runs\dev0\run-0` leg the
+    /// pre-existing regression above reads) decodes clean, read-only, and
+    /// classifies HISTORICAL. Independently confirms the dual-profile
+    /// mechanism against a second real leg of the same evidence tree. This
+    /// test depends on that external evidence directory remaining present on
+    /// this machine, and never writes to it.
+    #[test]
+    fn real_ladder_pilot_pool3_primary_run_json_decodes_historical() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary\run.json";
+
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real ladder pilot pool3/primary run.json at {REAL_RUN_JSON_PATH}: {error}"
+            )
+        });
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real ladder pilot pool3/primary run.json failed validation: {error:?}")
+        });
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+        assert_eq!(
+            validated.record().environment.card_db_hash_u64_hex,
+            FROZEN_CARD_DB_HASH_U64_HEX_V2
+        );
+        assert_eq!(
+            validated.record().environment.runtime_catalog_sha256,
+            FROZEN_RUNTIME_CATALOG_SHA256_V2
+        );
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220) fix round,
+    /// panel finding 2 (compat blocker): empirical evidence from the two
+    /// real, active population-v2 records named by the coordinator. Two
+    /// independent facts, each locked in by its own assertion below:
+    ///
+    /// (1) Both records' own `card_db_hash_u64_hex`/`runtime_catalog_sha256`
+    /// fields are read directly off the raw JSON (bypassing
+    /// `decode_train_run_v2`, which cannot reach them -- see fact 2) and are
+    /// BIT-IDENTICAL to the existing HISTORICAL frozen literals
+    /// (`FROZEN_CARD_DB_HASH_U64_HEX_V2`/`FROZEN_RUNTIME_CATALOG_SHA256_V2`).
+    /// There is no third, distinct catalog-hash value here: the population-v2
+    /// worktree that produced both records never advanced past the rev3
+    /// (two-deck) catalog identity, even though both records were minted
+    /// chronologically after the runtime-decks-nine landing on this branch's
+    /// base. `classify_catalog_profile_v1` already classifies this exact
+    /// value pair correctly (as `Historical`); no new frozen literal pair
+    /// exists to register.
+    ///
+    /// (2) `decode_train_run_v2` currently fails on BOTH real files with
+    /// `CanonicalJson(Deserialization)`, not `InvalidLiteral` and not any
+    /// catalog-profile-related classification. Root cause (confirmed by
+    /// direct inspection, not guessed): both records' `contracts` object
+    /// carries a population-v2-era section this branch's `TrainRunContractsV2`
+    /// does not define at all (`population_program_v2_cycle2` in the cycle-2
+    /// record, `population_program_v2` in the tranche-1 record; this branch
+    /// only defines `population_program_v1`), so `deny_unknown_fields`
+    /// rejects the record before canonical-JSON deserialization completes --
+    /// before `validate_environment_v2` or `classify_catalog_profile_v1` are
+    /// ever reached. This is a separate, pre-existing schema-generation gap
+    /// (the population-v2 contract-widening lane, collab CLAUDE #226: "the
+    /// v2 implementation items... land FIRST, before your run_v2 catalog
+    /// successor rebases onto those files"), not something this dual-profile
+    /// catalog work introduces or can fix by itself.
+    ///
+    /// Consequence, flagged for the coordinator rather than guessed at:
+    /// neither prescribed outcome (equals CURRENT; or differs and gets a new
+    /// third frozen literal pair) applies -- the observed value equals
+    /// HISTORICAL exactly. Once the population-v2 schema widening lands and
+    /// these records become decodable on some future branch, they will
+    /// classify `Historical` under this design and be rejected at the
+    /// science-loop/publish/resume boundaries exactly as the panel warns.
+    /// That is a real, valid forward-looking concern; resolving it now would
+    /// mean inventing a discriminating signal from schema this branch does
+    /// not have, which risks being wrong. This test locks in the current,
+    /// verified-true state as a tripwire: if it starts failing (either
+    /// assertion), that is the signal the schema widening has landed and the
+    /// boundary policy for population-v2's specific case needs revisiting
+    /// with real decodable evidence in hand.
+    #[test]
+    fn population_v2_active_records_are_historical_catalog_identity_blocked_by_a_separate_schema_gap(
+    ) {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        for candidate_path in [
+            r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json",
+            r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json",
+        ] {
+            if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+                std::path::Path::new(candidate_path),
+            ) {
+                return;
+            }
+        }
+
+        for (label, path) in [
+            (
+                "cycle2",
+                r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json",
+            ),
+            (
+                "tranche1",
+                r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json",
+            ),
+        ] {
+            let bytes = std::fs::read(path).unwrap_or_else(|error| {
+                panic!("could not read the real population-v2 {label} run.json at {path}: {error}")
+            });
+
+            // Fact 1: the catalog identity fields, read directly off the raw
+            // JSON, equal the HISTORICAL pin exactly. No decode needed.
+            let raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                raw["environment"]["card_db_hash_u64_hex"].as_str().unwrap(),
+                FROZEN_CARD_DB_HASH_U64_HEX_V2,
+                "{label}: catalog card_db_hash_u64_hex is not the historical pin"
+            );
+            assert_eq!(
+                raw["environment"]["runtime_catalog_sha256"]
+                    .as_str()
+                    .unwrap(),
+                FROZEN_RUNTIME_CATALOG_SHA256_V2,
+                "{label}: catalog runtime_catalog_sha256 is not the historical pin"
+            );
+
+            // Fact 2: decode fails at canonical-JSON deserialization (the
+            // unknown population-v2 contract field), never reaching catalog
+            // classification at all.
+            let error = decode_train_run_v2(&bytes)
+                .expect_err(&format!("{label}: expected decode to fail (schema gap)"));
+            assert_eq!(
+                error.kind(),
+                TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization),
+                "{label}: expected the unknown-field schema gap, got a different failure"
+            );
+        }
     }
 
     /// Backward-compatibility regression for the Phase 2 512-horizon
@@ -7824,6 +8748,13 @@ mod tests {
         const STORED_RUN_SHA256: &str =
             "8d98ee5411e2407af7530421d2eac44cfdf3a6b0198b9ab898caec51b7e8e3cc";
 
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
         let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
             panic!(
                 "could not read the real denovo-screen-256 run.json fixture at {REAL_RUN_JSON_PATH}: {error}"
@@ -7836,6 +8767,13 @@ mod tests {
         });
         assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
         assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+
+        // Dual-Profile Catalog Successor (collab CLAUDE #220): this real,
+        // pre-nine-deck store must classify HISTORICAL, not merely decode.
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
 
         let response = validated
             .record()
@@ -7878,16 +8816,14 @@ mod tests {
 
         let redecoded = decode_train_run_v2(&bytes).unwrap();
         assert_eq!(redecoded.canonical_bytes(), bytes.as_slice());
-        assert!(
-            redecoded
-                .record()
-                .contracts()
-                .response_exploiter_v1
-                .as_ref()
-                .unwrap()
-                .authorized_denovo_512_seeds
-                .is_none()
-        );
+        assert!(redecoded
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .unwrap()
+            .authorized_denovo_512_seeds
+            .is_none());
     }
 
     // =========================================================================

@@ -1585,8 +1585,18 @@ fn cast_spell_or_pass_native(
         let text = match state.objects.get(id).zone {
             Zone::Graveyard => {
                 let cd = &CARD_DEFS[state.objects.get(id).card_def as usize];
-                let fb = cd.flashback.as_ref().map(|f| f.cost).unwrap_or(&[]);
-                format!("Flashback {}", render_flashback_cost(fb))
+                match (cd.flashback.as_ref(), cd.escape.as_ref()) {
+                    (Some(flashback), None) => {
+                        format!("Flashback {}", render_flashback_cost(flashback.cost))
+                    }
+                    // `EscapeAbility` sets the spell card name to
+                    // "<card> with Escape"; `SpellAbility::toString()` then
+                    // exposes "Cast <card> with Escape" to ComputerPlayerRL.
+                    (None, Some(_)) => format!("Cast {name} with Escape"),
+                    _ => panic!(
+                        "graveyard cast candidate {name:?} lacks one unambiguous rendered method"
+                    ),
+                }
             }
             Zone::Exile => format!("Cast {name} using Plot"),
             _ => format!("Cast {name}"),
@@ -1661,7 +1671,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
     let cost = def.activated_abilities[ability_idx as usize].cost;
     let parts: Vec<String> = cost
         .iter()
-        .map(|c| match c {
+        .map(|c| {
+            match c {
             card_def::CostComponent::Mana(cost) => render_cost(cost),
             card_def::CostComponent::Tap => "{T}".to_string(),
             // `mage.abilities.costs.common.SacrificeSourceCost`'s own
@@ -1686,8 +1697,24 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             card_def::CostComponent::DiscardCards(n) => format!("Discard {n} cards"),
             card_def::CostComponent::SacrificeLands(1) => "Sacrifice a land".to_string(),
             card_def::CostComponent::SacrificeLands(n) => format!("Sacrifice {n} lands"),
+            card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(1) => {
+                "Exile another card from your graveyard".to_string()
+            }
+            card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
+                format!("Exile {n} other cards from your graveyard")
+            }
             card_def::CostComponent::PayLife(1) => "Pay 1 life".to_string(),
             card_def::CostComponent::PayLife(n) => format!("Pay {n} life"),
+            unsupported @ (card_def::CostComponent::SacrificeControlled { .. }
+            | card_def::CostComponent::ReturnControlledPermanentToOwnersHand(_)
+            | card_def::CostComponent::TapOtherUntappedControlledPermanentWithSubtype(_)
+            | card_def::CostComponent::TapUntappedControlledPermanent(_)
+            | card_def::CostComponent::RevealHandIfNoCardsWithType(_)
+            | card_def::CostComponent::ReturnControlledUnblockedAttackerToOwnersHand
+            | card_def::CostComponent::ChooseControlledCreatureOrRevealCreatureCardFromHand) => {
+                panic!("walk_diff has no Mage-pinned renderer for activated cost {unsupported:?}")
+            }
+        }
         })
         .collect();
     format!("{}: Draw a card.", parts.join(", "))
@@ -1792,11 +1819,16 @@ fn decision_texts(
             .map(|(t, _)| t)
             .collect(),
         )),
-        SurfaceDecision::Decision(Decision::ChooseTargets { legal_targets, .. }) => Some((
+        SurfaceDecision::Decision(Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        }) => Some((
             "SELECT_TARGETS",
             legal_targets
                 .iter()
                 .map(|t| target_name(state, t, p0_name, p1_name))
+                .chain((*can_finish).then(|| "DONE".to_string()))
                 .collect(),
         )),
         SurfaceDecision::Decision(Decision::ChooseCostTargets { candidates, .. }) => Some((
@@ -1863,9 +1895,9 @@ fn decision_texts(
                 })
                 .collect(),
         )),
-        SurfaceDecision::Decision(Decision::ChooseSpellMode { mode_count, .. }) => Some((
+        SurfaceDecision::Decision(Decision::ChooseSpellMode { legal_modes, .. }) => Some((
             "CHOOSE_MODE",
-            (0..*mode_count).map(|i| format!("mode#{i}")).collect(),
+            legal_modes.iter().map(|i| format!("mode#{i}")).collect(),
         )),
         SurfaceDecision::Decision(Decision::ChooseEffectOption { option_count, .. }) => Some((
             "CHOOSE_MODE",
@@ -1955,12 +1987,20 @@ fn apply_by_indices(
                 )
                 .map_err(|e| format!("engine-step-error:walk:CastSpellOrPass:{e}"))
         }
-        SurfaceDecision::Decision(Decision::ChooseTargets { legal_targets, .. }) => {
-            let t = *legal_targets
-                .get(i0)
-                .ok_or("apply_by_indices:index-out-of-range:ChooseTargets")?;
+        SurfaceDecision::Decision(Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        }) => {
+            let action = if let Some(&target) = legal_targets.get(i0) {
+                Action::ChooseTarget(target)
+            } else if *can_finish && i0 == legal_targets.len() {
+                Action::FinishEffectSelection
+            } else {
+                return Err("apply_by_indices:index-out-of-range:ChooseTargets".to_string());
+            };
             surface
-                .apply(state, SurfaceAction::Action(Action::ChooseTarget(t)))
+                .apply(state, SurfaceAction::Action(action))
                 .map_err(|e| format!("engine-step-error:walk:ChooseTargets:{e}"))
         }
         SurfaceDecision::Decision(Decision::ChooseCostTargets { candidates, .. }) => {
@@ -2033,12 +2073,14 @@ fn apply_by_indices(
                 .apply(state, SurfaceAction::Action(Action::ChooseCastMode(m)))
                 .map_err(|e| format!("engine-step-error:walk:ChooseCastMode:{e}"))
         }
-        SurfaceDecision::Decision(Decision::ChooseSpellMode { .. }) => surface
-            .apply(
-                state,
-                SurfaceAction::Action(Action::ChooseSpellMode(i0 as u8)),
-            )
-            .map_err(|e| format!("engine-step-error:walk:ChooseSpellMode:{e}")),
+        SurfaceDecision::Decision(Decision::ChooseSpellMode { legal_modes, .. }) => {
+            let mode = *legal_modes
+                .get(i0)
+                .ok_or("apply_by_indices:index-out-of-range:ChooseSpellMode")?;
+            surface
+                .apply(state, SurfaceAction::Action(Action::ChooseSpellMode(mode)))
+                .map_err(|e| format!("engine-step-error:walk:ChooseSpellMode:{e}"))
+        }
         SurfaceDecision::Decision(Decision::ChooseEffectOption { .. }) => surface
             .apply(
                 state,

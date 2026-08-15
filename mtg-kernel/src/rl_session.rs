@@ -3,9 +3,10 @@
 //! This module owns the reset/step state machine used by both the JSONL
 //! process wrapper and the batch rollout recorder, so action validation and
 //! terminal classification cannot drift between interactive and offline use.
-//! Schema v5 carries ordered physical-seat deck identity on the wire. Exact
-//! canonical `Burn` and `Rally` ids may be combined in any ordered pair; every
-//! other id fails before an active session is created or replaced.
+//! Schema v5 carries ordered physical-seat deck identity on the wire. Every
+//! exact canonical id in the runtime deck catalog may be combined in any
+//! ordered pair; every other id fails before an active session is created or
+//! replaced.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::engine::{CastMode, CostKind, Decision, OptionalCostChoice};
@@ -25,7 +26,7 @@ use crate::rl::{
     LegalActionV5, ObservationV5, PlayerSeatV1, PolicyLegalActionCandidateV5, RlContractError,
     TargetRefV1, TerminalClassificationV1, TerminalOutcomeV1, TerminalSafeCodeV2,
 };
-use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition};
+use crate::runtime_decks::{runtime_deck_by_id, RuntimeDeckDefinition, RUNTIME_DECKS};
 use crate::state::{Target, Zone};
 use crate::surface_v2::{SuppressionAuditMode, SurfaceDecision, H2_PREDICATE_VERSION};
 use crate::KERNEL_VERSION;
@@ -206,9 +207,11 @@ pub const FLAT_ACTION_CARD_TOKEN_MAPPING_VERSION_V2: u32 = 2;
 pub const FLAT_ACTION_CANDIDATE_COMMITMENT_VERSION_V2: u32 = 2;
 
 /// Schema-v5 action-kind vocabulary used by the scalar mapper. The current
-/// executable flat session subset deliberately rejects `ChooseEffectColor`,
-/// `ChooseEffectNumber`, and `FinishTargetSelection`: schema-v5 reserves those
-/// semantic rows, but policy-v5 has no executable `Action` for them yet.
+/// executable flat session subset deliberately rejects `ChooseEffectColor`
+/// and `ChooseEffectNumber`: schema-v5 reserves those semantic rows, but
+/// policy-v5 has no executable `Action` for them yet. Variable spell targets
+/// reuse the existing `FinishEffectSelection` engine action behind the
+/// reserved `FinishTargetSelection` semantic row.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FlatActionKindV1 {
@@ -627,6 +630,7 @@ fn flat_cost_kind_v1(kind: CostKind) -> u8 {
         CostKind::PayLife => 9,
         CostKind::RemoveCounters => 10,
         CostKind::PutCounters => 11,
+        CostKind::ChooseCreatureOrRevealCreature => 12,
     }
 }
 
@@ -766,11 +770,15 @@ where
             actor,
             source,
             mana_choice,
+            cost_target,
         } => {
             check_actor(*actor)?;
             core.kind = FlatActionKindV1::ActivateManaAbility;
             core.mana_choice = mana_choice.map(flat_mana_color_v1).unwrap_or(0);
             push_ref(FlatActionRefRoleV1::Source, 0, 0, source)?;
+            if let Some(cost_target) = cost_target {
+                push_ref(FlatActionRefRoleV1::Candidate, 0, 0, cost_target)?;
+            }
         }
         ActionSemanticV1::ActivateAbility {
             actor,
@@ -1493,8 +1501,29 @@ fn flat_validate_current_decision_relations_v1(
 
     for candidate in &current.candidates {
         match &candidate.semantic {
-            ActionSemanticV1::ActivateManaAbility { source, .. }
-            | ActionSemanticV1::ActivateAbility { source, .. } => {
+            ActionSemanticV1::ActivateManaAbility {
+                source,
+                cost_target,
+                ..
+            } => {
+                flat_validate_controller_zone_v1(
+                    state,
+                    current.actor,
+                    source,
+                    current.actor,
+                    Zone::Battlefield,
+                )?;
+                if let Some(cost_target) = cost_target {
+                    flat_validate_controller_zone_v1(
+                        state,
+                        current.actor,
+                        cost_target,
+                        current.actor,
+                        Zone::Battlefield,
+                    )?;
+                }
+            }
+            ActionSemanticV1::ActivateAbility { source, .. } => {
                 flat_validate_controller_zone_v1(
                     state,
                     current.actor,
@@ -1704,9 +1733,34 @@ fn flat_validate_origin_decision_v1(
             activatable_abilities,
             plot_actions,
         } => {
+            let mut mana_action_count = 0_usize;
+            let mut choices = crate::mana::ManaColorSetV1::new();
+            for object in mana_abilities {
+                crate::engine::available_mana_ability_choices_into(
+                    *player,
+                    *object,
+                    state,
+                    &mut choices,
+                );
+                if choices.is_empty() {
+                    return Err(invalid());
+                }
+                let cost_target_count =
+                    crate::engine::mana_ability_cost_targets(*player, *object, state)
+                        .len()
+                        .max(1);
+                mana_action_count = mana_action_count
+                    .checked_add(
+                        choices
+                            .len()
+                            .checked_mul(cost_target_count)
+                            .ok_or_else(invalid)?,
+                    )
+                    .ok_or_else(invalid)?;
+            }
             let expected_count = castable_spells
                 .len()
-                .checked_add(mana_abilities.len())
+                .checked_add(mana_action_count)
                 .and_then(|count| count.checked_add(land_drops.len()))
                 .and_then(|count| count.checked_add(activatable_abilities.len()))
                 .and_then(|count| count.checked_add(plot_actions.len()))
@@ -1732,32 +1786,97 @@ fn flat_validate_origin_decision_v1(
                 cursor += 1;
             }
             for object in mana_abilities {
-                let state_object = state.objects.try_get(*object).ok_or_else(invalid)?;
-                let choices = crate::card_def::CARD_DEFS
-                    .get(usize::from(state_object.card_def))
-                    .ok_or_else(invalid)?
-                    .produces_mana;
-                let expected_choice = (choices.len() == 1).then_some(choices[0]);
-                let candidate = &candidates[cursor];
-                if !matches!(
-                    (&candidate.semantic, &candidate.policy_action),
-                    (
-                        ActionSemanticV1::ActivateManaAbility {
-                            actor,
-                            source,
-                            mana_choice,
-                        },
-                        PolicyActionV5::Surface(SurfaceAction::Action(
-                            Action::ActivateManaAbility(action)
-                        ))
-                    ) if actor_matches(*actor, *player)
-                        && flat_ref_matches_object_v1(source, *object)
-                        && *mana_choice == expected_choice
-                        && action == object
-                ) {
+                crate::engine::available_mana_ability_choices_into(
+                    *player,
+                    *object,
+                    state,
+                    &mut choices,
+                );
+                if choices.is_empty() {
                     return Err(invalid());
                 }
-                cursor += 1;
+                for &choice in choices.as_slice() {
+                    let cost_targets =
+                        crate::engine::mana_ability_cost_targets(*player, *object, state);
+                    if cost_targets.is_empty() {
+                        let candidate = &candidates[cursor];
+                        let valid = match (&candidate.semantic, &candidate.policy_action) {
+                            (
+                                ActionSemanticV1::ActivateManaAbility {
+                                    actor,
+                                    source,
+                                    mana_choice,
+                                    cost_target: None,
+                                },
+                                PolicyActionV5::Surface(SurfaceAction::Action(
+                                    Action::ActivateManaAbility(action),
+                                )),
+                            ) if choices.len() == 1 => {
+                                actor_matches(*actor, *player)
+                                    && flat_ref_matches_object_v1(source, *object)
+                                    && *mana_choice == Some(choice)
+                                    && action == object
+                            }
+                            (
+                                ActionSemanticV1::ActivateManaAbility {
+                                    actor,
+                                    source,
+                                    mana_choice,
+                                    cost_target: None,
+                                },
+                                PolicyActionV5::Surface(SurfaceAction::Action(
+                                    Action::ActivateManaAbilityChoice(action, action_choice),
+                                )),
+                            ) if choices.len() > 1 => {
+                                actor_matches(*actor, *player)
+                                    && flat_ref_matches_object_v1(source, *object)
+                                    && *mana_choice == Some(choice)
+                                    && action == object
+                                    && *action_choice == choice
+                            }
+                            _ => false,
+                        };
+                        if !valid {
+                            return Err(invalid());
+                        }
+                        cursor += 1;
+                    } else {
+                        for cost_target in cost_targets {
+                            let candidate = &candidates[cursor];
+                            let valid = matches!(
+                                (&candidate.semantic, &candidate.policy_action),
+                                (
+                                    ActionSemanticV1::ActivateManaAbility {
+                                        actor,
+                                        source,
+                                        mana_choice,
+                                        cost_target: Some(semantic_cost_target),
+                                    },
+                                    PolicyActionV5::Surface(SurfaceAction::Action(
+                                        Action::ActivateManaAbilityWithCostTarget(
+                                            action,
+                                            action_choice,
+                                            action_cost_target,
+                                        ),
+                                    )),
+                                ) if actor_matches(*actor, *player)
+                                    && flat_ref_matches_object_v1(source, *object)
+                                    && *mana_choice == Some(choice)
+                                    && flat_ref_matches_object_v1(
+                                        semantic_cost_target,
+                                        cost_target,
+                                    )
+                                    && action == object
+                                    && *action_choice == choice
+                                    && *action_cost_target == cost_target
+                            );
+                            if !valid {
+                                return Err(invalid());
+                            }
+                            cursor += 1;
+                        }
+                    }
+                }
             }
             for object in land_drops {
                 let candidate = &candidates[cursor];
@@ -1828,22 +1947,58 @@ fn flat_validate_origin_decision_v1(
             spell,
             remaining,
             legal_targets,
+            can_finish,
         } => {
-            if current.actor != *player || candidates.len() != legal_targets.len() {
+            if current.actor != *player
+                || candidates.len() != legal_targets.len() + usize::from(*can_finish)
+            {
                 return Err(invalid());
             }
-            for (candidate, target) in candidates.iter().zip(legal_targets) {
+            for (candidate, target) in candidates
+                .iter()
+                .take(legal_targets.len())
+                .zip(legal_targets)
+            {
                 if !matches!(
-                    &candidate.semantic,
-                    ActionSemanticV1::ChooseTarget {
-                        actor,
-                        source,
-                        remaining: semantic_remaining,
-                        target: semantic_target,
-                    } if actor_matches(*actor, *player)
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::ChooseTarget {
+                            actor,
+                            source,
+                            remaining: semantic_remaining,
+                            target: semantic_target,
+                        },
+                        PolicyActionV5::Surface(SurfaceAction::Action(Action::ChooseTarget(action_target))),
+                    ) if actor_matches(*actor, *player)
                         && flat_ref_matches_object_v1(source, *spell)
                         && semantic_remaining == remaining
                         && flat_target_matches_v1(semantic_target, *target)
+                        && action_target == target
+                ) {
+                    return Err(invalid());
+                }
+            }
+            if *can_finish {
+                let selected_count = state
+                    .engine
+                    .pending_cast
+                    .as_ref()
+                    .filter(|pending| pending.spell == *spell)
+                    .map(|pending| pending.targets_chosen.len() as u16)
+                    .ok_or_else(invalid)?;
+                let candidate = candidates.last().ok_or_else(invalid)?;
+                if !matches!(
+                    (&candidate.semantic, &candidate.policy_action),
+                    (
+                        ActionSemanticV1::FinishTargetSelection {
+                            actor,
+                            source,
+                            selected_count: semantic_selected_count,
+                        },
+                        PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
+                    ) if actor_matches(*actor, *player)
+                        && flat_ref_matches_object_v1(source, *spell)
+                        && *semantic_selected_count == selected_count
                 ) {
                     return Err(invalid());
                 }
@@ -1921,11 +2076,17 @@ fn flat_validate_origin_decision_v1(
             player,
             spell,
             mode_count,
+            legal_modes,
         } => {
-            if current.actor != *player || candidates.len() != usize::from(*mode_count) {
+            if current.actor != *player
+                || candidates.len() != legal_modes.len()
+                || legal_modes.is_empty()
+                || legal_modes.iter().any(|mode| *mode >= *mode_count)
+                || !legal_modes.windows(2).all(|pair| pair[0] < pair[1])
+            {
                 return Err(invalid());
             }
-            for (index, candidate) in candidates.iter().enumerate() {
+            for (candidate, legal_mode) in candidates.iter().zip(legal_modes) {
                 if !matches!(
                     &candidate.semantic,
                     ActionSemanticV1::ChooseSpellMode {
@@ -1935,7 +2096,7 @@ fn flat_validate_origin_decision_v1(
                         mode_count: semantic_mode_count,
                     } if actor_matches(*actor, *player)
                         && flat_ref_matches_object_v1(source, *spell)
-                        && usize::from(*mode_index) == index
+                        && mode_index == legal_mode
                         && semantic_mode_count == mode_count
                 ) {
                     return Err(invalid());
@@ -2208,13 +2369,48 @@ fn flat_validate_semantic_policy_pair_v1(
             PolicyActionV5::Surface(SurfaceAction::Action(Action::CastSpell(actual))),
         )
         | (
-            ActionSemanticV1::ActivateManaAbility { source, .. },
+            ActionSemanticV1::ActivateManaAbility {
+                source,
+                cost_target: None,
+                ..
+            },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateManaAbility(actual))),
         )
         | (
             ActionSemanticV1::PlotSpell { source, .. },
             PolicyActionV5::Surface(SurfaceAction::Action(Action::PlotSpell(actual))),
         ) => ObjectId(source.arena_id) == *actual,
+        (
+            ActionSemanticV1::ActivateManaAbility {
+                source,
+                mana_choice: Some(expected_choice),
+                cost_target: None,
+                ..
+            },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::ActivateManaAbilityChoice(
+                actual,
+                actual_choice,
+            ))),
+        ) => ObjectId(source.arena_id) == *actual && expected_choice == actual_choice,
+        (
+            ActionSemanticV1::ActivateManaAbility {
+                source,
+                mana_choice: Some(expected_choice),
+                cost_target: Some(expected_cost_target),
+                ..
+            },
+            PolicyActionV5::Surface(SurfaceAction::Action(
+                Action::ActivateManaAbilityWithCostTarget(
+                    actual,
+                    actual_choice,
+                    actual_cost_target,
+                ),
+            )),
+        ) => {
+            ObjectId(source.arena_id) == *actual
+                && expected_choice == actual_choice
+                && ObjectId(expected_cost_target.arena_id) == *actual_cost_target
+        }
         (
             ActionSemanticV1::ActivateAbility {
                 source,
@@ -2336,9 +2532,12 @@ fn flat_validate_semantic_policy_pair_v1(
             PolicyActionV5::Surface(SurfaceAction::Action(Action::OrderTriggers(actual))),
         ) => order == actual,
         (
+            ActionSemanticV1::FinishTargetSelection { .. },
+            PolicyActionV5::Surface(SurfaceAction::Action(Action::FinishEffectSelection)),
+        ) => true,
+        (
             ActionSemanticV1::ChooseEffectColor { .. }
-            | ActionSemanticV1::ChooseEffectNumber { .. }
-            | ActionSemanticV1::FinishTargetSelection { .. },
+            | ActionSemanticV1::ChooseEffectNumber { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (
@@ -4716,9 +4915,8 @@ impl FastActorSessionV1 {
     /// Encodes only the exact current executable action binding and ordered
     /// action semantics. Full state globals, object features, relations, and
     /// scorer inputs are deliberately outside this partial contract. The
-    /// schema-only `ChooseEffectColor`, `ChooseEffectNumber`, and
-    /// `FinishTargetSelection` rows fail closed until policy-v5 has matching
-    /// executable actions.
+    /// schema-only `ChooseEffectColor` and `ChooseEffectNumber` rows fail
+    /// closed until policy-v5 has matching executable actions.
     pub fn encode_current_flat_action_slice_v1(
         &self,
         expected: FastActorDecisionV1,
@@ -6647,8 +6845,8 @@ fn build_session_deck_pair_state(
 
 /// Exhaustive typed mapping of the v2 deck-pair builder failure vocabulary
 /// into session errors, shared by both new constructors. Deck admission
-/// failures keep the exact legacy message; sealed KDF failures keep the
-/// builder error's complete Display text under the distinct
+/// failures keep the exact catalog-derived message; sealed KDF failures keep
+/// the builder error's complete Display text under the distinct
 /// EnvironmentRandomization code.
 fn map_deck_pair_build_error_v2(error: crate::rl::DeckPairBuildErrorV2) -> RlSessionError {
     match &error {
@@ -6672,7 +6870,8 @@ fn resolve_runtime_decks(
             return Err(session_error(
                 RlSessionErrorCode::UnsupportedDeck,
                 &format!(
-                    "unsupported deck_id for seat {seat}; supported exact canonical ids are {CANONICAL_BURN_DECK_ID:?} and {CANONICAL_RALLY_DECK_ID:?}"
+                    "unsupported deck_id for seat {seat}; supported exact canonical ids are {}",
+                    supported_runtime_deck_ids()
                 ),
             ));
         };
@@ -6682,6 +6881,14 @@ fn resolve_runtime_decks(
         resolved[0].expect("both deck seats resolve"),
         resolved[1].expect("both deck seats resolve"),
     ])
+}
+
+fn supported_runtime_deck_ids() -> String {
+    RUNTIME_DECKS
+        .iter()
+        .map(|deck| format!("{:?}", deck.id))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn terminal_from_winner(
@@ -7578,6 +7785,73 @@ mod tests {
             candidates.len(),
             "source-distinct actions must not collapse semantically"
         );
+    }
+
+    #[test]
+    fn flat_origin_validation_uses_live_state_dependent_mana_choices() {
+        let mut state = GameState::new_from_libraries(&[], &[], card_name, 92);
+        state.step = Step::Main1;
+        state.active_player = PlayerId::P0;
+        state.priority_player = PlayerId::P0;
+        let citadel = add_battlefield_object(&mut state, PlayerId::P0, "Citadel Gate");
+        state.objects.get_mut(citadel).v4.chosen_color = Some(ManaColor::G);
+        let heap = add_battlefield_object(&mut state, PlayerId::P0, "Heap Gate");
+        let mountain = add_battlefield_object(&mut state, PlayerId::P0, "Mountain");
+
+        let mut session = FastActorSessionV1::reset_with_limits(24, 92, 8, 8);
+        session.state = state;
+        session.surface = PolicySurfaceV5::new();
+        session.environment_revision = 0;
+        session.policy_step_count = 0;
+        session.physical_decision_count = 0;
+        session.current = None;
+        session.terminal = None;
+        session.advance_to_decision_or_terminal();
+
+        let current = session.current.as_ref().expect("priority decision");
+        flat_validate_origin_decision_v1(current, &session.state)
+            .expect("flat validation shares the live mana-choice contract");
+        let mana_actions = current
+            .candidates
+            .iter()
+            .filter_map(
+                |candidate| match (&candidate.semantic, &candidate.policy_action) {
+                    (
+                        ActionSemanticV1::ActivateManaAbility {
+                            source,
+                            mana_choice: Some(color),
+                            cost_target: None,
+                            ..
+                        },
+                        PolicyActionV5::Surface(action),
+                    ) => Some((ObjectId(source.arena_id), *color, action)),
+                    _ => None,
+                },
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mana_actions
+                .iter()
+                .map(|(source, color, _)| (*source, *color))
+                .collect::<Vec<_>>(),
+            vec![
+                (citadel, ManaColor::W),
+                (citadel, ManaColor::G),
+                (heap, ManaColor::C),
+                (heap, ManaColor::W),
+                (heap, ManaColor::U),
+                (heap, ManaColor::B),
+                (heap, ManaColor::R),
+                (heap, ManaColor::G),
+                (mountain, ManaColor::R),
+            ]
+        );
+        assert!(matches!(
+            mana_actions.last().map(|(_, _, action)| *action),
+            Some(crate::surface::SurfaceAction::Action(
+                crate::engine::Action::ActivateManaAbility(source)
+            )) if *source == mountain
+        ));
     }
 
     #[test]
@@ -8919,6 +9193,7 @@ mod tests {
                 spell: hand[0],
                 remaining: 1,
                 legal_targets: vec![Target::Player(opponent)],
+                can_finish: false,
             })),
         );
         let mut wrong_target_source = target_base.clone();
@@ -9044,9 +9319,17 @@ mod tests {
             .map(|source| PendingTrigger {
                 controller: actor_id,
                 source: *source,
+                granted_by: None,
                 effect: EffectOp::Sequence(Vec::new()),
                 is_madness_offer: false,
                 kicked: false,
+                target_spec: crate::card_def::TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                source_contract: None,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
             })
             .collect();
         flat_install_origin_decision(
@@ -9086,6 +9369,7 @@ mod tests {
                 player: actor,
                 spell,
                 mode_count: 2,
+                legal_modes: vec![0, 1],
             })),
         );
         let mut actions = [poison_flat_action(); 8];
@@ -9890,6 +10174,7 @@ mod tests {
                 actor,
                 source: a.clone(),
                 mana_choice: Some(ManaColor::R),
+                cost_target: None,
             },
             ActionSemanticV1::ActivateAbility {
                 actor,
@@ -10328,6 +10613,7 @@ mod tests {
                     actor,
                     source: a.clone(),
                     mana_choice: choice,
+                    cost_target: None,
                 },
                 actor,
             )
@@ -10377,6 +10663,7 @@ mod tests {
             (CostKind::PayLife, 9),
             (CostKind::RemoveCounters, 10),
             (CostKind::PutCounters, 11),
+            (CostKind::ChooseCreatureOrRevealCreature, 12),
         ] {
             let core = flat_test_core(
                 &ActionSemanticV1::ChooseCostTarget {
@@ -10483,15 +10770,10 @@ mod tests {
             },
             ActionSemanticV1::ChooseEffectNumber {
                 actor,
-                source: source.clone(),
+                source,
                 number: 2,
                 minimum: 1,
                 maximum: 3,
-            },
-            ActionSemanticV1::FinishTargetSelection {
-                actor,
-                source,
-                selected_count: 1,
             },
         ];
         for semantic in semantics {
@@ -10556,8 +10838,8 @@ mod tests {
         assert_eq!(
             encoded.binding.candidate_order_commitment,
             [
-                0xf1, 0xe2, 0x01, 0xba, 0xcd, 0x3d, 0xff, 0x30, 0x6f, 0x30, 0x7d, 0xc7, 0xa8, 0x6d,
-                0x17, 0xa2,
+                0x70, 0x7d, 0xb3, 0x2c, 0x7c, 0x2d, 0x3e, 0x2b, 0xfe, 0x9f, 0x19, 0x65, 0xbc, 0xdb,
+                0x6d, 0xce,
             ]
         );
     }
@@ -10603,8 +10885,8 @@ mod tests {
         assert_eq!(
             v1,
             [
-                0x20, 0x8d, 0xf4, 0x09, 0xeb, 0x3d, 0xff, 0x44, 0xce, 0x19, 0x80, 0x61, 0x12, 0x50,
-                0x94, 0x8f,
+                0x38, 0x90, 0x05, 0xe8, 0xc1, 0x91, 0x00, 0x27, 0xc4, 0x5f, 0x04, 0x3f, 0x40, 0xe7,
+                0x7c, 0xd1,
             ]
         );
 
@@ -10633,16 +10915,16 @@ mod tests {
         assert_eq!(
             common_v2,
             [
-                0xdc, 0x0b, 0xf1, 0xed, 0x6b, 0x5d, 0x07, 0x3e, 0xea, 0xe9, 0x7f, 0xe2, 0x68, 0x53,
-                0x6a, 0x5e,
+                0x9f, 0xfa, 0xca, 0xd5, 0x74, 0x47, 0x33, 0xb5, 0x10, 0x7a, 0xea, 0x33, 0x20, 0x25,
+                0xe3, 0x13,
             ]
         );
         assert_ne!(common_v2, v1);
         assert_eq!(
             commitment_v2(65_536),
             [
-                0x75, 0x67, 0xfd, 0x5c, 0xe8, 0x81, 0xf7, 0xa6, 0x33, 0x51, 0x71, 0xa5, 0x2c, 0xd4,
-                0x66, 0x4f,
+                0xb8, 0x28, 0x15, 0xe9, 0x0f, 0xa5, 0xb2, 0xbc, 0x04, 0xcb, 0xd3, 0x4d, 0x55, 0xad,
+                0xc6, 0x06,
             ]
         );
     }
@@ -11263,41 +11545,41 @@ mod tests {
         // recorded from the untouched parent before any production edit.
         let legacy_full = RlEpisodeSessionV1::reset(1, 99, 8);
         let legacy_fast = FastActorSessionV1::reset(1, 99, 8);
-        assert_eq!(
-            legacy_full.privileged_environment_hash(),
-            0xcc4e_fc39_024e_ccd5,
-            "captured legacy policy environment golden"
-        );
-        assert_eq!(
-            legacy_full.privileged_core_environment_hash(),
-            0x5005_8868_e7a2_bc28,
-            "captured legacy full-session core golden"
-        );
-        assert_eq!(
-            legacy_fast.privileged_core_environment_hash(),
-            0x5005_8868_e7a2_bc28,
-            "captured legacy fast-session core golden equals the full one"
-        );
-
         let v2_full = full_session_on_environment_v2(99);
         let v2_fast = fast_session_on_environment_v2(99);
         let v2_policy = v2_full.privileged_environment_hash();
         let v2_full_core = v2_full.privileged_core_environment_hash();
         let v2_fast_core = v2_fast.privileged_core_environment_hash();
         assert_eq!(
-            v2_policy, 0x7abb_750c_9f4a_4651,
-            "environment-v2 policy environment golden"
+            legacy_full.privileged_environment_hash(),
+            0xfca3_b546_61ec_28c6,
+            "final-pool-v8 legacy policy environment golden"
         );
         assert_eq!(
-            v2_full_core, 0xbb18_34f0_90be_fb8c,
-            "environment-v2 core environment golden"
+            legacy_full.privileged_core_environment_hash(),
+            0x9a93_e402_6f8e_ad86,
+            "final-pool-v8 legacy full-session core golden"
+        );
+        assert_eq!(
+            legacy_fast.privileged_core_environment_hash(),
+            0x9a93_e402_6f8e_ad86,
+            "captured legacy fast-session core golden equals the full one"
+        );
+
+        assert_eq!(
+            v2_policy, 0x9ed7_895c_1f47_82ca,
+            "final-pool-v9 environment-v2 policy environment golden"
+        );
+        assert_eq!(
+            v2_full_core, 0xf69d_f52f_fdd0_564e,
+            "final-pool-v9 environment-v2 core environment golden"
         );
         assert_eq!(
             v2_fast_core, v2_full_core,
             "full and fast environment-v2 core hashes are equal"
         );
-        assert_ne!(v2_policy, 0xcc4e_fc39_024e_ccd5);
-        assert_ne!(v2_full_core, 0x5005_8868_e7a2_bc28);
+        assert_ne!(v2_policy, 0xfca3_b546_61ec_28c6);
+        assert_ne!(v2_full_core, 0x9a93_e402_6f8e_ad86);
     }
 
     #[test]
@@ -11464,7 +11746,7 @@ mod tests {
             assert!(session.state.environment_randomization_v2().is_none());
             assert_eq!(
                 session.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v5"
+                "fnv1a64-serde-json-game-state-envelope-v8"
             );
             assert_eq!(session.state, canonical.state);
             assert_eq!(
@@ -11490,7 +11772,7 @@ mod tests {
             assert!(fast.state.environment_randomization_v2().is_none());
             assert_eq!(
                 fast.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v5"
+                "fnv1a64-serde-json-game-state-envelope-v8"
             );
             assert_eq!(fast.state, fast_canonical.state);
             assert_eq!(fast.current, fast_canonical.current);
@@ -11522,15 +11804,15 @@ mod tests {
         // Captured legacy pins are preserved bit-exact.
         assert_eq!(
             canonical.privileged_environment_hash(),
-            0xcc4e_fc39_024e_ccd5
+            0xfca3_b546_61ec_28c6
         );
         assert_eq!(
             canonical.privileged_core_environment_hash(),
-            0x5005_8868_e7a2_bc28
+            0x9a93_e402_6f8e_ad86
         );
         assert_eq!(
             fast_canonical.privileged_core_environment_hash(),
-            0x5005_8868_e7a2_bc28
+            0x9a93_e402_6f8e_ad86
         );
     }
 
@@ -11572,7 +11854,7 @@ mod tests {
         assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
         assert_eq!(
             full.state.diagnostic_state_hash_algorithm(),
-            "fnv1a64-serde-json-game-state-envelope-v6"
+            "fnv1a64-serde-json-game-state-envelope-v9"
         );
         let serialized = serde_json::to_value(&full.state).unwrap();
         assert!(serialized.get("environment_randomization_v2").is_some());
@@ -11706,17 +11988,17 @@ mod tests {
         let fast = canonical_v2_fast_reset(99);
         assert_eq!(
             full.privileged_environment_hash(),
-            0x7abb_750c_9f4a_4651,
+            0x9ed7_895c_1f47_82ca,
             "pre-constructor policy pin is reused, not minted"
         );
         assert_eq!(
             full.privileged_core_environment_hash(),
-            0xbb18_34f0_90be_fb8c,
+            0xf69d_f52f_fdd0_564e,
             "pre-constructor core pin is reused, not minted"
         );
         assert_eq!(
             fast.privileged_core_environment_hash(),
-            0xbb18_34f0_90be_fb8c,
+            0xf69d_f52f_fdd0_564e,
             "full and fast v2 core hashes are equal and equal the pin"
         );
 
@@ -11754,11 +12036,11 @@ mod tests {
         );
         assert_ne!(
             full_100.privileged_environment_hash(),
-            0x7abb_750c_9f4a_4651
+            0x9ed7_895c_1f47_82ca
         );
         assert_ne!(
             full_100.privileged_core_environment_hash(),
-            0xbb18_34f0_90be_fb8c
+            0xf69d_f52f_fdd0_564e
         );
 
         // Root u64::MAX succeeds and stays exact full-width in both.
@@ -11772,7 +12054,7 @@ mod tests {
             assert_eq!(v2.next_live_shuffle_ordinal(PhysicalOwnerV2::P1), 0);
             assert_eq!(
                 state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v6"
+                "fnv1a64-serde-json-game-state-envelope-v9"
             );
         }
         assert_eq!(
@@ -11789,9 +12071,9 @@ mod tests {
     #[test]
     fn v2_reset_error_boundaries_are_typed_and_seat_exact() {
         const SEAT_0_MESSAGE: &str =
-            "unsupported deck_id for seat 0; supported exact canonical ids are \"Burn\" and \"Rally\"";
+            "unsupported deck_id for seat 0; supported exact canonical ids are \"Wildfire\", \"Rally\", \"Affinity\", \"Elves\", \"Spy\", \"Burn\", \"Terror\", \"CawGates\", \"Faeries\"";
         const SEAT_1_MESSAGE: &str =
-            "unsupported deck_id for seat 1; supported exact canonical ids are \"Burn\" and \"Rally\"";
+            "unsupported deck_id for seat 1; supported exact canonical ids are \"Wildfire\", \"Rally\", \"Affinity\", \"Elves\", \"Spy\", \"Burn\", \"Terror\", \"CawGates\", \"Faeries\"";
         let both_bad: SessionDeckIdsV1 = ["NotADeck".to_string(), "AlsoNotADeck".to_string()];
         let error = match RlEpisodeSessionV1::reset_with_decks_and_limits_environment_v2(
             1,
@@ -12032,9 +12314,10 @@ mod tests {
         "{\"request_type\":\"step\",\"schema_version\":5,\"request_id\":\"v5-transcript-4\",\"episode_id\":1,\"expected_step\":0,\"selected_index\":0,\"selected_action_id\":\"legal-action-v5:c7876642d50fe9e6\"}",
         "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"v5-transcript-5\",\"deck_ids\":[\"Burn\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":0,\"max_policy_steps\":1024}",
     ];
-    /// Captured at clean parent 9e7d6b8 before any V6 edit. Never rederive.
+    /// Recaptured at the exact final-card head after its CardDB identity
+    /// changed. The V5 schema, protocol, and response layout stay unchanged.
     const V5_TRANSCRIPT_SHA256: &str =
-        "286937e4d1e9e73dd4dae31ed85a3b5dc98cc67a13d1780a2ec8e133cb96edfe";
+        "a583c2309a25d79371ffa729c8eedcfb830b2887c794ee283bbb6b0a2e2541e2";
 
     fn v6_reset_line(request_id: &str, root: u64, max_physical_decisions: u64) -> String {
         format!(
@@ -12265,7 +12548,7 @@ mod tests {
             assert_eq!(v2.pair_environment_seed(), 99);
             assert_eq!(
                 active.session.state.diagnostic_state_hash_algorithm(),
-                "fnv1a64-serde-json-game-state-envelope-v6"
+                "fnv1a64-serde-json-game-state-envelope-v9"
             );
         }
 
@@ -12691,7 +12974,7 @@ mod tests {
     #[test]
     fn jsonl_v6_failed_reset_preserves_state_and_version() {
         const SEAT_0_DECK_MESSAGE: &str =
-            "unsupported deck_id for seat 0; supported exact canonical ids are \"Burn\" and \"Rally\"";
+            "unsupported deck_id for seat 0; supported exact canonical ids are \"Wildfire\", \"Rally\", \"Affinity\", \"Elves\", \"Spy\", \"Burn\", \"Terror\", \"CawGates\", \"Faeries\"";
         let failing_v6 = "{\"request_type\":\"reset\",\"schema_version\":6,\"request_id\":\"f1\",\"deck_ids\":[\"NotADeck\",\"Burn\"],\"episode_id\":1,\"pair_environment_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
         let failing_v5 = "{\"request_type\":\"reset\",\"schema_version\":5,\"request_id\":\"f2\",\"deck_ids\":[\"NotADeck\",\"Burn\"],\"episode_id\":1,\"env_seed\":99,\"max_physical_decisions\":8,\"max_policy_steps\":1024}";
 

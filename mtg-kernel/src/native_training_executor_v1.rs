@@ -1109,6 +1109,8 @@ impl<'executor> NativeTrainingPreparedUpdateV2<'executor> {
     /// time a caller can reach this guard), and narrowing the type to that
     /// guarantee now, before an executor-integrated caller makes this
     /// load-bearing, is cheaper than relying on caller discipline later.
+    // Reserved for the not-yet-wired executor-integrated caller noted above; accepted.
+    #[allow(dead_code)]
     pub(crate) fn stamp_episode_provenance_v1(
         &mut self,
         scoring_weight_version: u64,
@@ -1329,7 +1331,7 @@ impl<'executor> NativeTrainingSegmentCandidateV2<'executor> {
         let observation = self
             .candidate_trainer
             .run_even_batch_update_v2(&self.update_config, self.environment_trajectory_contract)
-            .map_err(|error| trainer_executor_error_v1(error))?;
+            .map_err(trainer_executor_error_v1)?;
         let successor =
             intrinsic_checkpoint_facts_from_parts_v2(&self.config, &self.candidate_trainer)?;
         validate_current_observation_from_parts_v2(

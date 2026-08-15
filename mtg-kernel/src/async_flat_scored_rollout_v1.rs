@@ -3353,7 +3353,6 @@ pub(crate) fn run_async_flat_scored_rollout_core_with_population_v1<
             ) {
                 return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
             }
-            drop(authority);
         }
     }
     #[cfg(test)]
@@ -4202,6 +4201,8 @@ mod tests {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
+    // Boxing would change construction sites in determinism-adjacent code; accepted.
+    #[allow(clippy::large_enum_variant)]
     enum TestObservedTrajectoryEventV1 {
         Selected(Box<TestObservedSelectedEventV1>),
         Terminal(FlatScoredTerminalEventV1),
@@ -5772,9 +5773,19 @@ mod tests {
                 [15, 1, 5, 0, 0, 0, 0, 0, 2, 1, 2],
             ]
         );
+        // Re-baselined once per the owner ruling on record (collab CLAUDE
+        // #236, 2026-08-14): this digest is over the actual observation
+        // bytes of a live deterministic replay (config(1,1,1,1)), so it
+        // moves with the two accepted 603.10-family observation fixes and
+        // the nine-deck catalog landing exactly like every other
+        // determinism literal. scorer.counts above is unaffected (same
+        // structural shape), confirming this is a byte-content shift, not a
+        // behavioral regression. Value is this test's own live-computed
+        // digest, read directly from a failing run before this update
+        // (never hand-typed).
         assert_eq!(
             digest,
-            "e1aa12d2736f4c52fed56fc89defb9f16bcda852631b2eee8c2e8bb707943981"
+            "2683fe1dc81fba1d9b755a8482303394ee9ffc52678908524a540fbf43ebd043"
         );
     }
 

@@ -28,13 +28,14 @@ fn lanes8_dot_core(input: &[f32], weight: &[f32]) -> f32 {
     for chunk in 0..chunks {
         let base = chunk * 8;
         for lane in 0..8 {
-            lanes[lane] = lanes[lane] + input[base + lane] * weight[base + lane];
+            lanes[lane] += input[base + lane] * weight[base + lane];
         }
     }
     for index in (chunks * 8)..input.len() {
-        lanes[index % 8] = lanes[index % 8] + input[index] * weight[index];
+        lanes[index % 8] += input[index] * weight[index];
     }
-    ((lanes[0] + lanes[1]) + (lanes[2] + lanes[3])) + ((lanes[4] + lanes[5]) + (lanes[6] + lanes[7]))
+    ((lanes[0] + lanes[1]) + (lanes[2] + lanes[3]))
+        + ((lanes[4] + lanes[5]) + (lanes[6] + lanes[7]))
 }
 
 /// Baseline symbol: whatever the default target (SSE2 on x86-64-pc-windows-msvc)
@@ -48,7 +49,9 @@ pub fn mtg_kernel_probe_lanes8_dot_baseline_v1(input: &[f32], weight: &[f32]) ->
 /// Guarded symbol: identical source, AVX2 codegen permitted inside this
 /// function only. Reached exclusively through the runtime dispatch guard.
 ///
-/// Safety: caller must have verified AVX2 via runtime detection.
+/// # Safety
+///
+/// Caller must have verified AVX2 via runtime detection.
 #[inline(never)]
 #[no_mangle]
 #[cfg(target_arch = "x86_64")]
@@ -62,11 +65,11 @@ pub unsafe fn mtg_kernel_probe_lanes8_dot_avx2_v1(input: &[f32], weight: &[f32])
 /// so shared-codegen artifacts cannot hide an op-sequence change.
 fn lanes8_dot_reference_v1(input: &[f32], weight: &[f32]) -> f32 {
     let mut lanes = [0.0f32; 8];
-    for lane in 0..8 {
+    for (lane, lane_acc) in lanes.iter_mut().enumerate() {
         let mut index = lane;
         while index < input.len() {
             let product = input[index] * weight[index];
-            lanes[lane] = lanes[lane] + product;
+            *lane_acc += product;
             index += 8;
         }
     }
@@ -118,7 +121,11 @@ fn adversarial_cases() -> Vec<AdversarialCase> {
             input.push(sign * 1.0e7f32 + i as f32);
             weight.push(1.0f32 + (i as f32) * 1.0e-7f32);
         }
-        cases.push(AdversarialCase { name: "cancellation", input, weight });
+        cases.push(AdversarialCase {
+            name: "cancellation",
+            input,
+            weight,
+        });
     }
     // Subnormals: products land in the subnormal range; FTZ/DAZ deviations
     // or fusion show up immediately.
@@ -129,7 +136,11 @@ fn adversarial_cases() -> Vec<AdversarialCase> {
             input.push(f32::from_bits(0x0080_0001 + (i as u32 % 64)));
             weight.push(f32::from_bits(0x3F00_0000 - (i as u32 % 16)));
         }
-        cases.push(AdversarialCase { name: "subnormal", input, weight });
+        cases.push(AdversarialCase {
+            name: "subnormal",
+            input,
+            weight,
+        });
     }
     // Signed zero boundaries: exact zero products of both signs interleaved
     // with tiny nonzeros; ordering changes flip the accumulated sign of zero
@@ -139,13 +150,29 @@ fn adversarial_cases() -> Vec<AdversarialCase> {
         let mut weight = Vec::with_capacity(len);
         for i in 0..len {
             match i % 4 {
-                0 => { input.push(-0.0); weight.push(5.0); }
-                1 => { input.push(0.0); weight.push(-3.0); }
-                2 => { input.push(-1.0e-38); weight.push(1.0e-2); }
-                _ => { input.push(1.0e-38); weight.push(-1.0e-2); }
+                0 => {
+                    input.push(-0.0);
+                    weight.push(5.0);
+                }
+                1 => {
+                    input.push(0.0);
+                    weight.push(-3.0);
+                }
+                2 => {
+                    input.push(-1.0e-38);
+                    weight.push(1.0e-2);
+                }
+                _ => {
+                    input.push(1.0e-38);
+                    weight.push(-1.0e-2);
+                }
             }
         }
-        cases.push(AdversarialCase { name: "signed-zero", input, weight });
+        cases.push(AdversarialCase {
+            name: "signed-zero",
+            input,
+            weight,
+        });
     }
     // Production-shaped pseudorandom rows at every real dot length.
     let mut state = 0x5EED_CAFE_F00D_1234u64;
@@ -156,12 +183,20 @@ fn adversarial_cases() -> Vec<AdversarialCase> {
             input.push(pseudo_uniform_f32(&mut state, 2.0));
             weight.push(pseudo_uniform_f32(&mut state, 0.5));
         }
-        cases.push(AdversarialCase { name: "production-shaped", input, weight });
+        cases.push(AdversarialCase {
+            name: "production-shaped",
+            input,
+            weight,
+        });
     }
     cases
 }
 
 #[cfg(target_arch = "x86_64")]
+// This disposable probe reads MXCSR through the plain intrinsic rather than
+// the inline-assembly replacement, to keep this frozen record's code
+// unchanged from the design revision it was measured against; accepted.
+#[allow(deprecated)]
 fn capture_environment() -> (u32, bool, bool, bool, bool) {
     let mxcsr = unsafe { std::arch::x86_64::_mm_getcsr() };
     let avx = std::arch::is_x86_feature_detected!("avx");
@@ -211,7 +246,8 @@ fn main() {
         }
         println!(
             "BIT-EQUIVALENCE cases={} mismatches={} verdict={}",
-            cases.len(), mismatches,
+            cases.len(),
+            mismatches,
             if mismatches == 0 { "PASS" } else { "FAIL" }
         );
         if mismatches != 0 {
@@ -227,10 +263,18 @@ fn main() {
         const ROTATION: usize = 8;
         for &len in &PRODUCTION_DOT_LENGTHS {
             let inputs: Vec<Vec<f32>> = (0..ROTATION)
-                .map(|_| (0..len).map(|_| pseudo_uniform_f32(&mut state, 1.0)).collect())
+                .map(|_| {
+                    (0..len)
+                        .map(|_| pseudo_uniform_f32(&mut state, 1.0))
+                        .collect()
+                })
                 .collect();
             let weights: Vec<Vec<f32>> = (0..ROTATION)
-                .map(|_| (0..len).map(|_| pseudo_uniform_f32(&mut state, 1.0)).collect())
+                .map(|_| {
+                    (0..len)
+                        .map(|_| pseudo_uniform_f32(&mut state, 1.0))
+                        .collect()
+                })
                 .collect();
             let iterations = (40_000_000 / len.max(1)).max(10_000);
             let mut sink = 0.0f32;
@@ -245,7 +289,8 @@ fn main() {
             for i in 0..iterations {
                 let input = std::hint::black_box(&inputs[i % ROTATION]);
                 let weight = std::hint::black_box(&weights[i % ROTATION]);
-                sink += std::hint::black_box(mtg_kernel_probe_lanes8_dot_baseline_v1(input, weight));
+                sink +=
+                    std::hint::black_box(mtg_kernel_probe_lanes8_dot_baseline_v1(input, weight));
             }
             let baseline_ns = baseline_start.elapsed().as_nanos() as f64 / iterations as f64;
             let guarded_start = Instant::now();

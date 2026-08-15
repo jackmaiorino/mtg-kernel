@@ -72,9 +72,9 @@ pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_PHYSICAL_PROJECTION_IDENTIT
 pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_PORTABLE_VECTOR_STREAM_IDENTITY_V1: &str =
     "mtg-kernel-environment-randomization-v2-reset-physical-trajectory-portable-vector-stream-sha256-v1";
 pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GOLDENS_SHA256_V1: &str =
-    "ab002901a598d40732d39f9b0f21abaa2b7445e63b1c14d45a44b7900f6b739b";
+    "18ec6cd138a76bce1bf06c6b794fe169fbe8d83c0a9265d0ff99119a4c4a16bc";
 pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_PORTABLE_VECTOR_STREAM_SHA256_V1: &str =
-    "15d312141f8d96f079684dd64b58b5bab803086a78ac9687e3c14aab91e0a3c9";
+    "97f8eeff002ec15f3e30f58fd1f1e477a8abf1db3a38e25aaeb810f87da2a085";
 pub const ENVIRONMENT_RANDOMIZATION_RESET_TRAJECTORY_GOLDENS_V1: &str = include_str!(
     "../../data/environment_randomization_v2/reset_physical_trajectory_goldens_v1.json"
 );

@@ -42,9 +42,9 @@ pub const OBSERVATION_SCHEMA_VERSION: u32 = 4;
 pub const LEGAL_ACTION_SCHEMA_VERSION: u32 = 4;
 pub const OBSERVATION_SCHEMA_VERSION_V5: u32 = 5;
 pub const LEGAL_ACTION_SCHEMA_VERSION_V5: u32 = 5;
-pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 10;
+pub const AUDIT_EPISODE_SCHEMA_VERSION: u32 = 11;
 pub const POLICY_EPISODE_SCHEMA_VERSION: u32 = 5;
-pub const MANIFEST_SCHEMA_VERSION: u32 = 8;
+pub const MANIFEST_SCHEMA_VERSION: u32 = 9;
 pub const DEFAULT_MAX_PHYSICAL_DECISIONS: u64 = 200_000;
 pub const DEFAULT_MAX_POLICY_STEPS: u64 = 25_600_000;
 pub const BURN_MIRROR_MATCHUP: &str = "burn_mirror";
@@ -502,6 +502,10 @@ pub struct PendingCastSemanticV2 {
     pub additional_cost_discarded: Option<Vec<CardStableRefV1>>,
     pub mode_chosen: Option<u8>,
     pub origin_zone: Zone,
+    /// Frozen sacrifice-only public binding. Privileged Escape graveyard
+    /// selections are never reinterpreted through this field; a versioned
+    /// policy successor must expose generic object-cost selections before an
+    /// Escape deck can be admitted to training.
     pub sacrifice_chosen: Vec<CardStableRefV1>,
     pub kicked: Option<bool>,
 }
@@ -513,6 +517,8 @@ pub struct PendingActivationSemanticV2 {
     pub ability_index: u8,
     pub chosen_targets: Vec<TargetRefV1>,
     pub cost_discard_paid: Option<Vec<CardStableRefV1>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub object_cost_chosen: Vec<CardStableRefV1>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -880,6 +886,11 @@ pub enum ActionSemanticV1 {
         actor: PlayerSeatV1,
         source: CardStableRefV1,
         mana_choice: Option<ManaColor>,
+        /// Additional permanent tapped as an activation cost. Absent from
+        /// legacy serialized actions so their stable JSON identities remain
+        /// byte-for-byte unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_target: Option<CardStableRefV1>,
     },
     ActivateAbility {
         actor: PlayerSeatV1,
@@ -1723,6 +1734,17 @@ fn build_policy_observation_v5(request: PolicyObservationBuildV5<'_>) -> Result<
             "invalid physical decision substep {substep_index}/{substep_count}"
         )));
     }
+    if state
+        .engine
+        .pending_cast
+        .as_ref()
+        .is_some_and(|pending| pending.source_contract.cast_method == CastMethodV4::Escape)
+    {
+        return Err(RlContractError(
+            "policy schema v5 cannot represent a staged Escape graveyard-exile prefix; a versioned object-cost successor is required"
+                .to_string(),
+        ));
+    }
     // V5 wraps the complete V2 projection but does not expose V2's standalone
     // projection hash. Building V2 without hashing avoids serializing the same
     // large projection twice. The public artifact constructor hashes the
@@ -2034,23 +2056,45 @@ fn core_surface_action_candidates_v1(
                     )?;
                 }
                 for &id in mana_abilities {
-                    push_action(
-                        &mut out,
-                        ActionSemanticV1::ActivateManaAbility {
-                            actor,
-                            source: card_ref(state, id)?,
-                            mana_choice: {
-                                let choices = CARD_DEFS[state.objects.get(id).card_def as usize]
-                                    .produces_mana;
-                                if choices.len() == 1 {
-                                    Some(choices[0])
+                    let choices = engine::available_mana_ability_choices(*player, id, state);
+                    for &choice in &choices {
+                        let cost_targets = engine::mana_ability_cost_targets(*player, id, state);
+                        if cost_targets.is_empty() {
+                            push_action(
+                                &mut out,
+                                ActionSemanticV1::ActivateManaAbility {
+                                    actor,
+                                    source: card_ref(state, id)?,
+                                    mana_choice: Some(choice),
+                                    cost_target: None,
+                                },
+                                SurfaceAction::Action(if choices.len() == 1 {
+                                    Action::ActivateManaAbility(id)
                                 } else {
-                                    None
-                                }
-                            },
-                        },
-                        SurfaceAction::Action(Action::ActivateManaAbility(id)),
-                    )?;
+                                    Action::ActivateManaAbilityChoice(id, choice)
+                                }),
+                            )?;
+                        } else {
+                            for &cost_target in &cost_targets {
+                                push_action(
+                                    &mut out,
+                                    ActionSemanticV1::ActivateManaAbility {
+                                        actor,
+                                        source: card_ref(state, id)?,
+                                        mana_choice: Some(choice),
+                                        cost_target: Some(card_ref(state, cost_target)?),
+                                    },
+                                    SurfaceAction::Action(
+                                        Action::ActivateManaAbilityWithCostTarget(
+                                            id,
+                                            choice,
+                                            cost_target,
+                                        ),
+                                    ),
+                                )?;
+                            }
+                        }
+                    }
                 }
                 for &id in land_drops {
                     push_action(
@@ -2094,6 +2138,7 @@ fn core_surface_action_candidates_v1(
                 spell,
                 remaining,
                 legal_targets,
+                can_finish,
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *spell)?;
@@ -2107,6 +2152,28 @@ fn core_surface_action_candidates_v1(
                             target: target_ref(state, target)?,
                         },
                         SurfaceAction::Action(Action::ChooseTarget(target)),
+                    )?;
+                }
+                if *can_finish {
+                    let selected_count = state
+                        .engine
+                        .pending_cast
+                        .as_ref()
+                        .filter(|pending| pending.spell == *spell)
+                        .map(|pending| pending.targets_chosen.len() as u16)
+                        .ok_or_else(|| {
+                            RlContractError(
+                                "optional cast target decision lost its pending cast".to_string(),
+                            )
+                        })?;
+                    push_action(
+                        &mut out,
+                        ActionSemanticV1::FinishTargetSelection {
+                            actor,
+                            source,
+                            selected_count,
+                        },
+                        SurfaceAction::Action(Action::FinishEffectSelection),
                     )?;
                 }
             }
@@ -2171,10 +2238,11 @@ fn core_surface_action_candidates_v1(
                 player,
                 spell,
                 mode_count,
+                legal_modes,
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *spell)?;
-                for mode_index in 0..*mode_count {
+                for &mode_index in legal_modes {
                     push_action(
                         &mut out,
                         ActionSemanticV1::ChooseSpellMode {
@@ -2194,17 +2262,90 @@ fn core_surface_action_candidates_v1(
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *source)?;
-                for option_index in 0..*option_count {
-                    push_action(
-                        &mut out,
-                        ActionSemanticV1::ChooseEffectOption {
-                            actor,
-                            source: source.clone(),
-                            option_index,
-                            option_count: *option_count,
-                        },
-                        SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
-                    )?;
+                if let Some(pending) = state.engine.pending_land_play.as_ref() {
+                    engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
+                    if pending.controller != *player
+                        || pending.source.0 != source.arena_id
+                        || *option_count != 4
+                    {
+                        return Err(RlContractError(
+                            "land color-choice decision disagrees with its staged source"
+                                .to_string(),
+                        ));
+                    }
+                    let legal_colors = [
+                        ManaColor::W,
+                        ManaColor::U,
+                        ManaColor::B,
+                        ManaColor::R,
+                        ManaColor::G,
+                    ]
+                    .into_iter()
+                    .filter(|color| *color != pending.excluded_color)
+                    .collect::<Vec<_>>();
+                    for (option_index, color) in legal_colors.into_iter().enumerate() {
+                        let option_index =
+                            u16::try_from(option_index).expect("four colors fit u16");
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseEffectColor {
+                                actor,
+                                source: source.clone(),
+                                color,
+                            },
+                            SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
+                        )?;
+                    }
+                } else if let Some(crate::effect::PendingEffectChoice::ChooseOption {
+                    player: color_player,
+                    options,
+                    purpose:
+                        crate::effect::EffectOptionChoicePurpose::ChooseColor { legal_colors, .. },
+                    ..
+                }) = state
+                    .engine
+                    .pending_effect
+                    .as_ref()
+                    .and_then(|pending| pending.choice.as_ref())
+                {
+                    if color_player != player
+                        || options.len() != usize::from(*option_count)
+                        || state.engine.pending_effect.as_ref().is_none_or(|pending| {
+                            pending.resolving_item.source.0 != source.arena_id
+                        })
+                    {
+                        return Err(RlContractError(
+                            "effect color-choice decision disagrees with its continuation"
+                                .to_string(),
+                        ));
+                    }
+                    for (option_index, color) in legal_colors.iter().copied().enumerate() {
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseEffectColor {
+                                actor,
+                                source: source.clone(),
+                                color,
+                            },
+                            SurfaceAction::Action(Action::ChooseEffectOption(
+                                u16::try_from(option_index)
+                                    .expect("five colors fit the u16 option contract"),
+                            )),
+                        )?;
+                    }
+                } else {
+                    for option_index in 0..*option_count {
+                        push_action(
+                            &mut out,
+                            ActionSemanticV1::ChooseEffectOption {
+                                actor,
+                                source: source.clone(),
+                                option_index,
+                                option_count: *option_count,
+                            },
+                            SurfaceAction::Action(Action::ChooseEffectOption(option_index)),
+                        )?;
+                    }
                 }
             }
             Decision::ChooseEffectTargets {
@@ -2368,6 +2509,9 @@ fn core_surface_action_candidates_v1(
             Decision::DeclareAttackers { player, eligible } => {
                 let actor = (*player).into();
                 for attackers in subsets(eligible)? {
+                    if engine::validate_declare_attackers(state, &attackers).is_err() {
+                        continue;
+                    }
                     let attacker_refs = attackers
                         .iter()
                         .map(|&id| card_ref(state, id))
@@ -2411,9 +2555,14 @@ fn core_surface_action_candidates_v1(
             attacker,
             legal_blockers,
         } => {
-            let actor = state.objects.get(*attacker).controller.opponent().into();
+            let attacker_object = state.objects.get(*attacker);
+            let actor = attacker_object.controller.opponent().into();
             let attacker_ref = card_ref(state, *attacker)?;
+            let minimum_blockers = engine::minimum_blockers_required(state, *attacker);
             for blockers in subsets(legal_blockers)? {
+                if !blockers.is_empty() && blockers.len() < minimum_blockers {
+                    continue;
+                }
                 let blocker_refs = blockers
                     .iter()
                     .map(|&id| card_ref(state, id))
@@ -4269,7 +4418,16 @@ fn object_is_live_in_zone_index(state: &GameState, id: ObjectId) -> Result<bool>
             .contains(&id),
         Zone::Graveyard => state.players[object.owner.index()].graveyard.contains(&id),
         Zone::Exile => state.exile.contains(&id),
-        Zone::Stack => state.stack.iter().any(|item| item.source == id),
+        Zone::Stack => state.stack.iter().any(|item| {
+            item.kind == StackItemKind::Spell
+                && item.source == id
+                && item.v4.source_contract.is_some_and(|contract| {
+                    contract.source == id
+                        && contract.card_def == object.card_def
+                        && contract.owner == object.owner
+                        && contract.zone_change_count == object.zone_change_count
+                })
+        }),
         Zone::Command => state.command.contains(&id),
     })
 }
@@ -4444,7 +4602,13 @@ fn public_card_v2(
         .ok_or_else(|| RlContractError(format!("object id {} missing", id.0)))?;
     Ok(CardPublicV2 {
         stable: card_ref(state, id)?,
-        card_name: text_mode.card_name(object.card_def),
+        card_name: if object.v4.face_index == 1
+            && matches!(text_mode, ObservationTextModeV2::FullArtifact)
+        {
+            object.name.clone()
+        } else {
+            text_mode.card_name(object.card_def)
+        },
         tapped: object.tapped,
         summoning_sick: object.summoning_sick,
         damage: object.damage,
@@ -4577,24 +4741,24 @@ fn known_hand_cards_v4(
 fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristicsV2 {
     let object = state.objects.get(id);
     let def = &CARD_DEFS[object.card_def as usize];
-    let base_power = def.power.map(i32::from);
-    let base_toughness = def.toughness.map(i32::from);
+    let base_power = def.power_for_face(object.v4.face_index).map(i32::from);
+    let base_toughness = def.toughness_for_face(object.v4.face_index).map(i32::from);
     let has_pt = base_power.is_some() || base_toughness.is_some();
     CardCharacteristicsV2 {
         type_flags: CardTypeFlagsV2 {
-            land: def.has_type(CardType::Land),
-            creature: def.has_type(CardType::Creature),
-            instant: def.has_type(CardType::Instant),
-            sorcery: def.has_type(CardType::Sorcery),
-            artifact: def.has_type(CardType::Artifact),
-            enchantment: def.has_type(CardType::Enchantment),
+            land: engine::object_has_type(state, id, CardType::Land),
+            creature: engine::object_has_type(state, id, CardType::Creature),
+            instant: engine::object_has_type(state, id, CardType::Instant),
+            sorcery: engine::object_has_type(state, id, CardType::Sorcery),
+            artifact: engine::object_has_type(state, id, CardType::Artifact),
+            enchantment: engine::object_has_type(state, id, CardType::Enchantment),
         },
         base_power,
         base_toughness,
         effective_power: has_pt.then(|| engine::effective_power(state, id)),
         effective_toughness: has_pt.then(|| engine::effective_toughness(state, id)),
         effective_color_mask: object.v4.effective_color_mask,
-        effective_subtype_ids: object.v4.effective_subtype_ids.clone(),
+        effective_subtype_ids: engine::effective_subtype_ids(state, id),
         effective_keywords: KeywordFlagsV2 {
             flying: engine::has_effective_keyword(state, id, Keywords::FLYING),
             reach: engine::has_effective_keyword(state, id, Keywords::REACH),
@@ -4615,15 +4779,11 @@ fn card_characteristics_v2(state: &GameState, id: ObjectId) -> CardCharacteristi
                 Keywords::PROTECTION_FROM_MONOCOLORED,
             ),
             ward_generic: object.v4.ward_generic,
-            minimum_blockers: object.v4.minimum_blockers_override.unwrap_or_else(|| {
-                if !def.has_type(CardType::Creature) {
-                    0
-                } else if engine::has_effective_keyword(state, id, Keywords::MENACE) {
-                    2
-                } else {
-                    1
-                }
-            }),
+            minimum_blockers: if engine::object_has_type(state, id, CardType::Creature) {
+                engine::minimum_blockers_required(state, id) as u8
+            } else {
+                0
+            },
             landwalk_mask: object.v4.landwalk_mask,
         },
     }
@@ -4677,6 +4837,13 @@ fn object_relations_public_v4(
     state: &GameState,
     acting_player: PlayerId,
 ) -> Result<Vec<ObjectRelationPublicV4>> {
+    validate_linked_exile_records_public_v4(state)?;
+    state.validate_attachment_relations().map_err(|object| {
+        RlContractError(format!(
+            "invalid attachment relation at object {}",
+            object.0
+        ))
+    })?;
     let mut out = Vec::new();
     for (id, object) in state.objects.iter() {
         let Some(source) = visible_card_ref(state, id, acting_player)? else {
@@ -4702,12 +4869,36 @@ fn object_relations_public_v4(
             let target = state.objects.try_get(link.object).ok_or_else(|| {
                 RlContractError("exiled_by relation points at a missing object".to_string())
             })?;
-            if target.zone_change_count != link.zone_change_count {
-                return Err(RlContractError(
-                    "exiled_by relation points at a stale object incarnation".to_string(),
-                ));
-            }
-            if let Some(exiled_by) = visible_card_ref(state, link.object, acting_player)? {
+            let exiled_by = if target.zone_change_count == link.zone_change_count {
+                visible_card_ref(state, link.object, acting_player)?
+            } else {
+                let matches = state
+                    .engine
+                    .linked_exile_records
+                    .iter()
+                    .filter(|record| {
+                        record.exiled == id
+                            && record.exiled_zone_change_count == object.zone_change_count
+                            && record.source.source == link.object
+                            && record.source.zone_change_count == link.zone_change_count
+                    })
+                    .collect::<Vec<_>>();
+                let [record] = matches.as_slice() else {
+                    return Err(RlContractError(
+                        "exiled_by relation points at an unauthenticated historical incarnation"
+                            .to_string(),
+                    ));
+                };
+                Some(CardStableRefV1 {
+                    arena_id: record.source.source.0,
+                    card_db_id: record.source.card_def,
+                    owner: record.source.owner.into(),
+                    controller: record.source.controller.into(),
+                    zone: record.source.zone,
+                    zone_change_count: record.source.zone_change_count,
+                })
+            };
+            if let Some(exiled_by) = exiled_by {
                 out.push(ObjectRelationPublicV4::ExiledBy {
                     object: source,
                     exiled_by,
@@ -4715,14 +4906,165 @@ fn object_relations_public_v4(
             }
         }
     }
+    for record in &state.engine.linked_exile_records {
+        let exiled = state.objects.get(record.exiled);
+        if exiled.zone_change_count != record.exiled_zone_change_count
+            || out.iter().any(|relation| {
+                matches!(
+                    relation,
+                    ObjectRelationPublicV4::ExiledBy { object, exiled_by }
+                        if object.arena_id == record.exiled.0
+                            && object.zone_change_count == record.exiled_zone_change_count
+                            && exiled_by.arena_id == record.source.source.0
+                            && exiled_by.zone_change_count == record.source.zone_change_count
+                )
+            })
+        {
+            continue;
+        }
+        let Some(object) = visible_card_ref(state, record.exiled, acting_player)? else {
+            continue;
+        };
+        out.push(ObjectRelationPublicV4::ExiledBy {
+            object,
+            exiled_by: CardStableRefV1 {
+                arena_id: record.source.source.0,
+                card_db_id: record.source.card_def,
+                owner: record.source.owner.into(),
+                controller: record.source.controller.into(),
+                zone: record.source.zone,
+                zone_change_count: record.source.zone_change_count,
+            },
+        });
+    }
     Ok(out)
+}
+
+fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
+    for (index, record) in state.engine.linked_exile_records.iter().enumerate() {
+        if record.source.zone != Zone::Battlefield
+            || record.source.attached_to.is_some()
+            || crate::card_def::CARD_DEFS
+                .get(record.source.card_def as usize)
+                .is_none_or(|definition| {
+                    !matches!(definition.name, "Mesmeric Fiend" | "Journey to Nowhere")
+                })
+            || state.engine.linked_exile_records[..index]
+                .iter()
+                .any(|other| other.source == record.source)
+        {
+            return Err(RlContractError(
+                "linked-exile record has an invalid or duplicate source contract".to_string(),
+            ));
+        }
+        let source = state.objects.try_get(record.source.source).ok_or_else(|| {
+            RlContractError("linked-exile record source object is missing".to_string())
+        })?;
+        let exiled = state.objects.try_get(record.exiled).ok_or_else(|| {
+            RlContractError("linked-exile record exiled object is missing".to_string())
+        })?;
+        if source.card_def != record.source.card_def
+            || source.owner != record.source.owner
+            || source.zone_change_count < record.source.zone_change_count
+            || exiled.card_def != record.exiled_card_def
+            || exiled.owner != record.exiled_owner
+            || exiled.zone_change_count < record.exiled_zone_change_count
+        {
+            return Err(RlContractError(
+                "linked-exile record no longer matches its physical objects".to_string(),
+            ));
+        }
+        if exiled.zone_change_count == record.exiled_zone_change_count {
+            let exile_memberships = state
+                .exile
+                .iter()
+                .filter(|&&candidate| candidate == record.exiled)
+                .count();
+            if exiled.zone != Zone::Exile || exile_memberships != 1 {
+                return Err(RlContractError(
+                    "linked-exile exact card incarnation is not uniquely in exile".to_string(),
+                ));
+            }
+        }
+        if source.zone_change_count == record.source.zone_change_count
+            && exiled.zone_change_count == record.exiled_zone_change_count
+            && (source.zone != Zone::Battlefield
+                || exiled.v4.exiled_by
+                    != Some(crate::state::ObjectLinkV4 {
+                        object: record.source.source,
+                        zone_change_count: record.source.zone_change_count,
+                    }))
+        {
+            return Err(RlContractError(
+                "live linked-exile source lost its public object relation".to_string(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn continuous_effects_public_v2(
     state: &GameState,
     acting_player: PlayerId,
 ) -> Result<Vec<ContinuousEffectPublicV2>> {
+    state.validate_attachment_relations().map_err(|object| {
+        RlContractError(format!(
+            "invalid attachment relation at object {}",
+            object.0
+        ))
+    })?;
     let mut out = Vec::new();
+    for (host_id, host) in state.objects.iter() {
+        if host.zone != Zone::Battlefield {
+            continue;
+        }
+        for (equipment_id, equipment) in engine::attached_equipment_profiles(state, host_id) {
+            let equipment_object = state.objects.get(equipment_id);
+            let keywords = if state.active_player == equipment_object.controller {
+                equipment.controller_turn_keywords
+            } else {
+                equipment.other_turn_keywords
+            };
+            let mut layers = engine::Layers::POWER_TOUGHNESS.0;
+            if equipment.add_subtype.is_some() {
+                layers |= engine::Layers::TYPE_CHANGING.0;
+            }
+            if keywords != Keywords::NONE {
+                layers |= engine::Layers::ABILITY_ADDING.0;
+            }
+            out.push(ContinuousEffectPublicV2 {
+                source: Some(card_ref(state, equipment_id)?),
+                controller: Some(equipment_object.controller.into()),
+                affected_objects: vec![card_ref(state, host_id)?],
+                affected_players: Vec::new(),
+                global: false,
+                layers,
+                timestamp: (u64::from(equipment_id.0) << 32)
+                    | u64::from(equipment_object.zone_change_count),
+                duration: EffectDurationV2::WhileAttached,
+                power_delta: i32::from(equipment.power_delta),
+                toughness_delta: i32::from(equipment.toughness_delta),
+                grants_haste: keywords.has(Keywords::HASTE),
+                set_power: None,
+                set_toughness: None,
+                add_color_mask: 0,
+                remove_color_mask: 0,
+                add_subtype_ids: equipment
+                    .add_subtype
+                    .map(|subtype| vec![subtype.stable_id()])
+                    .unwrap_or_default(),
+                remove_subtype_ids: Vec::new(),
+                add_keyword_mask: keywords.0,
+                remove_keyword_mask: 0,
+                ward_generic_delta: 0,
+                minimum_blockers: None,
+                add_landwalk_mask: 0,
+                remove_landwalk_mask: 0,
+                prevent_damage_from_color_mask: 0,
+                damage_cannot_be_prevented: false,
+            });
+        }
+    }
     for effect in &state.engine.until_end_of_turn {
         match effect {
             UntilEndOfTurnEffect::SyntheticMarker(_) => {}
@@ -4768,6 +5110,149 @@ fn continuous_effects_public_v2(
                     remove_landwalk_mask: 0,
                     prevent_damage_from_color_mask: 0,
                     damage_cannot_be_prevented: false,
+                });
+            }
+            UntilEndOfTurnEffect::ResolvedObjectEffect {
+                object_id,
+                object_zone_change_count,
+                layer,
+                timestamp,
+                duration,
+                power,
+                toughness,
+                grant_haste,
+            } => {
+                let Some(object) = state.objects.try_get(*object_id) else {
+                    continue;
+                };
+                if object.zone != Zone::Battlefield
+                    || object.zone_change_count != *object_zone_change_count
+                {
+                    continue;
+                }
+                let duration = match duration {
+                    engine::EffectDuration::EndOfTurn => EffectDurationV2::EndOfTurn,
+                };
+                let affected_objects = visible_card_refs(state, &[*object_id], acting_player)?;
+                if affected_objects.is_empty() {
+                    continue;
+                }
+                out.push(ContinuousEffectPublicV2 {
+                    source: None,
+                    controller: None,
+                    affected_objects,
+                    affected_players: Vec::new(),
+                    global: false,
+                    layers: layer.0,
+                    timestamp: *timestamp,
+                    duration,
+                    power_delta: *power,
+                    toughness_delta: *toughness,
+                    grants_haste: *grant_haste,
+                    set_power: None,
+                    set_toughness: None,
+                    add_color_mask: 0,
+                    remove_color_mask: 0,
+                    add_subtype_ids: Vec::new(),
+                    remove_subtype_ids: Vec::new(),
+                    add_keyword_mask: if *grant_haste { Keywords::HASTE.0 } else { 0 },
+                    remove_keyword_mask: 0,
+                    ward_generic_delta: 0,
+                    minimum_blockers: None,
+                    add_landwalk_mask: 0,
+                    remove_landwalk_mask: 0,
+                    prevent_damage_from_color_mask: 0,
+                    damage_cannot_be_prevented: false,
+                });
+            }
+            UntilEndOfTurnEffect::ResolvedObjectKeywordEffect {
+                object_id,
+                object_zone_change_count,
+                layer,
+                timestamp,
+                duration,
+                keywords,
+            } => {
+                let Some(object) = state.objects.try_get(*object_id) else {
+                    continue;
+                };
+                if object.zone != Zone::Battlefield
+                    || object.zone_change_count != *object_zone_change_count
+                {
+                    continue;
+                }
+                let duration = match duration {
+                    engine::EffectDuration::EndOfTurn => EffectDurationV2::EndOfTurn,
+                };
+                let affected_objects = visible_card_refs(state, &[*object_id], acting_player)?;
+                if affected_objects.is_empty() {
+                    continue;
+                }
+                out.push(ContinuousEffectPublicV2 {
+                    source: None,
+                    controller: None,
+                    affected_objects,
+                    affected_players: Vec::new(),
+                    global: false,
+                    layers: layer.0,
+                    timestamp: *timestamp,
+                    duration,
+                    power_delta: 0,
+                    toughness_delta: 0,
+                    grants_haste: keywords.has(Keywords::HASTE),
+                    set_power: None,
+                    set_toughness: None,
+                    add_color_mask: 0,
+                    remove_color_mask: 0,
+                    add_subtype_ids: Vec::new(),
+                    remove_subtype_ids: Vec::new(),
+                    add_keyword_mask: keywords.0,
+                    remove_keyword_mask: 0,
+                    ward_generic_delta: 0,
+                    minimum_blockers: None,
+                    add_landwalk_mask: if keywords.has(Keywords::ISLANDWALK) {
+                        crate::card_def::mana_color_mask(crate::mana::ManaColor::U)
+                    } else {
+                        0
+                    },
+                    remove_landwalk_mask: 0,
+                    prevent_damage_from_color_mask: 0,
+                    damage_cannot_be_prevented: false,
+                });
+            }
+            UntilEndOfTurnEffect::DamageCannotBePrevented {
+                timestamp,
+                duration,
+            } => {
+                let duration = match duration {
+                    engine::EffectDuration::EndOfTurn => EffectDurationV2::EndOfTurn,
+                };
+                out.push(ContinuousEffectPublicV2 {
+                    source: None,
+                    controller: None,
+                    affected_objects: Vec::new(),
+                    affected_players: Vec::new(),
+                    global: true,
+                    layers: 0,
+                    timestamp: *timestamp,
+                    duration,
+                    power_delta: 0,
+                    toughness_delta: 0,
+                    grants_haste: false,
+                    set_power: None,
+                    set_toughness: None,
+                    add_color_mask: 0,
+                    remove_color_mask: 0,
+                    add_subtype_ids: Vec::new(),
+                    remove_subtype_ids: Vec::new(),
+                    add_keyword_mask: 0,
+                    remove_keyword_mask: 0,
+                    ward_generic_delta: 0,
+                    minimum_blockers: None,
+                    add_landwalk_mask: 0,
+                    remove_landwalk_mask: 0,
+                    prevent_damage_from_color_mask: 0,
+                    damage_cannot_be_prevented: true,
                 });
             }
         }
@@ -4817,7 +5302,7 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
         EngineDecisionStageV2::PendingOptionalCostSacrifice
     } else if state.engine.pending_spell_copy.is_some() {
         EngineDecisionStageV2::PendingSpellCopy
-    } else if state.engine.pending_effect.is_some() {
+    } else if state.engine.pending_effect.is_some() || state.engine.pending_land_play.is_some() {
         EngineDecisionStageV2::PendingEffect
     } else if !state.engine.pending_triggers.is_empty() {
         EngineDecisionStageV2::PendingTriggers
@@ -4877,12 +5362,25 @@ fn engine_context_v2(state: &GameState, acting_player: PlayerId) -> Result<Engin
             .as_ref()
             .map(|p| pending_spell_copy_semantic_v2(state, acting_player, p))
             .transpose()?,
-        pending_effect: state
-            .engine
-            .pending_effect
-            .as_ref()
-            .map(|pending| pending_effect_semantic_v4(state, acting_player, pending))
-            .transpose()?,
+        pending_effect: if let Some(pending) = state.engine.pending_effect.as_ref() {
+            Some(pending_effect_semantic_v4(state, acting_player, pending)?)
+        } else if let Some(pending) = state.engine.pending_land_play.as_ref() {
+            engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
+            Some(PendingEffectSemanticV4 {
+                source: Some(card_ref(state, pending.source)?),
+                controller: pending.controller.into(),
+                choice: Some(PendingEffectChoiceSemanticV4::Color {
+                    player: pending.controller.into(),
+                    structural_path: Vec::new(),
+                    legal_colors: ManaColor::ALL
+                        .into_iter()
+                        .filter(|color| *color != pending.excluded_color && *color != ManaColor::C)
+                        .collect(),
+                }),
+            })
+        } else {
+            None
+        },
         pending_triggers: state
             .engine
             .pending_triggers
@@ -4918,14 +5416,23 @@ fn pending_effect_semantic_v4(
                     player,
                     path,
                     options,
-                    ..
-                } => Ok(PendingEffectChoiceSemanticV4::Options {
-                    player: (*player).into(),
-                    structural_path: path.clone(),
-                    option_count: options.len().try_into().map_err(|_| {
-                        RlContractError("effect option count exceeds u16".to_string())
-                    })?,
-                }),
+                    purpose,
+                } => match purpose {
+                    crate::effect::EffectOptionChoicePurpose::ChooseColor {
+                        legal_colors, ..
+                    } => Ok(PendingEffectChoiceSemanticV4::Color {
+                        player: (*player).into(),
+                        structural_path: path.clone(),
+                        legal_colors: legal_colors.clone(),
+                    }),
+                    _ => Ok(PendingEffectChoiceSemanticV4::Options {
+                        player: (*player).into(),
+                        structural_path: path.clone(),
+                        option_count: options.len().try_into().map_err(|_| {
+                            RlContractError("effect option count exceeds u16".to_string())
+                        })?,
+                    }),
+                },
                 crate::effect::PendingEffectChoice::SelectTargets {
                     player,
                     path,
@@ -4949,14 +5456,28 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
                             }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+                                ..
+                            }
                     ) && acting_player != *player;
                     let search_for_chooser = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player == *player;
                     let redact_search_shape = matches!(
                         purpose,
                         crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany { .. }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped { .. }
                     ) && acting_player != *player;
                     let visible_targets = |candidates: &[crate::effect::EffectTargetCandidate]| {
                         if chooser_private {
@@ -5008,6 +5529,9 @@ fn pending_effect_semantic_v4(
                             | crate::effect::EffectTargetSelectionPurpose::OrderMilledIntoGraveyard => {
                                 TargetSelectionPurposeV4::CardSelection
                             }
+                            crate::effect::EffectTargetSelectionPurpose::OrderRevealedIntoGraveyard {
+                                ..
+                            } => TargetSelectionPurposeV4::LibraryOrder,
                             crate::effect::EffectTargetSelectionPurpose::OrderLookedLibraryTop {
                                 ..
                             }
@@ -5028,7 +5552,45 @@ fn pending_effect_semantic_v4(
                             },
                             crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHand {
                                 ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToHandMany {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::SearchLibraryToBattlefieldTapped {
+                                ..
                             } => TargetSelectionPurposeV4::SearchResult,
+                            crate::effect::EffectTargetSelectionPurpose::UntapLands {
+                                ..
+                            } => TargetSelectionPurposeV4::PermanentSelection,
+                            crate::effect::EffectTargetSelectionPurpose::LookTopSelectByTypeToHandBottomRest {
+                                stage,
+                                ..
+                            } => match stage {
+                                crate::effect::LibraryPartitionSelectionStage::ChooseMatchingSubset => {
+                                    TargetSelectionPurposeV4::CardSelection
+                                }
+                                crate::effect::LibraryPartitionSelectionStage::OrderRest { .. } => {
+                                    TargetSelectionPurposeV4::LibraryOrder
+                                }
+                            },
+                            crate::effect::EffectTargetSelectionPurpose::ExileOneFromGraveyard {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::ExileOneMatchingFromGraveyard {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::LinkedExileNonlandFromRevealedHand {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::DuressDiscard {
+                                ..
+                            }
+                            | crate::effect::EffectTargetSelectionPurpose::UndercityThroneCreature {
+                                ..
+                            } => TargetSelectionPurposeV4::CardSelection,
+                            crate::effect::EffectTargetSelectionPurpose::SacrificeCreature {
+                                ..
+                            } => TargetSelectionPurposeV4::PermanentSelection,
                         },
                     })
                 }
@@ -5045,6 +5607,19 @@ fn pending_effect_semantic_v4(
                         crate::effect::EffectBooleanChoicePurpose::ShuffleLibrary { .. } => {
                             BooleanChoicePurposeV4::Shuffle
                         }
+                        crate::effect::EffectBooleanChoicePurpose::CounterUnlessPaysGeneric {
+                            ..
+                        }
+                        | crate::effect::EffectBooleanChoicePurpose::CounterTargetUnlessPaysGeneric {
+                            ..
+                        } => BooleanChoicePurposeV4::PayCost,
+                        crate::effect::EffectBooleanChoicePurpose::PayManaThen { .. }
+                        | crate::effect::EffectBooleanChoicePurpose::PayExileFromGraveyardThen {
+                            ..
+                        } => BooleanChoicePurposeV4::PayCost,
+                        crate::effect::EffectBooleanChoicePurpose::SearchLibraryToBattlefieldTapped {
+                            ..
+                        } => BooleanChoicePurposeV4::OptionalEffect,
                     },
                 }),
             }
@@ -5054,7 +5629,7 @@ fn pending_effect_semantic_v4(
         // A resolving stack item's source was already public as part of that
         // stack item. Reuse the same unconditional public source reference even
         // if the underlying card has since moved to a normally hidden zone.
-        source: Some(card_ref(state, pending.resolving_item.source)?),
+        source: Some(stack_source_ref(state, &pending.resolving_item)?),
         controller: pending.resolving_item.controller.into(),
         choice,
     })
@@ -5067,6 +5642,30 @@ fn pending_cast_semantic_v2(
 ) -> Result<PendingCastSemanticV2> {
     engine::validate_pending_cast(state, p)
         .map_err(|error| RlContractError(format!("invalid pending cast: {error}")))?;
+    // `sacrifice_chosen` is a frozen public binding whose name and flat
+    // feature role mean exactly "sacrificed permanents". Escape reuses the
+    // compatibility-named vector only in privileged serialized engine state.
+    // Exposing graveyard-exile picks here would silently reinterpret the
+    // existing V1 row/binding without the required public version bump. The
+    // current value encoder also does not pool legal actions, so candidate
+    // exclusion alone is not a Markov substitute; Escape remains gated from
+    // current policy-training authority until the explicit successor lands.
+    let source_def = &CARD_DEFS[state.objects.get(p.spell).card_def as usize];
+    let object_cost_is_tap = p.is_flashback
+        && source_def.flashback.as_ref().is_some_and(|flashback| {
+            flashback.cost.iter().any(|component| {
+                matches!(
+                    component,
+                    crate::card_def::CostComponent::TapUntappedControlledPermanent(_)
+                )
+            })
+        });
+    let sacrifice_chosen =
+        if p.source_contract.cast_method == CastMethodV4::Escape || object_cost_is_tap {
+            Vec::new()
+        } else {
+            visible_card_refs(state, &p.sacrifice_chosen, acting_player)?
+        };
     Ok(PendingCastSemanticV2 {
         source: visible_card_ref(state, p.spell, acting_player)?,
         controller: p.controller.into(),
@@ -5079,7 +5678,7 @@ fn pending_cast_semantic_v2(
         },
         mode_chosen: p.mode_chosen,
         origin_zone: p.origin_zone,
-        sacrifice_chosen: visible_card_refs(state, &p.sacrifice_chosen, acting_player)?,
+        sacrifice_chosen,
         kicked: p.kicked,
     })
 }
@@ -5091,6 +5690,11 @@ fn pending_activation_semantic_v2(
 ) -> Result<PendingActivationSemanticV2> {
     engine::validate_pending_activation(state, p)
         .map_err(|error| RlContractError(format!("invalid pending activation: {error}")))?;
+    let object_cost_chosen = p
+        .object_cost_chosen
+        .iter()
+        .map(|binding| binding.object)
+        .collect::<Vec<_>>();
     Ok(PendingActivationSemanticV2 {
         source: visible_card_ref(state, p.source, acting_player)?,
         controller: p.controller.into(),
@@ -5100,6 +5704,7 @@ fn pending_activation_semantic_v2(
             Some(ids) => Some(visible_card_refs(state, ids, acting_player)?),
             None => None,
         },
+        object_cost_chosen: visible_card_refs(state, &object_cost_chosen, acting_player)?,
     })
 }
 
@@ -5378,7 +5983,7 @@ fn stack_item_public_v1(
 ) -> Result<StackItemPublicV1> {
     Ok(StackItemPublicV1 {
         stack_index,
-        source: card_ref(state, item.source)?,
+        source: stack_source_ref(state, item)?,
         controller: item.controller.into(),
         targets: stack_target_refs(state, item)?,
         is_trigger_or_ability: item.kind != StackItemKind::Spell,
@@ -5413,7 +6018,7 @@ fn stack_item_public_v2(
     }
     Ok(StackItemPublicV2 {
         stack_index,
-        source: card_ref(state, item.source)?,
+        source: stack_source_ref(state, item)?,
         controller: item.controller.into(),
         // Announced stack targets are public historical facts. Project the
         // frozen target contract rather than rebuilding a reference from a
@@ -5429,6 +6034,66 @@ fn stack_item_public_v2(
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
         paid_cost_refs: paid_cost_card_refs(&item.v4.paid_cost_refs, acting_player),
+    })
+}
+
+fn stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {
+    crate::engine::validated_stack_item_target_spec(item, state)
+        .map_err(|error| RlContractError(format!("invalid stack source metadata: {error}")))?;
+    let (card_def, owner, controller, zone, zone_change_count) = match item.kind {
+        StackItemKind::Spell => return card_ref(state, item.source),
+        StackItemKind::TriggeredAbility if item.v4.source_contract.is_some() => {
+            let contract = item.v4.source_contract.ok_or_else(|| {
+                RlContractError("spell-sourced trigger lost its frozen producer".to_string())
+            })?;
+            (
+                contract.card_def,
+                contract.owner,
+                contract.controller,
+                contract.zone,
+                contract.zone_change_count,
+            )
+        }
+        StackItemKind::ActivatedAbility | StackItemKind::TriggeredAbility => {
+            let contract = item.v4.ability_source_contract.ok_or_else(|| {
+                RlContractError("ability stack source lost its frozen incarnation".to_string())
+            })?;
+            (
+                contract.card_def,
+                contract.owner,
+                contract.controller,
+                contract.zone,
+                contract.zone_change_count,
+            )
+        }
+        StackItemKind::MadnessOffer => {
+            let contract = item.v4.madness_source_contract.ok_or_else(|| {
+                RlContractError("Madness offer lost its frozen source incarnation".to_string())
+            })?;
+            (
+                contract.card_def,
+                contract.owner,
+                contract.controller,
+                contract.zone,
+                contract.zone_change_count,
+            )
+        }
+    };
+    let historical = state.objects.try_get(item.source).ok_or_else(|| {
+        RlContractError("ability stack source references an unknown arena object".to_string())
+    })?;
+    if historical.card_def != card_def || historical.owner != owner {
+        return Err(RlContractError(
+            "ability stack source changed stable arena identity".to_string(),
+        ));
+    }
+    Ok(CardStableRefV1 {
+        arena_id: item.source.0,
+        card_db_id: card_def,
+        owner: owner.into(),
+        controller: controller.into(),
+        zone,
+        zone_change_count,
     })
 }
 

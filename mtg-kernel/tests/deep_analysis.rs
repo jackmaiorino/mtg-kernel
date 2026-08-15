@@ -122,6 +122,7 @@ fn cast_and_target(state: &mut GameState, deep: ObjectId, target: PlayerId) -> D
             spell,
             remaining: 1,
             ref legal_targets,
+            ..
         } if spell == deep
             && legal_targets == &vec![
                 Target::Player(PlayerId::P0),
@@ -408,6 +409,14 @@ fn copied_flashback_draws_without_repaying_and_virtual_copy_never_enters_exile()
         copy_source,
         mtg_kernel::state::CastMethodV4::Normal,
     ));
+    // The engine-driven copy path stamps every copy with a fresh stack
+    // incarnation; a clone reusing the parent's id is rejected by the
+    // duplicate-incarnation check (fixture modernized, engine check
+    // untouched).
+    copy.v4.stack_item_id = {
+        state.engine.next_stack_item_id += 1;
+        mtg_kernel::ids::StackItemId(state.engine.next_stack_item_id)
+    };
     state.stack.push(copy);
     let history_start = state.engine.event_history.len();
 

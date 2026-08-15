@@ -181,7 +181,7 @@ fn repair_and_gate_v1(
                 }
             }
         }
-        debug_assert_eq!(row_index < actions.len(), true);
+        debug_assert!(row_index < actions.len());
     }
     Ok(output)
 }
@@ -667,7 +667,7 @@ fn operational_scorer_projection_v1(
                 scoring
                     .objects
                     .get(*model_object_index as usize)
-                    .map_or(true, |model_object| {
+                    .is_none_or(|model_object| {
                         !operational_object_matches_model_object_v1(
                             *operational_object,
                             *model_object,

@@ -22,9 +22,9 @@ use crate::native_checkpoint_runner_v1::{
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 #[cfg(test)]
 use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
-use crate::native_population_opponent_v1::{
-    PopulationOpponentEngineV1, PopulationWeightVectorV1,
-};
+use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
+#[cfg(test)]
+use crate::native_population_opponent_v1::PopulationWeightVectorV1;
 #[cfg(test)]
 use crate::native_train_state_payload_v1::decode_native_train_state_payload_v1;
 #[cfg(test)]
@@ -67,6 +67,12 @@ pub enum NativeScienceLoopV1ErrorKind {
     UnsupportedPlatform,
     StoreBusy,
     InputInvalid,
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220): the supplied run
+    /// classified as `NativeRunCatalogProfileV1::Historical` at decode time.
+    /// Historical-profile records stay decodable and read-only-validatable
+    /// forever, but are rejected here, before any bootstrap, genesis, train,
+    /// or evaluate work begins.
+    HistoricalCatalogProfile,
     BootstrapFailed,
     GenesisFailed,
     TrainFailed,
@@ -80,6 +86,7 @@ impl NativeScienceLoopV1ErrorKind {
     pub const fn code(self) -> &'static str {
         match self {
             Self::UnsupportedPlatform => "native-training-store-v2-unsupported-platform",
+            Self::HistoricalCatalogProfile => "native-science-loop-historical-catalog-profile",
             Self::StoreBusy => "native-training-store-busy",
             Self::InputInvalid => "native-science-loop-input-invalid",
             Self::BootstrapFailed => "native-science-loop-bootstrap-failed",
@@ -457,13 +464,7 @@ pub fn run_native_science_loop_with_population_v1(
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<NativeScienceLoopReportV1> {
-    if population_opponent.is_none()
-        || run
-            .record()
-            .contracts()
-            .population_program_v1
-            .is_none()
-    {
+    if population_opponent.is_none() || run.record().contracts().population_program_v1.is_none() {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
     }
     match run_native_science_loop_with_opponents_v1(
@@ -503,16 +504,8 @@ pub fn run_native_response_exploiter_training_v1(
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<u64> {
     if population_opponent.is_none()
-        || run
-            .record()
-            .contracts()
-            .response_exploiter_v1
-            .is_none()
-        || run
-            .record()
-            .contracts()
-            .population_program_v1
-            .is_some()
+        || run.record().contracts().response_exploiter_v1.is_none()
+        || run.record().contracts().population_program_v1.is_some()
     {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
     }
@@ -538,6 +531,8 @@ pub fn run_native_response_exploiter_training_v1(
     }
 }
 
+// Boxing would change construction sites in determinism-adjacent code; accepted.
+#[allow(clippy::large_enum_variant)]
 enum NativeScienceLoopCompletionV1 {
     TrainingOnly { latest_generation_index: u64 },
     Evaluated(NativeScienceLoopReportV1),
@@ -558,6 +553,32 @@ fn run_native_science_loop_with_opponents_v1(
     evaluate_after_training: bool,
 ) -> Result<NativeScienceLoopCompletionV1> {
     use crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind;
+    use crate::native_training_store_run_v2::NativeRunCatalogProfileV1;
+
+    // Dual-Profile Catalog Successor (collab CLAUDE #220), science-loop
+    // boundary: reject a historical-profile run before any bootstrap,
+    // genesis, train, or evaluate work begins. This is the first statement in
+    // the shared implementation so every public entry point above
+    // (`run_native_science_loop_v1`, `run_native_science_loop_with_population_v1`,
+    // `run_native_response_exploiter_training_v1`) inherits it. Exhaustive
+    // match (fix round, panel finding 3): a future third
+    // `NativeRunCatalogProfileV1` variant fails this match at compile time
+    // rather than silently falling through an `if`/`else`, forcing an
+    // explicit decision here instead of an accidental pass-through. The live
+    // build-identity authenticity check for CURRENT (fix round, panel
+    // finding 1) lives at the publish and resume boundaries only: this
+    // function calls into both transitively (bootstrap's own genesis publish
+    // and every training window's resume), so a forged CURRENT record is
+    // still caught before any mutation, just slightly later in the call
+    // chain than a redundant check here would catch it.
+    match run.catalog_profile_v1() {
+        NativeRunCatalogProfileV1::Historical => {
+            return Err(loop_error_v1(
+                NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile,
+            ));
+        }
+        NativeRunCatalogProfileV1::Current => {}
+    }
 
     if ladder_opponent.is_some() && population_opponent.is_some() {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
@@ -864,10 +885,10 @@ fn run_native_science_loop_with_opponents_v1(
 
     Ok(NativeScienceLoopCompletionV1::Evaluated(
         NativeScienceLoopReportV1 {
-        latest_generation_index,
-        reference_run,
-        candidate_run,
-        evaluation,
+            latest_generation_index,
+            reference_run,
+            candidate_run,
+            evaluation,
         },
     ))
 }
@@ -1073,7 +1094,8 @@ mod windows_science_loop_tests {
     use crate::native_training_store_checkpoint_v3::decode_genesis_checkpoint_manifest_v2_v3;
     use crate::native_training_store_resume_v2::test_execution_config_v2;
     use crate::native_training_store_run_v2::{
-        decode_train_run_v2, test_fixture_bytes_v2, test_fixture_bytes_with_schedule_v2,
+        decode_train_run_v2, test_fixture_bytes_historical_v1, test_fixture_bytes_v2,
+        test_fixture_bytes_with_schedule_v2,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1152,6 +1174,39 @@ mod windows_science_loop_tests {
                 "{directory} must remain empty"
             );
         }
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220), science-loop
+    /// boundary: a historical-profile run is rejected with the specific
+    /// `HistoricalCatalogProfile` kind before any bootstrap, genesis, train,
+    /// or evaluate work begins -- no store directory is even created under
+    /// `parent`.
+    #[test]
+    fn historical_catalog_profile_is_rejected_before_bootstrap() {
+        let run = decode_train_run_v2(&test_fixture_bytes_historical_v1()).unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let parent = TestParentV1::new("historical-catalog-profile");
+
+        let result = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeScienceLoopV1ErrorKind::HistoricalCatalogProfile
+        );
+        assert!(
+            !parent.parent.join("store").exists(),
+            "the boundary must reject before bootstrap creates anything"
+        );
     }
 
     /// Learning smoke at the settled K=64 operating point: train a real
@@ -1342,8 +1397,7 @@ mod windows_science_loop_tests {
         // instead of the uniform identity; the uniform path (MULTIRUN_LADDER
         // unset) is completely untouched.
         let ladder_enabled = env_knob_v1("MULTIRUN_LADDER", 0) != 0;
-        let population_authority_enabled =
-            env_knob_v1("MULTIRUN_POPULATION_AUTHORITY", 0) != 0;
+        let population_authority_enabled = env_knob_v1("MULTIRUN_POPULATION_AUTHORITY", 0) != 0;
         let population_runtime_enabled = env_knob_v1("MULTIRUN_POPULATION_RUNTIME", 0) != 0;
         let response_exploiter_runtime_enabled =
             env_knob_v1("MULTIRUN_RESPONSE_EXPLOITER_RUNTIME", 0) != 0;
@@ -1503,7 +1557,8 @@ mod windows_science_loop_tests {
              and exactly one of parent init (warm-start build/screen) or \
              MULTIRUN_RESPONSE_EXPLOITER_DENOVO=1 (fresh-init denovo-screen)"
         );
-        let population_engine = if population_runtime_enabled || response_exploiter_runtime_enabled {
+        let population_engine = if population_runtime_enabled || response_exploiter_runtime_enabled
+        {
             let (chain_name, roots_name) = if response_exploiter_runtime_enabled {
                 (
                     "MULTIRUN_RESPONSE_EXPLOITER_REFRESH_CHAIN",
@@ -1516,11 +1571,11 @@ mod windows_science_loop_tests {
                 )
             };
             let chain_paths: Vec<std::path::PathBuf> = std::env::var(chain_name)
-            .unwrap_or_else(|_| panic!("runtime requires {chain_name}"))
-            .split(';')
-            .filter(|value| !value.is_empty())
-            .map(std::path::PathBuf::from)
-            .collect();
+                .unwrap_or_else(|_| panic!("runtime requires {chain_name}"))
+                .split(';')
+                .filter(|value| !value.is_empty())
+                .map(std::path::PathBuf::from)
+                .collect();
             assert!(!chain_paths.is_empty(), "population refresh chain is empty");
             let mut chain = Vec::with_capacity(chain_paths.len());
             for path in chain_paths {
@@ -1558,11 +1613,11 @@ mod windows_science_loop_tests {
                 );
             }
             let slot_roots: Vec<std::path::PathBuf> = std::env::var(roots_name)
-            .unwrap_or_else(|_| panic!("runtime requires {roots_name}"))
-            .split(';')
-            .filter(|value| !value.is_empty())
-            .map(std::path::PathBuf::from)
-            .collect();
+                .unwrap_or_else(|_| panic!("runtime requires {roots_name}"))
+                .split(';')
+                .filter(|value| !value.is_empty())
+                .map(std::path::PathBuf::from)
+                .collect();
             let engine = if response_exploiter_runtime_enabled {
                 crate::native_population_runtime_resolution_v1::resolve_population_response_target_v1(
                     active,
@@ -2496,17 +2551,17 @@ mod windows_science_loop_tests {
         // it must be exactly `"P0"` or `"P1"` or the test panics rather than
         // silently falling back (deny-invalid, matching `required_env_v1`'s
         // discipline for the other required knobs above).
-        let starting_player: Option<crate::ids::PlayerId> = match std::env::var("H2H_STARTING_PLAYER")
-        {
-            Err(_) => None,
-            Ok(value) => Some(match value.as_str() {
-                "P0" => crate::ids::PlayerId::P0,
-                "P1" => crate::ids::PlayerId::P1,
-                other => panic!(
+        let starting_player: Option<crate::ids::PlayerId> =
+            match std::env::var("H2H_STARTING_PLAYER") {
+                Err(_) => None,
+                Ok(value) => Some(match value.as_str() {
+                    "P0" => crate::ids::PlayerId::P0,
+                    "P1" => crate::ids::PlayerId::P1,
+                    other => panic!(
                     "H2H_STARTING_PLAYER must be exactly \"P0\" or \"P1\" when set; got {other:?}"
                 ),
-            }),
-        };
+                }),
+            };
         assert!(
             !(wide && init_store.is_some()),
             "WIDE=1 is not supported with H2H_INIT_STORE: the wide protocol trains fresh-init only"
@@ -2929,8 +2984,7 @@ mod windows_science_loop_tests {
         use crate::native_population_runtime_resolution_v1::resolve_population_response_target_pairwise_v1;
         use crate::native_training_store_digest_v1::{lower_hex_raw32_v1, sha256_v1};
         use crate::rl::{
-            terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1,
-            TerminalSafeCodeV2,
+            terminal_tuple_is_valid_v1, PlayerSeatV1, TerminalClassificationV1, TerminalSafeCodeV2,
         };
         use std::fs::OpenOptions;
         use std::io::Write;
@@ -2972,7 +3026,10 @@ mod windows_science_loop_tests {
             );
         } else {
             assert!(
-                matches!(candidate_gen, 0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256),
+                matches!(
+                    candidate_gen,
+                    0 | 32 | 64 | 96 | 128 | 160 | 192 | 224 | 256
+                ),
                 "mixture arm must be a complete exploiter or its exact promoted(2) genesis control"
             );
         }
@@ -3047,9 +3104,8 @@ mod windows_science_loop_tests {
                 .expect("response mixture target must resolve through all Store authorities"),
         );
 
-        let candidate_run_bytes =
-            fs::read(Path::new(&candidate_store_root).join("run.json"))
-                .expect("response candidate run.json must be readable");
+        let candidate_run_bytes = fs::read(Path::new(&candidate_store_root).join("run.json"))
+            .expect("response candidate run.json must be readable");
         let candidate_run =
             decode_train_run_v2(&candidate_run_bytes).expect("response candidate RunV2");
         let candidate_root =
@@ -4129,6 +4185,13 @@ mod windows_science_loop_tests {
             test_fixture_bytes_with_schedule_and_base_seed_ladder_v2, OpponentLadderPoolContractV1,
         };
 
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json"),
+        ) {
+            return;
+        }
+
         let pool_bytes = fs::read(r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json")
             .expect("real ladder pilot pool.json must be readable");
         let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
@@ -4163,7 +4226,7 @@ mod windows_science_loop_tests {
             None,
         )
         .expect("ladder science loop");
-        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&parent.parent.join("store"))
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(parent.parent.join("store"))
             .expect("validated store root");
 
         // LADDER_EVAL_GENS's own loop body: gen 0 as the reference AND, here,
@@ -4218,6 +4281,19 @@ mod windows_science_loop_tests {
     const REAL_LADDER_INIT_REFERENCE_STORE_V1: &str =
         r"D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store";
     const REAL_LADDER_INIT_REFERENCE_GENERATION_V1: u64 = 32;
+    const REAL_LADDER_PILOT_POOL_JSON_V1: &str =
+        r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json";
+
+    /// Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+    /// Shared gate for every test below that depends on `ladder_init_fixture_v1()`
+    /// (both of its real evidence roots), called before that fixture is touched.
+    fn ladder_init_evidence_present_v1() -> bool {
+        crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V1),
+        ) && crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_PILOT_POOL_JSON_V1),
+        )
+    }
 
     fn ladder_init_fixture_v1() -> &'static LadderInitFixtureV1 {
         LADDER_INIT_FIXTURE_V1.get_or_init(|| {
@@ -4298,6 +4374,10 @@ mod windows_science_loop_tests {
     /// for the same in-memory proof at the checkpoint-authority layer.
     #[test]
     fn ladder_init_genesis_bit_equals_the_real_s1_source_checkpoint_weights() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v1() {
+            return;
+        }
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
 
@@ -4355,6 +4435,10 @@ mod windows_science_loop_tests {
     /// publisher returned Ok" but "the walk independently reproves it."
     #[test]
     fn ladder_init_genesis_publishes_through_the_pure_walk_reconciler() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v1() {
+            return;
+        }
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
 
@@ -4450,6 +4534,10 @@ mod windows_science_loop_tests {
     /// would hit this exact obstacle.
     #[test]
     fn ladder_init_science_loop_trains_the_store_end_to_end() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v1() {
+            return;
+        }
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
         let target = run.requested_successful_updates();
@@ -4553,6 +4641,10 @@ mod windows_science_loop_tests {
     /// which pinned the exact narrower `RunFailed` obstacle this closes.
     #[test]
     fn ladder_init_science_loop_wrapper_completes_genesis_training_and_evaluation_end_to_end() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v1() {
+            return;
+        }
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
         let target = run.requested_successful_updates();
@@ -4581,7 +4673,7 @@ mod windows_science_loop_tests {
 
         // Genesis and training are both durably published, and the Store the
         // wrapper leaves behind independently re-validates end to end.
-        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&parent.parent.join("store"))
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(parent.parent.join("store"))
             .expect("store root must open: genesis and training both committed");
         let state = validate_native_training_store_v2(&root, &run)
             .expect("the Store the wrapper leaves behind is itself fully valid");

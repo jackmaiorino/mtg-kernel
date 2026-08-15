@@ -201,7 +201,9 @@ pub fn native_policy_anchor_v1(
 
             let mut row_forward_kl = 0.0f32;
             let mut gradient = vec![0.0f32; parent_width];
-            for action_index in 0..row.legal_action_count {
+            for (action_index, gradient_slot) in
+                gradient.iter_mut().enumerate().take(row.legal_action_count)
+            {
                 let term =
                     parent.1[action_index] * (parent.0[action_index] - current.0[action_index]);
                 if !term.is_finite() {
@@ -230,7 +232,7 @@ pub fn native_policy_anchor_v1(
                         logit_index: action_index,
                     });
                 }
-                gradient[action_index] = action_gradient;
+                *gradient_slot = action_gradient;
             }
 
             group_forward_kl += row_forward_kl;

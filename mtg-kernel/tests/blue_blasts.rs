@@ -17,21 +17,20 @@
 //! Hydroblast can target any spell/permanent and checks red only when it
 //! resolves. XMage's color predicate reads dynamic `getColor(game)` and its
 //! destroy effect honors indestructible/regeneration. This kernel slice is
-//! deliberately bounded to the frozen pool's static card-definition colors
-//! and its existing shared destroy-as-zone-change behavior: no executable
-//! effect can change color, and no valid red target exercises either destroy
-//! exception.
+//! deliberately bounded to the frozen pool's static card-definition colors:
+//! no executable effect can change color, indestructible is enforced by the
+//! shared destroy primitive, and no valid red target has regeneration.
 
 use mtg_kernel::card_def::{card_id_by_name, TargetSpec, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
 use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
-use mtg_kernel::ids::{ObjectId, PlayerId};
+use mtg_kernel::ids::{ObjectId, PlayerId, StackItemId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::rl::{legal_action_candidates_v1, ActionSemanticV1, TargetRefV1};
 use mtg_kernel::state::{
-    CastMethodV4, Counters, GameObject, GameState, SpellCastOriginV4, SpellCastRouteV4,
-    SpellCopyOriginV4, StackItem, StackItemKind, StackSourceContractV4, StackStateV4, Step, Target,
-    Zone, DIAGNOSTIC_STATE_HASH_ALGORITHM,
+    CastMethodV4, Counters, FinalizedCastBindingV1, GameObject, GameState, SpellCastOriginV4,
+    SpellCastRouteV4, SpellCopyOriginV4, StackItem, StackItemKind, StackSourceContractV4,
+    StackStateV4, Step, Target, Zone, DIAGNOSTIC_STATE_HASH_ALGORITHM,
 };
 use mtg_kernel::surface_v2::SurfaceDecision;
 
@@ -65,6 +64,15 @@ fn ready_game_without_permanents() -> GameState {
     state.priority_player = PlayerId::P0;
     state.players[PlayerId::P0.index()].mana_pool[ManaColor::U.pool_index()] = 1;
     state
+}
+
+fn next_stack_item_id(state: &mut GameState) -> StackItemId {
+    state.engine.next_stack_item_id = state
+        .engine
+        .next_stack_item_id
+        .checked_add(1)
+        .expect("test stack-item identity space exhausted");
+    StackItemId(state.engine.next_stack_item_id)
 }
 
 fn put_object(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> ObjectId {
@@ -110,6 +118,8 @@ fn put_spell_on_stack(
             "supported copies have canonical normal provenance"
         );
         let parent = put_spell_on_stack(state, player, name, false, false);
+        // Production copies inherit the parent's finalized stack choices while
+        // recapturing provenance for their distinct virtual source object.
         let mut item = state.stack.pop().expect("physical parent was just pushed");
         let parent_object = state.objects.get(parent).clone();
         let id = state.objects.push(GameObject {
@@ -138,6 +148,7 @@ fn put_spell_on_stack(
         item.source = id;
         item.is_copy = true;
         item.is_flashback = false;
+        item.v4.stack_item_id = next_stack_item_id(state);
         item.v4.cast_method = Some(CastMethodV4::Normal);
         item.v4.source_contract = Some(StackSourceContractV4::capture(
             state,
@@ -169,6 +180,10 @@ fn put_spell_on_stack(
         },
         finalized_method: Some(cast_method),
     });
+    object_v4.finalized_cast_binding = Some(FinalizedCastBindingV1 {
+        x_value: 0,
+        chosen_creature_cost: None,
+    });
     let id = state.objects.push(GameObject {
         card_def,
         name: name.to_string(),
@@ -186,6 +201,7 @@ fn put_spell_on_stack(
         zone_change_count: 1,
     });
     let source_contract = StackSourceContractV4::capture(state, id, cast_method);
+    let stack_item_id = next_stack_item_id(state);
     state.stack.push(StackItem {
         kind: StackItemKind::Spell,
         source: id,
@@ -199,7 +215,9 @@ fn put_spell_on_stack(
         madness_offer: false,
         kicked: false,
         v4: StackStateV4 {
+            stack_item_id,
             source_contract: Some(source_contract),
+            x_value: 0,
             ..StackStateV4::spell(cast_method)
         },
     });
@@ -241,6 +259,7 @@ fn cast_for_mode(state: &mut GameState, blast: ObjectId, mode: u8) -> Decision {
             player: PlayerId::P0,
             spell,
             mode_count: 2,
+            ..
         } if spell == blast => {
             engine::step(state, Action::ChooseSpellMode(mode)).unwrap();
             engine::advance_until_decision(state)
@@ -381,7 +400,7 @@ fn blue_blasts_with_zero_viable_modes_are_not_offered_or_castable() {
 }
 
 #[test]
-fn blue_pending_cast_is_frozen_into_diagnostic_hash_v5() {
+fn blue_pending_cast_is_frozen_into_diagnostic_hash_v8() {
     let mut state = ready_game();
     put_spell_on_stack(&mut state, PlayerId::P1, "Lightning Bolt", false, false);
     let red_permanent = put_object(&mut state, PlayerId::P1, "Guttersnipe", Zone::Battlefield);
@@ -402,7 +421,7 @@ fn blue_pending_cast_is_frozen_into_diagnostic_hash_v5() {
     );
     assert_eq!(
         DIAGNOSTIC_STATE_HASH_ALGORITHM,
-        "fnv1a64-serde-json-game-state-envelope-v5"
+        "fnv1a64-serde-json-game-state-envelope-v8"
     );
     let json = serde_json::to_string(&state).unwrap();
     assert!(json.contains("\"target_spec\":\"RedSpellOnStack\""));
@@ -412,7 +431,7 @@ fn blue_pending_cast_is_frozen_into_diagnostic_hash_v5() {
         restored.diagnostic_state_hash(),
         state.diagnostic_state_hash()
     );
-    assert_eq!(state.diagnostic_state_hash(), 0xb531_c85b_c876_5b42);
+    assert_eq!(state.diagnostic_state_hash(), 0x64d0_7fde_5fbd_0f5a);
 
     engine::step(&mut state, Action::ChooseSpellMode(1)).unwrap();
     let decision = engine::advance_until_decision(&mut state);

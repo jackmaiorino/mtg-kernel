@@ -64,6 +64,20 @@ pub enum NativeTrainingStoreResumeV2ErrorKind {
     StoreBusy,
     RootInvalid,
     RunInvalid,
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220): the supplied run
+    /// classified as `NativeRunCatalogProfileV1::Historical` at decode time.
+    /// Historical-profile records stay decodable and read-only-validatable
+    /// forever (see `validate_native_training_store_v2`, which performs no
+    /// such rejection), but the mutator path rejects them here, before the
+    /// root is even recaptured.
+    HistoricalCatalogProfile,
+    /// Dual-Profile Catalog Successor fix round (panel finding 1, blocker:
+    /// bypass): the supplied run classified `Current` at decode time, but its
+    /// embedded catalog fields do not equal the crate's live build constants
+    /// at this moment. Closes the bypass where a record merely claiming the
+    /// pinned CURRENT literal (rather than being authored by a build whose
+    /// live identity actually equals it right now) could still resume.
+    CurrentCatalogProfileLiveMismatch,
     ScheduleInvalid,
     GenerationInvalid,
     LatestInvalid,
@@ -78,6 +92,12 @@ impl NativeTrainingStoreResumeV2ErrorKind {
             Self::UnsupportedPlatform => "native-training-store-v2-unsupported-platform",
             Self::StoreBusy => "native-training-store-busy",
             Self::RootInvalid => "native-training-store-resume-root-invalid",
+            Self::HistoricalCatalogProfile => {
+                "native-training-store-resume-historical-catalog-profile"
+            }
+            Self::CurrentCatalogProfileLiveMismatch => {
+                "native-training-store-resume-current-catalog-profile-live-mismatch"
+            }
             Self::RunInvalid => "native-training-store-resume-run-invalid",
             Self::ScheduleInvalid => "native-training-store-resume-schedule-invalid",
             Self::GenerationInvalid => "native-training-store-resume-generation-invalid",
@@ -318,6 +338,35 @@ pub fn resume_native_training_store_v2(
     run: &ValidatedTrainRunV2,
     config: NativeTrainingExecutionConfigV1,
 ) -> Result<NativeTrainingStoreResumeV2> {
+    // Dual-Profile Catalog Successor (collab CLAUDE #220), resume boundary:
+    // reject a historical-profile run before any other check, lock, or store
+    // mutation. `validate_native_training_store_v2` (the read-only walk used
+    // to verify sealed evidence stores) deliberately performs no such
+    // rejection; only this mutator path does. Exhaustive match (fix round,
+    // panel finding 3): a future third profile variant fails this match at
+    // compile time rather than silently resuming under it. The CURRENT arm
+    // (fix round, panel finding 1, blocker: bypass) additionally requires the
+    // record's own catalog fields to equal the crate's live build constants
+    // at this moment, not merely the pinned CURRENT literal -- closing the
+    // gap where a record merely claiming that literal, authored by a build
+    // whose real identity has since moved past it, could still resume.
+    use crate::native_training_store_run_v2::{
+        current_profile_matches_live_build_identity_v1, NativeRunCatalogProfileV1,
+    };
+    match run.catalog_profile_v1() {
+        NativeRunCatalogProfileV1::Historical => {
+            return Err(resume_error_v2(
+                NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile,
+            ));
+        }
+        NativeRunCatalogProfileV1::Current => {
+            if !current_profile_matches_live_build_identity_v1(run.record().environment()) {
+                return Err(resume_error_v2(
+                    NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch,
+                ));
+            }
+        }
+    }
     validate_prepared_execution_config_v1(run, &config)
         .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::RunInvalid))?;
     root.recapture_v2()
@@ -958,7 +1007,9 @@ mod windows_resume_tests {
     use crate::native_training_store_reference_latest_v2::{
         build_checkpoint_reference_v2, build_latest_v2,
     };
-    use crate::native_training_store_run_v2::{decode_train_run_v2, test_fixture_bytes_v2};
+    use crate::native_training_store_run_v2::{
+        decode_train_run_v2, test_fixture_bytes_historical_v1, test_fixture_bytes_v2,
+    };
     use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
     use crate::native_training_store_v2::{
         publish_genesis_generation_v2, publish_prepared_segment_v2,
@@ -1038,6 +1089,68 @@ mod windows_resume_tests {
         .unwrap();
         assert_eq!(receipt.generation_index(), 0);
         root
+    }
+
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220), resume boundary:
+    /// a historical-profile run is rejected with the specific
+    /// `HistoricalCatalogProfile` kind before the root is even recaptured or
+    /// locked. Deliberately bootstraps only a bare skeleton (no genesis --
+    /// publishing genesis with a historical run is itself rejected by the
+    /// publisher boundary, so this test cannot depend on it): the mutator
+    /// path's own check must fire first regardless of store contents.
+    #[test]
+    fn resume_rejects_a_historical_catalog_profile_run_before_any_store_interaction() {
+        let parent = TestParentV2::new("historical-catalog-profile");
+        let bootstrapped = bootstrap_native_training_store_v2(parent.path(), "store").unwrap();
+        assert_eq!(
+            bootstrapped.outcome(),
+            NativeTrainingStoreBootstrapOutcomeV2::SkeletonReady
+        );
+        let root = bootstrapped.into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_historical_v1()).unwrap();
+
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile
+        );
+    }
+
+    /// Dual-Profile Catalog Successor fix round (panel finding 1, blocker:
+    /// bypass), resume boundary: a CURRENT-profile run whose embedded
+    /// catalog fields do not equal the crate's live build constants at this
+    /// moment is rejected with the specific `CurrentCatalogProfileLiveMismatch`
+    /// kind before the root is even recaptured. The crate's real live
+    /// constants cannot be changed from a test, so this simulates a future
+    /// catalog move via the module's own per-thread test shim
+    /// (`LiveCatalogBuildIdentityOverrideGuardV1`): the record still claims
+    /// the pinned CURRENT literal (and so still classifies `Current`), but
+    /// the shimmed "live" identity has moved past it.
+    #[test]
+    fn resume_rejects_a_current_catalog_profile_run_whose_live_identity_has_moved() {
+        use crate::native_training_store_run_v2::LiveCatalogBuildIdentityOverrideGuardV1;
+
+        let parent = TestParentV2::new("current-catalog-profile-live-mismatch");
+        let bootstrapped = bootstrap_native_training_store_v2(parent.path(), "store").unwrap();
+        assert_eq!(
+            bootstrapped.outcome(),
+            NativeTrainingStoreBootstrapOutcomeV2::SkeletonReady
+        );
+        let root = bootstrapped.into_root();
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+
+        let _shim = LiveCatalogBuildIdentityOverrideGuardV1::install(
+            "ffffffffffffffff",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        );
+
+        let result = resume_native_training_store_v2(&root, &run, execution_config_v2(&run));
+
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::CurrentCatalogProfileLiveMismatch
+        );
     }
 
     #[test]

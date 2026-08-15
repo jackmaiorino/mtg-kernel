@@ -90,30 +90,55 @@ DECK_SPECS = (
 
 # Runnable deck admission is deliberate rather than inferred from the current
 # support totals. Filtering DECK_SPECS preserves the canonical pool order.
-RUNTIME_DECK_IDS = ("Rally", "Burn")
+RUNTIME_DECK_IDS = (
+    "Wildfire",
+    "Rally",
+    "Affinity",
+    "Elves",
+    "Spy",
+    "Burn",
+    "Terror",
+    "CawGates",
+    "Faeries",
+)
 EXPECTED_RUNTIME_DECK_HASHES = {
+    "Wildfire": "0x552acb5fc9631d3b",
     "Rally": "0x0c9f01c2544412bf",
+    "Affinity": "0xff4bf00deadf8821",
+    "Elves": "0x6a187257d6d37346",
+    "Spy": "0xcd2afdfee3573675",
     "Burn": "0x5fdb7b92986b6fc1",
+    "Terror": "0xfd6f1a4aceaa157b",
+    "CawGates": "0x25c1916a4d20c08e",
+    "Faeries": "0xd7a47ab2fa78dbaa",
 }
 
 
 TOKEN_DEPENDENCIES = (
-    ("Blood Token", ("Voldaren Epicure",)),
+    ("Blood Token", ("Voldaren Epicure", "Blood Fountain")),
     ("Human Soldier Token", ("Rally at the Hornburg",)),
     ("Samurai Token", ("Experimental Synthesizer",)),
     ("Bird Illusion Token", ("Murmuring Mystic",)),
+    ("Food Token", ("Generous Ent", "Gingerbread Cabin")),
+    ("Map Token", ("Fanatical Offering",)),
+    ("Sacred Cat Embalmed Token", ("Sacred Cat",)),
+    ("Treasure Token", ("Heap Gate",)),
+    ("Eldrazi Spawn Token", ("Writhing Chrysalis",)),
+    ("Hero Token", ("Black Mage's Rod",)),
+    ("Clue Token", ("Toxin Analysis",)),
+    ("Skeleton Token", ("Avenging Hunter",)),
 )
 
 EXPECTED_MAINBOARD_SUPPORT = {
-    "Wildfire": {"full": 7, "partial": 0, "no_effect": 53},
+    "Wildfire": {"full": 60, "partial": 0, "no_effect": 0},
     "Rally": {"full": 60, "partial": 0, "no_effect": 0},
-    "Affinity": {"full": 8, "partial": 0, "no_effect": 52},
-    "Elves": {"full": 17, "partial": 0, "no_effect": 43},
-    "Spy": {"full": 8, "partial": 0, "no_effect": 52},
+    "Affinity": {"full": 60, "partial": 0, "no_effect": 0},
+    "Elves": {"full": 60, "partial": 0, "no_effect": 0},
+    "Spy": {"full": 60, "partial": 0, "no_effect": 0},
     "Burn": {"full": 60, "partial": 0, "no_effect": 0},
-    "Terror": {"full": 54, "partial": 0, "no_effect": 6},
-    "CawGates": {"full": 16, "partial": 0, "no_effect": 44},
-    "Faeries": {"full": 24, "partial": 0, "no_effect": 36},
+    "Terror": {"full": 60, "partial": 0, "no_effect": 0},
+    "CawGates": {"full": 60, "partial": 0, "no_effect": 0},
+    "Faeries": {"full": 60, "partial": 0, "no_effect": 0},
 }
 
 
@@ -461,9 +486,9 @@ def normalize_registry(
             raise ManifestError(f"registry-only non-token card {name!r} is outside the pinned pool")
         card["decks"] = list(expected_memberships[name])
     expected_token_names = {name for name, _producers in TOKEN_DEPENDENCIES}
-    if non_token_count != 132 or token_names != expected_token_names:
+    if non_token_count != 150 or token_names != expected_token_names:
         raise ManifestError(
-            f"registry baseline drift: expected 132 deck cards and tokens "
+            f"registry baseline drift: expected 150 deck cards and tokens "
             f"{sorted(expected_token_names)!r}, got {non_token_count} and {sorted(token_names)!r}"
         )
     registry["pool_decks"] = [spec.filename for spec in DECK_SPECS]

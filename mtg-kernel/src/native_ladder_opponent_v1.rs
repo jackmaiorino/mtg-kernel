@@ -658,7 +658,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     fn hex64(fill: char) -> String {
-        std::iter::repeat(fill).take(64).collect()
+        std::iter::repeat_n(fill, 64).collect()
     }
 
     fn checkpoint_ref(
@@ -762,7 +762,11 @@ mod tests {
             &snapshot_payload,
         )
         .unwrap();
-        let payload = executor.checkpoint_candidate_v1().unwrap().payload().to_vec();
+        let payload = executor
+            .checkpoint_candidate_v1()
+            .unwrap()
+            .payload()
+            .to_vec();
         let checkpoint = build_genesis_checkpoint_manifest_v3(&run, &payload).unwrap();
         load_native_checkpoint_inference_v1(&run, &checkpoint, &payload).unwrap()
     }
@@ -793,7 +797,17 @@ mod tests {
         // end-to-end through the eval-only engine.
         let (globals, actions) = determinism_decision_view_parts_v1();
         let view = FlatScoringDecisionViewV2::new(
-            &globals, &[], &[], &[], &[], &[], &[], &[], &[], &actions, &[],
+            &globals,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &actions,
+            &[],
         );
         let action = engine
             .select_policy_action_v1(OpponentLadderPoolMemberV2::Primary, view, 12_345)

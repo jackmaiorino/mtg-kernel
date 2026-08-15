@@ -1296,17 +1296,17 @@ mod tests {
     fn surface_binding_envelopes_are_diagnostic_dispatched_with_exact_goldens() {
         let (legacy, v2) = standalone_binding_states();
         let surface = crate::surface_v2::HarnessSurfaceV2::new();
-        assert_eq!(legacy.diagnostic_state_hash(), 0x8650_30b6_0d41_3489);
+        assert_eq!(legacy.diagnostic_state_hash(), 0xa921_902d_e1a8_d8ce);
         assert_eq!(
             surface_binding_hash(&legacy, &surface).expect("legacy binding hashes"),
-            0x69cf_6904_0094_98de,
-            "pre-edit captured legacy SurfaceBinding V1 golden"
+            0xd281_e56f_4389_60a9,
+            "final-pool-v8 legacy SurfaceBinding V1 golden"
         );
-        assert_eq!(v2.diagnostic_state_hash(), 0x9123_6647_2e4e_9520);
+        assert_eq!(v2.diagnostic_state_hash(), 0x8ecd_b59c_374e_2345);
         assert_eq!(
             surface_binding_hash(&v2, &surface).expect("v2 binding hashes"),
-            0x30f5_defd_054b_41de,
-            "independently derived SurfaceBinding V2 golden"
+            0x5c8f_cd1c_7941_a53e,
+            "final-pool-v9 SurfaceBinding V2 golden"
         );
 
         let legacy_bytes =
@@ -1320,7 +1320,7 @@ mod tests {
         assert_eq!(legacy_value["schema_version"], 1);
         assert_eq!(
             legacy_value["diagnostic_state_hash_algorithm"],
-            "fnv1a64-serde-json-game-state-envelope-v5"
+            "fnv1a64-serde-json-game-state-envelope-v8"
         );
         assert!(
             legacy_value.get("hash_algorithm").is_none(),
@@ -1337,7 +1337,7 @@ mod tests {
         assert_eq!(v2_value["schema_version"], 2);
         assert_eq!(
             v2_value["diagnostic_state_hash_algorithm"],
-            "fnv1a64-serde-json-game-state-envelope-v6"
+            "fnv1a64-serde-json-game-state-envelope-v9"
         );
         assert!(v2_value.get("hash_algorithm").is_none());
     }

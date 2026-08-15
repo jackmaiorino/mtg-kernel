@@ -31,7 +31,7 @@ fn parse_args_v1(
     ),
     (),
 > {
-    if raw.len() < 2 || raw.len() > 8 || raw.len() % 2 != 0 {
+    if raw.len() < 2 || raw.len() > 8 || !raw.len().is_multiple_of(2) {
         return Err(());
     }
     let mut authority_root = None;

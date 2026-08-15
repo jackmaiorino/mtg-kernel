@@ -8,9 +8,9 @@
 //! resulting `CommittedEvent` to `state.engine.event_log` for
 //! `trigger::collect_and_process` to drain after the resolution finishes.
 
-use crate::ids::{ObjectId, PlayerId};
+use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
-use crate::state::{GameState, Target, Zone};
+use crate::state::{GameState, PaidCostRefV4, StackItemKind, Target, Zone};
 use serde::{Deserialize, Serialize};
 
 pub type ReplacementId = u32;
@@ -43,6 +43,13 @@ pub enum ReplacementEffectKind {
     /// replacement pipeline shape end-to-end; see
     /// `tests::prevention_shield_absorbs_then_expires`.
     PreventNextDamage { target: Target, remaining: i32 },
+    /// Prevent all damage that sources sharing `color` would deal during
+    /// the turn in which this replacement was installed.
+    PreventDamageFromColorUntilEndOfTurn {
+        color: ManaColor,
+        turn: u32,
+        active_player: PlayerId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -78,6 +85,15 @@ pub struct ZoneChangeProposed {
     /// inserted identity. Other observers learn no new identity, while their
     /// still-valid prior library position facts shift through the insertion.
     pub library_insert_visibility: LibraryInsertVisibility,
+    /// Forces a permanent moved to the battlefield by this effect to enter
+    /// tapped, independently of its own static entry rules.
+    pub force_battlefield_tapped: bool,
+    /// Optional transformed battlefield face. Ordinary zone changes retain
+    /// `None`, which resets the object to its front face.
+    pub battlefield_face_index: Option<u8>,
+    /// Optional controller for a battlefield return whose effect says
+    /// "under your control" rather than the ordinary owner-controlled rule.
+    pub battlefield_controller: Option<PlayerId>,
     pub touched_by: Vec<ReplacementId>,
 }
 
@@ -149,6 +165,22 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Hidden,
+            force_battlefield_tapped: false,
+            battlefield_face_index: None,
+            battlefield_controller: None,
+            touched_by: Vec::new(),
+        })
+    }
+    pub fn zone_change_to_battlefield_tapped(object: ObjectId) -> ProposedEvent {
+        ProposedEvent::ZoneChange(ZoneChangeProposed {
+            object,
+            to_zone: Zone::Battlefield,
+            library_placement: LibraryPlacement::Top,
+            preserve_known_identity: false,
+            library_insert_visibility: LibraryInsertVisibility::Hidden,
+            force_battlefield_tapped: true,
+            battlefield_face_index: None,
+            battlefield_controller: None,
             touched_by: Vec::new(),
         })
     }
@@ -159,6 +191,9 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: true,
             library_insert_visibility: LibraryInsertVisibility::Hidden,
+            force_battlefield_tapped: false,
+            battlefield_face_index: None,
+            battlefield_controller: None,
             touched_by: Vec::new(),
         })
     }
@@ -172,6 +207,9 @@ impl ProposedEvent {
             library_placement: LibraryPlacement::Top,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Owner,
+            force_battlefield_tapped: false,
+            battlefield_face_index: None,
+            battlefield_controller: None,
             touched_by: Vec::new(),
         })
     }
@@ -186,6 +224,26 @@ impl ProposedEvent {
             library_placement: placement,
             preserve_known_identity: false,
             library_insert_visibility: LibraryInsertVisibility::Public,
+            force_battlefield_tapped: false,
+            battlefield_face_index: None,
+            battlefield_controller: None,
+            touched_by: Vec::new(),
+        })
+    }
+    pub fn transformed_battlefield_return(
+        object: ObjectId,
+        face_index: u8,
+        controller: PlayerId,
+    ) -> ProposedEvent {
+        ProposedEvent::ZoneChange(ZoneChangeProposed {
+            object,
+            to_zone: Zone::Battlefield,
+            library_placement: LibraryPlacement::Top,
+            preserve_known_identity: false,
+            library_insert_visibility: LibraryInsertVisibility::Public,
+            force_battlefield_tapped: false,
+            battlefield_face_index: Some(face_index),
+            battlefield_controller: Some(controller),
             touched_by: Vec::new(),
         })
     }
@@ -315,6 +373,57 @@ pub enum CommittedEvent {
         spell: ObjectId,
         controller: PlayerId,
     },
+    /// A completed cast, activation, or copy-target choice made this exact
+    /// permanent incarnation a target. This is nonreplaceable bookkeeping
+    /// consumed by reusable Ward trigger matching.
+    Targeted {
+        target: ObjectId,
+        target_zone_change_count: u32,
+        targeting_stack_item: StackItemId,
+        targeting_controller: PlayerId,
+    },
+    /// A permanent was sacrificed by its current controller. The effective
+    /// subtype set is captured as last-known information before the ensuing
+    /// zone change resets the object incarnation.
+    Sacrificed {
+        object: ObjectId,
+        controller_before: PlayerId,
+        effective_subtype_ids_before: Vec<u16>,
+    },
+    /// Nonreplaceable marker emitted after a combat-damage batch only when
+    /// positive damage to a player survived prevention. The exact source
+    /// incarnation prevents a later zone-change generation from inheriting
+    /// the combat trigger.
+    CombatDamageToPlayer {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        player: PlayerId,
+        amount: i32,
+    },
+    /// A Saga received this exact lore counter and its corresponding chapter
+    /// ability triggered. Captures the source incarnation at counter time so
+    /// later zone changes cannot relabel the chapter ability.
+    SagaChapter {
+        source: ObjectId,
+        source_zone_change_count: u32,
+        controller: PlayerId,
+        chapter: u8,
+    },
+    /// Transient cast-provenance marker consumed from `event_log` by the
+    /// trigger collection immediately following this resolution. It is not
+    /// appended to permanent `event_history`; the spell stack item and its
+    /// paid-cost references remain the durable provenance.
+    OptionalAdditionalCostPaid {
+        source: ObjectId,
+        kind: crate::card_def::OptionalAdditionalCostDef,
+        paid_cost_refs: Vec<PaidCostRefV4>,
+    },
+    /// Nonreplaceable marker for one global Initiative or Undercity trigger.
+    /// `history_index` is self-authenticating against the permanent event
+    /// history before the resulting ability may be placed on the stack.
+    InitiativeTrigger {
+        binding: crate::state::InitiativeTriggerBindingV1,
+    },
 }
 
 /// Runs the replace/prevent pass to a fixed point: repeatedly finds an
@@ -325,12 +434,42 @@ pub fn apply_replacements(
     state: &mut GameState,
     mut proposed: ProposedEvent,
 ) -> Option<ProposedEvent> {
+    let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
+        && state.engine.until_end_of_turn.iter().any(|effect| {
+            matches!(
+                effect,
+                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+            )
+        });
+    if let ProposedEvent::Damage(damage) = &proposed {
+        if !damage_cannot_be_prevented
+            && crate::engine::damage_is_prevented_by_protection(state, damage.source, damage.target)
+        {
+            return None;
+        }
+    }
     loop {
+        let damage_cannot_be_prevented = matches!(&proposed, ProposedEvent::Damage(_))
+            && state.engine.until_end_of_turn.iter().any(|effect| {
+                matches!(
+                    effect,
+                    crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+                )
+            });
         let hit = state
             .engine
             .active_replacements
             .iter()
-            .find(|r| !proposed.touched_by().contains(&r.id) && replacement_applies(r, &proposed))
+            .find(|r| {
+                !(proposed.touched_by().contains(&r.id)
+                    || damage_cannot_be_prevented
+                        && matches!(
+                            &r.kind,
+                            ReplacementEffectKind::PreventNextDamage { .. }
+                                | ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. }
+                        ))
+                    && replacement_applies(r, &proposed, state)
+            })
             .cloned();
 
         let Some(repl) = hit else {
@@ -345,12 +484,30 @@ pub fn apply_replacements(
     }
 }
 
-fn replacement_applies(repl: &ActiveReplacement, proposed: &ProposedEvent) -> bool {
+fn replacement_applies(
+    repl: &ActiveReplacement,
+    proposed: &ProposedEvent,
+    state: &GameState,
+) -> bool {
     match (&repl.kind, proposed) {
         (
             ReplacementEffectKind::PreventNextDamage { target, remaining },
             ProposedEvent::Damage(d),
         ) => *remaining > 0 && d.target == *target,
+        (
+            ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
+                color,
+                turn,
+                active_player,
+            },
+            ProposedEvent::Damage(d),
+        ) => {
+            *turn == state.turn
+                && *active_player == state.active_player
+                && crate::engine::object_color_mask(state, d.source)
+                    & crate::card_def::mana_color_mask(*color)
+                    != 0
+        }
         _ => false,
     }
 }
@@ -396,14 +553,64 @@ fn replacement_apply(
                 Some(ProposedEvent::Damage(d))
             }
         }
+        (
+            ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { .. },
+            ProposedEvent::Damage(_),
+        ) => None,
         (_, other) => Some(other),
     }
 }
 
-/// Convenience: replace/prevent then commit if anything survived.
+/// Installs a W/U/B/R/G prevention replacement through the same monotonic
+/// identity allocator used by all replacement effects.
+pub fn install_color_damage_prevention(
+    state: &mut GameState,
+    source: ObjectId,
+    color: ManaColor,
+) -> Result<ReplacementId, String> {
+    if color == ManaColor::C {
+        return Err("colorless is not a legal Prismatic Strands choice".to_string());
+    }
+    let id = state
+        .engine
+        .next_replacement_id
+        .checked_add(1)
+        .ok_or("replacement identity space exhausted")?;
+    state.engine.next_replacement_id = id;
+    state.engine.active_replacements.push(ActiveReplacement {
+        id,
+        source,
+        kind: ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn {
+            color,
+            turn: state.turn,
+            active_player: state.active_player,
+        },
+    });
+    Ok(id)
+}
+
+fn lifelink_gain_for(state: &GameState, event: &ProposedEvent) -> Option<(PlayerId, i32)> {
+    let ProposedEvent::Damage(damage) = event else {
+        return None;
+    };
+    if damage.amount <= 0 {
+        return None;
+    }
+    let source = state.objects.try_get(damage.source)?;
+    crate::engine::has_effective_keyword(state, damage.source, crate::card_def::Keywords::LIFELINK)
+        .then_some((source.controller, damage.amount))
+}
+
+/// Convenience: replace/prevent then commit if anything survived. Lifelink
+/// is evaluated from the final damage amount and source immediately before
+/// that damage is committed.
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     if let Some(final_event) = apply_replacements(state, event) {
+        let lifelink_gain = lifelink_gain_for(state, &final_event);
         commit(state, final_event);
+        if let Some((player, amount)) = lifelink_gain {
+            commit(state, ProposedEvent::life_gain(player, amount));
+        }
     }
 }
 
@@ -412,10 +619,18 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
 pub fn commit(state: &mut GameState, event: ProposedEvent) {
     let committed = match event {
         ProposedEvent::Damage(d) => {
+            let source_has_deathtouch = d.amount > 0
+                && state.objects.try_get(d.source).is_some()
+                && crate::engine::has_effective_keyword(
+                    state,
+                    d.source,
+                    crate::card_def::Keywords::DEATHTOUCH,
+                );
             match d.target {
                 Target::Object(id) => {
                     let obj = state.objects.get_mut(id);
                     obj.damage = obj.damage.saturating_add(d.amount.max(0) as u16);
+                    obj.v4.deathtouch_damage |= source_has_deathtouch;
                 }
                 Target::Player(p) => {
                     state.players[p.index()].life -= d.amount;
@@ -437,6 +652,9 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 z.library_placement,
                 z.preserve_known_identity,
                 z.library_insert_visibility,
+                z.force_battlefield_tapped,
+                z.battlefield_face_index,
+                z.battlefield_controller,
             );
             CommittedEvent::ZoneChange {
                 object: z.object,
@@ -487,9 +705,8 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
             }
         }
         ProposedEvent::CreateToken(t) => {
-            let name = crate::card_def::CARD_DEFS[t.token_def as usize]
-                .name
-                .to_string();
+            let token_def = &crate::card_def::CARD_DEFS[t.token_def as usize];
+            let name = token_def.object_name.to_string();
             let object = state.objects.push(crate::state::GameObject {
                 card_def: t.token_def,
                 name,
@@ -521,6 +738,8 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
                 zone_change_count: 0,
             });
             state.players[t.controller.index()].battlefield.push(object);
+            let enters_tapped = permanent_enters_battlefield_tapped(state, object, t.controller);
+            state.objects.get_mut(object).tapped = enters_tapped;
             CommittedEvent::CreateToken {
                 object,
                 token_def: t.token_def,
@@ -528,8 +747,33 @@ pub fn commit(state: &mut GameState, event: ProposedEvent) {
             }
         }
     };
+    let saga_entered = matches!(
+        committed,
+        CommittedEvent::ZoneChange {
+            object,
+            to: Zone::Battlefield,
+            ..
+        } if state.objects.get(object).v4.face_index == 0
+            && crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize]
+                .saga
+                .is_some()
+    );
+    let saga_source = match &committed {
+        CommittedEvent::ZoneChange { object, .. } if saga_entered => Some(*object),
+        _ => None,
+    };
     state.engine.event_log.push(committed.clone());
     state.engine.event_history.push(committed);
+    if let Some(source) = saga_source {
+        let chapter = {
+            let lore = &mut state.objects.get_mut(source).counters.lore;
+            *lore = lore
+                .checked_add(1)
+                .expect("a newly entered Saga's first lore counter fits i16");
+            u8::try_from(*lore).expect("a supported Saga chapter fits u8")
+        };
+        log_saga_chapter(state, source, chapter);
+    }
 }
 
 /// Runs the replace/prevent pass independently on every event in `events`
@@ -545,8 +789,17 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         .into_iter()
         .filter_map(|e| apply_replacements(state, e))
         .collect();
+    // Lifelink changes life at the same time as the damage. Capture every
+    // source/controller before any member of the simultaneous batch can die.
+    let lifelink_gains = survivors
+        .iter()
+        .filter_map(|event| lifelink_gain_for(state, event))
+        .collect::<Vec<_>>();
     for e in survivors {
         commit(state, e);
+    }
+    for (player, amount) in lifelink_gains {
+        commit(state, ProposedEvent::life_gain(player, amount));
     }
 }
 
@@ -563,10 +816,145 @@ pub fn log_spell_cast(state: &mut GameState, spell: ObjectId, controller: Player
     state.engine.event_history.push(committed);
 }
 
+/// Logs one final targeting marker after the enclosing spell or ability has
+/// completed announcement. Failed casts never reach this point.
+pub fn log_targeted(
+    state: &mut GameState,
+    target: ObjectId,
+    target_zone_change_count: u32,
+    targeting_stack_item: StackItemId,
+    targeting_controller: PlayerId,
+) {
+    let committed = CommittedEvent::Targeted {
+        target,
+        target_zone_change_count,
+        targeting_stack_item,
+        targeting_controller,
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+/// Records the rules action separately from its ensuing replaceable zone
+/// change. Sacrifice triggers consume this marker instead of guessing from
+/// an ordinary battlefield-to-graveyard move.
+pub fn log_sacrifice(state: &mut GameState, object: ObjectId) {
+    let live = state.objects.get(object);
+    let committed = CommittedEvent::Sacrificed {
+        object,
+        controller_before: live.controller,
+        effective_subtype_ids_before: crate::engine::effective_subtype_ids(state, object),
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+/// Records that one exact permanent incarnation dealt combat damage to a
+/// player. The underlying damage event remains independently committed;
+/// this marker exists only to distinguish combat from noncombat damage for
+/// triggered-ability matching.
+pub fn log_combat_damage_to_player(
+    state: &mut GameState,
+    source: ObjectId,
+    source_zone_change_count: u32,
+    player: PlayerId,
+    amount: i32,
+) {
+    let committed = CommittedEvent::CombatDamageToPlayer {
+        source,
+        source_zone_change_count,
+        player,
+        amount,
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+/// Logs the nonreplaceable chapter marker immediately after a lore counter
+/// is placed by the Saga rules action.
+pub fn log_saga_chapter(state: &mut GameState, source: ObjectId, chapter: u8) {
+    let object = state.objects.get(source);
+    let committed = CommittedEvent::SagaChapter {
+        source,
+        source_zone_change_count: object.zone_change_count,
+        controller: object.controller,
+        chapter,
+    };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+}
+
+pub fn log_initiative_trigger(
+    state: &mut GameState,
+    player: PlayerId,
+    mut source: crate::state::AbilitySourceContractV4,
+    kind: crate::state::InitiativeTriggerKindV1,
+) -> Result<crate::state::InitiativeTriggerBindingV1, String> {
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("Initiative designation source no longer exists")?;
+    if live.card_def != source.card_def
+        || live.owner != source.owner
+        || live.zone_change_count < source.zone_change_count
+        || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
+        || crate::card_def::CARD_DEFS
+            .get(source.card_def as usize)
+            .is_none_or(|definition| definition.name != "Avenging Hunter")
+    {
+        return Err("Initiative designation source contract is malformed".to_string());
+    }
+    source.controller = player;
+    let history_index = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Initiative event history exceeds u32".to_string())?;
+    let binding = crate::state::InitiativeTriggerBindingV1 {
+        history_index,
+        player,
+        source,
+        kind,
+    };
+    let committed = CommittedEvent::InitiativeTrigger { binding };
+    state.engine.event_log.push(committed.clone());
+    state.engine.event_history.push(committed);
+    Ok(binding)
+}
+
+fn permanent_enters_battlefield_tapped(
+    state: &GameState,
+    object: ObjectId,
+    controller: PlayerId,
+) -> bool {
+    let def = &crate::card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
+    if def.enters_battlefield_tapped {
+        return true;
+    }
+    let Some(rule) = def.enters_battlefield_tapped_unless else {
+        return false;
+    };
+    let controlled_other_count = state.players[controller.index()]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|candidate| *candidate != object)
+        .filter(|candidate| {
+            let live = state.objects.get(*candidate);
+            live.zone == Zone::Battlefield
+                && live.controller == controller
+                && crate::engine::has_effective_subtype(
+                    state,
+                    *candidate,
+                    rule.controller_controls_other_subtype,
+                )
+        })
+        .count();
+    controlled_other_count < usize::from(rule.minimum_count)
+}
+
 /// Zone bookkeeping shared by every `MoveObject` effect leaf. "Hand ->
 /// Stack" (casting) is deliberately not reachable here: putting a spell on
 /// the stack is an engine action (see `engine::begin_cast`), never
 /// something a card's own effect program does.
+#[allow(clippy::too_many_arguments)]
 fn commit_zone_change(
     state: &mut GameState,
     id: ObjectId,
@@ -574,9 +962,13 @@ fn commit_zone_change(
     library_placement: LibraryPlacement,
     preserve_known_identity: bool,
     library_insert_visibility: LibraryInsertVisibility,
+    force_battlefield_tapped: bool,
+    battlefield_face_index: Option<u8>,
+    battlefield_controller: Option<PlayerId>,
 ) {
     let owner = state.objects.get(id).owner;
     let from_zone = state.objects.get(id).zone;
+    refresh_paid_creature_power_lki(state, id, from_zone);
     let informed_observer_mask =
         if preserve_known_identity && from_zone == Zone::Library && to_zone == Zone::Hand {
             let position = state.players[owner.index()]
@@ -623,7 +1015,9 @@ fn commit_zone_change(
             state.players[owner.index()].library.insert(position, id);
         }
         Zone::Hand => state.players[owner.index()].hand.push(id),
-        Zone::Battlefield => state.players[owner.index()].battlefield.push(id),
+        Zone::Battlefield => state.players[battlefield_controller.unwrap_or(owner).index()]
+            .battlefield
+            .push(id),
         Zone::Graveyard => state.players[owner.index()].graveyard.push(id),
         Zone::Exile => state.exile.push(id),
         Zone::Command => state.command.push(id),
@@ -631,13 +1025,19 @@ fn commit_zone_change(
     }
 
     let turn = state.turn;
+    let enters_battlefield_tapped = to_zone == Zone::Battlefield
+        && (force_battlefield_tapped || permanent_enters_battlefield_tapped(state, id, owner));
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
         // A zone change creates a new object with no carried-over control
         // effect. Moves to Stack are engine actions and never enter this
         // helper, so every destination handled here begins owner-controlled.
-        obj.controller = owner;
+        obj.controller = if to_zone == Zone::Battlefield {
+            battlefield_controller.unwrap_or(owner)
+        } else {
+            owner
+        };
         // Plot is provenance of one exact exile incarnation, not a durable
         // property of the physical card. `engine::plot_spell` re-stamps the
         // newly-created Exile incarnation immediately after this move; every
@@ -650,12 +1050,37 @@ fn commit_zone_change(
         // zone-specific special case.
         obj.zone_change_count += 1;
         obj.v4.reset_for_zone_change(obj.card_def, to_zone, turn);
+        obj.name = crate::card_def::CARD_DEFS[obj.card_def as usize]
+            .object_name
+            .to_string();
+        obj.damage = 0;
+        obj.counters = Default::default();
+        obj.attachments.clear();
         if to_zone == Zone::Battlefield {
-            obj.tapped = false;
+            if let Some(face_index) = battlefield_face_index {
+                let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+                let Some(face) = (face_index == 1)
+                    .then_some(def.transform_face.as_ref())
+                    .flatten()
+                else {
+                    panic!("transformed battlefield return requested an undefined face");
+                };
+                obj.v4.face_index = face_index;
+                obj.v4.effective_color_mask = crate::card_def::mana_colors_mask(face.colors);
+                obj.v4.effective_subtype_ids = face
+                    .subtypes
+                    .iter()
+                    .map(|subtype| subtype.stable_id())
+                    .collect();
+                obj.v4.effective_subtype_ids.sort_unstable();
+                obj.v4.effective_subtype_ids.dedup();
+                obj.name = face.name.to_string();
+            }
+            obj.tapped = enters_battlefield_tapped;
             obj.summoning_sick = true;
-            obj.damage = 0;
-            obj.counters = Default::default();
-            obj.attachments.clear();
+        } else {
+            obj.tapped = false;
+            obj.summoning_sick = false;
         }
     }
     if to_zone == Zone::Library {
@@ -697,6 +1122,62 @@ fn commit_zone_change(
                     .expect("known library object just moved into its owner's hand");
             }
         }
+    }
+}
+
+/// Monstrous Emergence keeps the chosen battlefield creature's last-known
+/// power, not merely its power when the casting cost was announced. Capture
+/// that value immediately before the exact paid-cost incarnation leaves.
+fn refresh_paid_creature_power_lki(state: &mut GameState, id: ObjectId, from_zone: Zone) {
+    if from_zone != Zone::Battlefield {
+        return;
+    }
+    let Some(object) = state.objects.try_get(id) else {
+        return;
+    };
+    let generation = object.zone_change_count;
+    let power = crate::engine::effective_power(state, id);
+    let refresh = |references: &mut Vec<crate::state::PaidCostRefV4>| {
+        for reference in references {
+            if reference.object == id
+                && reference.zone == Zone::Battlefield
+                && reference.zone_change_count == generation
+                && reference.power_lki.is_some()
+            {
+                reference.power_lki = Some(power);
+            }
+        }
+    };
+    let refresh_binding = |binding: &mut Option<crate::state::FinalizedCastBindingV1>| {
+        let Some(reference) = binding
+            .as_mut()
+            .and_then(|binding| binding.chosen_creature_cost.as_mut())
+        else {
+            return;
+        };
+        if reference.object == id
+            && reference.zone == Zone::Battlefield
+            && reference.zone_change_count == generation
+            && reference.power_lki.is_some()
+        {
+            reference.power_lki = Some(power);
+        }
+    };
+    for item in &mut state.stack {
+        refresh(&mut item.v4.paid_cost_refs);
+        if let Some(contract) = item.v4.source_contract.as_mut() {
+            refresh_binding(&mut contract.finalized_cast_binding);
+        }
+    }
+    if let Some(pending) = state.engine.pending_effect.as_mut() {
+        refresh(&mut pending.resolving_item.v4.paid_cost_refs);
+        if let Some(contract) = pending.resolving_item.v4.source_contract.as_mut() {
+            refresh_binding(&mut contract.finalized_cast_binding);
+        }
+        refresh(&mut pending.ctx.paid_cost_refs);
+    }
+    for (_, object) in state.objects.iter_mut() {
+        refresh_binding(&mut object.v4.finalized_cast_binding);
     }
 }
 
@@ -770,7 +1251,15 @@ fn remove_from_zone(state: &mut GameState, owner: PlayerId, id: ObjectId, zone: 
         Zone::Command => drop_from(&mut state.command, id),
         Zone::Stack => {
             let before = state.stack.len();
-            state.stack.retain(|item| item.source != id);
+            let live_generation = state.objects.get(id).zone_change_count;
+            state.stack.retain(|item| {
+                item.kind != StackItemKind::Spell
+                    || item.source != id
+                    || item
+                        .v4
+                        .source_contract
+                        .is_none_or(|contract| contract.zone_change_count != live_generation)
+            });
             before != state.stack.len()
         }
     }

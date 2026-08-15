@@ -1675,11 +1675,11 @@ fn metric_primitives_are_gauge_invariant_and_fail_on_nonfinite_v1() {
     assert_eq!(top_index_v1(&[2.0, 2.0, 1.0]), 0);
     assert_eq!(stable_softmax_v1(&[0.0]), vec![1.0]);
 
-    let before = vec![DecisionScoreV1 {
+    let before = [DecisionScoreV1 {
         logits: vec![0.0],
         value: -0.25,
     }];
-    let after = vec![DecisionScoreV1 {
+    let after = [DecisionScoreV1 {
         logits: vec![9.0],
         value: 0.25,
     }];
@@ -1740,9 +1740,17 @@ fn fixed_rally_corpus_is_repeatable_without_external_artifacts_v1() {
     let first = build_fixed_rally_corpus_v1(CORPUS_DECISION_COUNT_V1);
     let second = build_fixed_rally_corpus_v1(CORPUS_DECISION_COUNT_V1);
     assert_eq!(first.tensors.len(), 256);
+    // Re-baselined once per the owner ruling on record (collab CLAUDE #236,
+    // 2026-08-14): build_fixed_rally_corpus_v1 is a live reproduction (built
+    // twice in this test, both compared equal below), not a decode of
+    // sealed evidence, so it moves with the accepted observation/catalog
+    // changes. This value coincidentally matches the historical corpus
+    // identity pinned in scripts/action_ingress_admission_v1/v2's sealed,
+    // dated diagnostics (CORPUS_SHA256), which stay frozen forever on their
+    // own terms and are untouched by this update; the two are independent.
     assert_eq!(
         first.sha256,
-        "72103ea367a662f76675a044ad4efcf4c52bf86d32630df88e5247cf79f5e5e0"
+        "6685d907752db0e82b62b123ffb88142d2fb59adf40f6a354c8a61ab3bd81c41"
     );
     assert_eq!(first.episode_count, 4);
     assert_eq!(first.multi_action_decision_count, 256);
@@ -2009,6 +2017,11 @@ fn trained_checkpoint_hash_vs_direct_reliance_probe_v1() {
     );
 }
 
+// Carries the TreatmentAwareScorerV1/ReceiptRetainingObserverV1 diagnostic
+// scaffolding for the formal unit-tape gradient screen, kept in place for
+// not-yet-wired follow-on work rather than deleted; allowed at module
+// scope instead of item-by-item.
+#[allow(dead_code)]
 mod action_block_gradient_diagnostic_v1;
 mod action_ingress_admission_v1;
 mod action_ingress_admission_v2;

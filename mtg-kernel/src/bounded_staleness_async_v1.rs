@@ -52,7 +52,9 @@ use std::time::Duration;
 pub enum TrainingExecutionModeV1 {
     #[default]
     SynchronousV1,
-    BoundedStalenessAsyncV1 { max_staleness_updates: u32 },
+    BoundedStalenessAsyncV1 {
+        max_staleness_updates: u32,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -374,7 +376,8 @@ where
                         guard = worker_dispatch_cv.wait(guard).unwrap();
                     }
                 };
-                let (batch, episode_ids) = produce(target_update, scoring_version, weights_snapshot);
+                let (batch, episode_ids) =
+                    produce(target_update, scoring_version, weights_snapshot);
                 worker_ready.lock().unwrap().push_back(ReadyBatchV1 {
                     consuming_update_version: target_update,
                     scoring_weight_version: scoring_version,
@@ -424,11 +427,7 @@ where
             .unwrap();
         let Some(ready_batch) = guard.pop_front() else {
             if wait_result.timed_out() {
-                if self
-                    .worker
-                    .as_ref()
-                    .is_some_and(JoinHandle::is_finished)
-                {
+                if self.worker.as_ref().is_some_and(JoinHandle::is_finished) {
                     return Err(BoundedStalenessConsumeErrorV1::ProducerEnded);
                 }
                 return Err(BoundedStalenessConsumeErrorV1::Timeout);
@@ -564,11 +563,10 @@ mod tests {
         assert_eq!(sync.max_staleness_updates, None);
         assert!(!sync.reproducibility_claim.starts_with("NOT"));
 
-        let async_metadata = execution_mode_run_metadata_v1(
-            TrainingExecutionModeV1::BoundedStalenessAsyncV1 {
+        let async_metadata =
+            execution_mode_run_metadata_v1(TrainingExecutionModeV1::BoundedStalenessAsyncV1 {
                 max_staleness_updates: 2,
-            },
-        );
+            });
         assert_eq!(async_metadata.execution_mode, "bounded_staleness_async_v1");
         assert_eq!(async_metadata.max_staleness_updates, Some(2));
         assert!(async_metadata.reproducibility_claim.starts_with("NOT"));
@@ -576,11 +574,10 @@ mod tests {
 
     #[test]
     fn run_metadata_round_trips_through_json() {
-        let metadata = execution_mode_run_metadata_v1(
-            TrainingExecutionModeV1::BoundedStalenessAsyncV1 {
+        let metadata =
+            execution_mode_run_metadata_v1(TrainingExecutionModeV1::BoundedStalenessAsyncV1 {
                 max_staleness_updates: 8,
-            },
-        );
+            });
         let encoded = serde_json::to_string(&metadata).unwrap();
         let decoded: ExecutionModeRunMetadataV1 = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, metadata);
@@ -783,16 +780,21 @@ mod tests {
     #[should_panic(expected = "max_staleness_updates >= 1")]
     fn scheduler_construction_rejects_k0() {
         let _scheduler: BoundedStalenessSchedulerV1<u64, Vec<u64>> =
-            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 0, 1, |_u, _v, _w| (Vec::new(), Vec::new()));
+            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 0, 1, |_u, _v, _w| {
+                (Vec::new(), Vec::new())
+            });
     }
 
     #[test]
     fn scheduler_produces_updates_in_strict_order_with_no_gaps() {
         let total_updates = 40;
         let scheduler: BoundedStalenessSchedulerV1<u64, u64> =
-            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 4, total_updates, |target_update, _version, _weights| {
-                (target_update, Vec::new())
-            });
+            BoundedStalenessSchedulerV1::spawn_v1(
+                0_u64,
+                4,
+                total_updates,
+                |target_update, _version, _weights| (target_update, Vec::new()),
+            );
         let mut seen = Vec::new();
         for update in 1..=total_updates {
             let consumed = scheduler
@@ -808,12 +810,16 @@ mod tests {
 
     #[test]
     fn scheduler_publish_does_not_block_on_a_slow_producer() {
-        let scheduler: BoundedStalenessSchedulerV1<u64, ()> =
-            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 4, 1, |_target_update, _version, _weights| {
+        let scheduler: BoundedStalenessSchedulerV1<u64, ()> = BoundedStalenessSchedulerV1::spawn_v1(
+            0_u64,
+            4,
+            1,
+            |_target_update, _version, _weights| {
                 // Deliberately much slower than any reasonable publish call.
                 std::thread::sleep(Duration::from_millis(300));
                 ((), Vec::new())
-            });
+            },
+        );
         let started = Instant::now();
         scheduler.publish_v1(0, 0_u64);
         let elapsed = started.elapsed();
@@ -856,9 +862,12 @@ mod tests {
         // receive in this test, so the second `next_batch_v1` call must time
         // out rather than hang.
         let scheduler: BoundedStalenessSchedulerV1<u64, u64> =
-            BoundedStalenessSchedulerV1::spawn_v1(0_u64, 1, 2, |target_update, _version, _weights| {
-                (target_update, Vec::new())
-            });
+            BoundedStalenessSchedulerV1::spawn_v1(
+                0_u64,
+                1,
+                2,
+                |target_update, _version, _weights| (target_update, Vec::new()),
+            );
         let first = scheduler
             .next_batch_v1(Duration::from_secs(5))
             .expect("first batch should be ready without any publish");
