@@ -4605,18 +4605,26 @@ mod tests {
         // pre-C2 baseline checkout on this exact target.
         #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
         {
+            // Re-based at the merge epoch under the owner-accepted ruling
+            // (collab CLAUDE #236/#241), values read from the hosted
+            // linux-gnu CI runs 31855835633 and 31863359780, witnessed by
+            // the 40/40 replay gate. Compared as one tuple so any future
+            // drift reports every pinned quantity in a single failing run.
             let canonical_sha256: [u8; 32] = Sha256::digest(group.canonical_bytes()).into();
-            assert_eq!(
+            let observed = (
                 lower_hex_raw32_v1(canonical_sha256),
-                "befacadb1ed7cc774587779c087bcd6c429d83fc500ca1744d01b685e1300ddc",
-                "the legacy update group canonical bytes drifted from the pre-C2 baseline"
+                lower_hex_raw32_v1(group.update_evidence_sha256()),
+                group.canonical_bytes().len(),
+            );
+            let pinned = (
+                "befacadb1ed7cc774587779c087bcd6c429d83fc500ca1744d01b685e1300ddc".to_owned(),
+                "48ea5707a925e904e876747abddebbacfee4fad8f0dcf8b345da017eabd0be63".to_owned(),
+                78_190usize,
             );
             assert_eq!(
-                lower_hex_raw32_v1(group.update_evidence_sha256()),
-                "f3f2e325d2afebd3792ecbfd72c4e50cfb1f455d849918fa34a61db255cbbe37",
-                "the legacy update evidence digest drifted from the pre-C2 baseline"
+                observed, pinned,
+                "the legacy update group linux-gnu pins drifted from the merge-epoch baseline"
             );
-            assert_eq!(group.canonical_bytes().len(), 78_190);
         }
         // The episode projection carries counts, seeds, deck bindings, and
         // trajectory digests but no float bits, so this pre-C2 pin is
