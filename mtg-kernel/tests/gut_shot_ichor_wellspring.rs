@@ -26,7 +26,7 @@ fn card_name(card_def: u16) -> String {
 fn ready_state() -> GameState {
     let library = vec![card_id("Mountain"); 8];
     let mut state =
-        GameState::new_from_libraries(&library, &library, card_name, 0x4755_5453_484F_54);
+        GameState::new_from_libraries(&library, &library, card_name, 0x0047_5554_5348_4F54);
     state.step = Step::Main1;
     state.active_player = PlayerId::P0;
     state.priority_player = PlayerId::P0;

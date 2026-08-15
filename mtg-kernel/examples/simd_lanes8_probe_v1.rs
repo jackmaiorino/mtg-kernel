@@ -28,11 +28,11 @@ fn lanes8_dot_core(input: &[f32], weight: &[f32]) -> f32 {
     for chunk in 0..chunks {
         let base = chunk * 8;
         for lane in 0..8 {
-            lanes[lane] = lanes[lane] + input[base + lane] * weight[base + lane];
+            lanes[lane] += input[base + lane] * weight[base + lane];
         }
     }
     for index in (chunks * 8)..input.len() {
-        lanes[index % 8] = lanes[index % 8] + input[index] * weight[index];
+        lanes[index % 8] += input[index] * weight[index];
     }
     ((lanes[0] + lanes[1]) + (lanes[2] + lanes[3]))
         + ((lanes[4] + lanes[5]) + (lanes[6] + lanes[7]))
@@ -49,7 +49,9 @@ pub fn mtg_kernel_probe_lanes8_dot_baseline_v1(input: &[f32], weight: &[f32]) ->
 /// Guarded symbol: identical source, AVX2 codegen permitted inside this
 /// function only. Reached exclusively through the runtime dispatch guard.
 ///
-/// Safety: caller must have verified AVX2 via runtime detection.
+/// # Safety
+///
+/// Caller must have verified AVX2 via runtime detection.
 #[inline(never)]
 #[no_mangle]
 #[cfg(target_arch = "x86_64")]
@@ -63,11 +65,11 @@ pub unsafe fn mtg_kernel_probe_lanes8_dot_avx2_v1(input: &[f32], weight: &[f32])
 /// so shared-codegen artifacts cannot hide an op-sequence change.
 fn lanes8_dot_reference_v1(input: &[f32], weight: &[f32]) -> f32 {
     let mut lanes = [0.0f32; 8];
-    for lane in 0..8 {
+    for (lane, lane_acc) in lanes.iter_mut().enumerate() {
         let mut index = lane;
         while index < input.len() {
             let product = input[index] * weight[index];
-            lanes[lane] = lanes[lane] + product;
+            *lane_acc += product;
             index += 8;
         }
     }
@@ -191,6 +193,10 @@ fn adversarial_cases() -> Vec<AdversarialCase> {
 }
 
 #[cfg(target_arch = "x86_64")]
+// This disposable probe reads MXCSR through the plain intrinsic rather than
+// the inline-assembly replacement, to keep this frozen record's code
+// unchanged from the design revision it was measured against; accepted.
+#[allow(deprecated)]
 fn capture_environment() -> (u32, bool, bool, bool, bool) {
     let mxcsr = unsafe { std::arch::x86_64::_mm_getcsr() };
     let avx = std::arch::is_x86_feature_detected!("avx");

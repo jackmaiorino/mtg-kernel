@@ -607,7 +607,7 @@ fn duress_reveals_the_exact_hand_and_only_discards_noncreature_nonland() {
 
 #[test]
 fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle() {
-    let mut etb = ready_game(0x4c45_4d42_4153_01);
+    let mut etb = ready_game(0x004c_454d_4241_5301);
     let top = put_object(
         &mut etb,
         PlayerId::P0,
@@ -650,7 +650,7 @@ fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle(
     ));
     assert_eq!(etb.objects.get(top).zone, Zone::Hand);
 
-    let mut state = ready_game(0x4c45_4d42_4153_02);
+    let mut state = ready_game(0x004c_454d_4241_5302);
     let filler = put_object(
         &mut state,
         PlayerId::P0,

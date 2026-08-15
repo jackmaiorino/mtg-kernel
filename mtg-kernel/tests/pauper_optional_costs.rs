@@ -151,17 +151,17 @@ fn definitions_ids_and_append_only_grammar_match_checked_in_mage() {
         35
     );
 
-    let collect = Some(OptionalAdditionalCostDef::CollectEvidence {
+    let collect = OptionalAdditionalCostDef::CollectEvidence {
         minimum_mana_value: 6,
-    });
+    };
     let extract = &CARD_DEFS[card_id("Extract a Confession") as usize];
     assert_eq!(extract.capability, CardCapability::Full);
-    assert_eq!(extract.optional_additional_cost, collect);
+    assert_eq!(extract.optional_additional_cost, Some(collect));
     assert_eq!(extract.target_spec, TargetSpec::None);
     assert_eq!(
         (extract.spell_effect)(),
         Some(EffectOp::Conditional {
-            cond: EffectCond::OptionalAdditionalCostPaid(collect.unwrap()),
+            cond: EffectCond::OptionalAdditionalCostPaid(collect),
             then: Box::new(EffectOp::SacrificeCreature {
                 player: PlayerRef::Opponent,
                 filter: CreatureSacrificeFilter::GreatestPower,
@@ -194,7 +194,7 @@ fn definitions_ids_and_append_only_grammar_match_checked_in_mage() {
 
     let inspector = &CARD_DEFS[card_id("Vitu-Ghazi Inspector") as usize];
     assert_eq!(inspector.capability, CardCapability::Full);
-    assert_eq!(inspector.optional_additional_cost, collect);
+    assert_eq!(inspector.optional_additional_cost, Some(collect));
     assert_eq!((inspector.power, inspector.toughness), (Some(1), Some(3)));
     assert!(inspector.keywords.has(Keywords::REACH));
     assert_eq!(
