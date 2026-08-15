@@ -749,22 +749,83 @@ fn scry_private_choices_redact_identities_and_update_knowledge_once() {
         "ambiguous private prefix facts vanish while untouched-tail facts shift by one"
     );
 
-    let (mut one, _, one_library) = ready_scry(&FOUR[..3], 1, false);
-    one.reveal_library_top(PlayerId::P1, PlayerId::P0, 3);
-    engine::advance_until_decision(&mut one);
-    choose(&mut one, one_library[0]);
-    engine::advance_until_decision(&mut one);
+    // Lembas's real ETB trigger is a definition-owned one-card scry:
+    // `Sequence([Scry { count: 1 }, DrawCards { count: 1 }])` (see
+    // `lembas_etb_effect` in trigger.rs). `GameState::apply_scry_result`
+    // (state.rs) keys its `prefix_len == 1` identity-preservation branch
+    // purely on the bound scry prefix's length, not on what the calling
+    // program does afterward, so that branch fires exactly the same way here
+    // as it did for the hand-built bare `EffectOp::Scry { count: 1 }` this
+    // block used to stage. This drives a real Lembas through the ordinary
+    // cast path (paying its own `{2}` mana cost) so the source's stack
+    // provenance is definition-owned, exactly like this file's other
+    // modernized fixtures.
+    //
+    // Choosing the lone scry candidate completes the whole staged
+    // `EffectContinuation` -- draw included -- before the engine's public
+    // `step`/`advance_until_decision` API returns another decision, so the
+    // scry-only intermediate library/knowledge state is not observable here.
+    // The assertion below is therefore the honest composition of two
+    // separately-proven laws: the scry's identity-preserving keep/bottom
+    // branch, then the ordinary draw-time removal/shift
+    // (`GameState::note_library_removal`) applied on top of it.
+    let lembas_library_defs = FOUR[..3]
+        .iter()
+        .map(|name| card_id(name))
+        .collect::<Vec<_>>();
+    let lembas_p1_library = [card_id("Snow-Covered Forest")];
+    let mut lembas_state = GameState::new_from_libraries(
+        &lembas_library_defs,
+        &lembas_p1_library,
+        card_name,
+        0x5052_454F_5244_4C42,
+    );
+    lembas_state.step = Step::Main1;
+    lembas_state.active_player = PlayerId::P0;
+    lembas_state.priority_player = PlayerId::P0;
+    let lembas_library = lembas_state.players[0].library.clone();
+    // Lembas costs {2}: two untapped generic sources, mirroring the single
+    // Island `ready_scry` puts down for Preordain/Faerie Seer's {U}.
+    put_object(&mut lembas_state, PlayerId::P0, "Island", Zone::Battlefield);
+    put_object(&mut lembas_state, PlayerId::P0, "Island", Zone::Battlefield);
+    let lembas = put_object(&mut lembas_state, PlayerId::P0, "Lembas", Zone::Hand);
+    lembas_state.reveal_library_top(PlayerId::P1, PlayerId::P0, 3);
+
+    engine::step(&mut lembas_state, Action::CastSpell(lembas)).unwrap();
+    // One priority round resolves the Lembas artifact spell onto the
+    // battlefield (queuing its ETB trigger); a second resolves that trigger
+    // into the scry decision, exactly like `ready_scry`'s Faerie Seer path.
+    pass_priority_round(&mut lembas_state);
+    pass_priority_round(&mut lembas_state);
+    let scry_decision = engine::advance_until_decision(&mut lembas_state);
+    assert_scry_decision(&scry_decision, lembas, 0, 0, 1, &lembas_library[..1], true);
+
+    // Same keep-or-bottom choice the original block made: bottom the one
+    // scried card.
+    choose(&mut lembas_state, lembas_library[0]);
+    assert!(matches!(
+        engine::advance_until_decision(&mut lembas_state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    // What the trailing draw consumed: it drew the card scry left on top
+    // (lembas_library[1]) and left the bottomed card (lembas_library[0])
+    // beneath the untouched tail (lembas_library[2]).
+    assert_eq!(lembas_state.players[0].hand, vec![lembas_library[1]]);
     assert_eq!(
-        one.known_library_cards(PlayerId::P1, PlayerId::P0)
+        lembas_state.players[0].library,
+        vec![lembas_library[2], lembas_library[0]]
+    );
+    assert_eq!(
+        lembas_state
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
             .iter()
             .map(|entry| (entry.position, entry.object))
             .collect::<Vec<_>>(),
-        vec![
-            (0, one_library[1]),
-            (1, one_library[2]),
-            (2, one_library[0])
-        ],
-        "a one-card scry preserves already-known deterministic identities exactly"
+        vec![(0, lembas_library[2]), (1, lembas_library[0])],
+        "a one-card scry preserves already-known deterministic identities \
+         exactly; the trailing draw then removes the fact for the card it \
+         drew and shifts the remaining known identities shallower by one, \
+         like any other draw"
     );
 }
 
