@@ -3621,10 +3621,7 @@ impl ActualTreatmentV1 {
         }
     }
 
-    fn tensor_v1<'a>(
-        self,
-        lineage: &'a RetainedTreatmentLineageV1,
-    ) -> &'a NativeFlatDecisionTensorV2 {
+    fn tensor_v1(self, lineage: &RetainedTreatmentLineageV1) -> &NativeFlatDecisionTensorV2 {
         match self {
             Self::Full => lineage.full_tensor_v1(),
             Self::Half => lineage.half_tensor_v1(),
@@ -5129,7 +5126,7 @@ fn evaluate_held_out_loss_v1(
                 .ok_or(HeldOutEvaluationErrorV1::NonFinite)?;
         }
     }
-    if counts.iter().any(|count| *count == 0) {
+    if counts.contains(&0) {
         return Err(HeldOutEvaluationErrorV1::EmptyStratum);
     }
     let mut means = [0.0f32; 4];
@@ -5602,6 +5599,10 @@ struct ValidatedPreflightProvenanceV1 {
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 impl PreflightProvenanceGuardV1 {
+    // This is a runtime guard: it must still panic if this function is ever
+    // called from a debug build, so it stays a plain assert! rather than a
+    // const block, which would instead fail every debug compile outright.
+    #[allow(clippy::assertions_on_constants)]
     fn begin_v1() -> Self {
         assert!(!cfg!(debug_assertions), "live preflight requires --release");
         assert_eq!(
@@ -6136,6 +6137,9 @@ fn persist_preflight_artifacts_v1(bundle: ValidatedPreflightPublicationBundleV1)
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 #[test]
 #[ignore = "authorized seed-949999 Pool3 GPU1 preflight; native Windows/MSVC, dedicated process, and explicit invocation required"]
+// Runtime platform guard for an explicitly-invoked live test: must still
+// panic if run on the wrong platform rather than fail to compile there.
+#[allow(clippy::assertions_on_constants)]
 fn action_block_gradient_preflight_seed949999_gpu1_v1() {
     assert!(
         cfg!(all(
@@ -6802,6 +6806,9 @@ impl FormalStagingPublicationV1 {
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 #[test]
 #[ignore = "authorized single-shot six-unit formal HALF measurement; native Windows/MSVC, dedicated process, and explicit invocation required"]
+// Runtime platform guard for an explicitly-invoked live test: must still
+// panic if run on the wrong platform rather than fail to compile there.
+#[allow(clippy::assertions_on_constants)]
 fn action_block_gradient_formal_six_unit_gpu1_v1() {
     assert!(
         cfg!(all(

@@ -346,6 +346,7 @@ pub(super) fn validate_transported_logit_row_v2(
 /// result's `gradients` field stays the same empty vector it has always
 /// been -- production carries no selector, template, branch, or extra
 /// return.
+#[allow(clippy::too_many_arguments)]
 fn train_step_cuda_burn_dense_inner_v1(
     snapshot: NativePolicyValueTrainSnapshotV1,
     wide: bool,
