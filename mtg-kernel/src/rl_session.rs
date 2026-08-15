@@ -5347,6 +5347,134 @@ impl FastActorSessionV1 {
         })
     }
 
+    /// Private state view used only by the kernel-native search core's static
+    /// evaluator. The searcher receives `&FastActorSessionV1`, clones before
+    /// every simulation, and never obtains mutable access to the authoritative
+    /// episode through this boundary.
+    pub(crate) fn kernel_search_state_v1(&self) -> &crate::state::GameState {
+        &self.state
+    }
+
+    #[cfg(test)]
+    pub(crate) fn kernel_search_state_mut_for_test_v1(&mut self) -> &mut crate::state::GameState {
+        &mut self.state
+    }
+
+    pub(crate) fn kernel_search_private_diagnostic_identity_v1(&self) -> &str {
+        self.state.diagnostic_state_hash_algorithm()
+    }
+
+    /// Produces one transactionally admitted determinization of the current
+    /// actor's represented information set. Unknown identities are sampled in
+    /// the clone, then the exact root observation, ordered action semantics,
+    /// and complete V2 flat binding are regenerated and compared with the
+    /// authoritative root. A mismatch returns no sampled session.
+    pub(crate) fn kernel_search_redeterminized_clone_v1(
+        &self,
+        simulation_seed: u64,
+    ) -> Result<
+        FastActorSessionV1,
+        crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1,
+    > {
+        self.kernel_search_redeterminized_clone_core_v1(simulation_seed, |_state, _actor| {})
+    }
+
+    /// Test-only entry to the same boundary as
+    /// [`Self::kernel_search_redeterminized_clone_v1`]. `corruption` runs
+    /// once, after the honest hidden-zone resample and before the
+    /// rebuild-and-compare admission check, so it can manufacture a genuine
+    /// post-redetermination mismatch for adversarial tests of that check.
+    /// This function does not exist outside `cfg(test)`; no production call
+    /// site can construct a corrupting closure, so no production path can
+    /// reach it.
+    #[cfg(test)]
+    pub(crate) fn kernel_search_redeterminized_clone_for_test_v1(
+        &self,
+        simulation_seed: u64,
+        corruption: impl FnOnce(&mut crate::state::GameState, PlayerId),
+    ) -> Result<
+        FastActorSessionV1,
+        crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1,
+    > {
+        self.kernel_search_redeterminized_clone_core_v1(simulation_seed, corruption)
+    }
+
+    /// Shared implementation behind
+    /// [`Self::kernel_search_redeterminized_clone_v1`] and its test-only
+    /// sibling above. `post_redetermination_hook` is called once, after
+    /// `redeterminize_hidden_zones_v1` and before the rebuild that produces
+    /// `after_observation` / `after_semantics` / `after_binding`. The
+    /// production wrapper always passes a no-op closure, so this is
+    /// byte-for-byte the same admission logic production runs.
+    fn kernel_search_redeterminized_clone_core_v1(
+        &self,
+        simulation_seed: u64,
+        post_redetermination_hook: impl FnOnce(&mut crate::state::GameState, PlayerId),
+    ) -> Result<
+        FastActorSessionV1,
+        crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1,
+    > {
+        use crate::kernel_native_search_opponent_v1::KernelNativeSearchErrorV1;
+
+        if self.flat_action_contract_mode != FlatActionContractModeV1::V2 {
+            return Err(KernelNativeSearchErrorV1::UnsupportedFlatActionContract);
+        }
+        let current = self
+            .current
+            .as_ref()
+            .ok_or(KernelNativeSearchErrorV1::InvalidDecision)?;
+        let FastActorResponseV1::Decision(expected) = self.current_response() else {
+            return Err(KernelNativeSearchErrorV1::InvalidDecision);
+        };
+        let actor = current.actor;
+        let before_observation = self.flat_policy_observation_v2(expected)?;
+        let before_semantics = self
+            .diagnostic_current_action_semantics()
+            .ok_or(KernelNativeSearchErrorV1::InvalidDecision)?;
+        let before_binding = self.native_full_trajectory_current_binding_v2(expected)?;
+
+        let mut sampled = self.clone();
+        crate::kernel_native_search_opponent_v1::redeterminize_hidden_zones_v1(
+            &mut sampled.state,
+            actor,
+            simulation_seed,
+        )?;
+        post_redetermination_hook(&mut sampled.state, actor);
+
+        let mut refreshed = sampled
+            .current
+            .take()
+            .ok_or(KernelNativeSearchErrorV1::InvalidDecision)?;
+        let candidates =
+            core_policy_action_candidates_v5(&refreshed.origin_decision, &sampled.state)
+                .map_err(|_| KernelNativeSearchErrorV1::HiddenStateContract)?;
+        let after_semantics: Vec<ActionSemanticV1> = candidates
+            .iter()
+            .map(|candidate| candidate.semantic.clone())
+            .collect();
+        if after_semantics != before_semantics {
+            return Err(KernelNativeSearchErrorV1::HiddenStateContract);
+        }
+        refreshed.candidates = candidates;
+        refreshed.flat_action_cache = None;
+        refreshed.flat_action_cache_error = None;
+        refreshed.flat_action_cache_v2 = None;
+        refreshed.flat_action_cache_error_v2 = None;
+        let cache = flat_build_action_cache_v2(&sampled, &refreshed, None)
+            .map_err(|_| KernelNativeSearchErrorV1::HiddenStateContract)?;
+        flat_install_action_cache_build_result_v2(&mut refreshed, Ok(cache));
+        sampled.flat_action_cache_spare = None;
+        sampled.flat_action_cache_spare_v2 = None;
+        sampled.current = Some(refreshed);
+
+        let after_observation = sampled.flat_policy_observation_v2(expected)?;
+        let after_binding = sampled.native_full_trajectory_current_binding_v2(expected)?;
+        if after_observation != before_observation || after_binding != before_binding {
+            return Err(KernelNativeSearchErrorV1::HiddenStateContract);
+        }
+        Ok(sampled)
+    }
+
     /// Test-only semantic-to-flat audit bridge.
     ///
     /// The caller must supply the retained ordered semantic rows. Equality is
