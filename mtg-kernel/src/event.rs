@@ -1255,9 +1255,10 @@ fn remove_from_zone(state: &mut GameState, owner: PlayerId, id: ObjectId, zone: 
             state.stack.retain(|item| {
                 item.kind != StackItemKind::Spell
                     || item.source != id
-                    || item.v4.source_contract.is_none_or(|contract| {
-                        contract.zone_change_count != live_generation
-                    })
+                    || item
+                        .v4
+                        .source_contract
+                        .is_none_or(|contract| contract.zone_change_count != live_generation)
             });
             before != state.stack.len()
         }

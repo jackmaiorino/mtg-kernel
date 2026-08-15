@@ -1665,9 +1665,7 @@ impl XmageCp7TeacherJsonlWriterV1 {
         self.next_teacher_decision_ordinal = self
             .next_teacher_decision_ordinal
             .checked_add(1)
-            .ok_or_else(|| {
-                io::Error::other("teacher decision ordinal exhausted")
-            })?;
+            .ok_or_else(|| io::Error::other("teacher decision ordinal exhausted"))?;
         Ok(())
     }
 
@@ -2067,13 +2065,10 @@ impl XmageCp7OutcomeJsonlWriterV1 {
         if episode.first_outcome_decision_ordinal.is_none() {
             episode.first_outcome_decision_ordinal = Some(self.next_outcome_decision_ordinal);
         }
-        episode.outcome_decision_count =
-            episode
-                .outcome_decision_count
-                .checked_add(1)
-                .ok_or_else(|| {
-                    io::Error::other("episode decision count exhausted")
-                })?;
+        episode.outcome_decision_count = episode
+            .outcome_decision_count
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("episode decision count exhausted"))?;
         self.next_record_ordinal = self
             .next_record_ordinal
             .checked_add(1)
@@ -2081,9 +2076,7 @@ impl XmageCp7OutcomeJsonlWriterV1 {
         self.next_outcome_decision_ordinal = self
             .next_outcome_decision_ordinal
             .checked_add(1)
-            .ok_or_else(|| {
-                io::Error::other("outcome decision ordinal exhausted")
-            })?;
+            .ok_or_else(|| io::Error::other("outcome decision ordinal exhausted"))?;
         Ok(())
     }
 

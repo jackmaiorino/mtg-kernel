@@ -1877,9 +1877,9 @@ impl GameState {
         use crate::environment_randomization_v2 as env2;
         let owner = library_shuffle_owner(owner)?;
         let authorization = match &self.randomness {
-            GameRandomnessState::Legacy(rng) => LibraryShuffleAuthorization::Legacy {
-                expected_rng: *rng,
-            },
+            GameRandomnessState::Legacy(rng) => {
+                LibraryShuffleAuthorization::Legacy { expected_rng: *rng }
+            }
             GameRandomnessState::EnvironmentV2(v2) => {
                 let physical_owner = physical_owner_v2_exact(owner)?;
                 let ordinal = v2.next_live_shuffle_ordinal(physical_owner);

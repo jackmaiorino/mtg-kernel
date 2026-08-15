@@ -3044,7 +3044,9 @@ fn validate_counter_unless_pays_frame(
     else {
         return Err("Ward answer guard does not contain its typed frame".to_string());
     };
-    if path.as_slice() != [u16::from(*pay)] || !pending.frames.ends_with(std::slice::from_ref(frame)) {
+    if path.as_slice() != [u16::from(*pay)]
+        || !pending.frames.ends_with(std::slice::from_ref(frame))
+    {
         return Err("Ward answered Boolean path or frame position changed".to_string());
     }
     let StackTargetContractV4::Object {
@@ -3231,7 +3233,9 @@ fn validate_counter_target_unless_pays_frame(
     else {
         return Err("counter-unless-pay answer guard does not contain its typed frame".to_string());
     };
-    if path.as_slice() != [u16::from(*pay)] || !pending.frames.ends_with(std::slice::from_ref(frame)) {
+    if path.as_slice() != [u16::from(*pay)]
+        || !pending.frames.ends_with(std::slice::from_ref(frame))
+    {
         return Err("counter-unless-pay answered Boolean path changed".to_string());
     }
     validate_counter_target_unless_pays_binding(
@@ -3784,9 +3788,9 @@ fn validate_undercity_route_frame(
     let Some(option_index) = legal_rooms.iter().position(|candidate| candidate == room) else {
         return Err("Undercity route selected a nonadjacent room".to_string());
     };
-    let expected_path = vec![
-        u16::try_from(option_index).map_err(|_| "Undercity route index exceeds u16".to_string())?,
-    ];
+    let expected_path =
+        vec![u16::try_from(option_index)
+            .map_err(|_| "Undercity route index exceeds u16".to_string())?];
     if *from_room != expected_from
         || !expected_remaining_frames.is_empty()
         || path != &expected_path
