@@ -4414,18 +4414,20 @@ mod tests {
         }
         #[cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))]
         {
+            // Linux pin re-based at the merge epoch under the accepted Rally
+            // ruling; witnessed by the 40/40 replay gate.
             (
                 "x86_64-unknown-linux-gnu",
                 BurnPairNumericalWitnessV1 {
                     train_state_sha256: [
-                        123, 200, 0, 83, 51, 3, 54, 216, 47, 5, 112, 187, 4, 74, 137, 69, 67, 101,
-                        49, 78, 192, 135, 162, 81, 61, 143, 123, 166, 225, 191, 172, 17,
+                        145, 196, 208, 109, 105, 2, 26, 238, 24, 185, 93, 196, 99, 141, 82, 82, 56,
+                        74, 19, 66, 173, 118, 92, 130, 48, 132, 138, 91, 186, 200, 164, 216,
                     ],
                     model_digest_after:
-                        "40eafa2be6624d0126e5aaf704441034f6186799c4235f7b7c513b7d3628f06d",
-                    policy_sum_bits: 1_111_603_742,
-                    value_sum_bits: 1_121_934_212,
-                    loss_bits: 1_064_195_457,
+                        "d76bae630ed24fc4a7ce533031ecffb63ee04e714e4047775f1765f6ea95eb8e",
+                    policy_sum_bits: 1_111_823_260,
+                    value_sum_bits: 1_121_905_000,
+                    loss_bits: 1_064_304_203,
                 },
             )
         }
