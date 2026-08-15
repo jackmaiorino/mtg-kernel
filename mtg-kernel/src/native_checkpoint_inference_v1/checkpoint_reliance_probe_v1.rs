@@ -1675,11 +1675,11 @@ fn metric_primitives_are_gauge_invariant_and_fail_on_nonfinite_v1() {
     assert_eq!(top_index_v1(&[2.0, 2.0, 1.0]), 0);
     assert_eq!(stable_softmax_v1(&[0.0]), vec![1.0]);
 
-    let before = vec![DecisionScoreV1 {
+    let before = [DecisionScoreV1 {
         logits: vec![0.0],
         value: -0.25,
     }];
-    let after = vec![DecisionScoreV1 {
+    let after = [DecisionScoreV1 {
         logits: vec![9.0],
         value: 0.25,
     }];
@@ -2017,6 +2017,11 @@ fn trained_checkpoint_hash_vs_direct_reliance_probe_v1() {
     );
 }
 
+// Carries the TreatmentAwareScorerV1/ReceiptRetainingObserverV1 diagnostic
+// scaffolding for the formal unit-tape gradient screen, kept in place for
+// not-yet-wired follow-on work rather than deleted; allowed at module
+// scope instead of item-by-item.
+#[allow(dead_code)]
 mod action_block_gradient_diagnostic_v1;
 mod action_ingress_admission_v1;
 mod action_ingress_admission_v2;

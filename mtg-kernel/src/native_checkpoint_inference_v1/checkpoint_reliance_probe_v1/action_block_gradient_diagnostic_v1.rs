@@ -458,8 +458,12 @@ pub(super) fn derive_half_parameters_v1(
         .values
         .chunks_exact_mut(ACTION_ENCODER_COLUMNS_V1)
     {
-        for column in ACTION_HASH_BEGIN_V1..ACTION_HASH_END_V1 {
-            row[column] = double_round_trip_v1(row[column])?;
+        for value in row
+            .iter_mut()
+            .take(ACTION_HASH_END_V1)
+            .skip(ACTION_HASH_BEGIN_V1)
+        {
+            *value = double_round_trip_v1(*value)?;
         }
     }
     Ok(half)
@@ -477,8 +481,12 @@ pub(super) fn halve_action_encoder_digest_columns_v1(
         .values
         .chunks_exact_mut(ACTION_ENCODER_COLUMNS_V1)
     {
-        for column in ACTION_HASH_BEGIN_V1..ACTION_HASH_END_V1 {
-            row[column] = halve_round_trip_v1(row[column])?;
+        for value in row
+            .iter_mut()
+            .take(ACTION_HASH_END_V1)
+            .skip(ACTION_HASH_BEGIN_V1)
+        {
+            *value = halve_round_trip_v1(*value)?;
         }
     }
     Ok(restored)
@@ -508,8 +516,12 @@ pub(super) fn pure_half_digest_transform_v1(
 ) -> Result<NativeFlatDecisionTensorV2, ScalingValidityErrorV1> {
     let mut half = repaired_full.clone();
     for row in half.action_features.chunks_exact_mut(ACTION_FEATURE_DIM_V1) {
-        for column in ACTION_HASH_BEGIN_V1..ACTION_HASH_END_V1 {
-            row[column] = halve_round_trip_v1(row[column])?;
+        for value in row
+            .iter_mut()
+            .take(ACTION_HASH_END_V1)
+            .skip(ACTION_HASH_BEGIN_V1)
+        {
+            *value = halve_round_trip_v1(*value)?;
         }
     }
     Ok(half)
@@ -1204,6 +1216,7 @@ fn validate_preflight_receipt_v1(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_join_binding_v1(
     observed: FlatDecisionBindingV2,
     retained: FlatDecisionBindingV2,
@@ -2831,11 +2844,7 @@ pub(super) fn frame_tape_v1(
     }
     // Derived, not asserted: every validation stratum needs a real learner
     // physical decision group.
-    if validation
-        .groups_per_stratum_v1()
-        .iter()
-        .any(|count| *count == 0)
-    {
+    if validation.groups_per_stratum_v1().contains(&0) {
         return Err(TapeFramingErrorV1::EmptyStratumGroup);
     }
 
@@ -5182,11 +5191,7 @@ fn frame_formal_unit_tape_v1(
         expected_deck_hashes,
         validation,
     )?;
-    if validation
-        .groups_per_stratum_v1()
-        .iter()
-        .any(|count| *count == 0)
-    {
+    if validation.groups_per_stratum_v1().contains(&0) {
         return Err(TapeFramingErrorV1::EmptyStratumGroup);
     }
     let mut writer = FramedWriterV1::new_v1(FORMAL_UNIT_TAPE_SCHEMA_V1);
@@ -6966,6 +6971,7 @@ fn fixture_owned_inputs_v1(actions: &[FlatScorerActionCoreV2]) -> FlatOwnedScori
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn raw_environment_receipt_v1(
     episode_id: u64,
     deck_ids: &SessionDeckIdsV1,
@@ -7697,7 +7703,7 @@ fn join_rollout_positive_and_fail_closed_wiring_v1() {
     );
 
     let mut duplicate_receipt = join_fixture_v1();
-    duplicate_receipt.observed.receipts[1] = duplicate_receipt.observed.receipts[0].clone();
+    duplicate_receipt.observed.receipts[1] = duplicate_receipt.observed.receipts[0];
     assert_join_error_v1(
         join_rollout_v1(
             &duplicate_receipt.authority,
@@ -8154,6 +8160,10 @@ fn every_validation_stratum_is_non_empty_v1() {
 }
 
 #[test]
+// This runtime-style assert deliberately matches its neighboring
+// assert_eq! frozen-bit-pattern checks in this test rather than moving to
+// a const block; accepted.
+#[allow(clippy::assertions_on_constants)]
 fn frozen_scale_and_authority_bits_decode_exactly_v1() {
     assert_eq!(f32::from_bits(HALF_DIGEST_SCALE_BITS_V1), 0.5f32);
     assert_eq!(f32::from_bits(DOUBLE_WEIGHT_SCALE_BITS_V1), 2.0f32);
@@ -8178,8 +8188,8 @@ fn exact_half_and_double_round_trips_hold_on_normal_values_v1() {
         1.0f32,
         -1.0f32,
         0.0f32,
-        33.84172446829393f32,
-        9.348080156950672f32,
+        33.841_724_f32,
+        9.348_08_f32,
         f32::MIN_POSITIVE,
         1.5e-38f32,
         3.4e38f32,
@@ -10270,7 +10280,7 @@ fn derived_deltas_v1(
 fn update_frame_validates_manifest_alignment_finiteness_and_derived_deltas_v1() {
     let gradients = native_stream_fixture_v1(0.5);
     let before = native_stream_fixture_v1(1.0);
-    let after = native_stream_fixture_v1(1.0009765625);
+    let after = native_stream_fixture_v1(1.000_976_6);
     let deltas = derived_deltas_v1(&before, &after);
     let moments = native_stream_fixture_v1(2.0);
 
