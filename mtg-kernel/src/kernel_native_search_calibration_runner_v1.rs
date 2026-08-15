@@ -502,7 +502,8 @@ pub(crate) fn pair_outcomes_v1(
             .ok_or(CalibrationRunnerErrorV1::ProtocolMismatch)?;
         let leg_candidate_p0 = leg_outcome_v1(binding_p0, episode_p0)?;
         let leg_candidate_p1 = leg_outcome_v1(binding_p1, episode_p1)?;
-        let candidate_paired_net = leg_candidate_p0.candidate_reward + leg_candidate_p1.candidate_reward;
+        let candidate_paired_net =
+            leg_candidate_p0.candidate_reward + leg_candidate_p1.candidate_reward;
         pairs.push(CalibrationPairOutcomeV1 {
             pair_index: binding_p0.episode_index() / 2,
             environment_seed: binding_p0.environment_seed(),
@@ -523,8 +524,7 @@ pub(crate) fn pair_outcomes_v1(
 pub(crate) fn repeat_hash_v1(
     pairs: &[CalibrationPairOutcomeV1],
 ) -> Result<String, CalibrationRunnerErrorV1> {
-    let bytes =
-        serde_json::to_vec(pairs).map_err(|_| CalibrationRunnerErrorV1::OutcomeIo)?;
+    let bytes = serde_json::to_vec(pairs).map_err(|_| CalibrationRunnerErrorV1::OutcomeIo)?;
     Ok(lower_hex_raw32_v1(sha256_v1(&bytes)))
 }
 
@@ -631,7 +631,8 @@ pub(crate) fn run_calibration_screen_v1(
     let total_physical_decisions: u64 = pairs
         .iter()
         .map(|pair| {
-            pair.leg_candidate_p0.physical_decision_count + pair.leg_candidate_p1.physical_decision_count
+            pair.leg_candidate_p0.physical_decision_count
+                + pair.leg_candidate_p1.physical_decision_count
         })
         .sum();
     let wall_seconds = wall_time.as_secs_f64();
@@ -648,17 +649,32 @@ pub(crate) fn run_calibration_screen_v1(
 
     let candidate_wins = pairs
         .iter()
-        .flat_map(|pair| [pair.leg_candidate_p0.candidate_reward, pair.leg_candidate_p1.candidate_reward])
+        .flat_map(|pair| {
+            [
+                pair.leg_candidate_p0.candidate_reward,
+                pair.leg_candidate_p1.candidate_reward,
+            ]
+        })
         .filter(|&reward| reward == 1)
         .count();
     let candidate_losses = pairs
         .iter()
-        .flat_map(|pair| [pair.leg_candidate_p0.candidate_reward, pair.leg_candidate_p1.candidate_reward])
+        .flat_map(|pair| {
+            [
+                pair.leg_candidate_p0.candidate_reward,
+                pair.leg_candidate_p1.candidate_reward,
+            ]
+        })
         .filter(|&reward| reward == -1)
         .count();
     let candidate_draws = pairs
         .iter()
-        .flat_map(|pair| [pair.leg_candidate_p0.candidate_reward, pair.leg_candidate_p1.candidate_reward])
+        .flat_map(|pair| {
+            [
+                pair.leg_candidate_p0.candidate_reward,
+                pair.leg_candidate_p1.candidate_reward,
+            ]
+        })
         .filter(|&reward| reward == 0)
         .count();
     let candidate_paired_net_total: i32 = pairs.iter().map(|pair| pair.candidate_paired_net).sum();
@@ -821,8 +837,11 @@ mod tests {
             ($field:ident, $value:expr) => {{
                 let mut tampered = valid_authority_v1();
                 tampered.$field = $value;
-                let error = opponent_from_authority_v1(tampered)
-                    .expect_err(concat!("tampered ", stringify!($field), " must be rejected"));
+                let error = opponent_from_authority_v1(tampered).expect_err(concat!(
+                    "tampered ",
+                    stringify!($field),
+                    " must be rejected"
+                ));
                 assert_eq!(error, CalibrationRunnerErrorV1::InvalidAuthority);
             }};
         }
@@ -926,7 +945,10 @@ mod tests {
     fn peak_working_set_reads_a_positive_value_on_windows() {
         let value = peak_working_set_bytes_v1();
         #[cfg(windows)]
-        assert!(value.unwrap_or(0) > 0, "expected a positive peak working set");
+        assert!(
+            value.unwrap_or(0) > 0,
+            "expected a positive peak working set"
+        );
         #[cfg(not(windows))]
         assert_eq!(value, None);
     }

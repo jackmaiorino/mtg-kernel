@@ -6128,9 +6128,15 @@ mod tests {
         assert!(opponent_authority_installation_is_valid_v1(
             false, false, false
         ));
-        assert!(opponent_authority_installation_is_valid_v1(true, false, false));
-        assert!(opponent_authority_installation_is_valid_v1(false, true, false));
-        assert!(opponent_authority_installation_is_valid_v1(false, false, true));
+        assert!(opponent_authority_installation_is_valid_v1(
+            true, false, false
+        ));
+        assert!(opponent_authority_installation_is_valid_v1(
+            false, true, false
+        ));
+        assert!(opponent_authority_installation_is_valid_v1(
+            false, false, true
+        ));
         assert!(!opponent_authority_installation_is_valid_v1(
             true, true, false
         ));
@@ -6140,7 +6146,9 @@ mod tests {
         assert!(!opponent_authority_installation_is_valid_v1(
             false, true, true
         ));
-        assert!(!opponent_authority_installation_is_valid_v1(true, true, true));
+        assert!(!opponent_authority_installation_is_valid_v1(
+            true, true, true
+        ));
     }
 
     #[test]

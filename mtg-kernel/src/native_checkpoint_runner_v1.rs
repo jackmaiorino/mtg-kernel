@@ -19,6 +19,7 @@ use crate::async_flat_scored_rollout_v2::{
 };
 use crate::async_rollout_v2::AsyncRolloutConfigV2;
 use crate::ids::PlayerId;
+use crate::kernel_native_search_opponent_v1::KernelNativeSearchOpponentV1;
 use crate::native_checkpoint_inference_v1::{
     load_native_checkpoint_inference_v1, load_native_checkpoint_inference_wide_v1,
     NativeCheckpointInferenceErrorV1,
@@ -26,7 +27,6 @@ use crate::native_checkpoint_inference_v1::{
 use crate::native_full_episode_trajectory_v2::{
     preflight_native_environment_window_v2, NativeEnvironmentWindowPreflightAuthorityV2,
 };
-use crate::kernel_native_search_opponent_v1::KernelNativeSearchOpponentV1;
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
 use crate::native_trainer_schedule_v1::native_trainer_episode_schedule_v1;
@@ -529,7 +529,15 @@ pub fn run_native_checkpoint_v1(
     checkpoint_payload: &[u8],
     config: NativeCheckpointRunnerConfigV1,
 ) -> Result<NativeCheckpointRunResultV1, NativeCheckpointRunnerErrorV1> {
-    run_native_checkpoint_core_v1(run, checkpoint, checkpoint_payload, config, None, None, None)
+    run_native_checkpoint_core_v1(
+        run,
+        checkpoint,
+        checkpoint_payload,
+        config,
+        None,
+        None,
+        None,
+    )
 }
 
 /// EVAL-ONLY (Self-Play Ladder Design Contract S2, Deliverable 2 head-to-head
@@ -758,7 +766,10 @@ fn run_native_checkpoint_core_v1(
             .authority()
             .validate()
             .map_err(|_| NativeCheckpointRunnerErrorV1::InvalidConfig)?;
-        if !search_opponent.authority().matches_fresh_reconstruction_v1() {
+        if !search_opponent
+            .authority()
+            .matches_fresh_reconstruction_v1()
+        {
             return Err(NativeCheckpointRunnerErrorV1::InvalidConfig);
         }
     }
