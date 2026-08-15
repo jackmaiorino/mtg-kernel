@@ -6612,7 +6612,25 @@ mod tests {
             document.dimensions.action_ref,
             NATIVE_FLAT_ACTION_REF_FEATURE_DIM_V1
         );
-        assert_eq!(hex(&Sha256::digest(FEATURES_PY)), document.authority_sha256);
+        // Dual-profile split (see the successor comment at the top of this
+        // module): `python_action_features_v2.json` is sealed evidence, never
+        // regenerated, and records the HISTORICAL features.py authority
+        // forever; the live features.py must match the CURRENT ratified pin
+        // (collab CLAUDE #239). Both literals are duplicated inline as
+        // overwrite tripwires: neither may be redirected through a shared
+        // constant.
+        assert_eq!(
+            document.authority_sha256,
+            "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+            "sealed action-features golden no longer records the historical authority: \
+             the sealed evidence file was modified, which is forbidden"
+        );
+        assert_eq!(
+            hex(&Sha256::digest(FEATURES_PY)),
+            "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c",
+            "live features.py does not match the CURRENT ratified authority pin: \
+             a new epoch requires an explicit re-pin with owner/Codex countersign"
+        );
 
         let mut payload: Value = serde_json::from_str(GOLDEN).unwrap();
         payload.as_object_mut().unwrap().remove("payload_sha256");
