@@ -28,9 +28,7 @@ use crate::fast_sampler::{
     FAST_CATEGORICAL_CROSS_LANGUAGE_VECTOR_STREAM_SHA256, FAST_CATEGORICAL_EXP_TABLE_SHA256,
     FAST_CATEGORICAL_SAMPLER_CONTRACT_SHA256, FAST_CATEGORICAL_SAMPLER_VERSION,
 };
-use crate::native_flat_tensorizer_v2::{
-    NATIVE_FLAT_TENSORIZER_FEATURES_SOURCE_SHA256_V2, NATIVE_FLAT_TENSORIZER_IDENTITY_V2,
-};
+use crate::native_flat_tensorizer_v2::NATIVE_FLAT_TENSORIZER_IDENTITY_V2;
 use crate::native_full_episode_trajectory_v1::{
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_FILE_SHA256_V1,
     NATIVE_FULL_EPISODE_TRAJECTORY_GOLDENS_GENERATOR_IDENTITY_V1,
@@ -3782,6 +3780,9 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_ladder_environment_
 /// population-program authority before reminting the run digests.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
+// Reserved test-fixture helper for a not-yet-written population-program
+// regression case; kept alongside the currently exercised fixtures.
+#[allow(dead_code)]
 pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_population_environment_v2(
     backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
     batch_episodes: u64,
@@ -6588,7 +6589,7 @@ mod tests {
     }
 
     fn hex64(fill: char) -> String {
-        std::iter::repeat(fill).take(64).collect()
+        std::iter::repeat_n(fill, 64).collect()
     }
 
     fn valid_ladder_checkpoint_ref(fill: char, generation: u64) -> OpponentLadderCheckpointRefV1 {

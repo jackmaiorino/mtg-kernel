@@ -163,6 +163,9 @@ struct BlindCorpusV1 {
 
 #[derive(Debug)]
 struct BlindEpisodeV1 {
+    // Hashed into the corpus commitment at construction time; kept on the
+    // struct for provenance/debugging even though nothing reads it back.
+    #[allow(dead_code)]
     episode_id: u64,
     learner_seat: PlayerSeatV1,
     groups: Vec<BlindGroupV1>,
@@ -170,6 +173,9 @@ struct BlindEpisodeV1 {
 
 #[derive(Debug)]
 struct BlindGroupV1 {
+    // Hashed into the corpus commitment at construction time; kept on the
+    // struct for provenance/debugging even though nothing reads it back.
+    #[allow(dead_code)]
     physical_decision_id: u64,
     substeps: Vec<BlindSubstepV1>,
 }
@@ -390,7 +396,7 @@ fn strip_terminal_fields_v1(
                     .iter()
                     .map(|bits| f32::from_bits(*bits))
                     .collect();
-                if parent_logits.len() < 1
+                if parent_logits.is_empty()
                     || selected_index >= parent_logits.len()
                     || parent_logits.iter().any(|value| !value.is_finite())
                 {
@@ -472,6 +478,7 @@ fn stable_log_softmax_v1(logits: &[f64]) -> Result<Vec<f64>, ScreenErrorV1> {
         .collect())
 }
 
+#[allow(clippy::type_complexity)]
 fn row_metrics_v1(
     parent: &[f32],
     candidate: &[f32],

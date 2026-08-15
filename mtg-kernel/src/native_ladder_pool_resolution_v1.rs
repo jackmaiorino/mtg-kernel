@@ -204,6 +204,8 @@ pub(crate) struct LadderCheckpointAuthorityV1 {
 }
 
 #[derive(Debug)]
+// Boxing would change construction sites in determinism-adjacent code; accepted.
+#[allow(clippy::large_enum_variant)]
 enum LadderCheckpointManifestSourceV1 {
     Genesis {
         checkpoint: CheckpointManifestV3,

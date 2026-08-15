@@ -3353,7 +3353,6 @@ pub(crate) fn run_async_flat_scored_rollout_core_with_population_v1<
             ) {
                 return Err(AsyncFlatScoredRolloutErrorV1::BrokerProtocolViolation.into());
             }
-            drop(authority);
         }
     }
     #[cfg(test)]
@@ -4202,6 +4201,8 @@ mod tests {
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
+    // Boxing would change construction sites in determinism-adjacent code; accepted.
+    #[allow(clippy::large_enum_variant)]
     enum TestObservedTrajectoryEventV1 {
         Selected(Box<TestObservedSelectedEventV1>),
         Terminal(FlatScoredTerminalEventV1),

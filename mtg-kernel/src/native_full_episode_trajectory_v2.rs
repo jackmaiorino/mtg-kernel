@@ -394,6 +394,11 @@ const LIVE_AUTHORITY_CHECKS_V2: [(&str, &str); 24] = [
 /// which values are hashed.  Every constructing entry point calls this before
 /// it looks at any start value.
 fn guard_live_source_authorities_v2() -> Result<(), NativeFullEpisodeTrajectoryErrorV2> {
+    // The enumerate index is only read under #[cfg(test)] below (to arm a
+    // synthetic mismatch on one slot); it is genuinely unused in the
+    // non-test build, so the index-discarded lint is a cfg-dependent false
+    // positive here rather than dead code.
+    #[allow(clippy::unused_enumerate_index)]
     for (_index, &(live, expected)) in LIVE_AUTHORITY_CHECKS_V2.iter().enumerate() {
         // Test-only synthetic mismatch: the armed slot's expectation is
         // swapped for a value no owner constant can equal, so the production

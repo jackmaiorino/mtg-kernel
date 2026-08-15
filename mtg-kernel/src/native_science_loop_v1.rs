@@ -22,7 +22,9 @@ use crate::native_checkpoint_runner_v1::{
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 #[cfg(test)]
 use crate::native_policy_value_net_v1::{NativePolicyValueModelConfigV1, NativePolicyValueNetV1};
-use crate::native_population_opponent_v1::{PopulationOpponentEngineV1, PopulationWeightVectorV1};
+use crate::native_population_opponent_v1::PopulationOpponentEngineV1;
+#[cfg(test)]
+use crate::native_population_opponent_v1::PopulationWeightVectorV1;
 #[cfg(test)]
 use crate::native_train_state_payload_v1::decode_native_train_state_payload_v1;
 #[cfg(test)]
@@ -529,6 +531,8 @@ pub fn run_native_response_exploiter_training_v1(
     }
 }
 
+// Boxing would change construction sites in determinism-adjacent code; accepted.
+#[allow(clippy::large_enum_variant)]
 enum NativeScienceLoopCompletionV1 {
     TrainingOnly { latest_generation_index: u64 },
     Evaluated(NativeScienceLoopReportV1),
@@ -4215,7 +4219,7 @@ mod windows_science_loop_tests {
             None,
         )
         .expect("ladder science loop");
-        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&parent.parent.join("store"))
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(parent.parent.join("store"))
             .expect("validated store root");
 
         // LADDER_EVAL_GENS's own loop body: gen 0 as the reference AND, here,
@@ -4633,7 +4637,7 @@ mod windows_science_loop_tests {
 
         // Genesis and training are both durably published, and the Store the
         // wrapper leaves behind independently re-validates end to end.
-        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&parent.parent.join("store"))
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(parent.parent.join("store"))
             .expect("store root must open: genesis and training both committed");
         let state = validate_native_training_store_v2(&root, &run)
             .expect("the Store the wrapper leaves behind is itself fully valid");

@@ -8353,7 +8353,7 @@ mod tests {
         fn median_ns(samples: &mut [u64]) -> f64 {
             samples.sort_unstable();
             let n = samples.len();
-            if n % 2 == 0 {
+            if n.is_multiple_of(2) {
                 (samples[n / 2 - 1] as f64 + samples[n / 2] as f64) / 2.0
             } else {
                 samples[n / 2] as f64

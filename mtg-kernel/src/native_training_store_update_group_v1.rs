@@ -4689,8 +4689,7 @@ mod tests {
         };
         let facts = executor.intrinsic_checkpoint_facts_v2().unwrap();
         let mut candidate = executor.begin_segment_candidate_v2().unwrap();
-        let transition = candidate.prepare_transition_v2(facts, true).unwrap();
-        transition
+        candidate.prepare_transition_v2(facts, true).unwrap()
     }
 
     /// Live C2 Store diagonal: all eight homogeneous run/transition/receipt

@@ -579,6 +579,8 @@ pub(crate) fn run_native_checkpoint_with_ladder_opponent_eval_v1(
 /// Evaluation-only population-opponent sibling. Existing fixed and ladder
 /// callers cannot supply a population engine and preserve their exact path.
 #[cfg(test)]
+// Reserved for a not-yet-written population-opponent-eval regression test.
+#[allow(dead_code)]
 pub(crate) fn run_native_checkpoint_with_population_opponent_eval_v1(
     run: &ValidatedTrainRunV2,
     checkpoint: &CheckpointManifestV3,
