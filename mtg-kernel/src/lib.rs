@@ -79,7 +79,12 @@ pub(crate) mod native_policy_value_net_v1;
 // train-state bytes to a private, immutable native inference model.
 pub mod native_checkpoint_inference_v1;
 // Strict JSONL bridge from one exact checkpoint inference authority to the
-// production FastActor/FlatScoredFamilyV2 decision path.
+// production FastActor/FlatScoredFamilyV2 decision path. Carries a large
+// amount of scaffolding (CP7/XMage teacher-outcome record shapes, bounded
+// value search, depth8 search) left in place by the fable/shadow-scorer-
+// on-main-v1 port for future reactivation rather than deleted; allowed
+// at module scope instead of item-by-item.
+#[allow(dead_code)]
 pub mod native_checkpoint_shadow_stdio_v1;
 // Trimmed port (fable/shadow-scorer-on-main-v1): only the
 // NativeStructuredHistoryEntryV1 record and its supporting constants, which

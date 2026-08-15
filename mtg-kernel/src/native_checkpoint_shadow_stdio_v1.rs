@@ -62,7 +62,6 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
 
 pub const CHECKPOINT_SHADOW_STDIO_PROTOCOL_V1: &str = "mtg-kernel-checkpoint-shadow-stdio/v1";
 pub const CHECKPOINT_SHADOW_STDIO_SCHEMA_VERSION_V1: u32 = 1;
@@ -1449,6 +1448,8 @@ fn f32_bits_v1(values: &[f32]) -> Vec<u32> {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "record_type", rename_all = "snake_case")]
+// Boxing would change construction sites in determinism-adjacent code; accepted.
+#[allow(clippy::large_enum_variant)]
 enum XmageCp7TeacherRecordV1 {
     Header {
         schema_version: u32,
@@ -1660,12 +1661,12 @@ impl XmageCp7TeacherJsonlWriterV1 {
         self.next_record_ordinal = self
             .next_record_ordinal
             .checked_add(1)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "record ordinal exhausted"))?;
+            .ok_or_else(|| io::Error::other("record ordinal exhausted"))?;
         self.next_teacher_decision_ordinal = self
             .next_teacher_decision_ordinal
             .checked_add(1)
             .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::Other, "teacher decision ordinal exhausted")
+                io::Error::other("teacher decision ordinal exhausted")
             })?;
         Ok(())
     }
@@ -1681,7 +1682,7 @@ impl XmageCp7TeacherJsonlWriterV1 {
         self.next_record_ordinal = self
             .next_record_ordinal
             .checked_add(1)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "record ordinal exhausted"))?;
+            .ok_or_else(|| io::Error::other("record ordinal exhausted"))?;
         Ok(())
     }
 
@@ -1695,6 +1696,8 @@ impl XmageCp7TeacherJsonlWriterV1 {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "record_type", rename_all = "snake_case")]
+// Boxing would change construction sites in determinism-adjacent code; accepted.
+#[allow(clippy::large_enum_variant)]
 enum XmageCp7OutcomeRecordV1 {
     Header {
         schema_version: u32,
@@ -2069,17 +2072,17 @@ impl XmageCp7OutcomeJsonlWriterV1 {
                 .outcome_decision_count
                 .checked_add(1)
                 .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::Other, "episode decision count exhausted")
+                    io::Error::other("episode decision count exhausted")
                 })?;
         self.next_record_ordinal = self
             .next_record_ordinal
             .checked_add(1)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "record ordinal exhausted"))?;
+            .ok_or_else(|| io::Error::other("record ordinal exhausted"))?;
         self.next_outcome_decision_ordinal = self
             .next_outcome_decision_ordinal
             .checked_add(1)
             .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::Other, "outcome decision ordinal exhausted")
+                io::Error::other("outcome decision ordinal exhausted")
             })?;
         Ok(())
     }
@@ -2095,7 +2098,7 @@ impl XmageCp7OutcomeJsonlWriterV1 {
         self.next_record_ordinal = self
             .next_record_ordinal
             .checked_add(1)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "record ordinal exhausted"))?;
+            .ok_or_else(|| io::Error::other("record ordinal exhausted"))?;
         self.active_episode = None;
         Ok(())
     }
@@ -2683,6 +2686,7 @@ impl ShadowScorerServiceV1 {
         Ok((scored, output))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn depth8_branch_value_v1(
         model: &dyn ShadowModelScorerV1,
         opponent_model: Option<&dyn ShadowModelScorerV1>,
@@ -2784,12 +2788,12 @@ impl ShadowScorerServiceV1 {
 
     fn depth8_history_value_selection_v1(
         model: &dyn ShadowModelScorerV1,
-        opponent_model: Option<&dyn ShadowModelScorerV1>,
-        session: &FastActorSessionV1,
+        _opponent_model: Option<&dyn ShadowModelScorerV1>,
+        _session: &FastActorSessionV1,
         scored: &ScoredCurrentDecisionV1,
-        structured_history: &[NativeStructuredHistoryEntryV1],
-        candidate_seat: PlayerSeatV1,
-        fallback_selected_index: u32,
+        _structured_history: &[NativeStructuredHistoryEntryV1],
+        _candidate_seat: PlayerSeatV1,
+        _fallback_selected_index: u32,
     ) -> Result<Option<Depth8TeacherDiagnosticV1>, &'static str> {
         let expected = scored.expected;
         if !model.uses_structured_history_v1()
@@ -2818,12 +2822,12 @@ impl ShadowScorerServiceV1 {
 
     fn one_step_history_value_selection_v1(
         model: &dyn ShadowModelScorerV1,
-        session: &FastActorSessionV1,
+        _session: &FastActorSessionV1,
         scored: &ScoredCurrentDecisionV1,
-        structured_history: &[NativeStructuredHistoryEntryV1],
-        candidate_seat: PlayerSeatV1,
-        fallback_selected_index: u32,
-        candidate_turn_only: bool,
+        _structured_history: &[NativeStructuredHistoryEntryV1],
+        _candidate_seat: PlayerSeatV1,
+        _fallback_selected_index: u32,
+        _candidate_turn_only: bool,
     ) -> Result<Option<u32>, &'static str> {
         let expected = scored.expected;
         if !model.uses_structured_history_v1()
@@ -2853,6 +2857,7 @@ impl ShadowScorerServiceV1 {
         Err("value_search_redeterminization_unavailable_on_this_lineage")
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn score_session_v1(
         model: &dyn ShadowModelScorerV1,
         opponent_model: Option<&dyn ShadowModelScorerV1>,
@@ -3260,7 +3265,6 @@ impl ShadowScorerServiceV1 {
                     FastActorResponseV1::Decision(_) => Ok(()),
                     FastActorResponseV1::Terminal(terminal) => export
                         .terminal_record_v1(&active, terminal)
-                        .map_err(|()| ())
                         .and_then(|record| export.write_terminal_v1(&record).map_err(|_| ())),
                 }
             });
@@ -3927,8 +3931,7 @@ fn run_jsonl_v1(
         writeln!(writer, "{}", service.handle_line_v1(&line))?;
         writer.flush()?;
         if service.export_poisoned {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
+            return Err(io::Error::other(
                 "checkpoint shadow export is poisoned after a write failure",
             ));
         }
@@ -3968,7 +3971,7 @@ mod tests {
         fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
             self.0
                 .lock()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "shared writer poisoned"))?
+                .map_err(|_| io::Error::other("shared writer poisoned"))?
                 .extend_from_slice(bytes);
             Ok(bytes.len())
         }
@@ -3993,12 +3996,9 @@ mod tests {
             if *self
                 .fail_flush
                 .lock()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "flush control poisoned"))?
+                .map_err(|_| io::Error::other("flush control poisoned"))?
             {
-                Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "injected export flush failure",
-                ))
+                Err(io::Error::other("injected export flush failure"))
             } else {
                 Ok(())
             }
