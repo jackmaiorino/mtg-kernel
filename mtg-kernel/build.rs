@@ -4114,8 +4114,7 @@ fn activated_abilities_for(name: &str) -> String {
     }
     let abilities = recipes
         .iter()
-        .enumerate()
-        .map(|(_index, recipe)| {
+        .map(|recipe| {
             let costs = recipe
                 .cost
                 .iter()
@@ -4144,8 +4143,7 @@ fn activated_abilities_for(name: &str) -> String {
 fn activated_abilities_token(name: &str) -> String {
     activated_ability_recipes_for(name)
         .iter()
-        .enumerate()
-        .map(|(_index, recipe)| {
+        .map(|recipe| {
             let costs = recipe
                 .cost
                 .iter()
