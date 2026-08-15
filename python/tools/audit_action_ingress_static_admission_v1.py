@@ -63,8 +63,20 @@ ACTION_REF_DIM = 25
 BOOLEAN_SLOT = 69
 
 EXPECTED_FROZEN_SHA256 = {
+    # Live-file pin: the ratified CURRENT profile of features.py (commit
+    # 92edf3b, "Fix historical stack-source encoder arena collision"). The
+    # HISTORICAL profile this pin previously named was
+    # "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb";
+    # that commit's fix is confined to _NodeRegistry's state-side stack
+    # source registration in _objects(), which this audit's supplemental
+    # case never calls (it drives _action_features/_canonical_model_value
+    # directly against a synthetic classifier_input with no stack), and it
+    # leaves ENCODING_CONTRACT_VERSION/FEATURE_CONTRACT_DIGEST_V1 unchanged
+    # (see that commit message). The other entries in this dict remain the
+    # HISTORICAL sealed reference artifacts this profile's corpus/coverage
+    # pins were generated against; only this one entry tracks the live file.
     "python/mtg_kernel_rl/features.py": (
-        "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb"
+        "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c"
     ),
     "python/mtg_kernel_rl/model.py": (
         "2e3e830d4212b8c8f8085861b2508c49a6d7192b9621cef087dd396e22d12c59"
@@ -88,6 +100,17 @@ EXPECTED_FROZEN_STRUCTURED_ALIAS_CASES = [
     ["boolean-attacker-false", "boolean-attacker-true"],
     ["boolean-blocker-false", "boolean-blocker-true"],
 ]
+# The frozen action golden (data/flat_policy_v2/python_action_features_v2.json,
+# pinned above, untouched) bakes in its own "authority_sha256" field: the
+# exact features.py hash it was generated under. That is sealed provenance
+# about the HISTORICAL profile, permanently distinct from
+# EXPECTED_FROZEN_SHA256["python/mtg_kernel_rl/features.py"] above, which now
+# tracks the ratified CURRENT live file. The two must not be collapsed into
+# one constant: the golden's own claim about its own history does not change
+# just because the live file legitimately moved forward.
+EXPECTED_ACTION_GOLDEN_FEATURES_AUTHORITY_SHA256_V1 = (
+    "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb"
+)
 SUPPLEMENTAL_WITNESS_ATOMS = [
     (
         "legal_action.semantic.<action_kind=choose_effect_target>."
@@ -194,9 +217,7 @@ def _validate_frozen_inputs(audit: Any, features: Any, action: dict[str, Any]) -
         raise AdmissionError("frozen action corpus must contain exactly 115 cases")
     if action.get("authority") != "python/mtg_kernel_rl/features.py":
         raise AdmissionError("action golden has unexpected authority path")
-    if action.get("authority_sha256") != EXPECTED_FROZEN_SHA256[
-        "python/mtg_kernel_rl/features.py"
-    ]:
+    if action.get("authority_sha256") != EXPECTED_ACTION_GOLDEN_FEATURES_AUTHORITY_SHA256_V1:
         raise AdmissionError("action golden feature-authority binding drifted")
     expected_dimensions = {
         "action": ACTION_DIM,
