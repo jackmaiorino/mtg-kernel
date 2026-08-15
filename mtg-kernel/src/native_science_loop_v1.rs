@@ -4185,6 +4185,13 @@ mod windows_science_loop_tests {
             test_fixture_bytes_with_schedule_and_base_seed_ladder_v2, OpponentLadderPoolContractV1,
         };
 
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json"),
+        ) {
+            return;
+        }
+
         let pool_bytes = fs::read(r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json")
             .expect("real ladder pilot pool.json must be readable");
         let pool: OpponentLadderPoolContractV1 = serde_json::from_slice(&pool_bytes)
@@ -4274,6 +4281,19 @@ mod windows_science_loop_tests {
     const REAL_LADDER_INIT_REFERENCE_STORE_V1: &str =
         r"D:\mtg-kernel-s1-mirror-20260724\dev1\run-0\store";
     const REAL_LADDER_INIT_REFERENCE_GENERATION_V1: u64 = 32;
+    const REAL_LADDER_PILOT_POOL_JSON_V1: &str =
+        r"D:\mtg-kernel-ladder-pilot-20260725\pool\pool.json";
+
+    /// Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+    /// Shared gate for every test below that depends on `ladder_init_fixture_v1()`
+    /// (both of its real evidence roots), called before that fixture is touched.
+    fn ladder_init_evidence_present_v1() -> bool {
+        crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_INIT_REFERENCE_STORE_V1),
+        ) && crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_LADDER_PILOT_POOL_JSON_V1),
+        )
+    }
 
     fn ladder_init_fixture_v1() -> &'static LadderInitFixtureV1 {
         LADDER_INIT_FIXTURE_V1.get_or_init(|| {
@@ -4354,6 +4374,10 @@ mod windows_science_loop_tests {
     /// for the same in-memory proof at the checkpoint-authority layer.
     #[test]
     fn ladder_init_genesis_bit_equals_the_real_s1_source_checkpoint_weights() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v1() {
+            return;
+        }
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
 
@@ -4411,6 +4435,10 @@ mod windows_science_loop_tests {
     /// publisher returned Ok" but "the walk independently reproves it."
     #[test]
     fn ladder_init_genesis_publishes_through_the_pure_walk_reconciler() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v1() {
+            return;
+        }
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
 
@@ -4506,6 +4534,10 @@ mod windows_science_loop_tests {
     /// would hit this exact obstacle.
     #[test]
     fn ladder_init_science_loop_trains_the_store_end_to_end() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v1() {
+            return;
+        }
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
         let target = run.requested_successful_updates();
@@ -4609,6 +4641,10 @@ mod windows_science_loop_tests {
     /// which pinned the exact narrower `RunFailed` obstacle this closes.
     #[test]
     fn ladder_init_science_loop_wrapper_completes_genesis_training_and_evaluation_end_to_end() {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !ladder_init_evidence_present_v1() {
+            return;
+        }
         let fixture = ladder_init_fixture_v1();
         let run = decode_train_run_v2(&fixture.run_bytes).expect("ladder-init run record");
         let target = run.requested_successful_updates();

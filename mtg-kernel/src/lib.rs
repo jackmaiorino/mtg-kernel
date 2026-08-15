@@ -75,6 +75,12 @@ pub(crate) mod native_flat_cpu_reference_v1;
 // deliberately not a production or performance backend.
 #[allow(dead_code)]
 pub(crate) mod native_policy_value_net_v1;
+// Shared cfg(test) helper: gates tests that read machine-local sealed
+// evidence (real, already-published run/store artifacts under absolute
+// D:\ / C:\ paths) so they skip cleanly on hosted CI runners instead of
+// panicking with NotFound, while staying strict on the science host.
+#[cfg(test)]
+pub(crate) mod native_test_support_local_evidence_v1;
 // Pure in-memory bridge from already-validated Store authorities and exact
 // train-state bytes to a private, immutable native inference model.
 pub mod native_checkpoint_inference_v1;

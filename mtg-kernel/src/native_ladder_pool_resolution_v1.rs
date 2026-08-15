@@ -847,6 +847,12 @@ mod tests {
     #[test]
     fn stage_ladder_checkpoint_ref_v1_matches_the_real_pilot_pool_json_primary_entry() {
         const POOL_PRIMARY_STORE_ROOT: &str = r"D:\mtg-kernel-ladder-pilot-20260725\pool\primary";
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(POOL_PRIMARY_STORE_ROOT),
+        ) {
+            return;
+        }
         let staged =
             stage_ladder_checkpoint_ref_v1(std::path::Path::new(POOL_PRIMARY_STORE_ROOT), 256)
                 .expect("real pilot pool primary checkpoint must resolve to a staged ref");

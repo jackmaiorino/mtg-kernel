@@ -8473,6 +8473,13 @@ mod tests {
         const STORED_RUN_SHA256: &str =
             "47bc46634de718439ea93fbad105cbf96a6339913856805dccca87773760e7ef";
 
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
         let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
             panic!("could not read the real S1 mirror run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
         });
@@ -8522,6 +8529,13 @@ mod tests {
         // `checkpoints\update-00000000.checkpoint.json` sidecar.
         const STORED_RUN_SHA256: &str =
             "6a78ae91b616c8f42ccfe9907ff82bdc1b0cd8ed693fd19bcc9e0783ba71e425";
+
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
 
         let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
             panic!(
@@ -8575,6 +8589,13 @@ mod tests {
     fn real_ladder_pilot_pool3_primary_run_json_decodes_historical() {
         const REAL_RUN_JSON_PATH: &str =
             r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary\run.json";
+
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
 
         let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
             panic!(
@@ -8651,6 +8672,18 @@ mod tests {
     #[test]
     fn population_v2_active_records_are_historical_catalog_identity_blocked_by_a_separate_schema_gap(
     ) {
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        for candidate_path in [
+            r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json",
+            r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json",
+        ] {
+            if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+                std::path::Path::new(candidate_path),
+            ) {
+                return;
+            }
+        }
+
         for (label, path) in [
             (
                 "cycle2",
@@ -8714,6 +8747,13 @@ mod tests {
         // store's `latest.json` pointer.
         const STORED_RUN_SHA256: &str =
             "8d98ee5411e2407af7530421d2eac44cfdf3a6b0198b9ab898caec51b7e8e3cc";
+
+        // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
 
         let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
             panic!(
