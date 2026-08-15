@@ -1103,10 +1103,52 @@ def portable_check_v1(repo_root: Path | None = None) -> ValidatedCommonModelSnap
     return validate_snapshot_files_v1(manifest_path, payload_path, repo_root=root)
 
 
+def _manifest_bytes_with_authority_sources(
+    manifest_bytes: bytes, sources: list[dict[str, str]], source_bundle_sha256: str
+) -> bytes:
+    """Rebuild manifest bytes with the given authority source bindings
+    injected and the integrity fields recomputed, exactly as the generator
+    would have produced them had it seen those sources."""
+
+    manifest = json.loads(manifest_bytes.decode("utf-8"))
+    manifest["authority"]["sources"] = copy.deepcopy(sources)
+    manifest["authority"]["source_bundle_sha256"] = source_bundle_sha256
+    core_sha256 = _manifest_core_sha256(manifest)
+    manifest["integrity"]["manifest_core_sha256"] = core_sha256
+    manifest["integrity"]["snapshot_sha256"] = _snapshot_sha256(
+        core_sha256, manifest["payload"]["sha256"]
+    )
+    return canonical_json_bytes(manifest) + b"\n"
+
+
 def authority_check_v1(repo_root: Path | None = None) -> ValidatedCommonModelSnapshotV1:
     root = _repo_root() if repo_root is None else Path(repo_root).resolve()
     committed = portable_check_v1(root)
     generated_manifest, generated_payload = generate_authority_snapshot_v1(root)
-    if generated_manifest != committed.manifest_file_bytes or generated_payload != committed.payload_bytes:
-        raise CommonModelSnapshotErrorV1("authority regeneration is not byte-identical")
-    return committed
+    if generated_manifest == committed.manifest_file_bytes and generated_payload == committed.payload_bytes:
+        return committed
+    # Dual-profile split (merge-epoch successor, mirrors
+    # `_authority_source_binding_is_known`): the committed snapshot is the
+    # FROZEN historical authority and is never regenerated in place, while
+    # the live authority sources move forward with the epoch. The committed
+    # artifact is accepted iff its authority section equals the frozen
+    # HISTORICAL bindings, whole-tuple, and a fresh regeneration with those
+    # bindings injected reproduces the committed manifest byte-exactly. That
+    # proves the payload and every non-authority manifest field still
+    # regenerate bit-identically; the only tolerated delta is the recorded
+    # source bindings themselves.
+    authority = committed.manifest["authority"]
+    historical_sources = _historical_authority_sources()
+    if (
+        generated_payload == committed.payload_bytes
+        and authority["sources"] == historical_sources
+        and authority["source_bundle_sha256"] == FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1
+        and _manifest_bytes_with_authority_sources(
+            generated_manifest,
+            historical_sources,
+            FROZEN_AUTHORITY_SOURCE_BUNDLE_SHA256_HISTORICAL_V1,
+        )
+        == committed.manifest_file_bytes
+    ):
+        return committed
+    raise CommonModelSnapshotErrorV1("authority regeneration is not byte-identical")

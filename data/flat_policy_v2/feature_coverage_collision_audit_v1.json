@@ -1,11 +1,11 @@
 {
   "authority": {
     "audit_source_path": "python/tools/audit_feature_coverage_collision_v1.py",
-    "audit_source_sha256": "c73c0d3ebedc3ba53753991ededeb6dc4e290284b7c714f3042cc11b36556c0c",
+    "audit_source_sha256": "3bea5cec426b66081e6382a19b890a54d118bb6844034ece526ab22d61454f18",
     "encoding_contract_fingerprint": "918e57a0796807e84310026de48d30b500813ef37d939462ea85b7255a39111c",
     "feature_contract_fingerprint": "bcc808186e40a1ad6aec679d8a386631cb1226379366a632603f0beb95b47396",
     "features_path": "python/mtg_kernel_rl/features.py",
-    "features_sha256": "fce419176dbd15e2b911e5c5f688bb390e731e3817da142571f38b1a7cc778eb",
+    "features_sha256": "5d82f5b87a6819076c903390230015da456f914828890d9c5384af410f21be1c",
     "python_contracts": {
       "encoding_contract_version": "actor-relative-node-graph-12",
       "feature_registry_version": "rust-observation-v5-action-v5-registry-4",
@@ -8060,11 +8060,10 @@
           "atom_id": "observation.projection.graveyards.[].[].summoning_sick",
           "case_count": 10,
           "classification": "model_input",
-          "distinct_value_count": 2,
+          "distinct_value_count": 1,
           "kind": "bool",
           "observed_values": [
-            false,
-            true
+            false
           ],
           "occurrence_count": 74,
           "status": "WITNESSED"
@@ -8073,11 +8072,10 @@
           "atom_id": "observation.projection.graveyards.[].[].tapped",
           "case_count": 10,
           "classification": "model_input",
-          "distinct_value_count": 2,
+          "distinct_value_count": 1,
           "kind": "bool",
           "observed_values": [
-            false,
-            true
+            false
           ],
           "occurrence_count": 74,
           "status": "WITNESSED"
@@ -10109,6 +10107,24 @@
         },
         {
           "atom_id": "observation.projection.graveyards.[].[].skip_next_untap",
+          "missing_values": [
+            true
+          ],
+          "observed_values": [
+            false
+          ]
+        },
+        {
+          "atom_id": "observation.projection.graveyards.[].[].summoning_sick",
+          "missing_values": [
+            true
+          ],
+          "observed_values": [
+            false
+          ]
+        },
+        {
+          "atom_id": "observation.projection.graveyards.[].[].tapped",
           "missing_values": [
             true
           ],
@@ -13050,7 +13066,7 @@
       "case_count": 18,
       "path": "data/flat_policy_v2/python_full_features_v2.json",
       "schema": "mtg-kernel-python-full-features-golden/v2",
-      "sha256": "5dbece4f903a09260a499295d866c7e6ff4283f9de83f842224511f977ae8a97"
+      "sha256": "edd8c255d65b0f1eba17b029da2d0e4aa5f9600243e9e390cd105c0b32b92812"
     },
     {
       "case_count": 115,
@@ -13066,7 +13082,7 @@
     "no observation-leakage, model-capacity, equilibrium, BO3, sideboarding, human, or pro-level-play verdict",
     "enum-domain and seat-category gaps are diagnostic because schema domains can contain contextually inadmissible combinations"
   ],
-  "payload_sha256": "6a9c23d37c94c522d7fea6ca08f5cd4d4e2b11fb9328db244259cbefb6192a64",
+  "payload_sha256": "8838fd47e0dc4af46f0058999c9bff1b67c9f0d9db239f692f1b71015bb507e9",
   "representation_identities": {
     "action": [
       {
@@ -13992,20 +14008,20 @@
     ],
     "observation": [
       {
-        "canonical_sha256": "2883f0d38332c101e2654871f2e3ee7c4278eb5bc828dc1b2e9305a89cf06f0b",
-        "complete_representation_sha256": "494553b3060e6c6bc4915a4972470f867901dde9850c8a9dbf1dd68fc8509591",
+        "canonical_sha256": "67dd09e2d9aabc4d5086e92c3c1c2ddee4d8d6a157160b02cfd4655b434b5d9f",
+        "complete_representation_sha256": "c0f14db5a75b72b8e7fb76c290d312920dfcbc23ce30eb9ea1c8a999a12e4bf1",
         "name": "burn-mirror-combat",
-        "quantized_tail_sha256": "851402f3b6f3e97ec15e7510cbb1ab9cedb83bd569663b9649a601c10a9ba1ee",
-        "raw_digest_sha256": "f07da497348c73de4261f3197ff2f6a6b6326ef60ce934d7563e35f051086ace",
-        "structured_signature_sha256": "e701e65811cb6739f17534d130354e8478a935a8935c92fc1ace297bf3f296c0"
+        "quantized_tail_sha256": "91b4e6a767fae501adbc32e9873fac77d342a85ba696027d9e7e4bcab3c2190b",
+        "raw_digest_sha256": "c6517eead08385673720c79bb3c7db550232ff7f58559e013adf06570cd92c8a",
+        "structured_signature_sha256": "74b5d8d293e97b0da1daea639adf6aab017164a912c8a3571f85928d18ecab30"
       },
       {
-        "canonical_sha256": "f5754ee6c3a18337fe1c7db413990371b143d93515c77ee822ab2404c074bb01",
-        "complete_representation_sha256": "91fe7a881499164815beec8911a5b5f01b4e9c3dc1896d43db879f41ab461515",
+        "canonical_sha256": "5a45fc701c50e05115d74064c249d98e7263130ff85f9b6c16e2b38f1a3c3932",
+        "complete_representation_sha256": "4f3b29f50746784dc8da89523e6dc4ac5d8dfb6be7ce80168c05f183bb47c509",
         "name": "burn-mirror-combat-present-empty",
-        "quantized_tail_sha256": "2c4a93ad259a170fca6b1c491f86b1db02c5a2905ccb9d19acd4feae40f21aa7",
-        "raw_digest_sha256": "bbceacadd141c007f62952da73c3aa11238cc2eb7e34f69b930047d44cd5fdeb",
-        "structured_signature_sha256": "65167ae207db778e72a43a4700ec5c39adb99544ba73c7983febe63d0365701e"
+        "quantized_tail_sha256": "251421687bd9c467d64abd3ac93edcdd26b87104886ca57b715865cb65c1f09c",
+        "raw_digest_sha256": "53e12b298b9b40fe66e071e4ef4f3834962cd8fa03356c3ae7629deca9179027",
+        "structured_signature_sha256": "b2b14cc1cbc930348c5a58ba8b5fdc7bf40cedfe37fafd5ca6a7e74967005f48"
       },
       {
         "canonical_sha256": "119ca26b92e7a1e2bbefce7a1cc013eed3a7174aec6dfcd6b653c459317a3eb6",
@@ -14024,12 +14040,12 @@
         "structured_signature_sha256": "bc1c85042e34c9bd52dd8870305085e33657c2736ac9bf6a1f474c7e90d0228e"
       },
       {
-        "canonical_sha256": "f5f8f18eade390fa493c1f429bf34d6a6945863c3779cbc639e3b28eac8b7c14",
-        "complete_representation_sha256": "5e4ed4083ae372fda9a6b7783878f108f47301ef77fc007d99b842423ac3865f",
+        "canonical_sha256": "aca4bdc92b9dff45a6019ee4d71f05ac6078004992b160c1afadb1d2c871484a",
+        "complete_representation_sha256": "5a228c5a2dc5cb7531a02753ba73248276a4bc51403da353abf2c3c4742a8c71",
         "name": "burn-mirror-private-combat",
-        "quantized_tail_sha256": "c65070680444d9435ff9bbede71a7416afad913179a2c9c85ef2f220436dcf48",
-        "raw_digest_sha256": "8be17ecd3dce64d2922fb92c75d7aa7a07bda37755e181927ee4b2e9f8f51275",
-        "structured_signature_sha256": "f649ec900d97ba669c46da8f22c6942c4b43b907b98b4dc3e7534e749abbb48d"
+        "quantized_tail_sha256": "958bd604a7f159a553182487fdba31ddbc510c37a0a06aeb54df85937b0cb5b1",
+        "raw_digest_sha256": "82f166161f061d7c8beb9c562025040b2814651558da1f4ab534131883160453",
+        "structured_signature_sha256": "e2093791f244295d82967da2e55039da9915dd8e815d8bdee6f1f5a5a199529f"
       },
       {
         "canonical_sha256": "c170e6a8787290533104c9e15101d457a445cd0b4381219edaf6cb661195977a",
@@ -14040,28 +14056,28 @@
         "structured_signature_sha256": "628bb4b4a564e6539e760ffd6c162e9f37cb1e080891add89a068fe64b7399bb"
       },
       {
-        "canonical_sha256": "40934ca3e611700c50e7d8cfbd62c21415f9990699bf6b1166b77bb2b7f9ed3f",
-        "complete_representation_sha256": "3b85b3177022c5d07c3ce56fe4bb0074cf8e05c09782e0a11e31987a95019356",
+        "canonical_sha256": "906bb6b97fc84bf301904e571d4060b3b3623344e10cf40e363a1ecd8fcc3247",
+        "complete_representation_sha256": "abca1876fd546f0c84d67ce60d3b4eb57ceb49cd2244ba60bf4f2551280279fd",
         "name": "burn-mirror-replay-08",
-        "quantized_tail_sha256": "572c7aec234b39f1045f4e561669c0a9519565c7ef3ce3618feac718cfdde7f5",
-        "raw_digest_sha256": "e5757aa0bd32f38bc70322b4eb2bb0fa7681ff9cf8a0c040a9bdcb5858547e87",
-        "structured_signature_sha256": "cc6a81e24735486e2d79474f9bf189b9dd624a553e4b7942df3d622403fb4bba"
+        "quantized_tail_sha256": "97c6623e29c6aac89d299466323c4ba07ec70345ac3292e627f1a051c4bae46e",
+        "raw_digest_sha256": "2655c37b1ba06bb3b3a86e80e10d12f34c9a4d2f33961b131d2e9e0f27659f49",
+        "structured_signature_sha256": "14c69ac61354580836c52555f4c8becd8ffc9e092c9bd40f5ac75ea0370140c5"
       },
       {
-        "canonical_sha256": "2b356b83d2684d211e0e2fa93e686ed11008ffab2d9523da34e07751adda12cd",
-        "complete_representation_sha256": "3e058459a05fac42ae0a2af349eca02f7b26b01f973ea74f013dd827dab8dcc1",
+        "canonical_sha256": "84d2fe95b8d0e2e469613404bcaca5293d73d8ffbcb3ab3e14fa8bca3f627048",
+        "complete_representation_sha256": "fa24350879b6fb64b005e270aa0f9de5528273b9d9bfa6ef51b3ec6cc5440811",
         "name": "burn-mirror-replay-32",
-        "quantized_tail_sha256": "e8275f1e63bcb8730c7d8870c784078c07775ff4edf742f6afe4be9eaca3de76",
-        "raw_digest_sha256": "93b22d7d01d3c0437b9f225a473429fc132e607718cb1e0846efc3ecde8681ce",
-        "structured_signature_sha256": "21a8b3c417fd4fb4e0e1e9ada0d9fda825edb04cbce1ea6ecb77ddb088cdabfe"
+        "quantized_tail_sha256": "8e1f97dcac67c59127bf772617d2a6e879403947dadd4b0a295a3ac891087d66",
+        "raw_digest_sha256": "cfc45403be0696028a0d67286dfc52fc4bed5c8b459880363afb548fe74bb944",
+        "structured_signature_sha256": "d11aab95e20af81c49ed4e0d9ecb190a5806aeda4af86f9ddc7e22829d1e7f71"
       },
       {
-        "canonical_sha256": "c8961d50ae005300f5e019a59db651ba8b798cdd94e38e5d359e3e2072643f8b",
-        "complete_representation_sha256": "4267dda6691b7268d70483335edba97e23f70137d5141e5174dda7ab4e2ba407",
+        "canonical_sha256": "8057a80f97fe18e433cc8934615969519db060b2c9656c2a91a707fb12023651",
+        "complete_representation_sha256": "a65e8d91648e0295206324d08e822b2324cc1a086d57ae942732d35b86954181",
         "name": "burn-mirror-replay-48",
-        "quantized_tail_sha256": "92de59f23bc1069607a1d11075b523c0db67c065ccf41e53be482af8c0ca0f3e",
-        "raw_digest_sha256": "d334b44e6b1e5c30d435e0aaa1f22a04cfee586bdf166b08ea87fe304fe096e6",
-        "structured_signature_sha256": "8da2a4428a6c050872da71e0cc707a17c51bb961ff0c551fa9b9c77d794aeebc"
+        "quantized_tail_sha256": "b344bac5a24f396d61a821dc2fd39d64440ba2cc71c0b8eead9c55e8a2257c3c",
+        "raw_digest_sha256": "6d8a09fbd61e29da5d61c475ec3dc6bb692f7a8e0cbca78e055c17133a9c7f1b",
+        "structured_signature_sha256": "56272ca787892128f911395cb6f1af860a2a0484da9a87da31b5b3c6a7e7dcfe"
       },
       {
         "canonical_sha256": "48276c1d6fd1e714a50302dd58b9880bab29d69b6e7eb7da3cb2ed72f5ca3fae",
@@ -14072,12 +14088,12 @@
         "structured_signature_sha256": "9018e36e796ed911aa7b23e474300475a9bb5e2171c88a9e97367524c7ee9c56"
       },
       {
-        "canonical_sha256": "4c016aded0c8873a85c0e4dd110919c58d668000b16c68d2b42ae0f998c813f0",
-        "complete_representation_sha256": "cf9e650b832d8da0cf64d1f8685755c545666a0c58ab05cab3c26218d60915d1",
+        "canonical_sha256": "2d56ab6439454092562d61ba8a16a33b5a90f14ba2832d8a3711e31980bb7e14",
+        "complete_representation_sha256": "f34bb84c6cf4c37c04ef0ef898b8b9d3cea64b58faba3af008fc926cd2ecbffe",
         "name": "burn-rally-paid-cost",
-        "quantized_tail_sha256": "7b2ecbd3b0a8062b5489f03b2ce7d04369f6e5374d0fbd8ffaf0bba8cea17eb1",
-        "raw_digest_sha256": "383c09db74897c223b214e80c3889314cf3872d6041d341238102537e997577b",
-        "structured_signature_sha256": "c7095dd3afc08623bc4b98250b40fbc4fc80e3bd23796835d2b8d2cc5ebd83f7"
+        "quantized_tail_sha256": "c108993c645d14cf1920de41a47e980711ee1e4df2fe0d486faafa355db6a7ad",
+        "raw_digest_sha256": "47e584fd44f43eb687e59b68c2211423b9a7ef6373a6b968ef608cd7753fa90d",
+        "structured_signature_sha256": "fc0b6d4b6419615e3991ff2697f3b61c484ba494221f992e83fc3302107998c0"
       },
       {
         "canonical_sha256": "675f05eb16191846f02d40ada878bfdf4992cee8ee0526f20378b2cd5b951437",
@@ -14088,20 +14104,20 @@
         "structured_signature_sha256": "4c767d362ccae7e4f7ae4b5e5e65cb91af6b532910ccae8e6331e8de8cd0bf3e"
       },
       {
-        "canonical_sha256": "0c2b82464b0b8737b2f723e07e3e9888ddc8a4241bd8a6313ac0c6a05748a5bb",
-        "complete_representation_sha256": "ab8d777827abc5a45be6b6d9b16b3eb402e67da2c26dfdd8052479cc11ec0799",
+        "canonical_sha256": "dfb3e05b882dea03453481145d379762efbe8d33bd8c1be9675019111b94bad9",
+        "complete_representation_sha256": "1e8a5c9fcc2e4e5c18cb03d34a64dec003d4c3f44bda9feee946d232205e87ac",
         "name": "rally-mirror-effect",
-        "quantized_tail_sha256": "aeb022830768dd9a34a8c38d3566ab2848afe45a0c671bd56a6e3375dc8598eb",
-        "raw_digest_sha256": "a1b2ee47a80d20be262f18b73413d91ad416100b0663d184d3fd1a9e3278372b",
-        "structured_signature_sha256": "e832204325e11aa01e10d0a6e8c0248e4a890876dde835d05d5a341be5836cf4"
+        "quantized_tail_sha256": "5376d109a5b8784a0fbccbee32a7daf4e7f72e8142d619a21aec6b52592d9e28",
+        "raw_digest_sha256": "fbb4f4d805a8bd2de3bf0e625fd620f38418c96865c061dfd0fc7c1889b5c1eb",
+        "structured_signature_sha256": "ca640508754511832ffc79dfb770bba4b1ea3cb9a392af29d7ebbea5ac4368ff"
       },
       {
-        "canonical_sha256": "2e4fd42551914bc3cbd252b297974237c22f3e62fb61381cce483fc40dd474ed",
-        "complete_representation_sha256": "398326dfea71c1c47f9fe3b40b630769b4f526e7186138ee80ad926f96119398",
+        "canonical_sha256": "8054321507b6ef6181e85653cc9abd6ec41ed33707ea8528c09bd5feb486447f",
+        "complete_representation_sha256": "e2baa8c74be3cca4d4c2e7faae17b4f294cb4f3eaee44509e1b9c57d57384715",
         "name": "rally-mirror-permission",
-        "quantized_tail_sha256": "c97253d229e7351da0fc78916f8e26b69b0d043acffca50312d0d32b5d8791e0",
-        "raw_digest_sha256": "cbba8af1ce8df02cef4dd21c201ff9051837f16a73756b3b5797ae797a6bdea4",
-        "structured_signature_sha256": "14754aedd5364edf7fa234989daffb69c448c005cd95a38d8e4a1a44d7a99e46"
+        "quantized_tail_sha256": "d0948b6149d693287187391e48fa91ba72fd3a7b6ad5cb3e5c6e6bf05eebdcea",
+        "raw_digest_sha256": "239ea2d8b31d79b8fb64b9df537aa72fbac396a9b4a8ad68623f849bf81b6103",
+        "structured_signature_sha256": "2a791be57336c00280d6287856a94aeeadf8680515977c0f853653c0be9ce6d2"
       },
       {
         "canonical_sha256": "119ca26b92e7a1e2bbefce7a1cc013eed3a7174aec6dfcd6b653c459317a3eb6",
