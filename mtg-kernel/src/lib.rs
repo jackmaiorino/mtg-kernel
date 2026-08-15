@@ -76,6 +76,10 @@ pub mod ids;
 // through it) keeps that single gate in one place and matches this module
 // having no non-test consumer anywhere in the crate.
 #[cfg(test)]
+// The runner's only consumer is its own Windows-gated --ignored launcher
+// module; on non-Windows test builds every item is unreferenced. Dead-code
+// lint stays active where the callers exist.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
 pub mod mana;
