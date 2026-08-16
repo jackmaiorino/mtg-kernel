@@ -2292,6 +2292,45 @@ mod tests {
         }
     }
 
+    /// Item 4, panel-driven revision: proves the MXCSR gate is actually
+    /// wired into the real production entry point, not just exercised in
+    /// isolation by `deterministic_math_v1`'s own gate tests. Calls the
+    /// real `forward_search_deterministic_v1` (the same function the
+    /// checkpoint-inference boundary's `score_decision_search_deterministic_v1`
+    /// calls) with a real encoded decision from this file's own golden
+    /// fixture, under a dirtied MXCSR in a scoped OS thread. Because the
+    /// gate runs first, at that function's entry, before any of the eight
+    /// activation call sites (including the scorer and value_head's direct
+    /// `tanh_in_place_v1` calls) execute, one passing test here pins that
+    /// the entire downstream computation is gated, protecting against a
+    /// future refactor silently moving or dropping the gate call.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn forward_search_deterministic_v1_panics_through_the_real_entry_point_when_mxcsr_is_dirty() {
+        let handle = std::thread::spawn(|| {
+            let original = crate::deterministic_math_v1::read_mxcsr_v1();
+            crate::deterministic_math_v1::write_mxcsr_v1(original | (1 << 15)); // dirty FTZ (MXCSR bit 15)
+            let result = std::panic::catch_unwind(|| {
+                let fixture = fixture();
+                let model = NativePolicyValueNetV1::runner_fixed_v1(
+                    NativePolicyValueModelConfigV1::contract_v1(),
+                )
+                .expect("model builds");
+                let case = &fixture.cases[0];
+                model.forward_search_deterministic_v1(view(case))
+            });
+            crate::deterministic_math_v1::write_mxcsr_v1(original);
+            assert!(
+                result.is_err(),
+                "expected forward_search_deterministic_v1 to panic through its real \
+                 MXCSR gate when FTZ is dirty"
+            );
+        });
+        handle
+            .join()
+            .expect("production-path mxcsr gate thread must not panic");
+    }
+
     #[test]
     fn goldens_cover_empty_and_ordered_topologies_and_full_token_boundary() {
         let fixture = fixture();

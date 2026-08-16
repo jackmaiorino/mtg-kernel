@@ -75,9 +75,9 @@
 //!   the same independent oracle, the fixed algorithm's maximum deviation
 //!   across a several-hundred-thousand-point scan (dense coverage of both
 //!   seams plus random interior sampling) is 1 ULP, with the seams and the
-//!   saturation region exact (0 ULP); see the module's own
-//!   `oracle_correctly_rounded_comparison_v1` test below for the
-//!   committed, generation-script-provenanced version of this claim.
+//!   saturation region exact (0 ULP); see the oracle-comparison test below
+//!   for the committed, generation-script-provenanced version of this
+//!   claim.
 //!
 //! The saturation threshold was also DEFECTIVE (not just imprecise): its
 //! original justification used the half-ULP gap *above* `1.0` (`2^-24`)
@@ -88,11 +88,12 @@
 //! f32::from_bits(0x4110_2cb4)` (`9.010913848876953...`): the previous
 //! `9.0` cutoff was short by about `0.0109`, a region of `11,444`
 //! representable `f32` inputs the original algorithm saturated early
-//! instead of computing (exhaustively verified in this revision's own
-//! verification pass: every one of those 11,444 inputs has correctly-
-//! rounded `tanh(x) == f32::from_bits(0x3f7f_ffff)`, one ULP below `1.0`,
-//! and the fixed general-formula path reproduces that exactly for every
-//! one of them).
+//! instead of computing (exhaustively verified in this revision's test
+//! suite: every one of those 11,444 inputs has correctly-rounded
+//! `tanh(x) == f32::from_bits(0x3f7f_ffff)`, one ULP below `1.0`, and the
+//! fixed general-formula path reproduces that exactly for every one of
+//! them). See the module's own oracle-comparison test for the mpmath
+//! evidence this revision's own verification pass produced.
 //!
 //! # `tanh_f32_v1`: algorithm, operation order pinned
 //!
@@ -123,7 +124,11 @@
 //!    and around this exact boundary in the golden battery below, not
 //!    just argued analytically). This also exactly preserves every
 //!    subnormal input (including the smallest, `f32::from_bits(1)`) and
-//!    signed zero (`tanh_f32_v1(-0.0) == -0.0`, bit-for-bit).
+//!    signed zero (`tanh_f32_v1(-0.0) == -0.0`, bit-for-bit), immune even
+//!    to a dirtied DAZ flag (denormals-are-zero affects hardware FPU
+//!    *arithmetic* on subnormal operands; this branch performs no
+//!    arithmetic at all on `x`, just returns it, so DAZ has nothing to
+//!    act on -- see the dedicated DAZ-immunity test below).
 //! 4. **Saturation region.** If `ax >= TANH_SATURATION_THRESHOLD_V1`
 //!    (`f32::from_bits(0x4110_2cb4)`, `≈9.010914`, the true crossover
 //!    derived above), return `1.0_f32.copysign(x)`.
@@ -201,11 +206,12 @@
 //!    identity the withdrawn `f32`-only version used for `e^t` itself,
 //!    adapted to `expm1`'s `-1` so the outer cancellation never happens.
 //!
-//! Empirical accuracy: see `oracle_correctly_rounded_comparison_v1` below
-//! for the committed, generation-script-provenanced measurement (maximum
-//! deviation 1 ULP across several hundred oracle-table entries spanning
-//! both seams densely, subnormals, the passthrough region, the polynomial
-//! interior at varied exponents, and the saturation region; the seams and
+//! Empirical accuracy: see the module's own independent-oracle comparison
+//! test, `oracle_correctly_rounded_comparison_v1`, for the committed,
+//! generation-script-provenanced measurement (maximum deviation 1 ULP
+//! across several hundred oracle-table entries spanning both seams
+//! densely, subnormals, the passthrough region, the polynomial interior
+//! at varied exponents, and the saturation region; the seams and
 //! saturation region are exact, 0 ULP). See the max-ULP-versus-libm probe
 //! comparison test (`native_forward_determinism_probe_v1.rs`) for the
 //! separate measurement against the production `f32::tanh()` path.
@@ -222,12 +228,21 @@
 //! arithmetic in that call runs. `x86_64`-only, matching the existing
 //! probe's own scope limitation (`native_forward_determinism_probe_v1.rs`);
 //! every `x86_64` target this crate builds for has SSE2 and therefore
-//! MXCSR as a mandatory baseline.
+//! MXCSR as a mandatory baseline. Cost: one `stmxcsr` (a single,
+//! non-serializing store-from-register instruction) per search-scoped
+//! forward call, immeasurably small next to that call's own network
+//! forward pass; it stays permanently rather than becoming a debug-only or
+//! feature-gated check because its entire purpose is catching a *future*
+//! in-process contamination source (a CUDA context, a different numerical
+//! library) that does not exist in this crate's dependency graph today --
+//! removing the gate once it has never fired yet would defeat exactly the
+//! guarantee it exists to provide.
 
 /// Saturation cutoff for [`tanh_f32_v1`]'s magnitude: the true crossover
 /// where correctly-rounded `tanh` first equals exactly `1.0` in `f32`,
 /// found by direct binary search against an independent mpmath oracle
-/// (panel-driven revision; see the module doc above). NOT `9.0`: that was
+/// (panel-driven revision; see the module doc above and
+/// `oracle_correctly_rounded_comparison_v1` below). NOT `9.0`: that was
 /// the withdrawn first version's defect.
 pub(crate) const TANH_SATURATION_THRESHOLD_V1: f32 = f32::from_bits(0x4110_2cb4);
 
@@ -341,9 +356,12 @@ const MXCSR_ROUNDING_CONTROL_MASK_V1: u32 = 0b11;
 /// so it cannot be hoisted or sunk across neighboring floating-point
 /// operations, matching the same rationale the existing determinism
 /// probe's own `read_mxcsr_v1` documents
-/// (`native_forward_determinism_probe_v1.rs`).
+/// (`native_forward_determinism_probe_v1.rs`). `pub(crate)` so other
+/// modules' test code (e.g.
+/// `native_policy_value_net_v1`'s production-path gate coverage test) can
+/// reuse it instead of a fourth copy of this same inline-asm block.
 #[cfg(target_arch = "x86_64")]
-fn read_mxcsr_v1() -> u32 {
+pub(crate) fn read_mxcsr_v1() -> u32 {
     let mut mxcsr: u32 = 0;
     unsafe {
         std::arch::asm!(
@@ -354,13 +372,13 @@ fn read_mxcsr_v1() -> u32 {
     mxcsr
 }
 
-/// Writes the calling thread's MXCSR. Used only by this module's own test
-/// module below (to set up and restore MXCSR mutation scenarios for the
-/// gate-violation tests); nothing in the production path calls it, since
-/// production only ever needs to read and verify, never repair, the
-/// FTZ/DAZ/rounding-control state.
+/// Writes the calling thread's MXCSR. Test-only (`#[cfg(test)]`); nothing
+/// in the production path calls it, since production only ever needs to
+/// read and verify, never repair, the FTZ/DAZ/rounding-control state.
+/// `pub(crate)` for the same cross-module test-reuse reason as
+/// [`read_mxcsr_v1`].
 #[cfg(all(test, target_arch = "x86_64"))]
-fn write_mxcsr_v1(value: u32) {
+pub(crate) fn write_mxcsr_v1(value: u32) {
     unsafe {
         std::arch::asm!(
             "ldmxcsr [{0}]",
@@ -413,10 +431,12 @@ mod tests {
     /// item 1) and the saturation cutoff moved from `9.0` to the true
     /// mpmath-verified crossover `f32::from_bits(0x4110_2cb4)` (DEFECT
     /// fix, item 2), so every case at or near either seam is either new or
-    /// re-verified against the independent oracle. Every bit pattern below
-    /// at the two seams was independently checked against a
-    /// 50-digit-precision mpmath reference before being pinned here, not
-    /// just accepted from a single implementation run.
+    /// re-verified against the independent oracle (see
+    /// `oracle_correctly_rounded_comparison_v1` for the generation-script-
+    /// provenanced version of this same claim over a much larger table).
+    /// Every bit pattern below at the two seams was independently checked
+    /// against a 50-digit-precision mpmath reference before being pinned
+    /// here, not just accepted from a single implementation run.
     #[test]
     fn golden_battery_bits_v1() {
         let cases: &[(&str, f32, u32)] = &[
@@ -838,5 +858,43 @@ mod tests {
         handle
             .join()
             .expect("mxcsr rounding-control-violation thread must not panic");
+    }
+
+    /// Note 1, panel-driven revision: subnormal DAZ-immunity. Denormals-
+    /// are-zero (DAZ) affects the hardware FPU's own *arithmetic* on
+    /// subnormal operands (flushing them to zero before/during an add,
+    /// multiply, etc.); `tanh_f32_v1`'s passthrough branch for a subnormal
+    /// input performs no arithmetic on it at all (`ax <=
+    /// TANH_SMALL_LINEAR_THRESHOLD_V1` is a comparison, and the branch
+    /// simply returns `x`, its own bit pattern, unmodified), so a dirty
+    /// DAZ flag has nothing to act on: this test proves that directly,
+    /// with DAZ actually dirtied in a scoped thread (MXCSR is per-thread),
+    /// not merely argued from the source.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn subnormal_passthrough_is_daz_immune_v1() {
+        let handle = std::thread::spawn(|| {
+            let original = read_mxcsr_v1();
+            write_mxcsr_v1(original | MXCSR_DAZ_BIT_V1);
+            for bits in [0x0000_0001u32, 0x0040_0000, 0x007f_ffff, 0x8000_0001] {
+                let x = f32::from_bits(bits);
+                assert!(
+                    x.is_subnormal(),
+                    "test setup bug: 0x{bits:08x} is not subnormal"
+                );
+                let y = tanh_f32_v1(x);
+                assert_eq!(
+                    y.to_bits(),
+                    bits,
+                    "subnormal passthrough must be bit-exact even with DAZ dirty: \
+                     input=0x{bits:08x} got=0x{:08x}",
+                    y.to_bits()
+                );
+            }
+            write_mxcsr_v1(original);
+        });
+        handle
+            .join()
+            .expect("subnormal daz-immunity thread must not panic");
     }
 }
