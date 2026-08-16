@@ -83,6 +83,11 @@ pub mod ids;
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
 pub mod mana;
+// Model-guided searcher (CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md Section
+// 1.2, implementation item 1): pure PUCT prior-quantization contract
+// (apportionment, expansion order, selection bonus). Disjoint stage-1 core,
+// not wired into any search loop, Store record, or population dispatch.
+pub mod model_guided_search_prior_quantization_v1;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;
