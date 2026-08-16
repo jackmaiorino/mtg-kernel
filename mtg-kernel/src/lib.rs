@@ -88,6 +88,11 @@ pub mod mana;
 // (apportionment, expansion order, selection bonus). Disjoint stage-1 core,
 // not wired into any search loop, Store record, or population dispatch.
 pub mod model_guided_search_prior_quantization_v1;
+// Model-guided searcher (CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md Section
+// 1.3, implementation item 2): pure value-quantization contract (domain
+// canonicalization, perspective flip, scale, round-ties-even, clamp). Same
+// disjoint-core discipline as the prior-quantization module above.
+pub mod model_guided_search_value_quantization_v1;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;
