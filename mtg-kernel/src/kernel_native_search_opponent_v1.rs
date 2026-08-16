@@ -351,7 +351,7 @@ impl KernelNativeSearchOpponentV1 {
         if root.actions.iter().any(|action| action.visits == 0) {
             return Err(KernelNativeSearchErrorV1::CorruptTree);
         }
-        let selected_index = select_final_root_action_v1(root)?;
+        let selected_index = select_final_root_action_v1(&root.actions)?;
         let root_action_stats = root
             .actions
             .iter()
@@ -374,18 +374,29 @@ impl KernelNativeSearchOpponentV1 {
     }
 }
 
+/// `pub(crate)` (not private): `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md`
+/// Section 1.1 inherits this action-statistics record verbatim ("Truncating
+/// signed integer division for means... no floating-point comparison
+/// controls an action, anywhere, including in the new terms this design
+/// adds"). `model_guided_search_core_v1` reuses this exact type as the
+/// element type of its own node's action array, adding only a parallel
+/// `prior: Vec<u32>` array alongside it (the new design's node needs a
+/// cached PUCT prior per action, which this v1-owned type has no field for);
+/// no field, method, or behavior here changes. This is visibility-only
+/// sharing, not a fork: v1's own tests (this module's `#[cfg(test)]`)
+/// exercise the identical type unchanged.
 #[derive(Debug, Clone)]
-struct SearchActionStatV1 {
-    visits: u32,
-    value_sum: i64,
+pub(crate) struct SearchActionStatV1 {
+    pub(crate) visits: u32,
+    pub(crate) value_sum: i64,
     /// Multiple information-set successors may follow one action across
     /// determinizations. The vector is insertion-ordered and contains no
     /// duplicates; no hash map participates in search.
-    child_nodes: Vec<usize>,
+    pub(crate) child_nodes: Vec<usize>,
 }
 
 impl SearchActionStatV1 {
-    fn mean(&self) -> i64 {
+    pub(crate) fn mean(&self) -> i64 {
         if self.visits == 0 {
             0
         } else {
@@ -613,9 +624,24 @@ fn select_tree_action_v1(
     Ok(best_index)
 }
 
-fn select_final_root_action_v1(root: &SearchNodeV1) -> Result<u32, KernelNativeSearchErrorV1> {
+/// `pub(crate)`, and takes the action-statistics slice directly rather than
+/// `&SearchNodeV1`: `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.1
+/// inherits this final-selection rule verbatim ("the selected index is the
+/// most visited root action, then the higher fixed-point mean, then the
+/// lower stable index"), and `model_guided_search_core_v1`'s own root node
+/// type is not `SearchNodeV1` (it carries an extra cached-prior field v1's
+/// node has no room for). Narrowing the parameter to `&[SearchActionStatV1]`
+/// lets both node types call the identical function with zero duplicated
+/// logic; this is a signature-only change; the algorithm, tie rule, and every
+/// existing call site's observable behavior are byte-for-byte unchanged (the
+/// one production call site below is updated from `select_final_root_action_v1(root)`
+/// to `select_final_root_action_v1(&root.actions)`, which reads the exact
+/// same data).
+pub(crate) fn select_final_root_action_v1(
+    actions: &[SearchActionStatV1],
+) -> Result<u32, KernelNativeSearchErrorV1> {
     let mut best = None::<(usize, u32, i64)>;
-    for (index, action) in root.actions.iter().enumerate() {
+    for (index, action) in actions.iter().enumerate() {
         let candidate = (index, action.visits, action.mean());
         if best.is_none_or(|current| {
             candidate.1 > current.1 || (candidate.1 == current.1 && candidate.2 > current.2)
@@ -627,7 +653,15 @@ fn select_final_root_action_v1(root: &SearchNodeV1) -> Result<u32, KernelNativeS
         .map_err(|_| KernelNativeSearchErrorV1::CorruptTree)
 }
 
-fn integer_ucb_bonus_v1(parent_visits: u32, child_visits: u32) -> u64 {
+/// `pub(crate)`: `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.2's
+/// selection-bonus formula is defined as v1's own `bonus(a)` (this function,
+/// unchanged) multiplied by the cached PUCT prior fraction:
+/// `bonus_PUCT(a) = floor(bonus(a) * P_int(a) / 1,000,000)`. Reused directly
+/// by `model_guided_search_core_v1` and by
+/// `model_guided_search_prior_quantization_v1::puct_bonus_v1`'s own doc
+/// comment, which names this exact function as the unchanged core it wraps.
+/// Visibility-only change; the arithmetic is untouched.
+pub(crate) fn integer_ucb_bonus_v1(parent_visits: u32, child_visits: u32) -> u64 {
     debug_assert!(child_visits > 0);
     let log_term = integer_ilog2_v1(u64::from(parent_visits) + 1) + 1;
     let radicand = 1_000_000u64
@@ -672,7 +706,16 @@ struct SearchNodeKeyEnvelopeV1<'a> {
     remaining_depth: u16,
 }
 
-fn search_node_key_v1(
+/// `pub(crate)`: the tree-key computation is inherited verbatim by
+/// `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.1 ("The tree key
+/// commits to the acting-player Observation V5 information set, ordered
+/// legal-action semantics, and remaining depth"); `model_guided_search_authority_v1`
+/// already reuses the `KERNEL_NATIVE_SEARCH_NODE_KEY_V1` string identity
+/// unchanged, and `model_guided_search_core_v1` reuses this exact function
+/// (not a re-derivation) so the two algorithms' tree keys are structurally
+/// guaranteed identical, not just identically labeled. Visibility-only
+/// change; behavior is untouched.
+pub(crate) fn search_node_key_v1(
     session: &FastActorSessionV1,
     decision: FastActorDecisionV1,
     remaining_depth: u16,
@@ -691,7 +734,18 @@ fn search_node_key_v1(
     Ok(Sha256::digest(bytes).into())
 }
 
-fn derive_simulation_seed_v1(
+/// `pub(crate)`: the seed-domain-separation formula is inherited verbatim by
+/// `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.1 ("Seeds
+/// domain-separated from (authority digest, episode id, physical decision
+/// id, substep index, simulation ordinal, player to act)"). This function
+/// already takes `authority_digest` as a plain parameter, decoupled from
+/// which authority TYPE produced it, so `model_guided_search_core_v1` reuses
+/// it directly by passing `ModelGuidedSearchAuthorityV1::digest()` in place
+/// of v1's own digest; `model_guided_search_authority_v1` already requires
+/// `seed_domain == KERNEL_NATIVE_SEARCH_SEED_DOMAIN_V1` byte-for-byte
+/// (`validate`'s `InvalidSeedDomain` check), so this is the same domain
+/// string, not a new one. Visibility-only change; behavior is untouched.
+pub(crate) fn derive_simulation_seed_v1(
     authority_digest: [u8; 32],
     decision: FastActorDecisionV1,
     simulation_ordinal: u64,
@@ -726,7 +780,12 @@ fn terminal_value_v1(
     }
 }
 
-fn natural_terminal_value_v1(
+/// `pub(crate)`: `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.3,
+/// site 1 ("Natural terminal... Unchanged: scored exactly +10,000, 0, or
+/// -10,000 for root win, draw, or loss. The value head is never invoked
+/// here"). `model_guided_search_core_v1` reuses this exact function for
+/// natural terminals; visibility-only change, behavior untouched.
+pub(crate) fn natural_terminal_value_v1(
     outcome: TerminalOutcomeV1,
     root_player: PlayerId,
 ) -> Result<i32, KernelNativeSearchErrorV1> {
@@ -1034,7 +1093,10 @@ fn unbiased_index_v1(rng: &mut SplitMix64, bound: u64) -> u64 {
     }
 }
 
-fn player_id_v1(player: PlayerSeatV1) -> PlayerId {
+/// `pub(crate)`: trivial `PlayerSeatV1` -> `PlayerId` mapping, reused by
+/// `model_guided_search_core_v1` so both algorithms agree on the identical
+/// mapping by construction rather than by copy. Visibility-only change.
+pub(crate) fn player_id_v1(player: PlayerSeatV1) -> PlayerId {
     match player {
         PlayerSeatV1::P0 => PlayerId::P0,
         PlayerSeatV1::P1 => PlayerId::P1,
@@ -1530,7 +1592,7 @@ mod tests {
         node.visits = 12;
         assert_eq!(select_tree_action_v1(&node, PlayerId::P0).unwrap(), 0);
         assert_eq!(select_tree_action_v1(&node, PlayerId::P1).unwrap(), 0);
-        assert_eq!(select_final_root_action_v1(&node).unwrap(), 0);
+        assert_eq!(select_final_root_action_v1(&node.actions).unwrap(), 0);
         let tree = SearchTreeV1::new(key, PlayerId::P0, 3).unwrap();
         assert_eq!(tree.find_node(key), Some(0));
         assert_eq!(tree.find_node([8; 32]), None);
