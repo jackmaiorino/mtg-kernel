@@ -89,6 +89,14 @@ pub mod mana;
 // reviewed diff. See the module's own doc comment for the full field-by-
 // field mapping against v1's `kernel_native_search_opponent_v1`.
 pub mod model_guided_search_authority_v1;
+// Model-guided searcher (CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md Sections
+// 1.2-1.3, implementation item 5): the new algorithm's own search-loop path
+// (prior-ordered expansion, value-head leaf dispatch via a MOCK evaluator
+// seam). v1's own path (`kernel_native_search_opponent_v1`) is untouched;
+// this module's real-forward wiring into any launcher/eval path is item 6,
+// out of scope here. See the module's own doc comment for the sharing
+// architecture against v1 and the quantization contract modules below.
+pub mod model_guided_search_core_v1;
 // Model-guided searcher (CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md Section
 // 1.2, implementation item 1): pure PUCT prior-quantization contract
 // (apportionment, expansion order, selection bonus). Disjoint stage-1 core,
