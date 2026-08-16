@@ -75,9 +75,9 @@
 //!   the same independent oracle, the fixed algorithm's maximum deviation
 //!   across a several-hundred-thousand-point scan (dense coverage of both
 //!   seams plus random interior sampling) is 1 ULP, with the seams and the
-//!   saturation region exact (0 ULP); see the module's own oracle-
-//!   comparison verification for the committed, generation-script-
-//!   provenanced version of this claim.
+//!   saturation region exact (0 ULP); see the module's own
+//!   `oracle_correctly_rounded_comparison_v1` test below for the
+//!   committed, generation-script-provenanced version of this claim.
 //!
 //! The saturation threshold was also DEFECTIVE (not just imprecise): its
 //! original justification used the half-ULP gap *above* `1.0` (`2^-24`)
@@ -201,15 +201,14 @@
 //!    identity the withdrawn `f32`-only version used for `e^t` itself,
 //!    adapted to `expm1`'s `-1` so the outer cancellation never happens.
 //!
-//! Empirical accuracy: measured maximum deviation 1 ULP across several
-//! hundred oracle-table entries spanning both seams densely, subnormals,
-//! the passthrough region, the polynomial interior at varied exponents,
-//! and the saturation region; the seams and saturation region are exact,
-//! 0 ULP (see the independent-oracle verification landing in a follow-up
-//! commit for the committed, generation-script-provenanced version of this
-//! measurement). See the max-ULP-versus-libm probe comparison test
-//! (`native_forward_determinism_probe_v1.rs`) for the separate measurement
-//! against the production `f32::tanh()` path.
+//! Empirical accuracy: see `oracle_correctly_rounded_comparison_v1` below
+//! for the committed, generation-script-provenanced measurement (maximum
+//! deviation 1 ULP across several hundred oracle-table entries spanning
+//! both seams densely, subnormals, the passthrough region, the polynomial
+//! interior at varied exponents, and the saturation region; the seams and
+//! saturation region are exact, 0 ULP). See the max-ULP-versus-libm probe
+//! comparison test (`native_forward_determinism_probe_v1.rs`) for the
+//! separate measurement against the production `f32::tanh()` path.
 //!
 //! # FTZ/DAZ/rounding-mode entry gate
 //!
@@ -567,6 +566,93 @@ mod tests {
              change (constants, operation order, or branch structure), not \
              a flaky test -- update deliberately if the change is reviewed \
              and intended"
+        );
+    }
+
+    // -------------------------------------------------------------
+    // Independent oracle comparison (item 3, panel-driven revision):
+    // `tanh_f32_v1` compared against a table computed independently of
+    // this crate's own implementation, by `mpmath` at 50 decimal digits
+    // of precision, rounded to `f32` by a single safe double-rounding
+    // through `f64`. Regenerate with:
+    //   python python/tools/generate_deterministic_math_v1_oracle_goldens.py
+    // (requires `mpmath`; see that script's own module doc for why it is
+    // not a project dependency). Covers, per input_bits ascending: both
+    // seams densely (64 consecutive bit patterns each), subnormals, the
+    // passthrough region, the polynomial interior at varied exponents
+    // (both signs), and the saturation region including extremes and the
+    // infinities.
+    // -------------------------------------------------------------
+
+    include!("deterministic_math_v1_oracle_table_v1.rs");
+
+    /// Signed-magnitude-to-ordered-integer key: adjacent representable
+    /// `f32` values map to keys exactly 1 apart, matching `f32`'s own
+    /// total order (ignoring NaN). Standard technique (Bruce Dawson's
+    /// "comparing floating point numbers").
+    fn ordered_key_v1(bits: u32) -> i64 {
+        let signed = bits as i32;
+        let ordered = if signed < 0 {
+            i32::MIN.wrapping_sub(signed)
+        } else {
+            signed
+        };
+        ordered as i64
+    }
+
+    fn ulp_distance_v1(bits_a: u32, bits_b: u32) -> u64 {
+        (ordered_key_v1(bits_a) - ordered_key_v1(bits_b)).unsigned_abs()
+    }
+
+    /// Bit ranges, inclusive, where the oracle table's own construction
+    /// (see the generation script) guarantees the entries sit at or
+    /// immediately adjacent to one of the two seams, or in the saturation
+    /// region: these must be *exact* (0 ULP), not merely within the
+    /// general 1-ULP contract goal, since seam and saturation correctness
+    /// is exactly what items 1 and 2 of the panel-driven revision fixed.
+    fn must_be_exact_v1(input_bits: u32) -> bool {
+        let magnitude = input_bits & 0x7fff_ffff;
+        let near_small_seam = ((0x3980_0000 - 32)..=(0x3980_0000 + 31)).contains(&magnitude);
+        let near_sat_seam = ((0x4110_2cb4 - 32)..=(0x4110_2cb4 + 31)).contains(&magnitude);
+        let saturated = magnitude >= 0x4110_2cb4;
+        near_small_seam || near_sat_seam || saturated
+    }
+
+    #[test]
+    fn oracle_correctly_rounded_comparison_v1() {
+        let mut max_ulp = 0u64;
+        let mut max_ulp_bits = 0u32;
+        let mut exact_count = 0u32;
+        for &(input_bits, expected_bits) in ORACLE_TABLE_V1.iter() {
+            let input = f32::from_bits(input_bits);
+            let actual_bits = tanh_f32_v1(input).to_bits();
+            let distance = ulp_distance_v1(actual_bits, expected_bits);
+            if distance == 0 {
+                exact_count += 1;
+            }
+            if distance > max_ulp {
+                max_ulp = distance;
+                max_ulp_bits = input_bits;
+            }
+            if must_be_exact_v1(input_bits) {
+                assert_eq!(
+                    actual_bits, expected_bits,
+                    "seam/saturation entry must be exact: input=0x{input_bits:08x} \
+                     ({input:?}) got=0x{actual_bits:08x} expected=0x{expected_bits:08x}"
+                );
+            } else {
+                assert!(
+                    distance <= 1,
+                    "contract goal is at most 1 ULP: input=0x{input_bits:08x} ({input:?}) \
+                     got=0x{actual_bits:08x} expected=0x{expected_bits:08x} ulp={distance}"
+                );
+            }
+        }
+        println!(
+            "oracle_correctly_rounded_comparison_v1: {} entries, {exact_count} exact (0 ULP), \
+             max_ulp={max_ulp} at input_bits=0x{max_ulp_bits:08x} ({:?})",
+            ORACLE_TABLE_V1.len(),
+            f32::from_bits(max_ulp_bits),
         );
     }
 
