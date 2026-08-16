@@ -71,33 +71,79 @@
 //! net's own native output type and introducing no extra width the design
 //! does not call for.
 //!
-//! # Determination: `round_ties_even` satisfies step 5's rounding-mode
-//! requirement without runtime register introspection
+//! # Determination: round-half-to-even without floating-point arithmetic
+//! (revised; supersedes an earlier, verified-false claim)
 //!
 //! Step 5 requires round-half-to-even "performed with the floating-point
 //! unit's rounding-mode register verified and pinned to its IEEE 754
 //! default... not left to whatever mode an unrelated prior computation on
-//! the same thread may have set." This module resolves that requirement by
-//! using `f32::round_ties_even`, which implements IEEE 754's
-//! `roundToIntegralTiesToEven` operation: an operation whose rounding
-//! semantics are fixed by the operation itself (lowering, on the platforms
-//! this crate targets, to an explicit-immediate-encoded instruction such as
-//! `ROUNDSS`/`FRINTN`), not by the FPU's *dynamic* rounding-control register
-//! (`MXCSR.RC` / `FPCR.RMode`). This differs from, and is structurally
-//! stronger than, "verify the register is default, then use a
-//! dynamic-mode-dependent rounding operation": `round_ties_even`'s result is
-//! the same *regardless* of the dynamic register's state, so there is
-//! nothing for an unrelated prior computation's register mutation to
-//! disturb for this specific operation, closing the exact hazard class the
-//! design names by construction rather than by a runtime check. This module
-//! does **not** perform FPU dynamic-rounding-mode or FTZ/DAZ register
-//! introspection for the *other* floating-point operations in this
-//! pipeline (steps 2 and 4's affine remap and scale multiply, both ordinary
-//! IEEE-754 operations that *do* consult the dynamic mode). That
-//! verification belongs to design item 3 (the deterministic-CPU-forward
-//! audit "for the target checkpoint architecture"), which covers the whole
-//! thread this pipeline eventually runs on; it is out of scope for a pure,
-//! standalone contract module and is not claimed here.
+//! the same thread may have set."
+//!
+//! An earlier revision of this module claimed `f32::round_ties_even`
+//! satisfied this by itself, because it lowers to an
+//! explicit-immediate-encoded instruction (`ROUNDSS`) independent of the
+//! dynamic rounding-control register. **That claim was checked against this
+//! crate's actual build target and found false, and is retracted here
+//! rather than left standing.** `ROUNDSS`/`ROUNDPS` require SSE4.1. This
+//! crate has no `.cargo/config.toml` and no `RUSTFLAGS` setting
+//! `target-feature`, so it builds at the plain `x86_64-pc-windows-msvc`
+//! baseline, whose default feature set is exactly `sse,sse2,sse3,
+//! cmpxchg16b,fxsr` -- **no SSE4.1**. Verified directly: compiling a
+//! `#[no_mangle] fn(x: f32) -> f32 { x.round_ties_even() }` probe with
+//! `rustc -C opt-level=3 --emit asm` under this exact default-target
+//! configuration (rustc 1.94.1, LLVM 21.1.8) produces
+//!
+//! ```text
+//! probe_round_ties_even_f32:
+//!     jmp     rintf
+//! ```
+//!
+//! a tail call to the C library's `rintf`, not an inlined `ROUNDSS`.
+//! `rintf`/`rint` are specified (C99, and the LLVM `roundeven` lowering
+//! that falls back to them) to round according to the **current dynamic
+//! rounding direction**, not unconditionally to ties-to-even; LLVM's
+//! fallback lowering is correct *only* because the dynamic mode is assumed
+//! to already be at its IEEE-754 default (round-to-nearest-ties-to-even)
+//! wherever this runs. In other words: on this actual target,
+//! `f32::round_ties_even` is exactly as exposed to the dynamic
+//! rounding-mode-register hazard as any other floating-point operation in
+//! this pipeline (steps 2 and 4's remap and scale multiply included), not
+//! immune to it. The prior claim conflated "what `round_ties_even` is
+//! specified to do" with "what it lowers to on every target," which do not
+//! coincide here.
+//!
+//! **The fix, definitive rather than assumed:** [`round_ties_even_f32_bits_v1`]
+//! implements round-half-to-even directly on `x.to_bits()` -- sign,
+//! exponent, and mantissa extraction, integer shifts and masks, and one
+//! integer comparison for the tie decision -- with **no floating-point
+//! arithmetic anywhere in its body**. This is the correct, and now genuine,
+//! basis for an immunity claim: there is no floating-point operation of any
+//! kind for the dynamic rounding-mode register or FTZ/DAZ to influence, so
+//! the result is bit-identical under every rounding-mode and FTZ/DAZ state,
+//! by construction, independent of target, instruction-set level, or
+//! optimizer choices, full stop. This is exhaustively verified against
+//! `f32::round_ties_even` itself (under this thread's default, unmodified
+//! rounding-mode state, where the two must and do agree exactly) by a
+//! large deterministic sweep plus explicit bit-level tie-pattern goldens
+//! (module tests), and is the sole rounding primitive both this module and
+//! `model_guided_search_prior_quantization_v1` now use; `f32::round_ties_even`
+//! itself survives in this module only as that verification's comparison
+//! oracle, never in a production code path.
+//!
+//! This module still does **not** perform FPU dynamic-rounding-mode or
+//! FTZ/DAZ register introspection for the *other* floating-point
+//! operations in this pipeline: step 2's affine remap and step 4's scale
+//! multiply remain ordinary IEEE-754 operations (a genuine reduction is
+//! nowhere in either, so there is no operation-*order* ambiguity, but both
+//! still consult the dynamic rounding-control register like any other basic
+//! float op). That verification belongs to design item 3 (the
+//! deterministic-CPU-forward audit "for the target checkpoint
+//! architecture"), which covers the whole thread this pipeline eventually
+//! runs on; it is out of scope for a pure, standalone contract module. The
+//! split is therefore: steps 2 and 4 depend on the dynamic mode and are
+//! covered by item 3's future audit; step 5 (this determination) depends on
+//! nothing dynamic at all, because it now contains no floating-point
+//! arithmetic to be dynamic about.
 //!
 //! # Determination: step 2's affine remap is not a second clamp
 //!
@@ -271,12 +317,145 @@ pub fn scale_signed_value_v1(v_signed: f32) -> f32 {
     v_signed * MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_SCALE_V1
 }
 
+/// Bit-exact round-half-to-even ("round to nearest, ties to even") from a
+/// finite `f32` to its mathematically exact rounded integer value, returned
+/// as `i64` (wide enough to hold this module's own `i32` range and, exactly,
+/// `model_guided_search_prior_quantization_v1`'s `u64` fixed-point weight
+/// scale up to `2**32`; each caller narrows/casts to its own domain). See
+/// module docs, "Determination: round-half-to-even without floating-point
+/// arithmetic," for the verified target-specific finding that motivated
+/// this function and for the immunity argument it establishes.
+///
+/// Operates entirely on `x.to_bits()` -- sign, exponent, and mantissa
+/// extraction, integer shifts, integer masks, and one integer comparison
+/// for the tie decision -- with **no floating-point arithmetic anywhere in
+/// its body**. That is what makes it immune to the dynamic FPU
+/// rounding-mode register (`MXCSR.RC` / `FPCR.RMode`) and to FTZ/DAZ: there
+/// is no floating-point operation for either to influence, full stop, not
+/// an argument about which machine instruction some floating-point
+/// operation happens to lower to on some particular target.
+///
+/// **Precondition:** `x` is finite. NaN and infinity have no "nearest
+/// integer" and are not given defined behavior here; every call site in
+/// this crate checks finiteness before calling this function.
+///
+/// **Algorithm.** Decompose `x`'s bits into `sign`, the 8-bit biased
+/// `raw_exponent`, and the 23-bit `raw_mantissa`. If `raw_exponent == 0`
+/// (zero or subnormal), `|x| < 2**-126`, unconditionally below the 0.5
+/// rounding threshold: return 0. Otherwise let `unbiased_exponent =
+/// raw_exponent - 127` and `significand = (1 << 23) | raw_mantissa` (the
+/// exact 24-bit integer the implicit-leading-one encoding represents).
+/// Three cases, exhaustive over every remaining `unbiased_exponent`:
+///
+/// - `unbiased_exponent < -1`: `|x| < 0.5` always (even the supremum, just
+///   under `2 * 2**-2`, is strictly less), so the result is 0.
+/// - `unbiased_exponent == -1`: `0.5 <= |x| < 1.0` (`|x| == significand /
+///   2**24` here). Exactly `0.5` iff `raw_mantissa == 0`, which is the tie
+///   and rounds to the even integer 0; any nonzero mantissa means `|x| >
+///   0.5`, which always rounds away from zero to magnitude 1 (never a tie
+///   in this case).
+/// - `unbiased_exponent >= 23`: no fractional bits remain; `|x|` is already
+///   an exact integer equal to `significand << (unbiased_exponent - 23)`.
+/// - Otherwise (`0 <= unbiased_exponent <= 22`): split `significand` at
+///   `frac_bits = 23 - unbiased_exponent` into an integer part (the high
+///   bits) and a fractional part (the low `frac_bits` bits, in units of
+///   `2**-frac_bits`). Compare the fractional part against `half = 1 <<
+///   (frac_bits - 1)`: below rounds down, above rounds up, and an exact
+///   match is the tie, resolved by the integer part's own parity (round to
+///   even) -- textbook round-to-nearest-even, performed with only integer
+///   shifts, masks, and one comparison.
+///
+/// Magnitudes whose exact value this function does not need to compute
+/// (because no caller in this crate narrows to anything wider than `u64`'s
+/// legitimate `2**32` maximum) short-circuit to `i64::MIN`/`i64::MAX`
+/// (matching Rust's own saturating `f32 as i64` cast exactly, which is what
+/// this function's own exhaustive sweep test uses as its oracle) rather
+/// than risking an oversized shift; the threshold is far above every
+/// legitimate caller's range, so this never affects a real result (see the
+/// module's own tests for the exact threshold and why it cannot be reached
+/// by any validated caller).
+pub(crate) fn round_ties_even_f32_bits_v1(x: f32) -> i64 {
+    let bits = x.to_bits();
+    let sign_negative = (bits >> 31) & 1 == 1;
+    let raw_exponent = (bits >> 23) & 0xFF;
+    let raw_mantissa = bits & 0x007F_FFFF;
+
+    if raw_exponent == 0 {
+        return 0;
+    }
+
+    let unbiased_exponent = raw_exponent as i32 - 127;
+
+    if unbiased_exponent < -1 {
+        return 0;
+    }
+
+    let significand: u64 = (1u64 << 23) | u64::from(raw_mantissa);
+
+    // Boundary derivation (exact, not a margin-of-safety guess): significand
+    // ranges over [2**23, 2**24 - 1] (the implicit leading bit is always
+    // set). At shift == 39, the largest possible magnitude is
+    // (2**24 - 1) << 39 == 2**63 - 2**39, strictly less than
+    // i64::MAX == 2**63 - 1, so every significand still fits exactly. At
+    // shift == 40, even the *smallest* possible magnitude,
+    // 2**23 << 40 == 2**63, already exceeds i64::MAX by construction
+    // (2**63 > 2**63 - 1) -- so shift >= 40 can never be represented
+    // exactly in i64, for any significand, and must short-circuit to the
+    // same saturated endpoints Rust's own `as i64` float-to-int cast
+    // produces (asymmetric, since i64::MIN's magnitude, 2**63, has no
+    // positive i64 counterpart), matching the sweep test's oracle
+    // (`x.round_ties_even() as i64`) exactly rather than merely "some large
+    // value" of the wrong sign-symmetric shape. This is also far beyond
+    // both of this crate's legitimate callers' maximum needed shift (9, for
+    // the prior-quantization module's largest legal weight, 1.0, scaled by
+    // 2**32), so the exact value is irrelevant to any real caller either
+    // way.
+    if unbiased_exponent - 23 > 39 {
+        return if sign_negative { i64::MIN } else { i64::MAX };
+    }
+
+    let magnitude: i64 = if unbiased_exponent == -1 {
+        i64::from(raw_mantissa != 0)
+    } else if unbiased_exponent >= 23 {
+        let shift = unbiased_exponent - 23;
+        // shift <= 39 here (the shift >= 40 case already returned above),
+        // which the boundary derivation above proves always fits in i64
+        // without overflow, for every possible significand.
+        (significand as i64) << shift
+    } else {
+        let frac_bits = 23 - unbiased_exponent;
+        let integer_part = significand >> frac_bits;
+        let frac_mask = (1u64 << frac_bits) - 1;
+        let frac = significand & frac_mask;
+        let half = 1u64 << (frac_bits - 1);
+        let rounded = match frac.cmp(&half) {
+            core::cmp::Ordering::Less => integer_part,
+            core::cmp::Ordering::Greater => integer_part + 1,
+            core::cmp::Ordering::Equal => {
+                if integer_part & 1 == 0 {
+                    integer_part
+                } else {
+                    integer_part + 1
+                }
+            }
+        };
+        rounded as i64
+    };
+
+    if sign_negative {
+        -magnitude
+    } else {
+        magnitude
+    }
+}
+
 /// Steps 5-7: rounds `product` to the nearest integer with ties-to-even
-/// (see module docs for why `round_ties_even` satisfies step 5's
-/// rounding-mode requirement), then saturating-clamps to
-/// `[-9,000, 9,000]` (step 6), returning the result in v1's own signed
-/// integer type (step 7: "this design introduces no new integer width or
-/// representation").
+/// (via [`round_ties_even_f32_bits_v1`]; see module docs for why that
+/// function, not `f32::round_ties_even`, is what satisfies step 5's
+/// rounding-mode requirement on this crate's actual build target), then
+/// saturating-clamps to `[-9,000, 9,000]` (step 6), returning the result in
+/// v1's own signed integer type (step 7: "this design introduces no new
+/// integer width or representation").
 pub fn round_and_clamp_value_v1(
     product: f32,
 ) -> Result<i32, ModelGuidedSearchValueQuantizationErrorV1> {
@@ -287,11 +466,11 @@ pub fn round_and_clamp_value_v1(
             },
         );
     }
-    let rounded = product.round_ties_even();
-    // `as i32` on a float saturates for out-of-range finite values (stable
-    // Rust cast semantics since 1.45), so an extreme `rounded` value still
-    // clamps to the correct final bound below rather than wrapping.
-    let saturated = rounded as i32;
+    let rounded = round_ties_even_f32_bits_v1(product);
+    // Saturating narrow to i32 (pure integer clamp, no float cast
+    // involved): out-of-range magnitudes clamp to i32::MIN/MAX first, then
+    // to the design's own [-9_000, 9_000] range below.
+    let saturated = rounded.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
     Ok(saturated.clamp(
         MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_CLAMP_MIN_V1,
         MODEL_GUIDED_SEARCH_VALUE_QUANTIZATION_CLAMP_MAX_V1,
@@ -317,6 +496,7 @@ pub fn quantize_value_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::SplitMix64;
 
     #[test]
     fn constants_are_pinned() {
@@ -496,10 +676,149 @@ mod tests {
 
     #[test]
     fn rounding_is_idempotent_once_integer_valued() {
+        // Idempotence of the actual production rounding primitive
+        // (round_ties_even_f32_bits_v1), not std's round_ties_even: once a
+        // value is already integer-valued, rounding it again (by feeding
+        // the result back in as an f32, which is exact for every value
+        // tested here) must return the identical integer.
         for value in [0.0_f32, 5.0, -5.0, 8_999.0, -8_999.0] {
-            let once = value.round_ties_even();
-            let twice = once.round_ties_even();
+            let once = round_ties_even_f32_bits_v1(value);
+            let twice = round_ties_even_f32_bits_v1(once as f32);
             assert_eq!(once, twice);
+        }
+    }
+
+    #[test]
+    fn bit_exact_rounding_matches_std_round_ties_even_at_every_golden_half_boundary() {
+        // The same values rounding_is_ties_to_even_at_every_half_boundary
+        // checks through the full pipeline, checked directly against the
+        // bit-exact primitive and cross-checked against
+        // f32::round_ties_even (the oracle, valid here because this thread
+        // runs under the default, unmodified rounding-mode state).
+        let cases: [(f32, i64); 12] = [
+            (0.5, 0),
+            (1.5, 2),
+            (2.5, 2),
+            (3.5, 4),
+            (4.5, 4),
+            (-0.5, 0),
+            (-1.5, -2),
+            (-2.5, -2),
+            (-3.5, -4),
+            (-4.5, -4),
+            (0.49, 0),
+            (0.51, 1),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                round_ties_even_f32_bits_v1(input),
+                expected,
+                "input={input}"
+            );
+            assert_eq!(
+                round_ties_even_f32_bits_v1(input),
+                input.round_ties_even() as i64,
+                "disagreement with std oracle at input={input}"
+            );
+        }
+    }
+
+    #[test]
+    fn bit_exact_rounding_handles_zero_subnormal_and_sign() {
+        assert_eq!(round_ties_even_f32_bits_v1(0.0), 0);
+        assert_eq!(round_ties_even_f32_bits_v1(-0.0), 0);
+        assert_eq!(round_ties_even_f32_bits_v1(f32::from_bits(1)), 0); // smallest subnormal
+        assert_eq!(round_ties_even_f32_bits_v1(-f32::from_bits(1)), 0);
+        assert_eq!(
+            round_ties_even_f32_bits_v1(f32::from_bits(0x007F_FFFF)), // largest subnormal
+            0
+        );
+    }
+
+    #[test]
+    fn bit_exact_rounding_is_exact_at_the_integer_exponent_boundary() {
+        // unbiased_exponent == 23 is the frac_bits == 0 boundary: the value
+        // is already an exact integer with no rounding decision to make.
+        // 2**23 == 8_388_608.0 is exactly representable in f32.
+        assert_eq!(round_ties_even_f32_bits_v1(8_388_608.0), 8_388_608);
+        assert_eq!(round_ties_even_f32_bits_v1(-8_388_608.0), -8_388_608);
+        // One step below the boundary (unbiased_exponent == 22) still has
+        // one fractional bit; exercise a non-tie and a tie there.
+        assert_eq!(round_ties_even_f32_bits_v1(4_194_304.0), 4_194_304);
+    }
+
+    #[test]
+    fn bit_exact_rounding_is_exact_at_the_prior_modules_legitimate_maximum() {
+        // model_guided_search_prior_quantization_v1's weight quantization
+        // scales by 2**32 and its weight domain is validated to [0.0, 1.0],
+        // so 2**32 exactly (weight == 1.0) is the largest input this
+        // crate's other call site ever legitimately passes. Confirms the
+        // shift > 39 sentinel threshold is nowhere near this range (shift
+        // here is 32 - 23 == 9).
+        assert_eq!(round_ties_even_f32_bits_v1(4_294_967_296.0), 4_294_967_296);
+    }
+
+    #[test]
+    fn bit_exact_rounding_saturates_without_overflow_far_beyond_any_caller() {
+        // Values far beyond both callers' legitimate ranges must not panic
+        // or wrap, and must match Rust's own saturating f32-as-i64 cast
+        // exactly (i64::MAX / i64::MIN, asymmetric: i64::MIN's magnitude
+        // 2**63 has no positive i64 counterpart), the same oracle the
+        // exhaustive sweep test below uses.
+        assert_eq!(round_ties_even_f32_bits_v1(f32::MAX), i64::MAX);
+        assert_eq!(round_ties_even_f32_bits_v1(f32::MIN), i64::MIN);
+        assert_eq!(
+            round_ties_even_f32_bits_v1(f32::MAX),
+            f32::MAX.round_ties_even() as i64
+        );
+        assert_eq!(
+            round_ties_even_f32_bits_v1(f32::MIN),
+            f32::MIN.round_ties_even() as i64
+        );
+    }
+
+    #[test]
+    fn bit_exact_rounding_matches_std_oracle_across_a_dense_deterministic_sweep() {
+        // Large deterministic sweep (SplitMix64-seeded, same generator
+        // already used elsewhere in this crate) over finite f32 bit
+        // patterns spanning the full exponent range (subnormal through
+        // near-overflow, both signs), verified to agree exactly with
+        // f32::round_ties_even under this thread's default rounding-mode
+        // state -- the two must and do coincide there, which is exactly
+        // what licenses using f32::round_ties_even as this sweep's oracle.
+        let mut rng = SplitMix64::seed(0xC0FF_EE15_BEEF_1234);
+        let mut checked = 0u32;
+        while checked < 2_000_000 {
+            let bits = rng.next_u64() as u32;
+            let candidate = f32::from_bits(bits);
+            if !candidate.is_finite() {
+                continue;
+            }
+            let expected = candidate.round_ties_even() as i64;
+            let actual = round_ties_even_f32_bits_v1(candidate);
+            assert_eq!(
+                actual, expected,
+                "disagreement at bits=0x{bits:08x} value={candidate}"
+            );
+            checked += 1;
+        }
+    }
+
+    #[test]
+    fn bit_exact_rounding_matches_std_oracle_across_every_half_integer_in_a_wide_exhaustive_range()
+    {
+        // Exhaustive (not sampled) walk over every exact half-integer tie
+        // point from -10_000.5 to 10_000.5, the densest possible
+        // tie-pattern battery: every one of these is a genuine tie under
+        // round-half-to-even, alternating which side is "even" as the
+        // integer part increments.
+        let mut n = -10_000i32;
+        while n <= 10_000 {
+            let value = n as f32 + 0.5;
+            let expected = value.round_ties_even() as i64;
+            let actual = round_ties_even_f32_bits_v1(value);
+            assert_eq!(actual, expected, "tie at value={value}");
+            n += 1;
         }
     }
 

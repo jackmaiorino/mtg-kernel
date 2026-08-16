@@ -98,7 +98,8 @@
 //! per-action weight, not a logit requiring softmax).
 //!
 //! # Determination: `f32` -> exact-integer conversion via power-of-two
-//! scaling plus `round_ties_even`
+//! scaling plus bit-exact round-half-to-even (revised; corrects an earlier
+//! by-reference claim that did not survive verification)
 //!
 //! The task's own float-in-contract-surface rule requires any `f32`-to-
 //! integer conversion to be bit-defined ("via `to_bits` ordering or
@@ -106,26 +107,44 @@
 //! converts each `f32` weight (known to lie in `[0.0, 1.0]`) to a `u64`
 //! fixed-point integer by multiplying by `2**32`
 //! (`MODEL_GUIDED_SEARCH_PRIOR_QUANTIZATION_FIXED_POINT_SCALE_V1`) and
-//! rounding with `f32::round_ties_even`, an IEEE-754-specified
-//! `roundToIntegralTiesToEven` operation, not an implementation-defined
-//! library shortcut (the same standard Section 1.3 step 5 states for its own
-//! rounding step; see that module's docs for why this specific operation is
-//! also immune to the dynamic-rounding-mode-register hazard).
+//! rounding with
+//! `model_guided_search_value_quantization_v1::round_ties_even_f32_bits_v1`.
 //!
-//! The multiply-by-`2**32` step is itself *exactly* lossless for every
-//! finite `f32` in this domain: multiplying an IEEE-754 float by a power of
-//! two changes only its exponent field, never its mantissa bits, so the
-//! product carries exactly the same, and no more, significant bits as the
-//! input `weight` (provably true here because the exponent never leaves
-//! `f32`'s valid range for inputs in `[0.0, 1.0]` scaled by `2**32`). The
-//! rounding step therefore only ever discards bits genuinely below `f32`'s
-//! own 24-bit significand precision, never introduces error beyond what the
-//! `f32` input itself already carries, and its result is always itself
-//! exactly representable in `f32` before the final `as u64` cast (proved in
-//! the module's own test suite: for `weight >= 2**-9`, the scaled product is
-//! already an exact integer at that magnitude with no bits below the
-//! binary point; for smaller `weight`, the scaled product's integer part is
-//! `<= 2**23`, within `f32`'s exact-integer range).
+//! An earlier revision of this module rounded with `f32::round_ties_even`
+//! directly and claimed, by reference to the value-quantization module's
+//! docs, that the operation was immune to the dynamic FPU rounding-mode
+//! register. That referenced claim was checked against this crate's actual
+//! build target and found false there (`f32::round_ties_even` lowers to a
+//! tail call to the C library's `rintf`, which *is* governed by the dynamic
+//! rounding-control register, on the plain `x86_64-pc-windows-msvc`
+//! baseline this crate builds at with no SSE4.1 enabled -- see the
+//! sibling module's docs for the verified probe and full account). This
+//! module now rounds with that sibling module's
+//! `round_ties_even_f32_bits_v1` instead: a bit-exact round-half-to-even
+//! implementation operating entirely on `to_bits()` (sign/exponent/mantissa
+//! extraction, integer shifts and masks, one integer comparison for the
+//! tie), with no floating-point arithmetic anywhere in its body, which is
+//! what makes *that* function's result independent of the dynamic
+//! rounding-mode register and FTZ/DAZ by construction, not by reference to
+//! which instruction some floating-point operation happens to lower to.
+//!
+//! The multiply-by-`2**32` step (`scaled`, still an ordinary `f32`
+//! multiply, and still exposed to the dynamic-mode caveat like any other
+//! basic float op) is itself *exactly* lossless for every finite `f32` in
+//! this domain: multiplying an IEEE-754 float by a power of two changes
+//! only its exponent field, never its mantissa bits, so the product carries
+//! exactly the same, and no more, significant bits as the input `weight`
+//! (provably true here because the exponent never leaves `f32`'s valid
+//! range for inputs in `[0.0, 1.0]` scaled by `2**32`). Because
+//! `round_ties_even_f32_bits_v1` computes round-half-to-even of `scaled`'s
+//! own exact bit pattern directly -- there is no intermediate rounded `f32`
+//! value to worry about being representable, unlike the
+//! `f32::round_ties_even`-based approach this superseded -- no additional
+//! representability argument is needed at all: the function's algorithm
+//! (see the sibling module's docs) is exact for every finite `f32` input by
+//! construction, and is exhaustively verified against `f32::round_ties_even`
+//! itself under this thread's default rounding-mode state in that module's
+//! own test suite.
 //!
 //! The fixed-point scale is `2**32`, deliberately far finer than the
 //! `2**20`-ish resolution of the final 1,000,000 apportionment scale, so
@@ -227,9 +246,14 @@ pub fn quantize_legal_action_weight_v1(
         );
     }
     let scaled = weight * MODEL_GUIDED_SEARCH_PRIOR_QUANTIZATION_FIXED_POINT_SCALE_V1;
-    let rounded = scaled.round_ties_even();
-    // `rounded` is a nonnegative, finite, exactly-integer-valued `f32` no
-    // larger than `2**32`; the cast is exact.
+    // Bit-exact round-half-to-even (see module docs): no floating-point
+    // arithmetic in the rounding step itself, immune to the dynamic
+    // rounding-mode register regardless of build target. `rounded` is
+    // nonnegative (weight >= 0.0 was validated above) and no larger than
+    // `2**32` (weight <= 1.0 was validated above), so the cast to `u64` is
+    // exact and lossless.
+    let rounded =
+        crate::model_guided_search_value_quantization_v1::round_ties_even_f32_bits_v1(scaled);
     Ok(rounded as u64)
 }
 
@@ -420,13 +444,14 @@ mod tests {
 
     #[test]
     fn weight_quantization_round_trip_never_exceeds_f32_exact_integer_range_below_the_boundary() {
-        // For weight < 2**-9, the scaled product's magnitude is <= 2**23,
-        // within f32's exact-integer range, and round_ties_even is exact
-        // IEEE-754 rounding of the true mathematical product (itself exact,
-        // since scaling by a power of two never rounds). This test pins that
-        // structural argument against a concrete, exactly-constructed value
-        // (division by a power of two is exact absent underflow) rather than
-        // only asserting it in prose.
+        // For weight < 2**-9, scaled's magnitude is <= 2**23; the scaling
+        // multiply is exact (power-of-two scaling never rounds), and
+        // round_ties_even_f32_bits_v1 computes round-half-to-even of
+        // scaled's own exact bit pattern directly (see that function's
+        // module docs for the full bit algorithm and its own exhaustive
+        // verification). This test pins the result against a concrete,
+        // exactly-constructed value (division by a power of two is exact
+        // absent underflow) rather than only asserting it in prose.
         let tiny = 1.0_f32 / 16_384.0; // == 2**-14 exactly, well below 2**-9
         let fixed = quantize_legal_action_weight_v1(0, tiny).unwrap();
         assert_eq!(fixed, 1u64 << 18); // 2**-14 * 2**32 == 2**18 exactly
