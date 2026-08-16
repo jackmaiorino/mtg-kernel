@@ -21,6 +21,59 @@ env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
+  detect-changes:
+    name: Detect changed paths
+    runs-on: ubuntu-24.04
+    outputs:
+      python_relevant: ${{ steps.classify.outputs.python_relevant }}
+      rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
+    steps:
+      - name: Check out merge ref with parents
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 2
+
+      - name: Classify changed paths
+        id: classify
+        shell: bash
+        run: |
+          # Non-PR events (push to main, tags, manual dispatch) always run
+          # the full matrix: the merge gate must never be narrowed there.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "python_relevant=true" >> "$GITHUB_OUTPUT"
+            echo "rust_relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The PR checkout is the synthetic merge commit; HEAD^1 is the
+          # base branch tip, so this diff is exactly the PR's file set.
+          files=$(git diff --name-only HEAD^1 HEAD)
+          echo "changed files:"; echo "$files"
+          python_relevant=false
+          rust_relevant=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            # Python jobs care about python sources/tools/tests, the data
+            # artifacts they validate, workflow changes, and the pinned
+            # interpreter/lock config.
+            case "$f" in
+              python/*|data/*|.github/*|uv.lock|pyproject.toml|.python-version)
+                python_relevant=true ;;
+            esac
+            # Rust jobs run unless a file is provably outside the crate's
+            # input surface. python/mtg_kernel_rl/** stays rust-relevant
+            # (embedded authorities: features.py and twins); data/** stays
+            # rust-relevant (include_str goldens). Only non-embedded python
+            # (tests/tools), docs, and markdown are rust-irrelevant.
+            case "$f" in
+              python/tests/*|python/tools/*|docs/*|*.md) : ;;
+              *) rust_relevant=true ;;
+            esac
+          done <<< "$files"
+          echo "python_relevant=$python_relevant" >> "$GITHUB_OUTPUT"
+          echo "rust_relevant=$rust_relevant" >> "$GITHUB_OUTPUT"
+          echo "verdict: python_relevant=$python_relevant rust_relevant=$rust_relevant"
+
   rust-quality:
     name: Rust formatting and lint
     runs-on: ubuntu-24.04
@@ -59,6 +112,8 @@ jobs:
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.rust_relevant == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -95,6 +150,8 @@ jobs:
 
   python-tests:
     name: Python tests (${{ matrix.os }}, shard ${{ matrix.shard }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.python_relevant == 'true'
     strategy:
       fail-fast: false
       matrix:
