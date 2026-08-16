@@ -2,11 +2,14 @@
 //!
 //! Authority: `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Sections 1.2
 //! ("New: the net's policy as a PUCT-style expansion prior"), 1.3 ("New: the
-//! net's value at leaf cutoffs, replacing v1's static evaluator"), and 5.3
-//! item 5: "Core search-loop change: prior-ordered expansion and value-head
-//! leaf dispatch (Sections 1.2-1.3), replacing v1's ascending-index expansion
-//! and static evaluator on THIS DESIGN'S OWN ALGORITHM PATH ONLY (v1's own
-//! path is untouched, Section 1.1)."
+//! net's value at leaf cutoffs, replacing v1's static evaluator"), 1.4 (the
+//! "third dispatch shape"), 5.3 item 5 ("Core search-loop change: prior-
+//! ordered expansion and value-head leaf dispatch (Sections 1.2-1.3),
+//! replacing v1's ascending-index expansion and static evaluator on THIS
+//! DESIGN'S OWN ALGORITHM PATH ONLY, v1's own path is untouched, Section
+//! 1.1"), and 5.3 item 6's own live-session encoder bridge sub-scope
+//! ("item 6a" here), sequenced, per item 6's own text, "to extend v1's own
+//! stage-2 dispatch surface rather than duplicate it."
 //!
 //! Sequencing ruling (collab `CLAUDE #252`, binding): this diff wires the
 //! search loop to the already-merged quantization contracts
@@ -15,10 +18,14 @@
 //! seam ([`ModelGuidedSearchLeafEvaluatorV1`]) with a deterministic MOCK
 //! implementation ([`MockLeafEvaluatorV1`]) for tests. The REAL forward
 //! (`NativePolicyValueNetV1::forward_search_deterministic_v1`, already on
-//! `main`) gets a seam implementation
-//! ([`ModelGuidedSearchRealForwardValueEvaluatorV1`]) whose construction is
-//! present but whose use in any launcher/eval path is NOT wired; that is
-//! item 6. `kernel_native_search_opponent_v1` (v1) is not modified in
+//! `main`) now also has a full trait implementation
+//! ([`ModelGuidedSearchRealForwardValueEvaluatorV1`], item 6a, see "Item 6a:
+//! the live-session encoder bridge" below for the encode-path map). What
+//! remains unwired by this diff is any launcher, CLI, panel, script, or
+//! eval-path CONSUMER of that evaluator (native evaluation, population
+//! selection, analyzer, scorer-bridge integration): none of those call it
+//! yet, matching item 6's own broader stage-2 scope, of which this is one
+//! piece. `kernel_native_search_opponent_v1` (v1) is not modified in
 //! behavior anywhere by this module; v1's own tests are re-verified green,
 //! unchanged, alongside this module's own suite.
 //!
@@ -209,40 +216,146 @@
 //! root_player)` has no acting-player parameter at all). `Halted` is
 //! unaffected: v1 already errors there (`NonNaturalTerminal`), unchanged.
 //!
-//! # Resolved scope boundary: the real-forward seam does not implement the
-//! live-session trait
+//! # Item 6a: the live-session encoder bridge (supersedes the former
+//! "Resolved scope boundary" note below)
 //!
+//! An earlier revision of this module's docs stated that
 //! [`ModelGuidedSearchRealForwardValueEvaluatorV1`] does not implement
-//! [`ModelGuidedSearchLeafEvaluatorV1`]. Doing so honestly would require
-//! converting a live, possibly mid-simulation-redeterminized
-//! `FastActorSessionV1`/decision into a `NativeEncodedDecisionViewV1`- or
-//! `FlatScoringDecisionViewV2`-shaped tensor -- exactly the "third dispatch
-//! combination" `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.4's own
-//! "Dispatch note" names as its own implementation item ("its wiring is its
-//! own implementation item, Section 5.3, item 6"), not item 5's. Verified
-//! before writing this module: no construction site anywhere in this crate
-//! builds a `FlatScoringDecisionViewV2` from a live `&FastActorSessionV1`;
-//! every existing site either builds one from an already-staged/owned
-//! trajectory record (`private_physical_trajectory_v2.rs`) or from a
-//! synthetic test fixture. Building that live encoder here would BE item 6's
-//! wiring, not item 5's algorithm change. Per the task's own instruction
-//! ("Real-forward unit tests may exercise the seam directly where they can
-//! construct a model in-memory; keep them minimal and clearly labeled"),
-//! this type instead exposes a directly callable, fully functional method
-//! operating on an ALREADY-ENCODED view
-//! ([`ModelGuidedSearchRealForwardValueEvaluatorV1::evaluate_encoded_value_v1`]),
-//! genuinely calling the real, MXCSR-gated
-//! `forward_search_deterministic_v1` and this design's own value-quantization
-//! pipeline (Section 1.3, item 2's module). Its own tests (below) construct
-//! a real in-memory model
-//! (`NativePolicyValueNetV1::runner_fixed_v1`) and a minimal, hand-built
-//! encoded view, matching this file's own precedent for constructing such a
-//! view directly in tests. The PRIOR side's raw-logit-to-legal-action-weight
-//! conversion (which needs both live masking AND a still-design-silent
-//! logit-to-weight convention -- item 1's own module docs explicitly
-//! decline to reuse `fast_sampler.rs`'s existing softmax/exponential-
-//! weighting step, leaving that convention unresolved) is left to item 6.
+//! [`ModelGuidedSearchLeafEvaluatorV1`], and that "no construction site
+//! anywhere in this crate builds a `FlatScoringDecisionViewV2` from a live
+//! `&FastActorSessionV1`." That second claim does not survive a full trace
+//! and is retracted here rather than left standing (the same discipline
+//! this module's other "Resolved design point" notes already apply to
+//! their own earlier, corrected claims). One real construction site exists
+//! today: the checkpoint-opponent branch of the async flat-scored rollout
+//! (`async_flat_scored_rollout_v1.rs`, the `(Some(_), None, false) |
+//! (None, Some(_), false)` arm around `F::encode_packet`/
+//! `F::ladder_scoring_view`) builds a `FlatScoringDecisionViewV2` from
+//! `self.session.as_ref()` -- a live, in-flight rollout session, not a
+//! staged trajectory record -- every time a ladder or population opponent
+//! scores a decision. It is layered three deep behind the
+//! `FlatScoredFamilyCore` trait's generic dispatch
+//! (`F::encode_packet` -> an owned, validated packet
+//! (`ValidatedOwnedFlatScoringDecisionV2`) -> `.scorer_view_v1()`), which is
+//! almost certainly why the earlier grep-shaped search that produced the
+//! original claim missed it: the literal `FlatScoringDecisionViewV2::new`
+//! call is inside `OwnedFlatScoringDecisionV2::scorer_view` in
+//! `async_flat_scored_rollout_v2.rs`, reached only through that indirection,
+//! not through any direct construction visible from this module's own
+//! neighborhood.
+//!
+//! That checkpoint-opponent encode path -- `FlatScoredFamilyV2::encode_packet`
+//! (an unmodified, existing `pub(crate)` trait method,
+//! `async_flat_scored_rollout_v2.rs`) producing a
+//! `ValidatedOwnedFlatScoringDecisionV2` whose `.scorer_view_v1()` is a
+//! `FlatScoringDecisionViewV2`, then `NativeFlatTensorizerV2::fill` (already
+//! `pub(crate)`, `native_flat_tensorizer_v2.rs`) tensorizing that view into a
+//! `NativeFlatDecisionTensorV2`, then `encoded_decision_view_v1` (bumped from
+//! private to `pub(crate)` by this change, `native_checkpoint_inference_v1.rs`,
+//! zero behavior change to its body) converting that tensor into the
+//! `NativeEncodedDecisionViewV1` [`NativePolicyValueNetV1::forward_search_deterministic_v1`]
+//! consumes -- is the EXACT machinery
+//! `NativeCheckpointInferenceV1::score_decision_search_deterministic_v1`
+//! already wraps for a full, checkpoint-manifest-backed model handle. This
+//! evaluator reuses the same three pure, unmodified pieces directly against
+//! a bare `&NativePolicyValueNetV1` instead (matching this file's own
+//! existing test precedent of constructing `NativePolicyValueNetV1::
+//! runner_fixed_v1` in-memory, with no checkpoint-manifest/Store dependency),
+//! because `NativeCheckpointInferenceV1::score_decision_search_deterministic_v1`
+//! itself is not reused directly: doing so would route search leaves through
+//! `NativeCheckpointInferenceV1`, the exact checkpoint-manifest-backed type
+//! the calibration runner's own doc draws the eval-only/production boundary
+//! around, and would require a full `ValidatedTrainRunV2`/`CheckpointManifestV3`
+//! construction this evaluator's own tests (and item 5's precedent before it)
+//! deliberately avoid. No existing function's body changes; the only
+//! reachability change anywhere in this diff is the one visibility bump
+//! above.
+//!
+//! [`ModelGuidedSearchLeafEvaluatorV1`] is now implemented for
+//! [`ModelGuidedSearchRealForwardValueEvaluatorV1`] (below), calling the
+//! real, MXCSR-gated `forward_search_deterministic_v1` exactly once per
+//! leaf-evaluation event and reading BOTH heads (`output.logits` for the
+//! prior, `output.value` for `v_raw`) off that one call's return value, per
+//! Section 1.3's `heads_per_leaf` economy. `value_domain` is taken as a
+//! construction parameter and used as-is; this evaluator does not decide
+//! what it should be for any real checkpoint (item 6b, elsewhere).
+//!
+//! # Determination: the real-forward evaluator's live-decision requirement
+//!
+//! `evaluate_leaf_v1`'s trait signature receives `session` and `leaf_key`,
+//! not a `FastActorDecisionV1` directly. This evaluator recovers the
+//! decision to encode from `session.current_response()`, which is sound
+//! for every one of `run_simulation_puct_v1`'s actual call sites: `session`
+//! there is always the per-simulation redeterminized clone, freshly
+//! positioned by `consume_current_flat_action_slice_v2` at exactly the leaf
+//! this call is evaluating, so `session.current_response()` at the moment
+//! of the call is that same leaf's live `Decision` -- for `RootPrior`
+//! (session unmodified, verified equal to `expected` before the loop
+//! starts), for `NewlyExpandedNode` (site 2, just transitioned to), and for
+//! the ordinary `RevisitedDepthCapLeaf` cases (site 3 proper, v1's own
+//! coverage-guarantee early exit, and the structurally-dead top-of-loop
+//! branch). The one exception, documented in code as
+//! [`ModelGuidedSearchCoreErrorV1::NoLiveDecisionToEncode`]: the
+//! `TerminalClassificationV1::Truncated` synthetic-key dispatch (module
+//! docs above) calls the evaluator with `session.current_response()` still
+//! `Terminal` (the transition that reached it already consumed the last
+//! decision), carrying no live decision to encode at all. This evaluator
+//! fails closed there rather than fabricating an encoding; a construction
+//! that never reaches a decision-cap truncation within its own depth cap
+//! (every test in this diff) never exercises that path.
+//!
+//! # Determination: the real-forward PRIOR conversion (item 6's own open
+//! question; sigmoid RETRACTED, softmax adopted -- countersigning panel
+//! ruling, 2026-08-16)
+//!
+//! Item 1's own module (`model_guided_search_prior_quantization_v1`) states
+//! its input contract as "per-legal-action weights that need not already
+//! sum to 1... each required to lie in `[0.0, 1.0]`" and explicitly declines
+//! to reuse `fast_sampler.rs`'s softmax/exponential-weighting step, leaving
+//! the real conversion for item 6. This evaluator's first revision resolved
+//! it with a per-action sigmoid, documented honestly as an open
+//! implementation choice with a defensible (if debatable) rationale. A
+//! countersigning panel reviewed that choice on the merits, not only for
+//! documentation honesty, and RULED it wrong: the panel's own
+//! recomputation, for legal logits `{10.0, 0.0 x9}`, found softmax puts
+//! `~99.96%` of the prior mass on the dominant action, while
+//! sigmoid-plus-Hamilton-apportionment puts only `~18%` there -- sigmoid
+//! near-flattens the net's own guidance, and the policy head is trained as
+//! a softmax distribution (cross-entropy against a normalized target), so
+//! the prior slot must carry the object the net actually learned, not a
+//! differently-shaped one. This also matters for mode (c): a future
+//! visit-count training target is downstream of whichever prior shapes
+//! expansion order and the PUCT bonus, so a wrongly-shaped prior would bias
+//! that target's distribution too, not only today's search quality. The
+//! ruling is a merits correction, not a fidelity one: the design left this
+//! conversion open, and the sigmoid documentation was itself accurate about
+//! what it did and why; the panel simply found a better answer to the
+//! question the design deliberately left unanswered.
+//!
+//! This evaluator now calls
+//! [`softmax_legal_action_weights_v1`](crate::deterministic_math_v1::softmax_legal_action_weights_v1)
+//! directly on `output.logits` (already exactly the node's live ordered
+//! legal-action set: `NativeFlatTensorizerV2` only ever tensorizes the
+//! decision's actual candidate rows, so no separate masking step is needed
+//! here at all -- the encode path IS the mask, unchanged from the
+//! sigmoid-era note this superseded). The sigmoid function
+//! (`sigmoid_v1`) and its `tanh_f32_v1` import are REMOVED outright by this
+//! revision, not deprecated or left as a dead alternative surface, per the
+//! ruling's own instruction. See
+//! [`crate::deterministic_math_v1`]'s own module doc, "Panel ruling
+//! extension (2026-08-16)" section, for the full softmax algorithm (the
+//! new `exp_f64_v1` primitive's bit-pinned operation order, the clamp
+//! floor, and why this design never performs a floating-point summation
+//! reduction at all: `softmax_legal_action_weights_v1` returns
+//! UNNORMALIZED per-action weights, and `quantize_prior_v1`'s own exact
+//! `u128` largest-remainder apportionment is what completes the softmax
+//! semantics losslessly, exactly as it already did for the withdrawn
+//! sigmoid's own not-summing-to-1 weights).
 
+use crate::async_flat_scored_rollout_v1::FlatScoredFamilyCore;
+use crate::async_flat_scored_rollout_v2::{FlatScoredFamilyV2, OwnedFlatScoringDecisionV2};
+use crate::deterministic_math_v1::softmax_legal_action_weights_v1;
+use crate::flat_policy_v2::FlatDecisionEncoderV2;
 use crate::ids::PlayerId;
 use crate::kernel_native_search_opponent_v1::{
     derive_simulation_seed_v1, integer_ucb_bonus_v1, natural_terminal_value_v1, player_id_v1,
@@ -260,6 +373,8 @@ use crate::model_guided_search_value_quantization_v1::{
     quantize_value_v1, ModelGuidedSearchValueHeadDomainV1,
     ModelGuidedSearchValueQuantizationErrorV1,
 };
+use crate::native_checkpoint_inference_v1::encoded_decision_view_v1;
+use crate::native_flat_tensorizer_v2::{NativeFlatDecisionTensorV2, NativeFlatTensorizerV2};
 use crate::native_policy_value_net_v1::{
     NativeEncodedDecisionViewV1, NativePolicyValueErrorV1, NativePolicyValueNetV1,
 };
@@ -294,6 +409,30 @@ pub enum ModelGuidedSearchCoreErrorV1 {
     /// contract violation of the evaluator implementation, not a tree or
     /// session defect.
     EvaluatorContract,
+    /// Item 6a: the real-forward evaluator was invoked while
+    /// `session.current_response()` was not a live `Decision`. This is a
+    /// known, documented scope boundary, not a bug: it is reachable exactly
+    /// once, at the `TerminalClassificationV1::Truncated` synthetic-key
+    /// dispatch (module docs, "Resolved design point:
+    /// `TerminalClassificationV1::Truncated`"), where v1's own
+    /// `RlSessionTerminalV1` carries no live decision to encode into a
+    /// `FlatScoringDecisionViewV2` at all. The mock evaluator has no such
+    /// gap, since it derives its output purely from `leaf_key` bytes, never
+    /// from session content. See this module's own "Determination: the
+    /// real-forward evaluator's live-decision requirement" note.
+    NoLiveDecisionToEncode,
+    /// Item 6a: `FlatScoredFamilyCore::encode_packet` rejected the live
+    /// decision. The trait boundary's error type is an opaque `()` (see
+    /// that trait's own doc comment), so no further detail is available to
+    /// preserve here.
+    Encode,
+    /// Item 6a: tensorizing an encoded `FlatScoringDecisionViewV2` into the
+    /// net's thirteen-tensor input failed (`NativeFlatTensorErrorV2`,
+    /// `pub(crate)` in its own module, stored as `Display` text for the
+    /// identical reason `Forward` stores `NativePolicyValueErrorV1` as
+    /// text: avoids leaking a `pub(crate)` type through this enum's own
+    /// `pub` visibility).
+    Tensorize(String),
 }
 
 impl fmt::Display for ModelGuidedSearchCoreErrorV1 {
@@ -468,22 +607,35 @@ impl ModelGuidedSearchLeafEvaluatorV1 for MockLeafEvaluatorV1 {
     }
 }
 
-/// REAL-FORWARD SEAM. See the module docs' "Resolved scope boundary" note
-/// for exactly what this type does and does not do, and why.
+/// REAL-FORWARD SEAM. See the module docs' "Item 6a: the live-session
+/// encoder bridge" and "Determination" notes for exactly what this type
+/// does and does not do, and why.
 ///
 /// `pub(crate)`, not `pub`: it inherently carries
 /// `NativePolicyValueNetV1`/`NativeEncodedDecisionViewV1`, both `pub(crate)`
 /// in their own module, so it cannot be part of this library's external
-/// `pub` surface without leaking a private type (this is also exactly why
-/// this type is not wired into any launcher/eval path in this diff -- see
-/// module docs). Its only callers today are this module's own tests, hence
-/// the dead-code allowance outside `cfg(test)` builds, matching the
+/// `pub` surface without leaking a private type. Its only callers today are
+/// this module's own tests (item 6a implements the trait; wiring a real
+/// launcher/eval CONSUMER of it is not this diff's scope, see module docs),
+/// hence the dead-code allowance outside `cfg(test)` builds, matching the
 /// task's own "platform-scoped [or, here, feature-scoped] dead-code
 /// allowances only if genuinely needed" instruction.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct ModelGuidedSearchRealForwardValueEvaluatorV1<'a> {
     model: &'a NativePolicyValueNetV1,
     value_domain: ModelGuidedSearchValueHeadDomainV1,
+    /// Item 6a instrumentation, not production state: counts
+    /// `evaluate_leaf_v1` invocations. Compared against `forward_calls`
+    /// (below) so a test can prove the single-forward-per-leaf economy
+    /// (design Section 1.3: both heads "computed together in one forward
+    /// call per leaf-evaluation event... when the checkpoint architecture
+    /// shares a trunk between policy and value") empirically, not only by
+    /// code inspection: the two counters must stay equal, call for call.
+    leaf_calls: Cell<u32>,
+    /// Item 6a instrumentation: counts calls to
+    /// `forward_search_deterministic_v1` made from `evaluate_leaf_v1`. See
+    /// `leaf_calls` above.
+    forward_calls: Cell<u32>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -495,6 +647,8 @@ impl<'a> ModelGuidedSearchRealForwardValueEvaluatorV1<'a> {
         Self {
             model,
             value_domain,
+            leaf_calls: Cell::new(0),
+            forward_calls: Cell::new(0),
         }
     }
 
@@ -503,7 +657,11 @@ impl<'a> ModelGuidedSearchRealForwardValueEvaluatorV1<'a> {
     /// here -- see that function's doc comment) on an already-encoded
     /// decision view, then this design's Section 1.3 value-quantization
     /// pipeline. Returns the quantized, root-perspective value in
-    /// `[-9_000, 9_000]`.
+    /// `[-9_000, 9_000]`. Unchanged by item 6a: still item 5's own direct,
+    /// already-encoded-view entry point, independent of
+    /// [`ModelGuidedSearchLeafEvaluatorV1::evaluate_leaf_v1`] below (which
+    /// does not call this method, and does not touch the counters below
+    /// itself; each has its own accounting).
     pub(crate) fn evaluate_encoded_value_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
@@ -516,6 +674,106 @@ impl<'a> ModelGuidedSearchRealForwardValueEvaluatorV1<'a> {
             leaf_acting_player_is_root,
         )?)
     }
+
+    /// Item 6a test instrumentation accessors (see `leaf_calls`/
+    /// `forward_calls` field docs). `pub(crate)` so this module's own test
+    /// suite can read them; not part of any production decision.
+    #[cfg(test)]
+    pub(crate) fn leaf_calls_v1(&self) -> u32 {
+        self.leaf_calls.get()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn forward_calls_v1(&self) -> u32 {
+        self.forward_calls.get()
+    }
+}
+
+/// Item 6a: the live-session encoder bridge itself. See module docs, "Item
+/// 6a: the live-session encoder bridge" for the encode-path map and
+/// "Determination: the real-forward evaluator's live-decision requirement"
+/// / "Determination: the real-forward PRIOR conversion" for the two design
+/// decisions this implementation makes.
+impl ModelGuidedSearchLeafEvaluatorV1 for ModelGuidedSearchRealForwardValueEvaluatorV1<'_> {
+    fn evaluate_leaf_v1(
+        &self,
+        session: &FastActorSessionV1,
+        _leaf_key: [u8; 32],
+        legal_action_count: u32,
+        _site: ModelGuidedSearchLeafSiteV1,
+    ) -> Result<ModelGuidedSearchLeafForwardV1, ModelGuidedSearchCoreErrorV1> {
+        self.leaf_calls.set(self.leaf_calls.get() + 1);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            return Err(ModelGuidedSearchCoreErrorV1::NoLiveDecisionToEncode);
+        };
+        if decision.legal_action_count != legal_action_count {
+            return Err(ModelGuidedSearchCoreErrorV1::EvaluatorContract);
+        }
+
+        let tensor = encode_live_decision_tensor_v1(session, decision)?;
+        let encoded = encoded_decision_view_v1(&tensor);
+
+        // Single forward call, both heads (Section 1.3's `heads_per_leaf`
+        // economy): `output.logits` is the prior side, `output.value` is
+        // the raw value side, from the one call below.
+        let output = self.model.forward_search_deterministic_v1(encoded)?;
+        self.forward_calls.set(self.forward_calls.get() + 1);
+        if output.logits.len() != legal_action_count as usize
+            || output.logits.iter().any(|value| !value.is_finite())
+            || !output.value.is_finite()
+        {
+            return Err(ModelGuidedSearchCoreErrorV1::EvaluatorContract);
+        }
+
+        // `output.logits` already corresponds, index for index, to the
+        // node's live ordered legal-action set: `NativeFlatTensorizerV2`
+        // only ever tensorizes the decision's actual candidate rows, so
+        // the encode path IS the mask (module docs, "Determination: the
+        // real-forward PRIOR conversion"). No separate masking step.
+        // Softmax (panel ruling, 2026-08-16): unnormalized per-action
+        // weights, positionally index-matched to `output.logits`;
+        // `quantize_prior_v1` renormalizes.
+        let legal_action_weights = softmax_legal_action_weights_v1(&output.logits);
+
+        Ok(ModelGuidedSearchLeafForwardV1 {
+            legal_action_weights,
+            v_raw: output.value,
+        })
+    }
+}
+
+/// Item 6a: encodes one live decision into the net's own thirteen-tensor
+/// input, using the exact, unmodified checkpoint-opponent encode path
+/// (module docs, "Item 6a: the live-session encoder bridge") -- fresh
+/// scratch every call, no caching. Factored out of
+/// [`ModelGuidedSearchLeafEvaluatorV1::evaluate_leaf_v1`] above so this
+/// module's own encode-determinism test (below) exercises the identical
+/// code path production uses, not a re-derived copy that could drift from
+/// it. `session: &FastActorSessionV1` (immutable): this function cannot
+/// mutate the session, or consume any RNG state stored mutably on it, by
+/// construction -- the borrow checker enforces this structurally, not
+/// merely as an empirical observation about today's implementation. That
+/// is the exact "if the existing encode path consumes RNG or mutable
+/// session state, isolate that" concern the task's own instructions name;
+/// this module's answer is that it provably cannot, and the
+/// encode-determinism test below checks the resulting claim (byte-identical
+/// output for the same live leaf) empirically, on top of that structural
+/// argument.
+fn encode_live_decision_tensor_v1(
+    session: &FastActorSessionV1,
+    decision: FastActorDecisionV1,
+) -> Result<NativeFlatDecisionTensorV2, ModelGuidedSearchCoreErrorV1> {
+    let mut encoder = FlatDecisionEncoderV2::default();
+    let owned = OwnedFlatScoringDecisionV2::default();
+    let validated = FlatScoredFamilyV2::encode_packet(session, decision, &mut encoder, owned)
+        .map_err(|()| ModelGuidedSearchCoreErrorV1::Encode)?;
+    let view = validated.scorer_view_v1();
+    let mut tensorizer = NativeFlatTensorizerV2::new();
+    let mut tensor = NativeFlatDecisionTensorV2::default();
+    tensorizer
+        .fill(view, &mut tensor)
+        .map_err(|error| ModelGuidedSearchCoreErrorV1::Tensorize(error.to_string()))?;
+    Ok(tensor)
 }
 
 /// A node in the model-guided search tree. Structurally v1's own
@@ -1639,5 +1897,232 @@ mod tests {
             root_value, root_value_again,
             "two calls over the same encoded view must be byte-identical"
         );
+    }
+
+    // ---- item 6a: the live-session encoder bridge ----
+
+    fn real_model_for_test_v1() -> NativePolicyValueNetV1 {
+        NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+            .expect("runner-fixed model builds")
+    }
+
+    #[test]
+    fn encoding_the_same_live_leaf_twice_is_byte_identical() {
+        let session = v2_session_v1("Rally", "Burn", 41_101);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("reset terminated")
+        };
+        let tensor_a = encode_live_decision_tensor_v1(&session, decision).expect("encodes");
+        let tensor_b = encode_live_decision_tensor_v1(&session, decision).expect("encodes");
+        assert_eq!(
+            tensor_a, tensor_b,
+            "encoding the same live leaf twice must be byte-identical"
+        );
+    }
+
+    #[test]
+    fn real_forward_evaluator_makes_exactly_one_forward_call_per_leaf_event() {
+        let session = v2_session_v1("Rally", "Burn", 41_102);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("reset terminated")
+        };
+        let searcher = ModelGuidedSearchCoreV1::new(authority_v1(KernelNativeSearchTierV1::T512))
+            .expect("authority validates");
+        let model = real_model_for_test_v1();
+        let value_domain = ModelGuidedSearchValueHeadDomainV1::Calibrated {
+            lower: -8.0,
+            upper: 8.0,
+        };
+        let evaluator = ModelGuidedSearchRealForwardValueEvaluatorV1::new(&model, value_domain);
+        let transition_budget = decision
+            .legal_action_count
+            .saturating_mul(3)
+            .saturating_add(8);
+        let result = searcher
+            .select_action_with_budget_v1(
+                &session,
+                decision,
+                transition_budget,
+                3,
+                &evaluator,
+                &value_domain,
+            )
+            .expect("real-model search completes");
+        assert!(result.transitions_used > 0);
+        assert!(
+            evaluator.leaf_calls_v1() > 1,
+            "a real, multi-simulation search must dispatch more than the root-prior call alone"
+        );
+        assert_eq!(
+            evaluator.leaf_calls_v1(),
+            evaluator.forward_calls_v1(),
+            "every leaf-evaluation event must cost exactly one forward call, both heads \
+             together (Section 1.3's heads_per_leaf economy), never zero and never two"
+        );
+    }
+
+    #[test]
+    fn end_to_end_search_with_real_model_is_byte_reproducible_and_selects_a_legal_action() {
+        let session = v2_session_v1("Rally", "Burn", 41_103);
+        let FastActorResponseV1::Decision(decision) = session.current_response() else {
+            panic!("reset terminated")
+        };
+        let searcher = ModelGuidedSearchCoreV1::new(authority_v1(KernelNativeSearchTierV1::T512))
+            .expect("authority validates");
+        let model = real_model_for_test_v1();
+        let value_domain = ModelGuidedSearchValueHeadDomainV1::Calibrated {
+            lower: -8.0,
+            upper: 8.0,
+        };
+        let transition_budget = decision
+            .legal_action_count
+            .saturating_mul(3)
+            .saturating_add(8);
+        let depth_cap = 3u16;
+
+        let evaluator_a = ModelGuidedSearchRealForwardValueEvaluatorV1::new(&model, value_domain);
+        let result_a = searcher
+            .select_action_with_budget_v1(
+                &session,
+                decision,
+                transition_budget,
+                depth_cap,
+                &evaluator_a,
+                &value_domain,
+            )
+            .expect("real-model search completes");
+
+        let evaluator_b = ModelGuidedSearchRealForwardValueEvaluatorV1::new(&model, value_domain);
+        let result_b = searcher
+            .select_action_with_budget_v1(
+                &session,
+                decision,
+                transition_budget,
+                depth_cap,
+                &evaluator_b,
+                &value_domain,
+            )
+            .expect("real-model search completes");
+
+        assert_eq!(
+            result_a, result_b,
+            "two runs of the real-model search over the same seed/state must be byte-identical"
+        );
+        assert!(result_a.selected_index < decision.legal_action_count);
+        // No-mutation guarantee, inherited: the original session must remain
+        // untouched by either run.
+        assert_eq!(
+            session.current_response(),
+            FastActorResponseV1::Decision(decision)
+        );
+    }
+
+    #[test]
+    fn encoding_two_different_live_leaves_produces_different_tensors() {
+        // Item 6a's own "encode-view binding" mutation boundary: proves the
+        // encode genuinely reflects the specific live decision passed in
+        // (not, say, a stale or constant placeholder that would happen to
+        // pass the byte-identical-reencode test above vacuously). Two
+        // distinct seeds' opening decisions must not encode identically.
+        let session_a = v2_session_v1("Rally", "Burn", 41_105);
+        let FastActorResponseV1::Decision(decision_a) = session_a.current_response() else {
+            panic!("reset terminated")
+        };
+        let session_b = v2_session_v1("Rally", "Burn", 41_106);
+        let FastActorResponseV1::Decision(decision_b) = session_b.current_response() else {
+            panic!("reset terminated")
+        };
+        let tensor_a = encode_live_decision_tensor_v1(&session_a, decision_a).expect("encodes");
+        let tensor_b = encode_live_decision_tensor_v1(&session_b, decision_b).expect("encodes");
+        assert_ne!(
+            tensor_a, tensor_b,
+            "two different live leaves must not encode to the same tensor"
+        );
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn real_forward_evaluator_panics_through_the_real_mxcsr_gate_when_dirty() {
+        // Item 6a's own "gate presence" mutation boundary: proves THIS
+        // evaluator's own dispatch genuinely reaches
+        // `forward_search_deterministic_v1`'s MXCSR gate (not, say, a
+        // mistaken call to the ungated production `forward_v1`), mirroring
+        // `native_policy_value_net_v1`'s own item-4 proof that the gate is
+        // wired into the real entry point, but exercised through item 6a's
+        // own evaluator and a real live session/decision instead of that
+        // file's synthetic fixture.
+        let handle = std::thread::spawn(|| {
+            let original = crate::deterministic_math_v1::read_mxcsr_v1();
+            crate::deterministic_math_v1::write_mxcsr_v1(original | (1 << 15)); // dirty FTZ
+            let result = std::panic::catch_unwind(|| {
+                let session = v2_session_v1("Rally", "Burn", 41_107);
+                let FastActorResponseV1::Decision(decision) = session.current_response() else {
+                    panic!("reset terminated")
+                };
+                let model = real_model_for_test_v1();
+                let value_domain = ModelGuidedSearchValueHeadDomainV1::Calibrated {
+                    lower: -8.0,
+                    upper: 8.0,
+                };
+                let evaluator =
+                    ModelGuidedSearchRealForwardValueEvaluatorV1::new(&model, value_domain);
+                evaluator.evaluate_leaf_v1(
+                    &session,
+                    [0u8; 32],
+                    decision.legal_action_count,
+                    ModelGuidedSearchLeafSiteV1::RootPrior,
+                )
+            });
+            crate::deterministic_math_v1::write_mxcsr_v1(original);
+            assert!(
+                result.is_err(),
+                "expected the real-forward evaluator to panic through the MXCSR gate \
+                 when FTZ is dirty"
+            );
+        });
+        handle
+            .join()
+            .expect("evaluator mxcsr gate thread must not panic");
+    }
+
+    #[test]
+    fn real_forward_evaluator_fails_closed_with_no_live_decision_to_encode() {
+        // Module docs, "Determination: the real-forward evaluator's
+        // live-decision requirement": the one case the real-forward
+        // evaluator cannot encode is a session whose `current_response()`
+        // is `Terminal`, not `Decision` (the `TerminalClassificationV1::
+        // Truncated` synthetic-key dispatch). This test proves the
+        // documented failure mode directly, on a session actually at a
+        // terminal, rather than only asserting it in prose.
+        let mut session = v2_session_v1("Rally", "Burn", 41_104);
+        let model = real_model_for_test_v1();
+        let value_domain = ModelGuidedSearchValueHeadDomainV1::Calibrated {
+            lower: -8.0,
+            upper: 8.0,
+        };
+        let evaluator = ModelGuidedSearchRealForwardValueEvaluatorV1::new(&model, value_domain);
+        loop {
+            match session.current_response() {
+                FastActorResponseV1::Terminal(_) => break,
+                FastActorResponseV1::Decision(decision) => {
+                    let binding = session
+                        .native_full_trajectory_current_binding_v2(decision)
+                        .expect("binding available");
+                    session
+                        .consume_current_flat_action_slice_v2(binding, 0)
+                        .expect("action consumes");
+                }
+            }
+        }
+        let result = evaluator.evaluate_leaf_v1(
+            &session,
+            [0u8; 32],
+            1,
+            ModelGuidedSearchLeafSiteV1::RevisitedDepthCapLeaf,
+        );
+        match result {
+            Err(ModelGuidedSearchCoreErrorV1::NoLiveDecisionToEncode) => {}
+            other => panic!("expected NoLiveDecisionToEncode, got {other:?}"),
+        }
     }
 }

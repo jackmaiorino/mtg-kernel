@@ -220,6 +220,100 @@
 //! comparison test (`native_forward_determinism_probe_v1.rs`) for the
 //! separate measurement against the production `f32::tanh()` path.
 //!
+//! # Panel ruling extension (2026-08-16): `softmax_legal_action_weights_v1`
+//! and `exp_f64_v1`
+//!
+//! `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` item 6a's own review left one
+//! open question unresolved by design (Section 1.2 states only "masked...
+//! renormalized... quantized," not which function converts a raw policy
+//! logit into a legal-action weight) and item 6a's first revision closed it
+//! with a per-action sigmoid, documented honestly as a resolved-but-open
+//! implementation choice. A countersigning panel's own recomputation found
+//! the sigmoid choice materially wrong on the merits, not merely
+//! undocumented: for the worked example legal logits `{10.0, 0.0 x9}`,
+//! softmax puts `~99.96%` of the prior mass on the dominant action, while
+//! sigmoid-plus-Hamilton-apportionment puts only `~18%` there -- sigmoid
+//! near-flattens the trained policy head's own guidance, because the net's
+//! policy head is trained as a softmax distribution (cross-entropy against
+//! a normalized target), so only a softmax-shaped prior carries the object
+//! the net actually learned. This also matters beyond mode (b): mode (c)'s
+//! visit-count training targets are downstream of whichever prior shapes
+//! expansion order and the PUCT bonus, so a badly-shaped prior would bias
+//! that future target's distribution too, not just today's search quality.
+//! This ruling replaces the sigmoid with a deterministic softmax; the
+//! sigmoid function is removed outright (not deprecated or left as a dead
+//! alternative surface).
+//!
+//! **What lives here versus at the call site.** This module owns the new
+//! bit-defined primitive ([`exp_f64_v1`]) and the softmax wrapper
+//! ([`softmax_legal_action_weights_v1`]) that the model-guided search's
+//! evaluator calls directly, exactly mirroring this module's own existing
+//! split for `tanh_f32_v1`/`expm1_f64_v1`: one clean, oracle-verified
+//! `pub(crate)` entry point built from a private, domain-restricted
+//! primitive, all of it libm-free and bit-order-pinned. Masking is not this
+//! module's concern (as with `expm1_f64_v1`, "no session/observation state
+//! is available here"): the caller already hands this function exactly the
+//! node's live ordered legal-action logits (see
+//! `model_guided_search_core_v1.rs`'s own docs for why the encode path
+//! upstream already performs the masking, so no separate mask step is
+//! needed by the time logits reach this module).
+//!
+//! **What this function returns, and why it never divides by a sum.**
+//! [`softmax_legal_action_weights_v1`] returns UNNORMALIZED per-action
+//! weights, `e^(logit_i - max_logit)`, in the caller's own index order, not
+//! a normalized probability vector. This is deliberate, not a shortcut:
+//! `model_guided_search_prior_quantization_v1::quantize_prior_v1`'s own
+//! contract already "accepts per-legal-action weights that need not
+//! already sum to 1... it renormalizes implicitly by dividing by their
+//! actual sum," via exact `u128` largest-remainder apportionment, not
+//! floating-point division. Handing it `e^(logit_i - max_logit)` directly
+//! therefore reproduces the exact softmax RATIOS (`e^(logit_i-max) /
+//! sum_j e^(logit_j-max)` is mathematically identical to
+//! `e^(logit_i)/sum_j e^(logit_j)`, the standard softmax, since the
+//! `e^-max` factor cancels in every ratio) while never performing a
+//! floating-point summation-then-division at all in this module: the exact-
+//! integer apportionment downstream is what completes the softmax
+//! semantics, losslessly. This is a genuine determinism improvement over a
+//! conventional softmax implementation (which normally divides by a
+//! floating-point sum, a reduction whose order could in principle matter),
+//! not merely a convenience: there is no order-sensitive floating-point
+//! reduction anywhere in this function.
+//!
+//! **Max-subtraction is exact, not approximate.** `max_logit` is found by a
+//! single explicit ascending-index scan (fixed order, documented, not an
+//! iterator-adapter chain whose evaluation order is left implicit), using
+//! strict `>` so ties keep the first-seen maximum value -- though since
+//! `f32::max`-style comparison is associative/commutative exactly (unlike
+//! `+`), which occurrence of a tied maximum "wins" cannot change the
+//! computed max VALUE itself, only which index a human reader might think
+//! of as "the" argmax; every tied action still receives `logit_i ==
+//! max_logit` and therefore `x_i == 0.0` exactly. Each `x_i = f64::from
+//! (logit_i) - f64::from(max_logit)` is computed independently per action
+//! (never accumulated across actions), so `x_i` does not depend on which
+//! other actions were scanned before or after it, and the max action's own
+//! `x_i` is bit-exact `0.0` (both operands are exact, lossless `f32`-to-
+//! `f64` widenings of the identical value, so the subtraction commits no
+//! rounding error at all for that action): [`exp_f64_v1`] of exactly `0.0`
+//! is, by this function's own algorithm (see below), exactly `1.0`, so the
+//! dominant action's weight is always bit-exact `1.0`, never an
+//! approximation of it.
+//!
+//! **The clamp floor.** By construction, every `x_i <= 0.0` (since
+//! `max_logit` is the true maximum). [`exp_f64_v1`] is a private,
+//! domain-restricted primitive, valid only for finite `x` in
+//! `[EXP_DOMAIN_FLOOR_V1, 0.0]`, mirroring `expm1_f64_v1`'s own bounded,
+//! not-general-purpose contract; [`softmax_legal_action_weights_v1`] clamps
+//! every `x_i` to that floor (`x_i.max(EXP_DOMAIN_FLOOR_V1)`) before
+//! calling it. See [`EXP_DOMAIN_FLOOR_V1`]'s own doc comment for the exact
+//! floor value and why it was chosen with wide margin below the boundary
+//! where `e^x` first rounds to exactly `0.0f32`, rather than sitting close
+//! to that boundary. A weight of exactly `0.0f32` for a legal action is not
+//! itself an error: `quantize_legal_action_weight_v1`'s own precondition is
+//! the closed range `[0.0, 1.0]`, and only an ALL-zero weight vector (every
+//! legal action's weight quantizing to zero) is `quantize_prior_v1`'s own
+//! hard `ZeroTotalWeight` error -- unreachable here since the dominant
+//! action's weight is always exactly `1.0`.
+//!
 //! # FTZ/DAZ/rounding-mode entry gate
 //!
 //! `assert_pinned_mxcsr_state_v1` (Design v1 Section 1.5 property 5,
@@ -339,6 +433,159 @@ pub(crate) fn tanh_f32_v1(x: f32) -> f32 {
     let result_abs64 = (em1 / denom).clamp(0.0_f64, 1.0_f64);
     let result_abs = result_abs64 as f32;
     result_abs.copysign(x)
+}
+
+// ---------------------------------------------------------------------
+// Panel ruling extension (2026-08-16): softmax_legal_action_weights_v1 and
+// its private exp_f64_v1 primitive. See the module doc's own "Panel ruling
+// extension" section above for the full rationale (why softmax replaces
+// the withdrawn sigmoid, why this function never divides by a sum, the
+// max-subtraction exactness argument, and the clamp-floor argument).
+// ---------------------------------------------------------------------
+
+/// Domain floor for [`exp_f64_v1`]: inputs are clamped to this value before
+/// being passed to it, which is valid only for `x` in
+/// `[EXP_DOMAIN_FLOOR_V1, 0.0]` (mirroring [`expm1_f64_v1`]'s own bounded,
+/// not-general-purpose contract, not an accident of shared style). Chosen
+/// with comfortable margin below the exact IEEE-754 round-to-nearest-even
+/// boundary where `e^x` first rounds to exactly `0.0f32` rather than the
+/// smallest subnormal (`ln(2^-150) ~= -103.97212`, the halfway point
+/// between `0.0` and f32's smallest subnormal `2^-149 ~= 1.401e-45`, which
+/// is itself the tie-break floor since round-to-nearest-even favors the
+/// "more even" `0.0` at an exact tie): at `x = -120.0`, `e^-120 ~=
+/// 7.67e-53`, more than seven orders of magnitude below even the smallest
+/// f32 subnormal, so every clamped input narrows to bit-exact `0.0f32`
+/// unambiguously, with wide margin, rather than this module needing to
+/// argue precisely about a tight boundary. `k` (this function's own
+/// range-reduction integer, see [`exp_f64_v1`]'s doc) stays in `-174..=0`
+/// for this floor, still far inside `f64`'s normal exponent range.
+const EXP_DOMAIN_FLOOR_V1: f64 = -120.0;
+
+/// Private, domain-restricted deterministic `exp` (`e^x`). Valid only for
+/// finite `x` in `[EXP_DOMAIN_FLOOR_V1, 0.0]`; its only caller
+/// ([`softmax_legal_action_weights_v1`]) clamps to this domain before
+/// calling, exactly as [`expm1_f64_v1`]'s own contract requires its own
+/// caller (`tanh_f32_v1`) to pre-guard its domain via branch structure
+/// rather than a runtime assertion. Not a general-purpose `exp` (no
+/// positive-`x` handling, no overflow saturation): reusing it outside this
+/// exact contract is a bug, not a feature, identically to `expm1_f64_v1`'s
+/// own warning.
+///
+/// Same range-reduction technique as [`expm1_f64_v1`] (this module's own
+/// established, panel-reviewed precedent for exactly this class of
+/// problem): reduce against a single full-precision `f64` `ln(2)`
+/// constant (no Cody-Waite two-part split needed, for the same reason
+/// `expm1_f64_v1` gives, extended to this function's own wider `k` range
+/// below), evaluate a degree-7 Taylor polynomial for `e^r` by Horner's
+/// method (reusing the identical [`EXPM1_TAYLOR_C2_V1`]..
+/// [`EXPM1_TAYLOR_C7_V1`] coefficients [`expm1_f64_v1`] already defines --
+/// the same `1/n!` values power a plain `e^r` series exactly as they power
+/// `e^r - 1`'s; deliberately not renamed or duplicated as literals, since
+/// `expm1_f64_v1`/`tanh_f32_v1` are already independently countersigned
+/// and this addition does not change their behavior, only reads their
+/// already-fixed constants a second time), then reconstruct via exact
+/// bit-level `2^k` scaling. Unlike `expm1_f64_v1`, there is no
+/// cancellation hazard here to guard against with an "expm1-style"
+/// reformulation: this function's result is used directly as one softmax
+/// numerator among several, never subtracted from an `O(1)` quantity
+/// afterward, so a plain Taylor series for `e^r` itself (leading
+/// coefficient `1.0`, written out rather than omitted) is safe as written,
+/// with no cancellation-avoidance trick needed.
+///
+/// Computed, in this exact order:
+///
+/// 1. `k_f = (x * EXPM1_INV_LN2_F64_V1).round()` (`f64::round`, half away
+///    from zero, identical primitive to `expm1_f64_v1`'s); `k = k_f as
+///    i32`.
+/// 2. `r = x - (k as f64) * EXPM1_LN2_F64_V1`; `|r| <= ln(2)/2 ~= 0.3466`
+///    by construction, the identical bound `expm1_f64_v1` derives. For
+///    this function's domain (`x` in `[-120.0, 0.0]`), `k` ranges over
+///    `-174..=0` (`-120.0 / ln(2) ~= -173.13`), still utterly negligible
+///    reduction error against a single full-precision constant (`|k| *
+///    2^-52 <= 174 * 2^-52 ~= 3.9e-14`, far below the `f32`-precision
+///    target (`~6e-8`) this function's caller ultimately narrows to), and
+///    still well inside `f64`'s normal exponent range for the
+///    reconstruction step below (`k + 1023` in `849..=1023`, nowhere near
+///    the field's `0..=2046` boundary).
+/// 3. Degree-7 Taylor polynomial, Horner's method, descending degree,
+///    reusing `EXPM1_TAYLOR_C2_V1..C7_V1` plus explicit `1.0` coefficients
+///    for the `r^1` and `r^0` terms (both written out, unlike
+///    `expm1_f64_v1`'s implicit-leading-term trick, since there is no
+///    cancellation to avoid here): `e^r = ((((((C7*r + C6)*r + C5)*r +
+///    C4)*r + C3)*r + C2)*r + 1.0)*r + 1.0`.
+/// 4. Reconstruction, `e^x = 2^k * e^r`, via the identical exact bit-level
+///    `2^k` construction `expm1_f64_v1` uses (`f64::from_bits(((k + 1023)
+///    as u64) << 52)`).
+///
+/// Accuracy: the Taylor truncation bound (`~3e-9` relative, at `|r| <=
+/// 0.3466`) and the reduction-constant error bound (`~3.9e-14` at this
+/// function's widest `k`) are both independent of how negative `x` is
+/// (range reduction always brings `r` into the same fixed small interval
+/// regardless of `x`'s magnitude), so this function's `f64`-precision
+/// accuracy stays uniform across its whole documented domain; narrowing to
+/// `f32` (the caller's one rounding per weight) is therefore correctly
+/// rounded to within the oracle-verified contract goal below. See
+/// `exp_f64_v1_oracle_correctly_rounded_comparison_v1` for the committed,
+/// generation-script-provenanced measurement.
+fn exp_f64_v1(x: f64) -> f64 {
+    let k_f = (x * EXPM1_INV_LN2_F64_V1).round();
+    let k = k_f as i32;
+    let k_as_f64 = f64::from(k);
+
+    let r = x - k_as_f64 * EXPM1_LN2_F64_V1;
+
+    let mut value = EXPM1_TAYLOR_C7_V1;
+    value = value * r + EXPM1_TAYLOR_C6_V1;
+    value = value * r + EXPM1_TAYLOR_C5_V1;
+    value = value * r + EXPM1_TAYLOR_C4_V1;
+    value = value * r + EXPM1_TAYLOR_C3_V1;
+    value = value * r + EXPM1_TAYLOR_C2_V1;
+    value = value * r + 1.0_f64; // C1 = 1/1! = 1.0, written out (see doc).
+    let exp_r = value * r + 1.0_f64; // C0 = 1/0! = 1.0, written out.
+
+    // Exact power-of-two scaling via direct exponent-field construction;
+    // no libm `exp2`/`powi`/`powf`/`exp` call. Safe for this function's
+    // whole documented domain: k in -174..=0 here, far inside the normal
+    // f64 exponent range.
+    let scale_bits: u64 = ((k + 1023) as u64) << 52;
+    let scale = f64::from_bits(scale_bits);
+    scale * exp_r
+}
+
+/// Deterministic softmax-numerator conversion over one node's legal-action
+/// logits, in the caller's own ascending index order (`weights[i]`
+/// corresponds to `logits[i]`, positionally, always -- this function
+/// performs no reordering of its own). Returns UNNORMALIZED per-action
+/// weights (`e^(logit_i - max_logit)`, each in `[0.0, 1.0]`, the dominant
+/// action(s) always exactly `1.0`); see the module doc's own "Panel ruling
+/// extension" section for why the caller (`quantize_prior_v1`) is meant to
+/// renormalize these, and why that design has no floating-point summation
+/// reduction anywhere in this function at all. Callers must ensure every
+/// `logit` is finite (this function does not itself validate that,
+/// identically to `expm1_f64_v1`/`exp_f64_v1`'s own "caller's job"
+/// contract); `model_guided_search_core_v1`'s own caller already validates
+/// this upstream before calling.
+pub(crate) fn softmax_legal_action_weights_v1(logits: &[f32]) -> Vec<f32> {
+    let mut max_logit = f32::NEG_INFINITY;
+    for &logit in logits {
+        if logit > max_logit {
+            max_logit = logit;
+        }
+    }
+    let max_logit64 = f64::from(max_logit);
+
+    let mut weights = Vec::with_capacity(logits.len());
+    for &logit in logits {
+        // Exact: both operands are lossless f32-to-f64 widenings of the
+        // identical bit pattern for the dominant action, so this
+        // subtraction commits no rounding error there (module doc,
+        // "Max-subtraction is exact, not approximate").
+        let diff = f64::from(logit) - max_logit64;
+        let clamped = diff.max(EXP_DOMAIN_FLOOR_V1);
+        let exp_value = exp_f64_v1(clamped);
+        weights.push(exp_value as f32); // the one rounding to f32 per weight
+    }
+    weights
 }
 
 // ---------------------------------------------------------------------
@@ -900,5 +1147,301 @@ mod tests {
         handle
             .join()
             .expect("subnormal daz-immunity thread must not panic");
+    }
+
+    // -------------------------------------------------------------
+    // Panel ruling extension (2026-08-16): exp_f64_v1 and
+    // softmax_legal_action_weights_v1. Mirrors the tanh_f32_v1 test
+    // discipline above (golden battery, dense-sweep hash, independent
+    // oracle comparison, property tests), adapted to exp_f64_v1's own
+    // `f64 -> f64` signature by comparing the one-rounding-to-f32 result
+    // its only caller (softmax_legal_action_weights_v1) actually produces,
+    // exactly as tanh_f32_v1's own tests validate the f32-visible surface
+    // rather than expm1_f64_v1's raw f64 internals directly.
+    // -------------------------------------------------------------
+
+    fn exp_f64_v1_f32_bits(x: f64) -> u32 {
+        (exp_f64_v1(x) as f32).to_bits()
+    }
+
+    /// Every case independently checked against a 50-digit-precision
+    /// mpmath reference before being pinned here (see
+    /// `generate_deterministic_math_v1_exp_oracle_goldens.py`'s own golden-
+    /// case cross-check), not accepted from a single implementation run.
+    #[test]
+    fn exp_f64_v1_golden_battery_bits_v1() {
+        let cases: &[(&str, f64, u32)] = &[
+            ("zero", 0.0, 0x3f80_0000), // the dominant action's own x: exactly 1.0
+            ("neg_zero", -0.0, 0x3f80_0000),
+            ("floor_exact", EXP_DOMAIN_FLOOR_V1, 0x0000_0000),
+            ("near_floor", -119.0, 0x0000_0000),
+            ("neg_one", -1.0, 0x3ebc_5ab2),
+            ("neg_half", -0.5, 0x3f1b_4598),
+            ("worked_example_gap", -10.0, 0x383e_6bce), // coordinator's own {10,0} example
+            ("expm1_domain_edge", -18.0218, 0x3280_00e0), // 2*TANH_SATURATION_THRESHOLD_V1
+            ("neg_twenty", -20.0, 0x310d_a433),
+            ("neg_fifty", -50.0, 0x1b69_2beb),
+            ("normal_subnormal_boundary", -87.336544, 0x0080_0006),
+            ("zero_round_boundary_below", -103.97212, 0x0000_0000),
+            ("zero_round_boundary_above", -103.9, 0x0000_0001),
+            ("neg_hundred_three", -103.0, 0x0000_0001),
+            ("neg_hundred", -100.0, 0x0000_001b),
+            // Exact reduction seam: r = -ln(2)/2, k = -1 (k*ln2 = -ln2, r =
+            // x - k*ln2 = -ln2/2 - (-ln2) = ln2/2... constructed so |r| sits
+            // at its own documented bound).
+            ("reduction_seam", -0.346_573_590_279_972_64, 0x3f35_04f3),
+            ("small_eps", -1.0e-10, 0x3f80_0000),
+        ];
+        for (name, input, expected_bits) in cases.iter().copied() {
+            let actual_bits = exp_f64_v1_f32_bits(input);
+            assert_eq!(
+                actual_bits, expected_bits,
+                "case {name}: input={input:?} got=0x{actual_bits:08x} expected=0x{expected_bits:08x}"
+            );
+        }
+    }
+
+    #[test]
+    fn exp_f64_v1_golden_dense_sweep_hash_v1() {
+        let mut hasher = Sha256::new();
+        const STEPS: u32 = 200_000;
+        for i in 0..=STEPS {
+            let t = f64::from(i) / f64::from(STEPS);
+            let x = EXP_DOMAIN_FLOOR_V1 * (1.0 - t); // linear sweep [-120.0, 0.0]
+            hasher.update(exp_f64_v1_f32_bits(x).to_be_bytes());
+        }
+        let digest = hasher.finalize();
+        let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+        assert_eq!(
+            hex, "880eca125c1b4d01342d61f4b14103a0a828c84c494610430af830d7b873ba6b",
+            "dense-sweep golden hash moved; this is a real algorithm-output \
+             change (constants, operation order, or branch structure), not \
+             a flaky test -- update deliberately if the change is reviewed \
+             and intended"
+        );
+    }
+
+    // Independent oracle comparison for exp_f64_v1 (panel ruling,
+    // 2026-08-16), mirroring tanh_f32_v1's own oracle discipline above.
+    // Regenerate with:
+    //   python python/tools/generate_deterministic_math_v1_exp_oracle_goldens.py
+    // Covers, per input_bits ascending: the clamp-floor boundary and its
+    // near neighbors, the zero-rounding boundary (ln(2^-150) ~= -103.972)
+    // densely, the normal/subnormal boundary (ln(2^-126) ~= -87.337)
+    // densely, zero itself (both signs), a dense octave-by-octave interior
+    // sweep, and named reference points including the countersigning
+    // panel's own worked-example gap (-10.0).
+    include!("deterministic_math_v1_exp_oracle_table_v1.rs");
+
+    /// Regions where this function's own correctness argument (module doc,
+    /// clamp-floor note) says the result must be EXACT, not merely within
+    /// the general 1-ULP goal: comfortably inside the zero-rounding region
+    /// (`x <= -104.0`, deep past the exact tie boundary `~-103.9721` with
+    /// margin), where every entry in the oracle table already independently
+    /// rounds to `0.0f32`.
+    fn exp_f64_v1_must_be_exact(input_bits: u32) -> bool {
+        let x = f32::from_bits(input_bits);
+        x <= -104.0
+    }
+
+    #[test]
+    fn exp_f64_v1_oracle_correctly_rounded_comparison_v1() {
+        let mut max_ulp = 0u64;
+        let mut max_ulp_bits = 0u32;
+        let mut exact_count = 0u32;
+        for &(input_bits, expected_bits) in EXP_ORACLE_TABLE_V1.iter() {
+            let input = f64::from(f32::from_bits(input_bits));
+            let actual_bits = exp_f64_v1_f32_bits(input);
+            let distance = ulp_distance_v1(actual_bits, expected_bits);
+            if distance == 0 {
+                exact_count += 1;
+            }
+            if distance > max_ulp {
+                max_ulp = distance;
+                max_ulp_bits = input_bits;
+            }
+            if exp_f64_v1_must_be_exact(input_bits) {
+                assert_eq!(
+                    actual_bits,
+                    expected_bits,
+                    "zero-rounding-region entry must be exact: input_bits=0x{input_bits:08x} \
+                     ({:?}) got=0x{actual_bits:08x} expected=0x{expected_bits:08x}",
+                    f32::from_bits(input_bits),
+                );
+            } else {
+                assert!(
+                    distance <= 1,
+                    "contract goal is at most 1 ULP: input_bits=0x{input_bits:08x} \
+                     ({:?}) got=0x{actual_bits:08x} expected=0x{expected_bits:08x} ulp={distance}",
+                    f32::from_bits(input_bits),
+                );
+            }
+        }
+        println!(
+            "exp_f64_v1_oracle_correctly_rounded_comparison_v1: {} entries, {exact_count} exact \
+             (0 ULP), max_ulp={max_ulp} at input_bits=0x{max_ulp_bits:08x}",
+            EXP_ORACLE_TABLE_V1.len(),
+        );
+    }
+
+    #[test]
+    fn exp_f64_v1_property_monotonic_on_sampled_grid_v1() {
+        const STEPS: i32 = 400_000;
+        let mut previous: Option<f64> = None;
+        for i in 0..=STEPS {
+            let t = f64::from(i) / f64::from(STEPS);
+            let x = EXP_DOMAIN_FLOOR_V1 * (1.0 - t);
+            let y = exp_f64_v1(x);
+            if let Some(previous_y) = previous {
+                assert!(
+                    y >= previous_y,
+                    "monotonicity violated: x={x} produced y={y} < previous y={previous_y}"
+                );
+            }
+            previous = Some(y);
+        }
+    }
+
+    #[test]
+    fn exp_f64_v1_property_output_range_bounds_v1() {
+        const STEPS: i32 = 400_000;
+        for i in 0..=STEPS {
+            let t = f64::from(i) / f64::from(STEPS);
+            let x = EXP_DOMAIN_FLOOR_V1 * (1.0 - t);
+            let y = exp_f64_v1(x);
+            assert!((0.0..=1.0).contains(&y), "range violated for x={x}: y={y}");
+        }
+    }
+
+    // -------------------------------------------------------------
+    // softmax_legal_action_weights_v1: golden battery over the wrapper
+    // itself (masking-free, index-order-sensitive behavior that
+    // exp_f64_v1's own tests above do not exercise).
+    // -------------------------------------------------------------
+
+    /// Max-subtraction mutation boundary: the dominant action's own weight
+    /// must be bit-exact `1.0` for any legal logit set, since its own
+    /// `x_i` is exact `0.0` by construction (module doc, "Max-subtraction
+    /// is exact, not approximate"). A mutation that skipped or corrupted
+    /// max-subtraction would not, in general, produce exactly `1.0` here.
+    #[test]
+    fn softmax_dominant_action_weight_is_exactly_one_v1() {
+        for logits in [
+            vec![10.0_f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            vec![-5.0_f32, -3.0, 7.5, 2.0],
+            vec![0.0_f32],
+            vec![-1000.0_f32, 1000.0],
+        ] {
+            let weights = softmax_legal_action_weights_v1(&logits);
+            let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            for (index, (&logit, &weight)) in logits.iter().zip(weights.iter()).enumerate() {
+                if logit == max {
+                    assert_eq!(
+                        weight.to_bits(),
+                        1.0_f32.to_bits(),
+                        "dominant action at index {index} must have weight exactly 1.0, \
+                         got {weight} for logits {logits:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Two equal max logits: both must receive bit-exact equal (`1.0`)
+    /// weight, not merely approximately equal.
+    #[test]
+    fn softmax_two_equal_max_logits_tie_case_v1() {
+        let logits = vec![5.0_f32, 5.0, 1.0, -3.0];
+        let weights = softmax_legal_action_weights_v1(&logits);
+        assert_eq!(weights[0].to_bits(), 1.0_f32.to_bits());
+        assert_eq!(weights[1].to_bits(), 1.0_f32.to_bits());
+        assert_eq!(weights[0].to_bits(), weights[1].to_bits());
+        assert!(weights[2] < weights[0]);
+        assert!(weights[3] < weights[2]);
+    }
+
+    /// All-equal logits give bit-exact equal weights (every `x_i == 0.0`).
+    #[test]
+    fn softmax_all_equal_logits_give_equal_weights_exactly_v1() {
+        let logits = vec![3.5_f32; 6];
+        let weights = softmax_legal_action_weights_v1(&logits);
+        for &weight in &weights {
+            assert_eq!(weight.to_bits(), 1.0_f32.to_bits());
+        }
+    }
+
+    /// A single legal action: its own weight must be exactly 1.0 (it is
+    /// trivially the dominant action).
+    #[test]
+    fn softmax_single_legal_action_v1() {
+        for logit in [0.0_f32, 123.456, -999.0, f32::MIN, f32::MAX] {
+            let weights = softmax_legal_action_weights_v1(&[logit]);
+            assert_eq!(weights.len(), 1);
+            assert_eq!(weights[0].to_bits(), 1.0_f32.to_bits());
+        }
+    }
+
+    /// Clamp-floor mutation boundary: an extreme spread (the losing action
+    /// far below the winner) must still return a well-formed, finite,
+    /// in-range weight for every action -- not NaN, not a garbage bit
+    /// pattern from an out-of-contract `exp_f64_v1` call. This is the
+    /// scenario an unclamped call could corrupt (module doc, "The clamp
+    /// floor").
+    #[test]
+    fn softmax_extreme_spread_clamps_and_stays_well_formed_v1() {
+        for spread in [200.0_f32, 1_000.0, 1.0e6, f32::MAX / 2.0] {
+            let logits = vec![0.0_f32, -spread];
+            let weights = softmax_legal_action_weights_v1(&logits);
+            assert_eq!(weights[0].to_bits(), 1.0_f32.to_bits());
+            assert!(
+                weights[1].is_finite() && (0.0..=1.0).contains(&weights[1]),
+                "extreme spread {spread} produced an out-of-contract weight: {:?}",
+                weights[1]
+            );
+        }
+    }
+
+    /// Index-order boundary: `weights[i]` must correspond POSITIONALLY to
+    /// `logits[i]`, not merely contain the right multiset of values in some
+    /// order. Distinct, individually identifiable logits per index make a
+    /// transposition bug detectable.
+    #[test]
+    fn softmax_output_is_positionally_index_matched_v1() {
+        let logits = vec![1.0_f32, 2.0, 3.0, 4.0, 5.0];
+        let weights = softmax_legal_action_weights_v1(&logits);
+        assert_eq!(weights.len(), logits.len());
+        // Strictly increasing input logits must produce strictly
+        // increasing weights at the SAME indices (softmax is monotonic in
+        // its own input), so any positional shuffle is detectable here.
+        for window in weights.windows(2) {
+            assert!(
+                window[1] > window[0],
+                "weights must be strictly increasing at increasing indices \
+                 for strictly increasing logits: {weights:?}"
+            );
+        }
+        // The last (highest-logit) action must be the unique dominant one.
+        assert_eq!(*weights.last().unwrap(), 1.0_f32);
+    }
+
+    /// Sanity cross-check against the countersigning panel's own worked
+    /// example (module doc, "Panel ruling extension"): legal logits
+    /// `{10.0, 0.0 x9}` must put approximately 99.96% of the (Hamilton-
+    /// apportioned, normalized) mass on the dominant action, reproducing
+    /// the panel's own recomputation, not merely this implementation's own
+    /// self-consistency.
+    #[test]
+    fn softmax_matches_panels_worked_example_v1() {
+        let mut logits = vec![0.0_f32; 10];
+        logits[0] = 10.0;
+        let weights = softmax_legal_action_weights_v1(&logits);
+        let sum: f64 = weights.iter().map(|&w| f64::from(w)).sum();
+        let dominant_share = f64::from(weights[0]) / sum;
+        assert!(
+            (0.999_0..=0.999_9).contains(&dominant_share),
+            "expected the dominant action's share to match the panel's own \
+             ~99.96% recomputation, got {:.6}",
+            dominant_share * 100.0
+        );
     }
 }

@@ -725,7 +725,20 @@ fn parse_authority_digest_v1(value: &str) -> Result<[u8; 32]> {
     })
 }
 
-fn encoded_decision_view_v1(
+/// Visibility bump only (was module-private): `model-guided-searcher-v1`
+/// item 6a (`CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.4's
+/// "third dispatch shape", Section 5.3 item 6) reuses this exact,
+/// unmodified conversion from its own leaf evaluator
+/// (`model_guided_search_core_v1::ModelGuidedSearchRealForwardValueEvaluatorV1`)
+/// to build a `NativeEncodedDecisionViewV1` from a `NativeFlatDecisionTensorV2`
+/// it tensorizes itself, without going through the full checkpoint-manifest
+/// loading this module's own `NativeCheckpointInferenceV1` requires (the
+/// search seam constructs its model in-memory via
+/// `NativePolicyValueNetV1::runner_fixed_v1`, matching this crate's own
+/// item-5 precedent). Zero behavior change: the function body is byte-for-
+/// byte unchanged, and every existing caller and test in this module is
+/// unaffected.
+pub(crate) fn encoded_decision_view_v1(
     tensor: &NativeFlatDecisionTensorV2,
 ) -> NativeEncodedDecisionViewV1<'_> {
     NativeEncodedDecisionViewV1::from_slices_unvalidated(
