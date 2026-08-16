@@ -136,25 +136,60 @@
 //!
 //! Section 1.3 enumerates three per-simulation leaf-value sites; v1's own
 //! `run_simulation_v1` implementation, read literally, has FOUR textual call
-//! sites for its static evaluator: (a) the top-of-loop check (fires only on
-//! mid-tree BUDGET exhaustion in practice -- remaining_depth==0 never reaches
-//! this branch, since every path that would produce it already breaks out
-//! one statement earlier); (b) the immediate post-transition depth-cap check
-//! (the genuine site-3 case); (c) newly-expanded-node creation (site 2); and
-//! (d) the coverage-guarantee early exit for an EXISTING next node during the
-//! initial "every root action gets one visit" phase. The design's own text
-//! resolves (a): "'Budget exhaustion'... is a decision-level condition...
-//! not itself a fourth per-simulation leaf trigger, and this design does not
-//! treat it as one." Since (a) and (d) both evaluate an EXISTING node
-//! without creating a new one -- structurally the defining property of site
-//! 3, "a node already created... that a later simulation's... selection
-//! reaches again" -- this module routes (a), (b), and (d) all through the
+//! sites for its static evaluator: (a) the top-of-loop check; (b) the
+//! immediate post-transition depth-cap check (the genuine site-3 case); (c)
+//! newly-expanded-node creation (site 2); and (d) the coverage-guarantee
+//! early exit for an EXISTING next node during the initial "every root
+//! action gets one visit" phase.
+//!
+//! **(a) is unreachable under any well-formed call, not merely rare in
+//! practice.** Its condition (`remaining_depth == 0 || *transitions_used >=
+//! transition_budget`) is checked, and found false, by branch (b)
+//! immediately before the only path that can loop back around to (a) (the
+//! "existing node found" arm, taken when `forced_root_action` is `None`);
+//! nothing on that path changes `remaining_depth` or `transitions_used`
+//! between the two checks, so (a)'s condition cannot flip from false to true
+//! in between. On the very first iteration, the caller's own preconditions
+//! make it false there too: the outer budget loop only starts a new
+//! simulation while `transitions_used < transition_budget`, and `depth_cap`
+//! is always positive in every real call. This is defense-in-depth dead
+//! code, structurally identical to v1's own equally-unreachable top-of-loop
+//! branch -- this module's traversal loop deliberately mirrors v1's shape
+//! line for line, per the inherit-verbatim mandate (Section 1.1) -- and is
+//! kept here for structural symmetry with that inherited traversal, not
+//! because it fires in practice. (An earlier revision of this comment
+//! claimed it "fires only on mid-tree budget exhaustion in practice"; that
+//! claim was checked against the actual control flow and found false, and
+//! is retracted here rather than left standing.)
+//!
+//! **(b) and (d) route to the same tag as a matter of event semantics, not
+//! tree-lookup structure.** Both are an evaluation of a search-frontier
+//! state that does not expand a new tree node this simulation (genuine site
+//! 3, and v1's own coverage-guarantee early exit, respectively). An earlier
+//! revision of this comment justified the grouping by claiming both
+//! "evaluate an existing node without creating a new one," calling that
+//! "structurally the defining property of site 3." That justification does
+//! not hold as written: (b) itself never looks up or touches an existing
+//! tree node before evaluating -- it short-circuits on the depth-cap/budget
+//! check immediately after a transition, before `tree.find_node` is ever
+//! called -- so there is no shared tree-lookup property between (b) and (d)
+//! to appeal to. What actually licenses folding (a) into this same tag,
+//! despite its own separate unreachability, is the design's own text:
+//! "'Budget exhaustion'... is a decision-level condition... not itself a
+//! fourth per-simulation leaf trigger, and this design does not treat it as
+//! one." And because per-simulation redetermination is inherited verbatim
+//! (Section 1.1), the concrete state underlying a given tree key differs on
+//! every simulation even when the key itself does not: a first-ever
+//! encounter with a given depth-cap-frontier key and a genuine later
+//! revisit of that same key are therefore INDISTINGUISHABLE at this site by
+//! design, deliberately -- the evaluator is invoked fresh either way,
+//! exactly as Section 1.3 requires ("the evaluator is therefore invoked
+//! fresh on every such revisit, never cached from a prior simulation's
+//! result"). This module routes (a) (dead), (b), and (d) all through the
 //! same [`ModelGuidedSearchLeafSiteV1::RevisitedDepthCapLeaf`] tag and mock
-//! counter. This is the minimal reading consistent with the design's own
-//! "not a fourth... trigger" statement and with Section 1.3's own closing
-//! claim that no site is "silently doubled up": three site TAGS exist here
-//! (`RootPrior` is pre-loop and not a per-simulation site at all), matching
-//! the design's three-site count exactly once `RootPrior` is set aside.
+//! counter. Three site TAGS exist here (`RootPrior` is pre-loop and not a
+//! per-simulation site at all), matching the design's three-site count
+//! exactly once `RootPrior` is set aside.
 //!
 //! # Resolved design point: `TerminalClassificationV1::Truncated`
 //!
