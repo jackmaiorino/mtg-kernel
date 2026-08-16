@@ -23,14 +23,18 @@
 //! `f32::powi`, or any other transcendental libm-backed function). Every
 //! operation is one of: elementary IEEE 754 `f32` arithmetic (`+`, `-`,
 //! `*`, `/`), a bit-level reinterpretation (`f32::to_bits`/`f32::from_bits`),
-//! or a primitive that Rust/LLVM lowers to a native instruction or
-//! compiler-builtin rather than a dynamic libm import (`f32::abs`,
-//! `f32::copysign`, `f32::round`, `f32::clamp`, `f32::is_nan`,
-//! `f32::is_infinite`; the audit's own `dumpbin /imports` evidence lists
-//! `tanhf`/`logf`/`exp`/`pow` as the crate's system-libm imports and does
-//! not list any of these). This module's own verification step re-runs
-//! that same import-table check against a binary built from this exact
-//! module.
+//! or a primitive whose result is exactly specified by IEEE 754 for every
+//! input, leaving no implementation latitude (`f32::abs`, `f32::copysign`,
+//! `f32::round`, `f32::clamp`, `f32::is_nan`, `f32::is_infinite`).
+//! Honesty note (round-2 countersign): on this Windows/MSVC target
+//! `f64::round` DOES lower to a CRT `round` import rather than a compiler
+//! builtin (verified by an isolated dumpbin probe); that is acceptable
+//! here, and only here, because `round` is an exactly-specified operation
+//! with a unique correct answer per input, unlike the transcendental
+//! functions this module exists to avoid. The determinism contract
+//! therefore rests on exact-specification, not on import-freedom; the
+//! transcendental imports (`tanhf`/`logf`/`exp`/`pow`) remain banned from
+//! this module's bodies.
 //!
 //! # Panel-driven revision (2026-08-15)
 //!
