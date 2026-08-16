@@ -139,10 +139,19 @@
 //! (`native_forward_determinism_probe_v1.rs`) for the same measurement
 //! against the production `f32::tanh()` path specifically.
 //!
-//! The FTZ/DAZ/rounding-mode entry gate this module also owns
-//! (`assert_pinned_mxcsr_state_v1`, Design v1 Section 1.5 property 5,
-//! follow-on item 3b) is added in a later commit alongside the
-//! search-scoped forward variant that calls it.
+//! # FTZ/DAZ/rounding-mode entry gate
+//!
+//! `assert_pinned_mxcsr_state_v1` (Design v1 Section 1.5 property 5,
+//! follow-on item 3b) reads the calling thread's MXCSR control/status
+//! register and panics if flush-to-zero, denormals-are-zero, or the
+//! rounding-control field are not in their IEEE 754 default state (both
+//! flags off, round-to-nearest-even). It is called once, at the entry of
+//! the search-scoped forward variant
+//! (`NativePolicyValueNetV1::forward_search_deterministic_v1`), before any
+//! arithmetic in that call runs. `x86_64`-only, matching the existing
+//! probe's own scope limitation (`native_forward_determinism_probe_v1.rs`);
+//! every `x86_64` target this crate builds for has SSE2 and therefore
+//! MXCSR as a mandatory baseline.
 
 /// Saturation cutoff for [`tanh_f32_v1`]'s magnitude. See the algorithm
 /// doc above (step 4) for why `9.0` is an exact, not approximate, cutoff.
@@ -229,6 +238,83 @@ pub(crate) fn tanh_f32_v1(x: f32) -> f32 {
     let frac = 2.0_f32 / denom;
     let result_abs = (1.0_f32 - frac).clamp(0.0_f32, 1.0_f32);
     result_abs.copysign(x)
+}
+
+// ---------------------------------------------------------------------
+// MXCSR FTZ/DAZ/rounding-mode entry gate (Design v1 Section 1.5 property
+// 5; follow-on item 3b).
+// ---------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+const MXCSR_DAZ_BIT_V1: u32 = 1 << 6;
+#[cfg(target_arch = "x86_64")]
+const MXCSR_FTZ_BIT_V1: u32 = 1 << 15;
+#[cfg(target_arch = "x86_64")]
+const MXCSR_ROUNDING_CONTROL_SHIFT_V1: u32 = 13;
+#[cfg(target_arch = "x86_64")]
+const MXCSR_ROUNDING_CONTROL_MASK_V1: u32 = 0b11;
+
+/// Reads the calling thread's MXCSR. `stmxcsr` with no special
+/// `options(...)` is a full side effect from the compiler's point of view,
+/// so it cannot be hoisted or sunk across neighboring floating-point
+/// operations, matching the same rationale the existing determinism
+/// probe's own `read_mxcsr_v1` documents
+/// (`native_forward_determinism_probe_v1.rs`).
+#[cfg(target_arch = "x86_64")]
+fn read_mxcsr_v1() -> u32 {
+    let mut mxcsr: u32 = 0;
+    unsafe {
+        std::arch::asm!(
+            "stmxcsr [{0}]",
+            in(reg) &mut mxcsr,
+        );
+    }
+    mxcsr
+}
+
+/// Writes the calling thread's MXCSR. Used only by this module's own test
+/// module below (to set up and restore MXCSR mutation scenarios for the
+/// gate-violation tests); nothing in the production path calls it, since
+/// production only ever needs to read and verify, never repair, the
+/// FTZ/DAZ/rounding-control state.
+#[cfg(all(test, target_arch = "x86_64"))]
+fn write_mxcsr_v1(value: u32) {
+    unsafe {
+        std::arch::asm!(
+            "ldmxcsr [{0}]",
+            in(reg) &value,
+        );
+    }
+}
+
+/// Panics unless the calling thread's MXCSR has FTZ=0, DAZ=0, and
+/// rounding-control=0 (round-to-nearest-even), the pinned state Design v1
+/// Section 1.5 property 5 requires be verified "at the point the forward
+/// pass runs." Called once, at the entry of
+/// [`crate::native_policy_value_net_v1::NativePolicyValueNetV1::forward_search_deterministic_v1`],
+/// before any arithmetic in that call runs.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn assert_pinned_mxcsr_state_v1() {
+    let mxcsr = read_mxcsr_v1();
+    let daz = mxcsr & MXCSR_DAZ_BIT_V1 != 0;
+    let ftz = mxcsr & MXCSR_FTZ_BIT_V1 != 0;
+    let rounding_control =
+        (mxcsr >> MXCSR_ROUNDING_CONTROL_SHIFT_V1) & MXCSR_ROUNDING_CONTROL_MASK_V1;
+    assert!(
+        !daz,
+        "search-scoped deterministic forward requires MXCSR DAZ=0 \
+         (denormals-are-zero must be off); found dirty MXCSR 0x{mxcsr:08x}"
+    );
+    assert!(
+        !ftz,
+        "search-scoped deterministic forward requires MXCSR FTZ=0 \
+         (flush-to-zero must be off); found dirty MXCSR 0x{mxcsr:08x}"
+    );
+    assert_eq!(
+        rounding_control, 0,
+        "search-scoped deterministic forward requires MXCSR rounding-control=0 \
+         (round-to-nearest-even); found dirty MXCSR 0x{mxcsr:08x}"
+    );
 }
 
 #[cfg(test)]
@@ -471,5 +557,85 @@ mod tests {
             let y = tanh_f32_v1(x);
             assert_eq!(y.to_bits(), f32::NAN.to_bits());
         }
+    }
+
+    // -------------------------------------------------------------
+    // MXCSR FTZ/DAZ/rounding-mode gate tests. Each mutation runs in a
+    // freshly spawned OS thread (MXCSR is per-thread) so it cannot affect
+    // any concurrently running test's floating-point control state, and
+    // restores the thread's original MXCSR before the thread exits.
+    // -------------------------------------------------------------
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn assert_pinned_mxcsr_state_passes_on_clean_state_v1() {
+        let handle = std::thread::spawn(|| {
+            let original = read_mxcsr_v1();
+            let dirty_mask = MXCSR_DAZ_BIT_V1
+                | MXCSR_FTZ_BIT_V1
+                | (MXCSR_ROUNDING_CONTROL_MASK_V1 << MXCSR_ROUNDING_CONTROL_SHIFT_V1);
+            let clean = original & !dirty_mask;
+            write_mxcsr_v1(clean);
+            assert_pinned_mxcsr_state_v1();
+            write_mxcsr_v1(original);
+        });
+        handle
+            .join()
+            .expect("mxcsr clean-state thread must not panic");
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn assert_pinned_mxcsr_state_panics_on_dirty_ftz_v1() {
+        let handle = std::thread::spawn(|| {
+            let original = read_mxcsr_v1();
+            write_mxcsr_v1(original | MXCSR_FTZ_BIT_V1);
+            let result = std::panic::catch_unwind(assert_pinned_mxcsr_state_v1);
+            write_mxcsr_v1(original);
+            assert!(
+                result.is_err(),
+                "expected panic when MXCSR FTZ bit is dirty"
+            );
+        });
+        handle
+            .join()
+            .expect("mxcsr ftz-violation thread must not panic");
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn assert_pinned_mxcsr_state_panics_on_dirty_daz_v1() {
+        let handle = std::thread::spawn(|| {
+            let original = read_mxcsr_v1();
+            write_mxcsr_v1(original | MXCSR_DAZ_BIT_V1);
+            let result = std::panic::catch_unwind(assert_pinned_mxcsr_state_v1);
+            write_mxcsr_v1(original);
+            assert!(
+                result.is_err(),
+                "expected panic when MXCSR DAZ bit is dirty"
+            );
+        });
+        handle
+            .join()
+            .expect("mxcsr daz-violation thread must not panic");
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn assert_pinned_mxcsr_state_panics_on_dirty_rounding_control_v1() {
+        let handle = std::thread::spawn(|| {
+            let original = read_mxcsr_v1();
+            let dirty = original | (1 << MXCSR_ROUNDING_CONTROL_SHIFT_V1);
+            write_mxcsr_v1(dirty);
+            let result = std::panic::catch_unwind(assert_pinned_mxcsr_state_v1);
+            write_mxcsr_v1(original);
+            assert!(
+                result.is_err(),
+                "expected panic when MXCSR rounding-control is dirty"
+            );
+        });
+        handle
+            .join()
+            .expect("mxcsr rounding-control-violation thread must not panic");
     }
 }

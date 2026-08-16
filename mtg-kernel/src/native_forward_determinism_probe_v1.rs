@@ -238,6 +238,108 @@ mod tests {
         hasher.finalize().into()
     }
 
+    /// Search-scoped sibling of [`hash_battery_v1`]: identical battery,
+    /// identical hashing technique, but scores through
+    /// `NativeCheckpointInferenceV1::score_decision_search_deterministic_v1`
+    /// (the new search-scoped forward variant,
+    /// `native_policy_value_net_v1::NativePolicyValueNetV1::forward_search_deterministic_v1`,
+    /// which routes activation through
+    /// `deterministic_math_v1::tanh_f32_v1` instead of `f32::tanh()`)
+    /// instead of `score_decision_v1`. Proves the variant's OWN bit
+    /// stability; it is not compared against `hash_battery_v1`'s hash here
+    /// (the two are expected to differ in general, since the variant uses
+    /// a deliberately different, libm-free `tanh` -- see the max-ULP
+    /// comparison test below for that measurement).
+    fn hash_battery_search_deterministic_v1(
+        inference: &NativeCheckpointInferenceV1,
+        battery: &[(FlatGlobalsV2, Vec<FlatScorerActionCoreV2>)],
+    ) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        for (globals, actions) in battery {
+            let view = FlatScoringDecisionViewV2::new(
+                globals,
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                actions,
+                &[],
+            );
+            let output = inference
+                .score_decision_search_deterministic_v1(view)
+                .expect("search-deterministic forward must succeed on every fixed battery input");
+            for logit in output.action_logits() {
+                hasher.update(logit.to_bits().to_be_bytes());
+            }
+            hasher.update(output.value().to_bits().to_be_bytes());
+        }
+        hasher.finalize().into()
+    }
+
+    /// Flattens every logit and the value from every battery decision, in
+    /// battery order, scored through either the production libm path or
+    /// the search-scoped deterministic-math variant. Used only by the
+    /// max-ULP comparison test below.
+    fn battery_outputs_v1(
+        inference: &NativeCheckpointInferenceV1,
+        battery: &[(FlatGlobalsV2, Vec<FlatScorerActionCoreV2>)],
+        use_search_deterministic_variant: bool,
+    ) -> Vec<f32> {
+        let mut values = Vec::new();
+        for (globals, actions) in battery {
+            let view = FlatScoringDecisionViewV2::new(
+                globals,
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                actions,
+                &[],
+            );
+            let output = if use_search_deterministic_variant {
+                inference.score_decision_search_deterministic_v1(view)
+            } else {
+                inference.score_decision_v1(view)
+            }
+            .expect("forward must succeed on every fixed battery input");
+            values.extend_from_slice(output.action_logits());
+            values.push(output.value());
+        }
+        values
+    }
+
+    /// Maps an `f32` to a signed integer key such that the usual `f32`
+    /// total order (ignoring NaN) corresponds exactly to the integer order
+    /// of the keys, and adjacent representable `f32` values map to keys
+    /// exactly 1 apart. Standard technique (Bruce Dawson's "comparing
+    /// floating point numbers"): non-negative floats' bit patterns are
+    /// already monotonic as signed integers; negative floats' bit patterns
+    /// sort backwards, so they are remapped by reflecting through
+    /// `i32::MIN`.
+    fn ordered_key_v1(value: f32) -> i64 {
+        let bits = value.to_bits() as i32;
+        let ordered = if bits < 0 {
+            i32::MIN.wrapping_sub(bits)
+        } else {
+            bits
+        };
+        ordered as i64
+    }
+
+    /// Distance, in ULPs, between two (non-NaN) `f32` values, via
+    /// [`ordered_key_v1`].
+    fn ulp_distance_v1(a: f32, b: f32) -> u64 {
+        (ordered_key_v1(a) - ordered_key_v1(b)).unsigned_abs()
+    }
+
     fn hex_v1(bytes: &[u8]) -> String {
         let mut out = String::with_capacity(bytes.len() * 2);
         for byte in bytes {
@@ -450,6 +552,127 @@ mod tests {
         assert_eq!(
             before_thread_start, after_all,
             "MXCSR at end of probe differs from MXCSR before the first forward call"
+        );
+    }
+
+    // ----------------------------------------------------------------
+    // Search-scoped forward variant (Design v1 Section 1.5, Option S):
+    // extends this probe to prove the deterministic-tanh variant's own
+    // bit-stability, and to record its distance from the production libm
+    // path. Nothing on the production path calls the variant; these tests
+    // exercise it only through
+    // `NativeCheckpointInferenceV1::score_decision_search_deterministic_v1`.
+    // ----------------------------------------------------------------
+
+    /// Search-scoped sibling of property (a):
+    /// `forward_is_byte_identical_across_1000_repeated_calls_in_one_process_v1`.
+    #[test]
+    #[ignore = "requires the real de-novo checkpoint store on D:; run explicitly for the forward-determinism audit"]
+    fn search_deterministic_forward_is_byte_identical_across_1000_repeated_calls_in_one_process_v1()
+    {
+        let inference = load_probe_checkpoint_v1();
+        let battery = battery_v1();
+        let first = hash_battery_search_deterministic_v1(&inference, &battery);
+        for iteration in 0..1000u32 {
+            let hash = hash_battery_search_deterministic_v1(&inference, &battery);
+            assert_eq!(
+                hash, first,
+                "search-deterministic in-process repeat {iteration} diverged from the first call's hash"
+            );
+        }
+        println!(
+            "search_deterministic_in_process_1000x_battery_hash_hex={}",
+            hex_v1(&first)
+        );
+    }
+
+    /// Search-scoped sibling of property (c):
+    /// `forward_is_byte_identical_under_four_concurrent_threads_v1`.
+    #[test]
+    #[ignore = "requires the real de-novo checkpoint store on D:; run explicitly for the forward-determinism audit"]
+    fn search_deterministic_forward_is_byte_identical_under_four_concurrent_threads_v1() {
+        let inference = Arc::new(load_probe_checkpoint_v1());
+        let battery = Arc::new(battery_v1());
+        let reference_hash = hash_battery_search_deterministic_v1(&inference, &battery);
+
+        let mut handles = Vec::new();
+        for thread_index in 0..4u32 {
+            let inference = Arc::clone(&inference);
+            let battery = Arc::clone(&battery);
+            handles.push(std::thread::spawn(move || {
+                let mut last = [0u8; 32];
+                for _ in 0..250u32 {
+                    last = hash_battery_search_deterministic_v1(&inference, &battery);
+                    assert_eq!(
+                        last, reference_hash,
+                        "search-deterministic thread {thread_index} diverged from the single-threaded reference hash"
+                    );
+                }
+                last
+            }));
+        }
+        for (thread_index, handle) in handles.into_iter().enumerate() {
+            let last = handle.join().unwrap_or_else(|_| {
+                panic!("search-deterministic thread {thread_index} panicked during concurrent forward calls")
+            });
+            assert_eq!(last, reference_hash);
+        }
+        println!(
+            "search_deterministic_four_thread_concurrent_battery_hash_hex={}",
+            hex_v1(&reference_hash)
+        );
+    }
+
+    /// Informational only, not a gate (see this file's module doc and the
+    /// implementation task this test was written for): measures, and
+    /// prints, the maximum ULP distance between the production libm
+    /// forward path (`score_decision_v1`) and the search-scoped
+    /// deterministic-math variant (`score_decision_search_deterministic_v1`)
+    /// over every logit and value in the fixed battery. This is expected
+    /// to be nonzero -- the whole point of the variant is a different,
+    /// libm-free `tanh` -- and documents roughly how far apart the two
+    /// paths land, not a pass/fail bound. Design v1 Section 1.5 explicitly
+    /// accepts last-bit differences between the two paths, since search
+    /// values are action-selection internals.
+    #[test]
+    #[ignore = "requires the real de-novo checkpoint store on D:; run explicitly for the forward-determinism audit"]
+    fn search_deterministic_forward_max_ulp_deviation_from_libm_forward_v1() {
+        let inference = load_probe_checkpoint_v1();
+        let battery = battery_v1();
+
+        let libm_values = battery_outputs_v1(&inference, &battery, false);
+        let deterministic_values = battery_outputs_v1(&inference, &battery, true);
+        assert_eq!(
+            libm_values.len(),
+            deterministic_values.len(),
+            "libm and search-deterministic batteries produced different output shapes"
+        );
+
+        let mut max_ulp = 0u64;
+        let mut max_ulp_index = 0usize;
+        let mut sum_ulp: u128 = 0;
+        for (index, (&libm_value, &deterministic_value)) in libm_values
+            .iter()
+            .zip(deterministic_values.iter())
+            .enumerate()
+        {
+            let distance = ulp_distance_v1(libm_value, deterministic_value);
+            sum_ulp += distance as u128;
+            if distance > max_ulp {
+                max_ulp = distance;
+                max_ulp_index = index;
+            }
+        }
+        let mean_ulp = sum_ulp as f64 / libm_values.len() as f64;
+        println!(
+            "search_deterministic_vs_libm max_ulp={max_ulp} at flattened_index={max_ulp_index} \
+             (libm={:?} bits=0x{:08x}, search_deterministic={:?} bits=0x{:08x}) \
+             mean_ulp={mean_ulp:.3} over {} values -- informational bound only, not a gate",
+            libm_values[max_ulp_index],
+            libm_values[max_ulp_index].to_bits(),
+            deterministic_values[max_ulp_index],
+            deterministic_values[max_ulp_index].to_bits(),
+            libm_values.len(),
         );
     }
 }

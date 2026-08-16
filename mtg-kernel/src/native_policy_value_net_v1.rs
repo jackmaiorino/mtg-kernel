@@ -596,13 +596,15 @@ impl NativePolicyValueNetV1 {
     /// call [`Self::forward_v1`], which continues to use `LibmTanh`
     /// exactly as before this variant existed.
     ///
-    /// The MXCSR FTZ/DAZ/rounding-control entry gate (Design v1 Section 1.5
-    /// property 5) is added at this method's entry in a later commit,
-    /// alongside the gate function itself.
+    /// Asserts the calling thread's MXCSR FTZ/DAZ/rounding-control state is
+    /// pinned (Design v1 Section 1.5 property 5) before any arithmetic
+    /// runs; see [`deterministic_math_v1::assert_pinned_mxcsr_state_v1`].
     pub(crate) fn forward_search_deterministic_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        #[cfg(target_arch = "x86_64")]
+        deterministic_math_v1::assert_pinned_mxcsr_state_v1();
         self.forward_with_action_ingress_capture_v1(
             encoded,
             None,
