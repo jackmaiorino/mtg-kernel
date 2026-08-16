@@ -106,105 +106,101 @@ mod tests {
     /// by code reading instead of direct empirical exercise, not a silent
     /// gap.
     fn battery_v1() -> Vec<(FlatGlobalsV2, Vec<FlatScorerActionCoreV2>)> {
-        let mut battery = Vec::new();
-
-        // 1. Minimal: the same shape the existing crate-internal fixture
-        //    (`native_checkpoint_inference_v1.rs`'s own tests) already proves
-        //    valid.
-        battery.push((
-            FlatGlobalsV2 {
-                acting_player: FlatRelativePlayerV2::SelfPlayer,
-                ..FlatGlobalsV2::default()
-            },
-            vec![FlatScorerActionCoreV2::default()],
-        ));
-
-        // 2. Moderate, realistic-shaped globals with several legal-shaped
-        //    Pass actions. Non-Pass action kinds (`PlayLand`, `CastSpell`,
-        //    `ActivateAbility`, `ChooseEffectNumber`, ...) turned out to
-        //    require a nonempty `action_refs` binding (a source/target
-        //    object reference) to pass `native_flat_tensorizer_v2`'s own
-        //    decision-shape validation; this battery deliberately stays
-        //    inside the always-valid zero-`action_refs` shape (see the
-        //    battery's own doc comment above), so every action here uses
-        //    `FlatScorerActionKindV2::Pass`, which needs no reference. This
-        //    was confirmed empirically: an earlier revision of this battery
-        //    that used `PlayLand`/`CastSpell`/`ActivateAbility` with
-        //    `ref_len: 0` failed `score_decision_v1` with
-        //    `NativeCheckpointInferenceErrorKindV1::DecisionInvalid`, which
-        //    is itself a fact about the tensorizer's contract, not about
-        //    forward-pass determinism.
-        battery.push((
-            FlatGlobalsV2 {
-                acting_player: FlatRelativePlayerV2::SelfPlayer,
-                active_player: FlatRelativePlayerV2::SelfPlayer,
-                priority_player: FlatRelativePlayerV2::SelfPlayer,
-                initiative: FlatRelativePlayerV2::Opponent,
-                phase: FlatPhaseV2::Main1,
-                players: [
-                    player_globals_v1(20, [1, 0, 2, 0, 0, 3], 5, 34),
-                    player_globals_v1(17, [0, 1, 0, 1, 1, 0], 6, 31),
+        vec![
+            // 1. Minimal: the same shape the existing crate-internal fixture
+            //    (`native_checkpoint_inference_v1.rs`'s own tests) already
+            //    proves valid.
+            (
+                FlatGlobalsV2 {
+                    acting_player: FlatRelativePlayerV2::SelfPlayer,
+                    ..FlatGlobalsV2::default()
+                },
+                vec![FlatScorerActionCoreV2::default()],
+            ),
+            // 2. Moderate, realistic-shaped globals with several legal-shaped
+            //    Pass actions. Non-Pass action kinds (`PlayLand`, `CastSpell`,
+            //    `ActivateAbility`, `ChooseEffectNumber`, ...) turned out to
+            //    require a nonempty `action_refs` binding (a source/target
+            //    object reference) to pass `native_flat_tensorizer_v2`'s own
+            //    decision-shape validation; this battery deliberately stays
+            //    inside the always-valid zero-`action_refs` shape (see the
+            //    battery's own doc comment above), so every action here uses
+            //    `FlatScorerActionKindV2::Pass`, which needs no reference.
+            //    This was confirmed empirically: an earlier revision of this
+            //    battery that used `PlayLand`/`CastSpell`/`ActivateAbility`
+            //    with `ref_len: 0` failed `score_decision_v1` with
+            //    `NativeCheckpointInferenceErrorKindV1::DecisionInvalid`,
+            //    which is itself a fact about the tensorizer's contract, not
+            //    about forward-pass determinism.
+            (
+                FlatGlobalsV2 {
+                    acting_player: FlatRelativePlayerV2::SelfPlayer,
+                    active_player: FlatRelativePlayerV2::SelfPlayer,
+                    priority_player: FlatRelativePlayerV2::SelfPlayer,
+                    initiative: FlatRelativePlayerV2::Opponent,
+                    phase: FlatPhaseV2::Main1,
+                    players: [
+                        player_globals_v1(20, [1, 0, 2, 0, 0, 3], 5, 34),
+                        player_globals_v1(17, [0, 1, 0, 1, 1, 0], 6, 31),
+                    ],
+                    ..FlatGlobalsV2::default()
+                },
+                vec![
+                    FlatScorerActionCoreV2::default(),
+                    FlatScorerActionCoreV2::default(),
+                    FlatScorerActionCoreV2::default(),
+                    FlatScorerActionCoreV2::default(),
                 ],
-                ..FlatGlobalsV2::default()
-            },
-            vec![
-                FlatScorerActionCoreV2::default(),
-                FlatScorerActionCoreV2::default(),
-                FlatScorerActionCoreV2::default(),
-                FlatScorerActionCoreV2::default(),
-            ],
-        ));
-
-        // 3. Many actions (still all `Pass`), against item 2's exact
-        //    `acting_player`/`active_player`/`priority_player`/`initiative`/
-        //    `phase` shape (only the leaf numeric player fields and action
-        //    count vary). An earlier revision of this entry independently
-        //    varied `acting_player` away from `priority_player` and dropped
-        //    `initiative`, and that also failed `score_decision_v1` with
-        //    `DecisionInvalid` -- confirming the tensorizer validates
-        //    cross-field consistency among the player-role globals, not
-        //    just per-field ranges. This battery deliberately does not
-        //    chase that validation surface further: it is orthogonal to
-        //    the forward-pass arithmetic this audit targets.
-        battery.push((
-            FlatGlobalsV2 {
-                acting_player: FlatRelativePlayerV2::SelfPlayer,
-                active_player: FlatRelativePlayerV2::SelfPlayer,
-                priority_player: FlatRelativePlayerV2::SelfPlayer,
-                initiative: FlatRelativePlayerV2::Opponent,
-                phase: FlatPhaseV2::Main1,
-                players: [
-                    player_globals_v1(1, [3, 2, 1, 0, 4, 0], 2, 15),
-                    player_globals_v1(30, [0, 0, 0, 0, 0, 2], 8, 22),
+            ),
+            // 3. Many actions (still all `Pass`), against item 2's exact
+            //    `acting_player`/`active_player`/`priority_player`/
+            //    `initiative`/`phase` shape (only the leaf numeric player
+            //    fields and action count vary). An earlier revision of this
+            //    entry independently varied `acting_player` away from
+            //    `priority_player` and dropped `initiative`, and that also
+            //    failed `score_decision_v1` with `DecisionInvalid` --
+            //    confirming the tensorizer validates cross-field consistency
+            //    among the player-role globals, not just per-field ranges.
+            //    This battery deliberately does not chase that validation
+            //    surface further: it is orthogonal to the forward-pass
+            //    arithmetic this audit targets.
+            (
+                FlatGlobalsV2 {
+                    acting_player: FlatRelativePlayerV2::SelfPlayer,
+                    active_player: FlatRelativePlayerV2::SelfPlayer,
+                    priority_player: FlatRelativePlayerV2::SelfPlayer,
+                    initiative: FlatRelativePlayerV2::Opponent,
+                    phase: FlatPhaseV2::Main1,
+                    players: [
+                        player_globals_v1(1, [3, 2, 1, 0, 4, 0], 2, 15),
+                        player_globals_v1(30, [0, 0, 0, 0, 0, 2], 8, 22),
+                    ],
+                    ..FlatGlobalsV2::default()
+                },
+                (0..24).map(|_| FlatScorerActionCoreV2::default()).collect(),
+            ),
+            // 4. A modestly different life/mana/hand/library spread on a
+            //    small action set, again staying inside item 2's exact
+            //    proven-valid globals field shape.
+            (
+                FlatGlobalsV2 {
+                    acting_player: FlatRelativePlayerV2::SelfPlayer,
+                    active_player: FlatRelativePlayerV2::SelfPlayer,
+                    priority_player: FlatRelativePlayerV2::SelfPlayer,
+                    initiative: FlatRelativePlayerV2::Opponent,
+                    phase: FlatPhaseV2::Main1,
+                    players: [
+                        player_globals_v1(5, [0, 0, 0, 0, 0, 0], 0, 40),
+                        player_globals_v1(40, [4, 4, 4, 4, 4, 4], 7, 20),
+                    ],
+                    ..FlatGlobalsV2::default()
+                },
+                vec![
+                    FlatScorerActionCoreV2::default(),
+                    FlatScorerActionCoreV2::default(),
                 ],
-                ..FlatGlobalsV2::default()
-            },
-            (0..24).map(|_| FlatScorerActionCoreV2::default()).collect(),
-        ));
-
-        // 4. A modestly different life/mana/hand/library spread on a small
-        //    action set, again staying inside item 2's exact proven-valid
-        //    globals field shape.
-        battery.push((
-            FlatGlobalsV2 {
-                acting_player: FlatRelativePlayerV2::SelfPlayer,
-                active_player: FlatRelativePlayerV2::SelfPlayer,
-                priority_player: FlatRelativePlayerV2::SelfPlayer,
-                initiative: FlatRelativePlayerV2::Opponent,
-                phase: FlatPhaseV2::Main1,
-                players: [
-                    player_globals_v1(5, [0, 0, 0, 0, 0, 0], 0, 40),
-                    player_globals_v1(40, [4, 4, 4, 4, 4, 4], 7, 20),
-                ],
-                ..FlatGlobalsV2::default()
-            },
-            vec![
-                FlatScorerActionCoreV2::default(),
-                FlatScorerActionCoreV2::default(),
-            ],
-        ));
-
-        battery
+            ),
+        ]
     }
 
     /// Scores every decision in the battery in order and folds the raw
