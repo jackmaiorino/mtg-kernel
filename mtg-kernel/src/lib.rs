@@ -83,6 +83,12 @@ pub mod ids;
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
 pub mod mana;
+// Model-guided searcher authority record SCHEMA ONLY (design item 4,
+// `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.4 / 5.3). No
+// dispatch, no science-loop or scorer-bridge wiring; that is item 6, its own
+// reviewed diff. See the module's own doc comment for the full field-by-
+// field mapping against v1's `kernel_native_search_opponent_v1`.
+pub mod model_guided_search_authority_v1;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;
