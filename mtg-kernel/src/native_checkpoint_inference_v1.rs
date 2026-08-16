@@ -240,6 +240,35 @@ impl NativeCheckpointInferenceV1 {
         self.score_decision_with_scratch_v1(decision, &mut tensorizer, &mut tensor)
     }
 
+    /// Search-scoped sibling of [`Self::score_decision_v1`]: identical
+    /// tensorization and output validation, but routes through
+    /// [`NativePolicyValueNetV1::forward_search_deterministic_v1`] instead
+    /// of [`NativePolicyValueNetV1::forward_v1`], so the net's activation
+    /// uses the kernel-owned, libm-free
+    /// [`crate::deterministic_math_v1::tanh_f32_v1`] instead of
+    /// `f32::tanh()`. `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section
+    /// 1.5, Option S
+    /// (`docs/audits/model_guided_forward_determinism_audit_v1.md`):
+    /// nothing on the production, checkpoint-runner, or training path calls
+    /// this method today. It exists so the audit's own determinism probe
+    /// can exercise the search-scoped forward variant through the same
+    /// checkpoint-inference boundary the production path uses
+    /// (`native_forward_determinism_probe_v1.rs`); the future
+    /// model-guided-searcher leaf-evaluation wiring (design items 5/6) is
+    /// the intended production consumer, not built by this change.
+    pub fn score_decision_search_deterministic_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+    ) -> Result<NativeCheckpointInferenceOutputV1> {
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut tensor = NativeFlatDecisionTensorV2::default();
+        self.score_decision_with_scratch_search_deterministic_v1(
+            decision,
+            &mut tensorizer,
+            &mut tensor,
+        )
+    }
+
     /// Creates a reusable fail-closed adapter for the existing V2 rollout
     /// scorer contract. The adapter borrows this immutable checkpoint handle;
     /// no model or optimizer state is copied or exposed.
@@ -259,6 +288,39 @@ impl NativeCheckpointInferenceV1 {
         let output = self
             .model
             .forward_v1(encoded_decision_view_v1(tensor))
+            .map_err(map_scoring_error_v1)?;
+        if output.logits.len() != decision.actions().len()
+            || output.logits.is_empty()
+            || output.logits.iter().any(|value| !value.is_finite())
+            || !output.value.is_finite()
+        {
+            return Err(NativeCheckpointInferenceErrorV1::new(
+                NativeCheckpointInferenceErrorKindV1::ScoringInvalid,
+            ));
+        }
+        Ok(NativeCheckpointInferenceOutputV1 {
+            action_logits: output.logits,
+            value: output.value,
+        })
+    }
+
+    /// Search-scoped sibling of [`Self::score_decision_with_scratch_v1`]:
+    /// identical tensorization, scratch reuse, and output validation, but
+    /// calls `forward_search_deterministic_v1` instead of `forward_v1`. See
+    /// [`Self::score_decision_search_deterministic_v1`] for the full
+    /// scope note.
+    fn score_decision_with_scratch_search_deterministic_v1(
+        &self,
+        decision: FlatScoringDecisionViewV2<'_>,
+        tensorizer: &mut NativeFlatTensorizerV2,
+        tensor: &mut NativeFlatDecisionTensorV2,
+    ) -> Result<NativeCheckpointInferenceOutputV1> {
+        tensorizer
+            .fill(decision, tensor)
+            .map_err(map_tensor_error_v1)?;
+        let output = self
+            .model
+            .forward_search_deterministic_v1(encoded_decision_view_v1(tensor))
             .map_err(map_scoring_error_v1)?;
         if output.logits.len() != decision.actions().len()
             || output.logits.is_empty()

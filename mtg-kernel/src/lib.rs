@@ -91,10 +91,7 @@ pub(crate) mod native_flat_cpu_reference_v1;
 // search-scoped forward variant. No libm calls anywhere in its body; see
 // the module doc for the full algorithm and
 // `docs/audits/model_guided_forward_determinism_audit_v1.md` for the
-// determinism hole it closes. Not yet wired to any caller as of this
-// commit (the search-scoped forward variant that calls it lands next);
-// `allow(dead_code)` is removed once that wiring lands.
-#[allow(dead_code)]
+// determinism hole it closes.
 pub(crate) mod deterministic_math_v1;
 // Auditable CPU inference reference for Python kernel-policy-value-net-8;
 // deliberately not a production or performance backend.
