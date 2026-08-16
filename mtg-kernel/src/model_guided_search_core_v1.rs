@@ -304,38 +304,57 @@
 //! that never reaches a decision-cap truncation within its own depth cap
 //! (every test in this diff) never exercises that path.
 //!
-//! # Determination: the real-forward PRIOR conversion (item 6's own
-//! open question, closed here)
+//! # Determination: the real-forward PRIOR conversion (item 6's own open
+//! question; sigmoid RETRACTED, softmax adopted -- countersigning panel
+//! ruling, 2026-08-16)
 //!
 //! Item 1's own module (`model_guided_search_prior_quantization_v1`) states
 //! its input contract as "per-legal-action weights that need not already
 //! sum to 1... each required to lie in `[0.0, 1.0]`" and explicitly declines
 //! to reuse `fast_sampler.rs`'s softmax/exponential-weighting step, leaving
-//! the real conversion for item 6. This evaluator resolves it as
-//! `sigmoid(logit) = 0.5 * (tanh(logit / 2) + 1)` ([`sigmoid_v1`], below),
-//! applied independently to each legal action's own raw logit from
-//! `output.logits` (already exactly the node's live ordered legal-action
-//! set: `NativeFlatTensorizerV2` only ever tensorizes the decision's actual
-//! candidate rows, so no separate masking step is needed here at all -- the
-//! encode path IS the mask). Two reasons, not one: (1) it is purely
-//! per-action, with zero cross-action reduction, so it carries no
-//! reduction-order hazard of any kind, matching the same "nothing to
-//! reduce" standard Section 1.3 states for its own value-scaling step,
-//! stricter than a softmax would be (which needs a cross-action `exp`-sum);
-//! (2) it reuses [`tanh_f32_v1`](deterministic_math_v1::tanh_f32_v1), this
-//! crate's existing deterministic, already-Section-1.5-audited activation,
-//! rather than introducing a second, independent bit-exactness surface.
-//! Its codomain is exactly `[0.0, 1.0]` for every finite input (never
-//! outside it, occasionally exactly `0.0` or `1.0` at extreme logit
-//! magnitudes, both still within `quantize_legal_action_weight_v1`'s closed
-//! range check), and it need not, and does not, produce values summing to
-//! 1 -- `quantize_prior_v1`'s own renormalization step is what turns these
-//! into an apportioned distribution, exactly as its docs state that
-//! renormalization is its job, not the caller's.
+//! the real conversion for item 6. This evaluator's first revision resolved
+//! it with a per-action sigmoid, documented honestly as an open
+//! implementation choice with a defensible (if debatable) rationale. A
+//! countersigning panel reviewed that choice on the merits, not only for
+//! documentation honesty, and RULED it wrong: the panel's own
+//! recomputation, for legal logits `{10.0, 0.0 x9}`, found softmax puts
+//! `~99.96%` of the prior mass on the dominant action, while
+//! sigmoid-plus-Hamilton-apportionment puts only `~18%` there -- sigmoid
+//! near-flattens the net's own guidance, and the policy head is trained as
+//! a softmax distribution (cross-entropy against a normalized target), so
+//! the prior slot must carry the object the net actually learned, not a
+//! differently-shaped one. This also matters for mode (c): a future
+//! visit-count training target is downstream of whichever prior shapes
+//! expansion order and the PUCT bonus, so a wrongly-shaped prior would bias
+//! that target's distribution too, not only today's search quality. The
+//! ruling is a merits correction, not a fidelity one: the design left this
+//! conversion open, and the sigmoid documentation was itself accurate about
+//! what it did and why; the panel simply found a better answer to the
+//! question the design deliberately left unanswered.
+//!
+//! This evaluator now calls
+//! [`softmax_legal_action_weights_v1`](crate::deterministic_math_v1::softmax_legal_action_weights_v1)
+//! directly on `output.logits` (already exactly the node's live ordered
+//! legal-action set: `NativeFlatTensorizerV2` only ever tensorizes the
+//! decision's actual candidate rows, so no separate masking step is needed
+//! here at all -- the encode path IS the mask, unchanged from the
+//! sigmoid-era note this superseded). The sigmoid function
+//! (`sigmoid_v1`) and its `tanh_f32_v1` import are REMOVED outright by this
+//! revision, not deprecated or left as a dead alternative surface, per the
+//! ruling's own instruction. See
+//! [`crate::deterministic_math_v1`]'s own module doc, "Panel ruling
+//! extension (2026-08-16)" section, for the full softmax algorithm (the
+//! new `exp_f64_v1` primitive's bit-pinned operation order, the clamp
+//! floor, and why this design never performs a floating-point summation
+//! reduction at all: `softmax_legal_action_weights_v1` returns
+//! UNNORMALIZED per-action weights, and `quantize_prior_v1`'s own exact
+//! `u128` largest-remainder apportionment is what completes the softmax
+//! semantics losslessly, exactly as it already did for the withdrawn
+//! sigmoid's own not-summing-to-1 weights).
 
 use crate::async_flat_scored_rollout_v1::FlatScoredFamilyCore;
 use crate::async_flat_scored_rollout_v2::{FlatScoredFamilyV2, OwnedFlatScoringDecisionV2};
-use crate::deterministic_math_v1::tanh_f32_v1;
+use crate::deterministic_math_v1::softmax_legal_action_weights_v1;
 use crate::flat_policy_v2::FlatDecisionEncoderV2;
 use crate::ids::PlayerId;
 use crate::kernel_native_search_opponent_v1::{
@@ -711,7 +730,10 @@ impl ModelGuidedSearchLeafEvaluatorV1 for ModelGuidedSearchRealForwardValueEvalu
         // only ever tensorizes the decision's actual candidate rows, so
         // the encode path IS the mask (module docs, "Determination: the
         // real-forward PRIOR conversion"). No separate masking step.
-        let legal_action_weights = output.logits.iter().copied().map(sigmoid_v1).collect();
+        // Softmax (panel ruling, 2026-08-16): unnormalized per-action
+        // weights, positionally index-matched to `output.logits`;
+        // `quantize_prior_v1` renormalizes.
+        let legal_action_weights = softmax_legal_action_weights_v1(&output.logits);
 
         Ok(ModelGuidedSearchLeafForwardV1 {
             legal_action_weights,
@@ -752,17 +774,6 @@ fn encode_live_decision_tensor_v1(
         .fill(view, &mut tensor)
         .map_err(|error| ModelGuidedSearchCoreErrorV1::Tensorize(error.to_string()))?;
     Ok(tensor)
-}
-
-/// Deterministic, per-legal-action sigmoid: `0.5 * (tanh(x / 2) + 1)`,
-/// reusing the crate's existing deterministic tanh
-/// ([`tanh_f32_v1`]; already audited for Design v1 Section 1.5's five
-/// forward-pass determinism properties) rather than a new bit-exactness
-/// surface. See module docs, "Determination: the real-forward PRIOR
-/// conversion" for the full reasoning (purely per-action, zero
-/// cross-action reduction, codomain exactly `[0.0, 1.0]`).
-fn sigmoid_v1(logit: f32) -> f32 {
-    0.5 * (tanh_f32_v1(logit * 0.5) + 1.0)
 }
 
 /// A node in the model-guided search tree. Structurally v1's own
