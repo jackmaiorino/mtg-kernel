@@ -83,9 +83,32 @@ pub mod ids;
 pub mod kernel_native_search_calibration_runner_v1;
 pub mod kernel_native_search_opponent_v1;
 pub mod mana;
+// Model-guided searcher authority record SCHEMA ONLY (design item 4,
+// `CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.4 / 5.3). No
+// dispatch, no science-loop or scorer-bridge wiring; that is item 6, its own
+// reviewed diff. See the module's own doc comment for the full field-by-
+// field mapping against v1's `kernel_native_search_opponent_v1`.
+pub mod model_guided_search_authority_v1;
+// Model-guided searcher (CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md Section
+// 1.2, implementation item 1): pure PUCT prior-quantization contract
+// (apportionment, expansion order, selection bonus). Disjoint stage-1 core,
+// not wired into any search loop, Store record, or population dispatch.
+pub mod model_guided_search_prior_quantization_v1;
+// Model-guided searcher (CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md Section
+// 1.3, implementation item 2): pure value-quantization contract (domain
+// canonicalization, perspective flip, scale, round-ties-even, clamp). Same
+// disjoint-core discipline as the prior-quantization module above.
+pub mod model_guided_search_value_quantization_v1;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;
+// Kernel-owned, bit-defined deterministic scalar math (tanh, and the MXCSR
+// FTZ/DAZ/rounding-mode entry gate) for the model-guided-searcher's
+// search-scoped forward variant. No libm calls anywhere in its body; see
+// the module doc for the full algorithm and
+// `docs/audits/model_guided_forward_determinism_audit_v1.md` for the
+// determinism hole it closes.
+pub(crate) mod deterministic_math_v1;
 // Auditable CPU inference reference for Python kernel-policy-value-net-8;
 // deliberately not a production or performance backend.
 #[allow(dead_code)]
@@ -125,6 +148,12 @@ pub mod native_cuda_qualification_metrics_v1;
 pub mod native_flat_tensorizer_diagnostic_v1;
 #[allow(dead_code)]
 pub(crate) mod native_flat_tensorizer_v2;
+// Deterministic-CPU-forward audit probe (model-guided-searcher design v1,
+// Section 1.5 / Section 5.3 item 3). Test-only, `#[ignore]`d: requires the
+// real de-novo screen checkpoint store on D:, which does not exist in a
+// clean checkout or on hosted CI.
+#[cfg(test)]
+mod native_forward_determinism_probe_v1;
 #[allow(dead_code)]
 pub(crate) mod native_full_episode_trajectory_v1;
 #[allow(dead_code)]
