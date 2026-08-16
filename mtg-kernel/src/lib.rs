@@ -102,6 +102,13 @@ pub mod model_guided_search_value_quantization_v1;
 // Fixed-shape synthetic CPU oracle only; not a production trainer API.
 #[allow(dead_code)]
 pub(crate) mod native_flat_cpu_reference_v1;
+// Kernel-owned, bit-defined deterministic scalar math (tanh, and the MXCSR
+// FTZ/DAZ/rounding-mode entry gate) for the model-guided-searcher's
+// search-scoped forward variant. No libm calls anywhere in its body; see
+// the module doc for the full algorithm and
+// `docs/audits/model_guided_forward_determinism_audit_v1.md` for the
+// determinism hole it closes.
+pub(crate) mod deterministic_math_v1;
 // Auditable CPU inference reference for Python kernel-policy-value-net-8;
 // deliberately not a production or performance backend.
 #[allow(dead_code)]
@@ -141,6 +148,12 @@ pub mod native_cuda_qualification_metrics_v1;
 pub mod native_flat_tensorizer_diagnostic_v1;
 #[allow(dead_code)]
 pub(crate) mod native_flat_tensorizer_v2;
+// Deterministic-CPU-forward audit probe (model-guided-searcher design v1,
+// Section 1.5 / Section 5.3 item 3). Test-only, `#[ignore]`d: requires the
+// real de-novo screen checkpoint store on D:, which does not exist in a
+// clean checkout or on hosted CI.
+#[cfg(test)]
+mod native_forward_determinism_probe_v1;
 #[allow(dead_code)]
 pub(crate) mod native_full_episode_trajectory_v1;
 #[allow(dead_code)]

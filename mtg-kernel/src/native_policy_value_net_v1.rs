@@ -5,9 +5,44 @@
 //! `runner-fixed-v1` initializer. It is not a trainer, optimizer, checkpoint
 //! loader, production backend, or cross-libm bit-parity claim.
 
+use crate::deterministic_math_v1;
 use sha2::{Digest, Sha256};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+
+/// Selects which `tanh` implementation the forward pass's activation
+/// primitive (`tanh_in_place_v1`, below) uses. `LibmTanh` is today's
+/// unchanged production behavior (`f32::tanh()`, which resolves to the
+/// platform's opaque system libm `tanhf`;
+/// `docs/audits/model_guided_forward_determinism_audit_v1.md` traces this
+/// call site exactly). `KernelDeterministicTanh` routes through
+/// [`deterministic_math_v1::tanh_f32_v1`], a bit-defined, libm-free
+/// implementation, and exists only for
+/// [`NativePolicyValueNetV1::forward_search_deterministic_v1`], a new
+/// search-scoped forward variant that nothing calls in production yet
+/// (`CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md` Section 1.5, Option S: a
+/// new path used only by the future model-guided searcher's leaf
+/// evaluation, leaving every existing forward path on libm exactly as
+/// today). This is the single dispatch point every activation call site in
+/// this module threads through; adding a mode here changes no existing
+/// behavior by itself, only which literal each call site passes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ForwardActivationModeV1 {
+    LibmTanh,
+    KernelDeterministicTanh,
+}
+
+impl ForwardActivationModeV1 {
+    #[inline]
+    fn apply_v1(self, value: f32) -> f32 {
+        match self {
+            ForwardActivationModeV1::LibmTanh => value.tanh(),
+            ForwardActivationModeV1::KernelDeterministicTanh => {
+                deterministic_math_v1::tanh_f32_v1(value)
+            }
+        }
+    }
+}
 
 pub(crate) const MODEL_CONFIG_SCHEMA_VERSION_V1: usize = 5;
 pub(crate) const MODEL_ARCHITECTURE_VERSION_V1: &str = "kernel-policy-value-net-8";
@@ -542,13 +577,46 @@ impl NativePolicyValueNetV1 {
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
-        self.forward_with_action_ingress_capture_v1(encoded, None)
+        self.forward_with_action_ingress_capture_v1(
+            encoded,
+            None,
+            ForwardActivationModeV1::LibmTanh,
+        )
+    }
+
+    /// Search-scoped forward variant (`CLAUDE-MODEL-GUIDED-SEARCHER-DESIGN-V1.md`
+    /// Section 1.5, Option S; `docs/audits/model_guided_forward_determinism_audit_v1.md`).
+    /// Byte-for-byte identical to [`Self::forward_v1`] except that every
+    /// activation call routes through [`deterministic_math_v1::tanh_f32_v1`]
+    /// instead of `f32::tanh()`. Nothing in this crate calls this method
+    /// yet: it exists for the future model-guided searcher's leaf-evaluation
+    /// wiring (design implementation items 5/6), which is not built by this
+    /// change. Every existing forward path (this crate's science loop,
+    /// checkpoint runner, and shadow scorer) is untouched and continues to
+    /// call [`Self::forward_v1`], which continues to use `LibmTanh`
+    /// exactly as before this variant existed.
+    ///
+    /// Asserts the calling thread's MXCSR FTZ/DAZ/rounding-control state is
+    /// pinned (Design v1 Section 1.5 property 5) before any arithmetic
+    /// runs; see [`deterministic_math_v1::assert_pinned_mxcsr_state_v1`].
+    pub(crate) fn forward_search_deterministic_v1(
+        &self,
+        encoded: NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
+        #[cfg(target_arch = "x86_64")]
+        deterministic_math_v1::assert_pinned_mxcsr_state_v1();
+        self.forward_with_action_ingress_capture_v1(
+            encoded,
+            None,
+            ForwardActivationModeV1::KernelDeterministicTanh,
+        )
     }
 
     fn forward_with_action_ingress_capture_v1(
         &self,
         encoded: NativeEncodedDecisionViewV1<'_>,
         mut action_ref_pooled_capture: Option<&mut Vec<f32>>,
+        activation_mode: ForwardActivationModeV1,
     ) -> Result<NativePolicyValueOutputV1, NativePolicyValueErrorV1> {
         let counts = encoded.validate(self.config)?;
 
@@ -564,8 +632,12 @@ impl NativePolicyValueNetV1 {
                 &self.card_embedding[embedding_begin..embedding_begin + CARD_EMBEDDING_DIM_V1],
             );
         }
-        let object_base_hidden =
-            apply_two_layer_tanh_rows_v1(&self.object_encoder, &object_input, counts.object_count);
+        let object_base_hidden = apply_two_layer_tanh_rows_v1(
+            &self.object_encoder,
+            &object_input,
+            counts.object_count,
+            activation_mode,
+        );
 
         let mut edge_pooled = vec![0.0; counts.object_count * HIDDEN_DIM_V1];
         if counts.edge_count > 0 {
@@ -586,8 +658,12 @@ impl NativePolicyValueNetV1 {
                     &object_base_hidden[target_begin..target_begin + HIDDEN_DIM_V1],
                 );
             }
-            let edge_hidden =
-                apply_two_layer_tanh_rows_v1(&self.edge_encoder, &edge_input, counts.edge_count);
+            let edge_hidden = apply_two_layer_tanh_rows_v1(
+                &self.edge_encoder,
+                &edge_input,
+                counts.edge_count,
+                activation_mode,
+            );
             // Match Python's two ordered index_add_ calls: all source rows in
             // edge order, followed by all target rows in edge order. A
             // source==target edge therefore contributes twice.
@@ -605,6 +681,7 @@ impl NativePolicyValueNetV1 {
             &self.node_update,
             &node_update_input,
             counts.object_count,
+            activation_mode,
         );
 
         let mut pooled_objects = vec![0.0; POOLED_OBJECT_DIM_V1];
@@ -612,7 +689,8 @@ impl NativePolicyValueNetV1 {
         let mut state_input = Vec::with_capacity(STATE_ENCODER_INPUT_V1);
         state_input.extend_from_slice(encoded.state);
         state_input.extend_from_slice(&pooled_objects);
-        let state_hidden = apply_two_layer_tanh_rows_v1(&self.state_encoder, &state_input, 1);
+        let state_hidden =
+            apply_two_layer_tanh_rows_v1(&self.state_encoder, &state_input, 1, activation_mode);
 
         let mut action_ref_pooled = vec![0.0; counts.action_count * HIDDEN_DIM_V1];
         if counts.action_ref_count > 0 {
@@ -633,6 +711,7 @@ impl NativePolicyValueNetV1 {
                 &self.action_ref_encoder,
                 &action_ref_input,
                 counts.action_ref_count,
+                activation_mode,
             );
             add_indexed_rows_v1(
                 &mut action_ref_pooled,
@@ -657,8 +736,12 @@ impl NativePolicyValueNetV1 {
             action_input
                 .extend_from_slice(&action_ref_pooled[pooled_begin..pooled_begin + HIDDEN_DIM_V1]);
         }
-        let action_hidden =
-            apply_two_layer_tanh_rows_v1(&self.action_encoder, &action_input, counts.action_count);
+        let action_hidden = apply_two_layer_tanh_rows_v1(
+            &self.action_encoder,
+            &action_input,
+            counts.action_count,
+            activation_mode,
+        );
 
         let mut scorer_input = Vec::with_capacity(counts.action_count * SCORER_INPUT_V1);
         for action in 0..counts.action_count {
@@ -669,11 +752,11 @@ impl NativePolicyValueNetV1 {
         }
         let mut scorer_hidden =
             linear_rows_v1(&self.scorer_first, &scorer_input, counts.action_count);
-        tanh_in_place_v1(&mut scorer_hidden);
+        tanh_in_place_v1(&mut scorer_hidden, activation_mode);
         let logits = linear_rows_v1(&self.scorer_second, &scorer_hidden, counts.action_count);
 
         let mut value_hidden = linear_rows_v1(&self.value_first, &state_hidden, 1);
-        tanh_in_place_v1(&mut value_hidden);
+        tanh_in_place_v1(&mut value_hidden, activation_mode);
         let value = linear_rows_v1(&self.value_second, &value_hidden, 1)[0];
 
         for (position, output) in logits.iter().copied().enumerate() {
@@ -702,8 +785,11 @@ impl NativePolicyValueNetV1 {
         let schema = encoded.schema;
         let action_count = encoded.action_features.len() / ACTION_FEATURE_DIM_V1;
         let mut action_ref_pooled = Vec::new();
-        let output =
-            self.forward_with_action_ingress_capture_v1(encoded, Some(&mut action_ref_pooled))?;
+        let output = self.forward_with_action_ingress_capture_v1(
+            encoded,
+            Some(&mut action_ref_pooled),
+            ForwardActivationModeV1::LibmTanh,
+        )?;
         Ok((
             output,
             NativeActionIngressCaptureV1 {
@@ -1023,11 +1109,16 @@ fn visit_linear_mut_v1(
     visitor(bias_name, &[linear.output_dim], &mut linear.bias);
 }
 
-fn apply_two_layer_tanh_rows_v1(encoder: &TwoLayerTanhV1, input: &[f32], rows: usize) -> Vec<f32> {
+fn apply_two_layer_tanh_rows_v1(
+    encoder: &TwoLayerTanhV1,
+    input: &[f32],
+    rows: usize,
+    activation_mode: ForwardActivationModeV1,
+) -> Vec<f32> {
     let mut hidden = linear_rows_v1(&encoder.first, input, rows);
-    tanh_in_place_v1(&mut hidden);
+    tanh_in_place_v1(&mut hidden, activation_mode);
     let mut output = linear_rows_v1(&encoder.second, &hidden, rows);
-    tanh_in_place_v1(&mut output);
+    tanh_in_place_v1(&mut output, activation_mode);
     output
 }
 
@@ -1049,9 +1140,9 @@ fn linear_rows_v1(linear: &LinearV1, input: &[f32], rows: usize) -> Vec<f32> {
     output
 }
 
-fn tanh_in_place_v1(values: &mut [f32]) {
+fn tanh_in_place_v1(values: &mut [f32], activation_mode: ForwardActivationModeV1) {
     for value in values {
-        *value = value.tanh();
+        *value = activation_mode.apply_v1(*value);
     }
 }
 
@@ -1521,11 +1612,11 @@ impl NativePolicyValueNetWideV1 {
         }
         let mut scorer_hidden =
             linear_rows_v1(&self.scorer_first, &scorer_input, counts.action_count);
-        tanh_in_place_v1(&mut scorer_hidden);
+        tanh_in_place_v1(&mut scorer_hidden, ForwardActivationModeV1::LibmTanh);
         let logits = linear_rows_v1(&self.scorer_second, &scorer_hidden, counts.action_count);
 
         let mut value_hidden = linear_rows_v1(&self.value_first, &state_hidden, 1);
-        tanh_in_place_v1(&mut value_hidden);
+        tanh_in_place_v1(&mut value_hidden, ForwardActivationModeV1::LibmTanh);
         let value = linear_rows_v1(&self.value_second, &value_hidden, 1)[0];
 
         for (position, output) in logits.iter().copied().enumerate() {
@@ -1793,9 +1884,9 @@ fn apply_two_layer_tanh_rows_wide_v1(
     rows: usize,
 ) -> Vec<f32> {
     let mut hidden = linear_rows_v1(&encoder.first, input, rows);
-    tanh_in_place_v1(&mut hidden);
+    tanh_in_place_v1(&mut hidden, ForwardActivationModeV1::LibmTanh);
     let mut output = linear_rows_v1(&encoder.second, &hidden, rows);
-    tanh_in_place_v1(&mut output);
+    tanh_in_place_v1(&mut output, ForwardActivationModeV1::LibmTanh);
     output
 }
 
@@ -2199,6 +2290,45 @@ mod tests {
                 fixture.authority.relative_tolerance,
             );
         }
+    }
+
+    /// Item 4, panel-driven revision: proves the MXCSR gate is actually
+    /// wired into the real production entry point, not just exercised in
+    /// isolation by `deterministic_math_v1`'s own gate tests. Calls the
+    /// real `forward_search_deterministic_v1` (the same function the
+    /// checkpoint-inference boundary's `score_decision_search_deterministic_v1`
+    /// calls) with a real encoded decision from this file's own golden
+    /// fixture, under a dirtied MXCSR in a scoped OS thread. Because the
+    /// gate runs first, at that function's entry, before any of the eight
+    /// activation call sites (including the scorer and value_head's direct
+    /// `tanh_in_place_v1` calls) execute, one passing test here pins that
+    /// the entire downstream computation is gated, protecting against a
+    /// future refactor silently moving or dropping the gate call.
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn forward_search_deterministic_v1_panics_through_the_real_entry_point_when_mxcsr_is_dirty() {
+        let handle = std::thread::spawn(|| {
+            let original = crate::deterministic_math_v1::read_mxcsr_v1();
+            crate::deterministic_math_v1::write_mxcsr_v1(original | (1 << 15)); // dirty FTZ (MXCSR bit 15)
+            let result = std::panic::catch_unwind(|| {
+                let fixture = fixture();
+                let model = NativePolicyValueNetV1::runner_fixed_v1(
+                    NativePolicyValueModelConfigV1::contract_v1(),
+                )
+                .expect("model builds");
+                let case = &fixture.cases[0];
+                model.forward_search_deterministic_v1(view(case))
+            });
+            crate::deterministic_math_v1::write_mxcsr_v1(original);
+            assert!(
+                result.is_err(),
+                "expected forward_search_deterministic_v1 to panic through its real \
+                 MXCSR gate when FTZ is dirty"
+            );
+        });
+        handle
+            .join()
+            .expect("production-path mxcsr gate thread must not panic");
     }
 
     #[test]
