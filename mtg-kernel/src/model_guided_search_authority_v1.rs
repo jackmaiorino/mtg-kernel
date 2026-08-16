@@ -129,6 +129,30 @@
 //! `MODEL_GUIDED_SEARCH_ALGORITHM_V1` below. Both are plain string
 //! literals, not structural commitments, so this resolution is cheaply
 //! revisable at item 6 if the owner intends only one field to change.
+//!
+//! ## Countersign-panel follow-up: `checkpoint_generation` had no guard
+//!
+//! A confirmed panel finding on the first diff: `checkpoint_generation` was
+//! never referenced in `validate`, was not exercised by the fresh-
+//! reconstruction tamper-test suite, and had no guard beyond JSON `u64`
+//! typing. Digest-coverage answer: the field IS part of the canonical
+//! serialized bytes `digest`/`matches_fresh_reconstruction_v1` hash (no
+//! serde skip was ever applied to it) -- but, being one of `Self::new`'s
+//! reconstruction inputs, tampering it alone can never be caught by
+//! `matches_fresh_reconstruction_v1` specifically, by the same designed
+//! limitation that method's own doc comment already states for every other
+//! input field (`tier`, `action_seed`, `checkpoint_store_path_or_lineage_id`,
+//! `checkpoint_weight_bytes_sha256`, `net_architecture_identity`, both
+//! quantization digests, `forward_determinism_build_identity`,
+//! `consumption_mode`). The actual defect was narrower than "not in the
+//! digest": unlike every one of those nine sibling input fields, this one
+//! had zero compensating `validate` check of its own. Fixed by adding a
+//! `checkpoint_generation > MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1`
+//! check to the `InvalidCheckpointIdentity` group, bounding it to 63 bits
+//! (mirroring `native_training_store_run_v2.rs`'s `is_u63`/`U63_MAX` and
+//! `native_training_store_checkpoint_v3.rs`'s `is_u63_v3` on
+//! `generation_index`) without also requiring nonzero, since generation 0 is
+//! a legitimate genesis checkpoint in this repo.
 
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::kernel_native_search_opponent_v1::{
@@ -173,6 +197,27 @@ pub const MODEL_GUIDED_SEARCH_AUTHORITY_MAX_BYTES_V1: usize = 16 * 1024;
 /// `MODEL_GUIDED_SEARCH_AUTHORITY_MAX_BYTES_V1`.
 pub const MODEL_GUIDED_SEARCH_IDENTITY_STRING_MAX_LEN_V1: usize = 4096;
 
+/// Structural sanity upper bound for `checkpoint_generation`, mirroring the
+/// repo-wide convention for generation/index-shaped `u64` fields: bound to
+/// 63 bits, not 64, so the value stays representable in a signed 64-bit
+/// integer without ambiguity across every downstream consumer (JSON
+/// numbers, Python interop, `i64` arithmetic). See
+/// `native_training_store_run_v2.rs`'s `is_u63`/`U63_MAX` (used, among
+/// other fields, on that record's own generation-shaped counters) and
+/// `native_training_store_checkpoint_v3.rs`'s `is_u63_v3` applied directly
+/// to `generation_index` (`CheckpointManifestV3`'s own generation field);
+/// the same `(1 << 63) - 1` bound recurs in
+/// `native_full_episode_trajectory_v2.rs`, `native_trainer_schedule_v2.rs`,
+/// and `environment_randomization_v2`'s golden harness. Unlike
+/// `is_positive_u63`, this bound does NOT also require nonzero: generation
+/// 0 is a legitimate genesis checkpoint in this repo (see
+/// `native_training_store_checkpoint_v3.rs`'s genesis-snapshot validation,
+/// which requires `generation_index == 0`, and the self-play ladder's own
+/// gen-zero tests), so `checkpoint_generation` accepts the full
+/// `0..=MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1` range inclusive,
+/// not a strictly-positive subset of it.
+pub const MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1: u64 = (1_u64 << 63) - 1;
+
 /// One of Section 2's three consumption modes. A closed enum: an
 /// unrecognized mode string is rejected at deserialization, before
 /// `validate` runs.
@@ -204,6 +249,18 @@ pub struct ModelGuidedSearchAuthorityV1 {
     pub private_diagnostic_identity: String,
     pub action_seed: u64,
     pub checkpoint_store_path_or_lineage_id: String,
+    /// Bounded to `0..=MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1`
+    /// (`validate`'s `InvalidCheckpointIdentity` check). Zero is a
+    /// legitimate value (a genesis checkpoint), so this field is
+    /// deliberately NOT also required nonzero, unlike `action_seed`. See
+    /// the constant's own doc comment for the convention this mirrors.
+    /// This field IS part of the canonical serialized bytes `digest` and
+    /// `matches_fresh_reconstruction_v1` hash (no serde skip), but, being
+    /// one of `Self::new`'s reconstruction inputs, direct tampering of it
+    /// alone is not independently caught by `matches_fresh_reconstruction_v1`
+    /// (that method's own doc comment states this is true of every input
+    /// field); the u63 bound above is this field's compensating `validate`
+    /// check, exactly as every other input field has one.
     pub checkpoint_generation: u64,
     pub checkpoint_weight_bytes_sha256: String,
     pub net_architecture_identity: String,
@@ -338,6 +395,7 @@ impl ModelGuidedSearchAuthorityV1 {
             || self.checkpoint_store_path_or_lineage_id.len()
                 > MODEL_GUIDED_SEARCH_IDENTITY_STRING_MAX_LEN_V1
             || !is_lower_hex_v1(&self.checkpoint_weight_bytes_sha256, 64)
+            || self.checkpoint_generation > MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1
         {
             return Err(ModelGuidedSearchAuthorityError::new(
                 Kind::InvalidCheckpointIdentity,
@@ -465,8 +523,10 @@ pub enum ModelGuidedSearchAuthorityErrorKind {
     InvalidProvenance,
     /// `action_seed` is zero.
     InvalidActionSeed,
-    /// `checkpoint_store_path_or_lineage_id` empty or too long, or
-    /// `checkpoint_weight_bytes_sha256` not SHA-256-shaped.
+    /// `checkpoint_store_path_or_lineage_id` empty or too long,
+    /// `checkpoint_weight_bytes_sha256` not SHA-256-shaped, or
+    /// `checkpoint_generation` exceeds
+    /// `MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1` (zero is valid).
     InvalidCheckpointIdentity,
     /// `net_architecture_identity` empty, too long, or equal to
     /// `checkpoint_weight_bytes_sha256`.
@@ -628,6 +688,10 @@ mod tests {
         );
         assert_eq!(MODEL_GUIDED_SEARCH_AUTHORITY_MAX_BYTES_V1, 16 * 1024);
         assert_eq!(MODEL_GUIDED_SEARCH_IDENTITY_STRING_MAX_LEN_V1, 4096);
+        assert_eq!(
+            MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1,
+            (1_u64 << 63) - 1
+        );
         assert_ne!(
             MODEL_GUIDED_SEARCH_AUTHORITY_KIND_V1,
             KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1
@@ -839,6 +903,29 @@ mod tests {
             short_hex_weight.validate().unwrap_err().kind(),
             ModelGuidedSearchAuthorityErrorKind::InvalidCheckpointIdentity
         );
+
+        // checkpoint_generation: tamper past the u63 sanity bound is
+        // rejected as InvalidCheckpointIdentity (countersign-panel finding:
+        // this field previously had no validate() guard at all).
+        let mut over_max_generation = base.clone();
+        over_max_generation.checkpoint_generation =
+            MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1 + 1;
+        assert_eq!(
+            over_max_generation.validate().unwrap_err().kind(),
+            ModelGuidedSearchAuthorityErrorKind::InvalidCheckpointIdentity
+        );
+
+        // Zero and the exact max boundary both remain legitimate: zero is a
+        // genesis checkpoint (this schema deliberately does NOT layer a
+        // nonzero requirement onto checkpoint_generation the way it does for
+        // action_seed), and the bound itself is inclusive.
+        let mut zero_generation = base.clone();
+        zero_generation.checkpoint_generation = 0;
+        assert!(zero_generation.validate().is_ok());
+
+        let mut max_generation = base.clone();
+        max_generation.checkpoint_generation = MODEL_GUIDED_SEARCH_CHECKPOINT_GENERATION_MAX_V1;
+        assert!(max_generation.validate().is_ok());
 
         let mut empty_arch = base.clone();
         empty_arch.net_architecture_identity = String::new();
