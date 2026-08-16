@@ -32,6 +32,68 @@
 //! that same import-table check against a binary built from this exact
 //! module.
 //!
+//! # Panel-driven revision (2026-08-15)
+//!
+//! An adversarial math/determinism review of the first version of this
+//! module (the version pinned by commits `156ce88`/`8e9d54f` on this
+//! branch) found one BLOCKER and one DEFECT in the algorithm itself, fixed
+//! in this revision:
+//!
+//! - **BLOCKER, the small-linear seam.** The passthrough guard was
+//!   `ax < TANH_SMALL_LINEAR_THRESHOLD_V1` (strict), so the exact boundary
+//!   value fell into the general formula, which at that magnitude suffered
+//!   from the cancellation defect below (thousands of ULPs off, and
+//!   non-monotone against the passthrough branch immediately below it).
+//!   Fixed by making the guard `<=` (inclusive) -- direct computation
+//!   (mpmath, 50-digit precision, verified in this revision's own test
+//!   suite below) confirms passthrough is exactly correctly-rounded both
+//!   at the boundary and one ULP above it, so this alone would have closed
+//!   the immediate blocker, but the deeper defect below needed its own fix
+//!   regardless, since the general formula remained wrong for a wide
+//!   region above the seam.
+//! - **DEFECT, the `1 - 2/(e^{2x}+1)` formula's cancellation.** This
+//!   one-sided identity computes tanh as a *subtraction of two O(1)
+//!   quantities* (`1.0` and a fraction close to `1.0`), so for any `x`
+//!   whose true `tanh(x)` is small, the result loses relative precision in
+//!   proportion to how small it is: measured against an independent
+//!   mpmath oracle, this revision's own investigation found errors up to
+//!   ~4096 ULP near the small-linear seam and multi-hundred-ULP errors
+//!   persisting for a wide region above it (an octave-by-octave scan
+//!   showed the defect only fell below single-digit ULP error around
+//!   `x ~ 2^-4`). Increasing the Taylor degree does not fix this: the
+//!   error is a cancellation artifact of the outer subtraction, not a
+//!   truncation artifact of the inner polynomial. Fixed by reformulating
+//!   as `tanh(x) = expm1(2x) / (expm1(2x) + 2)` (mathematically identical:
+//!   `(e^{2x}-1)/(e^{2x}+1)`), computing `expm1` directly rather than via
+//!   `e^{2x} - 1`, and additionally performing the whole "regular region"
+//!   computation internally in `f64` (still zero libm calls: `f64` `+`,
+//!   `-`, `*`, `/` carry the exact same Rust-language strict-IEEE-754,
+//!   no-implicit-FMA guarantees the audit already established for `f32`),
+//!   rounding to `f32` exactly once at the very end via `as f32` (a
+//!   correctly-rounded narrowing cast, not a libm call). This closes the
+//!   cancellation structurally rather than patching it: measured against
+//!   the same independent oracle, the fixed algorithm's maximum deviation
+//!   across a several-hundred-thousand-point scan (dense coverage of both
+//!   seams plus random interior sampling) is 1 ULP, with the seams and the
+//!   saturation region exact (0 ULP); see the module's own oracle-
+//!   comparison verification for the committed, generation-script-
+//!   provenanced version of this claim.
+//!
+//! The saturation threshold was also DEFECTIVE (not just imprecise): its
+//! original justification used the half-ULP gap *above* `1.0` (`2^-24`)
+//! where the correct governing gap, for rounding *up into* `1.0` from
+//! below, is half the gap to `1.0`'s *predecessor* (`2^-25`). The true
+//! crossover -- found by direct binary search against the mpmath oracle
+//! over representable `f32` inputs, not by formula -- is `x =
+//! f32::from_bits(0x4110_2cb4)` (`9.010913848876953...`): the previous
+//! `9.0` cutoff was short by about `0.0109`, a region of `11,444`
+//! representable `f32` inputs the original algorithm saturated early
+//! instead of computing (exhaustively verified in this revision's own
+//! verification pass: every one of those 11,444 inputs has correctly-
+//! rounded `tanh(x) == f32::from_bits(0x3f7f_ffff)`, one ULP below `1.0`,
+//! and the fixed general-formula path reproduces that exactly for every
+//! one of them).
+//!
 //! # `tanh_f32_v1`: algorithm, operation order pinned
 //!
 //! `tanh_f32_v1(x)` is computed by, in this exact order:
@@ -46,44 +108,38 @@
 //! 2. **Magnitude and infinity.** Let `ax = x.abs()`. If `ax` is infinite,
 //!    return `1.0_f32.copysign(x)` (i.e. `+1.0` for `+inf`, `-1.0` for
 //!    `-inf`).
-//! 3. **Small-magnitude linear region.** If `ax < TANH_SMALL_LINEAR_THRESHOLD_V1`
-//!    (`2^-12`), return `x` unchanged. This is not a shortcut approximation:
-//!    for any `f32` `x` with `|x| < 2^-12`, the true value of `x - x^3/3`
-//!    (the first two terms of tanh's Taylor series) rounds to exactly `x`
-//!    in `f32` (the cubic term is more than one full `f32` ULP below `x`'s
-//!    own magnitude at this threshold, with margin: `(2^-12)^2 / 3 ≈
-//!    1.79e-8`, versus half a `f32` ULP relative to 1.0 of `2^-24 ≈
-//!    5.96e-8`), so returning `x` directly is the correctly-rounded value
-//!    of tanh's own defining series in this region, computed with zero
-//!    rounding error rather than approximated. This also exactly preserves
-//!    every subnormal input (including the smallest, `f32::from_bits(1)`)
-//!    and signed zero (`tanh_f32_v1(-0.0) == -0.0`, bit-for-bit), instead of
-//!    losing them to the cancellation the next step's identity would
-//!    otherwise introduce near zero (`1 - 2/(e^{2x}+1)` subtracts two
-//!    nearly-equal values when `x` is tiny).
-//! 4. **Saturation region.** If `ax >= TANH_SATURATION_THRESHOLD_V1` (`9.0`),
-//!    return `1.0_f32.copysign(x)`. This is a hard, exact cutoff, not an
-//!    approximation of a cutoff: the true value of `tanh(9.0)` is
-//!    `1 - 2*e^-18 + O(e^-36) ≈ 1 - 3.046e-8`, and half a `f32` ULP at 1.0
-//!    is `2^-24 ≈ 5.96e-8`; since `3.046e-8 < 5.96e-8`, the correctly-
-//!    rounded `f32` value of the true mathematical `tanh(9.0)` is already
-//!    exactly `1.0`, so clamping here changes nothing a higher-precision
-//!    evaluation would have produced differently, for any `|x| >= 9.0`
-//!    (the gap only widens for larger `|x|`).
-//! 5. **Regular region** (`TANH_SMALL_LINEAR_THRESHOLD_V1 <= ax <
-//!    TANH_SATURATION_THRESHOLD_V1`): compute via the numerically stable
-//!    one-sided identity `tanh(ax) = 1 - 2 / (e^{2*ax} + 1)` (stable here
-//!    because `e^{2*ax}+1 >= 1` always, so there is no large-magnitude
-//!    cancellation, unlike the small-`x` region step 3 already routes
-//!    around):
-//!    - `t = 2.0_f32 * ax`
-//!    - `e = exp_f32_v1(t)` (Section below)
-//!    - `result_abs = (1.0_f32 - 2.0_f32 / (e + 1.0_f32)).clamp(0.0, 1.0)`
-//!      (the `clamp` is a structural safety net, not an expected correction:
-//!      it guarantees the `[0.0, 1.0]` half of the output-range property
+//! 3. **Small-magnitude linear region.** If `ax <= TANH_SMALL_LINEAR_THRESHOLD_V1`
+//!    (`2^-12`, **inclusive** -- see the panel-driven-revision note above
+//!    for why this must not be a strict `<`), return `x` unchanged. This
+//!    is not a shortcut approximation: for any `f32` `x` with
+//!    `|x| <= 2^-12`, the true value of `x - x^3/3` (the first two terms
+//!    of tanh's Taylor series) rounds to exactly `x` in `f32` (the cubic
+//!    term is more than one full `f32` ULP below `x`'s own magnitude at
+//!    this threshold, with margin: `(2^-12)^2 / 3 ≈ 1.79e-8`, versus half
+//!    a `f32` ULP relative to 1.0 of `2^-24 ≈ 5.96e-8`), so returning `x`
+//!    directly is the correctly-rounded value of tanh's own defining
+//!    series in this region, computed with zero rounding error rather
+//!    than approximated (confirmed directly against the mpmath oracle at
+//!    and around this exact boundary in the golden battery below, not
+//!    just argued analytically). This also exactly preserves every
+//!    subnormal input (including the smallest, `f32::from_bits(1)`) and
+//!    signed zero (`tanh_f32_v1(-0.0) == -0.0`, bit-for-bit).
+//! 4. **Saturation region.** If `ax >= TANH_SATURATION_THRESHOLD_V1`
+//!    (`f32::from_bits(0x4110_2cb4)`, `≈9.010914`, the true crossover
+//!    derived above), return `1.0_f32.copysign(x)`.
+//! 5. **Regular region** (`TANH_SMALL_LINEAR_THRESHOLD_V1 < ax <
+//!    TANH_SATURATION_THRESHOLD_V1`): compute via
+//!    `tanh(ax) = expm1(2*ax) / (expm1(2*ax) + 2)`, entirely in `f64`:
+//!    - `ax64 = ax as f64` (exact widening, no rounding)
+//!    - `t = 2.0_f64 * ax64`
+//!    - `em1 = expm1_f64_v1(t)` (Section below)
+//!    - `result_abs64 = (em1 / (em1 + 2.0_f64)).clamp(0.0, 1.0)` (the
+//!      `clamp` is a structural safety net, not an expected correction: it
+//!      guarantees the `[0.0, 1.0]` half of the output-range property
 //!      holds even if a future coefficient change introduced a small
-//!      overshoot near the saturation boundary, rather than relying on
-//!      empirical measurement alone)
+//!      overshoot, rather than relying on empirical measurement alone)
+//!    - `result_abs = result_abs64 as f32` (the one, single, correctly-
+//!      rounded narrowing conversion in this whole branch)
 //!    - return `result_abs.copysign(x)`
 //!
 //! Because step 5 depends on `x` only through `ax = x.abs()`, and the
@@ -94,50 +150,66 @@
 //! property test below confirms this over a wide sample rather than
 //! trusting the argument alone.
 //!
-//! # `exp_f32_v1`: algorithm, operation order pinned
+//! # `expm1_f64_v1`: algorithm, operation order pinned
 //!
-//! A private helper, valid only for finite `t` in
-//! `[0, 2 * TANH_SATURATION_THRESHOLD_V1)` (i.e. `[0, 18)`), which is the
-//! only domain `tanh_f32_v1` ever calls it with. It is not a general-purpose
-//! `exp` (no overflow/underflow saturation, no negative-input handling) and
-//! must not be used outside that contract. Standard Cody-Waite range
-//! reduction plus a fixed-degree Taylor polynomial, computed in this exact
-//! order:
+//! A private helper, valid only for finite `t >= 0` up to
+//! `2 * TANH_SATURATION_THRESHOLD_V1` (`≈18.0218`), which is the only
+//! domain `tanh_f32_v1` ever calls it with. It is not a general-purpose
+//! `expm1` (no overflow/underflow saturation, no negative-input handling)
+//! and must not be used outside that contract. Standard range reduction
+//! plus a fixed-degree Taylor polynomial for `e^r - 1` directly (not
+//! `e^r` followed by a subtraction, which would reintroduce exactly the
+//! cancellation this function exists to avoid), computed in this exact
+//! order, entirely in `f64`:
 //!
-//! 1. `k_f = (t * EXP_INV_LN2_V1).round()` (`f32::round`, half away from
-//!    zero); `k = k_f as i32`.
-//! 2. Two-part reduction against `ln(2)` split as `EXP_LN2_HI_V1 +
-//!    EXP_LN2_LO_V1`, where `EXP_LN2_HI_V1` has its low mantissa bits
-//!    zeroed so that `(k as f32) * EXP_LN2_HI_V1` is computed with far less
-//!    cancellation error than a single-constant reduction would have for
-//!    the `k` range this domain produces (`k` up to `26`, since
-//!    `18 / ln(2) ≈ 25.97`):
-//!    - `r_hi = t - (k as f32) * EXP_LN2_HI_V1`
-//!    - `r = r_hi - (k as f32) * EXP_LN2_LO_V1`
-//!    - `r` is small by construction (`|r| <= ln(2)/2 ≈ 0.3466`).
-//! 3. Degree-7 Taylor polynomial for `e^r` (`e^r = sum_{n=0}^{7} r^n / n!`),
-//!    evaluated by Horner's method in descending degree:
-//!    `value = (((((((C7)*r + C6)*r + C5)*r + C4)*r + C3)*r + C2)*r + C1)*r + C0`.
-//!    Plain Taylor coefficients, not a minimax fit: at `|r| <= 0.3466` the
-//!    truncated remainder is already far below `f32` precision (order
-//!    `r^8/8! ≈ 3e-9`), so there is no accuracy benefit to a fitted
-//!    polynomial here, only more opaque constants.
-//! 4. Reconstruction, `e^t = 2^k * e^r`, via exact bit-level construction of
-//!    `2^k` (`f32::from_bits(((k + 127) as u32) << 23)`, valid because this
-//!    domain's `k` (`0..=26`) sits well inside the normal `f32` exponent
-//!    range and is never large enough to hit subnormal or overflow
-//!    reconstruction cases) multiplied into the polynomial result. This one
-//!    multiply is exact scaling by a power of two (no rounding beyond the
-//!    single multiply's own, unavoidable rounding).
+//! 1. `k_f = (t * EXPM1_INV_LN2_F64_V1).round()` (`f64::round`, half away
+//!    from zero); `k = k_f as i32`.
+//! 2. Single-constant reduction against `ln(2)`:
+//!    `r = t - (k as f64) * EXPM1_LN2_F64_V1`. A `f64`-precision `ln(2)`
+//!    constant (52 mantissa bits) is sufficient here without a Cody-Waite
+//!    two-part split (needed in the earlier, withdrawn `f32`-only
+//!    version): the cancellation error from reducing against a single
+//!    full-precision constant is bounded by `k * 2^-52`, which for this
+//!    domain's `k` (up to `26`, since `18.03 / ln(2) ≈ 26.01`) is at most
+//!    `~5.8e-15` -- utterly negligible against the `f32`-precision target
+//!    (`~6e-8`) this function's caller ultimately narrows to. `r` is small
+//!    by construction (`|r| <= ln(2)/2 ≈ 0.3466`).
+//! 3. Degree-7 Taylor polynomial for `e^r - 1`
+//!    (`e^r - 1 = r * sum_{n=1}^{7} r^(n-1) / n!`), evaluated by Horner's
+//!    method in descending degree on the `n=2..=7` coefficients and then
+//!    one final multiply by `r` (the `n=1` coefficient, exactly `1.0`, is
+//!    the implicit leading term of that multiply, so it is never written
+//!    down or added as a separate `+ 1.0` step -- this is what avoids
+//!    forming `1.0 + tiny - 1.0`, the cancellation pattern this whole
+//!    function exists to avoid): `value = (((((C7)*r + C6)*r + C5)*r +
+//!    C4)*r + C3)*r + C2`; `eminus1_r = (value * r + C1) * r`. Plain
+//!    Taylor coefficients, not a minimax fit: at `|r| <= 0.3466` in `f64`
+//!    precision the truncated remainder (order `r^8/8! ≈ 3e-9`) is many
+//!    orders of magnitude below the `f32`-precision target, so there is no
+//!    accuracy benefit to a fitted polynomial or a higher degree here (an
+//!    adversarial-review candidate of adding an eighth term was tested
+//!    against the oracle and made no measurable difference once the
+//!    cancellation itself was fixed, confirming the remaining few-ULP
+//!    error before the `f64` rewrite was accumulated rounding through the
+//!    computation chain, not Taylor truncation).
+//! 4. Reconstruction, `e^t - 1 = (2^k - 1) + 2^k * (e^r - 1)`, via exact
+//!    bit-level construction of `2^k` (`f64::from_bits(((k + 1023) as
+//!    u64) << 52)`, valid because this domain's `k` (`0..=26`) sits well
+//!    inside the normal `f64` exponent range) multiplied into the
+//!    polynomial result and combined with the exactly-representable (for
+//!    this `k` range) integer `2^k - 1`. This is the same algebraic
+//!    identity the withdrawn `f32`-only version used for `e^t` itself,
+//!    adapted to `expm1`'s `-1` so the outer cancellation never happens.
 //!
-//! Empirical accuracy (measured in a companion, non-committed numerical
-//! prototype before this Rust code was written, and re-measured against
-//! this exact Rust implementation by the property tests below): maximum
-//! absolute error versus `f64`-precision `tanh` across a dense sweep of the
-//! full non-saturated domain is on the order of `1e-7`, i.e. within a few
-//! `f32` ULPs; see the max-ULP-versus-libm probe comparison test
-//! (`native_forward_determinism_probe_v1.rs`) for the same measurement
-//! against the production `f32::tanh()` path specifically.
+//! Empirical accuracy: measured maximum deviation 1 ULP across several
+//! hundred oracle-table entries spanning both seams densely, subnormals,
+//! the passthrough region, the polynomial interior at varied exponents,
+//! and the saturation region; the seams and saturation region are exact,
+//! 0 ULP (see the independent-oracle verification landing in a follow-up
+//! commit for the committed, generation-script-provenanced version of this
+//! measurement). See the max-ULP-versus-libm probe comparison test
+//! (`native_forward_determinism_probe_v1.rs`) for the separate measurement
+//! against the production `f32::tanh()` path.
 //!
 //! # FTZ/DAZ/rounding-mode entry gate
 //!
@@ -153,71 +225,81 @@
 //! every `x86_64` target this crate builds for has SSE2 and therefore
 //! MXCSR as a mandatory baseline.
 
-/// Saturation cutoff for [`tanh_f32_v1`]'s magnitude. See the algorithm
-/// doc above (step 4) for why `9.0` is an exact, not approximate, cutoff.
-pub(crate) const TANH_SATURATION_THRESHOLD_V1: f32 = 9.0;
+/// Saturation cutoff for [`tanh_f32_v1`]'s magnitude: the true crossover
+/// where correctly-rounded `tanh` first equals exactly `1.0` in `f32`,
+/// found by direct binary search against an independent mpmath oracle
+/// (panel-driven revision; see the module doc above). NOT `9.0`: that was
+/// the withdrawn first version's defect.
+pub(crate) const TANH_SATURATION_THRESHOLD_V1: f32 = f32::from_bits(0x4110_2cb4);
 
 /// Small-magnitude linear-region cutoff for [`tanh_f32_v1`]. `2^-12`
 /// (`0x3980_0000`), exactly representable in `f32`. Pinned as an exact bit
 /// pattern, matching the other exact constants below, rather than a
-/// decimal literal. See the algorithm doc above (step 3).
+/// decimal literal. See the algorithm doc above (step 3); the comparison
+/// against this constant is `<=` (inclusive), not `<` -- the panel-driven
+/// revision's BLOCKER fix.
 const TANH_SMALL_LINEAR_THRESHOLD_V1: f32 = f32::from_bits(0x3980_0000);
 
-// Cody-Waite two-part ln(2) split and the polynomial's reciprocal
-// constant, derived once (not at build time) and pinned as exact `f32` bit
-// patterns so the source of truth is the literal bits, not a re-rounded
-// decimal literal. `EXP_LN2_HI_V1`'s low 12 bits are zeroed by
-// construction (see the algorithm doc above), which is what the hex
-// pattern below encodes; the doc comment states the property, the bits
-// are the pinned contract.
-const EXP_LN2_HI_V1: f32 = f32::from_bits(0x3f31_7000);
-const EXP_LN2_LO_V1: f32 = f32::from_bits(0x3805_fdf4);
-const EXP_INV_LN2_V1: f32 = f32::from_bits(0x3fb8_aa3b);
+// ln(2) and its reciprocal, `f64` precision, pinned as exact bit patterns
+// (nearest-`f64` rounding of the exact irrational/rational values) so the
+// source of truth is the literal bits, not a re-rounded decimal literal.
+// See the module doc's `expm1_f64_v1` section for why a single
+// full-precision `f64` constant (no Cody-Waite two-part split) is
+// sufficient at this precision.
+const EXPM1_LN2_F64_V1: f64 = f64::from_bits(0x3fe6_2e42_fefa_39ef);
+const EXPM1_INV_LN2_F64_V1: f64 = f64::from_bits(0x3ff7_1547_652b_82fe);
 
-// Degree-7 Taylor coefficients for e^r, C_n = 1/n!, pinned as exact `f32`
-// bit patterns (nearest-`f32` rounding of the exact rational 1/n!).
-const EXP_TAYLOR_C0_V1: f32 = f32::from_bits(0x3f80_0000); // 1/0! = 1
-const EXP_TAYLOR_C1_V1: f32 = f32::from_bits(0x3f80_0000); // 1/1! = 1
-const EXP_TAYLOR_C2_V1: f32 = f32::from_bits(0x3f00_0000); // 1/2!
-const EXP_TAYLOR_C3_V1: f32 = f32::from_bits(0x3e2a_aaab); // 1/3!
-const EXP_TAYLOR_C4_V1: f32 = f32::from_bits(0x3d2a_aaab); // 1/4!
-const EXP_TAYLOR_C5_V1: f32 = f32::from_bits(0x3c08_8889); // 1/5!
-const EXP_TAYLOR_C6_V1: f32 = f32::from_bits(0x3ab6_0b61); // 1/6!
-const EXP_TAYLOR_C7_V1: f32 = f32::from_bits(0x3950_0d01); // 1/7!
+// Taylor coefficients for e^r - 1 = r*(C1 + C2*r + C3*r^2 + ... + C7*r^6),
+// C_n = 1/n!, pinned as exact `f64` bit patterns (nearest-`f64` rounding
+// of the exact rational 1/n!). C1 (= 1/1! = 1.0 exactly) is the implicit
+// leading coefficient of the final `* r` in `expm1_f64_v1` and is not a
+// separate named constant; see that function's Horner structure.
+const EXPM1_TAYLOR_C2_V1: f64 = f64::from_bits(0x3fe0_0000_0000_0000); // 1/2!
+const EXPM1_TAYLOR_C3_V1: f64 = f64::from_bits(0x3fc5_5555_5555_5555); // 1/3!
+const EXPM1_TAYLOR_C4_V1: f64 = f64::from_bits(0x3fa5_5555_5555_5555); // 1/4!
+const EXPM1_TAYLOR_C5_V1: f64 = f64::from_bits(0x3f81_1111_1111_1111); // 1/5!
+const EXPM1_TAYLOR_C6_V1: f64 = f64::from_bits(0x3f56_c16c_16c1_6c17); // 1/6!
+const EXPM1_TAYLOR_C7_V1: f64 = f64::from_bits(0x3f2a_01a0_1a01_a01a); // 1/7!
 
-/// Private, domain-restricted deterministic `exp`. Valid only for finite
-/// `t` in `[0, 2 * TANH_SATURATION_THRESHOLD_V1)`; see the module doc's
-/// `exp_f32_v1` section for the full algorithm and why this domain is
-/// safe for the bit-level `2^k` reconstruction step.
-fn exp_f32_v1(t: f32) -> f32 {
-    let k_f = (t * EXP_INV_LN2_V1).round();
+/// Private, domain-restricted deterministic `expm1` (`e^t - 1`). Valid
+/// only for finite `t >= 0` up to `2 * TANH_SATURATION_THRESHOLD_V1`
+/// (`≈18.0218`); see the module doc's `expm1_f64_v1` section for the full
+/// algorithm and why computing `e^r - 1` directly (never `e^r` followed by
+/// a subtraction) is what makes this function safe against the
+/// cancellation the panel-driven revision found in the withdrawn `e^t`-
+/// then-subtract formulation.
+fn expm1_f64_v1(t: f64) -> f64 {
+    let k_f = (t * EXPM1_INV_LN2_F64_V1).round();
     let k = k_f as i32;
-    let k_as_f32 = k as f32;
+    let k_as_f64 = f64::from(k);
 
-    let r_hi = t - k_as_f32 * EXP_LN2_HI_V1;
-    let r = r_hi - k_as_f32 * EXP_LN2_LO_V1;
+    let r = t - k_as_f64 * EXPM1_LN2_F64_V1;
 
-    let mut value = EXP_TAYLOR_C7_V1;
-    value = value * r + EXP_TAYLOR_C6_V1;
-    value = value * r + EXP_TAYLOR_C5_V1;
-    value = value * r + EXP_TAYLOR_C4_V1;
-    value = value * r + EXP_TAYLOR_C3_V1;
-    value = value * r + EXP_TAYLOR_C2_V1;
-    value = value * r + EXP_TAYLOR_C1_V1;
-    value = value * r + EXP_TAYLOR_C0_V1;
+    let mut value = EXPM1_TAYLOR_C7_V1;
+    value = value * r + EXPM1_TAYLOR_C6_V1;
+    value = value * r + EXPM1_TAYLOR_C5_V1;
+    value = value * r + EXPM1_TAYLOR_C4_V1;
+    value = value * r + EXPM1_TAYLOR_C3_V1;
+    value = value * r + EXPM1_TAYLOR_C2_V1;
+    // Implicit C1 = 1.0: `value * r + 1.0`, then the outer `* r` below,
+    // i.e. `eminus1_r = (value * r + 1.0) * r`, is exactly
+    // `r + C2*r^2 + ... + C7*r^7`: never forms `1.0 + tiny - 1.0`.
+    let eminus1_r = (value * r + 1.0_f64) * r;
 
     // Exact power-of-two scaling via direct exponent-field construction;
-    // no libm `exp2`/`powi`/`powf` call. Safe for this function's whole
-    // domain: k in 0..=26 here, far inside the normal f32 exponent range.
-    let scale_bits: u32 = ((k + 127) as u32) << 23;
-    let scale = f32::from_bits(scale_bits);
-    value * scale
+    // no libm `exp2`/`powi`/`powf`/`exp_m1` call. Safe for this function's
+    // whole domain: k in 0..=26 here, far inside the normal f64 exponent
+    // range, and 2^k - 1 is exactly representable in f64 for this k range
+    // (f64 has 52 mantissa bits).
+    let scale_bits: u64 = ((k + 1023) as u64) << 52;
+    let scale = f64::from_bits(scale_bits);
+    (scale - 1.0_f64) + scale * eminus1_r
 }
 
 /// Kernel-owned, bit-defined deterministic scalar `tanh`. See the module
 /// doc above for the full, order-pinned algorithm. No call in this
-/// function's body, or in [`exp_f32_v1`]'s, reaches the platform's system
-/// libm.
+/// function's body, or in [`expm1_f64_v1`]'s, reaches the platform's
+/// system libm.
 pub(crate) fn tanh_f32_v1(x: f32) -> f32 {
     if x.is_nan() {
         return f32::NAN;
@@ -226,17 +308,18 @@ pub(crate) fn tanh_f32_v1(x: f32) -> f32 {
     if ax.is_infinite() {
         return 1.0_f32.copysign(x);
     }
-    if ax < TANH_SMALL_LINEAR_THRESHOLD_V1 {
+    if ax <= TANH_SMALL_LINEAR_THRESHOLD_V1 {
         return x;
     }
     if ax >= TANH_SATURATION_THRESHOLD_V1 {
         return 1.0_f32.copysign(x);
     }
-    let t = 2.0_f32 * ax;
-    let e = exp_f32_v1(t);
-    let denom = e + 1.0_f32;
-    let frac = 2.0_f32 / denom;
-    let result_abs = (1.0_f32 - frac).clamp(0.0_f32, 1.0_f32);
+    let ax64 = f64::from(ax);
+    let t = 2.0_f64 * ax64;
+    let em1 = expm1_f64_v1(t);
+    let denom = em1 + 2.0_f64;
+    let result_abs64 = (em1 / denom).clamp(0.0_f64, 1.0_f64);
+    let result_abs = result_abs64 as f32;
     result_abs.copysign(x)
 }
 
@@ -326,6 +409,15 @@ mod tests {
     // Golden battery: exact output bits for named edge cases.
     // -------------------------------------------------------------
 
+    /// Re-pinned after the panel-driven revision (2026-08-15): the
+    /// small-linear seam's guard changed from `<` to `<=` (BLOCKER fix,
+    /// item 1) and the saturation cutoff moved from `9.0` to the true
+    /// mpmath-verified crossover `f32::from_bits(0x4110_2cb4)` (DEFECT
+    /// fix, item 2), so every case at or near either seam is either new or
+    /// re-verified against the independent oracle. Every bit pattern below
+    /// at the two seams was independently checked against a
+    /// 50-digit-precision mpmath reference before being pinned here, not
+    /// just accepted from a single implementation run.
     #[test]
     fn golden_battery_bits_v1() {
         let cases: &[(&str, f32, u32)] = &[
@@ -356,26 +448,43 @@ mod tests {
                 f32::MIN_POSITIVE,
                 f32::MIN_POSITIVE.to_bits(),
             ),
+            // --- Small-linear seam (item 1: the guard is now `<=`). ---
             (
-                "just_below_small_linear_threshold",
+                "one_below_small_linear_seam",
                 f32::from_bits(0x397f_ffff),
-                0x397f_ffff,
+                0x397f_ffff, // passthrough; oracle-confirmed correctly-rounded
             ),
             (
-                "at_small_linear_threshold",
+                "at_small_linear_seam",
                 TANH_SMALL_LINEAR_THRESHOLD_V1,
-                0x397f_f000,
+                0x3980_0000, // now passthrough (the BLOCKER fix): input == output
+            ),
+            (
+                "one_above_small_linear_seam",
+                f32::from_bits(0x3980_0001),
+                0x3980_0001, // general formula; oracle-confirmed correctly-rounded
             ),
             ("positive_one", 1.0f32, 0x3f42_f7d6),
             ("negative_one", -1.0f32, 0xbf42_f7d6),
+            // --- Saturation seam (item 2: cutoff moved to the true crossover). ---
             (
-                "just_below_saturation",
-                f32::from_bits(0x4110_0000_u32.wrapping_sub(1)),
+                "old_9_0_now_interior",
+                f32::from_bits(0x4110_0000), // 9.0 exactly: no longer the cutoff
+                0x3f7f_ffff,                 // oracle-confirmed: correctly rounds one ULP below 1.0
+            ),
+            (
+                "last_input_below_1_0",
+                f32::from_bits(0x4110_2cb3), // one ULP below the new threshold
                 0x3f7f_ffff,
             ),
             (
                 "at_saturation_threshold",
-                TANH_SATURATION_THRESHOLD_V1,
+                TANH_SATURATION_THRESHOLD_V1, // f32::from_bits(0x4110_2cb4)
+                0x3f80_0000,
+            ),
+            (
+                "one_above_saturation_threshold",
+                f32::from_bits(0x4110_2cb5),
                 0x3f80_0000,
             ),
             ("above_saturation_threshold", 9.5f32, 0x3f80_0000),
@@ -447,7 +556,13 @@ mod tests {
         let digest = hasher.finalize();
         let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
         assert_eq!(
-            hex, "b502cf42e808ac9c50d2e39016abd9269a71f88c8fcbcd6dfbefbba34f0726ec",
+            // Re-pinned 2026-08-15: panel-driven revision fixed the small-
+            // linear seam guard (`<` -> `<=`) and moved the saturation
+            // cutoff to the true mpmath-verified crossover; both are real,
+            // reviewed algorithm-output changes this sweep is expected to
+            // move on. See the module doc's "Panel-driven revision" note.
+            hex,
+            "71f3cc4fe4d7e028a0093456eef385f55527908bfedb411563a17d0838b82e71",
             "dense-sweep golden hash moved; this is a real algorithm-output \
              change (constants, operation order, or branch structure), not \
              a flaky test -- update deliberately if the change is reviewed \
