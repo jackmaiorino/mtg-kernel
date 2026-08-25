@@ -1305,3 +1305,98 @@ mod windows_resume_tests {
         assert_eq!(fs::read(&run_path).unwrap(), tampered);
     }
 }
+
+/// MEASUREMENT HARNESS ONLY (throughput remeasure task, 2026-08-25):
+/// per-depth wall-clock timing for `walk_complete_store_v2`'s per-generation
+/// loop, reusing `load_generation_v2` -- the exact function the production
+/// walk calls once per boundary generation -- but stopping at an externally
+/// chosen `target_depth` instead of always continuing to whatever
+/// `latest.json` records. This lets one already-decodable Store copy yield
+/// several depth points on the same wall-clock scaling curve, instead of
+/// needing a distinct Store at every depth. Excluded relative to a full
+/// `walk_complete_store_v2` call: the O(1) `run.json`/`latest.json` byte
+/// reads before the loop and the O(1) latest-pointer proof plus leaf
+/// inventory scan after it (see `walk_complete_store_v2` above); none of
+/// those scale with depth, so the comparison this exists to support (cost
+/// vs. depth) is unaffected by leaving them out. Read-only: takes the same
+/// shared reader lock `validate_native_training_store_v2` takes and writes
+/// nothing.
+#[cfg(test)]
+mod store_v2_partial_walk_timing_harness_v1 {
+    use super::*;
+    use crate::native_training_store_run_v2::decode_train_run_v2;
+    use std::time::Instant;
+
+    #[test]
+    #[ignore = "measurement harness: needs MTG_KERNEL_TIMING_HARNESS_STORE_ROOT and \
+                MTG_KERNEL_TIMING_HARNESS_TARGET_DEPTH set against a real Store copy"]
+    fn measure_partial_walk_wall_time_v1() {
+        let root_path = std::env::var("MTG_KERNEL_TIMING_HARNESS_STORE_ROOT")
+            .expect("set MTG_KERNEL_TIMING_HARNESS_STORE_ROOT to a Store root directory");
+        let target_depth: u64 = std::env::var("MTG_KERNEL_TIMING_HARNESS_TARGET_DEPTH")
+            .expect("set MTG_KERNEL_TIMING_HARNESS_TARGET_DEPTH to a boundary generation index")
+            .parse()
+            .expect("MTG_KERNEL_TIMING_HARNESS_TARGET_DEPTH must be a u64");
+        let repeats: u32 = std::env::var("MTG_KERNEL_TIMING_HARNESS_REPEATS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(3);
+
+        println!("partial_harness_store_root={root_path} target_depth={target_depth}");
+
+        let run_json_path = std::path::Path::new(&root_path).join("run.json");
+        let run_bytes = std::fs::read(&run_json_path).unwrap_or_else(|error| {
+            panic!("harness_error=read_run_json path={run_json_path:?} error={error}")
+        });
+        let run = decode_train_run_v2(&run_bytes)
+            .unwrap_or_else(|error| panic!("harness_error=decode_train_run_v2 error={error}"));
+        let checkpoint_segment_updates = run.checkpoint_segment_updates();
+        assert!(
+            target_depth == 0 || target_depth.is_multiple_of(checkpoint_segment_updates),
+            "target_depth must be 0 or a multiple of checkpoint_segment_updates ({checkpoint_segment_updates})"
+        );
+
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap_or_else(|error| {
+            panic!("harness_error=open_v2 code={} error={error}", error.code())
+        });
+
+        for repeat_index in 0..repeats {
+            root.recapture_v2().unwrap_or_else(|error| {
+                panic!("harness_error=recapture_v2 code={} error={error}", error.code())
+            });
+            let _shared = root.lock_shared_v2().map_err(map_lock_error_v2).unwrap_or_else(|error| {
+                panic!(
+                    "harness_error=lock_shared_v2 code={} error={error}",
+                    error.kind().code()
+                )
+            });
+            let started = Instant::now();
+            let mut walked: Option<WalkedGenerationV2> = None;
+            let mut generation_index = 0_u64;
+            loop {
+                let generation =
+                    load_generation_v2(&root, &run, walked.as_ref(), generation_index)
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "harness_error=load_generation_v2 code={} generation_index={} error={error}",
+                                error.kind().code(),
+                                generation_index
+                            )
+                        });
+                walked = Some(generation);
+                if generation_index == target_depth {
+                    break;
+                }
+                generation_index = generation_index
+                    .checked_add(checkpoint_segment_updates)
+                    .expect("generation_index overflow before reaching target_depth");
+            }
+            let elapsed = started.elapsed();
+            println!(
+                "partial_harness_result repeat={repeat_index} target_depth={target_depth} elapsed_micros={} elapsed_secs={:.6}",
+                elapsed.as_micros(),
+                elapsed.as_secs_f64(),
+            );
+        }
+    }
+}
