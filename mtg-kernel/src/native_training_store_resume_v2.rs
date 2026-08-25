@@ -1129,7 +1129,10 @@ const PERIODIC_FULL_WALK_CADENCE_WINDOWS_V1: u32 = 64;
 /// The exact byte-count bound `load_generation_v2` already applies per final
 /// kind (mirrored here, not refactored there, to avoid touching the existing
 /// full-walk path at all).
-fn max_bytes_for_final_v1(run: &ValidatedTrainRunV2, final_name: NativeTrainingStoreFinalNameV2) -> u64 {
+fn max_bytes_for_final_v1(
+    run: &ValidatedTrainRunV2,
+    final_name: NativeTrainingStoreFinalNameV2,
+) -> u64 {
     match final_name {
         NativeTrainingStoreFinalNameV2::Run => RUN_RECORD_MAX_BYTES_V2,
         NativeTrainingStoreFinalNameV2::Latest => LATEST_RECORD_MAX_BYTES_V2,
@@ -1146,8 +1149,12 @@ fn max_bytes_for_final_v1(run: &ValidatedTrainRunV2, final_name: NativeTrainingS
         NativeTrainingStoreFinalNameV2::SegmentManifest { .. } => SEGMENT_MANIFEST_MAX_BYTES_V2,
         NativeTrainingStoreFinalNameV2::CheckpointSidecar { .. } => CHECKPOINT_SIDECAR_MAX_BYTES_V2,
         NativeTrainingStoreFinalNameV2::HeadRecord { .. } => HEAD_RECORD_MAX_BYTES_V2,
-        NativeTrainingStoreFinalNameV2::CheckpointReference { .. } => CHECKPOINT_REFERENCE_MAX_BYTES_V2,
-        NativeTrainingStoreFinalNameV2::SegmentContinuation { .. } => SEGMENT_CONTINUATION_MAX_BYTES_V2,
+        NativeTrainingStoreFinalNameV2::CheckpointReference { .. } => {
+            CHECKPOINT_REFERENCE_MAX_BYTES_V2
+        }
+        NativeTrainingStoreFinalNameV2::SegmentContinuation { .. } => {
+            SEGMENT_CONTINUATION_MAX_BYTES_V2
+        }
     }
 }
 
@@ -1175,7 +1182,9 @@ const fn final_name_generation_index_v1(final_name: NativeTrainingStoreFinalName
 /// earlier generation's entries (and `Run`, per
 /// `NativeTrainingStoreTipProofV2`'s own doc). Pure and read-only; `state` is
 /// only borrowed.
-fn tip_proof_from_walked_v1(state: &ValidatedNativeTrainingStoreStateV2) -> NativeTrainingStoreTipProofV2 {
+fn tip_proof_from_walked_v1(
+    state: &ValidatedNativeTrainingStoreStateV2,
+) -> NativeTrainingStoreTipProofV2 {
     let tip = state.latest_generation_index();
     let final_expectations = state
         .final_expectations_v2()
@@ -1726,7 +1735,10 @@ mod windows_resume_tests {
                 .collect();
             a_names.sort();
             b_names.sort();
-            assert_eq!(a_names, b_names, "directory listing mismatch in {directory:?}");
+            assert_eq!(
+                a_names, b_names,
+                "directory listing mismatch in {directory:?}"
+            );
             for name in a_names {
                 let a_path = a_dir.join(&name);
                 if fs::symlink_metadata(&a_path).unwrap().is_dir() {
@@ -1784,7 +1796,10 @@ mod windows_resume_tests {
             }
         }
         let sync_calls = call_counters_v1::load_generation_calls_v1();
-        assert!(sync_calls > 0, "the sync path must call load_generation_v2 at all");
+        assert!(
+            sync_calls > 0,
+            "the sync path must call load_generation_v2 at all"
+        );
 
         // Session-aware path (StoreV3 port): identical run, fresh store.
         call_counters_v1::reset_load_generation_calls_v1();
@@ -1989,8 +2004,12 @@ mod windows_resume_tests {
         fs::write(&sidecar_path, &corrupted).unwrap();
 
         call_counters_v1::reset_load_generation_calls_v1();
-        let result =
-            resume_native_training_store_with_session_v2(&root, &run, execution_config_v2(&run), Some(session));
+        let result = resume_native_training_store_with_session_v2(
+            &root,
+            &run,
+            execution_config_v2(&run),
+            Some(session),
+        );
         assert_eq!(
             result.unwrap_err().kind(),
             NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid,
@@ -2000,7 +2019,11 @@ mod windows_resume_tests {
             call_counters_v1::load_generation_calls_v1() > 0,
             "the freshness probe must decline and fall back to the full walk, which is what actually catches this"
         );
-        assert_eq!(fs::read(&sidecar_path).unwrap(), corrupted, "no mutation on a failed resume");
+        assert_eq!(
+            fs::read(&sidecar_path).unwrap(),
+            corrupted,
+            "no mutation on a failed resume"
+        );
     }
 
     /// Gate (b), part 2: the O(1) freshness probe only reverifies the
@@ -2134,7 +2157,10 @@ mod windows_resume_tests {
                 cadence,
             ) {
                 Err(error) => {
-                    assert_eq!(error.kind(), NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid);
+                    assert_eq!(
+                        error.kind(),
+                        NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid
+                    );
                     caught = true;
                     break;
                 }
@@ -2250,20 +2276,27 @@ mod store_v2_partial_walk_timing_harness_v1 {
             "target_depth must be 0 or a multiple of checkpoint_segment_updates ({checkpoint_segment_updates})"
         );
 
-        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap_or_else(|error| {
-            panic!("harness_error=open_v2 code={} error={error}", error.code())
-        });
+        let root =
+            ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap_or_else(|error| {
+                panic!("harness_error=open_v2 code={} error={error}", error.code())
+            });
 
         for repeat_index in 0..repeats {
             root.recapture_v2().unwrap_or_else(|error| {
-                panic!("harness_error=recapture_v2 code={} error={error}", error.code())
-            });
-            let _shared = root.lock_shared_v2().map_err(map_lock_error_v2).unwrap_or_else(|error| {
                 panic!(
-                    "harness_error=lock_shared_v2 code={} error={error}",
-                    error.kind().code()
+                    "harness_error=recapture_v2 code={} error={error}",
+                    error.code()
                 )
             });
+            let _shared = root
+                .lock_shared_v2()
+                .map_err(map_lock_error_v2)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "harness_error=lock_shared_v2 code={} error={error}",
+                        error.kind().code()
+                    )
+                });
             let started = Instant::now();
             let mut walked: Option<WalkedGenerationV2> = None;
             let mut generation_index = 0_u64;

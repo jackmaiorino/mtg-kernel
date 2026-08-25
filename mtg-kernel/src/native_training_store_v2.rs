@@ -317,7 +317,10 @@ pub(crate) fn publish_prepared_segment_with_session_v2(
     prepared: &NativeTrainingPreparedSegmentV2<'_>,
     parent_tip_proof: &NativeTrainingStoreTipProofV2,
     windows_since_full_walk: u32,
-) -> PublisherResult<(NativeTrainingPersistenceReceiptV2, NativeTrainingStoreContinuationSessionV2)> {
+) -> PublisherResult<(
+    NativeTrainingPersistenceReceiptV2,
+    NativeTrainingStoreContinuationSessionV2,
+)> {
     let (receipt, facts) = publish_prepared_segment_with_hook_v2(
         root,
         run,
@@ -353,7 +356,10 @@ fn publish_prepared_segment_with_hook_v2(
     prepared: &NativeTrainingPreparedSegmentV2<'_>,
     tip_proof: Option<&NativeTrainingStoreTipProofV2>,
     hook: impl FnMut(PublisherBoundaryV2) -> PublisherResult<()>,
-) -> PublisherResult<(NativeTrainingPersistenceReceiptV2, PublishedGenerationSessionFactsV1)> {
+) -> PublisherResult<(
+    NativeTrainingPersistenceReceiptV2,
+    PublishedGenerationSessionFactsV1,
+)> {
     let view = prepared.publication_view_v2();
     let continuations = (0..view.continuation_count_v2())
         .map(|index| {
@@ -568,7 +574,10 @@ fn publish_generation_v2(
     input: &GenerationPublicationInputV2<'_>,
     tip_proof: Option<&NativeTrainingStoreTipProofV2>,
     mut hook: impl FnMut(PublisherBoundaryV2) -> PublisherResult<()>,
-) -> PublisherResult<(NativeTrainingPersistenceReceiptV2, PublishedGenerationSessionFactsV1)> {
+) -> PublisherResult<(
+    NativeTrainingPersistenceReceiptV2,
+    PublishedGenerationSessionFactsV1,
+)> {
     // Dual-Profile Catalog Successor (collab CLAUDE #220), publisher
     // boundary: reject a historical-profile run before any other check,
     // lock, or filesystem mutation. Both `publish_genesis_generation_v2` and
@@ -2955,13 +2964,17 @@ mod native_training_store_v2_publication_walk_timing_harness_v1 {
         let run = decode_train_run_v2(&run_bytes)
             .unwrap_or_else(|error| panic!("harness_error=decode_train_run_v2 error={error}"));
 
-        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap_or_else(|error| {
-            panic!("harness_error=open_v2 code={} error={error}", error.code())
-        });
+        let root =
+            ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap_or_else(|error| {
+                panic!("harness_error=open_v2 code={} error={error}", error.code())
+            });
 
         for repeat_index in 0..repeats {
             root.recapture_v2().unwrap_or_else(|error| {
-                panic!("harness_error=recapture_v2 code={} error={error}", error.code())
+                panic!(
+                    "harness_error=recapture_v2 code={} error={error}",
+                    error.code()
+                )
             });
             let started = Instant::now();
             let state = validate_native_training_store_for_publication_v2(&root, &run)
