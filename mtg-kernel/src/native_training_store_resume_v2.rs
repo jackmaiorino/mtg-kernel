@@ -65,6 +65,7 @@ const RUN_RECORD_MAX_BYTES_V2: u64 = 1_048_576;
 /// so a thread-local counter is immune to interference from unrelated tests
 /// running concurrently, whereas a shared `static` would not be.
 #[cfg(test)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) mod call_counters_v1 {
     use std::cell::Cell;
 
@@ -528,6 +529,7 @@ pub(crate) fn resume_native_training_store_with_session_v2(
 /// without touching any process-global state that could leak into other
 /// tests running concurrently on a different thread.
 #[cfg(test)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) fn resume_native_training_store_with_session_and_cadence_for_test_v1(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
