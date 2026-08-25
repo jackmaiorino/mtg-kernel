@@ -2694,3 +2694,91 @@ mod windows_publisher_tests {
         );
     }
 }
+
+/// MEASUREMENT HARNESS ONLY -- not part of the product surface.
+///
+/// StoreV3 port task (2026-08-25, branch `fable/storev3-port-v1`): gate (a-2)
+/// pre-port baseline, closing the countersigned port plan's blocker that the
+/// publish-side full walk had never been separately timed (V1's ~5h/lineage
+/// figure covered the resume-side walk only). This times the *publish-side*
+/// entry point into the exact same full-walk chokepoint the resume-side
+/// harnesses (`6d6df9c`, `c06c0f9`) already price:
+/// `validate_native_training_store_for_publication_v2` is a one-line wrapper
+/// around `walk_complete_store_v2` (see `native_training_store_resume_v2.rs`),
+/// reached in production from `publish_prepared_segment_v2` via
+/// `publish_generation_v2` -> `require_current_publication_authority_v2` ->
+/// `walk_current_store_through_parents_v2` (this file). Using the identical
+/// production entry point the publisher itself calls keeps this number
+/// directly comparable to the resume-side full-walk baseline on the same
+/// Store copy, per the port plan's gate (a) (section 5, option (i)).
+///
+/// Read-only: `validate_native_training_store_for_publication_v2` takes only
+/// the shared reader lock via the resume-side walk; no file is ever written,
+/// renamed, or deleted by this module.
+///
+/// Invocation (ignored by default; run explicitly):
+/// ```text
+/// set MTG_KERNEL_TIMING_HARNESS_STORE_ROOT=D:\path\to\store
+/// set MTG_KERNEL_TIMING_HARNESS_REPEATS=3
+/// cargo test --release --features native-training-store-v2-production \
+///     --lib native_training_store_v2_publication_walk_timing_harness_v1 -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod native_training_store_v2_publication_walk_timing_harness_v1 {
+    use crate::native_training_store_resume_v2::validate_native_training_store_for_publication_v2;
+    use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
+    use crate::native_training_store_run_v2::decode_train_run_v2;
+    use std::time::Instant;
+
+    /// Reads `MTG_KERNEL_TIMING_HARNESS_STORE_ROOT`, opens that path as a
+    /// Store root, decodes its `run.json`, then calls the real publish-side
+    /// entry point `validate_native_training_store_for_publication_v2`
+    /// `MTG_KERNEL_TIMING_HARNESS_REPEATS` times (default 3), printing each
+    /// wall time in microseconds plus the proven `latest_generation_index` so
+    /// the caller can bind the timing to a depth without trusting an
+    /// external label.
+    #[test]
+    #[ignore = "measurement harness: needs MTG_KERNEL_TIMING_HARNESS_STORE_ROOT set to a real Store copy"]
+    fn measure_walk_current_store_through_parents_wall_time_v1() {
+        let root_path = std::env::var("MTG_KERNEL_TIMING_HARNESS_STORE_ROOT")
+            .expect("set MTG_KERNEL_TIMING_HARNESS_STORE_ROOT to a Store root directory");
+        let repeats: u32 = std::env::var("MTG_KERNEL_TIMING_HARNESS_REPEATS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(3);
+
+        println!("publish_harness_store_root={root_path}");
+
+        let run_json_path = std::path::Path::new(&root_path).join("run.json");
+        let run_bytes = std::fs::read(&run_json_path).unwrap_or_else(|error| {
+            panic!("harness_error=read_run_json path={run_json_path:?} error={error}")
+        });
+        let run = decode_train_run_v2(&run_bytes)
+            .unwrap_or_else(|error| panic!("harness_error=decode_train_run_v2 error={error}"));
+
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap_or_else(|error| {
+            panic!("harness_error=open_v2 code={} error={error}", error.code())
+        });
+
+        for repeat_index in 0..repeats {
+            root.recapture_v2().unwrap_or_else(|error| {
+                panic!("harness_error=recapture_v2 code={} error={error}", error.code())
+            });
+            let started = Instant::now();
+            let state = validate_native_training_store_for_publication_v2(&root, &run)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "harness_error=validate_native_training_store_for_publication_v2 code={} error={error}",
+                        error.kind().code()
+                    )
+                });
+            let elapsed = started.elapsed();
+            println!(
+                "publish_harness_result repeat={repeat_index} latest_generation_index={} elapsed_micros={} elapsed_secs={:.6}",
+                state.latest_generation_index(),
+                elapsed.as_micros(),
+                elapsed.as_secs_f64(),
+            );
+        }
+    }
+}
