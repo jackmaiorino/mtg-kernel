@@ -63,13 +63,13 @@ mod tests {
         let run_bytes = std::fs::read(&run_json_path).unwrap_or_else(|error| {
             panic!("harness_error=read_run_json path={run_json_path:?} error={error}")
         });
-        let run = decode_train_run_v2(&run_bytes).unwrap_or_else(|error| {
-            panic!("harness_error=decode_train_run_v2 error={error}")
-        });
+        let run = decode_train_run_v2(&run_bytes)
+            .unwrap_or_else(|error| panic!("harness_error=decode_train_run_v2 error={error}"));
 
-        let root = ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap_or_else(|error| {
-            panic!("harness_error=open_v2 code={} error={error}", error.code())
-        });
+        let root =
+            ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap_or_else(|error| {
+                panic!("harness_error=open_v2 code={} error={error}", error.code())
+            });
 
         for repeat_index in 0..repeats {
             let started = Instant::now();
