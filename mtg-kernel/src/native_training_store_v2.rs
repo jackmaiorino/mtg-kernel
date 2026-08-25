@@ -715,7 +715,7 @@ fn tip_proof_from_published_input_v1(
                 generation_index,
                 continuation_index,
             },
-            *continuation,
+            continuation,
         )?);
     }
     Ok(NativeTrainingStoreTipProofV2::new_v1(

@@ -1716,11 +1716,11 @@ mod windows_resume_tests {
         ] {
             let a_dir = a.directory_path_v2(directory);
             let b_dir = b.directory_path_v2(directory);
-            let mut a_names: Vec<_> = fs::read_dir(&a_dir)
+            let mut a_names: Vec<_> = fs::read_dir(a_dir.clone())
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name())
                 .collect();
-            let mut b_names: Vec<_> = fs::read_dir(&b_dir)
+            let mut b_names: Vec<_> = fs::read_dir(b_dir.clone())
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name())
                 .collect();
