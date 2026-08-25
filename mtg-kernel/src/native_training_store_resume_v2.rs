@@ -58,6 +58,37 @@ use std::path::PathBuf;
 
 const RUN_RECORD_MAX_BYTES_V2: u64 = 1_048_576;
 
+/// StoreV3 port (D1) risk register: test-only instrumentation proving the
+/// O(1) shortcut path never falls back to per-generation decoding. Uses
+/// `thread_local!` rather than a process-wide counter deliberately: `cargo
+/// test`'s default runner gives each `#[test]` function its own OS thread,
+/// so a thread-local counter is immune to interference from unrelated tests
+/// running concurrently, whereas a shared `static` would not be.
+#[cfg(test)]
+pub(crate) mod call_counters_v1 {
+    use std::cell::Cell;
+
+    thread_local! {
+        static LOAD_GENERATION_CALLS_V1: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// Resets this test thread's counter to zero. Call before the
+    /// in-process behavior under test begins.
+    pub(crate) fn reset_load_generation_calls_v1() {
+        LOAD_GENERATION_CALLS_V1.with(|cell| cell.set(0));
+    }
+
+    /// The number of `load_generation_v2` calls on this test thread since
+    /// the last reset.
+    pub(crate) fn load_generation_calls_v1() -> u64 {
+        LOAD_GENERATION_CALLS_V1.with(Cell::get)
+    }
+
+    pub(crate) fn increment_load_generation_calls_v1() {
+        LOAD_GENERATION_CALLS_V1.with(|cell| cell.set(cell.get() + 1));
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeTrainingStoreResumeV2ErrorKind {
     UnsupportedPlatform,
@@ -215,6 +246,114 @@ pub struct NativeTrainingStoreResumeContinueV2 {
     pub parent_boundary: ValidatedNativeTrainingBoundaryV2,
     pub parent_generation_index: u64,
     pub target_generation_index: u64,
+    /// StoreV3 port (D1, `collab/CLAUDE-STOREV3-PORT-PLAN-V1.md` section 2):
+    /// O(1)-sized proof that `parent_boundary`/`parent_checkpoint` were just
+    /// confirmed current, carried forward so the publish call moments later
+    /// in the same science-loop window can attempt the same O(1)
+    /// reverification instead of walking the entire ancestry again. Always
+    /// populated, on both the fast path and the full-walk fallback, so every
+    /// caller of `publish_prepared_segment_with_session_v2` has it available
+    /// regardless of which path this resume call took.
+    pub(crate) tip_proof: NativeTrainingStoreTipProofV2,
+    /// Consecutive windows since the last full walk, as of this resume call
+    /// (see `NativeTrainingStoreContinuationSessionV2`'s own doc); `0` when
+    /// this resume call itself just performed one. Publish uses this to
+    /// derive the outgoing session's own counter.
+    pub(crate) windows_since_full_walk: u32,
+}
+
+/// O(1)-sized proof that exactly one already-proven generation's own finals
+/// (that generation's checkpoint manifest, state payload, segment manifest,
+/// checkpoint sidecar, head record, checkpoint reference, and any segment
+/// continuations, plus the Store's `latest.json`) were independently
+/// confirmed current -- deliberately not the whole-history vector a full
+/// walk produces, so re-verifying every entry here is O(1) in Store depth
+/// rather than O(depth). `run.json` is deliberately not included: both
+/// consumers of this bundle (the resume-side shortcut below and the
+/// publish-side authority check in `native_training_store_v2.rs`)
+/// independently reverify it unconditionally already, so carrying a
+/// redundant copy here would add nothing.
+#[derive(Clone, Debug)]
+pub(crate) struct NativeTrainingStoreTipProofV2 {
+    generation_index: u64,
+    final_expectations: Vec<NativeTrainingStoreFinalExpectationV2>,
+}
+
+impl NativeTrainingStoreTipProofV2 {
+    /// Constructed either by `tip_proof_from_walked_v1` (this module, from a
+    /// full walk's result) or by `native_training_store_v2.rs`'s publisher
+    /// (from the exact bytes it just durably published, already
+    /// independently reopened and byte-compared before this is called).
+    pub(crate) const fn new_v1(
+        generation_index: u64,
+        final_expectations: Vec<NativeTrainingStoreFinalExpectationV2>,
+    ) -> Self {
+        Self {
+            generation_index,
+            final_expectations,
+        }
+    }
+
+    pub(crate) const fn generation_index(&self) -> u64 {
+        self.generation_index
+    }
+
+    pub(crate) fn final_expectations(&self) -> &[NativeTrainingStoreFinalExpectationV2] {
+        &self.final_expectations
+    }
+}
+
+/// Retained per-process proof that a Store's tip generation was already
+/// fully proven current, carried from a successful publish into the
+/// following science-loop window's resume call
+/// (`resume_native_training_store_with_session_v2`) so it can attempt an
+/// O(1) reverification instead of walking the entire ancestry again.
+///
+/// Move-only by construction (no `Clone`): every consumer takes it by value,
+/// and only a full walk or a successful publish's own independent
+/// revalidation ever produces one, so a caller can never resurrect a session
+/// past a failed resume or a failed publish -- the failure path simply does
+/// not hand one back, and (per the science loop's own `?`-propagation) no
+/// further call happens against a session that was never returned.
+#[derive(Debug)]
+pub(crate) struct NativeTrainingStoreContinuationSessionV2 {
+    tip_checkpoint: CheckpointManifestV3,
+    tip_boundary: ValidatedNativeTrainingBoundaryV2,
+    tip_reference: ValidatedCheckpointReferenceV2,
+    tip_proof: NativeTrainingStoreTipProofV2,
+    /// Consecutive windows (on either side) since the last full
+    /// `walk_complete_store_v2` pass. Defense in depth (port plan section 6
+    /// risk register, directory-inventory/foreign-writer risk): the O(1)
+    /// freshness probe only reverifies the tip generation's own finals, not
+    /// the full directory inventory a full walk scans, so an out-of-band
+    /// foreign write elsewhere in the tree could otherwise go unnoticed for
+    /// the life of a run. Forcing a full walk at least this often bounds
+    /// that exposure even when every probe in between would have passed.
+    windows_since_full_walk: u32,
+}
+
+impl NativeTrainingStoreContinuationSessionV2 {
+    /// Constructed only from independently reopened/redecoded bytes: by the
+    /// resume-side full walk (via `tip_proof_from_walked_v1`, this module),
+    /// or by the publish side's own post-publication revalidation
+    /// (`native_training_store_v2.rs`, which already reopens and redecodes
+    /// every final of the generation it just published for receipt
+    /// purposes).
+    pub(crate) fn new_v1(
+        tip_checkpoint: CheckpointManifestV3,
+        tip_boundary: ValidatedNativeTrainingBoundaryV2,
+        tip_reference: ValidatedCheckpointReferenceV2,
+        tip_proof: NativeTrainingStoreTipProofV2,
+        windows_since_full_walk: u32,
+    ) -> Self {
+        Self {
+            tip_checkpoint,
+            tip_boundary,
+            tip_reference,
+            tip_proof,
+            windows_since_full_walk,
+        }
+    }
 }
 
 /// Validate the complete Store under the shared reader lock.
@@ -333,10 +472,78 @@ pub fn load_native_training_boundary_v2(
 /// Applies only the complete prevalidated recognized-stage deletion plan,
 /// then either proves the `P = N` no-op or reconstructs the latest candidate
 /// into a fresh executor for the next window.
+///
+/// Always performs the full `walk_complete_store_v2` pass (no retained
+/// session): byte-for-byte the same behavior every existing caller has
+/// always had. See `resume_native_training_store_with_session_v2` for the
+/// StoreV3 port's (D1) O(1) fast path.
 pub fn resume_native_training_store_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
     config: NativeTrainingExecutionConfigV1,
+) -> Result<NativeTrainingStoreResumeV2> {
+    resume_native_training_store_impl_v1(
+        root,
+        run,
+        config,
+        None,
+        PERIODIC_FULL_WALK_CADENCE_WINDOWS_V1,
+    )
+}
+
+/// StoreV3 port (D1, `collab/CLAUDE-STOREV3-PORT-PLAN-V1.md` section 2):
+/// resume with an optional retained session from a prior window's publish.
+/// A healthy in-process continuation (session present, its periodic-full-
+/// walk cadence not yet elapsed, its O(1) freshness probe passing) takes the
+/// shortcut instead of the full `walk_complete_store_v2` pass; any absence,
+/// cadence expiry, or byte mismatch falls back to exactly today's full walk.
+/// Identical to `resume_native_training_store_v2` in every other respect
+/// (same error taxonomy, same deletion-plan/no-op/continuation logic) --
+/// only which walk proves the state differs.
+///
+/// `pub(crate)`: this and `NativeTrainingStoreContinuationSessionV2` are
+/// internal science-loop plumbing, not part of the crate's public resume
+/// API surface (unlike `resume_native_training_store_v2`, which doc-tests
+/// reference externally).
+pub(crate) fn resume_native_training_store_with_session_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    config: NativeTrainingExecutionConfigV1,
+    session: Option<NativeTrainingStoreContinuationSessionV2>,
+) -> Result<NativeTrainingStoreResumeV2> {
+    resume_native_training_store_impl_v1(
+        root,
+        run,
+        config,
+        session,
+        PERIODIC_FULL_WALK_CADENCE_WINDOWS_V1,
+    )
+}
+
+/// Test-only sibling of `resume_native_training_store_with_session_v2` that
+/// takes the periodic-full-walk cadence as an explicit parameter instead of
+/// the production constant, so the section 6 risk-register mitigation
+/// itself (forcing a full walk after enough shortcut-only windows) can be
+/// exercised deterministically against a small cadence in a fast unit test,
+/// without touching any process-global state that could leak into other
+/// tests running concurrently on a different thread.
+#[cfg(test)]
+pub(crate) fn resume_native_training_store_with_session_and_cadence_for_test_v1(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    config: NativeTrainingExecutionConfigV1,
+    session: Option<NativeTrainingStoreContinuationSessionV2>,
+    cadence_windows: u32,
+) -> Result<NativeTrainingStoreResumeV2> {
+    resume_native_training_store_impl_v1(root, run, config, session, cadence_windows)
+}
+
+fn resume_native_training_store_impl_v1(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    config: NativeTrainingExecutionConfigV1,
+    session: Option<NativeTrainingStoreContinuationSessionV2>,
+    cadence_windows: u32,
 ) -> Result<NativeTrainingStoreResumeV2> {
     // Dual-Profile Catalog Successor (collab CLAUDE #220), resume boundary:
     // reject a historical-profile run before any other check, lock, or store
@@ -372,7 +579,8 @@ pub fn resume_native_training_store_v2(
     root.recapture_v2()
         .map_err(|_| resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::RootInvalid))?;
     let _exclusive = root.lock_exclusive_v2().map_err(map_lock_error_v2)?;
-    let state = walk_complete_store_v2(root, run)?;
+    let (state, windows_since_full_walk) =
+        walk_complete_store_or_shortcut_v2(root, run, session, cadence_windows)?;
 
     // Apply only the complete prevalidated recognized-stage deletion plan.
     for stage_path in &state.recognized_stage_paths {
@@ -421,6 +629,7 @@ pub fn resume_native_training_store_v2(
         .ok_or(resume_error_v2(
             NativeTrainingStoreResumeV2ErrorKind::ScheduleInvalid,
         ))?;
+    let tip_proof = tip_proof_from_walked_v1(&state);
     let executor = reconstruct_executor_v2(run, &state, config)?;
     Ok(NativeTrainingStoreResumeV2::Continue(Box::new(
         NativeTrainingStoreResumeContinueV2 {
@@ -429,6 +638,8 @@ pub fn resume_native_training_store_v2(
             target_generation_index: target,
             parent_checkpoint: state.latest_checkpoint,
             parent_boundary: state.latest_boundary,
+            tip_proof,
+            windows_since_full_walk,
         },
     )))
 }
@@ -490,7 +701,10 @@ struct WalkedGenerationV2 {
     final_expectations: Vec<NativeTrainingStoreFinalExpectationV2>,
 }
 
-fn final_expectation_v2(
+/// `pub(crate)`: also used by `native_training_store_v2.rs` to build a
+/// `NativeTrainingStoreTipProofV2` from bytes it independently reopens
+/// during publication (StoreV3 port, D1).
+pub(crate) fn final_expectation_v2(
     final_name: NativeTrainingStoreFinalNameV2,
     bytes: &[u8],
 ) -> Result<NativeTrainingStoreFinalExpectationV2> {
@@ -508,6 +722,14 @@ fn load_generation_v2(
     parent: Option<&WalkedGenerationV2>,
     generation_index: u64,
 ) -> Result<WalkedGenerationV2> {
+    // StoreV3 port (D1) risk register: test-only call counter proving the
+    // O(1) shortcut never reaches this function (only `walk_complete_store_v2`,
+    // the O(depth) full walk, ever does), so a future regression that
+    // silently reintroduces per-window walking on either the resume or the
+    // publish side fails a test deterministically, independent of noisy
+    // wall-clock timing. See `call_counters_v1` below.
+    #[cfg(test)]
+    call_counters_v1::increment_load_generation_calls_v1();
     let kind = NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid;
     let error = resume_error_v2(kind);
     // Capacity-experiment wide records carry a larger train-state payload;
@@ -864,6 +1086,193 @@ fn walk_complete_store_v2(
         recognized_stage_paths,
         final_expectations,
     })
+}
+
+// --- StoreV3 port (D1): retained-session O(1) successor check --------------
+//
+// `collab/CLAUDE-STOREV3-PORT-PLAN-V1.md` section 2. `walk_complete_store_v2`
+// above is the shared chokepoint both the resume side (this module) and the
+// publish side (`native_training_store_v2.rs`, via
+// `validate_native_training_store_for_publication_v2` just below) already
+// fall through, so a single session-aware short-circuit here fixes both
+// walks with one mechanism (plan section 1's "Note on the resume/publish
+// relationship"). It is deliberately NOT built by making
+// `walk_complete_store_v2` itself branch internally: that function, and its
+// three unconditional resume-side call sites in
+// `resume_native_training_store_v2` below, are left byte-for-byte as today,
+// so every existing caller (this module's own tests, `native_training_store_v2.rs`'s
+// tests, and the 20 other `publish_prepared_segment_v2` call sites) keeps the
+// exact O(depth) behavior it has always had. Only the two NEW entry points
+// (`resume_native_training_store_with_session_v2` below and
+// `publish_prepared_segment_with_session_v2` in `native_training_store_v2.rs`)
+// opt into the shortcut, per the plan's additive-API recommendation.
+
+/// Periodic full-walk cadence (plan section 6 risk register, directory-
+/// inventory/foreign-writer risk): the O(1) freshness probe below only
+/// reverifies the tip generation's own finals plus `latest.json`, not the
+/// full five-directory inventory scan `walk_complete_store_v2` performs --
+/// that scan is what catches a foreign writer's leaf anywhere else in the
+/// tree, and skipping it is exactly what makes the fast path O(1). Forcing a
+/// full walk at least this often bounds how long such a foreign write could
+/// otherwise go unnoticed, independent of whether every probe in between
+/// would have passed. Chosen as a conservative, disclosed default (not
+/// derived from the plan, which left the exact cadence to implementation);
+/// not caller-configurable in production. `walk_complete_store_or_shortcut_v2`
+/// takes the cadence as an explicit parameter (rather than reading this
+/// constant directly) so a test can exercise the mitigation itself against a
+/// small cadence, deterministically, without touching any process-global
+/// state (an env var or a shared `static` would be read by every test
+/// thread, including unrelated ones running concurrently) -- see
+/// `resume_native_training_store_with_session_and_cadence_for_test_v1`.
+const PERIODIC_FULL_WALK_CADENCE_WINDOWS_V1: u32 = 64;
+
+/// The exact byte-count bound `load_generation_v2` already applies per final
+/// kind (mirrored here, not refactored there, to avoid touching the existing
+/// full-walk path at all).
+fn max_bytes_for_final_v1(run: &ValidatedTrainRunV2, final_name: NativeTrainingStoreFinalNameV2) -> u64 {
+    match final_name {
+        NativeTrainingStoreFinalNameV2::Run => RUN_RECORD_MAX_BYTES_V2,
+        NativeTrainingStoreFinalNameV2::Latest => LATEST_RECORD_MAX_BYTES_V2,
+        NativeTrainingStoreFinalNameV2::StatePayload { .. } => {
+            if run.record().contracts.wide_model_experiment_v1.is_some() {
+                W_NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 as u64
+            } else {
+                NATIVE_TRAIN_STATE_PAYLOAD_BYTE_COUNT_V1 as u64
+            }
+        }
+        NativeTrainingStoreFinalNameV2::CheckpointManifest { .. } => {
+            CHECKPOINT_MANIFEST_MAX_BYTES_V3 as u64
+        }
+        NativeTrainingStoreFinalNameV2::SegmentManifest { .. } => SEGMENT_MANIFEST_MAX_BYTES_V2,
+        NativeTrainingStoreFinalNameV2::CheckpointSidecar { .. } => CHECKPOINT_SIDECAR_MAX_BYTES_V2,
+        NativeTrainingStoreFinalNameV2::HeadRecord { .. } => HEAD_RECORD_MAX_BYTES_V2,
+        NativeTrainingStoreFinalNameV2::CheckpointReference { .. } => CHECKPOINT_REFERENCE_MAX_BYTES_V2,
+        NativeTrainingStoreFinalNameV2::SegmentContinuation { .. } => SEGMENT_CONTINUATION_MAX_BYTES_V2,
+    }
+}
+
+/// The generation a final name belongs to, or `None` for the two
+/// generation-less finals (`Run`, `Latest`).
+const fn final_name_generation_index_v1(final_name: NativeTrainingStoreFinalNameV2) -> Option<u64> {
+    match final_name {
+        NativeTrainingStoreFinalNameV2::Run | NativeTrainingStoreFinalNameV2::Latest => None,
+        NativeTrainingStoreFinalNameV2::SegmentManifest { generation_index }
+        | NativeTrainingStoreFinalNameV2::SegmentContinuation {
+            generation_index, ..
+        }
+        | NativeTrainingStoreFinalNameV2::CheckpointManifest { generation_index }
+        | NativeTrainingStoreFinalNameV2::StatePayload { generation_index }
+        | NativeTrainingStoreFinalNameV2::CheckpointSidecar { generation_index }
+        | NativeTrainingStoreFinalNameV2::HeadRecord { generation_index }
+        | NativeTrainingStoreFinalNameV2::CheckpointReference { generation_index } => {
+            Some(generation_index)
+        }
+    }
+}
+
+/// Projects a fully walked state's tip generation into an O(1)-sized proof:
+/// `Latest` plus exactly the tip generation's own finals, dropping every
+/// earlier generation's entries (and `Run`, per
+/// `NativeTrainingStoreTipProofV2`'s own doc). Pure and read-only; `state` is
+/// only borrowed.
+fn tip_proof_from_walked_v1(state: &ValidatedNativeTrainingStoreStateV2) -> NativeTrainingStoreTipProofV2 {
+    let tip = state.latest_generation_index();
+    let final_expectations = state
+        .final_expectations_v2()
+        .iter()
+        .copied()
+        .filter(|expectation| match expectation.final_name() {
+            NativeTrainingStoreFinalNameV2::Latest => true,
+            NativeTrainingStoreFinalNameV2::Run => false,
+            other => final_name_generation_index_v1(other) == Some(tip),
+        })
+        .collect();
+    NativeTrainingStoreTipProofV2 {
+        generation_index: tip,
+        final_expectations,
+    }
+}
+
+/// Attempts the O(1) successor check: re-reads exactly the retained
+/// session's tip generation's own finals plus `latest.json` (never the full
+/// five-directory inventory) and requires each to still byte-for-byte match
+/// what was proven when the session was established. On success, reuses the
+/// session's already-decoded authorities directly -- no re-walk, no
+/// re-decode. Any I/O error or byte mismatch is `Err`, which the caller
+/// (`walk_complete_store_or_shortcut_v2`) treats as "decline the shortcut,
+/// fall back to a full walk," never as a hard failure of its own.
+fn try_tip_shortcut_v1(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    session: NativeTrainingStoreContinuationSessionV2,
+) -> Result<ValidatedNativeTrainingStoreStateV2> {
+    let declined = resume_error_v2(NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid);
+
+    // run.json is always independently reverified here too, exactly like
+    // `walk_complete_store_v2`'s own first check -- already O(1) regardless
+    // of depth, so there is no shortcut to take for it, only to repeat it.
+    let run_bytes = read_bounded_final_v2(
+        root,
+        NativeTrainingStoreFinalNameV2::Run,
+        RUN_RECORD_MAX_BYTES_V2,
+        NativeTrainingStoreResumeV2ErrorKind::RunInvalid,
+    )?;
+    if run_bytes != run.canonical_bytes() {
+        return Err(declined);
+    }
+
+    let tip = session.tip_proof.generation_index();
+    let mut latest_payload: Option<Vec<u8>> = None;
+    for expectation in session.tip_proof.final_expectations() {
+        let final_name = expectation.final_name();
+        let max_bytes = max_bytes_for_final_v1(run, final_name);
+        let bytes = read_bounded_final_v2(root, final_name, max_bytes, declined.kind())?;
+        if final_expectation_v2(final_name, &bytes)? != *expectation {
+            return Err(declined);
+        }
+        if let NativeTrainingStoreFinalNameV2::StatePayload { generation_index } = final_name {
+            if generation_index == tip {
+                latest_payload = Some(bytes);
+            }
+        }
+    }
+    let latest_payload = latest_payload.ok_or(declined)?;
+
+    Ok(ValidatedNativeTrainingStoreStateV2 {
+        latest_generation_index: tip,
+        latest_checkpoint: session.tip_checkpoint,
+        latest_boundary: session.tip_boundary,
+        latest_reference: session.tip_reference,
+        latest_payload,
+        recognized_stage_paths: Vec::new(),
+        final_expectations: session.tip_proof.final_expectations,
+    })
+}
+
+/// One walk at start/restart (plan section 2, item 1): with a retained
+/// session, a cadence that has not yet elapsed, and a freshness probe that
+/// passes, returns in O(1); any absence, cadence expiry, or mismatch falls
+/// back to exactly `walk_complete_store_v2`, unchanged. Returns the proven
+/// state plus the `windows_since_full_walk` count to carry forward (`0`
+/// whenever a full walk just ran, since that resets the cadence clock).
+fn walk_complete_store_or_shortcut_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    session: Option<NativeTrainingStoreContinuationSessionV2>,
+    cadence_windows: u32,
+) -> Result<(ValidatedNativeTrainingStoreStateV2, u32)> {
+    if let Some(session) = session {
+        if session.windows_since_full_walk < cadence_windows {
+            let windows_since_full_walk = session.windows_since_full_walk;
+            if let Ok(state) = try_tip_shortcut_v1(root, run, session) {
+                return Ok((state, windows_since_full_walk));
+            }
+            // Any decline (mismatch, I/O error) falls through to the full
+            // walk below, fail-closed: the shortcut never substitutes a
+            // weaker check for a stronger one it disagrees with.
+        }
+    }
+    Ok((walk_complete_store_v2(root, run)?, 0))
 }
 
 /// Read-only whole-Store validation for a publisher that already owns the
@@ -1281,6 +1690,491 @@ mod windows_resume_tests {
             NativeTrainingStoreResumeV2ErrorKind::StoreBusy
         );
         drop(held);
+    }
+
+    // --- StoreV3 port (D1) tests -------------------------------------------
+    //
+    // `collab/CLAUDE-STOREV3-PORT-PLAN-V1.md`. These exercise the new
+    // session-aware entry points (`resume_native_training_store_with_session_v2`,
+    // `publish_prepared_segment_with_session_v2`) side by side with the
+    // unchanged sync path, using the `call_counters_v1` instrumentation
+    // (never wall-clock timing, which is noisy) to prove the O(1)-per-window
+    // property directly.
+
+    /// Byte-for-byte identical directory tree, compared by relative path
+    /// (the two roots live under different temp directories).
+    fn assert_store_trees_equal_v1(
+        a: &ValidatedNativeTrainingStoreRootV2,
+        b: &ValidatedNativeTrainingStoreRootV2,
+    ) {
+        for directory in [
+            NativeTrainingStoreDirectoryV2::Root,
+            NativeTrainingStoreDirectoryV2::Segments,
+            NativeTrainingStoreDirectoryV2::Checkpoints,
+            NativeTrainingStoreDirectoryV2::Heads,
+            NativeTrainingStoreDirectoryV2::Refs,
+        ] {
+            let a_dir = a.directory_path_v2(directory);
+            let b_dir = b.directory_path_v2(directory);
+            let mut a_names: Vec<_> = fs::read_dir(&a_dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            let mut b_names: Vec<_> = fs::read_dir(&b_dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            a_names.sort();
+            b_names.sort();
+            assert_eq!(a_names, b_names, "directory listing mismatch in {directory:?}");
+            for name in a_names {
+                let a_path = a_dir.join(&name);
+                if fs::symlink_metadata(&a_path).unwrap().is_dir() {
+                    continue; // the four fixed subdirectories, walked separately above
+                }
+                assert_eq!(
+                    fs::read(&a_path).unwrap(),
+                    fs::read(b_dir.join(&name)).unwrap(),
+                    "file content mismatch: {directory:?}/{name:?}"
+                );
+            }
+        }
+    }
+
+    /// Gates (a) and (d): the session-aware path drives an identical run to
+    /// a byte-for-byte identical Store versus the unchanged sync path, while
+    /// calling `load_generation_v2` (only ever reachable from inside the
+    /// O(depth) `walk_complete_store_v2`) far fewer times -- proving the
+    /// fast path is taken, and that it changes nothing observable.
+    #[test]
+    fn session_shortcut_matches_sync_path_bit_for_bit_and_avoids_full_walks() {
+        use crate::native_training_store_v2::publish_prepared_segment_with_session_v2;
+
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let target = run.requested_successful_updates();
+        let checkpoint_segment_updates = run.checkpoint_segment_updates();
+
+        // Sync path (unchanged): every window's own full walk, on both sides.
+        call_counters_v1::reset_load_generation_calls_v1();
+        let sync_parent = TestParentV2::new("session-vs-sync-old");
+        let sync_root = bootstrap_and_publish_genesis_v2(sync_parent.path(), &run);
+        loop {
+            match resume_native_training_store_v2(&sync_root, &run, execution_config_v2(&run))
+                .unwrap()
+            {
+                NativeTrainingStoreResumeV2::Complete { .. } => break,
+                NativeTrainingStoreResumeV2::Continue(mut continuation) => {
+                    let prepared = prepare_segment_v2(
+                        &mut continuation.executor,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                    )
+                    .unwrap();
+                    let receipt = publish_prepared_segment_v2(
+                        &sync_root,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                        &prepared,
+                    )
+                    .unwrap();
+                    prepared.commit_v2(receipt).unwrap();
+                }
+            }
+        }
+        let sync_calls = call_counters_v1::load_generation_calls_v1();
+        assert!(sync_calls > 0, "the sync path must call load_generation_v2 at all");
+
+        // Session-aware path (StoreV3 port): identical run, fresh store.
+        call_counters_v1::reset_load_generation_calls_v1();
+        let session_parent = TestParentV2::new("session-vs-sync-new");
+        let session_root = bootstrap_and_publish_genesis_v2(session_parent.path(), &run);
+        let mut session: Option<NativeTrainingStoreContinuationSessionV2> = None;
+        loop {
+            let resumed = resume_native_training_store_with_session_v2(
+                &session_root,
+                &run,
+                execution_config_v2(&run),
+                session.take(),
+            )
+            .unwrap();
+            match resumed {
+                NativeTrainingStoreResumeV2::Complete { .. } => break,
+                NativeTrainingStoreResumeV2::Continue(mut continuation) => {
+                    let prepared = prepare_segment_v2(
+                        &mut continuation.executor,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                    )
+                    .unwrap();
+                    let (receipt, next_session) = publish_prepared_segment_with_session_v2(
+                        &session_root,
+                        &run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                        &prepared,
+                        &continuation.tip_proof,
+                        continuation.windows_since_full_walk,
+                    )
+                    .unwrap();
+                    session = Some(next_session);
+                    prepared.commit_v2(receipt).unwrap();
+                }
+            }
+        }
+        let session_calls = call_counters_v1::load_generation_calls_v1();
+
+        println!(
+            "session_shortcut_test sync_load_generation_calls={sync_calls} \
+             session_load_generation_calls={session_calls}"
+        );
+        assert!(
+            session_calls < sync_calls,
+            "session-aware path must call load_generation_v2 far less often: \
+             sync={sync_calls} session={session_calls}"
+        );
+        // Exact pin: one bootstrap walk at depth 0 (1 generation) plus
+        // exactly one full walk at the very end -- the `Complete` branch's
+        // existing, unconditional no-op reread (unchanged by this port,
+        // and itself unrelated to the per-window cost the port fixes, since
+        // it fires once per run rather than once per window) -- walking
+        // every boundary generation 0..=target.
+        let expected_session_calls = 1 + (target / checkpoint_segment_updates + 1);
+        assert_eq!(session_calls, expected_session_calls);
+
+        assert_store_trees_equal_v1(&sync_root, &session_root);
+    }
+
+    /// Gate (c): with no retained session (a genuine restart, or the first
+    /// call in a fresh process), the full walk always runs; with one, a
+    /// healthy in-process continuation never calls `load_generation_v2` at
+    /// all.
+    #[test]
+    fn session_shortcut_declines_after_a_genuine_restart() {
+        use crate::native_training_store_v2::publish_prepared_segment_with_session_v2;
+
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let parent = TestParentV2::new("session-restart");
+        let root = bootstrap_and_publish_genesis_v2(parent.path(), &run);
+
+        call_counters_v1::reset_load_generation_calls_v1();
+        let resumed = resume_native_training_store_with_session_v2(
+            &root,
+            &run,
+            execution_config_v2(&run),
+            None,
+        )
+        .unwrap();
+        let mut continuation = match resumed {
+            NativeTrainingStoreResumeV2::Continue(continuation) => continuation,
+            NativeTrainingStoreResumeV2::Complete { .. } => {
+                panic!("the fixture's schedule must have a first window")
+            }
+        };
+        assert!(
+            call_counters_v1::load_generation_calls_v1() > 0,
+            "the first resume call in a process must take the full walk"
+        );
+
+        let prepared = prepare_segment_v2(
+            &mut continuation.executor,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+        )
+        .unwrap();
+        let (receipt, session) = publish_prepared_segment_with_session_v2(
+            &root,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+            &prepared,
+            &continuation.tip_proof,
+            continuation.windows_since_full_walk,
+        )
+        .unwrap();
+        prepared.commit_v2(receipt).unwrap();
+
+        // In-process continuation: the shortcut is taken, adding zero more
+        // load_generation_v2 calls.
+        call_counters_v1::reset_load_generation_calls_v1();
+        let _ = resume_native_training_store_with_session_v2(
+            &root,
+            &run,
+            execution_config_v2(&run),
+            Some(session),
+        )
+        .unwrap();
+        assert_eq!(
+            call_counters_v1::load_generation_calls_v1(),
+            0,
+            "a healthy in-process continuation must not call load_generation_v2 at all"
+        );
+
+        // Genuine restart (or first call in a fresh process): session=None,
+        // exactly as if a new process had just opened this same on-disk
+        // Store. The full walk must run -- proportional to the current
+        // depth, never zero.
+        call_counters_v1::reset_load_generation_calls_v1();
+        let _ = resume_native_training_store_with_session_v2(
+            &root,
+            &run,
+            execution_config_v2(&run),
+            None,
+        )
+        .unwrap();
+        assert!(
+            call_counters_v1::load_generation_calls_v1() > 0,
+            "a genuine restart (no retained session) must perform the full walk"
+        );
+    }
+
+    /// Gate (b), part 1: a byte corruption of the retained session's own
+    /// tip generation is still caught. The O(1) freshness probe declines the
+    /// shortcut (byte mismatch), falls back to exactly `walk_complete_store_v2`,
+    /// and that full walk -- unchanged -- fails exactly as it would for the
+    /// unmodified sync path on the same corruption.
+    #[test]
+    fn session_shortcut_falls_back_and_fails_closed_on_tip_corruption() {
+        use crate::native_training_store_v2::publish_prepared_segment_with_session_v2;
+
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let parent = TestParentV2::new("session-tip-corruption");
+        let root = bootstrap_and_publish_genesis_v2(parent.path(), &run);
+
+        let resumed = resume_native_training_store_with_session_v2(
+            &root,
+            &run,
+            execution_config_v2(&run),
+            None,
+        )
+        .unwrap();
+        let mut continuation = match resumed {
+            NativeTrainingStoreResumeV2::Continue(continuation) => continuation,
+            NativeTrainingStoreResumeV2::Complete { .. } => {
+                panic!("the fixture's schedule must have a first window")
+            }
+        };
+        let prepared = prepare_segment_v2(
+            &mut continuation.executor,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+        )
+        .unwrap();
+        let (receipt, session) = publish_prepared_segment_with_session_v2(
+            &root,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+            &prepared,
+            &continuation.tip_proof,
+            continuation.windows_since_full_walk,
+        )
+        .unwrap();
+        prepared.commit_v2(receipt).unwrap();
+
+        // Corrupt the new tip's own sidecar (a same-length flip, exactly the
+        // "mid-chain final" corruption the sync-path test above exercises).
+        let checkpoint_segment_updates = run.checkpoint_segment_updates();
+        let sidecar_path = root
+            .directory_path_v2(NativeTrainingStoreDirectoryV2::Checkpoints)
+            .join(format!(
+                "update-{checkpoint_segment_updates:08}.sidecar.json"
+            ));
+        let original = fs::read(&sidecar_path).unwrap();
+        let corrupted: Vec<u8> = original.iter().map(|byte| byte ^ 0x01).collect();
+        fs::write(&sidecar_path, &corrupted).unwrap();
+
+        call_counters_v1::reset_load_generation_calls_v1();
+        let result =
+            resume_native_training_store_with_session_v2(&root, &run, execution_config_v2(&run), Some(session));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid,
+            "a corrupted tip must fail exactly as the unmodified full walk does"
+        );
+        assert!(
+            call_counters_v1::load_generation_calls_v1() > 0,
+            "the freshness probe must decline and fall back to the full walk, which is what actually catches this"
+        );
+        assert_eq!(fs::read(&sidecar_path).unwrap(), corrupted, "no mutation on a failed resume");
+    }
+
+    /// Gate (b), part 2: the O(1) freshness probe only reverifies the
+    /// retained session's own tip generation. It is NOT, however, the only
+    /// existing scan on the publish side: `validate_publication_inventory_v2`
+    /// (unchanged by this port) unconditionally classifies every leaf in all
+    /// five directories on *every* publish call regardless of any session,
+    /// which is why a stray/foreign leaf is actually caught immediately (an
+    /// earlier version of this test wrongly assumed otherwise and was
+    /// corrected). The real, disclosed blind spot is narrower: a *content*
+    /// corruption of an older, no-longer-tip generation's final. Neither the
+    /// freshness probe (tip-only) nor the inventory scan (filename
+    /// classification only -- it never rereads a historical, non-candidate
+    /// final's bytes) can see that. The periodic full-walk cadence bounds
+    /// how long it can persist: it fully redecodes every generation from
+    /// genesis, exactly like `resume_drives_the_full_run_from_reconstructed_executors_to_the_exact_no_op`'s
+    /// own "same-length corruption of a mid-chain final" case. Uses the
+    /// test-only cadence override so the mitigation is exercised in a
+    /// handful of windows rather than needing the real (much larger)
+    /// production cadence.
+    #[test]
+    fn periodic_full_walk_catches_mid_chain_corruption_the_shortcut_missed() {
+        use crate::native_training_store_v2::publish_prepared_segment_with_session_v2;
+
+        let run = decode_train_run_v2(&test_fixture_bytes_v2()).unwrap();
+        let parent = TestParentV2::new("session-periodic-cadence");
+        let root = bootstrap_and_publish_genesis_v2(parent.path(), &run);
+        let cadence = 3_u32;
+        let checkpoint_segment_updates = run.checkpoint_segment_updates();
+        let target = run.requested_successful_updates();
+        assert!(
+            target >= checkpoint_segment_updates * 2,
+            "fixture must schedule at least two windows so a generation can become non-tip"
+        );
+
+        // Window 1: gen 0 -> gen S.
+        let resumed = resume_native_training_store_with_session_and_cadence_for_test_v1(
+            &root,
+            &run,
+            execution_config_v2(&run),
+            None,
+            cadence,
+        )
+        .unwrap();
+        let mut continuation = match resumed {
+            NativeTrainingStoreResumeV2::Continue(continuation) => continuation,
+            NativeTrainingStoreResumeV2::Complete { .. } => {
+                panic!("the fixture's schedule must have a first window")
+            }
+        };
+        let prepared = prepare_segment_v2(
+            &mut continuation.executor,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+        )
+        .unwrap();
+        let (receipt, session_after_window1) = publish_prepared_segment_with_session_v2(
+            &root,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+            &prepared,
+            &continuation.tip_proof,
+            continuation.windows_since_full_walk,
+        )
+        .unwrap();
+        prepared.commit_v2(receipt).unwrap();
+
+        // Window 2: gen S -> gen 2S. Generation S is no longer the tip.
+        let resumed = resume_native_training_store_with_session_and_cadence_for_test_v1(
+            &root,
+            &run,
+            execution_config_v2(&run),
+            Some(session_after_window1),
+            cadence,
+        )
+        .unwrap();
+        let mut continuation = match resumed {
+            NativeTrainingStoreResumeV2::Continue(continuation) => continuation,
+            NativeTrainingStoreResumeV2::Complete { .. } => {
+                panic!("the fixture's schedule must have a second window")
+            }
+        };
+        let prepared = prepare_segment_v2(
+            &mut continuation.executor,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+        )
+        .unwrap();
+        let (receipt, session_after_window2) = publish_prepared_segment_with_session_v2(
+            &root,
+            &run,
+            &continuation.parent_boundary,
+            &continuation.parent_checkpoint,
+            &prepared,
+            &continuation.tip_proof,
+            continuation.windows_since_full_walk,
+        )
+        .unwrap();
+        prepared.commit_v2(receipt).unwrap();
+        let mut session = Some(session_after_window2);
+
+        // Corrupt generation S's own sidecar: a same-length byte flip, exactly
+        // the "mid-chain final" corruption the sync-path lifecycle test
+        // exercises against the unmodified full walk. Generation S is no
+        // longer the tip (generation 2S is).
+        let sidecar_path = root
+            .directory_path_v2(NativeTrainingStoreDirectoryV2::Checkpoints)
+            .join(format!(
+                "update-{checkpoint_segment_updates:08}.sidecar.json"
+            ));
+        let original = fs::read(&sidecar_path).unwrap();
+        let corrupted: Vec<u8> = original.iter().map(|byte| byte ^ 0x01).collect();
+        fs::write(&sidecar_path, &corrupted).unwrap();
+
+        // Drive further windows until either a resume call is caught by the
+        // periodic full walk, or the schedule would otherwise complete
+        // (bounded so a mispredicted cadence fails the test instead of
+        // looping forever).
+        let max_windows = target / checkpoint_segment_updates + 2;
+        let mut succeeded_despite_corruption = false;
+        let mut caught = false;
+        for _ in 0..max_windows {
+            match resume_native_training_store_with_session_and_cadence_for_test_v1(
+                &root,
+                &run,
+                execution_config_v2(&run),
+                session.take(),
+                cadence,
+            ) {
+                Err(error) => {
+                    assert_eq!(error.kind(), NativeTrainingStoreResumeV2ErrorKind::GenerationInvalid);
+                    caught = true;
+                    break;
+                }
+                Ok(NativeTrainingStoreResumeV2::Complete { .. }) => {
+                    panic!("must be caught by the periodic full walk before the schedule completes")
+                }
+                Ok(NativeTrainingStoreResumeV2::Continue(mut next_continuation)) => {
+                    succeeded_despite_corruption = true;
+                    let prepared = prepare_segment_v2(
+                        &mut next_continuation.executor,
+                        &run,
+                        &next_continuation.parent_boundary,
+                        &next_continuation.parent_checkpoint,
+                    )
+                    .unwrap();
+                    let (receipt, next_session) = publish_prepared_segment_with_session_v2(
+                        &root,
+                        &run,
+                        &next_continuation.parent_boundary,
+                        &next_continuation.parent_checkpoint,
+                        &prepared,
+                        &next_continuation.tip_proof,
+                        next_continuation.windows_since_full_walk,
+                    )
+                    .unwrap();
+                    prepared.commit_v2(receipt).unwrap();
+                    session = Some(next_session);
+                }
+            }
+        }
+        assert!(
+            succeeded_despite_corruption,
+            "at least one window must succeed despite the corruption -- the disclosed, accepted blind spot"
+        );
+        assert!(
+            caught,
+            "the periodic full-walk cadence must eventually catch the mid-chain corruption"
+        );
+
+        fs::write(&sidecar_path, &original).unwrap();
     }
 
     #[test]
