@@ -515,11 +515,34 @@ const RESPONSE_EXPLOITER_DENOVO_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1: &str =
 // seed array and its own training-update-count/completion-generation
 // constant, mirroring exactly how "build" and "screen" already use separate
 // arrays and separate completion generations rather than one shared,
-// reinterpreted array. One authorized seed today (971_202, verified fresh
-// against collab and every sibling mtg-kernel-* worktree before
-// authorization; the array stays closed/compile-bound and is widened, not
-// reinterpreted, if a future seed is authorized).
-const RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1: [u64; 1] = [971_202];
+// reinterpreted array. Originally authorized with one seed (971_202); the
+// array stays closed/compile-bound and is widened, not reinterpreted, if a
+// future seed is authorized.
+//
+// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 5 addendum (found
+// while completing Task 7's real per-slot resolution, same source commit
+// already authorized for the denovo-1024 port): this session's per-slot
+// diagnostic found the real, already-published denovo-1024-family stores
+// (seeds 971_221/971_222/971_223) fail at raw wire deserialize --
+// `serde_json::from_slice::<TrainRunWireV2>` reports "trailing characters"
+// partway through THIS array, because those real records' own
+// `authorized_denovo_512_seeds` field already carries four elements
+// (`[971_202, 971_211, 971_212, 971_213]`), not the one this crate's
+// D2 contract-widening merge back-ported. The stranded cycle-2-era branch
+// (commit `8c8d645`) already widened this exact array to these same four
+// values (its own doc comment: "Widened from the original one-seed
+// authorization... to the campaign set of four... widened, never
+// reinterpreted, in place, appending only") -- D2 back-ported the
+// Option-loosening but not this later in-place widening. Ported here
+// verbatim, value-for-value, under the same widen-in-place doctrine this
+// file already uses for every other authorized-seed array (additive,
+// backward-compatible: every record that validated against the
+// one-element array still validates, since `Some([971_202, ...])` full
+// four-element pins are what real records beyond the original one now
+// carry, exactly as D2's own exact-equality check already required for
+// whatever the array's current value is).
+const RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1: [u64; 4] =
+    [971_202, 971_211, 971_212, 971_213];
 const RESPONSE_EXPLOITER_DENOVO_512_TRAINING_UPDATE_COUNT_V1: u64 = 512;
 
 // De-novo response screen, 1,024-update horizon rung (CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md
@@ -1244,8 +1267,13 @@ pub struct ResponseExploiterContractV1 {
     // `validate_response_exploiter_v1` for the exact rule (denovo-screen-512
     // REQUIRES it present and exactly correct; every other role accepts
     // absence but still rejects wrong content if present).
+    //
+    // Widened from `[u64; 1]` to `[u64; 4]` (Amendment 5 addendum, see the
+    // frozen literal's own doc comment above): the real, already-published
+    // denovo-1024-family records carry the full four-element array, ported
+    // verbatim from the stranded era commit that already widened it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) authorized_denovo_512_seeds: Option<[u64; 1]>,
+    pub(crate) authorized_denovo_512_seeds: Option<[u64; 4]>,
     // CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 5: 1,024-update
     // horizon rung, ported from the stranded cycle-2-era branch (commit
     // `8c8d645`) with one deliberate, disclosed reconciliation -- that era
@@ -7805,7 +7833,7 @@ mod tests {
             |r| r.authorized_base_seeds = [971_001, 971_002, 971_101, 971_102, 971_003],
             |r| r.authorized_screen_seeds = [971_091, 971_092, 971_191, 971_003],
             |r| r.authorized_denovo_seeds = Some([971_202]),
-            |r| r.authorized_denovo_512_seeds = Some([971_299]),
+            |r| r.authorized_denovo_512_seeds = Some([971_202, 971_211, 971_212, 971_299]),
             |r| r.authorized_denovo_1024_seeds = Some([971_221, 971_222, 971_299]),
             |r| r.expected_base_seed = 971_002,
             |r| r.run_role = "screen".to_owned(),
@@ -7926,7 +7954,7 @@ mod tests {
             // (the role did not exist before the field did), so an absent
             // array must still be rejected for this role specifically.
             |r| r.authorized_denovo_512_seeds = None,
-            |r| r.authorized_denovo_512_seeds = Some([971_299]),
+            |r| r.authorized_denovo_512_seeds = Some([971_202, 971_211, 971_212, 971_299]),
         ];
         for mutate in mutations {
             let mut record = response_exploiter_denovo_record_for_seed(971_202);
