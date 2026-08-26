@@ -8740,7 +8740,10 @@ mod tests {
     ///   unchanged and remains its own tripwire for that future widening.
     #[test]
     fn population_v2_cycle2_active_record_now_decodes_tranche1_still_schema_gapped() {
-        const CYCLE2_PATH: &str = r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json";
+        // Relocated 2026-08-25: the cycle-2 evidence root moved from C:\ to the
+        // E:\ archive during the disk cleanup; the archived run.json is
+        // byte-identical (SHA-256 ed2fa4dd..., reviewer-verified).
+        const CYCLE2_PATH: &str = r"E:\c-evidence-archive-20260825\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json";
         const TRANCHE1_PATH: &str = r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json";
 
         // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
