@@ -915,6 +915,14 @@ pub struct TrainRunContractsV2 {
     /// struct only, no `validate_population_program_v2_cycle2` port.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) population_program_v2_cycle2: Option<PopulationProgramContractV2Cycle2>,
+    /// Population-v2 cycle-3 successor authority (searcher-in-pool
+    /// campaign). Additive: absent for every pre-cycle-3 record, so
+    /// canonical bytes of all prior records are unchanged.
+    /// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Section 3 ("Bind"): decode
+    /// + validate MINIMAL only (see `PopulationProgramContractV2Cycle3`'s
+    /// own doc comment for exactly what "minimal" excludes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) population_program_v2_cycle3: Option<PopulationProgramContractV2Cycle3>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -988,6 +996,107 @@ pub struct PopulationProgramContractV2Cycle2 {
     pub(crate) parent_lineage: PopulationSourceLineageV1,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) source_lineage_v2: Option<PopulationSourceLineageV1>,
+}
+
+/// Population-v2 cycle-3 successor authority (CLAUDE-POPULATION-V2-CYCLE3-
+/// SHEET-V1.md Section 3, "Bind"): the identical shape
+/// `PopulationProgramContractV2Cycle2` uses, minus the cycle-2-specific
+/// `source_lineage_v2` field this sheet does not ask for, since the sheet's
+/// own words are that cycle 3 "points back one hop further" using "the
+/// identical pattern cycle-2's own contract already uses."
+///
+/// DECODE + VALIDATE MINIMAL, by explicit implementation scope, and this
+/// is a real scope limit, not a placeholder gesture: `validate_population_
+/// program_v2_cycle3_parent_lineage_v1` below is a pure, standalone
+/// function that checks a contract's `parent_lineage`/`parent_store_local_
+/// generation` against independently recomputed values and fails closed
+/// on any mismatch. It is NOT wired into any resume, publish, or
+/// science-loop call site, so nothing currently invokes it automatically
+/// at a refresh-interval boundary. The cycle-3 sheet's own Section 3 asks
+/// for that wiring "exactly as population_program_v2_cycle2 itself already
+/// is (D2 Section 1a)" -- but per that same D2 sheet
+/// (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA a55e0777, Section 3, and the
+/// doc comment on `PopulationProgramContractV2Cycle2` above),
+/// `population_program_v2_cycle2` has no such wiring on main either: "this
+/// section decodes and is available for read-only audit/extraction, but
+/// its content claims are not authenticated on main." There is no existing
+/// mechanism to mirror. Deciding where in the actual resume/science-loop
+/// control flow this check should run (once per process start? once per
+/// refresh-manifest advance? note D1's retirement of the per-window
+/// resume/publish walk may mean a cycle-3 campaign runs as one continuous
+/// process across all 16 refreshes rather than restarting per window, which
+/// changes what "every interval" even means operationally) is a real
+/// architecture decision this sheet does not make and this implementation
+/// does not invent unreviewed. That wiring is intentionally left undone;
+/// see the implementation report.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationProgramContractV2Cycle3 {
+    pub(crate) identity: String,
+    pub(crate) package_commit: String,
+    pub(crate) program_document_sha256: String,
+    pub(crate) retest_manifest_sha256: String,
+    pub(crate) global_generation_offset: u64,
+    pub(crate) local_updates_total: u64,
+    pub(crate) refresh_interval: u64,
+    pub(crate) slot_count: u64,
+    pub(crate) reward_identity: String,
+    pub(crate) refresh_manifest_identity: String,
+    pub(crate) retest_beta_f32_bits: String,
+    pub(crate) expected_base_seed: u64,
+    pub(crate) pool_identity: String,
+    pub(crate) parent_store_local_generation: u64,
+    pub(crate) parent_lineage: PopulationSourceLineageV1,
+}
+
+/// Failure from [`validate_population_program_v2_cycle3_parent_lineage_v1`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PopulationProgramV2Cycle3ValidationErrorV1 {
+    CheckpointShaMismatch,
+    SidecarShaMismatch,
+    StateShaMismatch,
+    ModelParameterShaMismatch,
+    BaseSeedMismatch,
+    LocalGenerationMismatch,
+}
+
+/// Fail-closed identity check (cycle-3 sheet Section 3, "Fail-closed
+/// identity asserts"): recompute the warm-start-binding fields directly
+/// from the live extraction (or, at a later interval, from the live
+/// cycle-3 store's own recorded contract) and assert they equal the
+/// values `contract` itself pins. A mismatch on any single field refuses
+/// (returns `Err`) rather than silently proceeding on partial agreement.
+/// See the struct-level doc comment above for what invoking this at every
+/// interval, unattended, would still require beyond what this function
+/// alone provides.
+pub(crate) fn validate_population_program_v2_cycle3_parent_lineage_v1(
+    contract: &PopulationProgramContractV2Cycle3,
+    recomputed_checkpoint_sha256: &str,
+    recomputed_sidecar_sha256: &str,
+    recomputed_state_sha256: &str,
+    recomputed_model_parameter_sha256: &str,
+    recomputed_base_seed: u64,
+    recomputed_parent_store_local_generation: u64,
+) -> ::std::result::Result<(), PopulationProgramV2Cycle3ValidationErrorV1> {
+    if contract.parent_lineage.checkpoint_sha256 != recomputed_checkpoint_sha256 {
+        return Err(PopulationProgramV2Cycle3ValidationErrorV1::CheckpointShaMismatch);
+    }
+    if contract.parent_lineage.sidecar_sha256 != recomputed_sidecar_sha256 {
+        return Err(PopulationProgramV2Cycle3ValidationErrorV1::SidecarShaMismatch);
+    }
+    if contract.parent_lineage.state_sha256 != recomputed_state_sha256 {
+        return Err(PopulationProgramV2Cycle3ValidationErrorV1::StateShaMismatch);
+    }
+    if contract.parent_lineage.model_parameter_sha256 != recomputed_model_parameter_sha256 {
+        return Err(PopulationProgramV2Cycle3ValidationErrorV1::ModelParameterShaMismatch);
+    }
+    if contract.parent_lineage.base_seed != recomputed_base_seed {
+        return Err(PopulationProgramV2Cycle3ValidationErrorV1::BaseSeedMismatch);
+    }
+    if contract.parent_store_local_generation != recomputed_parent_store_local_generation {
+        return Err(PopulationProgramV2Cycle3ValidationErrorV1::LocalGenerationMismatch);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -8811,6 +8920,186 @@ mod tests {
             error.kind(),
             TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization),
             "tranche1: expected the unknown-field schema gap, got a different failure"
+        );
+    }
+
+    /// Cycle-3 sheet Section 3 test item 1: authoring round-trip. Values
+    /// mirror the real, verified current-1@2048 parent-lineage identity
+    /// (checkpoint_sha256/state_sha256/model_parameter_sha256/run_sha256 are
+    /// the actual pinned hashes from CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md
+    /// Section 2.3, independently reverified byte-for-byte against the
+    /// extracted store in this implementation's own report); store_tree_sha256
+    /// and sidecar_sha256 are structural placeholders here (this test proves
+    /// the schema round-trips and decodes, not that these two specific
+    /// fields hold production values -- see the implementation report for
+    /// why `store_tree_sha256` in particular is not independently computed
+    /// by this implementation).
+    fn population_program_v2_cycle3_fixture() -> PopulationProgramContractV2Cycle3 {
+        PopulationProgramContractV2Cycle3 {
+            identity: "mtg-kernel-native-scaled-selfplay-population/v2-cycle3".to_owned(),
+            package_commit: "c".repeat(40),
+            program_document_sha256: "d".repeat(64),
+            retest_manifest_sha256: "e".repeat(64),
+            global_generation_offset: 2304,
+            local_updates_total: 2048,
+            refresh_interval: 128,
+            slot_count: 8,
+            reward_identity: "terminal-wdl-win-plus-one-draw-zero-loss-minus-one/v1".to_owned(),
+            refresh_manifest_identity: "mtg-kernel-native-scaled-selfplay-refresh-manifest/v1"
+                .to_owned(),
+            retest_beta_f32_bits: "3dcccccd".to_owned(),
+            expected_base_seed: 977_002,
+            pool_identity: "mtg-kernel-opponent-ladder-pool-v1".to_owned(),
+            parent_store_local_generation: 2048,
+            parent_lineage: PopulationSourceLineageV1 {
+                base_seed: 972_002,
+                store_tree_sha256: "f".repeat(64),
+                run_sha256:
+                    "8d9a8287ef57651d5744d26275d2a8c0dc74cfb69cb7e1b2dd22691b5bd8a504"
+                        .to_owned(),
+                checkpoint_sha256:
+                    "5e1ff645091bfacdade2a3e06b47c3cd71c96ed1c9fee4dd9756b343d7c834fd"
+                        .to_owned(),
+                sidecar_sha256: "a".repeat(64),
+                state_sha256:
+                    "e4aa3172bf3962af1498028f19649a85424d0e30f226b5c1f6722160fb24a2d4"
+                        .to_owned(),
+                model_parameter_sha256:
+                    "67c5d0a2c506c0514623f3f4ea0f273b904662cbdae4f6ddc89c44e255b9a70d"
+                        .to_owned(),
+            },
+        }
+    }
+
+    #[test]
+    fn population_program_v2_cycle3_round_trips_and_decodes() {
+        let mut record = coherent_v2_record();
+        let contract = population_program_v2_cycle3_fixture();
+        record.contracts.population_program_v2_cycle3 = Some(contract.clone());
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated
+                .record()
+                .contracts()
+                .population_program_v2_cycle3
+                .as_ref(),
+            Some(&contract)
+        );
+        assert!(String::from_utf8(bytes)
+            .unwrap()
+            .contains("\"population_program_v2_cycle3\":{"));
+    }
+
+    #[test]
+    fn population_program_v2_cycle3_absent_round_trips_without_the_key() {
+        let record = coherent_v2_record();
+        assert!(record.contracts.population_program_v2_cycle3.is_none());
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert!(!String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("population_program_v2_cycle3"));
+        let validated = decode_train_run_v2(&bytes).unwrap();
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle3
+            .is_none());
+    }
+
+    /// Cycle-3 sheet Section 3 test item 2: "binding-assert fires on a
+    /// mismatched parent hash." Every one of the six checked fields is
+    /// exercised independently, each the sole corruption in its own call,
+    /// confirming the function does not silently pass on partial agreement
+    /// and identifies which field actually mismatched.
+    #[test]
+    fn population_program_v2_cycle3_parent_lineage_validation_fails_closed_per_field() {
+        let contract = population_program_v2_cycle3_fixture();
+        let lineage = &contract.parent_lineage;
+        let ok = validate_population_program_v2_cycle3_parent_lineage_v1(
+            &contract,
+            &lineage.checkpoint_sha256,
+            &lineage.sidecar_sha256,
+            &lineage.state_sha256,
+            &lineage.model_parameter_sha256,
+            lineage.base_seed,
+            contract.parent_store_local_generation,
+        );
+        assert_eq!(ok, Ok(()));
+
+        let wrong_sha = "0".repeat(64);
+        assert_eq!(
+            validate_population_program_v2_cycle3_parent_lineage_v1(
+                &contract,
+                &wrong_sha,
+                &lineage.sidecar_sha256,
+                &lineage.state_sha256,
+                &lineage.model_parameter_sha256,
+                lineage.base_seed,
+                contract.parent_store_local_generation,
+            ),
+            Err(PopulationProgramV2Cycle3ValidationErrorV1::CheckpointShaMismatch)
+        );
+        assert_eq!(
+            validate_population_program_v2_cycle3_parent_lineage_v1(
+                &contract,
+                &lineage.checkpoint_sha256,
+                &wrong_sha,
+                &lineage.state_sha256,
+                &lineage.model_parameter_sha256,
+                lineage.base_seed,
+                contract.parent_store_local_generation,
+            ),
+            Err(PopulationProgramV2Cycle3ValidationErrorV1::SidecarShaMismatch)
+        );
+        assert_eq!(
+            validate_population_program_v2_cycle3_parent_lineage_v1(
+                &contract,
+                &lineage.checkpoint_sha256,
+                &lineage.sidecar_sha256,
+                &wrong_sha,
+                &lineage.model_parameter_sha256,
+                lineage.base_seed,
+                contract.parent_store_local_generation,
+            ),
+            Err(PopulationProgramV2Cycle3ValidationErrorV1::StateShaMismatch)
+        );
+        assert_eq!(
+            validate_population_program_v2_cycle3_parent_lineage_v1(
+                &contract,
+                &lineage.checkpoint_sha256,
+                &lineage.sidecar_sha256,
+                &lineage.state_sha256,
+                &wrong_sha,
+                lineage.base_seed,
+                contract.parent_store_local_generation,
+            ),
+            Err(PopulationProgramV2Cycle3ValidationErrorV1::ModelParameterShaMismatch)
+        );
+        assert_eq!(
+            validate_population_program_v2_cycle3_parent_lineage_v1(
+                &contract,
+                &lineage.checkpoint_sha256,
+                &lineage.sidecar_sha256,
+                &lineage.state_sha256,
+                &lineage.model_parameter_sha256,
+                lineage.base_seed.wrapping_add(1),
+                contract.parent_store_local_generation,
+            ),
+            Err(PopulationProgramV2Cycle3ValidationErrorV1::BaseSeedMismatch)
+        );
+        assert_eq!(
+            validate_population_program_v2_cycle3_parent_lineage_v1(
+                &contract,
+                &lineage.checkpoint_sha256,
+                &lineage.sidecar_sha256,
+                &lineage.state_sha256,
+                &lineage.model_parameter_sha256,
+                lineage.base_seed,
+                contract.parent_store_local_generation + 1,
+            ),
+            Err(PopulationProgramV2Cycle3ValidationErrorV1::LocalGenerationMismatch)
         );
     }
 
