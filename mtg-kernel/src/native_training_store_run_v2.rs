@@ -1011,7 +1011,26 @@ pub struct ResponseExploiterContractV1 {
     pub(crate) fresh_adam_after_weight_init_identity: String,
     pub(crate) authorized_base_seeds: [u64; 5],
     pub(crate) authorized_screen_seeds: [u64; 4],
-    pub(crate) authorized_denovo_seeds: [u64; 1],
+    // Contract-widening (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA a55e0777,
+    // Section 1b), mirroring the exact backward-compatibility amendment
+    // `authorized_denovo_512_seeds` below already applies: this field was
+    // originally modeled as unconditional and always-present, but that
+    // orphaned every record written before this field existed (the real
+    // depth-4 "screen"-role exploiter store's run.json among them) with a
+    // hard decode failure. Now `Option`-shaped identically:
+    // `#[serde(default, skip_serializing_if = "Option::is_none")]` lets a
+    // pre-amendment record (any role) decode with the field absent and
+    // keeps canonical bytes unchanged on re-encode. Presence/content is
+    // still role-conditional and fail-closed: see
+    // `validate_response_exploiter_v1` for the exact rule, mirrored from the
+    // `authorized_denovo_512_seeds` rule with "denovo-screen-512" replaced by
+    // "denovo-screen" (the role this field's own frozen literal,
+    // `RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1`, already classifies
+    // records into): "denovo-screen" REQUIRES it present and exactly
+    // correct; every other role ("build", "screen", "denovo-screen-512")
+    // accepts absence but still rejects wrong content if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) authorized_denovo_seeds: Option<[u64; 1]>,
     // Phase 2 horizon amendment (CLAUDE-DENOVO-SCREEN-SHEET-V1.md), amended
     // again for backward compatibility: the 512-update denovo-screen-512
     // role's own dedicated authorized-seed array. It was originally
@@ -2957,19 +2976,35 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         response.run_role == "denovo-screen" || response.run_role == "denovo-screen-512";
 
     // Backward-compatibility amendment: unlike `authorized_base_seeds` /
-    // `authorized_screen_seeds` / `authorized_denovo_seeds` above (always
-    // present, always checked unconditionally), this array may be entirely
-    // absent -- a record written before the Phase 2 512-horizon amendment
-    // introduced it, of ANY role (the real denovo-screen-256 store's
-    // run.json among them). Absence is accepted for every role except
-    // "denovo-screen-512" itself, which cannot have a pre-amendment shape
-    // (the role did not exist before the amendment that added this field).
-    // Presence is still checked exactly, for every role: a record that
-    // does carry the field but with wrong content is rejected, the same
-    // fail-closed treatment every other literal in this contract gets.
+    // `authorized_screen_seeds` above (always present, always checked
+    // unconditionally), this array may be entirely absent -- a record
+    // written before the Phase 2 512-horizon amendment introduced it, of ANY
+    // role (the real denovo-screen-256 store's run.json among them).
+    // Absence is accepted for every role except "denovo-screen-512" itself,
+    // which cannot have a pre-amendment shape (the role did not exist before
+    // the amendment that added this field). Presence is still checked
+    // exactly, for every role: a record that does carry the field but with
+    // wrong content is rejected, the same fail-closed treatment every other
+    // literal in this contract gets.
     let authorized_denovo_512_seeds_invalid = match response.authorized_denovo_512_seeds {
         Some(seeds) => seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1,
         None => expected_role_and_completion.0 == "denovo-screen-512",
+    };
+    // Contract-widening (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    // a55e0777, Section 1b): the exact same amendment, one field over.
+    // `authorized_denovo_seeds` may now be entirely absent -- a record
+    // written before this field existed, of ANY role (the real depth-4
+    // "screen"-role exploiter store's run.json among them). Mirrored
+    // precisely from `authorized_denovo_512_seeds_invalid` immediately
+    // above, with "denovo-screen-512" replaced by "denovo-screen": absence
+    // is accepted for every role except "denovo-screen" itself, which
+    // cannot have a pre-amendment shape (that role is classified by, and so
+    // cannot predate, this field's own frozen literal
+    // `RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1`). Presence is still
+    // checked exactly for every role.
+    let authorized_denovo_seeds_invalid = match response.authorized_denovo_seeds {
+        Some(seeds) => seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
+        None => expected_role_and_completion.0 == "denovo-screen",
     };
 
     // Parent lineage and warm-start initialization are role-conditional, not
@@ -3030,7 +3065,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         || response.reward_identity != POPULATION_REWARD_IDENTITY_V1
         || response.authorized_base_seeds != RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
         || response.authorized_screen_seeds != RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
-        || response.authorized_denovo_seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
+        || authorized_denovo_seeds_invalid
         || authorized_denovo_512_seeds_invalid
         || response.expected_base_seed != record.schedule.base_seed
         || response.run_role != expected_role_and_completion.0
@@ -6775,7 +6810,7 @@ mod tests {
                 RESPONSE_EXPLOITER_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1.to_owned(),
             authorized_base_seeds: RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1,
             authorized_screen_seeds: RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1,
-            authorized_denovo_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
+            authorized_denovo_seeds: Some(RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1),
             authorized_denovo_512_seeds: Some(RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1),
             expected_base_seed,
             run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1.contains(&expected_base_seed) {
@@ -7410,7 +7445,7 @@ mod tests {
             |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
             |r| r.authorized_base_seeds = [971_001, 971_002, 971_101, 971_102, 971_003],
             |r| r.authorized_screen_seeds = [971_091, 971_092, 971_191, 971_003],
-            |r| r.authorized_denovo_seeds = [971_202],
+            |r| r.authorized_denovo_seeds = Some([971_202]),
             |r| r.authorized_denovo_512_seeds = Some([971_299]),
             |r| r.expected_base_seed = 971_002,
             |r| r.run_role = "screen".to_owned(),
@@ -7472,6 +7507,14 @@ mod tests {
                 r.parent_model_parameter_sha256 =
                     Some(POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned())
             },
+            // Contract-widening (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+            // a55e0777, Section 1b), mirroring the 512-role test's own
+            // `authorized_denovo_512_seeds = None` mutation below: unlike
+            // every other role, "denovo-screen" has no pre-amendment shape
+            // to fall back to (the role is classified by, and so cannot
+            // predate, this exact field's own frozen literal), so an absent
+            // array must still be rejected for this role specifically.
+            |r| r.authorized_denovo_seeds = None,
         ];
         for mutate in mutations {
             let mut record = response_exploiter_denovo_record_for_seed(971_201);
@@ -8870,6 +8913,287 @@ mod tests {
             .unwrap()
             .authorized_denovo_512_seeds
             .is_none());
+    }
+
+    /// Contract-widening (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777, Section 1b) companion to
+    /// `response_exploiter_absent_denovo_512_seeds_round_trips_without_the_key`,
+    /// one field over: a "build"-role record with `authorized_denovo_seeds`
+    /// set to `None` (the pre-amendment shape, any role other than
+    /// "denovo-screen") validates, the key is entirely absent from its
+    /// canonical bytes (never written as `null`), and decoding those exact
+    /// bytes back reproduces them byte for byte.
+    #[test]
+    fn response_exploiter_absent_denovo_seeds_round_trips_without_the_key() {
+        let mut record = response_exploiter_record_for_seed(971_001);
+        record
+            .contracts
+            .response_exploiter_v1
+            .as_mut()
+            .unwrap()
+            .authorized_denovo_seeds = None;
+        refresh_derived(&mut record);
+        let validated = validate_train_run_record_v2(record).unwrap();
+        let bytes = validated.canonical_bytes().to_vec();
+        assert!(!String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("authorized_denovo_seeds"));
+
+        let redecoded = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(redecoded.canonical_bytes(), bytes.as_slice());
+        assert!(redecoded
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .unwrap()
+            .authorized_denovo_seeds
+            .is_none());
+    }
+
+    /// Acceptance gate 4(a)-1/4(d) (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): reads the REAL, already-published population-v2 cycle-2
+    /// store's run.json (read-only; not a fixture, not modified by this
+    /// test) that failed `decode_train_run_v2` with
+    /// `CanonicalJson(Deserialization)` before this widening (unknown field
+    /// `population_program_v2_cycle2`), and proves it now decodes, classifies
+    /// Historical, and carries the exact real cycle-2 program fields. Also
+    /// proves the categorical `HistoricalCatalogProfile` rejection at the
+    /// resume boundary still fires for this exact widened-decode record,
+    /// before any store interaction (gate 4(d)).
+    #[test]
+    fn real_cycle2_depth2048_store_run_json_decodes_after_contract_widening() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\throughput-remeasure-20260825\v2-resume-walk\store-depth2048-cycle2\run.json";
+        const STORED_RUN_SHA256: &str =
+            "ed2fa4ddfe259ecae0e82206d0560bfefbf789baca86a15bb92c58f0b268f902";
+
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!("could not read the real cycle-2 run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real cycle-2 run.json failed to decode after widening: {error:?}")
+        });
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+
+        let program = validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle2
+            .as_ref()
+            .expect("this store's record carries the population-v2 cycle-2 contract");
+        assert_eq!(
+            program.identity,
+            "mtg-kernel-native-scaled-selfplay-population/v2-cycle2"
+        );
+        assert_eq!(program.expected_base_seed, 975_001);
+        assert_eq!(program.global_generation_offset, 256);
+        assert_eq!(program.local_updates_total, 2_048);
+        assert_eq!(program.parent_store_local_generation, 256);
+        assert_eq!(program.parent_lineage.base_seed, 972_001);
+        assert!(program.source_lineage_v2.is_none());
+
+        // Gate 4(d): the categorical Historical rejection is untouched by
+        // this widening and still fires before any store interaction.
+        let root_dir = std::path::Path::new(REAL_RUN_JSON_PATH)
+            .parent()
+            .expect("run.json has a parent directory");
+        let root = crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2::open_v2(root_dir)
+            .unwrap_or_else(|error| panic!("failed to open the real cycle-2 store root: {error}"));
+        let config = crate::native_training_store_resume_v2::test_execution_config_v2(&validated);
+        let resume_error = crate::native_training_store_resume_v2::resume_native_training_store_v2(
+            &root, &validated, config,
+        )
+        .expect_err("resume must still categorically reject a Historical-profile record");
+        assert_eq!(
+            resume_error.kind(),
+            crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile
+        );
+    }
+
+    /// Acceptance gate 4(a)-2/4(d) (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): reads the REAL, already-published 8/7-era response-exploiter
+    /// "screen"-role store's run.json (read-only; not a fixture) that failed
+    /// `decode_train_run_v2` with `CanonicalJson(Deserialization)` before this
+    /// widening (missing field `authorized_denovo_seeds`), and proves it now
+    /// decodes, classifies Historical, and its `authorized_denovo_seeds` is
+    /// genuinely absent from the record's own bytes (the real pre-amendment
+    /// shape, not merely defaulted). Also proves the categorical
+    /// `HistoricalCatalogProfile` rejection at the resume boundary still
+    /// fires for this exact widened-decode record (gate 4(d)).
+    #[test]
+    fn real_depth4_exploiter_store_run_json_decodes_after_contract_widening() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\throughput-remeasure-20260825\v2-resume-walk\store-depth4-exploiter\run.json";
+        const STORED_RUN_SHA256: &str =
+            "603cb7ec6613ec6caa7e5d4c4bcb20a7cce3228aea52ab4d81d06fa82f3b1bd3";
+
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!("could not read the real depth-4 exploiter run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real depth-4 exploiter run.json failed to decode after widening: {error:?}")
+        });
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+
+        let response = validated
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .expect("this store's record carries the response-exploiter contract");
+        assert_eq!(response.run_role, "screen");
+        assert_eq!(response.expected_base_seed, 971_192);
+        assert_eq!(response.expected_completion_generation, 4);
+        // The real, pre-amendment shape: the array this widening made
+        // optional is genuinely absent from this record's bytes.
+        assert!(response.authorized_denovo_seeds.is_none());
+        assert!(!String::from_utf8(bytes)
+            .unwrap()
+            .contains("authorized_denovo_seeds"));
+
+        // Gate 4(d): the categorical Historical rejection is untouched by
+        // this widening and still fires before any store interaction.
+        let root_dir = std::path::Path::new(REAL_RUN_JSON_PATH)
+            .parent()
+            .expect("run.json has a parent directory");
+        let root = crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2::open_v2(root_dir)
+            .unwrap_or_else(|error| panic!("failed to open the real depth-4 exploiter store root: {error}"));
+        let config = crate::native_training_store_resume_v2::test_execution_config_v2(&validated);
+        let resume_error = crate::native_training_store_resume_v2::resume_native_training_store_v2(
+            &root, &validated, config,
+        )
+        .expect_err("resume must still categorically reject a Historical-profile record");
+        assert_eq!(
+            resume_error.kind(),
+            crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile
+        );
+    }
+
+    /// Acceptance gate 4(a)-3 (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): no-regression control. The confirmed 7/24-era store (no
+    /// ladder/population/exploiter sections at all, `environment.schema_version
+    /// == 5`) must still decode unchanged after this widening.
+    #[test]
+    fn real_depth256_store_run_json_still_decodes_after_contract_widening() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\throughput-remeasure-20260825\v2-resume-walk\store-depth256\run.json";
+        const STORED_RUN_SHA256: &str =
+            "47bc46634de718439ea93fbad105cbf96a6339913856805dccca87773760e7ef";
+
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!("could not read the real depth-256 run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real depth-256 (7/24-era) run.json regressed: {error:?}")
+        });
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle2
+            .is_none());
+    }
+
+    /// Acceptance gate 4(a)-4 (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): no-regression control, current-era. Confirms the Current
+    /// catalog-profile branch and the plain-uniform-contracts decode path are
+    /// both untouched by this widening.
+    #[test]
+    fn real_current_era_oppoint_store_run_json_still_decodes_after_contract_widening() {
+        const REAL_RUN_JSON_PATH: &str = r"D:\throughput-remeasure-20260825\oppoint-diff-arm1-current-main\stores\proc-0\run-0\store\run.json";
+        const STORED_RUN_SHA256: &str =
+            "8840452ca97ec61e1d29b666f4237d4c310b913f203680b8e48e318246b420a9";
+
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!("could not read the real current-era run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes)
+            .unwrap_or_else(|error| panic!("real current-era run.json regressed: {error:?}"));
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Current
+        );
+    }
+
+    /// Acceptance gate 4(b) (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): negative test, fail-closed preserved. A genuinely unknown
+    /// key anywhere in `contracts` (never defined on any struct, before or
+    /// after this widening) must still be rejected with the same
+    /// `deny_unknown_fields`-driven `CanonicalJson(Deserialization)` error
+    /// class. Proves the widening is additive and did not loosen
+    /// `deny_unknown_fields` generally, only the two named gaps.
+    #[test]
+    fn genuinely_unknown_contract_key_still_fails_closed_after_contract_widening() {
+        let record = response_exploiter_record_for_seed(971_001);
+        let validated = validate_train_run_record_v2(record).unwrap();
+        let mut raw: serde_json::Value =
+            serde_json::from_slice(validated.canonical_bytes()).unwrap();
+        raw["contracts"]["totally_unknown_field_v99"] = serde_json::json!("nope");
+        // Re-encode with this crate's own canonical serializer (not plain
+        // `serde_json::to_vec`), so the tampered bytes are still exactly the
+        // byte-for-byte canonical form `parse_and_require_canonical` expects
+        // (sorted keys, trailing LF, checked number formatting); otherwise a
+        // generic re-serialization could fail on `NonCanonicalBytes` instead
+        // of reaching the `deny_unknown_fields` rejection this test targets.
+        let tampered = to_canonical_json_bytes_v1(&raw, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+
+        let error = decode_train_run_v2(&tampered)
+            .expect_err("a genuinely unknown contracts key must still fail closed");
+        assert_eq!(
+            error.kind(),
+            TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization),
+            "expected the unknown-field rejection, got a different failure"
+        );
     }
 
     // =========================================================================
