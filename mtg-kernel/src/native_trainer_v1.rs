@@ -1886,6 +1886,13 @@ pub struct NativeTrainerEpisodeEvidenceV1 {
     /// `None` when no population opponent is installed (ladder opponent or
     /// plain self-play).
     pub opponent_population_slot: Option<u8>,
+    /// The occupant_class string for `opponent_population_slot` ("policy" or
+    /// `KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1`), the same identity string
+    /// the population manifest schema uses. `Some` exactly when
+    /// `opponent_population_slot` is `Some`. Added alongside the wire-schema
+    /// extension (coordinator ruling on the Section 6 item 5 Store-persistence
+    /// gap; commit 1d817d7 precedent).
+    pub opponent_occupant_class: Option<&'static str>,
     pub opponent_run_sha256: Option<[u8; 32]>,
     pub opponent_checkpoint_manifest_sha256: Option<[u8; 32]>,
     /// The search-occupied-slot analog of the two fields above (commit
@@ -3630,6 +3637,7 @@ fn attach_population_opponent_identity_v1(
                 )
             })?;
         episode.opponent_population_slot = Some(slot.index_v1() as u8);
+        episode.opponent_occupant_class = Some(population_opponent.occupant_class_for_slot_v1(slot));
         // CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 5
         // (commit `1d817d7` precedent): exactly one of the two identity
         // pairs is populated, matching `slot_kind_v1`. Pure recomputation
@@ -3727,6 +3735,7 @@ fn train_grouped_candidate_v1(
             terminal_outcome: episode.terminal.terminal_outcome,
             full_trajectory_receipt,
             opponent_population_slot: None,
+            opponent_occupant_class: None,
             opponent_run_sha256: None,
             opponent_checkpoint_manifest_sha256: None,
             opponent_search_tier: None,
@@ -3996,6 +4005,7 @@ fn train_grouped_candidate_wide_v1(
             terminal_outcome: episode.terminal.terminal_outcome,
             full_trajectory_receipt,
             opponent_population_slot: None,
+            opponent_occupant_class: None,
             opponent_run_sha256: None,
             opponent_checkpoint_manifest_sha256: None,
             opponent_search_tier: None,
@@ -4269,7 +4279,7 @@ mod tests {
     use crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1;
     use crate::kernel_native_search_opponent_v1::{
         KernelNativeSearchAuthorityV1, KernelNativeSearchOpponentV1, KernelNativeSearchTierV1,
-        KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1,
+        KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1, KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1,
     };
     use crate::common_model_snapshot_v1::{
         common_model_snapshot_paths_v1, BASE_SEED_V1 as SNAPSHOT_AUTHORITY_BASE_SEED_V1,
@@ -6204,6 +6214,10 @@ mod tests {
                 "the all-weight-on-slot-6 vector must always draw the search slot"
             );
             assert_eq!(
+                episode.opponent_occupant_class,
+                Some(KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1)
+            );
+            assert_eq!(
                 episode.opponent_run_sha256, None,
                 "a search-occupied slot must not record Store identity"
             );
@@ -6294,6 +6308,7 @@ mod tests {
                 population.search_authority_identity_for_slot_v1(expected_slot),
             ) {
                 (Some((run_sha256, checkpoint_manifest_sha256)), None) => {
+                    assert_eq!(episode.opponent_occupant_class, Some("policy"));
                     assert_eq!(episode.opponent_run_sha256, Some(run_sha256));
                     assert_eq!(
                         episode.opponent_checkpoint_manifest_sha256,
@@ -6304,6 +6319,10 @@ mod tests {
                     observed_checkpoint = true;
                 }
                 (None, Some((tier, authority_sha256))) => {
+                    assert_eq!(
+                        episode.opponent_occupant_class,
+                        Some(KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1)
+                    );
                     assert_eq!(episode.opponent_run_sha256, None);
                     assert_eq!(episode.opponent_checkpoint_manifest_sha256, None);
                     assert_eq!(episode.opponent_search_tier, Some(tier));

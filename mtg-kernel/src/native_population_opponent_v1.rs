@@ -270,6 +270,20 @@ impl PopulationOpponentEngineV1 {
         }
     }
 
+    /// The occupant_class string for `slot`, the same identity string the
+    /// population manifest schema uses ("policy" or
+    /// `KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1`), for episode-identity
+    /// recording (coordinator ruling extending Section 6 item 5 to Store
+    /// persistence; commit 1d817d7 precedent).
+    pub(crate) fn occupant_class_for_slot_v1(&self, slot: PopulationSlotV1) -> &'static str {
+        match &self.handles[slot.index_v1()] {
+            PopulationSlotOccupantV1::Checkpoint(_) => "policy",
+            PopulationSlotOccupantV1::Search(_) => {
+                crate::kernel_native_search_opponent_v1::KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1
+            }
+        }
+    }
+
     /// The immutable `(run_sha256, checkpoint_manifest_sha256)` identity
     /// installed at `slot`, or `None` when `slot` is search-occupied.
     /// Read-only: it performs no inference and mutates nothing, so callers
