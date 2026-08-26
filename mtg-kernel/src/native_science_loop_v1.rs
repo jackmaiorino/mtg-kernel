@@ -813,6 +813,9 @@ fn run_native_science_loop_with_opponents_v1(
             } => {
                 #[cfg(test)]
                 if let Some(expected) = expected_resume_generation {
+                    eprintln!(
+                        "science-loop resume Complete: latest_generation_index={latest_generation_index} expected={expected} resume_generation_checked={resume_generation_checked}"
+                    );
                     if !resume_generation_checked && latest_generation_index != expected {
                         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
                     }
@@ -826,6 +829,9 @@ fn run_native_science_loop_with_opponents_v1(
                 {
                     let parent_generation = continuation.parent_checkpoint.generation_index();
                     if let Some(expected) = expected_resume_generation {
+                        eprintln!(
+                            "science-loop resume Continue: parent_generation={parent_generation} expected={expected} resume_generation_checked={resume_generation_checked} stop_after_generation={stop_after_generation:?}"
+                        );
                         if !resume_generation_checked {
                             if parent_generation != expected {
                                 return Err(loop_error_v1(
@@ -917,6 +923,9 @@ fn run_native_science_loop_with_opponents_v1(
     };
     #[cfg(test)]
     if !resume_generation_checked {
+        eprintln!(
+            "science-loop post-loop: resume_generation_checked=false latest_generation_index={latest_generation_index} expected_resume_generation={expected_resume_generation:?}"
+        );
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
     }
 
