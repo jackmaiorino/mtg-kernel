@@ -1,6 +1,8 @@
 param(
     [string]$StoreParent = 'E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-001',
-    [uint64]$Seed = 977002
+    [uint64]$Seed = 977002,
+    [ValidateSet('Both', 'Item2Only', 'Item3Only')]
+    [string]$Phase = 'Both'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,18 +93,41 @@ function Invoke-Cycle3Refresh {
     return $exitCode
 }
 
-# Task 7 item 2: the real refresh-1 (chain index 19) run, resuming the
-# authored genesis (local generation 0) to local generation 128, against
-# the full real chain (indices 0-19).
-$exit19 = Invoke-Cycle3Refresh -ChainThroughIndex 19 -ExpectedResumeLocal 0 -StopAfterLocal 128 -Label 'refresh-19'
-if ($exit19 -ne 0) { throw "refresh-19 (Task 7 item 2) failed with exit code $exit19" }
-Assert-WarmStartGenZeroCycle3V1 -StoreParent $StoreParent | Out-Null
-Write-Output 'TASK7_ITEM2_REFRESH19_PASSED'
+# FIX (caught 2026-08-26 on the first real attempt, native_science_loop_v1.rs:1761
+# assertion left==right failed: left 2432, right 2304): the manifest chain
+# supplied to a launch must end at that refresh's PARENT link, i.e. the
+# already-sealed state the store is RESUMING FROM (active.global_generation_v2()
+# is asserted == expected_start_global, the RESUME point, not the refresh's own
+# post-training target). Refresh-19 (local 0->128) resumes from index 18
+# (cycle-2's real terminal, global 2304) -- it must NOT include its own
+# not-yet-trained index-19 manifest. Only AFTER refresh-19 completes for real
+# is index 19 re-sealed with its REAL resulting slot-5 hashes and used as the
+# resume-parent for refresh-20's own launch.
+
+if ($Phase -ne 'Item3Only') {
+    # Task 7 item 2: the real refresh-19 run, resuming the authored genesis
+    # (local generation 0) to local generation 128, against the real
+    # already-sealed chain (indices 0-18, ending at cycle-2's real terminal).
+    $exit19 = Invoke-Cycle3Refresh -ChainThroughIndex 18 -ExpectedResumeLocal 0 -StopAfterLocal 128 -Label 'refresh-19'
+    if ($exit19 -ne 0) { throw "refresh-19 (Task 7 item 2) failed with exit code $exit19" }
+    Assert-WarmStartGenZeroCycle3V1 -StoreParent $StoreParent | Out-Null
+    Write-Output 'TASK7_ITEM2_REFRESH19_PASSED'
+}
+
+if ($Phase -eq 'Item2Only') {
+    Write-Output 'PHASE_ITEM2ONLY_DONE_AWAITING_MANIFEST_019_RESEAL'
+    return
+}
+
+if ($Phase -eq 'Item3Only') {
+    Write-Output 'PHASE_ITEM3ONLY_ASSUMES_MANIFEST_019_ALREADY_REAL_SEALED'
+}
 
 # Task 7 item 3: the index-20-shaped searcher smoke, continuing local
-# generation 128 to 256, against the full real chain (indices 0-20), which
-# is cycle-3's own refresh 2 -- a scheduled searcher-heavy window.
-$exit20 = Invoke-Cycle3Refresh -ChainThroughIndex 20 -ExpectedResumeLocal 128 -StopAfterLocal 256 -Label 'refresh-20-searcher-smoke'
+# generation 128 to 256, against the real chain (indices 0-19, ending at
+# the now-really-sealed index 19), landing on index 20 -- cycle-3's own
+# refresh 2, a scheduled searcher-heavy window.
+$exit20 = Invoke-Cycle3Refresh -ChainThroughIndex 19 -ExpectedResumeLocal 128 -StopAfterLocal 256 -Label 'refresh-20-searcher-smoke'
 if ($exit20 -ne 0) { throw "refresh-20 searcher smoke (Task 7 item 3) failed with exit code $exit20" }
 Assert-WarmStartGenZeroCycle3V1 -StoreParent $StoreParent | Out-Null
 Write-Output 'TASK7_ITEM3_REFRESH20_SEARCHER_SMOKE_PASSED'
