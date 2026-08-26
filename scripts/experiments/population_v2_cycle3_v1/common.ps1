@@ -181,6 +181,7 @@ function Set-Cycle3NativeEnvironment {
         $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
     $saved['MULTIRUN_POPULATION_CYCLE3_AUTHORITY'] = [Environment]::GetEnvironmentVariable('MULTIRUN_POPULATION_CYCLE3_AUTHORITY', 'Process')
+    $saved['MULTIRUN_POPULATION_V2_CYCLE3'] = [Environment]::GetEnvironmentVariable('MULTIRUN_POPULATION_V2_CYCLE3', 'Process')
     $values = @{
         MULTIRUN_RUNS = '1'; MULTIRUN_UPDATES = [string]$Updates
         MULTIRUN_WORKERS = '2'; MULTIRUN_SESSIONS = '32'; MULTIRUN_BROKER_TARGET = '16'
@@ -208,6 +209,18 @@ function Set-Cycle3NativeEnvironment {
         [Environment]::SetEnvironmentVariable($name, $values[$name], 'Process')
     }
     [Environment]::SetEnvironmentVariable('MULTIRUN_POPULATION_CYCLE3_AUTHORITY', '1', 'Process')
+    # Amendment 4 (countersigned 00affe6a), A4.3: the pool-RESOLUTION
+    # dispatch knob (native_science_loop_v1.rs's population_v2_cycle3_active_dispatch),
+    # distinct from MULTIRUN_POPULATION_CYCLE3_AUTHORITY above (record
+    # CONSTRUCTION). Set only when population resolution is actually
+    # requested this launch; cleared (not just '0') otherwise, matching
+    # how $PopulationRuntime's own MULTIRUN_POPULATION_RUNTIME/_REFRESH_CHAIN/
+    # _SLOT_ROOTS trio already behaves for the false case.
+    [Environment]::SetEnvironmentVariable(
+        'MULTIRUN_POPULATION_V2_CYCLE3',
+        $(if ($PopulationRuntime) { '1' } else { $null }),
+        'Process'
+    )
     return $saved
 }
 
@@ -215,6 +228,7 @@ function Restore-Cycle3NativeEnvironment {
     param([Parameter(Mandatory = $true)][hashtable]$Saved)
     Restore-NativeEnvironment -Saved $Saved
     [Environment]::SetEnvironmentVariable('MULTIRUN_POPULATION_CYCLE3_AUTHORITY', $Saved['MULTIRUN_POPULATION_CYCLE3_AUTHORITY'], 'Process')
+    [Environment]::SetEnvironmentVariable('MULTIRUN_POPULATION_V2_CYCLE3', $Saved['MULTIRUN_POPULATION_V2_CYCLE3'], 'Process')
 }
 
 function Assert-WarmStartGenZeroCycle3V1 {
