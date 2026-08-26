@@ -8710,62 +8710,41 @@ mod tests {
         );
     }
 
-    /// Dual-Profile Catalog Successor (collab CLAUDE #220) fix round,
-    /// panel finding 2 (compat blocker): empirical evidence from the two
-    /// real, active population-v2 records named by the coordinator. Two
-    /// independent facts, each locked in by its own assertion below:
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220) fix round, panel
+    /// finding 2 (compat blocker) tripwire, UPDATED by the contract-widening
+    /// commit that added `population_program_v2_cycle2`
+    /// (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA a55e0777): the tripwire has
+    /// fired for the cycle-2 half exactly as this test's own prior comment
+    /// predicted ("if it starts failing... that is the signal the schema
+    /// widening has landed and the boundary policy for population-v2's
+    /// specific case needs revisiting with real decodable evidence in
+    /// hand"). Both records still classify catalog identity HISTORICAL
+    /// (fact 1, unchanged, still asserted directly off the raw JSON for both).
+    /// Fact 2 now splits, because only ONE of the two records' schema gaps
+    /// is in this widening's scope:
     ///
-    /// (1) Both records' own `card_db_hash_u64_hex`/`runtime_catalog_sha256`
-    /// fields are read directly off the raw JSON (bypassing
-    /// `decode_train_run_v2`, which cannot reach them -- see fact 2) and are
-    /// BIT-IDENTICAL to the existing HISTORICAL frozen literals
-    /// (`FROZEN_CARD_DB_HASH_U64_HEX_V2`/`FROZEN_RUNTIME_CATALOG_SHA256_V2`).
-    /// There is no third, distinct catalog-hash value here: the population-v2
-    /// worktree that produced both records never advanced past the rev3
-    /// (two-deck) catalog identity, even though both records were minted
-    /// chronologically after the runtime-decks-nine landing on this branch's
-    /// base. `classify_catalog_profile_v1` already classifies this exact
-    /// value pair correctly (as `Historical`); no new frozen literal pair
-    /// exists to register.
-    ///
-    /// (2) `decode_train_run_v2` currently fails on BOTH real files with
-    /// `CanonicalJson(Deserialization)`, not `InvalidLiteral` and not any
-    /// catalog-profile-related classification. Root cause (confirmed by
-    /// direct inspection, not guessed): both records' `contracts` object
-    /// carries a population-v2-era section this branch's `TrainRunContractsV2`
-    /// does not define at all (`population_program_v2_cycle2` in the cycle-2
-    /// record, `population_program_v2` in the tranche-1 record; this branch
-    /// only defines `population_program_v1`), so `deny_unknown_fields`
-    /// rejects the record before canonical-JSON deserialization completes --
-    /// before `validate_environment_v2` or `classify_catalog_profile_v1` are
-    /// ever reached. This is a separate, pre-existing schema-generation gap
-    /// (the population-v2 contract-widening lane, collab CLAUDE #226: "the
-    /// v2 implementation items... land FIRST, before your run_v2 catalog
-    /// successor rebases onto those files"), not something this dual-profile
-    /// catalog work introduces or can fix by itself.
-    ///
-    /// Consequence, flagged for the coordinator rather than guessed at:
-    /// neither prescribed outcome (equals CURRENT; or differs and gets a new
-    /// third frozen literal pair) applies -- the observed value equals
-    /// HISTORICAL exactly. Once the population-v2 schema widening lands and
-    /// these records become decodable on some future branch, they will
-    /// classify `Historical` under this design and be rejected at the
-    /// science-loop/publish/resume boundaries exactly as the panel warns.
-    /// That is a real, valid forward-looking concern; resolving it now would
-    /// mean inventing a discriminating signal from schema this branch does
-    /// not have, which risks being wrong. This test locks in the current,
-    /// verified-true state as a tripwire: if it starts failing (either
-    /// assertion), that is the signal the schema widening has landed and the
-    /// boundary policy for population-v2's specific case needs revisiting
-    /// with real decodable evidence in hand.
+    /// - cycle-2 (`population_program_v2_cycle2`): decode now SUCCEEDS. This
+    ///   is the exact gap the contract-widening sheet closes (Section 1a);
+    ///   the record is real, already-published evidence independent of the
+    ///   `D:\throughput-remeasure-20260825` copy the sheet's own acceptance
+    ///   gates (`real_cycle2_depth2048_store_run_json_decodes_after_contract_widening`
+    ///   above) exercise, so this is a second, independent confirmation
+    ///   against a different real leg of the same store.
+    /// - tranche-1 (`population_program_v2`, no `_cycle2` suffix): decode
+    ///   still FAILS with the identical schema gap, for the identical
+    ///   reason. `population_program_v2` (as opposed to
+    ///   `population_program_v2_cycle2`) is a different, still-undefined
+    ///   contract type, explicitly out of scope for this widening (sheet
+    ///   Section 1: only `population_program_v2_cycle2` and
+    ///   `authorized_denovo_seeds`). This half of the test is intentionally
+    ///   unchanged and remains its own tripwire for that future widening.
     #[test]
-    fn population_v2_active_records_are_historical_catalog_identity_blocked_by_a_separate_schema_gap(
-    ) {
+    fn population_v2_cycle2_active_record_now_decodes_tranche1_still_schema_gapped() {
+        const CYCLE2_PATH: &str = r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json";
+        const TRANCHE1_PATH: &str = r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json";
+
         // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
-        for candidate_path in [
-            r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json",
-            r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json",
-        ] {
+        for candidate_path in [CYCLE2_PATH, TRANCHE1_PATH] {
             if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
                 std::path::Path::new(candidate_path),
             ) {
@@ -8773,47 +8752,61 @@ mod tests {
             }
         }
 
-        for (label, path) in [
-            (
-                "cycle2",
-                r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json",
-            ),
-            (
-                "tranche1",
-                r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json",
-            ),
-        ] {
-            let bytes = std::fs::read(path).unwrap_or_else(|error| {
-                panic!("could not read the real population-v2 {label} run.json at {path}: {error}")
-            });
+        let cycle2_bytes = std::fs::read(CYCLE2_PATH).unwrap_or_else(|error| {
+            panic!("could not read the real population-v2 cycle2 run.json at {CYCLE2_PATH}: {error}")
+        });
+        let raw: serde_json::Value = serde_json::from_slice(&cycle2_bytes).unwrap();
+        assert_eq!(
+            raw["environment"]["card_db_hash_u64_hex"].as_str().unwrap(),
+            FROZEN_CARD_DB_HASH_U64_HEX_V2,
+            "cycle2: catalog card_db_hash_u64_hex is not the historical pin"
+        );
+        assert_eq!(
+            raw["environment"]["runtime_catalog_sha256"]
+                .as_str()
+                .unwrap(),
+            FROZEN_RUNTIME_CATALOG_SHA256_V2,
+            "cycle2: catalog runtime_catalog_sha256 is not the historical pin"
+        );
+        let validated = decode_train_run_v2(&cycle2_bytes).unwrap_or_else(|error| {
+            panic!("cycle2: expected decode to succeed after the contract widening: {error:?}")
+        });
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle2
+            .is_some());
 
-            // Fact 1: the catalog identity fields, read directly off the raw
-            // JSON, equal the HISTORICAL pin exactly. No decode needed.
-            let raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(
-                raw["environment"]["card_db_hash_u64_hex"].as_str().unwrap(),
-                FROZEN_CARD_DB_HASH_U64_HEX_V2,
-                "{label}: catalog card_db_hash_u64_hex is not the historical pin"
-            );
-            assert_eq!(
-                raw["environment"]["runtime_catalog_sha256"]
-                    .as_str()
-                    .unwrap(),
-                FROZEN_RUNTIME_CATALOG_SHA256_V2,
-                "{label}: catalog runtime_catalog_sha256 is not the historical pin"
-            );
-
-            // Fact 2: decode fails at canonical-JSON deserialization (the
-            // unknown population-v2 contract field), never reaching catalog
-            // classification at all.
-            let error = decode_train_run_v2(&bytes)
-                .expect_err(&format!("{label}: expected decode to fail (schema gap)"));
-            assert_eq!(
-                error.kind(),
-                TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization),
-                "{label}: expected the unknown-field schema gap, got a different failure"
-            );
-        }
+        let tranche1_bytes = std::fs::read(TRANCHE1_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real population-v2 tranche1 run.json at {TRANCHE1_PATH}: {error}"
+            )
+        });
+        let raw: serde_json::Value = serde_json::from_slice(&tranche1_bytes).unwrap();
+        assert_eq!(
+            raw["environment"]["card_db_hash_u64_hex"].as_str().unwrap(),
+            FROZEN_CARD_DB_HASH_U64_HEX_V2,
+            "tranche1: catalog card_db_hash_u64_hex is not the historical pin"
+        );
+        assert_eq!(
+            raw["environment"]["runtime_catalog_sha256"]
+                .as_str()
+                .unwrap(),
+            FROZEN_RUNTIME_CATALOG_SHA256_V2,
+            "tranche1: catalog runtime_catalog_sha256 is not the historical pin"
+        );
+        let error = decode_train_run_v2(&tranche1_bytes).expect_err(
+            "tranche1: expected decode to still fail (population_program_v2 schema gap is out of this widening's scope)",
+        );
+        assert_eq!(
+            error.kind(),
+            TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization),
+            "tranche1: expected the unknown-field schema gap, got a different failure"
+        );
     }
 
     /// Backward-compatibility regression for the Phase 2 512-horizon
