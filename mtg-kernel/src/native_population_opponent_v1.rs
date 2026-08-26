@@ -29,6 +29,11 @@ pub(crate) const POPULATION_OPPONENT_SLOT_COUNT_V1: usize = 8;
 /// `Search` occupant; that restriction is the manifest validator's job
 /// (`native_population_refresh_manifest_v1.rs::validate_search_occupant_v1`),
 /// enforced before a manifest ever reaches resolution.
+// The size difference (by-value checkpoint inference vs an Arc) is accepted:
+// exactly eight instances ever exist (one fixed array), and boxing the
+// checkpoint variant would add a heap indirection on the hot inference path
+// for no meaningful memory saving.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum PopulationSlotOccupantV1 {
     Checkpoint(NativeCheckpointInferenceV1),
     Search(Arc<KernelNativeSearchOpponentV1>),
