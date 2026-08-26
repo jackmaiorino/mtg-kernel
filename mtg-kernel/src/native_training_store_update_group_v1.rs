@@ -4351,6 +4351,156 @@ mod tests {
         );
     }
 
+    /// TAU_N / TAU_S MEASUREMENT (CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md
+    /// Section 10/13 open item; coordinator-directed, 2026-08-26). Measures
+    /// mean per-episode wall-clock for a checkpoint-occupied ("neural")
+    /// population slot and a search-occupied slot at T2048, on the real
+    /// production-shaped path (NativeTrainingExecutorV1::prepare_update_v2,
+    /// the same entry point `search_slot_opponent_identity_round_trips_and_
+    /// rejects_tampering` and `population_opponent_identity_round_trips_
+    /// through_the_written_record` exercise), single-threaded
+    /// (worker_count/sessions_per_worker/broker_batch_target = 1) so wall
+    /// time divided by episode count is a genuine serial per-episode mean,
+    /// not confounded by cross-episode parallelism -- matching exactly what
+    /// the sheet's Section 9.1 worker-time-share formula models. A custom
+    /// run record (JSON-mutated from the shared fixture: batch_episodes and
+    /// topology only, deck/limits/backend untouched) is used because the
+    /// shared fixture's own topology and 30s scheduler_timeout are sized
+    /// for small, cheap batches. `#[ignore]`-gated: this is a measurement
+    /// harness the coordinator asked for, not a correctness gate re-run on
+    /// every `cargo test`.
+    #[test]
+    #[ignore]
+    fn tau_n_tau_s_worker_time_measurement_v1() {
+        use crate::kernel_native_search_opponent_v1::{
+            KernelNativeSearchAuthorityV1, KernelNativeSearchOpponentV1, KernelNativeSearchTierV1,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1,
+        };
+        use crate::native_population_opponent_v1::{
+            checkpoint_inference_handles_for_test_v1, PopulationOpponentEngineV1,
+            PopulationSlotOccupantV1, PopulationWeightVectorV1,
+        };
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        // Only topology (single-threaded: worker_count/sessions_per_worker/
+        // logical_actor_count/broker_batch_target = 1) and scheduler_timeout_ms
+        // are mutated; batch_episodes and every schedule-derived
+        // cross-binding (checkpoint_episode_interval, standalone_semantics.core)
+        // are left exactly as the shared fixture declares them, avoiding a
+        // cascade of independently-recomputed derived fields. run_update_v2
+        // (the non-persisting, no-Store direct-update path
+        // NativeTrainingExecutorV1 documents for "diagnostics") is called
+        // repeatedly on ONE constructed executor -- each call advances the
+        // trainer's own progress and processes one more fixture-sized batch
+        // -- so the model snapshot loads once and every call's elapsed time
+        // is genuine rollout wall-clock, not repeated setup overhead.
+        fn single_threaded_run_bytes_v1() -> Vec<u8> {
+            let mut value: Value = serde_json::from_slice(&test_fixture_bytes_v2()).unwrap();
+            value["topology"]["worker_count"] = serde_json::json!(1);
+            value["topology"]["sessions_per_worker"] = serde_json::json!(1);
+            value["topology"]["logical_actor_count"] = serde_json::json!(1);
+            value["topology"]["broker_batch_target"] = serde_json::json!(1);
+            value["topology"]["scheduler_timeout_ms"] = serde_json::json!(3_600_000_u64);
+            to_canonical_json_bytes_v1(&value, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+        }
+
+        fn time_batches_v1(
+            update_calls: u64,
+            population: Arc<PopulationOpponentEngineV1>,
+        ) -> (Duration, u64) {
+            let run_bytes = single_threaded_run_bytes_v1();
+            let run = decode_train_run_v2(&run_bytes).unwrap();
+            let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+            let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+                execution_config_v1(&run),
+                &snapshot_manifest,
+                &snapshot_payload,
+            )
+            .unwrap();
+            executor.set_population_opponent_v1(Some(population));
+            let episodes_per_call = run.batch_episodes();
+            let mut total = Duration::ZERO;
+            for _ in 0..update_calls {
+                let start = Instant::now();
+                executor.run_update_v2().unwrap();
+                total += start.elapsed();
+            }
+            (total, episodes_per_call * update_calls)
+        }
+
+        fn checkpoint_population_v1() -> Arc<PopulationOpponentEngineV1> {
+            let weights = PopulationWeightVectorV1::new_v1([1, 0, 0, 0, 0, 0, 0, 0], 1).unwrap();
+            let handles: [PopulationSlotOccupantV1; 8] =
+                checkpoint_inference_handles_for_test_v1::<8>().map(PopulationSlotOccupantV1::Checkpoint);
+            Arc::new(PopulationOpponentEngineV1::new_v1(weights, handles))
+        }
+
+        fn search_population_v1() -> Arc<PopulationOpponentEngineV1> {
+            let authority = KernelNativeSearchAuthorityV1::current(
+                KernelNativeSearchTierV1::T2048,
+                KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+                crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+            )
+            .unwrap();
+            let searcher = Arc::new(KernelNativeSearchOpponentV1::new(authority).unwrap());
+            let weights = PopulationWeightVectorV1::new_v1([0, 0, 0, 0, 0, 0, 1, 0], 1).unwrap();
+            let mut checkpoint_handles = checkpoint_inference_handles_for_test_v1::<7>().into_iter();
+            let handles: [PopulationSlotOccupantV1; 8] = std::array::from_fn(|index| {
+                if index == 6 {
+                    PopulationSlotOccupantV1::Search(Arc::clone(&searcher))
+                } else {
+                    PopulationSlotOccupantV1::Checkpoint(checkpoint_handles.next().unwrap())
+                }
+            });
+            Arc::new(PopulationOpponentEngineV1::new_v1(weights, handles))
+        }
+
+        // The fixture's own batch_episodes (2, unchanged) times enough
+        // repeated run_update_v2 calls to clear >= 200 neural and >= 20
+        // searcher episodes (coordinator's stated minimums).
+        const NEURAL_UPDATE_CALLS: u64 = 100; // 100 x 2 = 200 episodes
+        const SEARCH_UPDATE_CALLS: u64 = 10; // 10 x 2 = 20 episodes
+
+        let mut neural_totals = Vec::new();
+        let mut search_totals = Vec::new();
+        for repeat in 0..2 {
+            let (neural_elapsed, neural_episodes) =
+                time_batches_v1(NEURAL_UPDATE_CALLS, checkpoint_population_v1());
+            eprintln!(
+                "TAU-MEASUREMENT neural repeat {repeat}: {neural_episodes} episodes in {:.3}s -> tau_n = {:.6}s/episode",
+                neural_elapsed.as_secs_f64(),
+                neural_elapsed.as_secs_f64() / neural_episodes as f64
+            );
+            neural_totals.push((neural_elapsed, neural_episodes));
+
+            let (search_elapsed, search_episodes) =
+                time_batches_v1(SEARCH_UPDATE_CALLS, search_population_v1());
+            eprintln!(
+                "TAU-MEASUREMENT search repeat {repeat}: {search_episodes} episodes in {:.3}s -> tau_s = {:.6}s/episode",
+                search_elapsed.as_secs_f64(),
+                search_elapsed.as_secs_f64() / search_episodes as f64
+            );
+            search_totals.push((search_elapsed, search_episodes));
+        }
+
+        let tau_n = neural_totals
+            .iter()
+            .map(|(d, _)| d.as_secs_f64())
+            .sum::<f64>()
+            / neural_totals.iter().map(|(_, n)| *n as f64).sum::<f64>();
+        let tau_s = search_totals
+            .iter()
+            .map(|(d, _)| d.as_secs_f64())
+            .sum::<f64>()
+            / search_totals.iter().map(|(_, n)| *n as f64).sum::<f64>();
+        eprintln!("TAU-MEASUREMENT means: tau_n = {tau_n:.6}s, tau_s = {tau_s:.6}s (tau_s/tau_n = {:.2}x)", tau_s / tau_n);
+        for p in [0.02_f64, 0.10] {
+            let share = p * tau_s / (p * tau_s + (1.0 - p) * tau_n);
+            eprintln!("TAU-MEASUREMENT worker-time share at p={:.0}%: {:.4}%", p * 100.0, share * 100.0);
+        }
+    }
+
     /// Exercises the bounded-staleness async provenance fields the way a
     /// future executor-integrated caller will: after `prepare_update_v2`
     /// returns and before the guard is handed to `build_update_group_v1`,
