@@ -4114,6 +4114,29 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_population_cycle3_e
     )
 }
 
+/// Amendment 4 (CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md, countersigned
+/// 00affe6a), A4.4: thin top-level wrapper exposing
+/// `tests::population_program_v2_cycle3_contract_for_launch_v1` to
+/// `native_science_loop_v1`'s v2-cycle3 dispatch arm, mirroring this file's
+/// own established pattern immediately above
+/// (`test_fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2`)
+/// for exactly the same reason: the inner fixture-construction function
+/// lives inside the private `mod tests` and is not reachable from a
+/// sibling module without a wrapper at this file's own top level. FIX:
+/// this wrapper did not exist when A4.4's cross-check code was first
+/// written, which called the inner function via an invalid
+/// `crate::native_training_store_run_v2::population_program_v2_cycle3_contract_for_launch_v1`
+/// path; caught only under the exact release+production-feature build
+/// the real launcher uses (E0425, `cargo test -p mtg-kernel --release
+/// --features experimental-burn-net8-packed-cuda-v1,native-training-store-v2-production
+/// --lib --no-run`), not the narrower dev/check builds exercised earlier.
+#[cfg(test)]
+pub(crate) fn population_program_v2_cycle3_contract_for_launch_v1(
+    expected_base_seed: u64,
+) -> PopulationProgramContractV2Cycle3 {
+    tests::population_program_v2_cycle3_contract_for_launch_v1(expected_base_seed)
+}
+
 /// Exact program-update-1024 response-exploiter RunV2 authority. It composes
 /// the existing ladder-init plus environment-v2 carrier, then adds only the
 /// response contract before reminting the derived digests.
