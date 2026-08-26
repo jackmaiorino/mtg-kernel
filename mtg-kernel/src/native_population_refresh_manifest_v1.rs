@@ -41,13 +41,24 @@ pub(crate) const POPULATION_POLICY_CAP_UNITS_V1: u64 = 250_000;
 // (`POPULATION_SEARCH_SLOT_INDICES_V1`), only at tier T2048
 // (`POPULATION_SEARCH_ENABLED_TIER_V1`; T8192/T512/T32768 fail closed exactly
 // like an unregistered tier, gate 3), at most one such slot at a time, and
-// capped at `POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1` (2% of the total,
-// layered inside, never replacing, the general `POPULATION_POLICY_CAP_UNITS_V1`
-// ceiling). The five legacy Store-shaped hash fields on a search-occupied slot
-// must equal `POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1` (never a real-looking
-// hash), and `source_base_seed`/`source_generation` must be zero.
+// capped at `POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1`, layered inside,
+// never replacing, the general `POPULATION_POLICY_CAP_UNITS_V1` ceiling.
+// AMENDMENT 2 (countersigned ab3d777b): this is the per-manifest IN-WINDOW
+// maximum, not a cycle-average -- validate_slots_v1 is architecturally
+// single-manifest (its only history-facing parameter, `previous`, feeds
+// hash-chain/refresh-index continuity, never weight/economic bookkeeping),
+// so a cycle-average cannot live in this check. The 2% cycle-wide average
+// the registration sheet's own Section 9.2 originally derived this number
+// from is instead owned and enforced arithmetically by the referencing
+// campaign sheet's own fixed window set (cycle-3: 4 heavy refreshes at
+// 80,000 + 12 refreshes at 0, `4*80,000/16 = 20,000` exactly, matching the
+// original 2% figure on average while permitting an 80,000-unit peak in any
+// single manifest). The five legacy Store-shaped hash fields on a
+// search-occupied slot must equal `POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1`
+// (never a real-looking hash), and `source_base_seed`/`source_generation`
+// must be zero.
 pub(crate) const POPULATION_SEARCH_SLOT_INDICES_V1: [usize; 2] = [6, 7];
-pub(crate) const POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1: u64 = 20_000;
+pub(crate) const POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1: u64 = 80_000;
 pub(crate) const POPULATION_SEARCH_ENABLED_TIER_V1: KernelNativeSearchTierV1 =
     KernelNativeSearchTierV1::T2048;
 pub(crate) const POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1: &str =
@@ -1257,11 +1268,12 @@ mod tests {
 
     #[test]
     fn search_slot_weight_above_the_search_cap_is_rejected() {
-        // 25,000 stays under the general 250,000-unit cap but exceeds the
-        // search-specific 20,000-unit T2048 cap (Section 7, Section 9.2);
-        // slot 7 absorbs the remainder so the pair total (250,000) and the
-        // grand total (1,000,000) both still hold, isolating the
-        // search-specific cap from the general-cap and total-sum checks.
+        // 80,001 stays under the general 250,000-unit cap but exceeds the
+        // search-specific 80,000-unit T2048 cap (Amendment 2, countersigned
+        // ab3d777b: Section 7, Section 9.2, A2.3); slot 7 absorbs the
+        // remainder (169,999) so the pair total (250,000) and the grand
+        // total (1,000,000) both still hold, isolating the search-specific
+        // cap from the general-cap and total-sum checks.
         assert_eq!(
             mutate_v1(
                 &manifest_with_search_slot_v1(
@@ -1270,8 +1282,8 @@ mod tests {
                     POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
                 ),
                 |value| {
-                    value["slots"][6]["weight_units"] = json!(25_000);
-                    value["slots"][7]["weight_units"] = json!(225_000);
+                    value["slots"][6]["weight_units"] = json!(80_001);
+                    value["slots"][7]["weight_units"] = json!(169_999);
                 },
                 None
             ),
