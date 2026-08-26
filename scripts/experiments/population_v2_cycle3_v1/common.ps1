@@ -26,7 +26,11 @@ $script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..
 # Sheet-bound identities
 # ---------------------------------------------------------------------------
 $script:Cycle3SheetPath = 'C:\Users\Jack\IdeaProjects\collab\CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md'
-$script:Cycle3SheetSha256 = '1efa40979de0d4e8f3105d1c266b676b0c2a57c320994703b355a1989cdd1c0a'
+# Updated to the current countersigned SHA after Amendment 4 (v2, the
+# validate_search_occupant_v1 generalization fix): 00affe6a...; superseded
+# the original Amendment-3-era 1efa4097... pin the launch stack was first
+# built against.
+$script:Cycle3SheetSha256 = '00affe6af175e68e408fcf5ef471161a5e9dca39660df138f35e7d24a1d5d5e4'
 $script:SearcherPoolAuthoritySheetPath = 'C:\Users\Jack\IdeaProjects\collab\CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md'
 $script:SearcherPoolAuthoritySheetSha256 = '87a3ef08df86e7b0f8b0b3e2674bcd890a8c09953718646d10193b6fd7c4ea34'
 
