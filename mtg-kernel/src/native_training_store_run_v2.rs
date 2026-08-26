@@ -10216,4 +10216,35 @@ mod tests {
             2_750_754
         );
     }
+
+    /// Diagnostic aid (not a gate), CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md
+    /// Amendment 5 follow-up: `decode_train_run_v2` reports the real,
+    /// already-published denovo-1024 stores' `run.json` as
+    /// `CanonicalJson(Deserialization)` even after the seed-family port
+    /// landed -- a failure at the raw wire-deserialize stage, before
+    /// `validate_response_exploiter_v1` (or any other semantic validator)
+    /// ever runs. `TrainRunV2Error` deliberately retains no field/path/
+    /// message detail (see its own doc comment), so this calls
+    /// `serde_json::from_slice::<TrainRunWireV2>` directly (this file's own
+    /// private wire type, reachable only from inside this module) to get
+    /// serde's real error message.
+    #[test]
+    #[ignore = "diagnostic aid: run explicitly with --nocapture"]
+    fn diagnose_denovo_1024_wire_deserialize_error_v1() {
+        let paths = [
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971221\denovo-1024-screen-build\attempt-001\denovo-1024-store\run-0\store\run.json",
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971223\denovo-1024-screen-build\attempt-002\denovo-1024-store\run-0\store\run.json",
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971222\denovo-1024-screen-build\attempt-001\denovo-1024-store\run-0\store\run.json",
+        ];
+        for path in paths {
+            let Ok(bytes) = std::fs::read(path) else {
+                eprintln!("skipping: {path} not present on this host");
+                continue;
+            };
+            match serde_json::from_slice::<TrainRunWireV2>(&bytes) {
+                Ok(_) => println!("{path}: wire deserialize OK"),
+                Err(error) => println!("{path}: wire deserialize FAILED: {error}"),
+            }
+        }
+    }
 }
