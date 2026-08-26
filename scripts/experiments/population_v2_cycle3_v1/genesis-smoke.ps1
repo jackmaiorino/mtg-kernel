@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 Assert-Cycle3SheetIdentity | Out-Null
+Assert-SearcherPoolAuthoritySheetIdentity | Out-Null
 
 $evidenceRoot = Join-Path $PSScriptRoot '..\..\..\..\cycle3-genesis-smoke-evidence'
 $evidenceRoot = (New-Item -ItemType Directory -Force -Path $evidenceRoot).FullName

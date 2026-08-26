@@ -28,6 +28,7 @@ $script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..
 $script:Cycle3SheetPath = 'C:\Users\Jack\IdeaProjects\collab\CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md'
 $script:Cycle3SheetSha256 = '1efa40979de0d4e8f3105d1c266b676b0c2a57c320994703b355a1989cdd1c0a'
 $script:SearcherPoolAuthoritySheetPath = 'C:\Users\Jack\IdeaProjects\collab\CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md'
+$script:SearcherPoolAuthoritySheetSha256 = '87a3ef08df86e7b0f8b0b3e2674bcd890a8c09953718646d10193b6fd7c4ea34'
 
 # ---------------------------------------------------------------------------
 # Cycle-3 eligible-parent identity (sheet Section 2.3; re-verified byte-for-
@@ -64,6 +65,22 @@ function Assert-Cycle3SheetIdentity {
         throw "cycle-3 governing sheet SHA-256 changed: expected $script:Cycle3SheetSha256, got $actual; refusing to launch against a mutated sheet"
     }
     return [ordered]@{ path = $script:Cycle3SheetPath; sha256 = $actual }
+}
+
+function Assert-SearcherPoolAuthoritySheetIdentity {
+    # Independent-reviewer finding (CLAUDE-REVIEWER-VERDICT-CYCLE3-LAUNCH-STACK-20260826.md,
+    # "Additional findings", item 1): $script:SearcherPoolAuthoritySheetPath was
+    # set but never verified, despite this file's own header citing that
+    # sheet as co-governing. This closes that gap the same way
+    # Assert-Cycle3SheetIdentity does for the cycle-3 sheet.
+    if (-not (Test-Path -LiteralPath $script:SearcherPoolAuthoritySheetPath -PathType Leaf)) {
+        throw "searcher-pool-authority governing sheet is missing: $script:SearcherPoolAuthoritySheetPath"
+    }
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $script:SearcherPoolAuthoritySheetPath).Hash.ToLowerInvariant()
+    if ($actual -cne $script:SearcherPoolAuthoritySheetSha256) {
+        throw "searcher-pool-authority sheet SHA-256 changed: expected $script:SearcherPoolAuthoritySheetSha256, got $actual; refusing to launch against a mutated sheet"
+    }
+    return [ordered]@{ path = $script:SearcherPoolAuthoritySheetPath; sha256 = $actual }
 }
 
 function Get-ReleaseTestExecutableCycle3V1 {
