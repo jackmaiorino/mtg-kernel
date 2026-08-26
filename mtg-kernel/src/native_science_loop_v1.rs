@@ -1520,6 +1520,17 @@ mod windows_science_loop_tests {
         // stamping knob, which governs record CONSTRUCTION, not pool
         // RESOLUTION); a cycle-3 launch sets both.
         const POPULATION_V2_CYCLE3_ACTIVE_BASE_SEEDS_V1: [u64; 1] = [977_002];
+        // R7's standing local/global split (commit d1a11e3): the store's
+        // own generation counter is local (0..2,048); global = local +
+        // this offset (2,304, the parent's terminal global_generation, per
+        // population_program_v2_cycle3_contract_for_launch_v1's own
+        // global_generation_offset field). Named here, matching the
+        // cycle-2-era branch's own population_v2_cycle2_global_generation_v1
+        // pattern, so the manifest chain's own global-scale
+        // global_generation and the launcher's own local-scale
+        // MULTIRUN_EXPECT_RESUME_GENERATION/MULTIRUN_STOP_AFTER_GENERATION
+        // are never compared directly against each other.
+        const POPULATION_V2_CYCLE3_GLOBAL_GENERATION_OFFSET_V1: u64 = 2_304;
         let population_v2_cycle3_enabled = env_knob_v1("MULTIRUN_POPULATION_V2_CYCLE3", 0) != 0;
         let population_v2_cycle3_active_dispatch = population_runtime_enabled
             && POPULATION_V2_CYCLE3_ACTIVE_BASE_SEEDS_V1.contains(&base_seed);
@@ -1728,13 +1739,27 @@ mod windows_science_loop_tests {
             let active = chain
                 .last()
                 .expect("cycle-3 population refresh chain is nonempty");
-            let expected_start = expected_resume_generation
+            // FIX (caught before this was ever run for real): the manifest
+            // chain speaks GLOBAL generation (2,432-4,352 for cycle-3's own
+            // 16 links), but MULTIRUN_EXPECT_RESUME_GENERATION/
+            // MULTIRUN_STOP_AFTER_GENERATION are LOCAL (0-2,048, the
+            // store's own counter, per R7's standing convention) -- the
+            // SAME local/global split the cycle-2-era branch's own
+            // analogous arm (population_v2_cycle2_global_generation_v1)
+            // already had to bridge. Comparing the manifest's global value
+            // directly against a local env-var value, as an earlier draft
+            // of this arm did, would have failed this assert on every real
+            // launch; caught here before any real run was attempted.
+            let expected_start_local = expected_resume_generation
                 .expect("v2-cycle3 population runtime requires MULTIRUN_EXPECT_RESUME_GENERATION");
-            let expected_stop = expected_start
+            let expected_start_global = expected_start_local
+                .checked_add(POPULATION_V2_CYCLE3_GLOBAL_GENERATION_OFFSET_V1)
+                .expect("cycle-3 generation offset overflow");
+            let expected_stop_local = expected_start_local
                 .checked_add(128)
                 .expect("population interval generation overflow");
-            assert_eq!(active.global_generation_v2(), expected_start);
-            assert_eq!(stop_after_generation, Some(expected_stop));
+            assert_eq!(active.global_generation_v2(), expected_start_global);
+            assert_eq!(stop_after_generation, Some(expected_stop_local));
             // Amendment 4 A4.4: the manifest chain and the run-level
             // population_program_v2_cycle3 contract authenticate each
             // other. The contract is deterministic/side-effect-free
