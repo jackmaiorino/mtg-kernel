@@ -720,14 +720,26 @@ mod tests {
     #[test]
     #[ignore = "diagnostic aid: run explicitly with --nocapture"]
     fn diagnose_refresh19_opponent_pool_resolution_v1() {
-        let manifest_path =
-            r"E:\mtg-kernel-population-v2-cycle3\refresh-manifests\population-v3-refresh-018.json";
-        let Ok(bytes) = fs::read(manifest_path) else {
-            eprintln!("skipping: {manifest_path} not present on this host");
+        // The real decoder enforces chain continuity (previous_manifest_sha256
+        // etc.), so index 18 cannot decode standalone with `previous: None`
+        // -- walk the real chain from index 0 exactly like the real
+        // dispatch/preflight do, and use the last (index 18) link.
+        let dir = r"E:\mtg-kernel-population-v2-cycle3\refresh-manifests";
+        let path0 = format!("{dir}\\population-v3-refresh-000.json");
+        let Ok(bytes0) = fs::read(&path0) else {
+            eprintln!("skipping: {path0} not present on this host");
             return;
         };
-        let manifest = crate::native_population_refresh_manifest_v1::decode_population_tranche_refresh_manifest_v2(&bytes, None)
-            .expect("manifest index 18 must decode standalone");
+        let mut previous = crate::native_population_refresh_manifest_v1::decode_population_tranche_refresh_manifest_v2(&bytes0, None)
+            .expect("refresh_index 0 must decode standalone");
+        for idx in 1_u64..=18 {
+            let path = format!("{dir}\\population-v3-refresh-{idx:03}.json");
+            let bytes = fs::read(&path)
+                .unwrap_or_else(|_| panic!("{path} must be present"));
+            previous = crate::native_population_refresh_manifest_v1::decode_population_tranche_refresh_manifest_v2(&bytes, Some(&previous))
+                .unwrap_or_else(|error| panic!("refresh_index {idx} must chain-decode: {error:?}"));
+        }
+        let manifest = previous;
 
         let slot_roots: [&str; 8] = [
             r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary",
