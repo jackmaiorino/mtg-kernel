@@ -8756,7 +8756,9 @@ mod tests {
         }
 
         let cycle2_bytes = std::fs::read(CYCLE2_PATH).unwrap_or_else(|error| {
-            panic!("could not read the real population-v2 cycle2 run.json at {CYCLE2_PATH}: {error}")
+            panic!(
+                "could not read the real population-v2 cycle2 run.json at {CYCLE2_PATH}: {error}"
+            )
         });
         let raw: serde_json::Value = serde_json::from_slice(&cycle2_bytes).unwrap();
         assert_eq!(
@@ -8971,7 +8973,9 @@ mod tests {
         }
 
         let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
-            panic!("could not read the real cycle-2 run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
+            panic!(
+                "could not read the real cycle-2 run.json fixture at {REAL_RUN_JSON_PATH}: {error}"
+            )
         });
         assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
 
@@ -9007,7 +9011,10 @@ mod tests {
         let root_dir = std::path::Path::new(REAL_RUN_JSON_PATH)
             .parent()
             .expect("run.json has a parent directory");
-        let root = crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2::open_v2(root_dir)
+        let root =
+            crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2::open_v2(
+                root_dir,
+            )
             .unwrap_or_else(|error| panic!("failed to open the real cycle-2 store root: {error}"));
         let config = crate::native_training_store_resume_v2::test_execution_config_v2(&validated);
         let resume_error = crate::native_training_store_resume_v2::resume_native_training_store_v2(
@@ -9079,8 +9086,13 @@ mod tests {
         let root_dir = std::path::Path::new(REAL_RUN_JSON_PATH)
             .parent()
             .expect("run.json has a parent directory");
-        let root = crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2::open_v2(root_dir)
-            .unwrap_or_else(|error| panic!("failed to open the real depth-4 exploiter store root: {error}"));
+        let root =
+            crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2::open_v2(
+                root_dir,
+            )
+            .unwrap_or_else(|error| {
+                panic!("failed to open the real depth-4 exploiter store root: {error}")
+            });
         let config = crate::native_training_store_resume_v2::test_execution_config_v2(&validated);
         let resume_error = crate::native_training_store_resume_v2::resume_native_training_store_v2(
             &root, &validated, config,
