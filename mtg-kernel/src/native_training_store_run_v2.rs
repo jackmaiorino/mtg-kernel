@@ -904,6 +904,17 @@ pub struct TrainRunContractsV2 {
     /// their canonical bytes and behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) response_exploiter_v1: Option<ResponseExploiterContractV1>,
+    /// Population-v2 cycle-2 successor authority (fixed replay plus scaled
+    /// population-program cycle 2). Additive: absent for every pre-cycle-2
+    /// record, so canonical bytes of all prior records are unchanged. Ported
+    /// verbatim (zero field changes) from commit
+    /// 8c8d645d257e79fb7704d778c72ee136627f9218 (the commit that wrote the
+    /// real cycle-2 store), which itself reuses `PopulationSourceLineageV1`
+    /// below for `parent_lineage`. Contract-widening sheet
+    /// CLAUDE-CONTRACT-WIDENING-SHEET-V1.md (SHA a55e0777), Section 1a:
+    /// struct only, no `validate_population_program_v2_cycle2` port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) population_program_v2_cycle2: Option<PopulationProgramContractV2Cycle2>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -944,6 +955,41 @@ pub struct PopulationSourceLineageV1 {
     pub(crate) model_parameter_sha256: String,
 }
 
+/// Population-v2 cycle-2 successor authority. Ported verbatim from commit
+/// 8c8d645d257e79fb7704d778c72ee136627f9218's own
+/// `PopulationProgramContractV2Cycle2` (that commit's
+/// `native_training_store_run_v2.rs:1386-1404`), the commit that wrote the
+/// real cycle-2 store this widening exists to decode. Zero field changes;
+/// `parent_lineage` reuses `PopulationSourceLineageV1` above unchanged, an
+/// exact field-for-field match against the real record's `parent_lineage`
+/// object. Struct only: `validate_population_program_v2_cycle2` and its
+/// frozen `POPULATION_*_V2_CYCLE2` literals are deliberately not ported (see
+/// contract-widening sheet CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+/// a55e0777, Section 3): this section decodes and is available for
+/// read-only audit/extraction, but its content claims are not authenticated
+/// on main.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationProgramContractV2Cycle2 {
+    pub(crate) identity: String,
+    pub(crate) package_commit: String,
+    pub(crate) program_document_sha256: String,
+    pub(crate) retest_manifest_sha256: String,
+    pub(crate) global_generation_offset: u64,
+    pub(crate) local_updates_total: u64,
+    pub(crate) refresh_interval: u64,
+    pub(crate) slot_count: u64,
+    pub(crate) reward_identity: String,
+    pub(crate) refresh_manifest_identity: String,
+    pub(crate) retest_beta_f32_bits: String,
+    pub(crate) expected_base_seed: u64,
+    pub(crate) pool_identity: String,
+    pub(crate) parent_store_local_generation: u64,
+    pub(crate) parent_lineage: PopulationSourceLineageV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_lineage_v2: Option<PopulationSourceLineageV1>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResponseExploiterContractV1 {
@@ -965,7 +1011,26 @@ pub struct ResponseExploiterContractV1 {
     pub(crate) fresh_adam_after_weight_init_identity: String,
     pub(crate) authorized_base_seeds: [u64; 5],
     pub(crate) authorized_screen_seeds: [u64; 4],
-    pub(crate) authorized_denovo_seeds: [u64; 1],
+    // Contract-widening (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA a55e0777,
+    // Section 1b), mirroring the exact backward-compatibility amendment
+    // `authorized_denovo_512_seeds` below already applies: this field was
+    // originally modeled as unconditional and always-present, but that
+    // orphaned every record written before this field existed (the real
+    // depth-4 "screen"-role exploiter store's run.json among them) with a
+    // hard decode failure. Now `Option`-shaped identically:
+    // `#[serde(default, skip_serializing_if = "Option::is_none")]` lets a
+    // pre-amendment record (any role) decode with the field absent and
+    // keeps canonical bytes unchanged on re-encode. Presence/content is
+    // still role-conditional and fail-closed: see
+    // `validate_response_exploiter_v1` for the exact rule, mirrored from the
+    // `authorized_denovo_512_seeds` rule with "denovo-screen-512" replaced by
+    // "denovo-screen" (the role this field's own frozen literal,
+    // `RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1`, already classifies
+    // records into): "denovo-screen" REQUIRES it present and exactly
+    // correct; every other role ("build", "screen", "denovo-screen-512")
+    // accepts absence but still rejects wrong content if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) authorized_denovo_seeds: Option<[u64; 1]>,
     // Phase 2 horizon amendment (CLAUDE-DENOVO-SCREEN-SHEET-V1.md), amended
     // again for backward compatibility: the 512-update denovo-screen-512
     // role's own dedicated authorized-seed array. It was originally
@@ -2911,19 +2976,35 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         response.run_role == "denovo-screen" || response.run_role == "denovo-screen-512";
 
     // Backward-compatibility amendment: unlike `authorized_base_seeds` /
-    // `authorized_screen_seeds` / `authorized_denovo_seeds` above (always
-    // present, always checked unconditionally), this array may be entirely
-    // absent -- a record written before the Phase 2 512-horizon amendment
-    // introduced it, of ANY role (the real denovo-screen-256 store's
-    // run.json among them). Absence is accepted for every role except
-    // "denovo-screen-512" itself, which cannot have a pre-amendment shape
-    // (the role did not exist before the amendment that added this field).
-    // Presence is still checked exactly, for every role: a record that
-    // does carry the field but with wrong content is rejected, the same
-    // fail-closed treatment every other literal in this contract gets.
+    // `authorized_screen_seeds` above (always present, always checked
+    // unconditionally), this array may be entirely absent -- a record
+    // written before the Phase 2 512-horizon amendment introduced it, of ANY
+    // role (the real denovo-screen-256 store's run.json among them).
+    // Absence is accepted for every role except "denovo-screen-512" itself,
+    // which cannot have a pre-amendment shape (the role did not exist before
+    // the amendment that added this field). Presence is still checked
+    // exactly, for every role: a record that does carry the field but with
+    // wrong content is rejected, the same fail-closed treatment every other
+    // literal in this contract gets.
     let authorized_denovo_512_seeds_invalid = match response.authorized_denovo_512_seeds {
         Some(seeds) => seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1,
         None => expected_role_and_completion.0 == "denovo-screen-512",
+    };
+    // Contract-widening (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    // a55e0777, Section 1b): the exact same amendment, one field over.
+    // `authorized_denovo_seeds` may now be entirely absent -- a record
+    // written before this field existed, of ANY role (the real depth-4
+    // "screen"-role exploiter store's run.json among them). Mirrored
+    // precisely from `authorized_denovo_512_seeds_invalid` immediately
+    // above, with "denovo-screen-512" replaced by "denovo-screen": absence
+    // is accepted for every role except "denovo-screen" itself, which
+    // cannot have a pre-amendment shape (that role is classified by, and so
+    // cannot predate, this field's own frozen literal
+    // `RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1`). Presence is still
+    // checked exactly for every role.
+    let authorized_denovo_seeds_invalid = match response.authorized_denovo_seeds {
+        Some(seeds) => seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
+        None => expected_role_and_completion.0 == "denovo-screen",
     };
 
     // Parent lineage and warm-start initialization are role-conditional, not
@@ -2984,7 +3065,7 @@ fn validate_response_exploiter_v1(record: &TrainRunV2) -> Result<()> {
         || response.reward_identity != POPULATION_REWARD_IDENTITY_V1
         || response.authorized_base_seeds != RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1
         || response.authorized_screen_seeds != RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1
-        || response.authorized_denovo_seeds != RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1
+        || authorized_denovo_seeds_invalid
         || authorized_denovo_512_seeds_invalid
         || response.expected_base_seed != record.schedule.base_seed
         || response.run_role != expected_role_and_completion.0
@@ -6729,7 +6810,7 @@ mod tests {
                 RESPONSE_EXPLOITER_FRESH_ADAM_AFTER_WEIGHT_INIT_IDENTITY_V1.to_owned(),
             authorized_base_seeds: RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1,
             authorized_screen_seeds: RESPONSE_EXPLOITER_AUTHORIZED_SCREEN_SEEDS_V1,
-            authorized_denovo_seeds: RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1,
+            authorized_denovo_seeds: Some(RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1),
             authorized_denovo_512_seeds: Some(RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_512_SEEDS_V1),
             expected_base_seed,
             run_role: if RESPONSE_EXPLOITER_AUTHORIZED_BASE_SEEDS_V1.contains(&expected_base_seed) {
@@ -7364,7 +7445,7 @@ mod tests {
             |r| r.fresh_adam_after_weight_init_identity = "wrong".to_owned(),
             |r| r.authorized_base_seeds = [971_001, 971_002, 971_101, 971_102, 971_003],
             |r| r.authorized_screen_seeds = [971_091, 971_092, 971_191, 971_003],
-            |r| r.authorized_denovo_seeds = [971_202],
+            |r| r.authorized_denovo_seeds = Some([971_202]),
             |r| r.authorized_denovo_512_seeds = Some([971_299]),
             |r| r.expected_base_seed = 971_002,
             |r| r.run_role = "screen".to_owned(),
@@ -7426,6 +7507,14 @@ mod tests {
                 r.parent_model_parameter_sha256 =
                     Some(POPULATION_PARENT_MODEL_PARAMETER_SHA256_V1.to_owned())
             },
+            // Contract-widening (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+            // a55e0777, Section 1b), mirroring the 512-role test's own
+            // `authorized_denovo_512_seeds = None` mutation below: unlike
+            // every other role, "denovo-screen" has no pre-amendment shape
+            // to fall back to (the role is classified by, and so cannot
+            // predate, this exact field's own frozen literal), so an absent
+            // array must still be rejected for this role specifically.
+            |r| r.authorized_denovo_seeds = None,
         ];
         for mutate in mutations {
             let mut record = response_exploiter_denovo_record_for_seed(971_201);
@@ -8621,62 +8710,44 @@ mod tests {
         );
     }
 
-    /// Dual-Profile Catalog Successor (collab CLAUDE #220) fix round,
-    /// panel finding 2 (compat blocker): empirical evidence from the two
-    /// real, active population-v2 records named by the coordinator. Two
-    /// independent facts, each locked in by its own assertion below:
+    /// Dual-Profile Catalog Successor (collab CLAUDE #220) fix round, panel
+    /// finding 2 (compat blocker) tripwire, UPDATED by the contract-widening
+    /// commit that added `population_program_v2_cycle2`
+    /// (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA a55e0777): the tripwire has
+    /// fired for the cycle-2 half exactly as this test's own prior comment
+    /// predicted ("if it starts failing... that is the signal the schema
+    /// widening has landed and the boundary policy for population-v2's
+    /// specific case needs revisiting with real decodable evidence in
+    /// hand"). Both records still classify catalog identity HISTORICAL
+    /// (fact 1, unchanged, still asserted directly off the raw JSON for both).
+    /// Fact 2 now splits, because only ONE of the two records' schema gaps
+    /// is in this widening's scope:
     ///
-    /// (1) Both records' own `card_db_hash_u64_hex`/`runtime_catalog_sha256`
-    /// fields are read directly off the raw JSON (bypassing
-    /// `decode_train_run_v2`, which cannot reach them -- see fact 2) and are
-    /// BIT-IDENTICAL to the existing HISTORICAL frozen literals
-    /// (`FROZEN_CARD_DB_HASH_U64_HEX_V2`/`FROZEN_RUNTIME_CATALOG_SHA256_V2`).
-    /// There is no third, distinct catalog-hash value here: the population-v2
-    /// worktree that produced both records never advanced past the rev3
-    /// (two-deck) catalog identity, even though both records were minted
-    /// chronologically after the runtime-decks-nine landing on this branch's
-    /// base. `classify_catalog_profile_v1` already classifies this exact
-    /// value pair correctly (as `Historical`); no new frozen literal pair
-    /// exists to register.
-    ///
-    /// (2) `decode_train_run_v2` currently fails on BOTH real files with
-    /// `CanonicalJson(Deserialization)`, not `InvalidLiteral` and not any
-    /// catalog-profile-related classification. Root cause (confirmed by
-    /// direct inspection, not guessed): both records' `contracts` object
-    /// carries a population-v2-era section this branch's `TrainRunContractsV2`
-    /// does not define at all (`population_program_v2_cycle2` in the cycle-2
-    /// record, `population_program_v2` in the tranche-1 record; this branch
-    /// only defines `population_program_v1`), so `deny_unknown_fields`
-    /// rejects the record before canonical-JSON deserialization completes --
-    /// before `validate_environment_v2` or `classify_catalog_profile_v1` are
-    /// ever reached. This is a separate, pre-existing schema-generation gap
-    /// (the population-v2 contract-widening lane, collab CLAUDE #226: "the
-    /// v2 implementation items... land FIRST, before your run_v2 catalog
-    /// successor rebases onto those files"), not something this dual-profile
-    /// catalog work introduces or can fix by itself.
-    ///
-    /// Consequence, flagged for the coordinator rather than guessed at:
-    /// neither prescribed outcome (equals CURRENT; or differs and gets a new
-    /// third frozen literal pair) applies -- the observed value equals
-    /// HISTORICAL exactly. Once the population-v2 schema widening lands and
-    /// these records become decodable on some future branch, they will
-    /// classify `Historical` under this design and be rejected at the
-    /// science-loop/publish/resume boundaries exactly as the panel warns.
-    /// That is a real, valid forward-looking concern; resolving it now would
-    /// mean inventing a discriminating signal from schema this branch does
-    /// not have, which risks being wrong. This test locks in the current,
-    /// verified-true state as a tripwire: if it starts failing (either
-    /// assertion), that is the signal the schema widening has landed and the
-    /// boundary policy for population-v2's specific case needs revisiting
-    /// with real decodable evidence in hand.
+    /// - cycle-2 (`population_program_v2_cycle2`): decode now SUCCEEDS. This
+    ///   is the exact gap the contract-widening sheet closes (Section 1a);
+    ///   the record is real, already-published evidence independent of the
+    ///   `D:\throughput-remeasure-20260825` copy the sheet's own acceptance
+    ///   gates (`real_cycle2_depth2048_store_run_json_decodes_after_contract_widening`
+    ///   above) exercise, so this is a second, independent confirmation
+    ///   against a different real leg of the same store.
+    /// - tranche-1 (`population_program_v2`, no `_cycle2` suffix): decode
+    ///   still FAILS with the identical schema gap, for the identical
+    ///   reason. `population_program_v2` (as opposed to
+    ///   `population_program_v2_cycle2`) is a different, still-undefined
+    ///   contract type, explicitly out of scope for this widening (sheet
+    ///   Section 1: only `population_program_v2_cycle2` and
+    ///   `authorized_denovo_seeds`). This half of the test is intentionally
+    ///   unchanged and remains its own tripwire for that future widening.
     #[test]
-    fn population_v2_active_records_are_historical_catalog_identity_blocked_by_a_separate_schema_gap(
-    ) {
+    fn population_v2_cycle2_active_record_now_decodes_tranche1_still_schema_gapped() {
+        // Relocated 2026-08-25: the cycle-2 evidence root moved from C:\ to the
+        // E:\ archive during the disk cleanup; the archived run.json is
+        // byte-identical (SHA-256 ed2fa4dd..., reviewer-verified).
+        const CYCLE2_PATH: &str = r"E:\c-evidence-archive-20260825\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json";
+        const TRANCHE1_PATH: &str = r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json";
+
         // Machine-local sealed evidence; skips on hosted runners, strict on the science host.
-        for candidate_path in [
-            r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json",
-            r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json",
-        ] {
+        for candidate_path in [CYCLE2_PATH, TRANCHE1_PATH] {
             if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
                 std::path::Path::new(candidate_path),
             ) {
@@ -8684,47 +8755,63 @@ mod tests {
             }
         }
 
-        for (label, path) in [
-            (
-                "cycle2",
-                r"C:\mtg-kernel-population-v2-cycle2\active\cycle2-active-interval-0256-0384\attempt-001\seed-975001-store\run-0\store\run.json",
-            ),
-            (
-                "tranche1",
-                r"D:\mtg-kernel-population-v2-tranche1\active\active-interval-0000-0128\attempt-006\seed-972001-store\run-0\store\run.json",
-            ),
-        ] {
-            let bytes = std::fs::read(path).unwrap_or_else(|error| {
-                panic!("could not read the real population-v2 {label} run.json at {path}: {error}")
-            });
+        let cycle2_bytes = std::fs::read(CYCLE2_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real population-v2 cycle2 run.json at {CYCLE2_PATH}: {error}"
+            )
+        });
+        let raw: serde_json::Value = serde_json::from_slice(&cycle2_bytes).unwrap();
+        assert_eq!(
+            raw["environment"]["card_db_hash_u64_hex"].as_str().unwrap(),
+            FROZEN_CARD_DB_HASH_U64_HEX_V2,
+            "cycle2: catalog card_db_hash_u64_hex is not the historical pin"
+        );
+        assert_eq!(
+            raw["environment"]["runtime_catalog_sha256"]
+                .as_str()
+                .unwrap(),
+            FROZEN_RUNTIME_CATALOG_SHA256_V2,
+            "cycle2: catalog runtime_catalog_sha256 is not the historical pin"
+        );
+        let validated = decode_train_run_v2(&cycle2_bytes).unwrap_or_else(|error| {
+            panic!("cycle2: expected decode to succeed after the contract widening: {error:?}")
+        });
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle2
+            .is_some());
 
-            // Fact 1: the catalog identity fields, read directly off the raw
-            // JSON, equal the HISTORICAL pin exactly. No decode needed.
-            let raw: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(
-                raw["environment"]["card_db_hash_u64_hex"].as_str().unwrap(),
-                FROZEN_CARD_DB_HASH_U64_HEX_V2,
-                "{label}: catalog card_db_hash_u64_hex is not the historical pin"
-            );
-            assert_eq!(
-                raw["environment"]["runtime_catalog_sha256"]
-                    .as_str()
-                    .unwrap(),
-                FROZEN_RUNTIME_CATALOG_SHA256_V2,
-                "{label}: catalog runtime_catalog_sha256 is not the historical pin"
-            );
-
-            // Fact 2: decode fails at canonical-JSON deserialization (the
-            // unknown population-v2 contract field), never reaching catalog
-            // classification at all.
-            let error = decode_train_run_v2(&bytes)
-                .expect_err(&format!("{label}: expected decode to fail (schema gap)"));
-            assert_eq!(
-                error.kind(),
-                TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization),
-                "{label}: expected the unknown-field schema gap, got a different failure"
-            );
-        }
+        let tranche1_bytes = std::fs::read(TRANCHE1_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real population-v2 tranche1 run.json at {TRANCHE1_PATH}: {error}"
+            )
+        });
+        let raw: serde_json::Value = serde_json::from_slice(&tranche1_bytes).unwrap();
+        assert_eq!(
+            raw["environment"]["card_db_hash_u64_hex"].as_str().unwrap(),
+            FROZEN_CARD_DB_HASH_U64_HEX_V2,
+            "tranche1: catalog card_db_hash_u64_hex is not the historical pin"
+        );
+        assert_eq!(
+            raw["environment"]["runtime_catalog_sha256"]
+                .as_str()
+                .unwrap(),
+            FROZEN_RUNTIME_CATALOG_SHA256_V2,
+            "tranche1: catalog runtime_catalog_sha256 is not the historical pin"
+        );
+        let error = decode_train_run_v2(&tranche1_bytes).expect_err(
+            "tranche1: expected decode to still fail (population_program_v2 schema gap is out of this widening's scope)",
+        );
+        assert_eq!(
+            error.kind(),
+            TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization),
+            "tranche1: expected the unknown-field schema gap, got a different failure"
+        );
     }
 
     /// Backward-compatibility regression for the Phase 2 512-horizon
@@ -8824,6 +8911,297 @@ mod tests {
             .unwrap()
             .authorized_denovo_512_seeds
             .is_none());
+    }
+
+    /// Contract-widening (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777, Section 1b) companion to
+    /// `response_exploiter_absent_denovo_512_seeds_round_trips_without_the_key`,
+    /// one field over: a "build"-role record with `authorized_denovo_seeds`
+    /// set to `None` (the pre-amendment shape, any role other than
+    /// "denovo-screen") validates, the key is entirely absent from its
+    /// canonical bytes (never written as `null`), and decoding those exact
+    /// bytes back reproduces them byte for byte.
+    #[test]
+    fn response_exploiter_absent_denovo_seeds_round_trips_without_the_key() {
+        let mut record = response_exploiter_record_for_seed(971_001);
+        record
+            .contracts
+            .response_exploiter_v1
+            .as_mut()
+            .unwrap()
+            .authorized_denovo_seeds = None;
+        refresh_derived(&mut record);
+        let validated = validate_train_run_record_v2(record).unwrap();
+        let bytes = validated.canonical_bytes().to_vec();
+        assert!(!String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("authorized_denovo_seeds"));
+
+        let redecoded = decode_train_run_v2(&bytes).unwrap();
+        assert_eq!(redecoded.canonical_bytes(), bytes.as_slice());
+        assert!(redecoded
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .unwrap()
+            .authorized_denovo_seeds
+            .is_none());
+    }
+
+    /// Acceptance gate 4(a)-1/4(d) (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): reads the REAL, already-published population-v2 cycle-2
+    /// store's run.json (read-only; not a fixture, not modified by this
+    /// test) that failed `decode_train_run_v2` with
+    /// `CanonicalJson(Deserialization)` before this widening (unknown field
+    /// `population_program_v2_cycle2`), and proves it now decodes, classifies
+    /// Historical, and carries the exact real cycle-2 program fields. Also
+    /// proves the categorical `HistoricalCatalogProfile` rejection at the
+    /// resume boundary still fires for this exact widened-decode record,
+    /// before any store interaction (gate 4(d)).
+    #[test]
+    fn real_cycle2_depth2048_store_run_json_decodes_after_contract_widening() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\throughput-remeasure-20260825\v2-resume-walk\store-depth2048-cycle2\run.json";
+        const STORED_RUN_SHA256: &str =
+            "ed2fa4ddfe259ecae0e82206d0560bfefbf789baca86a15bb92c58f0b268f902";
+
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!(
+                "could not read the real cycle-2 run.json fixture at {REAL_RUN_JSON_PATH}: {error}"
+            )
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real cycle-2 run.json failed to decode after widening: {error:?}")
+        });
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+
+        let program = validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle2
+            .as_ref()
+            .expect("this store's record carries the population-v2 cycle-2 contract");
+        assert_eq!(
+            program.identity,
+            "mtg-kernel-native-scaled-selfplay-population/v2-cycle2"
+        );
+        assert_eq!(program.expected_base_seed, 975_001);
+        assert_eq!(program.global_generation_offset, 256);
+        assert_eq!(program.local_updates_total, 2_048);
+        assert_eq!(program.parent_store_local_generation, 256);
+        assert_eq!(program.parent_lineage.base_seed, 972_001);
+        assert!(program.source_lineage_v2.is_none());
+
+        // Gate 4(d): the categorical Historical rejection is untouched by
+        // this widening and still fires before any store interaction.
+        let root_dir = std::path::Path::new(REAL_RUN_JSON_PATH)
+            .parent()
+            .expect("run.json has a parent directory");
+        let root =
+            crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2::open_v2(
+                root_dir,
+            )
+            .unwrap_or_else(|error| panic!("failed to open the real cycle-2 store root: {error}"));
+        let config = crate::native_training_store_resume_v2::test_execution_config_v2(&validated);
+        let resume_error = crate::native_training_store_resume_v2::resume_native_training_store_v2(
+            &root, &validated, config,
+        )
+        .expect_err("resume must still categorically reject a Historical-profile record");
+        assert_eq!(
+            resume_error.kind(),
+            crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile
+        );
+    }
+
+    /// Acceptance gate 4(a)-2/4(d) (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): reads the REAL, already-published 8/7-era response-exploiter
+    /// "screen"-role store's run.json (read-only; not a fixture) that failed
+    /// `decode_train_run_v2` with `CanonicalJson(Deserialization)` before this
+    /// widening (missing field `authorized_denovo_seeds`), and proves it now
+    /// decodes, classifies Historical, and its `authorized_denovo_seeds` is
+    /// genuinely absent from the record's own bytes (the real pre-amendment
+    /// shape, not merely defaulted). Also proves the categorical
+    /// `HistoricalCatalogProfile` rejection at the resume boundary still
+    /// fires for this exact widened-decode record (gate 4(d)).
+    #[test]
+    fn real_depth4_exploiter_store_run_json_decodes_after_contract_widening() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\throughput-remeasure-20260825\v2-resume-walk\store-depth4-exploiter\run.json";
+        const STORED_RUN_SHA256: &str =
+            "603cb7ec6613ec6caa7e5d4c4bcb20a7cce3228aea52ab4d81d06fa82f3b1bd3";
+
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!("could not read the real depth-4 exploiter run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real depth-4 exploiter run.json failed to decode after widening: {error:?}")
+        });
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+
+        let response = validated
+            .record()
+            .contracts()
+            .response_exploiter_v1
+            .as_ref()
+            .expect("this store's record carries the response-exploiter contract");
+        assert_eq!(response.run_role, "screen");
+        assert_eq!(response.expected_base_seed, 971_192);
+        assert_eq!(response.expected_completion_generation, 4);
+        // The real, pre-amendment shape: the array this widening made
+        // optional is genuinely absent from this record's bytes.
+        assert!(response.authorized_denovo_seeds.is_none());
+        assert!(!String::from_utf8(bytes)
+            .unwrap()
+            .contains("authorized_denovo_seeds"));
+
+        // Gate 4(d): the categorical Historical rejection is untouched by
+        // this widening and still fires before any store interaction.
+        let root_dir = std::path::Path::new(REAL_RUN_JSON_PATH)
+            .parent()
+            .expect("run.json has a parent directory");
+        let root =
+            crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2::open_v2(
+                root_dir,
+            )
+            .unwrap_or_else(|error| {
+                panic!("failed to open the real depth-4 exploiter store root: {error}")
+            });
+        let config = crate::native_training_store_resume_v2::test_execution_config_v2(&validated);
+        let resume_error = crate::native_training_store_resume_v2::resume_native_training_store_v2(
+            &root, &validated, config,
+        )
+        .expect_err("resume must still categorically reject a Historical-profile record");
+        assert_eq!(
+            resume_error.kind(),
+            crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2ErrorKind::HistoricalCatalogProfile
+        );
+    }
+
+    /// Acceptance gate 4(a)-3 (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): no-regression control. The confirmed 7/24-era store (no
+    /// ladder/population/exploiter sections at all, `environment.schema_version
+    /// == 5`) must still decode unchanged after this widening.
+    #[test]
+    fn real_depth256_store_run_json_still_decodes_after_contract_widening() {
+        const REAL_RUN_JSON_PATH: &str =
+            r"D:\throughput-remeasure-20260825\v2-resume-walk\store-depth256\run.json";
+        const STORED_RUN_SHA256: &str =
+            "47bc46634de718439ea93fbad105cbf96a6339913856805dccca87773760e7ef";
+
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!("could not read the real depth-256 run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes).unwrap_or_else(|error| {
+            panic!("real depth-256 (7/24-era) run.json regressed: {error:?}")
+        });
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Historical
+        );
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle2
+            .is_none());
+    }
+
+    /// Acceptance gate 4(a)-4 (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): no-regression control, current-era. Confirms the Current
+    /// catalog-profile branch and the plain-uniform-contracts decode path are
+    /// both untouched by this widening.
+    #[test]
+    fn real_current_era_oppoint_store_run_json_still_decodes_after_contract_widening() {
+        const REAL_RUN_JSON_PATH: &str = r"D:\throughput-remeasure-20260825\oppoint-diff-arm1-current-main\stores\proc-0\run-0\store\run.json";
+        const STORED_RUN_SHA256: &str =
+            "8840452ca97ec61e1d29b666f4237d4c310b913f203680b8e48e318246b420a9";
+
+        if !crate::native_test_support_local_evidence_v1::require_local_evidence_v1(
+            std::path::Path::new(REAL_RUN_JSON_PATH),
+        ) {
+            return;
+        }
+
+        let bytes = std::fs::read(REAL_RUN_JSON_PATH).unwrap_or_else(|error| {
+            panic!("could not read the real current-era run.json fixture at {REAL_RUN_JSON_PATH}: {error}")
+        });
+        assert_eq!(sha256_hex(&bytes), STORED_RUN_SHA256);
+
+        let validated = decode_train_run_v2(&bytes)
+            .unwrap_or_else(|error| panic!("real current-era run.json regressed: {error:?}"));
+        assert_eq!(validated.run_sha256(), STORED_RUN_SHA256);
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.catalog_profile_v1(),
+            NativeRunCatalogProfileV1::Current
+        );
+    }
+
+    /// Acceptance gate 4(b) (CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+    /// a55e0777): negative test, fail-closed preserved. A genuinely unknown
+    /// key anywhere in `contracts` (never defined on any struct, before or
+    /// after this widening) must still be rejected with the same
+    /// `deny_unknown_fields`-driven `CanonicalJson(Deserialization)` error
+    /// class. Proves the widening is additive and did not loosen
+    /// `deny_unknown_fields` generally, only the two named gaps.
+    #[test]
+    fn genuinely_unknown_contract_key_still_fails_closed_after_contract_widening() {
+        let record = response_exploiter_record_for_seed(971_001);
+        let validated = validate_train_run_record_v2(record).unwrap();
+        let mut raw: serde_json::Value =
+            serde_json::from_slice(validated.canonical_bytes()).unwrap();
+        raw["contracts"]["totally_unknown_field_v99"] = serde_json::json!("nope");
+        // Re-encode with this crate's own canonical serializer (not plain
+        // `serde_json::to_vec`), so the tampered bytes are still exactly the
+        // byte-for-byte canonical form `parse_and_require_canonical` expects
+        // (sorted keys, trailing LF, checked number formatting); otherwise a
+        // generic re-serialization could fail on `NonCanonicalBytes` instead
+        // of reaching the `deny_unknown_fields` rejection this test targets.
+        let tampered = to_canonical_json_bytes_v1(&raw, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+
+        let error = decode_train_run_v2(&tampered)
+            .expect_err("a genuinely unknown contracts key must still fail closed");
+        assert_eq!(
+            error.kind(),
+            TrainRunV2ErrorKind::CanonicalJson(CanonicalJsonErrorKindV1::Deserialization),
+            "expected the unknown-field rejection, got a different failure"
+        );
     }
 
     // =========================================================================
