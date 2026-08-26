@@ -48,7 +48,9 @@ use crate::native_full_episode_trajectory_v2::{
 };
 use crate::native_ladder_opponent_v1::LadderOpponentEngineV1;
 use crate::native_opponent_sampler_v1::select_native_trainer_opponent_action_v1;
-use crate::native_population_opponent_v1::{PopulationOpponentEngineV1, PopulationSlotV1};
+use crate::native_population_opponent_v1::{
+    PopulationOpponentEngineV1, PopulationSlotKindV1, PopulationSlotV1,
+};
 use crate::native_trainer_schedule_v1::{
     derive_native_trainer_learner_action_seed_v1, derive_native_trainer_opponent_group_seed_v1,
     native_trainer_episode_schedule_v1,
@@ -2196,6 +2198,41 @@ impl<F: FlatScoredFamilyCore> LocalLaneCore<F> {
                             | (Some(_), None, true)
                             | (None, Some(_), true) => {
                                 return Err(self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol));
+                            }
+                            // A population slot that resolves to a
+                            // search-occupied slot is dispatched exactly
+                            // like the bare run-level search-opponent arm
+                            // above: the cloned session and exact decision
+                            // binding directly, never through the
+                            // checkpoint scoring-view path below
+                            // (CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md
+                            // Section 6 item 4). Guarded so a
+                            // Checkpoint-occupied population slot still
+                            // falls through to the unchanged arm below.
+                            (None, Some(population_slot), false)
+                                if self.population_opponent.as_ref().is_some_and(|engine| {
+                                    engine.slot_kind_v1(population_slot)
+                                        == PopulationSlotKindV1::Search
+                                }) =>
+                            {
+                                let searcher = self
+                                    .population_opponent
+                                    .as_ref()
+                                    .and_then(|engine| {
+                                        engine.search_authority_for_slot_v1(population_slot)
+                                    })
+                                    .ok_or_else(|| {
+                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                    })?;
+                                let session = self.session.as_ref().ok_or_else(|| {
+                                    self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                })?;
+                                searcher
+                                    .select_action(session, decision)
+                                    .map(|result| result.selected_index)
+                                    .map_err(|_| {
+                                        self.failure(AsyncFlatScoredWorkerPhaseV1::Protocol)
+                                    })?
                             }
                             (Some(_), None, false) | (None, Some(_), false) => {
                                 // Deferred from preflight for either immutable
