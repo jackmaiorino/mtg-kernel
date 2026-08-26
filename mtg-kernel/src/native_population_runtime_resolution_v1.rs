@@ -213,15 +213,38 @@ fn resolve_population_handles_v1(
 /// identity against its own live Store, mirroring `resolve_population_handles_v1`'s
 /// discipline minus the sidecar-hash check (the tranche-refresh manifest's
 /// own slot shape carries no `sidecar_sha256` field, the same disclosed
-/// absence recorded on `PopulationTrancheRefreshSlotV2` itself), plus one
-/// addition ported unchanged from `8c8d645`: the caller-supplied
-/// `slot_store_roots` entry for each slot is cross-checked against the
-/// manifest's own `store_root` field (the tranche-refresh manifest carries
-/// store roots directly, unlike the base program's `PopulationRefreshManifestV1`,
-/// which does not). Search-occupied slots (Amendment 4 A4.3(ii), absent
-/// from `8c8d645`, added here to match `resolve_population_handles_v1`'s own
-/// already-existing branch below) never read a Store at all, mirroring that
-/// branch exactly.
+/// absence recorded on `PopulationTrancheRefreshSlotV2` itself).
+///
+/// FIX (found live, before this was used for a real launch, not carried
+/// unchanged from `8c8d645` as an earlier revision of this comment claimed):
+/// the caller-supplied `slot_store_roots[i]` is `fs::read` directly and is
+/// the sole source of PHYSICAL LOCATION for slot `i`; it is never compared
+/// against the manifest's own `store_root` field. Authentication is
+/// entirely hash-based (`run_sha256`/`source_base_seed`/`source_generation`/
+/// `checkpoint_manifest_sha256`/`checkpoint_payload_sha256`/
+/// `model_parameter_sha256`, below), exactly mirroring how
+/// `resolve_population_handles_v1` authenticates a v1 slot without ever
+/// having a `store_root` field on the manifest to compare against in the
+/// first place. An earlier draft of this function additionally required
+/// `slot_store_roots[i] == slot.store_root_v2()` (byte-for-byte), ported
+/// directly from `8c8d645`'s own assumption that a slot's physical location
+/// never moves after it is sealed. That assumption is false in practice:
+/// this program's own 8/25 evidence cleanup relocated several `C:\` store
+/// roots (frozen forever in already-sealed historical manifests) to `E:\`
+/// archive paths (and duplicate working copies exist under `D:\` besides).
+/// Requiring an exact string match would make every historical slot whose
+/// physical copy has since moved permanently unresolvable, even though its
+/// content -- and therefore its authenticated identity -- is unchanged and
+/// independently verifiable via the hash checks alone. Dropping the string
+/// match does not weaken authentication: the manifest's own `store_root`
+/// field is retained as the frozen, chain-immutable HISTORICAL label
+/// (checked for frozen-slot continuity across links by
+/// `identity_matches_v2`, `native_population_refresh_manifest_v1.rs`), and
+/// the six hash/seed/generation checks below are the actual authenticator,
+/// unconditionally, for every slot, exactly as before this fix. Search-
+/// occupied slots (Amendment 4 A4.3(ii), absent from `8c8d645`, added here
+/// to match `resolve_population_handles_v1`'s own already-existing branch
+/// below) never read a Store at all, mirroring that branch exactly.
 pub(crate) fn resolve_population_tranche_refresh_opponent_v2(
     manifest: &PopulationTrancheRefreshManifestV2,
     slot_store_roots: &[PathBuf],
@@ -243,24 +266,11 @@ fn resolve_population_tranche_refresh_handles_v2(
         ));
     }
 
-    // Cheap, I/O-free store-root cross-check pass over every non-search
-    // slot first (ported from 8c8d645 unchanged): the tranche-refresh
-    // manifest carries its own `store_root` per slot, so the caller-supplied
-    // root is checked against the manifest's own declared value before any
-    // Store is opened for any slot. Search-occupied slots are skipped here
-    // (their manifest-declared `store_root` is the empty-string sentinel,
-    // never a real path to cross-check against the caller's array).
-    for (slot, store_root) in manifest.slots_v2().iter().zip(slot_store_roots) {
-        if slot.occupant_class_v2() == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1 {
-            continue;
-        }
-        if store_root.to_str() != Some(slot.store_root_v2()) {
-            return Err(PopulationRuntimeResolutionErrorV1::new(
-                PopulationRuntimeResolutionErrorKindV1::AuthorityMismatch,
-            ));
-        }
-    }
-
+    // No store_root string cross-check here (fixed; see this function's
+    // own doc comment above): slot_store_roots[i] is the sole physical
+    // location for slot i, authenticated below entirely by hash/seed/
+    // generation, never by comparing it against the manifest's own frozen
+    // store_root label.
     let mut handles = Vec::with_capacity(POPULATION_OPPONENT_SLOT_COUNT_V1);
     for (slot, store_root) in manifest.slots_v2().iter().zip(slot_store_roots) {
         // Mirrors resolve_population_handles_v1's own search-occupant
@@ -642,15 +652,28 @@ mod tests {
         }
 
         #[test]
-        fn resolver_rejects_a_root_mismatch_before_any_filesystem_access() {
+        fn a_relocated_store_root_is_not_rejected_before_filesystem_access() {
+            // Proves the fix: slot_store_roots is a physical LOCATION,
+            // never compared against the manifest's own frozen store_root
+            // string (this program's real, live-caught motivation: the
+            // 8/25 evidence cleanup relocated several C:\ store roots,
+            // permanently frozen in already-sealed historical manifests,
+            // to E:\ archive paths). A caller-supplied path that differs
+            // from the manifest's own declared string must NOT be rejected
+            // by that difference alone -- resolution proceeds to the real
+            // Store read (RunRead here, since this relocated-looking path
+            // does not actually exist on this host either), never
+            // AuthorityMismatch from a string comparison that no longer
+            // exists.
             let manifest = initial_manifest();
             let mut roots = matching_roots(&manifest);
-            roots[3] = PathBuf::from("D:\\wrong\\root");
+            assert_ne!(roots[3].to_str(), Some("D:\\relocated\\root"));
+            roots[3] = PathBuf::from("D:\\relocated\\root");
             assert_eq!(
                 resolve_population_tranche_refresh_opponent_v2(&manifest, &roots)
                     .unwrap_err()
                     .kind_v1(),
-                PopulationRuntimeResolutionErrorKindV1::AuthorityMismatch
+                PopulationRuntimeResolutionErrorKindV1::RunRead
             );
         }
 
