@@ -30,7 +30,8 @@ $evidenceRoot = (New-Item -ItemType Directory -Force -Path $evidenceRoot).FullNa
 $exe = Get-ReleaseTestExecutableCycle3V1 -EvidenceRoot $evidenceRoot -Label 'genesis-smoke'
 Write-Output "RESOLVED_EXE=$exe"
 
-$saved = Set-Cycle3NativeEnvironment -Seed $Seed -Updates $Updates -StoreParent $StoreParent -GpuOrdinal 0 -StopAfterGeneration $StopAfterGeneration -ExpectedResumeGeneration ([Nullable[uint64]](if ($null -eq $StopAfterGeneration) { $null } else { 0 }))
+$expectedResumeGeneration = if ($null -eq $StopAfterGeneration) { $null } else { [Nullable[uint64]]0 }
+$saved = Set-Cycle3NativeEnvironment -Seed $Seed -Updates $Updates -StoreParent $StoreParent -GpuOrdinal 0 -StopAfterGeneration $StopAfterGeneration -ExpectedResumeGeneration $expectedResumeGeneration
 $logPath = Join-Path $evidenceRoot 'genesis-smoke.log'
 try {
     $previous = $ErrorActionPreference
