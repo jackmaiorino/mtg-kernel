@@ -1414,12 +1414,12 @@ mod tests {
             // Section 6 item 2): PopulationOpponentEngineV1's handle array is
             // now slot-kind-tagged. This fixture predates search-slot support
             // and stays all-Checkpoint, unchanged in behavior.
-            let population_handles: [crate::native_population_opponent_v1::PopulationSlotOccupantV1; 8] =
-                std::array::from_fn(|_| {
-                    crate::native_population_opponent_v1::PopulationSlotOccupantV1::Checkpoint(
-                        handles.next().unwrap(),
-                    )
-                });
+            let population_handles: [crate::native_population_opponent_v1::PopulationSlotOccupantV1;
+                8] = std::array::from_fn(|_| {
+                crate::native_population_opponent_v1::PopulationSlotOccupantV1::Checkpoint(
+                    handles.next().unwrap(),
+                )
+            });
             let population = Arc::new(PopulationOpponentEngineV1::new_v1(
                 crate::native_population_opponent_v1::PopulationWeightVectorV1::new_v1(
                     [1, 2, 3, 4, 5, 6, 0, 0],

@@ -542,9 +542,10 @@ fn validate_slots_v1(wire: &PopulationRefreshManifestWireV1) -> Result<()> {
             )
         })?;
         let is_search_occupant = slot.occupant_class == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1;
-        let occupant_class_registered =
-            matches!(slot.occupant_class.as_str(), "policy" | "historical-fallback")
-                || is_search_occupant;
+        let occupant_class_registered = matches!(
+            slot.occupant_class.as_str(),
+            "policy" | "historical-fallback"
+        ) || is_search_occupant;
         // A search-occupied slot's five legacy Store-identity hashes must be
         // the fixed sentinel (never a real-looking hash); every other
         // occupant class keeps the ordinary is_sha256_v1 format check
@@ -986,9 +987,12 @@ mod tests {
         search_weight: u64,
     ) -> Vec<PopulationRefreshSlotV1> {
         let mut slots = slots_v1(512);
-        let authority =
-            KernelNativeSearchAuthorityV1::current(tier, action_seed, valid_diagnostic_identity_v1())
-                .expect("test authority must construct for a valid (tier, action_seed) pair");
+        let authority = KernelNativeSearchAuthorityV1::current(
+            tier,
+            action_seed,
+            valid_diagnostic_identity_v1(),
+        )
+        .expect("test authority must construct for a valid (tier, action_seed) pair");
         let search_authority = PopulationSearchAuthoritySlotV1::from_authority_v1(&authority);
         slots[6] = PopulationRefreshSlotV1::new_v1(
             6,
@@ -1061,15 +1065,26 @@ mod tests {
         // unchanged.
         let redecoded =
             decode_population_refresh_manifest_v1(manifest.canonical_bytes_v1(), None).unwrap();
-        assert_eq!(redecoded.canonical_bytes_v1(), manifest.canonical_bytes_v1());
-        assert_eq!(redecoded.manifest_sha256_v1(), manifest.manifest_sha256_v1());
+        assert_eq!(
+            redecoded.canonical_bytes_v1(),
+            manifest.canonical_bytes_v1()
+        );
+        assert_eq!(
+            redecoded.manifest_sha256_v1(),
+            manifest.manifest_sha256_v1()
+        );
         let slot = &redecoded.slots_v1()[6];
-        assert_eq!(slot.occupant_class_v1(), KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1);
+        assert_eq!(
+            slot.occupant_class_v1(),
+            KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1
+        );
         assert_eq!(
             slot.weight_units_v1(),
             POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1
         );
-        let search_authority = slot.search_authority_v1().expect("search config must survive");
+        let search_authority = slot
+            .search_authority_v1()
+            .expect("search config must survive");
         assert_eq!(search_authority.tier_v1(), KernelNativeSearchTierV1::T2048);
         assert_eq!(
             search_authority.action_seed_v1(),
@@ -1081,8 +1096,9 @@ mod tests {
         // manifest built before this field existed (skip_serializing_if
         // omits it entirely when `None`).
         let ordinary = build_population_refresh_manifest_v1(0, None, None, slots_v1(512)).unwrap();
-        assert!(!String::from_utf8_lossy(ordinary.canonical_bytes_v1())
-            .contains("search_authority"));
+        assert!(
+            !String::from_utf8_lossy(ordinary.canonical_bytes_v1()).contains("search_authority")
+        );
     }
 
     #[test]
@@ -1166,7 +1182,8 @@ mod tests {
                     POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
                 ),
                 |value| {
-                    value["slots"][6]["search_authority"]["evaluator_sha256"] = json!("f".repeat(64))
+                    value["slots"][6]["search_authority"]["evaluator_sha256"] =
+                        json!("f".repeat(64))
                 },
                 None
             ),
@@ -1187,7 +1204,8 @@ mod tests {
                     KernelNativeSearchTierV1::T2048,
                     POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
                 ),
-                |value| value["slots"][4]["occupant_class"] = json!(KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1),
+                |value| value["slots"][4]["occupant_class"] =
+                    json!(KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1),
                 None
             ),
             PopulationRefreshManifestErrorKindV1::InvalidSlots
@@ -1211,7 +1229,8 @@ mod tests {
                 |value| {
                     value["slots"][7]["occupant_class"] =
                         json!(KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1);
-                    value["slots"][7]["search_authority"] = value["slots"][6]["search_authority"].clone();
+                    value["slots"][7]["search_authority"] =
+                        value["slots"][6]["search_authority"].clone();
                     for field in [
                         "source_run_sha256",
                         "checkpoint_sha256",
@@ -1295,7 +1314,8 @@ mod tests {
                     POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
                 ),
                 |value| {
-                    value["slots"][0]["search_authority"] = value["slots"][6]["search_authority"].clone();
+                    value["slots"][0]["search_authority"] =
+                        value["slots"][6]["search_authority"].clone();
                 },
                 None
             ),
@@ -1313,7 +1333,10 @@ mod tests {
                     POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
                 ),
                 |value| {
-                    value["slots"][6].as_object_mut().unwrap().remove("search_authority");
+                    value["slots"][6]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("search_authority");
                 },
                 None
             ),

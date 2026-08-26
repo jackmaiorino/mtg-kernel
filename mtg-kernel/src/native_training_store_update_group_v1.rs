@@ -425,10 +425,7 @@ pub(crate) fn maximum_update_group_json_shape_v2(
         ("opponent_policy_step_count", u63),
         ("opponent_population_slot", u32_value),
         ("opponent_run_sha256", digest),
-        (
-            "opponent_search_authority_sha256",
-            digest,
-        ),
+        ("opponent_search_authority_sha256", digest),
         (
             "opponent_search_tier",
             // "t32768" (6 bytes) is the longest of the four tier strings.
@@ -4281,9 +4278,12 @@ mod tests {
             let slot = episode
                 .opponent_population_slot
                 .expect("a population opponent must record its slot");
-            let expected_slot =
-                population_slot_for_episode_v1(run.record().schedule.base_seed, episode.episode_index, &weights)
-                    .unwrap();
+            let expected_slot = population_slot_for_episode_v1(
+                run.record().schedule.base_seed,
+                episode.episode_index,
+                &weights,
+            )
+            .unwrap();
             assert_eq!(slot, u32::from(expected_slot.index_v1() as u8));
             assert_eq!(
                 episode.opponent_occupant_class.as_deref(),
@@ -4446,7 +4446,8 @@ mod tests {
         fn checkpoint_population_v1() -> Arc<PopulationOpponentEngineV1> {
             let weights = PopulationWeightVectorV1::new_v1([1, 0, 0, 0, 0, 0, 0, 0], 1).unwrap();
             let handles: [PopulationSlotOccupantV1; 8] =
-                checkpoint_inference_handles_for_test_v1::<8>().map(PopulationSlotOccupantV1::Checkpoint);
+                checkpoint_inference_handles_for_test_v1::<8>()
+                    .map(PopulationSlotOccupantV1::Checkpoint);
             Arc::new(PopulationOpponentEngineV1::new_v1(weights, handles))
         }
 
@@ -4459,7 +4460,8 @@ mod tests {
             .unwrap();
             let searcher = Arc::new(KernelNativeSearchOpponentV1::new(authority).unwrap());
             let weights = PopulationWeightVectorV1::new_v1([0, 0, 0, 0, 0, 0, 1, 0], 1).unwrap();
-            let mut checkpoint_handles = checkpoint_inference_handles_for_test_v1::<7>().into_iter();
+            let mut checkpoint_handles =
+                checkpoint_inference_handles_for_test_v1::<7>().into_iter();
             let handles: [PopulationSlotOccupantV1; 8] = std::array::from_fn(|index| {
                 if index == 6 {
                     PopulationSlotOccupantV1::Search(Arc::clone(&searcher))
@@ -4511,7 +4513,11 @@ mod tests {
         eprintln!("TAU-MEASUREMENT means: tau_n = {tau_n:.6}s, tau_s = {tau_s:.6}s (tau_s/tau_n = {:.2}x)", tau_s / tau_n);
         for p in [0.02_f64, 0.10] {
             let share = p * tau_s / (p * tau_s + (1.0 - p) * tau_n);
-            eprintln!("TAU-MEASUREMENT worker-time share at p={:.0}%: {:.4}%", p * 100.0, share * 100.0);
+            eprintln!(
+                "TAU-MEASUREMENT worker-time share at p={:.0}%: {:.4}%",
+                p * 100.0,
+                share * 100.0
+            );
         }
     }
 

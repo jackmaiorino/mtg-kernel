@@ -1903,7 +1903,8 @@ pub struct NativeTrainerEpisodeEvidenceV1 {
     /// names a search-occupied slot; `None` whenever the two Store-identity
     /// fields above are `Some`, and whenever no population opponent (or no
     /// search-occupied slot) is installed.
-    pub opponent_search_tier: Option<crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1>,
+    pub opponent_search_tier:
+        Option<crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1>,
     pub opponent_search_authority_sha256: Option<[u8; 32]>,
     /// Bounded-staleness async-inference provenance, stamped only by the
     /// opt-in async production integration
@@ -3637,7 +3638,8 @@ fn attach_population_opponent_identity_v1(
                 )
             })?;
         episode.opponent_population_slot = Some(slot.index_v1() as u8);
-        episode.opponent_occupant_class = Some(population_opponent.occupant_class_for_slot_v1(slot));
+        episode.opponent_occupant_class =
+            Some(population_opponent.occupant_class_for_slot_v1(slot));
         // CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 5
         // (commit `1d817d7` precedent): exactly one of the two identity
         // pairs is populated, matching `slot_kind_v1`. Pure recomputation
@@ -4277,13 +4279,13 @@ fn changed_non_gauge_parameters_v1(
 mod tests {
     use super::*;
     use crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1;
-    use crate::kernel_native_search_opponent_v1::{
-        KernelNativeSearchAuthorityV1, KernelNativeSearchOpponentV1, KernelNativeSearchTierV1,
-        KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1, KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1,
-    };
     use crate::common_model_snapshot_v1::{
         common_model_snapshot_paths_v1, BASE_SEED_V1 as SNAPSHOT_AUTHORITY_BASE_SEED_V1,
         MODEL_INIT_SEED_V1 as SNAPSHOT_MODEL_INIT_SEED_V1, SNAPSHOT_IDENTITY_V1,
+    };
+    use crate::kernel_native_search_opponent_v1::{
+        KernelNativeSearchAuthorityV1, KernelNativeSearchOpponentV1, KernelNativeSearchTierV1,
+        KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1, KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1,
     };
     use crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1;
     use crate::native_policy_value_net_v1::{
@@ -6255,7 +6257,9 @@ mod tests {
         // 20,000/1,000,000 at T2048, enforced at the manifest-schema layer,
         // tested separately).
         let weights = PopulationWeightVectorV1::new_v1(
-            [71_429, 71_429, 71_429, 71_429, 71_429, 71_429, 499_997, 71_429],
+            [
+                71_429, 71_429, 71_429, 71_429, 71_429, 71_429, 499_997, 71_429,
+            ],
             1_000_000,
         )
         .unwrap();

@@ -310,7 +310,10 @@ impl PopulationOpponentEngineV1 {
     pub(crate) fn search_authority_identity_for_slot_v1(
         &self,
         slot: PopulationSlotV1,
-    ) -> Option<(crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1, [u8; 32])> {
+    ) -> Option<(
+        crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1,
+        [u8; 32],
+    )> {
         match &self.handles[slot.index_v1()] {
             PopulationSlotOccupantV1::Search(searcher) => {
                 let authority = searcher.authority();
