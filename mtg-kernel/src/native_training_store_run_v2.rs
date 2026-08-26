@@ -904,6 +904,17 @@ pub struct TrainRunContractsV2 {
     /// their canonical bytes and behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) response_exploiter_v1: Option<ResponseExploiterContractV1>,
+    /// Population-v2 cycle-2 successor authority (fixed replay plus scaled
+    /// population-program cycle 2). Additive: absent for every pre-cycle-2
+    /// record, so canonical bytes of all prior records are unchanged. Ported
+    /// verbatim (zero field changes) from commit
+    /// 8c8d645d257e79fb7704d778c72ee136627f9218 (the commit that wrote the
+    /// real cycle-2 store), which itself reuses `PopulationSourceLineageV1`
+    /// below for `parent_lineage`. Contract-widening sheet
+    /// CLAUDE-CONTRACT-WIDENING-SHEET-V1.md (SHA a55e0777), Section 1a:
+    /// struct only, no `validate_population_program_v2_cycle2` port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) population_program_v2_cycle2: Option<PopulationProgramContractV2Cycle2>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -942,6 +953,41 @@ pub struct PopulationSourceLineageV1 {
     pub(crate) sidecar_sha256: String,
     pub(crate) state_sha256: String,
     pub(crate) model_parameter_sha256: String,
+}
+
+/// Population-v2 cycle-2 successor authority. Ported verbatim from commit
+/// 8c8d645d257e79fb7704d778c72ee136627f9218's own
+/// `PopulationProgramContractV2Cycle2` (that commit's
+/// `native_training_store_run_v2.rs:1386-1404`), the commit that wrote the
+/// real cycle-2 store this widening exists to decode. Zero field changes;
+/// `parent_lineage` reuses `PopulationSourceLineageV1` above unchanged, an
+/// exact field-for-field match against the real record's `parent_lineage`
+/// object. Struct only: `validate_population_program_v2_cycle2` and its
+/// frozen `POPULATION_*_V2_CYCLE2` literals are deliberately not ported (see
+/// contract-widening sheet CLAUDE-CONTRACT-WIDENING-SHEET-V1.md, SHA
+/// a55e0777, Section 3): this section decodes and is available for
+/// read-only audit/extraction, but its content claims are not authenticated
+/// on main.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopulationProgramContractV2Cycle2 {
+    pub(crate) identity: String,
+    pub(crate) package_commit: String,
+    pub(crate) program_document_sha256: String,
+    pub(crate) retest_manifest_sha256: String,
+    pub(crate) global_generation_offset: u64,
+    pub(crate) local_updates_total: u64,
+    pub(crate) refresh_interval: u64,
+    pub(crate) slot_count: u64,
+    pub(crate) reward_identity: String,
+    pub(crate) refresh_manifest_identity: String,
+    pub(crate) retest_beta_f32_bits: String,
+    pub(crate) expected_base_seed: u64,
+    pub(crate) pool_identity: String,
+    pub(crate) parent_store_local_generation: u64,
+    pub(crate) parent_lineage: PopulationSourceLineageV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) source_lineage_v2: Option<PopulationSourceLineageV1>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
