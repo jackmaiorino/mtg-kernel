@@ -2264,5 +2264,92 @@ mod tests {
             assert_eq!(decoded.slots_v2()[4].role_v2(), "current-0");
             assert_eq!(decoded.slots_v2()[4].source_base_seed_v2(), 975_001);
         }
+
+        /// Task 6 manifest-authoring aid, not a correctness gate: prints the
+        /// real, live-build search-authority JSON sub-record (T2048, the
+        /// authorized production seed 2026082601) to stdout, for splicing
+        /// into hand/script-authored cycle-3 refresh manifests at slots 6/7
+        /// during the four heavy windows. `evaluator_sha256`/`engine_commit`/
+        /// `card_db_hash`/`runtime_deck_catalog_sha256` are live-build-derived
+        /// and must come from this exact construction path
+        /// (`KernelNativeSearchAuthorityV1::current`), never hand-guessed,
+        /// or `matches_fresh_reconstruction_v1()` at decode/resolution time
+        /// will reject the slot.
+        #[test]
+        #[ignore = "manifest-authoring aid: run explicitly with --nocapture to print the real search-authority JSON"]
+        fn print_real_search_authority_json_for_manifest_authoring() {
+            let authority = KernelNativeSearchAuthorityV1::current(
+                KernelNativeSearchTierV1::T2048,
+                2_026_082_601,
+                valid_diagnostic_identity_v1(),
+            )
+            .expect("the authorized production (tier, seed) pair must construct");
+            let sub_record = PopulationSearchAuthoritySlotV1::from_authority_v1(&authority);
+            println!("{}", serde_json::to_string_pretty(&sub_record).unwrap());
+        }
+
+        /// Task 7 preflight, acceptance item 1: "decode-validate all 16
+        /// [cycle-3] manifests through the real decoder chain-linked."
+        ///
+        /// Anchors at the real cycle-2 archive's own terminal link
+        /// (refresh_index 18, global_generation 2,304), decoded via the
+        /// evaluation-only path (this worktree does not hold tranche-1's
+        /// own three genesis links, refresh_index 0-2, so a from-index-0
+        /// production chain walk is not possible on this host -- disclosed
+        /// in the implementation report, not silently worked around). From
+        /// there, all 16 of cycle-3's OWN new manifests (refresh_index
+        /// 19-34) decode through the fully unmodified, chain-checked
+        /// production entry point, `decode_population_tranche_refresh_manifest_v2`,
+        /// each genuinely re-validating schema, generation arithmetic,
+        /// chain continuity (hash + refresh_index succession +
+        /// payoff_panel_sha256 presence), frozen-slot immutability (slots
+        /// 0-3, continued unchanged from the real cycle-2 terminal
+        /// declaration), and slot/weight arithmetic -- this is the real
+        /// gate, not a re-statement of the unit tests above.
+        #[test]
+        fn task7_preflight_all_16_cycle3_manifests_decode_and_chain() {
+            let dir = r"E:\mtg-kernel-population-v2-cycle3\refresh-manifests";
+            let anchor_path = format!("{dir}\\population-v3-refresh-018.json");
+            let Ok(anchor_bytes) = std::fs::read(&anchor_path) else {
+                eprintln!("skipping: {anchor_path} not present on this host");
+                return;
+            };
+            let anchor = decode_population_tranche_refresh_manifest_v2_current_only(&anchor_bytes)
+                .expect("the real cycle-2 terminal link (refresh_index 18) must decode");
+            assert_eq!(anchor.refresh_index_v2(), 18);
+            assert_eq!(anchor.global_generation_v2(), 2_304);
+
+            let mut previous = anchor;
+            const HEAVY: [u64; 4] = [20, 25, 29, 34];
+            for idx in 19_u64..=34 {
+                let path = format!("{dir}\\population-v3-refresh-{idx:03}.json");
+                let bytes = std::fs::read(&path)
+                    .unwrap_or_else(|_| panic!("{path} must be present (run Task 6's authoring script first)"));
+                let decoded = decode_population_tranche_refresh_manifest_v2(&bytes, Some(&previous))
+                    .unwrap_or_else(|error| {
+                        panic!("refresh_index {idx} must chain-decode through the real production path: {error:?}")
+                    });
+                assert_eq!(decoded.refresh_index_v2(), idx);
+                assert_eq!(decoded.global_generation_v2(), idx * 128);
+                let slot6_is_search = decoded.slots_v2()[6].occupant_class_v2()
+                    == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1;
+                assert_eq!(
+                    slot6_is_search,
+                    HEAVY.contains(&idx),
+                    "refresh_index {idx}: slot 6 search-occupancy must match the heavy-window schedule exactly"
+                );
+                if slot6_is_search {
+                    assert_eq!(decoded.slots_v2()[6].weight_units_v2(), 80_000);
+                }
+                previous = decoded;
+            }
+            assert_eq!(previous.refresh_index_v2(), 34);
+            assert_eq!(previous.global_generation_v2(), 4_352);
+            println!(
+                "Task 7 preflight item 1 PASSED: all 16 cycle-3 manifests (refresh_index 19-34) decode \
+                 and chain through the real production path; terminal manifest_sha256={}",
+                lower_hex_raw32_v1(previous.manifest_sha256_v2())
+            );
+        }
     }
 }
