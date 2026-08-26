@@ -1,7 +1,7 @@
 param(
     [string]$StoreParent = 'E:\mtg-kernel-population-v2-cycle3\lineage\smoke-attempt-001',
     [uint64]$Seed = 977002,
-    [uint64]$Updates = 1
+    [uint64]$Updates = 4
 )
 
 $ErrorActionPreference = 'Stop'
