@@ -2308,20 +2308,29 @@ mod tests {
         /// gate, not a re-statement of the unit tests above.
         #[test]
         fn task7_preflight_all_16_cycle3_manifests_decode_and_chain() {
+            // Coordinator-located artifacts (superseding the earlier draft
+            // of this test, which bridged at refresh_index 18 via the
+            // evaluation-only decoder because tranche-1's own genesis
+            // links were believed missing): the real chain now walks from
+            // refresh_index 0 -- tranche-1's own three genesis links
+            // (D:\mtg-kernel-population-v2-tranche1\refresh\), then
+            // cycle-2's real 16 (E:\c-evidence-archive-20260825\...), then
+            // cycle-3's own 16 -- entirely through the fully unmodified,
+            // chain-checked production decoder, never the evaluation-only
+            // path.
             let dir = r"E:\mtg-kernel-population-v2-cycle3\refresh-manifests";
-            let anchor_path = format!("{dir}\\population-v3-refresh-018.json");
-            let Ok(anchor_bytes) = std::fs::read(&anchor_path) else {
-                eprintln!("skipping: {anchor_path} not present on this host");
+            let path0 = format!("{dir}\\population-v3-refresh-000.json");
+            let Ok(bytes0) = std::fs::read(&path0) else {
+                eprintln!("skipping: {path0} not present on this host");
                 return;
             };
-            let anchor = decode_population_tranche_refresh_manifest_v2_current_only(&anchor_bytes)
-                .expect("the real cycle-2 terminal link (refresh_index 18) must decode");
-            assert_eq!(anchor.refresh_index_v2(), 18);
-            assert_eq!(anchor.global_generation_v2(), 2_304);
+            let mut previous = decode_population_tranche_refresh_manifest_v2(&bytes0, None)
+                .expect("refresh_index 0 (tranche-1's own genesis) must decode through the real production path");
+            assert_eq!(previous.refresh_index_v2(), 0);
+            assert_eq!(previous.global_generation_v2(), 0);
 
-            let mut previous = anchor;
             const HEAVY: [u64; 4] = [20, 25, 29, 34];
-            for idx in 19_u64..=34 {
+            for idx in 1_u64..=34 {
                 let path = format!("{dir}\\population-v3-refresh-{idx:03}.json");
                 let bytes = std::fs::read(&path)
                     .unwrap_or_else(|_| panic!("{path} must be present (run Task 6's authoring script first)"));
@@ -2331,23 +2340,26 @@ mod tests {
                     });
                 assert_eq!(decoded.refresh_index_v2(), idx);
                 assert_eq!(decoded.global_generation_v2(), idx * 128);
-                let slot6_is_search = decoded.slots_v2()[6].occupant_class_v2()
-                    == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1;
-                assert_eq!(
-                    slot6_is_search,
-                    HEAVY.contains(&idx),
-                    "refresh_index {idx}: slot 6 search-occupancy must match the heavy-window schedule exactly"
-                );
-                if slot6_is_search {
-                    assert_eq!(decoded.slots_v2()[6].weight_units_v2(), 80_000);
+                if idx >= 19 {
+                    let slot6_is_search = decoded.slots_v2()[6].occupant_class_v2()
+                        == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1;
+                    assert_eq!(
+                        slot6_is_search,
+                        HEAVY.contains(&idx),
+                        "refresh_index {idx}: slot 6 search-occupancy must match the heavy-window schedule exactly"
+                    );
+                    if slot6_is_search {
+                        assert_eq!(decoded.slots_v2()[6].weight_units_v2(), 80_000);
+                    }
                 }
                 previous = decoded;
             }
             assert_eq!(previous.refresh_index_v2(), 34);
             assert_eq!(previous.global_generation_v2(), 4_352);
             println!(
-                "Task 7 preflight item 1 PASSED: all 16 cycle-3 manifests (refresh_index 19-34) decode \
-                 and chain through the real production path; terminal manifest_sha256={}",
+                "Task 7 preflight item 1 PASSED: the COMPLETE real chain (refresh_index 0-34, tranche-1 + \
+                 cycle-2 + cycle-3's own 16) decodes and chains through the real, unmodified, chain-checked \
+                 production decoder end to end; terminal manifest_sha256={}",
                 lower_hex_raw32_v1(previous.manifest_sha256_v2())
             );
         }
