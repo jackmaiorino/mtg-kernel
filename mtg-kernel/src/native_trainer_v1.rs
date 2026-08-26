@@ -6115,17 +6115,12 @@ mod tests {
     // (`NativeTrainerStateV2::run_even_batch_update_v2`, real rollout, real
     // terminal resolution -- this path has no synthetic-terminal code path,
     // so "terminals natural" is inherent, not separately asserted). They
-    // deliberately stop short of `build_update_group_v1`/Store persistence:
-    // that layer's own wire schema (`EpisodeWireV1`,
-    // `native_training_store_update_group_v1.rs`) does not yet carry the two
-    // new opponent-identity fields this sheet's Section 6 item 5 adds to
-    // `NativeTrainerEpisodeEvidenceV1`, a materially larger, pinned-contract-
-    // hash-bearing surface (`UPDATE_GROUP_RECORD_CONTRACT_SHA256_V1`,
-    // `maximum_update_group_json_shape_v2`) the countersigned sheet did not
-    // name and this pass does not touch. See the implementation report for
-    // the full gap description; closing it is follow-up work requiring its
-    // own review, not something to do unilaterally here (no silent pinned-
-    // hash recomputation).
+    // deliberately stop short of `build_update_group_v1`/Store persistence,
+    // which is covered separately: the wire schema (`EpisodeWireV1`,
+    // `native_training_store_update_group_v1.rs`) carries the searcher
+    // opponent-identity fields as of the reviewed wire-schema extension on
+    // this branch, with its own round-trip, tamper, and frozen-shape
+    // re-baseline tests in that module.
 
     fn search_pool_test_authority_v1() -> KernelNativeSearchAuthorityV1 {
         KernelNativeSearchAuthorityV1::current(
