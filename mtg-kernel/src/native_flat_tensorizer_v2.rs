@@ -8544,4 +8544,273 @@ mod tests {
              (full {full_mean:.1} ns vs skip {skip_mean:.1} ns)"
         );
     }
+
+    /// D5 hash-share remeasurement (throughput-remeasure task, 2026-08-25,
+    /// branch `fable/throughput-remeasure-v1`): scales
+    /// `device_tensorization_hash_share_probe_v1`'s exact method to a
+    /// production-representative corpus of at least
+    /// `MTG_KERNEL_TIMING_HARNESS_TENSORIZE_TARGET_DECISIONS` (default
+    /// 10,000) real decisions, and repeats the whole measurement series
+    /// independently `MTG_KERNEL_TIMING_HARNESS_TENSORIZE_SERIES` (default 3)
+    /// times so the reported hash share is not a single-sample artifact.
+    ///
+    /// Method is identical to the 576-decision probe above: full
+    /// `NativeFlatTensorizerV2::fill` is timed unmodified against the
+    /// test-only `encode_full_decision_skip_hash_v1` reimplementation, which
+    /// calls every real, unmodified private encoder function except the
+    /// canonical-JSON write and SHA-512 digest calls (state tail:
+    /// `write_canonical_observation_v2` / `append_digest_features_v2`; per
+    /// action row: `write_canonical_action_json_v1` /
+    /// `action_hash_features_v1`). See that test's doc comment for why the
+    /// reported share is a conservative LOWER bound (semantic-map
+    /// construction stays in the non-hash bucket even though it exists only
+    /// to be serialized and hashed).
+    ///
+    /// Corpus: deterministic splitmix64-seeded rollouts cycling the four
+    /// Burn/Rally matchup combinations (the only two decks in this
+    /// repository's canonical deck set -- see the throughput-remeasure
+    /// report for the deck/phase/decision-kind caveats this implies),
+    /// stepped with a randomized legal-action choice, growing the scenario
+    /// count until the target decision count is captured. Each captured
+    /// decision is verified against the real, unmodified `fill` path before
+    /// any timing starts.
+    ///
+    /// Invocation (ignored by default; run explicitly):
+    /// ```text
+    /// cargo test --release --lib \
+    ///     native_flat_tensorizer_v2::tests::device_tensorization_hash_share_probe_at_scale_v1 \
+    ///     -- --ignored --exact --nocapture
+    /// ```
+    /// Optional env vars: `MTG_KERNEL_TIMING_HARNESS_TENSORIZE_TARGET_DECISIONS`,
+    /// `MTG_KERNEL_TIMING_HARNESS_TENSORIZE_SERIES` (default 3),
+    /// `MTG_KERNEL_TIMING_HARNESS_TENSORIZE_ROUNDS_PER_SERIES` (default 5).
+    #[test]
+    #[ignore = "manual timing probe: run explicitly with --ignored --exact --nocapture"]
+    fn device_tensorization_hash_share_probe_at_scale_v1() {
+        fn next_random(state: &mut u64) -> u64 {
+            *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut value = *state;
+            value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            value ^ (value >> 31)
+        }
+
+        fn mean_ns(samples: &[u64]) -> f64 {
+            samples.iter().sum::<u64>() as f64 / samples.len() as f64
+        }
+
+        fn median_ns(samples: &[u64]) -> f64 {
+            let mut sorted = samples.to_vec();
+            sorted.sort_unstable();
+            let n = sorted.len();
+            if n.is_multiple_of(2) {
+                (sorted[n / 2 - 1] as f64 + sorted[n / 2] as f64) / 2.0
+            } else {
+                sorted[n / 2] as f64
+            }
+        }
+
+        let target_decisions: usize =
+            std::env::var("MTG_KERNEL_TIMING_HARNESS_TENSORIZE_TARGET_DECISIONS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(10_000);
+        let series_count: usize = std::env::var("MTG_KERNEL_TIMING_HARNESS_TENSORIZE_SERIES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(3);
+        let rounds_per_series: usize =
+            std::env::var("MTG_KERNEL_TIMING_HARNESS_TENSORIZE_ROUNDS_PER_SERIES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(5);
+
+        println!(
+            "harness_config target_decisions={target_decisions} series={series_count} \
+             rounds_per_series={rounds_per_series}"
+        );
+
+        let deck_combos: [[String; 2]; 4] = [
+            ["Burn".to_string(), "Burn".to_string()],
+            ["Rally".to_string(), "Rally".to_string()],
+            ["Burn".to_string(), "Rally".to_string()],
+            ["Rally".to_string(), "Burn".to_string()],
+        ];
+
+        const STEPS_PER_SCENARIO: usize = 96;
+        const MAX_SCENARIOS: usize = 4_000; // safety bound; should never trip
+
+        let mut corpus: Vec<OwnedScoringDecisionV2> =
+            Vec::with_capacity(target_decisions + STEPS_PER_SCENARIO);
+        let mut scenario_index: u64 = 0;
+        while corpus.len() < target_decisions {
+            assert!(
+                (scenario_index as usize) < MAX_SCENARIOS,
+                "hash-share probe: exceeded scenario safety bound before reaching \
+                 {target_decisions} decisions (got {})",
+                corpus.len()
+            );
+            let episode_id = 91_000_u64 + scenario_index;
+            let combo = &deck_combos[(scenario_index as usize) % deck_combos.len()];
+            let deck_ids = [combo[0].clone(), combo[1].clone()];
+            let mut seed_mix = 0x1235_9871_ab34_de56_u64 ^ episode_id.rotate_left(29);
+            let environment_seed =
+                next_random(&mut seed_mix) ^ next_random(&mut seed_mix).rotate_left(13);
+            let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v2(
+                episode_id,
+                environment_seed,
+                512,
+                65_536,
+                deck_ids,
+            )
+            .unwrap();
+            let mut random_state = environment_seed ^ episode_id.rotate_left(17);
+            for _ in 0..STEPS_PER_SCENARIO {
+                let FastActorResponseV1::Decision(expected) = session.current_response() else {
+                    break;
+                };
+                let owned = OwnedScoringDecisionV2::from_session(&session);
+                corpus.push(owned);
+                let selected = (next_random(&mut random_state)
+                    % u64::from(expected.legal_action_count)) as u32;
+                session
+                    .step(expected.episode_id, expected.step, selected)
+                    .unwrap();
+            }
+            scenario_index += 1;
+        }
+
+        assert!(
+            corpus.len() >= target_decisions,
+            "hash-share probe needs at least {target_decisions} genuine decisions, got {}",
+            corpus.len()
+        );
+
+        // Confirm every captured decision passes the real, unmodified fill
+        // path before timing anything (same sanity gate as the 576-decision
+        // probe).
+        let mut tensorizer = NativeFlatTensorizerV2::new();
+        let mut output = NativeFlatDecisionTensorV2::default();
+        let mut action_counts = Vec::with_capacity(corpus.len());
+        for (index, owned) in corpus.iter().enumerate() {
+            tensorizer
+                .fill(owned.view(), &mut output)
+                .unwrap_or_else(|error| {
+                    panic!("corpus decision {index} failed real fill: {error:?}")
+                });
+            action_counts.push(owned.actions.len());
+            let checksum =
+                encode_full_decision_skip_hash_v1(owned.view()).unwrap_or_else(|error| {
+                    panic!("corpus decision {index} failed skip-hash fill: {error:?}")
+                });
+            std::hint::black_box(checksum);
+        }
+
+        let decision_count = corpus.len();
+        let min_actions = *action_counts.iter().min().unwrap();
+        let max_actions = *action_counts.iter().max().unwrap();
+        let mean_actions = action_counts.iter().sum::<usize>() as f64 / decision_count as f64;
+        println!(
+            "harness_corpus decisions={decision_count} scenarios={scenario_index} \
+             steps_per_scenario={STEPS_PER_SCENARIO} deck_combos=4(Burn/Rally only) \
+             actions_min={min_actions} actions_mean={mean_actions:.2} actions_max={max_actions}"
+        );
+
+        const WARMUP_ROUNDS: usize = 1;
+
+        let mut all_full_ns: Vec<u64> =
+            Vec::with_capacity(decision_count * rounds_per_series * series_count);
+        let mut all_skip_ns: Vec<u64> =
+            Vec::with_capacity(decision_count * rounds_per_series * series_count);
+
+        for series_index in 0..series_count {
+            for _ in 0..WARMUP_ROUNDS {
+                for owned in &corpus {
+                    tensorizer.fill(owned.view(), &mut output).unwrap();
+                    std::hint::black_box(&output);
+                    let checksum = encode_full_decision_skip_hash_v1(owned.view()).unwrap();
+                    std::hint::black_box(checksum);
+                }
+            }
+
+            let mut full_samples_ns: Vec<u64> =
+                Vec::with_capacity(decision_count * rounds_per_series);
+            let mut skip_samples_ns: Vec<u64> =
+                Vec::with_capacity(decision_count * rounds_per_series);
+
+            for round in 0..rounds_per_series {
+                let full_first = round % 2 == 0;
+                let sides: [bool; 2] = if full_first {
+                    [true, false]
+                } else {
+                    [false, true]
+                };
+                for measure_full in sides {
+                    if measure_full {
+                        for owned in &corpus {
+                            let view = owned.view();
+                            let start = std::time::Instant::now();
+                            tensorizer.fill(view, &mut output).unwrap();
+                            let elapsed = start.elapsed();
+                            std::hint::black_box(&output);
+                            full_samples_ns.push(elapsed.as_nanos() as u64);
+                        }
+                    } else {
+                        for owned in &corpus {
+                            let view = owned.view();
+                            let start = std::time::Instant::now();
+                            let checksum = encode_full_decision_skip_hash_v1(view).unwrap();
+                            let elapsed = start.elapsed();
+                            std::hint::black_box(checksum);
+                            skip_samples_ns.push(elapsed.as_nanos() as u64);
+                        }
+                    }
+                }
+            }
+
+            let full_mean = mean_ns(&full_samples_ns);
+            let full_median = median_ns(&full_samples_ns);
+            let skip_mean = mean_ns(&skip_samples_ns);
+            let skip_median = median_ns(&skip_samples_ns);
+            let hash_share_mean_pct = (full_mean - skip_mean) / full_mean * 100.0;
+            let hash_share_median_pct = (full_median - skip_median) / full_median * 100.0;
+
+            println!(
+                "harness_result series={series_index} decisions={decision_count} \
+                 samples_per_side={} full_mean_ns={full_mean:.1} full_median_ns={full_median:.1} \
+                 skip_mean_ns={skip_mean:.1} skip_median_ns={skip_median:.1} \
+                 hash_share_mean_pct={hash_share_mean_pct:.2} hash_share_median_pct={hash_share_median_pct:.2}",
+                full_samples_ns.len(),
+            );
+
+            all_full_ns.extend_from_slice(&full_samples_ns);
+            all_skip_ns.extend_from_slice(&skip_samples_ns);
+        }
+
+        let overall_full_mean = mean_ns(&all_full_ns);
+        let overall_full_median = median_ns(&all_full_ns);
+        let overall_skip_mean = mean_ns(&all_skip_ns);
+        let overall_skip_median = median_ns(&all_skip_ns);
+        let overall_hash_share_mean_pct =
+            (overall_full_mean - overall_skip_mean) / overall_full_mean * 100.0;
+        let overall_hash_share_median_pct =
+            (overall_full_median - overall_skip_median) / overall_full_median * 100.0;
+
+        println!(
+            "harness_result series=ALL decisions={decision_count} series_count={series_count} \
+             samples_per_side={} full_mean_ns={overall_full_mean:.1} full_median_ns={overall_full_median:.1} \
+             skip_mean_ns={overall_skip_mean:.1} skip_median_ns={overall_skip_median:.1} \
+             hash_share_mean_pct={overall_hash_share_mean_pct:.2} hash_share_median_pct={overall_hash_share_median_pct:.2}",
+            all_full_ns.len(),
+        );
+
+        assert!(decision_count >= target_decisions);
+        assert!(overall_full_mean > 0.0);
+        assert!(overall_skip_mean > 0.0);
+        assert!(
+            overall_full_mean >= overall_skip_mean,
+            "skip-hash path should never be slower than the full path on average \
+             (full {overall_full_mean:.1} ns vs skip {overall_skip_mean:.1} ns)"
+        );
+    }
 }

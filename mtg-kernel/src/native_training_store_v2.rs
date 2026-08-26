@@ -39,7 +39,9 @@ use crate::native_training_store_reference_latest_v2::{
     ValidatedCheckpointReferenceV2, ValidatedLatestRecordV2,
 };
 use crate::native_training_store_resume_v2::{
-    validate_native_training_store_for_publication_v2, NativeTrainingStoreResumeV2ErrorKind,
+    final_expectation_v2, validate_native_training_store_for_publication_v2,
+    NativeTrainingStoreContinuationSessionV2, NativeTrainingStoreFinalExpectationV2,
+    NativeTrainingStoreResumeV2ErrorKind, NativeTrainingStoreTipProofV2,
     ValidatedNativeTrainingStoreStateV2,
 };
 use crate::native_training_store_root_v2::{
@@ -288,8 +290,62 @@ pub fn publish_prepared_segment_v2(
         parent,
         parent_checkpoint,
         prepared,
+        None,
         |_| Ok(()),
     )
+    .map(|(receipt, _facts)| receipt)
+}
+
+/// StoreV3 port (D1, `collab/CLAUDE-STOREV3-PORT-PLAN-V1.md` section 2): the
+/// session-aware sibling of `publish_prepared_segment_v2`, an additive entry
+/// point per the plan's section 2 recommendation so the other 20
+/// `publish_prepared_segment_v2` call sites (mostly test scaffolding) need no
+/// change. `parent_tip_proof` should be the exact `tip_proof` a resume call
+/// in this same science-loop window returned on its
+/// `NativeTrainingStoreResumeContinueV2`; `windows_since_full_walk` should be
+/// that same continuation's counter. Returns the receipt plus a freshly
+/// established session for the following window's resume call.
+///
+/// `pub(crate)`: internal science-loop plumbing, like
+/// `NativeTrainingStoreContinuationSessionV2` itself, not part of the
+/// crate's public publisher API surface.
+pub(crate) fn publish_prepared_segment_with_session_v2(
+    root: &ValidatedNativeTrainingStoreRootV2,
+    run: &ValidatedTrainRunV2,
+    parent: &ValidatedNativeTrainingBoundaryV2,
+    parent_checkpoint: &CheckpointManifestV3,
+    prepared: &NativeTrainingPreparedSegmentV2<'_>,
+    parent_tip_proof: &NativeTrainingStoreTipProofV2,
+    windows_since_full_walk: u32,
+) -> PublisherResult<(
+    NativeTrainingPersistenceReceiptV2,
+    NativeTrainingStoreContinuationSessionV2,
+)> {
+    let (receipt, facts) = publish_prepared_segment_with_hook_v2(
+        root,
+        run,
+        parent,
+        parent_checkpoint,
+        prepared,
+        Some(parent_tip_proof),
+        |_| Ok(()),
+    )?;
+    // A full walk having just run (on either side of this window) resets the
+    // cadence clock regardless of what the incoming counter was; otherwise
+    // one more shortcut-only window has elapsed since the last one.
+    let outgoing_windows_since_full_walk = if facts.authority_shortcut_used {
+        windows_since_full_walk.saturating_add(1)
+    } else {
+        0
+    };
+    let session = NativeTrainingStoreContinuationSessionV2::new_v1(
+        facts.reopened.checkpoint,
+        facts.reopened.boundary,
+        facts.reopened.reference,
+        facts.tip_proof,
+        outgoing_windows_since_full_walk,
+    );
+    Ok((receipt, session))
 }
 
 fn publish_prepared_segment_with_hook_v2(
@@ -298,8 +354,12 @@ fn publish_prepared_segment_with_hook_v2(
     parent: &ValidatedNativeTrainingBoundaryV2,
     parent_checkpoint: &CheckpointManifestV3,
     prepared: &NativeTrainingPreparedSegmentV2<'_>,
+    tip_proof: Option<&NativeTrainingStoreTipProofV2>,
     hook: impl FnMut(PublisherBoundaryV2) -> PublisherResult<()>,
-) -> PublisherResult<NativeTrainingPersistenceReceiptV2> {
+) -> PublisherResult<(
+    NativeTrainingPersistenceReceiptV2,
+    PublishedGenerationSessionFactsV1,
+)> {
     let view = prepared.publication_view_v2();
     let continuations = (0..view.continuation_count_v2())
         .map(|index| {
@@ -333,6 +393,7 @@ fn publish_prepared_segment_with_hook_v2(
             parent_checkpoint,
         },
         &input,
+        tip_proof,
         hook,
     )
 }
@@ -391,7 +452,8 @@ fn publish_genesis_generation_with_hook_v2(
         checkpoint_reference: genesis_reference.canonical_bytes(),
         latest: genesis_latest.canonical_bytes(),
     };
-    publish_generation_v2(root, run, PublisherParentV2::Genesis, &input, hook)
+    publish_generation_v2(root, run, PublisherParentV2::Genesis, &input, None, hook)
+        .map(|(receipt, _facts)| receipt)
 }
 
 /// One immutable artifact scheduled in the frozen publication order.
@@ -490,13 +552,32 @@ impl PublicationParentsV2 {
     }
 }
 
+/// StoreV3 port (D1): everything a session-aware caller needs about the
+/// generation `publish_generation_v2` just durably published, beyond the
+/// receipt itself. Every non-session-aware caller (genesis, and the
+/// unchanged `publish_prepared_segment_v2`) simply discards this.
+#[derive(Debug)]
+struct PublishedGenerationSessionFactsV1 {
+    reopened: ReopenedGenerationV2,
+    tip_proof: NativeTrainingStoreTipProofV2,
+    /// Whether `require_current_publication_authority_v2` proved currentness
+    /// via the O(1) shortcut (`true`) or the full walk (`false`); see that
+    /// function's own doc for why this matters for the outgoing session's
+    /// cadence counter.
+    authority_shortcut_used: bool,
+}
+
 fn publish_generation_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
     run: &ValidatedTrainRunV2,
     parent: PublisherParentV2<'_>,
     input: &GenerationPublicationInputV2<'_>,
+    tip_proof: Option<&NativeTrainingStoreTipProofV2>,
     mut hook: impl FnMut(PublisherBoundaryV2) -> PublisherResult<()>,
-) -> PublisherResult<NativeTrainingPersistenceReceiptV2> {
+) -> PublisherResult<(
+    NativeTrainingPersistenceReceiptV2,
+    PublishedGenerationSessionFactsV1,
+)> {
     // Dual-Profile Catalog Successor (collab CLAUDE #220), publisher
     // boundary: reject a historical-profile run before any other check,
     // lock, or filesystem mutation. Both `publish_genesis_generation_v2` and
@@ -535,8 +616,8 @@ fn publish_generation_v2(
 
     let inventory =
         validate_publication_inventory_v2(root, &parent, input.generation_index, &scheduled, true)?;
-    require_current_publication_authority_v2(
-        root, run, &parent, input, &scheduled, &parents, &inventory,
+    let authority_shortcut_used = require_current_publication_authority_v2(
+        root, run, &parent, input, &scheduled, &parents, &inventory, tip_proof,
     )?;
     prevalidate_publication_candidate_v2(run, &parent, input)?;
 
@@ -585,8 +666,71 @@ fn publish_generation_v2(
         observed.checkpoint_payload_sha256,
         observed.checkpoint_manifest_sha256,
     );
+    let tip_proof_out = tip_proof_from_published_input_v1(input)?;
     drop(lock);
-    Ok(receipt)
+    Ok((
+        receipt,
+        PublishedGenerationSessionFactsV1 {
+            reopened: observed,
+            tip_proof: tip_proof_out,
+            authority_shortcut_used,
+        },
+    ))
+}
+
+/// StoreV3 port (D1): projects the exact bytes just durably published (and
+/// already independently reopened/byte-verified by
+/// `revalidate_latest_and_referenced_v2` above) into an O(1)-sized tip proof
+/// for the outgoing session -- no extra I/O, since every byte slice here was
+/// already read for publication.
+fn tip_proof_from_published_input_v1(
+    input: &GenerationPublicationInputV2<'_>,
+) -> PublisherResult<NativeTrainingStoreTipProofV2> {
+    let error = publisher_error_v2(NativeTrainingStorePublisherV2ErrorKind::GenerationInvalid);
+    let generation_index = input.generation_index;
+    let build = |final_name: NativeTrainingStoreFinalNameV2, bytes: &[u8]| {
+        final_expectation_v2(final_name, bytes).map_err(|_| error)
+    };
+    let mut final_expectations = Vec::with_capacity(7 + input.continuations.len());
+    final_expectations.push(build(NativeTrainingStoreFinalNameV2::Latest, input.latest)?);
+    final_expectations.push(build(
+        NativeTrainingStoreFinalNameV2::StatePayload { generation_index },
+        input.checkpoint_payload,
+    )?);
+    final_expectations.push(build(
+        NativeTrainingStoreFinalNameV2::CheckpointManifest { generation_index },
+        input.checkpoint_manifest,
+    )?);
+    final_expectations.push(build(
+        NativeTrainingStoreFinalNameV2::SegmentManifest { generation_index },
+        input.segment_manifest,
+    )?);
+    final_expectations.push(build(
+        NativeTrainingStoreFinalNameV2::CheckpointSidecar { generation_index },
+        input.checkpoint_sidecar,
+    )?);
+    final_expectations.push(build(
+        NativeTrainingStoreFinalNameV2::HeadRecord { generation_index },
+        input.head_record,
+    )?);
+    final_expectations.push(build(
+        NativeTrainingStoreFinalNameV2::CheckpointReference { generation_index },
+        input.checkpoint_reference,
+    )?);
+    for (index, continuation) in input.continuations.iter().enumerate() {
+        let continuation_index = u64::try_from(index).map_err(|_| error)?;
+        final_expectations.push(build(
+            NativeTrainingStoreFinalNameV2::SegmentContinuation {
+                generation_index,
+                continuation_index,
+            },
+            continuation,
+        )?);
+    }
+    Ok(NativeTrainingStoreTipProofV2::new_v1(
+        generation_index,
+        final_expectations,
+    ))
 }
 
 fn verify_existing_final_exact_v2(
@@ -636,11 +780,21 @@ fn boundary_authority_matches_v2(
         && observed.head_record_canonical_bytes() == supplied.head_record_canonical_bytes()
 }
 
-fn verify_walked_final_expectations_v2(
+/// Verifies every supplied expectation still reads back exactly as recorded.
+///
+/// StoreV3 port (D1): deliberately takes a bare expectations slice rather
+/// than a full `ValidatedNativeTrainingStoreStateV2`, so the same function
+/// serves both the full-walk slow path (called with the whole-history
+/// vector, via `walk_current_store_through_parents_v2` below) and the O(1)
+/// shortcut's freshness recheck (called with just a
+/// `NativeTrainingStoreTipProofV2`'s tip-generation-only entries, in
+/// `require_current_publication_authority_v2` below) with no behavioral
+/// difference beyond how many entries are supplied.
+fn verify_final_expectations_v2(
     parents: &PublicationParentsV2,
-    walked: &ValidatedNativeTrainingStoreStateV2,
+    expectations: &[NativeTrainingStoreFinalExpectationV2],
 ) -> PublisherResult<()> {
-    for observed in walked.final_expectations_v2().iter().copied() {
+    for observed in expectations.iter().copied() {
         let final_name = observed.final_name();
         if let Err(error) = verify_existing_publication_v1(
             parents.parent_v2(final_name.directory()),
@@ -678,7 +832,7 @@ fn walk_current_store_through_parents_v2(
 ) -> PublisherResult<ValidatedNativeTrainingStoreStateV2> {
     let walked = validate_native_training_store_for_publication_v2(root, run)
         .map_err(map_store_validation_error_v2)?;
-    verify_walked_final_expectations_v2(parents, &walked)?;
+    verify_final_expectations_v2(parents, walked.final_expectations_v2())?;
     Ok(walked)
 }
 
@@ -686,6 +840,22 @@ fn walk_current_store_through_parents_v2(
 /// final is byte-equal, the complete committed Store is valid, and the supplied
 /// parent is either the exact current disk boundary or the exact parent of an
 /// already-current idempotent candidate.
+///
+/// StoreV3 port (D1, `collab/CLAUDE-STOREV3-PORT-PLAN-V1.md` section 2):
+/// `tip_proof`, when supplied, lets the common `Trained` case (every window
+/// after genesis) attempt an O(1) recheck -- that the exact parent this
+/// publish was handed is still, byte-for-byte, what a resume call already
+/// proved current moments earlier in the same science-loop window -- instead
+/// of the full `walk_current_store_through_parents_v2` pass. Any absence,
+/// generation-index mismatch, or byte mismatch falls through to exactly
+/// today's full walk, unchanged; the shortcut never substitutes a weaker
+/// check for a stronger one it disagrees with, and it is never attempted for
+/// the genesis or idempotent-retry cases.
+///
+/// Returns whether the O(1) shortcut proved authority (`true`) or the full
+/// walk did (`false`), so the caller can correctly maintain the outgoing
+/// session's periodic-full-walk cadence counter (a full walk having just run
+/// resets it, regardless of which side of a window triggered it).
 #[allow(clippy::too_many_arguments)]
 fn require_current_publication_authority_v2(
     root: &ValidatedNativeTrainingStoreRootV2,
@@ -695,7 +865,8 @@ fn require_current_publication_authority_v2(
     scheduled: &[ScheduledImmutableV2<'_>],
     parents: &PublicationParentsV2,
     inventory: &PublicationInventoryV2,
-) -> PublisherResult<()> {
+    tip_proof: Option<&NativeTrainingStoreTipProofV2>,
+) -> PublisherResult<bool> {
     let invalid = publisher_error_v2(NativeTrainingStorePublisherV2ErrorKind::GenerationInvalid);
     match parent {
         PublisherParentV2::Genesis => {
@@ -712,7 +883,7 @@ fn require_current_publication_authority_v2(
                         NativeTrainingStorePublisherV2ErrorKind::StageCorruption,
                     ));
                 }
-                return Ok(());
+                return Ok(false);
             }
 
             verify_existing_final_exact_v2(
@@ -726,7 +897,7 @@ fn require_current_publication_authority_v2(
             // neither semantic validation nor path drift can bless new bytes.
             verify_preexisting_candidate_finals_v2(parents, scheduled, inventory)?;
             if !inventory.latest_present {
-                return Ok(());
+                return Ok(false);
             }
             let walked = walk_current_store_through_parents_v2(root, run, parents)?;
             verify_preexisting_candidate_finals_v2(parents, scheduled, inventory)?;
@@ -739,7 +910,7 @@ fn require_current_publication_authority_v2(
             {
                 return Err(invalid);
             }
-            Ok(())
+            Ok(false)
         }
         PublisherParentV2::Trained {
             parent: supplied_parent,
@@ -755,6 +926,27 @@ fn require_current_publication_authority_v2(
                 NativeTrainingStorePublisherV2ErrorKind::ImmutableFinalMismatchCorruption,
             )?;
             verify_preexisting_candidate_finals_v2(parents, scheduled, inventory)?;
+
+            // O(1) shortcut: a retained proof that the exact parent we were
+            // handed is still current, re-verified fresh (never trusted
+            // blindly -- real time, and therefore a possible foreign write,
+            // has passed since the resume call that established it). On
+            // success this is exactly the same fact the full walk below
+            // would prove for this branch (`walked.latest_generation_index()
+            // == parent_checkpoint.generation_index()` with matching
+            // boundary/checkpoint bytes), so it is safe to return directly.
+            // Any absence or mismatch simply falls through to the full walk,
+            // which remains the sole authority for every other case
+            // (including the idempotent-retry branch below, which this
+            // shortcut never attempts).
+            if let Some(tip_proof) = tip_proof {
+                if tip_proof.generation_index() == parent_checkpoint.generation_index()
+                    && verify_final_expectations_v2(parents, tip_proof.final_expectations()).is_ok()
+                {
+                    return Ok(true);
+                }
+            }
+
             let walked = walk_current_store_through_parents_v2(root, run, parents)?;
             verify_preexisting_candidate_finals_v2(parents, scheduled, inventory)?;
             let current_latest =
@@ -767,14 +959,14 @@ fn require_current_publication_authority_v2(
                     && walked.latest_checkpoint().canonical_bytes()
                         == parent_checkpoint.canonical_bytes()
                 {
-                    return Ok(());
+                    return Ok(false);
                 }
                 return Err(invalid);
             }
             if walked.latest_generation_index() == input.generation_index
                 && current_latest.canonical_bytes() == input.latest
             {
-                return Ok(());
+                return Ok(false);
             }
             Err(invalid)
         }
@@ -1181,12 +1373,22 @@ fn read_exact_final_v2(
 }
 
 /// Decoded authorities reconstructed strictly from reopened final bytes.
+#[derive(Debug)]
 struct ReopenedGenerationV2 {
     boundary: ValidatedNativeTrainingBoundaryV2,
     reference: ValidatedCheckpointReferenceV2,
     generation_index: u64,
     checkpoint_payload_sha256: [u8; 32],
     checkpoint_manifest_sha256: [u8; 32],
+    /// StoreV3 port (D1): the decoded checkpoint object, retained (not just
+    /// hashed) so `publish_prepared_segment_with_session_v2` can carry it
+    /// straight into the outgoing `NativeTrainingStoreContinuationSessionV2`
+    /// without a second reopen/redecode pass. The session does not need the
+    /// reopened payload bytes themselves (only the resume-side freshness
+    /// probe reads those, fresh, when it next needs them), so unlike the
+    /// checkpoint object they are not threaded through here; every other
+    /// caller of `decode_generation_candidate_v2` simply ignores this field.
+    checkpoint: CheckpointManifestV3,
 }
 
 fn decode_generation_candidate_v2(
@@ -1264,12 +1466,15 @@ fn decode_generation_candidate_v2(
     }
     let reference = decode_checkpoint_reference_v2(input.checkpoint_reference, run, &boundary)
         .map_err(|_| error)?;
+    let checkpoint_payload_sha256 = sha256_v1(input.checkpoint_payload);
+    let checkpoint_manifest_sha256 = sha256_v1(input.checkpoint_manifest);
     Ok(ReopenedGenerationV2 {
         boundary,
         reference,
         generation_index: input.generation_index,
-        checkpoint_payload_sha256: sha256_v1(input.checkpoint_payload),
-        checkpoint_manifest_sha256: sha256_v1(input.checkpoint_manifest),
+        checkpoint_payload_sha256,
+        checkpoint_manifest_sha256,
+        checkpoint,
     })
 }
 
@@ -2013,6 +2218,7 @@ mod windows_publisher_tests {
                 parent_checkpoint: &genesis.checkpoint,
             },
             &input,
+            None,
             |_| Ok(()),
         )
         .unwrap_err();
@@ -2051,7 +2257,7 @@ mod windows_publisher_tests {
         fs::write(&payload_path, corrupted).unwrap();
 
         assert_eq!(
-            verify_walked_final_expectations_v2(&parents, &walked)
+            verify_final_expectations_v2(&parents, walked.final_expectations_v2())
                 .unwrap_err()
                 .kind(),
             NativeTrainingStorePublisherV2ErrorKind::GenerationInvalid
@@ -2374,6 +2580,7 @@ mod windows_publisher_tests {
                 &genesis.boundary,
                 &genesis.checkpoint,
                 &prepared,
+                None,
                 |reached| {
                     if reached == boundary {
                         Err(injected)
@@ -2500,6 +2707,7 @@ mod windows_publisher_tests {
             &genesis.boundary,
             &genesis.checkpoint,
             &prepared,
+            None,
             |reached| {
                 if reached == PublisherBoundaryV2::BeforeLatestReplacement {
                     Err(injected)
@@ -2692,5 +2900,97 @@ mod windows_publisher_tests {
             0,
             "no generation content may exist under a mismatching run"
         );
+    }
+}
+
+/// MEASUREMENT HARNESS ONLY -- not part of the product surface.
+///
+/// StoreV3 port task (2026-08-25, branch `fable/storev3-port-v1`): gate (a-2)
+/// pre-port baseline, closing the countersigned port plan's blocker that the
+/// publish-side full walk had never been separately timed (V1's ~5h/lineage
+/// figure covered the resume-side walk only). This times the *publish-side*
+/// entry point into the exact same full-walk chokepoint the resume-side
+/// harnesses (`6d6df9c`, `c06c0f9`) already price:
+/// `validate_native_training_store_for_publication_v2` is a one-line wrapper
+/// around `walk_complete_store_v2` (see `native_training_store_resume_v2.rs`),
+/// reached in production from `publish_prepared_segment_v2` via
+/// `publish_generation_v2` -> `require_current_publication_authority_v2` ->
+/// `walk_current_store_through_parents_v2` (this file). Using the identical
+/// production entry point the publisher itself calls keeps this number
+/// directly comparable to the resume-side full-walk baseline on the same
+/// Store copy, per the port plan's gate (a) (section 5, option (i)).
+///
+/// Read-only: `validate_native_training_store_for_publication_v2` takes only
+/// the shared reader lock via the resume-side walk; no file is ever written,
+/// renamed, or deleted by this module.
+///
+/// Invocation (ignored by default; run explicitly):
+/// ```text
+/// set MTG_KERNEL_TIMING_HARNESS_STORE_ROOT=D:\path\to\store
+/// set MTG_KERNEL_TIMING_HARNESS_REPEATS=3
+/// cargo test --release --features native-training-store-v2-production \
+///     --lib native_training_store_v2_publication_walk_timing_harness_v1 -- --ignored --nocapture
+/// ```
+#[cfg(test)]
+mod native_training_store_v2_publication_walk_timing_harness_v1 {
+    use crate::native_training_store_resume_v2::validate_native_training_store_for_publication_v2;
+    use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
+    use crate::native_training_store_run_v2::decode_train_run_v2;
+    use std::time::Instant;
+
+    /// Reads `MTG_KERNEL_TIMING_HARNESS_STORE_ROOT`, opens that path as a
+    /// Store root, decodes its `run.json`, then calls the real publish-side
+    /// entry point `validate_native_training_store_for_publication_v2`
+    /// `MTG_KERNEL_TIMING_HARNESS_REPEATS` times (default 3), printing each
+    /// wall time in microseconds plus the proven `latest_generation_index` so
+    /// the caller can bind the timing to a depth without trusting an
+    /// external label.
+    #[test]
+    #[ignore = "measurement harness: needs MTG_KERNEL_TIMING_HARNESS_STORE_ROOT set to a real Store copy"]
+    fn measure_walk_current_store_through_parents_wall_time_v1() {
+        let root_path = std::env::var("MTG_KERNEL_TIMING_HARNESS_STORE_ROOT")
+            .expect("set MTG_KERNEL_TIMING_HARNESS_STORE_ROOT to a Store root directory");
+        let repeats: u32 = std::env::var("MTG_KERNEL_TIMING_HARNESS_REPEATS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(3);
+
+        println!("publish_harness_store_root={root_path}");
+
+        let run_json_path = std::path::Path::new(&root_path).join("run.json");
+        let run_bytes = std::fs::read(&run_json_path).unwrap_or_else(|error| {
+            panic!("harness_error=read_run_json path={run_json_path:?} error={error}")
+        });
+        let run = decode_train_run_v2(&run_bytes)
+            .unwrap_or_else(|error| panic!("harness_error=decode_train_run_v2 error={error}"));
+
+        let root =
+            ValidatedNativeTrainingStoreRootV2::open_v2(&root_path).unwrap_or_else(|error| {
+                panic!("harness_error=open_v2 code={} error={error}", error.code())
+            });
+
+        for repeat_index in 0..repeats {
+            root.recapture_v2().unwrap_or_else(|error| {
+                panic!(
+                    "harness_error=recapture_v2 code={} error={error}",
+                    error.code()
+                )
+            });
+            let started = Instant::now();
+            let state = validate_native_training_store_for_publication_v2(&root, &run)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "harness_error=validate_native_training_store_for_publication_v2 code={} error={error}",
+                        error.kind().code()
+                    )
+                });
+            let elapsed = started.elapsed();
+            println!(
+                "publish_harness_result repeat={repeat_index} latest_generation_index={} elapsed_micros={} elapsed_secs={:.6}",
+                state.latest_generation_index(),
+                elapsed.as_micros(),
+                elapsed.as_secs_f64(),
+            );
+        }
     }
 }

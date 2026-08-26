@@ -45,9 +45,20 @@ use crate::native_training_store_reference_latest_v2::{
     build_checkpoint_reference_v2, build_latest_v2,
 };
 use crate::native_training_store_resume_v2::{
-    load_native_training_boundary_v2, resume_native_training_store_v2,
-    validate_native_training_store_v2, NativeTrainingStoreResumeV2,
+    load_native_training_boundary_v2, resume_native_training_store_with_session_v2,
+    validate_native_training_store_v2, NativeTrainingStoreContinuationSessionV2,
+    NativeTrainingStoreResumeV2,
 };
+// StoreV3 port (D1): the production loop below now resumes through
+// `resume_native_training_store_with_session_v2` above; this unqualified
+// name is retained only by `windows_science_loop_tests` (`cfg(all(test,
+// windows))`) test scaffolding that still exercises the plain full-walk
+// entry point directly, which is why it needs its own cfg-conditional
+// import matching that module's gate rather than joining the unconditional
+// block above (which would otherwise warn as unused on every non-Windows or
+// non-test build, including both clippy gates).
+#[cfg(all(test, windows))]
+use crate::native_training_store_resume_v2::resume_native_training_store_v2;
 use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
 use crate::native_training_store_run_v2::ValidatedTrainRunV2;
 use crate::native_training_store_segment_manifest_v2::build_genesis_segment_manifest_v2;
@@ -701,9 +712,21 @@ fn run_native_science_loop_with_opponents_v1(
     // executor and commits only through the durable receipt.
     #[cfg(test)]
     let mut resume_generation_checked = expected_resume_generation.is_none();
+    // StoreV3 port (D1, `collab/CLAUDE-STOREV3-PORT-PLAN-V1.md` section 2):
+    // retained across windows so resume and publish can O(1)-reverify
+    // currentness instead of re-walking the whole Store on every window.
+    // `None` on the first iteration (and after any invalidation) forces
+    // exactly today's full walk on both sides; a fresh session is always
+    // produced by a successful publish for the following iteration.
+    let mut continuation_session: Option<NativeTrainingStoreContinuationSessionV2> = None;
     let latest_generation_index = loop {
-        let resumed = resume_native_training_store_v2(&root, run, execution_config.clone())
-            .map_err(map_busy_v1(
+        let resumed = resume_native_training_store_with_session_v2(
+            &root,
+            run,
+            execution_config.clone(),
+            continuation_session.take(),
+        )
+        .map_err(map_busy_v1(
             NativeScienceLoopV1ErrorKind::TrainFailed,
             |error: &crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2Error| {
                 error.kind() == NativeTrainingStoreResumeV2ErrorKind::StoreBusy
@@ -782,24 +805,28 @@ fn run_native_science_loop_with_opponents_v1(
                     let _ = error;
                     train_error
                 })?;
-                let receipt = crate::native_training_store_v2::publish_prepared_segment_v2(
-                    &root,
-                    run,
-                    &continuation.parent_boundary,
-                    &continuation.parent_checkpoint,
-                    &prepared,
-                )
-                .map_err(|error| {
-                    #[cfg(test)]
-                    eprintln!(
-                        "science-loop segment publication failure: kind={:?} code={}",
-                        error.kind(),
-                        error.code()
-                    );
-                    #[cfg(not(test))]
-                    let _ = error;
-                    train_error
-                })?;
+                let (receipt, next_session) =
+                    crate::native_training_store_v2::publish_prepared_segment_with_session_v2(
+                        &root,
+                        run,
+                        &continuation.parent_boundary,
+                        &continuation.parent_checkpoint,
+                        &prepared,
+                        &continuation.tip_proof,
+                        continuation.windows_since_full_walk,
+                    )
+                    .map_err(|error| {
+                        #[cfg(test)]
+                        eprintln!(
+                            "science-loop segment publication failure: kind={:?} code={}",
+                            error.kind(),
+                            error.code()
+                        );
+                        #[cfg(not(test))]
+                        let _ = error;
+                        train_error
+                    })?;
+                continuation_session = Some(next_session);
                 prepared.commit_v2(receipt).map_err(|error| {
                     #[cfg(test)]
                     eprintln!(

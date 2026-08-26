@@ -296,6 +296,10 @@ pub mod native_training_store_reference_latest_v2;
 #[cfg(test)]
 mod native_gate3_terminal_blind_coefficient_screen_v1;
 pub mod native_training_store_v2;
+// MEASUREMENT HARNESS ONLY (throughput remeasure task, 2026-08-25): times
+// the real read-only `validate_native_training_store_v2` genesis-to-latest
+// walk against an externally supplied Store copy. Test-only, ignored by
+// default, never built into the product binary.
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
@@ -307,6 +311,8 @@ pub mod runtime_decks;
 pub mod sideboard;
 pub mod snapshot;
 pub mod state;
+#[cfg(test)]
+mod store_v2_resume_walk_timing_harness_v1;
 /// Frozen committed-source-tree capture for science workload preflight and
 /// postflight binding.
 pub mod strict_source_tree_attestation_v1;
