@@ -1,7 +1,22 @@
 param(
     [string]$StoreParent = 'E:\mtg-kernel-population-v2-cycle3\lineage\smoke-attempt-001',
     [uint64]$Seed = 977002,
-    [uint64]$Updates = 4
+    [uint64]$Updates = 4,
+    # FIX (caught 2026-08-26 building the REAL genesis): with no
+    # StopAfterGeneration, the underlying loop trains all the way to
+    # $Updates before returning -- fine for the smoke-test default (4,
+    # fast), but calling this with the real whole-lineage schedule
+    # (-Updates 2048, so the run's own persisted schedule matches every
+    # later refresh launch) would try to run the ENTIRE 2048-update
+    # campaign in this one blocking call (confirmed empirically: still
+    # running past 45 minutes, had to be killed). Genesis only needs to
+    # PUBLISH generation 0 (the warm-started import) and stop -- the
+    # per-refresh launches (refresh1-searcher-smoke.ps1) each separately
+    # advance local generation by exactly 128 per call via their own
+    # StopAfterGeneration. Nullable so the smoke-test default behavior
+    # (no early stop, train the full small -Updates count) is unchanged
+    # unless a caller opts in.
+    [Nullable[uint64]]$StopAfterGeneration
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +30,7 @@ $evidenceRoot = (New-Item -ItemType Directory -Force -Path $evidenceRoot).FullNa
 $exe = Get-ReleaseTestExecutableCycle3V1 -EvidenceRoot $evidenceRoot -Label 'genesis-smoke'
 Write-Output "RESOLVED_EXE=$exe"
 
-$saved = Set-Cycle3NativeEnvironment -Seed $Seed -Updates $Updates -StoreParent $StoreParent -GpuOrdinal 0
+$saved = Set-Cycle3NativeEnvironment -Seed $Seed -Updates $Updates -StoreParent $StoreParent -GpuOrdinal 0 -StopAfterGeneration $StopAfterGeneration -ExpectedResumeGeneration ([Nullable[uint64]](if ($null -eq $StopAfterGeneration) { $null } else { 0 }))
 $logPath = Join-Path $evidenceRoot 'genesis-smoke.log'
 try {
     $previous = $ErrorActionPreference
