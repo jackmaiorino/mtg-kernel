@@ -13,7 +13,7 @@
     "wall_clock_timeout_seconds": 1800,
     "device_rails": [
       { "device_uuid": "GPU-3502709e-6aef-8ed7-4abe-562838793e3d", "rail_mib": 11442 },
-      { "device_uuid": "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3", "rail_mib": 5393 }
+      { "device_uuid": "GPU-0642d3ca-e3d4-ba16-96ab-c561c6da90e3", "rail_mib": 5750 }
     ]
   },
   "processes": [
