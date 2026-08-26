@@ -274,6 +274,45 @@ const fn response_exploiter_runtime_requirements_satisfied_v1(
         && !population_authority_enabled
 }
 
+/// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 4, A4.4: the new
+/// cross-check between the cycle-3 tranche-refresh manifest chain and the
+/// run-level `population_program_v2_cycle3` contract, "so the manifest
+/// chain and the trainee contract authenticate each other." Neither
+/// `contracts.population_program_v2_cycle3.global_generation_offset`
+/// (2,304, the parent's terminal `global_generation`) nor
+/// `.local_updates_total` (2,048) says anything by itself about which
+/// chain link a given launch resolved; this asserts the chain's own first-
+/// owned and terminal `global_generation` values are exactly
+/// `offset + 128` and `offset + local_updates_total` respectively -- in
+/// addition to, not instead of, the existing launcher-env-var check
+/// (`MULTIRUN_EXPECT_RESUME_GENERATION`/`MULTIRUN_STOP_AFTER_GENERATION`,
+/// immediately above the one call site below) which reads what the
+/// launcher was TOLD to expect, not what the run's own decoded contract
+/// independently states; both must agree, mirroring Amendment 2's own
+/// two-layer (in-code contract, launcher env) discipline rather than
+/// trusting either alone. Extracted as a pure, `const fn` boolean check
+/// (mirroring `response_exploiter_runtime_requirements_satisfied_v1`
+/// immediately above) so it is unit-testable without a decoded record, a
+/// real manifest chain, or a device.
+#[cfg(test)]
+const fn population_v2_cycle3_manifest_chain_binds_contract_v1(
+    contract_global_generation_offset: u64,
+    contract_local_updates_total: u64,
+    first_owned_global_generation: u64,
+    terminal_global_generation: u64,
+) -> bool {
+    let expected_first = contract_global_generation_offset.checked_add(128);
+    let expected_terminal =
+        contract_global_generation_offset.checked_add(contract_local_updates_total);
+    match (expected_first, expected_terminal) {
+        (Some(expected_first), Some(expected_terminal)) => {
+            first_owned_global_generation == expected_first
+                && terminal_global_generation == expected_terminal
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 fn validate_response_exploiter_runtime_bindings_v1(
     run: &ValidatedTrainRunV2,
@@ -1108,6 +1147,38 @@ mod policy_anchor_parse_tests {
             true, true, false, true, 511, false,
         ));
     }
+
+    /// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 4, A4.4: the
+    /// cycle-3 manifest-chain/contract binding, at the pinned real values
+    /// (offset 2,304, local_updates_total 2,048): the first cycle-3-owned
+    /// link is 2,432, the terminal link is 4,352.
+    #[test]
+    fn population_v2_cycle3_manifest_chain_binds_contract_v1_at_the_pinned_values() {
+        assert!(population_v2_cycle3_manifest_chain_binds_contract_v1(
+            2_304, 2_048, 2_432, 4_352,
+        ));
+    }
+
+    #[test]
+    fn population_v2_cycle3_manifest_chain_binds_contract_v1_rejects_wrong_first_link() {
+        assert!(!population_v2_cycle3_manifest_chain_binds_contract_v1(
+            2_304, 2_048, 2_431, 4_352,
+        ));
+    }
+
+    #[test]
+    fn population_v2_cycle3_manifest_chain_binds_contract_v1_rejects_wrong_terminal_link() {
+        assert!(!population_v2_cycle3_manifest_chain_binds_contract_v1(
+            2_304, 2_048, 2_432, 4_351,
+        ));
+    }
+
+    #[test]
+    fn population_v2_cycle3_manifest_chain_binds_contract_v1_rejects_overflow() {
+        assert!(!population_v2_cycle3_manifest_chain_binds_contract_v1(
+            u64::MAX, 2_048, 2_432, 4_352,
+        ));
+    }
 }
 
 #[cfg(all(test, windows))]
@@ -1436,6 +1507,30 @@ mod windows_science_loop_tests {
         let population_cycle3_authority_enabled =
             env_knob_v1("MULTIRUN_POPULATION_CYCLE3_AUTHORITY", 0) != 0;
         let population_runtime_enabled = env_knob_v1("MULTIRUN_POPULATION_RUNTIME", 0) != 0;
+        // CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 4 (countersigned
+        // 00affe6a), A4.3: routes the population-engine RESOLUTION dispatch
+        // (below) to the ported v2 tranche-refresh chain
+        // (decode_population_tranche_refresh_manifest_v2 /
+        // resolve_population_tranche_refresh_opponent_v2) instead of the
+        // base program's v1 chain, mirroring the cycle-2-era branch's own
+        // MULTIRUN_POPULATION_V2_CYCLE2 dispatch idiom (commit 8c8d645):
+        // automatic base_seed membership plus an explicit, bidirectionally
+        // asserted knob, rather than either alone. This is a distinct knob
+        // from MULTIRUN_POPULATION_CYCLE3_AUTHORITY (Task 2's genesis-
+        // stamping knob, which governs record CONSTRUCTION, not pool
+        // RESOLUTION); a cycle-3 launch sets both.
+        const POPULATION_V2_CYCLE3_ACTIVE_BASE_SEEDS_V1: [u64; 1] = [977_002];
+        let population_v2_cycle3_enabled = env_knob_v1("MULTIRUN_POPULATION_V2_CYCLE3", 0) != 0;
+        let population_v2_cycle3_active_dispatch = population_runtime_enabled
+            && POPULATION_V2_CYCLE3_ACTIVE_BASE_SEEDS_V1.contains(&base_seed);
+        assert!(
+            !population_v2_cycle3_enabled || population_v2_cycle3_active_dispatch,
+            "MULTIRUN_POPULATION_V2_CYCLE3=1 requires a cycle-3 base_seed (977002) under MULTIRUN_POPULATION_RUNTIME=1"
+        );
+        assert!(
+            !population_v2_cycle3_active_dispatch || population_v2_cycle3_enabled,
+            "a cycle-3 base_seed (977002) under MULTIRUN_POPULATION_RUNTIME=1 requires MULTIRUN_POPULATION_V2_CYCLE3=1"
+        );
         let response_exploiter_runtime_enabled =
             env_knob_v1("MULTIRUN_RESPONSE_EXPLOITER_RUNTIME", 0) != 0;
         // De-novo response screen (CLAUDE-DENOVO-SCREEN-SHEET-V1.md): an
@@ -1600,7 +1695,83 @@ mod windows_science_loop_tests {
              and exactly one of parent init (warm-start build/screen) or \
              MULTIRUN_RESPONSE_EXPLOITER_DENOVO=1 (fresh-init denovo-screen)"
         );
-        let population_engine = if population_runtime_enabled || response_exploiter_runtime_enabled
+        let population_engine = if population_v2_cycle3_active_dispatch {
+            // Amendment 4 A4.3: the ported v2 tranche-refresh chain, not
+            // the base program's v1 chain immediately below (unedited by
+            // this branch's addition).
+            let chain_paths: Vec<std::path::PathBuf> =
+                std::env::var("MULTIRUN_POPULATION_REFRESH_CHAIN")
+                    .unwrap_or_else(|_| {
+                        panic!(
+                            "v2-cycle3 population runtime requires MULTIRUN_POPULATION_REFRESH_CHAIN"
+                        )
+                    })
+                    .split(';')
+                    .filter(|value| !value.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .collect();
+            assert!(!chain_paths.is_empty(), "cycle-3 population refresh chain is empty");
+            let mut chain = Vec::with_capacity(chain_paths.len());
+            for path in chain_paths {
+                let bytes =
+                    fs::read(&path).expect("cycle-3 population refresh manifest must be readable");
+                let manifest = crate::native_population_refresh_manifest_v1::decode_population_tranche_refresh_manifest_v2(
+                    &bytes,
+                    chain.last(),
+                )
+                .expect("cycle-3 population refresh chain must validate");
+                chain.push(manifest);
+            }
+            let first = chain
+                .first()
+                .expect("cycle-3 population refresh chain is nonempty");
+            let active = chain
+                .last()
+                .expect("cycle-3 population refresh chain is nonempty");
+            let expected_start = expected_resume_generation
+                .expect("v2-cycle3 population runtime requires MULTIRUN_EXPECT_RESUME_GENERATION");
+            let expected_stop = expected_start
+                .checked_add(128)
+                .expect("population interval generation overflow");
+            assert_eq!(active.global_generation_v2(), expected_start);
+            assert_eq!(stop_after_generation, Some(expected_stop));
+            // Amendment 4 A4.4: the manifest chain and the run-level
+            // population_program_v2_cycle3 contract authenticate each
+            // other. The contract is deterministic/side-effect-free
+            // (population_program_v2_cycle3_contract_for_launch_v1, Task
+            // 2's genesis-stamping function, native_training_store_run_v2.rs)
+            // so it is called directly here rather than requiring a
+            // decoded TrainRunV2 record at this point in the dispatch.
+            let contract =
+                crate::native_training_store_run_v2::population_program_v2_cycle3_contract_for_launch_v1(
+                    base_seed,
+                );
+            assert!(
+                population_v2_cycle3_manifest_chain_binds_contract_v1(
+                    contract.global_generation_offset,
+                    contract.local_updates_total,
+                    first.global_generation_v2(),
+                    active.global_generation_v2(),
+                ),
+                "cycle-3 manifest chain's own global_generation bounds must match \
+                 population_program_v2_cycle3's global_generation_offset/local_updates_total"
+            );
+            let slot_roots: Vec<std::path::PathBuf> =
+                std::env::var("MULTIRUN_POPULATION_SLOT_ROOTS")
+                    .unwrap_or_else(|_| {
+                        panic!("v2-cycle3 population runtime requires MULTIRUN_POPULATION_SLOT_ROOTS")
+                    })
+                    .split(';')
+                    .filter(|value| !value.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .collect();
+            let engine = crate::native_population_runtime_resolution_v1::resolve_population_tranche_refresh_opponent_v2(
+                active,
+                &slot_roots,
+            )
+            .expect("cycle-3 population runtime slots must resolve through Store authority");
+            Some(Arc::new(engine))
+        } else if population_runtime_enabled || response_exploiter_runtime_enabled
         {
             let (chain_name, roots_name) = if response_exploiter_runtime_enabled {
                 (
