@@ -514,7 +514,33 @@ pub fn run_native_science_loop_with_population_v1(
     population_opponent: Option<Arc<PopulationOpponentEngineV1>>,
     ladder_init_reference: Option<&GenesisInitializationReferenceV2>,
 ) -> Result<NativeScienceLoopReportV1> {
-    if population_opponent.is_none() || run.record().contracts().population_program_v1.is_none() {
+    // FIX (caught 2026-08-26 on the first real cycle-3 population-runtime
+    // launch to ever reach this far: every earlier real attempt failed
+    // upstream, in the manifest chain/resolver, before this function was
+    // ever called): this is the SOLE call site for every population-
+    // runtime dispatch -- v1's own tranche-1 mechanism, the ported v2
+    // cycle-2 mechanism, and cycle-3's own v2 mechanism alike -- but the
+    // gate below required `population_program_v1` specifically, which
+    // cycle-3's own genesis-stamping deliberately does NOT set (it stamps
+    // `population_program_v2_cycle3` instead; see
+    // `fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2`'s
+    // own doc comment: "Deliberately does not reuse
+    // population_program_fixture_for_seed... that stamping stays
+    // hard-locked to tranche-1 parameters"). This made every real cycle-3
+    // population-runtime launch fail here unconditionally, regardless of
+    // whether the manifest chain/resolver were otherwise correct. Widened
+    // to accept any of the three recognized population-program contract
+    // flavors (v1, v2 cycle-2, v2 cycle-3) -- purely additive: v1's own
+    // existing callers are unaffected (population_program_v1.is_some()
+    // still accepted first), and this does not relax anything else this
+    // function's caller already gates on population_runtime_enabled/the
+    // resolved population_opponent itself.
+    let contracts = run.record().contracts();
+    if population_opponent.is_none()
+        || (contracts.population_program_v1.is_none()
+            && contracts.population_program_v2_cycle2.is_none()
+            && contracts.population_program_v2_cycle3.is_none())
+    {
         return Err(loop_error_v1(NativeScienceLoopV1ErrorKind::InputInvalid));
     }
     match run_native_science_loop_with_opponents_v1(
