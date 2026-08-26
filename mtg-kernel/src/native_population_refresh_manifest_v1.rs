@@ -699,7 +699,11 @@ fn validate_slot_assignment_v1(
                 return Err(invalid());
             }
             if slot.occupant_class == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1 {
-                validate_search_occupant_v1(slot)?;
+                validate_search_occupant_v1(
+                    slot.source_base_seed,
+                    slot.source_generation,
+                    slot.search_authority.as_ref(),
+                )?;
             }
         }
         _ => return Err(invalid()),
@@ -715,14 +719,30 @@ fn validate_slot_assignment_v1(
 /// COUNTERSIGN amendment 3's "two distinct checks" pattern): field-by-field
 /// `.validate()`, then the independent whole-record `matches_fresh_reconstruction_v1()`
 /// rebuild-and-compare.
-fn validate_search_occupant_v1(slot: &PopulationRefreshSlotV1) -> Result<()> {
+///
+/// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 4 (countersigned
+/// 00affe6a), A4.3(ii): generalized from `(slot: &PopulationRefreshSlotV1)`
+/// to these three primitive parameters. The body reads exactly these three
+/// fields and nothing else on the v1 slot type; generalizing the signature
+/// (rather than adding a materially-identical sibling for
+/// `PopulationTrancheRefreshSlotV2`, whose search-occupied slots carry the
+/// same three fields under the same names/types) lets both the v1 and the
+/// ported v2 tranche-refresh validator call the identical function. The one
+/// existing v1 call site (`validate_slots_v1`, immediately above) is updated
+/// to pass its slot's three fields directly; body and observable behavior
+/// are otherwise unchanged.
+fn validate_search_occupant_v1(
+    source_base_seed: u64,
+    source_generation: u64,
+    search_authority: Option<&PopulationSearchAuthoritySlotV1>,
+) -> Result<()> {
     let invalid = || {
         PopulationRefreshManifestErrorV1::new(PopulationRefreshManifestErrorKindV1::InvalidSlots)
     };
-    if slot.source_base_seed != 0 || slot.source_generation != 0 {
+    if source_base_seed != 0 || source_generation != 0 {
         return Err(invalid());
     }
-    let search_authority = slot.search_authority_v1().ok_or_else(invalid)?;
+    let search_authority = search_authority.ok_or_else(invalid)?;
     if search_authority.tier_v1() != POPULATION_SEARCH_ENABLED_TIER_V1 {
         return Err(invalid());
     }
@@ -739,6 +759,528 @@ fn is_sha256_v1(value: &str) -> bool {
             .as_bytes()
             .iter()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+}
+
+// ---------------------------------------------------------------------------
+// Population program V2 tranche/cycle multiplicative-weights TRAINING
+// refresh chain decoder. Ported from the cycle-2-era branch tip (commit
+// `8c8d645`, main repo) per CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md
+// Amendment 4 (countersigned `00affe6a`), Section A4.3. Additive versioned
+// sibling: nothing above this line (v1's closed, population-v1-only chain)
+// is edited except `validate_search_occupant_v1`'s signature (see its own
+// updated doc comment, Amendment 4 A4.3(ii)). A THIRD, independent wire
+// shape from both `PopulationRefreshManifestV1` above and the (deliberately
+// NOT ported, per A4.3's own disclosed scope-narrowing) I9 pool-membership
+// manifest: no `retest_manifest_sha256`, no `availability_generation`;
+// `global_generation = refresh_index * POPULATION_TRANCHE_REFRESH_INTERVAL_V2`
+// with no replay-import offset (tranche-1 starts this chain at generation 0;
+// cycle-2 and cycle-3 are direct continuations of the SAME chain, not fresh
+// ones -- Amendment 4 A4.2/A4.4).
+//
+// Field-shape correction (Amendment 4 A4.3(i), a port correction, not a new
+// decision): field names match the real archived data
+// (`checkpoint_manifest_sha256`, `checkpoint_payload_sha256`, `run_sha256`,
+// `store_root`; no `sidecar_sha256`), confirmed against both `8c8d645`'s own
+// struct and the archived `refresh-000.json`/`population-v2-refresh-003.json`.
+//
+// Searcher-occupant support (Amendment 4 A4.2's disclosed gap, A4.3(ii)):
+// `8c8d645` predates the searcher-pool-registration work (PR #99/#106); its
+// slot type carried no `occupant_class`/`search_authority` field at all.
+// Added here, mirroring `PopulationRefreshSlotV1`'s identical shape and
+// reusing `PopulationSearchAuthoritySlotV1` unchanged (slot-shape-agnostic)
+// plus the five already-defined v1 search constants unchanged (none of them
+// is v1-specific): `KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1`,
+// `POPULATION_SEARCH_SLOT_INDICES_V1`, `POPULATION_SEARCH_ENABLED_TIER_V1`,
+// `POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1`,
+// `POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1`.
+pub(crate) const POPULATION_TRANCHE_INITIAL_REFRESH_SCHEMA_V2: &str =
+    "population-v2-tranche1-initial-refresh/v1";
+pub(crate) const POPULATION_TRANCHE_REFRESH_SCHEMA_V2: &str = "population-v2-tranche1-refresh/v1";
+pub(crate) const POPULATION_TRANCHE_REFRESH_INTERVAL_V2: u64 = 128;
+// Amendment 4 A4.4: raised from `8c8d645`'s cycle-2 value (18) to 34, in
+// place, additively, to accommodate cycle-3's own 16 further refreshes
+// (refresh_index 19 through 34, global_generation 2,432 through 4,352 --
+// exactly the parent's terminal 2,304 plus 128 per refresh, with no new
+// offset term: the existing `refresh_index * 128` formula already produces
+// this once the cap is raised, since cycle-2's own chain already anchors at
+// generation 0 and cycle-3 is a direct continuation of the same chain).
+pub(crate) const POPULATION_TRANCHE_REFRESH_MAX_INDEX_V2: u64 = 34;
+const POPULATION_TRANCHE_REFRESH_SLOT_COUNT_V2: usize = 8;
+const POPULATION_TRANCHE_REFRESH_FROZEN_SLOT_COUNT_V2: usize = 4;
+pub(crate) const POPULATION_PACKAGE_COMMIT_V2: &str = "10ac4b7f24b6ff1fd7b40522b7a7a379b4f6f723";
+pub(crate) const POPULATION_PROGRAM_DOCUMENT_SHA256_V2_PROPOSED: &str =
+    "c3540f385cf2c8d7dae922deb3be10af913a006076077817cc61da109cfd6d88";
+const POPULATION_TRANCHE_REFRESH_ROLE_FLOOR_UNITS_V2: u64 = POPULATION_ROLE_FLOOR_UNITS_V1;
+const POPULATION_TRANCHE_REFRESH_POLICY_CAP_UNITS_V2: u64 = POPULATION_POLICY_CAP_UNITS_V1;
+const POPULATION_TRANCHE_REFRESH_WEIGHT_TOTAL_UNITS_V2: u64 = POPULATION_WEIGHT_TOTAL_UNITS_V1;
+// Search occupancy on a v2 tranche slot carries no real store_root (mirrors
+// the legacy hash fields' own sentinel discipline); `store_root` is a
+// path-shaped field, not a hash, so the sentinel is an empty string rather
+// than a reuse of the 64-hex-char hash sentinel.
+const POPULATION_SEARCH_SLOT_STORE_ROOT_SENTINEL_V2: &str = "";
+
+fn population_tranche_default_occupant_class_v2() -> String {
+    "policy".to_owned()
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PopulationTrancheRefreshSlotV2 {
+    slot_index: u64,
+    role: String,
+    // Amendment 4 A4.3(ii): absent on every real record predating the
+    // searcher-pool work (the archived cycle-2 `population-v2-refresh-003.json`
+    // among them, confirmed absent by direct inspection), so this defaults
+    // to "policy" on decode -- the implicit meaning every pre-existing slot
+    // already had -- rather than becoming a hard decode failure for
+    // historical data this port must still accept (a field-shape
+    // correction, not a new decision; see the module comment above).
+    #[serde(default = "population_tranche_default_occupant_class_v2")]
+    occupant_class: String,
+    source_base_seed: u64,
+    source_generation: u64,
+    store_root: String,
+    run_sha256: String,
+    checkpoint_manifest_sha256: String,
+    checkpoint_payload_sha256: String,
+    model_parameter_sha256: String,
+    weight_units: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    search_authority: Option<PopulationSearchAuthoritySlotV1>,
+}
+
+impl PopulationTrancheRefreshSlotV2 {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_v2(
+        slot_index: u64,
+        role: impl Into<String>,
+        occupant_class: impl Into<String>,
+        source_base_seed: u64,
+        source_generation: u64,
+        store_root: impl Into<String>,
+        run_sha256: impl Into<String>,
+        checkpoint_manifest_sha256: impl Into<String>,
+        checkpoint_payload_sha256: impl Into<String>,
+        model_parameter_sha256: impl Into<String>,
+        weight_units: u64,
+    ) -> Self {
+        Self {
+            slot_index,
+            role: role.into(),
+            occupant_class: occupant_class.into(),
+            source_base_seed,
+            source_generation,
+            store_root: store_root.into(),
+            run_sha256: run_sha256.into(),
+            checkpoint_manifest_sha256: checkpoint_manifest_sha256.into(),
+            checkpoint_payload_sha256: checkpoint_payload_sha256.into(),
+            model_parameter_sha256: model_parameter_sha256.into(),
+            weight_units,
+            search_authority: None,
+        }
+    }
+
+    pub(crate) fn with_search_authority_v2(
+        mut self,
+        search_authority: PopulationSearchAuthoritySlotV1,
+    ) -> Self {
+        self.search_authority = Some(search_authority);
+        self
+    }
+
+    pub(crate) const fn slot_index_v2(&self) -> u64 {
+        self.slot_index
+    }
+
+    pub(crate) fn role_v2(&self) -> &str {
+        &self.role
+    }
+
+    pub(crate) fn occupant_class_v2(&self) -> &str {
+        &self.occupant_class
+    }
+
+    pub(crate) const fn source_base_seed_v2(&self) -> u64 {
+        self.source_base_seed
+    }
+
+    pub(crate) const fn source_generation_v2(&self) -> u64 {
+        self.source_generation
+    }
+
+    pub(crate) fn store_root_v2(&self) -> &str {
+        &self.store_root
+    }
+
+    pub(crate) fn run_sha256_v2(&self) -> &str {
+        &self.run_sha256
+    }
+
+    pub(crate) fn checkpoint_manifest_sha256_v2(&self) -> &str {
+        &self.checkpoint_manifest_sha256
+    }
+
+    pub(crate) fn checkpoint_payload_sha256_v2(&self) -> &str {
+        &self.checkpoint_payload_sha256
+    }
+
+    pub(crate) fn model_parameter_sha256_v2(&self) -> &str {
+        &self.model_parameter_sha256
+    }
+
+    pub(crate) const fn weight_units_v2(&self) -> u64 {
+        self.weight_units
+    }
+
+    pub(crate) fn search_authority_v2(&self) -> Option<&PopulationSearchAuthoritySlotV1> {
+        self.search_authority.as_ref()
+    }
+
+    // Identity comparison excluding weight_units (which legitimately
+    // changes every refresh cycle, frozen slots included): used only for
+    // the frozen-slot (indices 0-3) immutability check across chain links.
+    fn identity_matches_v2(&self, other: &Self) -> bool {
+        self.slot_index == other.slot_index
+            && self.role == other.role
+            && self.occupant_class == other.occupant_class
+            && self.source_base_seed == other.source_base_seed
+            && self.source_generation == other.source_generation
+            && self.store_root == other.store_root
+            && self.run_sha256 == other.run_sha256
+            && self.checkpoint_manifest_sha256 == other.checkpoint_manifest_sha256
+            && self.checkpoint_payload_sha256 == other.checkpoint_payload_sha256
+            && self.model_parameter_sha256 == other.model_parameter_sha256
+            && self.search_authority == other.search_authority
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PopulationTrancheRefreshManifestWireV2 {
+    schema: String,
+    program_package_commit_v2: String,
+    program_document_sha256_v2_proposed: String,
+    refresh_index: u64,
+    program_update: u64,
+    global_generation: u64,
+    weight_total_units: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous_manifest_sha256: Option<String>,
+    pool_manifest_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payoff_panel_sha256: Option<String>,
+    slots: Vec<PopulationTrancheRefreshSlotV2>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PopulationTrancheRefreshManifestV2 {
+    wire: PopulationTrancheRefreshManifestWireV2,
+    raw_bytes: Vec<u8>,
+    manifest_sha256: [u8; 32],
+}
+
+impl PopulationTrancheRefreshManifestV2 {
+    pub(crate) fn raw_bytes_v2(&self) -> &[u8] {
+        &self.raw_bytes
+    }
+
+    pub(crate) const fn manifest_sha256_v2(&self) -> [u8; 32] {
+        self.manifest_sha256
+    }
+
+    pub(crate) const fn refresh_index_v2(&self) -> u64 {
+        self.wire.refresh_index
+    }
+
+    pub(crate) const fn program_update_v2(&self) -> u64 {
+        self.wire.program_update
+    }
+
+    pub(crate) const fn global_generation_v2(&self) -> u64 {
+        self.wire.global_generation
+    }
+
+    pub(crate) fn slots_v2(&self) -> &[PopulationTrancheRefreshSlotV2] {
+        &self.wire.slots
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PopulationTrancheRefreshManifestErrorKindV2 {
+    Json,
+    InvalidAuthority,
+    InvalidGeneration,
+    InvalidChain,
+    InvalidSlots,
+    InvalidWeight,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PopulationTrancheRefreshManifestErrorV2 {
+    kind: PopulationTrancheRefreshManifestErrorKindV2,
+}
+
+impl PopulationTrancheRefreshManifestErrorV2 {
+    const fn new(kind: PopulationTrancheRefreshManifestErrorKindV2) -> Self {
+        Self { kind }
+    }
+
+    pub(crate) const fn kind_v2(self) -> PopulationTrancheRefreshManifestErrorKindV2 {
+        self.kind
+    }
+}
+
+impl Display for PopulationTrancheRefreshManifestErrorV2 {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{:?}", self.kind)
+    }
+}
+
+impl Error for PopulationTrancheRefreshManifestErrorV2 {}
+
+type ResultTrancheV2<T> = std::result::Result<T, PopulationTrancheRefreshManifestErrorV2>;
+
+/// Decodes and validates one link of the population-v2 tranche/cycle
+/// multiplicative-weights training refresh chain (either the `-Phase
+/// initial` seed link at `refresh_index` 0, or a later `-Phase refresh`
+/// link). `previous` must be the immediately preceding link for every
+/// `refresh_index` above 0, and must be `None` for `refresh_index` 0 --
+/// mirroring `decode_population_refresh_manifest_v1`'s own chain contract.
+/// Plain `serde_json` parsing, not canonical-JSON re-encode-and-compare
+/// (cross-language rationale: both historical writers were PS1/Python, not
+/// this crate's own canonical encoder; ported unchanged from `8c8d645`).
+pub(crate) fn decode_population_tranche_refresh_manifest_v2(
+    bytes: &[u8],
+    previous: Option<&PopulationTrancheRefreshManifestV2>,
+) -> ResultTrancheV2<PopulationTrancheRefreshManifestV2> {
+    let wire: PopulationTrancheRefreshManifestWireV2 =
+        serde_json::from_slice(bytes).map_err(|_| {
+            PopulationTrancheRefreshManifestErrorV2::new(
+                PopulationTrancheRefreshManifestErrorKindV2::Json,
+            )
+        })?;
+    validate_tranche_refresh_wire_v2(&wire, previous)?;
+    Ok(PopulationTrancheRefreshManifestV2 {
+        manifest_sha256: sha256_v1(bytes),
+        wire,
+        raw_bytes: bytes.to_vec(),
+    })
+}
+
+/// Schema/program-identity/generation-arithmetic checks only, no chain
+/// continuity: split out of `validate_tranche_refresh_wire_v2` (which still
+/// calls this, unchanged behavior) so
+/// `decode_population_tranche_refresh_manifest_v2_current_only` (test-only;
+/// see its own doc comment for why it exists) can reuse these checks
+/// without the chain check that function cannot perform.
+fn validate_tranche_refresh_authority_and_generation_v2(
+    wire: &PopulationTrancheRefreshManifestWireV2,
+) -> ResultTrancheV2<()> {
+    let is_initial = wire.refresh_index == 0;
+    let expected_schema = if is_initial {
+        POPULATION_TRANCHE_INITIAL_REFRESH_SCHEMA_V2
+    } else {
+        POPULATION_TRANCHE_REFRESH_SCHEMA_V2
+    };
+    if wire.schema != expected_schema
+        || wire.program_package_commit_v2 != POPULATION_PACKAGE_COMMIT_V2
+        || wire.program_document_sha256_v2_proposed != POPULATION_PROGRAM_DOCUMENT_SHA256_V2_PROPOSED
+        || wire.weight_total_units != POPULATION_TRANCHE_REFRESH_WEIGHT_TOTAL_UNITS_V2
+        || !is_sha256_v1(&wire.pool_manifest_sha256)
+    {
+        return Err(PopulationTrancheRefreshManifestErrorV2::new(
+            PopulationTrancheRefreshManifestErrorKindV2::InvalidAuthority,
+        ));
+    }
+    let expected_generation = wire
+        .refresh_index
+        .checked_mul(POPULATION_TRANCHE_REFRESH_INTERVAL_V2)
+        .ok_or_else(|| {
+            PopulationTrancheRefreshManifestErrorV2::new(
+                PopulationTrancheRefreshManifestErrorKindV2::InvalidGeneration,
+            )
+        })?;
+    if wire.refresh_index > POPULATION_TRANCHE_REFRESH_MAX_INDEX_V2
+        || wire.program_update != expected_generation
+        || wire.global_generation != expected_generation
+    {
+        return Err(PopulationTrancheRefreshManifestErrorV2::new(
+            PopulationTrancheRefreshManifestErrorKindV2::InvalidGeneration,
+        ));
+    }
+    Ok(())
+}
+
+/// Evaluation-only sibling of [`decode_population_tranche_refresh_manifest_v2`]:
+/// authenticates a single sealed link's schema, program-identity tags,
+/// generation arithmetic, and eight-slot shape, but performs no chain-
+/// continuity check against a predecessor (there is no `previous`
+/// parameter). Exists for exactly one purpose: proving an archived REAL
+/// historical link (e.g. the sealed cycle-2 `population-v2-refresh-003.json`
+/// record, `refresh_index` 3) decodes correctly through the ported v2 path
+/// on every check this crate can independently verify, when the full
+/// historical chain back to `refresh_index` 0 is not available to this
+/// worktree to reconstruct the `previous` argument the chain-checked
+/// decoder would require. Mirrors the identical scope-narrowing already
+/// established for the (deliberately not ported, Amendment 4 A4.3) I9
+/// pool-membership manifest's own `decode_population_refresh_manifest_v2_current_only`.
+#[cfg(test)]
+pub(crate) fn decode_population_tranche_refresh_manifest_v2_current_only(
+    bytes: &[u8],
+) -> ResultTrancheV2<PopulationTrancheRefreshManifestV2> {
+    let wire: PopulationTrancheRefreshManifestWireV2 =
+        serde_json::from_slice(bytes).map_err(|_| {
+            PopulationTrancheRefreshManifestErrorV2::new(
+                PopulationTrancheRefreshManifestErrorKindV2::Json,
+            )
+        })?;
+    validate_tranche_refresh_authority_and_generation_v2(&wire)?;
+    validate_tranche_refresh_slots_v2(&wire, None)?;
+    Ok(PopulationTrancheRefreshManifestV2 {
+        manifest_sha256: sha256_v1(bytes),
+        wire,
+        raw_bytes: bytes.to_vec(),
+    })
+}
+
+fn validate_tranche_refresh_wire_v2(
+    wire: &PopulationTrancheRefreshManifestWireV2,
+    previous: Option<&PopulationTrancheRefreshManifestV2>,
+) -> ResultTrancheV2<()> {
+    validate_tranche_refresh_authority_and_generation_v2(wire)?;
+    let is_initial = wire.refresh_index == 0;
+    match (is_initial, previous) {
+        (true, None) => {
+            if wire.previous_manifest_sha256.is_some() || wire.payoff_panel_sha256.is_some() {
+                return Err(PopulationTrancheRefreshManifestErrorV2::new(
+                    PopulationTrancheRefreshManifestErrorKindV2::InvalidChain,
+                ));
+            }
+        }
+        (true, Some(_)) | (false, None) => {
+            return Err(PopulationTrancheRefreshManifestErrorV2::new(
+                PopulationTrancheRefreshManifestErrorKindV2::InvalidChain,
+            ));
+        }
+        (false, Some(previous)) => {
+            let expected_previous = lower_hex_raw32_v1(previous.manifest_sha256_v2());
+            if previous.refresh_index_v2().checked_add(1) != Some(wire.refresh_index)
+                || wire.previous_manifest_sha256.as_deref() != Some(expected_previous.as_str())
+                || wire
+                    .payoff_panel_sha256
+                    .as_deref()
+                    .is_none_or(|value| !is_sha256_v1(value))
+            {
+                return Err(PopulationTrancheRefreshManifestErrorV2::new(
+                    PopulationTrancheRefreshManifestErrorKindV2::InvalidChain,
+                ));
+            }
+        }
+    }
+    validate_tranche_refresh_slots_v2(wire, previous)
+}
+
+fn validate_tranche_refresh_slots_v2(
+    wire: &PopulationTrancheRefreshManifestWireV2,
+    previous: Option<&PopulationTrancheRefreshManifestV2>,
+) -> ResultTrancheV2<()> {
+    let invalid_slots = || {
+        PopulationTrancheRefreshManifestErrorV2::new(
+            PopulationTrancheRefreshManifestErrorKindV2::InvalidSlots,
+        )
+    };
+    let invalid_weight = || {
+        PopulationTrancheRefreshManifestErrorV2::new(
+            PopulationTrancheRefreshManifestErrorKindV2::InvalidWeight,
+        )
+    };
+    if wire.slots.len() != POPULATION_TRANCHE_REFRESH_SLOT_COUNT_V2 {
+        return Err(invalid_slots());
+    }
+    let mut weight_sum = 0_u64;
+    let mut model_hashes = std::collections::BTreeSet::new();
+    let mut role_weights = [0_u64; 4];
+    let mut search_occupied_slot_count = 0_u32;
+    for (index, slot) in wire.slots.iter().enumerate() {
+        let expected_index = u64::try_from(index).map_err(|_| invalid_slots())?;
+        let is_search_occupant = slot.occupant_class == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1;
+        // Amendment 4 A4.3(ii): search occupancy restricted to slots 6/7,
+        // mirroring `validate_slot_assignment_v1`'s own structure exactly
+        // (slots 0-5 hardcode `occupant_class == "policy"`; only 6/7 admit
+        // "historical-fallback" or the search kind).
+        let occupant_class_ok = if index < 6 {
+            slot.occupant_class == "policy"
+        } else {
+            matches!(slot.occupant_class.as_str(), "policy" | "historical-fallback")
+                || is_search_occupant
+        };
+        let legacy_fields_valid = if is_search_occupant {
+            slot.run_sha256 == POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1
+                && slot.checkpoint_manifest_sha256 == POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1
+                && slot.checkpoint_payload_sha256 == POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1
+                && slot.model_parameter_sha256 == POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1
+                && slot.store_root == POPULATION_SEARCH_SLOT_STORE_ROOT_SENTINEL_V2
+        } else {
+            is_sha256_v1(&slot.run_sha256)
+                && is_sha256_v1(&slot.checkpoint_manifest_sha256)
+                && is_sha256_v1(&slot.checkpoint_payload_sha256)
+                && is_sha256_v1(&slot.model_parameter_sha256)
+                && !slot.store_root.is_empty()
+        };
+        let search_authority_presence_valid = is_search_occupant == slot.search_authority.is_some();
+        if slot.slot_index != expected_index
+            || slot.role != EXPECTED_ROLES_V1[index]
+            || !occupant_class_ok
+            || !legacy_fields_valid
+            || !search_authority_presence_valid
+            || (is_search_occupant && !POPULATION_SEARCH_SLOT_INDICES_V1.contains(&index))
+        {
+            return Err(invalid_slots());
+        }
+        // Frozen-slot immutability (indices 0-3): must be byte-identical
+        // (all identity fields except weight_units) to the immediately
+        // preceding chain link, once one exists.
+        if index < POPULATION_TRANCHE_REFRESH_FROZEN_SLOT_COUNT_V2 {
+            if let Some(previous) = previous {
+                if !slot.identity_matches_v2(&previous.slots_v2()[index]) {
+                    return Err(invalid_slots());
+                }
+            }
+        }
+        if is_search_occupant {
+            validate_search_occupant_v1(
+                slot.source_base_seed,
+                slot.source_generation,
+                slot.search_authority.as_ref(),
+            )
+            .map_err(|_| invalid_slots())?;
+            search_occupied_slot_count += 1;
+        }
+        if !is_search_occupant && !model_hashes.insert(slot.model_parameter_sha256.as_str()) {
+            return Err(invalid_slots());
+        }
+        let search_slot_weight_cap = if is_search_occupant {
+            POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1
+        } else {
+            POPULATION_TRANCHE_REFRESH_POLICY_CAP_UNITS_V2
+        };
+        if slot.weight_units == 0 || slot.weight_units > search_slot_weight_cap {
+            return Err(invalid_weight());
+        }
+        weight_sum = weight_sum.checked_add(slot.weight_units).ok_or_else(invalid_weight)?;
+        role_weights[index / 2] = role_weights[index / 2]
+            .checked_add(slot.weight_units)
+            .ok_or_else(invalid_weight)?;
+    }
+    if weight_sum != POPULATION_TRANCHE_REFRESH_WEIGHT_TOTAL_UNITS_V2
+        || role_weights
+            .iter()
+            .any(|weight| *weight < POPULATION_TRANCHE_REFRESH_ROLE_FLOOR_UNITS_V2)
+        || search_occupied_slot_count > 1
+    {
+        return Err(invalid_weight());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1354,5 +1896,373 @@ mod tests {
             ),
             PopulationRefreshManifestErrorKindV1::InvalidSlots
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Population program V2 tranche/cycle refresh chain decoder tests.
+    // CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 4 (countersigned
+    // 00affe6a), A4.5 acceptance gates.
+    // -----------------------------------------------------------------
+
+    mod tranche_refresh_v2 {
+        use super::*;
+
+        fn tranche_digest(seed: usize) -> String {
+            format!("{seed:064x}")
+        }
+
+        const TRANCHE_ROLES_V2: [&str; 8] = [
+            "anchor-0", "anchor-1", "historical-0", "historical-1", "current-0", "current-1",
+            "exploiter-0", "exploiter-1",
+        ];
+        const TRANCHE_SEEDS_V2: [u64; 8] = [
+            920_012, 970_002, 971_221, 971_223, 972_001, 972_002, 971_231, 971_233,
+        ];
+
+        // `source_generation` is deliberately FIXED (not tied to the
+        // manifest's own `global_generation`): unlike v1's mechanism, the
+        // v2 tranche validator never requires a slot's `source_generation`
+        // to equal `global_generation` (Amendment 4 A4.2: "no requirement
+        // that source_generation equal global_generation" for this
+        // mechanism). Keeping it fixed also keeps frozen slots 0-3
+        // trivially identity-stable across chain links in these fixtures.
+        fn tranche_slot_v2(index: usize, hash_seed: usize) -> Value {
+            json!({
+                "slot_index": index as u64,
+                "role": TRANCHE_ROLES_V2[index],
+                "occupant_class": "policy",
+                "source_base_seed": TRANCHE_SEEDS_V2[index],
+                "source_generation": 384_u64,
+                "store_root": format!("D:\\fixture\\tranche-v2\\slot-{index}"),
+                "run_sha256": tranche_digest(10 + hash_seed),
+                "checkpoint_manifest_sha256": tranche_digest(20 + hash_seed),
+                "checkpoint_payload_sha256": tranche_digest(30 + hash_seed),
+                "model_parameter_sha256": tranche_digest(40 + hash_seed),
+                "weight_units": 125_000_u64,
+            })
+        }
+
+        fn tranche_manifest_v2(
+            refresh_index: u64,
+            global_generation: u64,
+            previous_manifest_sha256: Option<String>,
+            payoff_panel_sha256: Option<String>,
+            slot_override: impl FnOnce(&mut Vec<Value>),
+        ) -> Vec<u8> {
+            let mut slots: Vec<Value> = (0..8)
+                .map(|index| tranche_slot_v2(index, 100 + index))
+                .collect();
+            slot_override(&mut slots);
+            let schema = if refresh_index == 0 {
+                POPULATION_TRANCHE_INITIAL_REFRESH_SCHEMA_V2
+            } else {
+                POPULATION_TRANCHE_REFRESH_SCHEMA_V2
+            };
+            let wire = json!({
+                "schema": schema,
+                "program_package_commit_v2": POPULATION_PACKAGE_COMMIT_V2,
+                "program_document_sha256_v2_proposed": POPULATION_PROGRAM_DOCUMENT_SHA256_V2_PROPOSED,
+                "refresh_index": refresh_index,
+                "program_update": global_generation,
+                "global_generation": global_generation,
+                "weight_total_units": 1_000_000_u64,
+                "previous_manifest_sha256": previous_manifest_sha256,
+                "pool_manifest_sha256": tranche_digest(1),
+                "payoff_panel_sha256": payoff_panel_sha256,
+                "slots": slots,
+            });
+            serde_json::to_vec(&wire).unwrap()
+        }
+
+        fn initial_bytes() -> Vec<u8> {
+            tranche_manifest_v2(0, 0, None, None, |_| {})
+        }
+
+        #[test]
+        fn initial_link_round_trips() {
+            let bytes = initial_bytes();
+            let decoded = decode_population_tranche_refresh_manifest_v2(&bytes, None).unwrap();
+            assert_eq!(decoded.refresh_index_v2(), 0);
+            assert_eq!(decoded.global_generation_v2(), 0);
+            assert_eq!(decoded.slots_v2().len(), 8);
+            assert_eq!(decoded.slots_v2()[4].role_v2(), "current-0");
+        }
+
+        #[test]
+        fn second_link_chains_onto_the_first() {
+            let initial = decode_population_tranche_refresh_manifest_v2(&initial_bytes(), None).unwrap();
+            let previous_sha = lower_hex_raw32_v1(initial.manifest_sha256_v2());
+            let next_bytes = tranche_manifest_v2(1, 128, Some(previous_sha), Some(tranche_digest(2)), |_| {});
+            let next = decode_population_tranche_refresh_manifest_v2(&next_bytes, Some(&initial)).unwrap();
+            assert_eq!(next.refresh_index_v2(), 1);
+            assert_eq!(next.global_generation_v2(), 128);
+        }
+
+        /// A4.5: "refresh 17 rejects" -- cycle-3's own 17th refresh, one past
+        /// its 16 authorized ones, is chain refresh_index 35, one past the
+        /// raised cap of 34.
+        #[test]
+        fn refresh_index_35_rejects_one_past_the_raised_cap() {
+            let bytes = tranche_manifest_v2(35, 35 * 128, None, None, |_| {});
+            assert_eq!(
+                decode_population_tranche_refresh_manifest_v2(&bytes, None)
+                    .unwrap_err()
+                    .kind_v2(),
+                PopulationTrancheRefreshManifestErrorKindV2::InvalidGeneration
+            );
+        }
+
+        /// The new cap itself (34) is still accepted, confirming the raise
+        /// is a widen, not an off-by-one: refresh_index=34, decoded stand-
+        /// alone via the evaluation-only path (no full 34-link chain built
+        /// in this unit test), still passes every non-chain check.
+        #[test]
+        fn refresh_index_34_the_new_cap_itself_is_accepted() {
+            let bytes = tranche_manifest_v2(34, 34 * 128, Some(tranche_digest(9)), Some(tranche_digest(2)), |_| {});
+            assert!(decode_population_tranche_refresh_manifest_v2_current_only(&bytes).is_ok());
+        }
+
+        #[test]
+        fn wrong_generation_arithmetic_rejects() {
+            // global_generation must equal refresh_index * 128 exactly;
+            // here refresh_index=3 (expected 384) but global_generation is
+            // declared as 383.
+            let slots: Vec<Value> = (0..8).map(|index| tranche_slot_v2(index, 100 + index)).collect();
+            let wire = json!({
+                "schema": POPULATION_TRANCHE_REFRESH_SCHEMA_V2,
+                "program_package_commit_v2": POPULATION_PACKAGE_COMMIT_V2,
+                "program_document_sha256_v2_proposed": POPULATION_PROGRAM_DOCUMENT_SHA256_V2_PROPOSED,
+                "refresh_index": 3_u64,
+                "program_update": 383_u64,
+                "global_generation": 383_u64,
+                "weight_total_units": 1_000_000_u64,
+                "previous_manifest_sha256": Value::Null,
+                "pool_manifest_sha256": tranche_digest(1),
+                "payoff_panel_sha256": Value::Null,
+                "slots": slots,
+            });
+            let bytes = serde_json::to_vec(&wire).unwrap();
+            assert_eq!(
+                decode_population_tranche_refresh_manifest_v2_current_only(&bytes)
+                    .unwrap_err()
+                    .kind_v2(),
+                PopulationTrancheRefreshManifestErrorKindV2::InvalidGeneration
+            );
+        }
+
+        /// Builds the search-authority sub-record the SAME way the v1
+        /// mechanism's own `slots_with_search_at_6_v1` fixture does
+        /// (`KernelNativeSearchAuthorityV1::current` + `from_authority_v1`),
+        /// rather than hand-constructing its live-build-derived fields
+        /// (`evaluator_sha256`/`engine_commit`/`card_db_hash`/
+        /// `runtime_deck_catalog_sha256`), which would risk not matching
+        /// what `matches_fresh_reconstruction_v1()` independently rebuilds.
+        fn search_occupied_slot_v2(action_seed: u64, tier: KernelNativeSearchTierV1, weight_units: u64) -> Value {
+            let authority = KernelNativeSearchAuthorityV1::current(
+                tier,
+                action_seed,
+                valid_diagnostic_identity_v1(),
+            )
+            .expect("test authority must construct for a valid (tier, action_seed) pair");
+            let search_authority = PopulationSearchAuthoritySlotV1::from_authority_v1(&authority);
+            json!({
+                "slot_index": 6_u64,
+                "role": "exploiter-0",
+                "occupant_class": KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1,
+                "source_base_seed": 0_u64,
+                "source_generation": 0_u64,
+                "store_root": "",
+                "run_sha256": POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1,
+                "checkpoint_manifest_sha256": POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1,
+                "checkpoint_payload_sha256": POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1,
+                "model_parameter_sha256": POPULATION_SEARCH_SLOT_SENTINEL_HASH_V1,
+                "weight_units": weight_units,
+                "search_authority": serde_json::to_value(&search_authority).unwrap(),
+            })
+        }
+
+        // Rebalances slot 7 to absorb whatever slot 6 gives up, keeping the
+        // 1,000,000-unit total exact regardless of the search slot's own
+        // weight (each `tranche_slot_v2` default is 125,000; slot 7's own
+        // weight becomes `125_000 + (125_000 - weight_units)` so the
+        // 6/7 pair, and the grand total, stay correct even when
+        // `weight_units` is deliberately invalid for a negative test).
+        fn manifest_with_search_slot_v2(action_seed: u64, tier: KernelNativeSearchTierV1, weight_units: u64) -> Vec<u8> {
+            tranche_manifest_v2(0, 0, None, None, |slots| {
+                slots[6] = search_occupied_slot_v2(action_seed, tier, weight_units);
+                slots[7]["weight_units"] = json!(250_000_u64.saturating_sub(weight_units));
+            })
+        }
+
+        #[test]
+        fn search_slot_at_t2048_80000_units_round_trips() {
+            let bytes = manifest_with_search_slot_v2(
+                KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+                KernelNativeSearchTierV1::T2048,
+                POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
+            );
+            let decoded = decode_population_tranche_refresh_manifest_v2(&bytes, None).unwrap();
+            assert!(decoded.slots_v2()[6].search_authority_v2().is_some());
+            assert_eq!(decoded.slots_v2()[6].weight_units_v2(), 80_000);
+        }
+
+        #[test]
+        fn search_slot_wrong_tier_rejects() {
+            let bytes = manifest_with_search_slot_v2(
+                KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+                KernelNativeSearchTierV1::T8192,
+                POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
+            );
+            assert_eq!(
+                decode_population_tranche_refresh_manifest_v2(&bytes, None)
+                    .unwrap_err()
+                    .kind_v2(),
+                PopulationTrancheRefreshManifestErrorKindV2::InvalidSlots
+            );
+        }
+
+        #[test]
+        fn search_slot_weight_above_the_search_cap_is_rejected() {
+            let bytes = manifest_with_search_slot_v2(
+                KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+                KernelNativeSearchTierV1::T2048,
+                POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1 + 1,
+            );
+            assert_eq!(
+                decode_population_tranche_refresh_manifest_v2(&bytes, None)
+                    .unwrap_err()
+                    .kind_v2(),
+                PopulationTrancheRefreshManifestErrorKindV2::InvalidWeight
+            );
+        }
+
+        #[test]
+        fn search_slot_unauthorized_action_seed_is_rejected() {
+            // `KernelNativeSearchAuthorityV1::current` itself refuses to
+            // construct for an unauthorized seed (mirrors v1's own
+            // `unauthorized_action_seed_is_rejected` test): build a
+            // genuinely valid manifest first, then mutate the ALREADY-
+            // ENCODED bytes' `action_seed` field afterward, bypassing the
+            // constructor's own validation, exactly as v1's test does.
+            let bytes = manifest_with_search_slot_v2(
+                KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+                KernelNativeSearchTierV1::T2048,
+                POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
+            );
+            let mut value: Value = serde_json::from_slice(&bytes).unwrap();
+            value["slots"][6]["search_authority"]["action_seed"] =
+                json!(KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0] + 1);
+            let tampered = serde_json::to_vec(&value).unwrap();
+            assert_eq!(
+                decode_population_tranche_refresh_manifest_v2(&tampered, None)
+                    .unwrap_err()
+                    .kind_v2(),
+                PopulationTrancheRefreshManifestErrorKindV2::InvalidSlots
+            );
+        }
+
+        #[test]
+        fn search_slot_at_a_non_exploiter_index_is_rejected() {
+            let bytes = tranche_manifest_v2(0, 0, None, None, |slots| {
+                slots[4] = {
+                    let mut slot = search_occupied_slot_v2(
+                        KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+                        KernelNativeSearchTierV1::T2048,
+                        POPULATION_SEARCH_SLOT_T2048_WEIGHT_UNITS_V1,
+                    );
+                    slot["slot_index"] = json!(4_u64);
+                    slot["role"] = json!("current-0");
+                    slot
+                };
+            });
+            assert_eq!(
+                decode_population_tranche_refresh_manifest_v2(&bytes, None)
+                    .unwrap_err()
+                    .kind_v2(),
+                PopulationTrancheRefreshManifestErrorKindV2::InvalidSlots
+            );
+        }
+
+        #[test]
+        fn frozen_slot_mutation_between_links_is_rejected() {
+            let initial = decode_population_tranche_refresh_manifest_v2(&initial_bytes(), None).unwrap();
+            let previous_sha = lower_hex_raw32_v1(initial.manifest_sha256_v2());
+            // Slot 0 (anchor-0, frozen) changes its model_parameter_sha256
+            // between links -- structurally identical to how the frozen
+            // slots must never move once sealed.
+            let next_bytes = tranche_manifest_v2(
+                1,
+                128,
+                Some(previous_sha),
+                Some(tranche_digest(2)),
+                |slots| {
+                    slots[0]["model_parameter_sha256"] = json!(tranche_digest(999));
+                },
+            );
+            assert_eq!(
+                decode_population_tranche_refresh_manifest_v2(&next_bytes, Some(&initial))
+                    .unwrap_err()
+                    .kind_v2(),
+                PopulationTrancheRefreshManifestErrorKindV2::InvalidSlots
+            );
+        }
+
+        /// A4.5: "v1 manifests still decode" -- population-v1's own real,
+        /// archived, byte-exact wire manifest (its OWN closed 8-refresh
+        /// chain, entirely unrelated to and unaffected by this port) still
+        /// decodes through the untouched `decode_population_refresh_manifest_v1`
+        /// path. Read-only against a real file on this host, not a fixture;
+        /// skipped (not failed) if that file is unavailable on the host
+        /// running this test, matching this crate's own established
+        /// pattern for real-external-file regression reads elsewhere in
+        /// this file's sibling test modules.
+        #[test]
+        fn v1_archived_population_v1_refresh_000_still_decodes() {
+            let path = r"D:\mtg-kernel-scaled-selfplay-population-v1\active\initial-refresh\refresh-000.json";
+            let Ok(bytes) = std::fs::read(path) else {
+                eprintln!("skipping: {path} not present on this host");
+                return;
+            };
+            // The archive copy carries a trailing CRLF (a filesystem/editor
+            // artifact from whatever tool last touched the file on disk,
+            // confirmed by direct byte inspection: the content itself is
+            // already canonical, sorted-key, single-line JSON); this
+            // crate's own canonical-JSON contract requires exactly one
+            // trailing LF (confirmed: stripping it outright, rather than
+            // normalizing to exactly one LF, trips `MissingFinalLf`), so
+            // the CRLF is normalized to a single LF here, rather than
+            // treated as a real decode failure, since it is not part of
+            // the sealed content itself.
+            let mut normalized = bytes.trim_ascii_end().to_vec();
+            normalized.push(b'\n');
+            let decoded = decode_population_refresh_manifest_v1(&normalized, None)
+                .expect("population-v1's own real refresh-000.json must still decode unchanged");
+            assert_eq!(decoded.refresh_index_v1(), 0);
+            assert_eq!(decoded.global_generation_v1(), 512);
+        }
+
+        /// A4.5: "the archived cycle-2 refresh-003 through the ported v2
+        /// path... must decode." Read-only against the real archived file;
+        /// decoded via the evaluation-only path (see
+        /// `decode_population_tranche_refresh_manifest_v2_current_only`'s own
+        /// doc comment for why: this worktree does not hold the full
+        /// historical chain back to refresh_index 0 needed to construct a
+        /// `previous` argument for the chain-checked decoder). Skipped, not
+        /// failed, if the archive is unavailable on the host running this
+        /// test.
+        #[test]
+        fn archived_cycle2_refresh_003_decodes_through_the_ported_v2_path() {
+            let path = r"E:\c-evidence-archive-20260825\mtg-kernel-population-v2-cycle2\refresh\cycle2-population-v2-refresh-0384\attempt-001\population-v2-refresh-003.json";
+            let Ok(bytes) = std::fs::read(path) else {
+                eprintln!("skipping: {path} not present on this host");
+                return;
+            };
+            let decoded = decode_population_tranche_refresh_manifest_v2_current_only(&bytes)
+                .expect("the archived cycle-2 refresh-003 record must decode through the ported v2 path");
+            assert_eq!(decoded.refresh_index_v2(), 3);
+            assert_eq!(decoded.global_generation_v2(), 384);
+            assert_eq!(decoded.slots_v2()[4].role_v2(), "current-0");
+            assert_eq!(decoded.slots_v2()[4].source_base_seed_v2(), 975_001);
+        }
     }
 }
