@@ -1099,6 +1099,61 @@ pub(crate) fn validate_population_program_v2_cycle3_parent_lineage_v1(
     Ok(())
 }
 
+// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Section 2.3 (countersigned SHA
+// 1efa40979de0d4e8f3105d1c266b676b0c2a57c320994703b355a1989cdd1c0a) pins the
+// eligible parent's identity: current-1 @ local generation 2048 under
+// `E:\mtg-kernel-population-v2-cycle3\parent-import\current-1-seed-975002-store\run-0\store`.
+// checkpoint_sha256/state_sha256/model_parameter_sha256 below are the exact
+// sheet-pinned values ("checkpoint_manifest_sha256"/"checkpoint_payload_sha256"/
+// "model_parameter_sha256" in the sheet's own naming), independently
+// reverified byte-for-byte against the live extracted store at implementation
+// time: sha256(update-00002048.checkpoint.json), sha256(update-00002048.state.f32le),
+// and the checkpoint's own embedded `train_state.model_parameter_sha256`, all
+// three matching the sheet exactly. sidecar_sha256 has no separate sheet pin
+// (Section 3 only names three cross-checked hashes); it is the freshly
+// computed sha256(update-00002048.sidecar.json) from that same extraction,
+// which is what "recompute the warm-start-binding fields directly from the
+// live extraction" (Section 3) calls for. base_seed is the tranche-1 base
+// seed (972002, Section 2.3), not the cycle-2 continuation seed (975002).
+const POPULATION_CYCLE3_PARENT_CHECKPOINT_SHA256_V1: &str =
+    "5e1ff645091bfacdade2a3e06b47c3cd71c96ed1c9fee4dd9756b343d7c834fd";
+const POPULATION_CYCLE3_PARENT_SIDECAR_SHA256_V1: &str =
+    "81ab98f52c37cb14a8305f48674133148ac0d06df516c1a12510e5350bb62133";
+const POPULATION_CYCLE3_PARENT_STATE_SHA256_V1: &str =
+    "e4aa3172bf3962af1498028f19649a85424d0e30f226b5c1f6722160fb24a2d4";
+const POPULATION_CYCLE3_PARENT_MODEL_PARAMETER_SHA256_V1: &str =
+    "67c5d0a2c506c0514623f3f4ea0f273b904662cbdae4f6ddc89c44e255b9a70d";
+const POPULATION_CYCLE3_PARENT_BASE_SEED_V1: u64 = 972_002;
+const POPULATION_CYCLE3_PARENT_LOCAL_GENERATION_V1: u64 = 2_048;
+
+/// Amendment 2 (2026-08-26) A2.1 Layer 1: whenever `validate_decoded_train_run_v2`
+/// accepts a run whose contracts carry `population_program_v2_cycle3`, it
+/// must also pass `validate_population_program_v2_cycle3_parent_lineage_v1`.
+/// Mirrors `validate_population_program_v1`'s own precedent exactly (that
+/// function checks its contract's parent-identity fields against FROZEN
+/// compile-time constants, not a live disk read): the "recomputed" values fed
+/// to the six-field validator here are the sheet-pinned, compile-bound parent
+/// identity above, not a store read, so this fires at every decode (every
+/// process start under the 16-per-refresh-launch model, Amendment 2 Fix 2)
+/// with no I/O and no dependency on what is later checked live by Layer 2 (the
+/// campaign launcher's on-disk generation-0 assert). Absent contract: no
+/// check, record unaffected, byte-for-byte as before this wiring existed.
+fn validate_population_program_v2_cycle3_v1(record: &TrainRunV2) -> Result<()> {
+    let Some(contract) = record.contracts.population_program_v2_cycle3.as_ref() else {
+        return Ok(());
+    };
+    validate_population_program_v2_cycle3_parent_lineage_v1(
+        contract,
+        POPULATION_CYCLE3_PARENT_CHECKPOINT_SHA256_V1,
+        POPULATION_CYCLE3_PARENT_SIDECAR_SHA256_V1,
+        POPULATION_CYCLE3_PARENT_STATE_SHA256_V1,
+        POPULATION_CYCLE3_PARENT_MODEL_PARAMETER_SHA256_V1,
+        POPULATION_CYCLE3_PARENT_BASE_SEED_V1,
+        POPULATION_CYCLE3_PARENT_LOCAL_GENERATION_V1,
+    )
+    .map_err(|_| TrainRunV2Error::new(TrainRunV2ErrorKind::CrossBinding))
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResponseExploiterContractV1 {
@@ -1905,6 +1960,7 @@ fn validate_decoded_train_run_v2(
     let requested_episode_count = validate_schedule_v2(&record.schedule, &record.model_snapshot)?;
     validate_population_program_v1(&record)?;
     validate_response_exploiter_v1(&record)?;
+    validate_population_program_v2_cycle3_v1(&record)?;
     validate_limits_v2(&record.limits)?;
     validate_topology_v2(&record.topology)?;
     validate_artifact_schemas_v2(&record.artifact_schemas)?;
@@ -8924,16 +8980,24 @@ mod tests {
     }
 
     /// Cycle-3 sheet Section 3 test item 1: authoring round-trip. Values
-    /// mirror the real, verified current-1@2048 parent-lineage identity
-    /// (checkpoint_sha256/state_sha256/model_parameter_sha256/run_sha256 are
-    /// the actual pinned hashes from CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md
-    /// Section 2.3, independently reverified byte-for-byte against the
-    /// extracted store in this implementation's own report); store_tree_sha256
-    /// and sidecar_sha256 are structural placeholders here (this test proves
-    /// the schema round-trips and decodes, not that these two specific
-    /// fields hold production values -- see the implementation report for
-    /// why `store_tree_sha256` in particular is not independently computed
-    /// by this implementation).
+    /// mirror the real, verified current-1@2048 parent-lineage identity:
+    /// checkpoint_sha256/sidecar_sha256/state_sha256/model_parameter_sha256/
+    /// run_sha256/base_seed are the six-field-validator-checked values (plus
+    /// run_sha256) independently recomputed from the live extracted store at
+    /// `E:\mtg-kernel-population-v2-cycle3\parent-import\current-1-seed-975002-store\run-0\store`,
+    /// generation 2048 (checkpoint/state/model_parameter match
+    /// CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Section 2.3's pins exactly;
+    /// sidecar has no separate sheet pin and is the freshly computed value
+    /// from that same extraction), and equal the
+    /// `POPULATION_CYCLE3_PARENT_*_V1` frozen constants the Layer 1 wiring
+    /// checks against, so this fixture now decodes successfully through the
+    /// wired `decode_train_run_v2` path, not only through the standalone
+    /// validator. `store_tree_sha256` remains a structural placeholder (see
+    /// the implementation report: this field is not checked by
+    /// `validate_population_program_v2_cycle3_parent_lineage_v1`'s six fields
+    /// and has no defined computation rule anywhere in the governance record;
+    /// the real genesis-authoring path uses the independently-verified
+    /// `Get-StoreTreeHash` convention instead, see the report).
     fn population_program_v2_cycle3_fixture() -> PopulationProgramContractV2Cycle3 {
         PopulationProgramContractV2Cycle3 {
             identity: "mtg-kernel-native-scaled-selfplay-population/v2-cycle3".to_owned(),
@@ -8960,7 +9024,9 @@ mod tests {
                 checkpoint_sha256:
                     "5e1ff645091bfacdade2a3e06b47c3cd71c96ed1c9fee4dd9756b343d7c834fd"
                         .to_owned(),
-                sidecar_sha256: "a".repeat(64),
+                sidecar_sha256:
+                    "81ab98f52c37cb14a8305f48674133148ac0d06df516c1a12510e5350bb62133"
+                        .to_owned(),
                 state_sha256:
                     "e4aa3172bf3962af1498028f19649a85424d0e30f226b5c1f6722160fb24a2d4"
                         .to_owned(),
@@ -9101,6 +9167,95 @@ mod tests {
             ),
             Err(PopulationProgramV2Cycle3ValidationErrorV1::LocalGenerationMismatch)
         );
+    }
+
+    /// Amendment 2 A2.1 Layer 1, acceptance item "present+valid passes": the
+    /// wired level, not the standalone function. The fixture's parent_lineage
+    /// already equals the `POPULATION_CYCLE3_PARENT_*_V1` frozen constants
+    /// (see the fixture's own doc comment), so `decode_train_run_v2` must
+    /// succeed with the wiring live.
+    #[test]
+    fn population_program_v2_cycle3_wired_valid_contract_decodes() {
+        let mut record = coherent_v2_record();
+        record.contracts.population_program_v2_cycle3 = Some(population_program_v2_cycle3_fixture());
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes)
+            .expect("a genuinely matching cycle-3 parent-lineage contract must decode");
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle3
+            .is_some());
+    }
+
+    /// Amendment 2 A2.1 Layer 1, acceptance item "present+each-field-invalid
+    /// fails closed": the wired level. Mirrors
+    /// `population_program_v2_cycle3_parent_lineage_validation_fails_closed_per_field`'s
+    /// per-field mutation pattern, but drives each mutation through
+    /// `decode_train_run_v2` on a full record's canonical bytes rather than
+    /// calling the standalone validator directly, proving
+    /// `validate_decoded_train_run_v2` itself -- not just the function it
+    /// calls -- fails closed on every one of the six checked fields.
+    #[test]
+    fn population_program_v2_cycle3_wired_per_field_corruption_fails_closed() {
+        let record = {
+            let mut record = coherent_v2_record();
+            record.contracts.population_program_v2_cycle3 =
+                Some(population_program_v2_cycle3_fixture());
+            record
+        };
+        let base_bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        assert!(decode_train_run_v2(&base_bytes).is_ok());
+
+        let wrong_sha = "0".repeat(64);
+        let mutations: [(&str, serde_json::Value); 6] = [
+            ("checkpoint_sha256", serde_json::json!(wrong_sha)),
+            ("sidecar_sha256", serde_json::json!(wrong_sha)),
+            ("state_sha256", serde_json::json!(wrong_sha)),
+            ("model_parameter_sha256", serde_json::json!(wrong_sha)),
+            (
+                "base_seed",
+                serde_json::json!(POPULATION_CYCLE3_PARENT_BASE_SEED_V1.wrapping_add(1)),
+            ),
+            (
+                "__parent_store_local_generation__",
+                serde_json::Value::Null,
+            ),
+        ];
+        for (field, value) in mutations {
+            let mut raw: serde_json::Value = serde_json::from_slice(&base_bytes).unwrap();
+            if field == "__parent_store_local_generation__" {
+                let current = raw["contracts"]["population_program_v2_cycle3"]
+                    ["parent_store_local_generation"]
+                    .as_u64()
+                    .unwrap();
+                raw["contracts"]["population_program_v2_cycle3"]["parent_store_local_generation"] =
+                    serde_json::json!(current + 1);
+            } else {
+                raw["contracts"]["population_program_v2_cycle3"]["parent_lineage"][field] = value;
+            }
+            let tampered =
+                to_canonical_json_bytes_v1(&raw, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+            let error = decode_train_run_v2(&tampered)
+                .expect_err(&format!("field {field} must fail closed at the wired level"));
+            assert_eq!(
+                error.kind(),
+                TrainRunV2ErrorKind::CrossBinding,
+                "field {field} produced an unexpected error kind"
+            );
+        }
+    }
+
+    /// Amendment 2 A2.1 Layer 1, acceptance item "absent unchanged": a record
+    /// with no `population_program_v2_cycle3` contract at all decodes exactly
+    /// as it did before this wiring existed (the wiring function returns
+    /// `Ok(())` immediately when the contract is `None`).
+    #[test]
+    fn population_program_v2_cycle3_wired_absent_contract_is_unaffected() {
+        let record = coherent_v2_record();
+        assert!(record.contracts.population_program_v2_cycle3.is_none());
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        decode_train_run_v2(&bytes).expect("a record with no cycle-3 contract must decode");
     }
 
     /// Backward-compatibility regression for the Phase 2 512-horizon
