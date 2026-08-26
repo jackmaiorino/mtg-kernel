@@ -13,7 +13,9 @@ use crate::native_population_opponent_v1::{
     PopulationOpponentEngineV1, PopulationSlotOccupantV1, PopulationWeightVectorV1,
     POPULATION_OPPONENT_SLOT_COUNT_V1,
 };
-use crate::native_population_refresh_manifest_v1::PopulationRefreshManifestV1;
+use crate::native_population_refresh_manifest_v1::{
+    PopulationRefreshManifestV1, PopulationTrancheRefreshManifestV2,
+};
 use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
 use crate::native_training_store_resume_v2::load_native_training_boundary_v2;
 use crate::native_training_store_root_v2::ValidatedNativeTrainingStoreRootV2;
@@ -200,6 +202,159 @@ fn resolve_population_handles_v1(
     handles.try_into().map_err(|_| {
         PopulationRuntimeResolutionErrorV1::new(PopulationRuntimeResolutionErrorKindV1::SlotCount)
     })
+}
+
+/// Population program V2 tranche/cycle training-side sibling of
+/// [`resolve_population_opponent_v1`] above: resolves a validated
+/// `PopulationTrancheRefreshManifestV2` link (Amendment 4, ported from
+/// commit `8c8d645`) into the same `PopulationOpponentEngineV1` shape, with
+/// all eight slots weighted (no exclusion; every slot, frozen or active, is
+/// part of the live training pool). Authenticates every Store-backed slot's
+/// identity against its own live Store, mirroring `resolve_population_handles_v1`'s
+/// discipline minus the sidecar-hash check (the tranche-refresh manifest's
+/// own slot shape carries no `sidecar_sha256` field, the same disclosed
+/// absence recorded on `PopulationTrancheRefreshSlotV2` itself), plus one
+/// addition ported unchanged from `8c8d645`: the caller-supplied
+/// `slot_store_roots` entry for each slot is cross-checked against the
+/// manifest's own `store_root` field (the tranche-refresh manifest carries
+/// store roots directly, unlike the base program's `PopulationRefreshManifestV1`,
+/// which does not). Search-occupied slots (Amendment 4 A4.3(ii), absent
+/// from `8c8d645`, added here to match `resolve_population_handles_v1`'s own
+/// already-existing branch below) never read a Store at all, mirroring that
+/// branch exactly.
+pub(crate) fn resolve_population_tranche_refresh_opponent_v2(
+    manifest: &PopulationTrancheRefreshManifestV2,
+    slot_store_roots: &[PathBuf],
+) -> Result<PopulationOpponentEngineV1> {
+    let handles = resolve_population_tranche_refresh_handles_v2(manifest, slot_store_roots)?;
+    let weights = population_tranche_refresh_weight_vector_v2(manifest)?;
+    Ok(PopulationOpponentEngineV1::new_v1(weights, handles))
+}
+
+fn resolve_population_tranche_refresh_handles_v2(
+    manifest: &PopulationTrancheRefreshManifestV2,
+    slot_store_roots: &[PathBuf],
+) -> Result<[PopulationSlotOccupantV1; POPULATION_OPPONENT_SLOT_COUNT_V1]> {
+    if slot_store_roots.len() != POPULATION_OPPONENT_SLOT_COUNT_V1
+        || manifest.slots_v2().len() != POPULATION_OPPONENT_SLOT_COUNT_V1
+    {
+        return Err(PopulationRuntimeResolutionErrorV1::new(
+            PopulationRuntimeResolutionErrorKindV1::SlotCount,
+        ));
+    }
+
+    // Cheap, I/O-free store-root cross-check pass over every non-search
+    // slot first (ported from 8c8d645 unchanged): the tranche-refresh
+    // manifest carries its own `store_root` per slot, so the caller-supplied
+    // root is checked against the manifest's own declared value before any
+    // Store is opened for any slot. Search-occupied slots are skipped here
+    // (their manifest-declared `store_root` is the empty-string sentinel,
+    // never a real path to cross-check against the caller's array).
+    for (slot, store_root) in manifest.slots_v2().iter().zip(slot_store_roots) {
+        if slot.occupant_class_v2() == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1 {
+            continue;
+        }
+        if store_root.to_str() != Some(slot.store_root_v2()) {
+            return Err(PopulationRuntimeResolutionErrorV1::new(
+                PopulationRuntimeResolutionErrorKindV1::AuthorityMismatch,
+            ));
+        }
+    }
+
+    let mut handles = Vec::with_capacity(POPULATION_OPPONENT_SLOT_COUNT_V1);
+    for (slot, store_root) in manifest.slots_v2().iter().zip(slot_store_roots) {
+        // Mirrors resolve_population_handles_v1's own search-occupant
+        // branch exactly (never reads a Store, never resolves a
+        // generation, positively confirms its own kind).
+        if slot.occupant_class_v2() == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1 {
+            let _ = store_root;
+            let search_authority = slot.search_authority_v2().ok_or_else(|| {
+                PopulationRuntimeResolutionErrorV1::new(
+                    PopulationRuntimeResolutionErrorKindV1::SearchAuthorityInvalid,
+                )
+            })?;
+            let authority = search_authority.to_authority_v1();
+            if authority.validate().is_err() || !authority.matches_fresh_reconstruction_v1() {
+                return Err(PopulationRuntimeResolutionErrorV1::new(
+                    PopulationRuntimeResolutionErrorKindV1::SearchAuthorityInvalid,
+                ));
+            }
+            let searcher = KernelNativeSearchOpponentV1::new(authority).map_err(|_| {
+                PopulationRuntimeResolutionErrorV1::new(
+                    PopulationRuntimeResolutionErrorKindV1::SearchAuthorityInvalid,
+                )
+            })?;
+            handles.push(PopulationSlotOccupantV1::Search(Arc::new(searcher)));
+            continue;
+        }
+        let run_bytes = fs::read(store_root.join("run.json")).map_err(|_| {
+            PopulationRuntimeResolutionErrorV1::new(PopulationRuntimeResolutionErrorKindV1::RunRead)
+        })?;
+        let run = decode_train_run_v2(&run_bytes).map_err(|_| {
+            PopulationRuntimeResolutionErrorV1::new(
+                PopulationRuntimeResolutionErrorKindV1::RunInvalid,
+            )
+        })?;
+        let root = ValidatedNativeTrainingStoreRootV2::open_v2(store_root).map_err(|_| {
+            PopulationRuntimeResolutionErrorV1::new(
+                PopulationRuntimeResolutionErrorKindV1::RootInvalid,
+            )
+        })?;
+        let boundary = load_native_training_boundary_v2(&root, &run, slot.source_generation_v2())
+            .map_err(|_| {
+                PopulationRuntimeResolutionErrorV1::new(
+                    PopulationRuntimeResolutionErrorKindV1::BoundaryInvalid,
+                )
+            })?;
+        let checkpoint = boundary.checkpoint();
+        let matches_authority = run.run_sha256() == slot.run_sha256_v2()
+            && run.record().schedule.base_seed == slot.source_base_seed_v2()
+            && checkpoint.generation_index() == slot.source_generation_v2()
+            && lower_hex_raw32_v1(checkpoint.checkpoint_manifest_sha256())
+                == slot.checkpoint_manifest_sha256_v2()
+            && lower_hex_raw32_v1(checkpoint.checkpoint_payload_sha256())
+                == slot.checkpoint_payload_sha256_v2()
+            && lower_hex_raw32_v1(checkpoint.model_parameter_sha256())
+                == slot.model_parameter_sha256_v2();
+        if !matches_authority {
+            return Err(PopulationRuntimeResolutionErrorV1::new(
+                PopulationRuntimeResolutionErrorKindV1::AuthorityMismatch,
+            ));
+        }
+        handles.push(PopulationSlotOccupantV1::Checkpoint(
+            load_native_checkpoint_inference_v1(&run, checkpoint, boundary.payload()).map_err(
+                |_| {
+                    PopulationRuntimeResolutionErrorV1::new(
+                        PopulationRuntimeResolutionErrorKindV1::InferenceInvalid,
+                    )
+                },
+            )?,
+        ));
+    }
+
+    handles.try_into().map_err(|_| {
+        PopulationRuntimeResolutionErrorV1::new(PopulationRuntimeResolutionErrorKindV1::SlotCount)
+    })
+}
+
+fn population_tranche_refresh_weight_vector_v2(
+    manifest: &PopulationTrancheRefreshManifestV2,
+) -> Result<PopulationWeightVectorV1> {
+    let weights = std::array::from_fn(|index| manifest.slots_v2()[index].weight_units_v2());
+    let total = weights
+        .iter()
+        .try_fold(0_u64, |sum, weight| sum.checked_add(*weight))
+        .ok_or_else(|| {
+            PopulationRuntimeResolutionErrorV1::new(
+                PopulationRuntimeResolutionErrorKindV1::WeightInvalid,
+            )
+        })?;
+    let weights = PopulationWeightVectorV1::new_v1(weights, total).map_err(|_| {
+        PopulationRuntimeResolutionErrorV1::new(
+            PopulationRuntimeResolutionErrorKindV1::WeightInvalid,
+        )
+    })?;
+    Ok(weights)
 }
 
 fn population_manifest_weight_vector_v1(
@@ -399,5 +554,135 @@ mod tests {
                 .kind_v1(),
             PopulationRuntimeResolutionErrorKindV1::SlotCount
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Population program V2 tranche/cycle training resolver
+    // (resolve_population_tranche_refresh_opponent_v2, Amendment 4) tests.
+    // -----------------------------------------------------------------
+
+    mod tranche_refresh_opponent_v2 {
+        use super::*;
+        use crate::native_population_refresh_manifest_v1::{
+            decode_population_tranche_refresh_manifest_v2, POPULATION_PACKAGE_COMMIT_V2,
+            POPULATION_PROGRAM_DOCUMENT_SHA256_V2_PROPOSED, POPULATION_TRANCHE_INITIAL_REFRESH_SCHEMA_V2,
+        };
+        use serde_json::{json, Value};
+
+        fn digest(n: usize) -> String {
+            format!("{n:064x}")
+        }
+
+        const ROLES: [&str; 8] = [
+            "anchor-0", "anchor-1", "historical-0", "historical-1", "current-0", "current-1",
+            "exploiter-0", "exploiter-1",
+        ];
+        const SEEDS: [u64; 8] = [
+            920_012, 970_002, 971_221, 971_223, 972_001, 972_002, 971_231, 971_233,
+        ];
+
+        fn checkpoint_slot(index: usize, hash_seed: usize) -> serde_json::Value {
+            json!({
+                "slot_index": index as u64,
+                "role": ROLES[index],
+                "occupant_class": "policy",
+                "source_base_seed": SEEDS[index],
+                "source_generation": 384_u64,
+                "store_root": format!("D:\\fixture\\tranche-opponent\\slot-{index}"),
+                "run_sha256": digest(10 + hash_seed),
+                "checkpoint_manifest_sha256": digest(20 + hash_seed),
+                "checkpoint_payload_sha256": digest(30 + hash_seed),
+                "model_parameter_sha256": digest(40 + hash_seed),
+                "weight_units": 125_000_u64,
+            })
+        }
+
+        fn initial_manifest() -> PopulationTrancheRefreshManifestV2 {
+            let slots: Vec<serde_json::Value> =
+                (0..8).map(|index| checkpoint_slot(index, 100 + index)).collect();
+            let wire = json!({
+                "schema": POPULATION_TRANCHE_INITIAL_REFRESH_SCHEMA_V2,
+                "program_package_commit_v2": POPULATION_PACKAGE_COMMIT_V2,
+                "program_document_sha256_v2_proposed": POPULATION_PROGRAM_DOCUMENT_SHA256_V2_PROPOSED,
+                "refresh_index": 0_u64,
+                "program_update": 0_u64,
+                "global_generation": 0_u64,
+                "weight_total_units": 1_000_000_u64,
+                "previous_manifest_sha256": Value::Null,
+                "pool_manifest_sha256": digest(1),
+                "payoff_panel_sha256": Value::Null,
+                "slots": slots,
+            });
+            let bytes = serde_json::to_vec(&wire).unwrap();
+            decode_population_tranche_refresh_manifest_v2(&bytes, None).unwrap()
+        }
+
+        fn matching_roots(manifest: &PopulationTrancheRefreshManifestV2) -> [PathBuf; 8] {
+            std::array::from_fn(|index| PathBuf::from(manifest.slots_v2()[index].store_root_v2()))
+        }
+
+        #[test]
+        fn weight_vector_retains_all_eight_slots() {
+            let manifest = initial_manifest();
+            let weights = population_tranche_refresh_weight_vector_v2(&manifest).unwrap();
+            assert_eq!(weights.weights_v1(), &[125_000; 8]);
+            assert_eq!(weights.total_v1(), 1_000_000);
+        }
+
+        #[test]
+        fn resolver_rejects_bad_root_count_before_any_filesystem_access() {
+            let manifest = initial_manifest();
+            let roots = std::array::from_fn::<_, 7, _>(|_| PathBuf::from("unused"));
+            assert_eq!(
+                resolve_population_tranche_refresh_opponent_v2(&manifest, &roots)
+                    .unwrap_err()
+                    .kind_v1(),
+                PopulationRuntimeResolutionErrorKindV1::SlotCount
+            );
+        }
+
+        #[test]
+        fn resolver_rejects_a_root_mismatch_before_any_filesystem_access() {
+            let manifest = initial_manifest();
+            let mut roots = matching_roots(&manifest);
+            roots[3] = PathBuf::from("D:\\wrong\\root");
+            assert_eq!(
+                resolve_population_tranche_refresh_opponent_v2(&manifest, &roots)
+                    .unwrap_err()
+                    .kind_v1(),
+                PopulationRuntimeResolutionErrorKindV1::AuthorityMismatch
+            );
+        }
+
+        #[test]
+        fn resolver_reaches_live_store_loading_once_cheap_checks_pass() {
+            let manifest = initial_manifest();
+            let roots = matching_roots(&manifest);
+            assert_eq!(
+                resolve_population_tranche_refresh_opponent_v2(&manifest, &roots)
+                    .unwrap_err()
+                    .kind_v1(),
+                PopulationRuntimeResolutionErrorKindV1::RunRead
+            );
+        }
+
+        // A resolver-level "search slot resolves without touching the
+        // filesystem, end to end" unit test was attempted here and
+        // withdrawn, disclosed rather than silently dropped: this
+        // function's loop is sequential and fails closed on the FIRST
+        // slot with a problem, and slots 0-5 in a decodable eight-slot
+        // manifest must be ordinary Checkpoint occupants (search is
+        // restricted to 6/7 by the validator), so proving slot 6 is
+        // reached AND handled correctly in one call would require slots
+        // 0-5 to resolve against real on-disk Stores -- out of proportion
+        // for this unit. The search branch itself is a direct,
+        // line-for-line mirror of `resolve_population_handles_v1`'s own
+        // already-established branch (same module, reviewed above); the
+        // manifest-decoder's own test module already thoroughly covers
+        // every search-occupancy validation rule (tier, cap, index,
+        // authorized seed, presence); and Task 7's real preflight run
+        // exercises this exact code path end to end against a genuine
+        // Store and a genuine searcher draw, which is stronger evidence
+        // than a synthetic unit test could provide here anyway.
     }
 }
