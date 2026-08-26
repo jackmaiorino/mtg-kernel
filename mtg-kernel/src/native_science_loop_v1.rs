@@ -1722,6 +1722,16 @@ mod windows_science_loop_tests {
                     .map(std::path::PathBuf::from)
                     .collect();
             assert!(!chain_paths.is_empty(), "cycle-3 population refresh chain is empty");
+            // Captured before the chain-build loop below consumes
+            // chain_paths by value; used further down (A4.4) to reach
+            // sibling manifest files beyond whatever this launch's own
+            // runtime resume chain currently spans.
+            let manifest_dir = chain_paths
+                .last()
+                .expect("cycle-3 population refresh chain is nonempty")
+                .parent()
+                .expect("cycle-3 population refresh manifest path must have a parent directory")
+                .to_path_buf();
             let mut chain = Vec::with_capacity(chain_paths.len());
             for path in chain_paths {
                 let bytes =
@@ -1771,12 +1781,57 @@ mod windows_science_loop_tests {
                 crate::native_training_store_run_v2::population_program_v2_cycle3_contract_for_launch_v1(
                     base_seed,
                 );
+            // FIX (caught 2026-08-26 on the first real refresh-19 launch,
+            // after the chain-length fix above): `first`/`active` here are
+            // the RUNTIME RESUME chain's own boundary links (ending at
+            // this launch's resume parent, per Check 1 just above) --
+            // their global_generation values move with
+            // expected_start_local at every one of the 16 launches, so
+            // they can never equal the contract's FIXED plan bounds
+            // (global_generation_offset+128 / +local_updates_total)
+            // except by coincidence. A4.4 authenticates the FULL cycle-3
+            // DESIGN PLAN (refresh_index 19-34, the whole lineage the
+            // contract describes) against the contract, independent of
+            // how far the runtime resume chain above has progressed.
+            // Decoded fresh here from the same manifest directory,
+            // chained onward from the real cycle-2 terminal link
+            // (refresh_index 18, always present in the runtime chain
+            // since every cycle-3 launch's resume chain starts at 0).
+            let historical_link_18 = chain
+                .iter()
+                .find(|manifest| manifest.refresh_index_v2() == 18)
+                .expect(
+                    "cycle-3 population refresh chain must include the real cycle-2 \
+                     terminal link (refresh_index 18)",
+                );
+            let mut plan_chain = Vec::with_capacity(16);
+            for plan_idx in 19_u64..=34 {
+                let plan_path =
+                    manifest_dir.join(format!("population-v3-refresh-{plan_idx:03}.json"));
+                let plan_bytes = fs::read(&plan_path)
+                    .expect("cycle-3 full design-plan manifest must be readable");
+                let predecessor = plan_chain.last().unwrap_or(historical_link_18);
+                let plan_decoded = crate::native_population_refresh_manifest_v1::decode_population_tranche_refresh_manifest_v2(
+                    &plan_bytes,
+                    Some(predecessor),
+                )
+                .expect("cycle-3 full design-plan manifest must chain-decode");
+                plan_chain.push(plan_decoded);
+            }
+            let plan_first_owned_global_generation = plan_chain
+                .first()
+                .expect("cycle-3 full design-plan chain is nonempty")
+                .global_generation_v2();
+            let plan_terminal_global_generation = plan_chain
+                .last()
+                .expect("cycle-3 full design-plan chain is nonempty")
+                .global_generation_v2();
             assert!(
                 population_v2_cycle3_manifest_chain_binds_contract_v1(
                     contract.global_generation_offset,
                     contract.local_updates_total,
-                    first.global_generation_v2(),
-                    active.global_generation_v2(),
+                    plan_first_owned_global_generation,
+                    plan_terminal_global_generation,
                 ),
                 "cycle-3 manifest chain's own global_generation bounds must match \
                  population_program_v2_cycle3's global_generation_offset/local_updates_total"
