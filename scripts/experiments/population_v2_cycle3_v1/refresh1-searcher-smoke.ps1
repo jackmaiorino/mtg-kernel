@@ -33,11 +33,30 @@ $slotRoots = @(
     # semantics (SlotRoots is physical location only, never compared to
     # the manifest's frozen store_root string).
     'D:\throughput-remeasure-20260825\v2-resume-walk\store-depth2048-cycle2'
-    (Join-Path $StoreParent 'run-0\store')
+    # slot 5 (current-1): FIX (caught 2026-08-26 on the real refresh-19
+    # launch attempt, RunInvalid at the opponent resolver): the opponent
+    # pool resolved for a given launch is ALWAYS the manifest chain's
+    # "active" (resume-parent) link's OWN 8-slot snapshot -- for refresh-19
+    # that is index 18, the real cycle-2 archive's terminal manifest, whose
+    # slot 5 declares CYCLE-2's OWN current-1 (seed 975002, generation
+    # 2048), not cycle-3's own trainee. cycle-3's own growing trainee is
+    # $StoreParent, resumed/trained directly via Set-Cycle3NativeEnvironment
+    # below -- an entirely separate mechanism from this opponent-pool slot
+    # array. The real cycle-2 seed-975002 store already sits at the
+    # coordinator-set-up parent-import location (common.ps1's own
+    # $script:Cycle3ParentStoreRoot; independently rehashed here: this
+    # store's run.json sha256 = 8d9a8287ef57651d5744d26275d2a8c0dc74cfb69cb7e1b2dd22691b5bd8a504,
+    # matching manifest index 18's own slot-5 run_sha256 exactly). Later
+    # launches (active = index 19+, cycle-3's own manifests) instead need
+    # slot 5 to point at cycle-3's own resulting store from the PRIOR
+    # refresh (i.e. $StoreParent itself, by then advanced to that refresh's
+    # real local generation) once that refresh's manifest is re-sealed with
+    # real hashes -- computed per-call in Invoke-Cycle3Refresh below, not
+    # fixed here.
+    '__SLOT5_PLACEHOLDER__'
     'D:\mtg-kernel-denovo-campaign-v1\seed-971222\denovo-1024-screen-build\attempt-001\denovo-1024-store\run-0\store'
     'D:\mtg-kernel-denovo-campaign-v1\seed-971221\denovo-1024-screen-build\attempt-001\denovo-1024-store\run-0\store'
 )
-$slotRootsJoined = [string]::Join(';', $slotRoots)
 
 $evidenceRoot = Join-Path $PSScriptRoot '..\..\..\..\cycle3-refresh1-smoke-evidence'
 $evidenceRoot = (New-Item -ItemType Directory -Force -Path $evidenceRoot).FullName
@@ -56,6 +75,16 @@ function Invoke-Cycle3Refresh {
         if (-not (Test-Path -LiteralPath $p)) { throw "missing chain manifest: $p" }
     }
     $refreshChain = [string]::Join(';', $chainPaths)
+
+    # slot 5 (current-1) is the ONE opponent-pool root that varies by which
+    # link is "active" (chain.last(), i.e. index $ChainThroughIndex) for
+    # this specific launch: index 18 (the real cycle-2 terminal) declares
+    # cycle-2's OWN current-1 (seed 975002, the parent-import store);
+    # index 19+ (cycle-3's own re-sealed manifests) declare cycle-3's own
+    # growing trainee, which IS $StoreParent by the time that launch runs.
+    $slot5Root = if ($ChainThroughIndex -eq 18) { $script:Cycle3ParentStoreRoot } else { (Join-Path $StoreParent 'run-0\store') }
+    $callSlotRoots = $slotRoots | ForEach-Object { if ($_ -eq '__SLOT5_PLACEHOLDER__') { $slot5Root } else { $_ } }
+    $slotRootsJoined = [string]::Join(';', $callSlotRoots)
 
     # MULTIRUN_UPDATES is the WHOLE lineage's own schedule target
     # (record.schedule.requested_successful_updates), not a per-refresh
