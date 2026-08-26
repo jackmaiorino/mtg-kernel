@@ -814,4 +814,34 @@ mod tests {
             }
         }
     }
+
+    /// Follow-up diagnostic (not a gate): the resolver-level replay above
+    /// still reports `RunInvalid` for the four denovo-1024 slots even after
+    /// the Amendment 5 port landed, and manual field-by-field comparison
+    /// against a known-working real "denovo-screen" record (seed 971_201,
+    /// `D:\mtg-kernel-denovo-screen-v1\...`) found every response-exploiter-
+    /// specific and every other contracts/environment/schedule field
+    /// byte-identical in shape (only the seed/role/array fields, and
+    /// digests inherently derived from them, legitimately differ). Calls
+    /// `decode_train_run_v2` directly (bypassing the resolver's blanket
+    /// `RunInvalid` mapping) to get the real `TrainRunV2ErrorKind`.
+    #[test]
+    #[ignore = "diagnostic aid: run explicitly with --nocapture"]
+    fn diagnose_denovo_1024_decode_error_kind_v1() {
+        let paths = [
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971221\denovo-1024-screen-build\attempt-001\denovo-1024-store\run-0\store\run.json",
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971223\denovo-1024-screen-build\attempt-002\denovo-1024-store\run-0\store\run.json",
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971222\denovo-1024-screen-build\attempt-001\denovo-1024-store\run-0\store\run.json",
+        ];
+        for path in paths {
+            let Ok(bytes) = fs::read(path) else {
+                eprintln!("skipping: {path} not present on this host");
+                continue;
+            };
+            match decode_train_run_v2(&bytes) {
+                Ok(validated) => println!("{path}: DECODED OK, run_sha256={}", validated.run_sha256()),
+                Err(error) => println!("{path}: FAILED kind={:?} code={}", error.kind(), error.code()),
+            }
+        }
+    }
 }
