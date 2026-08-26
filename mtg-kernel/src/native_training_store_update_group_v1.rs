@@ -13,6 +13,9 @@ use crate::canonical_json_v1::{
     CanonicalJsonClosedMaxV1, CanonicalJsonErrorKindV1, CanonicalJsonErrorV1,
     CanonicalJsonNullPathSegmentV1, CanonicalJsonNullPolicyV1,
 };
+use crate::kernel_native_search_opponent_v1::{
+    KernelNativeSearchTierV1, KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1,
+};
 use crate::native_policy_train_step_v1::{
     CANONICAL_GAUGE_PARAMETERS_V1, NATIVE_SCORER_BIAS_GAUGE_EVIDENCE_IDENTITY_V1,
 };
@@ -215,10 +218,32 @@ struct EpisodeWireV1 {
     /// so the canonical round-trip byte check still passes for old records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     opponent_population_slot: Option<u32>,
+    /// The occupant_class string for `opponent_population_slot` ("policy" or
+    /// `KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1`), the same identity string
+    /// the population manifest schema uses. Additive, same
+    /// default/skip_serializing_if discipline as the fields above: absent
+    /// on every record written before this field existed, so old-shape
+    /// records keep decoding and re-encoding byte-for-byte unchanged
+    /// (coordinator ruling extending CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md
+    /// Section 6 item 5 to Store persistence; commit 1d817d7 precedent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opponent_occupant_class: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     opponent_run_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     opponent_checkpoint_manifest_sha256: Option<String>,
+    /// The search-occupied-slot analog of the two Store-identity fields
+    /// above: tier and canonical authority digest, recorded the way a
+    /// Store-backed slot records `run_sha256`. `Some` only when
+    /// `opponent_population_slot` names a search-occupied slot; `None`
+    /// whenever the two Store-identity fields above are `Some`, and
+    /// whenever no population opponent (or no search-occupied slot) is
+    /// installed. Same additive discipline as every opponent-identity field
+    /// above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opponent_search_tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opponent_search_authority_sha256: Option<String>,
     /// Bounded-staleness async-inference provenance: which trainer weight
     /// version scored this episode's rollout, and which trainer update its
     /// data is destined to train. Both `None` for every record written
@@ -388,10 +413,27 @@ pub(crate) fn maximum_update_group_json_shape_v2(
         ),
         ("learner_seat", seat),
         ("opponent_checkpoint_manifest_sha256", digest),
+        (
+            "opponent_occupant_class",
+            // Longer than "policy" (6 bytes): the search authority-kind
+            // string is the worst-case-length occupant_class value.
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1(
+                KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1,
+            )?,
+        ),
         ("opponent_physical_decision_count", u63),
         ("opponent_policy_step_count", u63),
         ("opponent_population_slot", u32_value),
         ("opponent_run_sha256", digest),
+        (
+            "opponent_search_authority_sha256",
+            digest,
+        ),
+        (
+            "opponent_search_tier",
+            // "t32768" (6 bytes) is the longest of the four tier strings.
+            CanonicalJsonClosedMaxV1::fixed_ascii_string_v1("t32768")?,
+        ),
         ("physical_decision_count", u63),
         ("policy_step_count", u63),
         (
@@ -1443,9 +1485,16 @@ fn evidence_from_observation_v1(
             // accessor. The V2 outer digest never enters EpisodeWire.
             trajectory_sha256: lower_hex_raw32_v1(receipt.trajectory_sha256()),
             opponent_population_slot: observed.opponent_population_slot.map(u32::from),
+            opponent_occupant_class: observed.opponent_occupant_class.map(str::to_owned),
             opponent_run_sha256: observed.opponent_run_sha256.map(lower_hex_raw32_v1),
             opponent_checkpoint_manifest_sha256: observed
                 .opponent_checkpoint_manifest_sha256
+                .map(lower_hex_raw32_v1),
+            opponent_search_tier: observed
+                .opponent_search_tier
+                .map(|tier| search_tier_wire_v1(tier).to_owned()),
+            opponent_search_authority_sha256: observed
+                .opponent_search_authority_sha256
                 .map(lower_hex_raw32_v1),
             scoring_weight_version: observed.scoring_weight_version,
             consuming_update_version: observed.consuming_update_version,
@@ -1973,21 +2022,51 @@ fn validate_episodes_v1(run: &ValidatedTrainRunV2, evidence: &UpdateEvidenceWire
         {
             return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
         }
-        // The three opponent-identity fields are recorded together or not at
-        // all: a population opponent always names a slot and its checkpoint's
-        // full identity, and every other opponent path (ladder, plain
-        // self-play, or a record predating this field) leaves all three
-        // absent.
+        // The opponent-identity fields are recorded together, in one of two
+        // shapes, or not at all: a checkpoint-occupied population slot names
+        // a slot and its checkpoint's full identity; a search-occupied slot
+        // (coordinator ruling extending CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md
+        // Section 6 item 5 to Store persistence) names a slot, its search
+        // tier, and its authority digest instead; every other opponent path
+        // (ladder, plain self-play, or a record predating either field)
+        // leaves all five absent. `opponent_occupant_class` is additive and
+        // backward-compatible on the checkpoint arm ONLY: every record
+        // written between commit 1d817d7 and this change has checkpoint
+        // identity but no occupant_class at all, so that arm accepts it
+        // either absent or exactly "policy", never any other value. The
+        // search arm has no such legacy: every search-occupied record is
+        // written by this change or later, so occupant_class is always
+        // required there, exactly the search authority-kind string.
         match (
             episode.opponent_population_slot,
             &episode.opponent_run_sha256,
             &episode.opponent_checkpoint_manifest_sha256,
+            &episode.opponent_search_tier,
+            &episode.opponent_search_authority_sha256,
         ) {
-            (None, None, None) => {}
-            (Some(slot), Some(run_sha256), Some(checkpoint_manifest_sha256)) => {
+            (None, None, None, None, None) => {
+                if episode.opponent_occupant_class.is_some() {
+                    return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+                }
+            }
+            (Some(slot), Some(run_sha256), Some(checkpoint_manifest_sha256), None, None) => {
                 if slot >= POPULATION_OPPONENT_SLOT_COUNT_V1 as u32
                     || parse_digest_v1(run_sha256).is_err()
                     || parse_digest_v1(checkpoint_manifest_sha256).is_err()
+                    || episode
+                        .opponent_occupant_class
+                        .as_deref()
+                        .is_some_and(|value| value != "policy")
+                {
+                    return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
+                }
+            }
+            (Some(slot), None, None, Some(search_tier), Some(search_authority_sha256)) => {
+                if slot >= POPULATION_OPPONENT_SLOT_COUNT_V1 as u32
+                    || parse_search_tier_wire_v1(search_tier).is_err()
+                    || parse_digest_v1(search_authority_sha256).is_err()
+                    || episode.opponent_occupant_class.as_deref()
+                        != Some(KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1)
                 {
                     return Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding));
                 }
@@ -2522,6 +2601,37 @@ const fn learner_return_wire_v1(seat: SeatWireV1, outcome: OutcomeWireV1) -> i8 
     }
 }
 
+/// The wire-string form of a search tier, matching
+/// `KernelNativeSearchTierV1`'s own `#[serde(rename_all = "snake_case")]`
+/// spelling. Hand-rolled (not `#[derive(Serialize)]` on the enum itself)
+/// because this file's other opponent-identity fields are all plain
+/// `String`/primitive wire types, not typed enums, and this stays
+/// consistent with that.
+const fn search_tier_wire_v1(tier: KernelNativeSearchTierV1) -> &'static str {
+    match tier {
+        KernelNativeSearchTierV1::T512 => "t512",
+        KernelNativeSearchTierV1::T2048 => "t2048",
+        KernelNativeSearchTierV1::T8192 => "t8192",
+        KernelNativeSearchTierV1::T32768 => "t32768",
+    }
+}
+
+/// Format-only validation of a wire tier string: confirms it names one of
+/// the four registered tiers. Mirrors `parse_digest_v1`'s own scope for
+/// `opponent_run_sha256`/`opponent_checkpoint_manifest_sha256` -- this layer
+/// checks well-formedness only, never re-derives or cross-checks the
+/// authority itself (that proof lives at the layer that constructed the
+/// identity, `native_trainer_v1.rs::attach_population_opponent_identity_v1`).
+fn parse_search_tier_wire_v1(value: &str) -> Result<KernelNativeSearchTierV1> {
+    match value {
+        "t512" => Ok(KernelNativeSearchTierV1::T512),
+        "t2048" => Ok(KernelNativeSearchTierV1::T2048),
+        "t8192" => Ok(KernelNativeSearchTierV1::T8192),
+        "t32768" => Ok(KernelNativeSearchTierV1::T32768),
+        _ => Err(error_v1(UpdateGroupV1ErrorKind::EpisodeBinding)),
+    }
+}
+
 fn exact_u64_as_f32_v1(value: u64) -> Result<f32> {
     let encoded = value as f32;
     if value == 0 || !encoded.is_finite() || (encoded as u128) != u128::from(value) {
@@ -2646,13 +2756,27 @@ mod tests {
 
     #[test]
     fn update_group_closed_maximum_matches_frozen_recurrence() {
+        // Re-baselined for the three new opponent-identity fields
+        // (opponent_occupant_class, opponent_search_tier,
+        // opponent_search_authority_sha256; coordinator ruling extending
+        // CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 5 to
+        // Store persistence, commit 1d817d7 precedent). Old episode
+        // component 3_820 -> new 4_015 (+195 bytes/episode, the three new
+        // keys plus their worst-case values: KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1
+        // as the longest occupant_class, "t32768" as the longest tier, a
+        // 64-byte digest); physical_term/gauge/other components (754, 125,
+        // 216) are untouched by this change. Directly measured from this
+        // test's own failure before this update (old 4_915 -> new 5_110),
+        // not hand-derived.
         let one = maximum_update_group_json_shape_v2(1, 1, 1).unwrap();
-        assert_eq!(one.token_bytes(), 3_820 + 754 + 125 + 216);
-        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_916);
+        assert_eq!(one.token_bytes(), 4_015 + 754 + 125 + 216);
+        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 5_111);
 
+        // Only the per-episode component moves: +195 bytes x 2 episodes =
+        // +390 over the old 36_509_204 / 36_509_205 totals.
         let current = maximum_update_group_json_shape_v2(2, 65_536, 131_072).unwrap();
-        assert_eq!(current.token_bytes(), 36_509_204);
-        assert_eq!(current.canonical_document_bytes_v1().unwrap(), 36_509_205);
+        assert_eq!(current.token_bytes(), 36_509_594);
+        assert_eq!(current.canonical_document_bytes_v1().unwrap(), 36_509_595);
     }
 
     fn execution_config_v1(run: &ValidatedTrainRunV2) -> NativeTrainingExecutionConfigV1 {
@@ -3646,8 +3770,11 @@ mod tests {
             opponent_physical_decision_count: U63_MAX_V1,
             trajectory_sha256: "f".repeat(64),
             opponent_population_slot: Some(u32::MAX),
+            opponent_occupant_class: Some(KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1.to_owned()),
             opponent_run_sha256: Some("f".repeat(64)),
             opponent_checkpoint_manifest_sha256: Some("f".repeat(64)),
+            opponent_search_tier: Some("t32768".to_owned()),
+            opponent_search_authority_sha256: Some("f".repeat(64)),
             scoring_weight_version: Some(U63_MAX_V1),
             consuming_update_version: Some(U63_MAX_V1),
         };
@@ -3693,13 +3820,13 @@ mod tests {
         // `update_group_closed_maximum_matches_frozen_recurrence`; restate them
         // here so a planner widening cannot satisfy the allowance equality
         // above by moving both sides at once.
-        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 4_916);
+        assert_eq!(one.canonical_document_bytes_v1().unwrap(), 5_111);
         assert_eq!(
             maximum_update_group_json_shape_v2(2, 65_536, 131_072)
                 .unwrap()
                 .canonical_document_bytes_v1()
                 .unwrap(),
-            36_509_205
+            36_509_595
         );
 
         const BASE_EPISODE_KEYS_V1: [&str; 18] = [
@@ -3723,22 +3850,34 @@ mod tests {
             "winner",
         ];
 
-        /// The three opponent-identity fields are omitted from the wire
-        /// (never written as `null`) whenever they are `None`, so unlike the
+        /// The opponent-identity fields are omitted from the wire (never
+        /// written as `null`) whenever they are `None`, so unlike the
         /// eighteen base fields the expected key set is per-episode: a
-        /// population-opponent episode carries twenty-one keys, and every
-        /// other episode (ladder opponent, plain self-play, or a record
-        /// predating this field) carries the original eighteen.
+        /// checkpoint-occupied population-opponent episode carries up to
+        /// twenty-two keys (occupant_class is optional even there, for
+        /// backward compatibility with records predating it), a
+        /// search-occupied one carries twenty-two, and every other episode
+        /// (ladder opponent, plain self-play, or a record predating either
+        /// field) carries the original eighteen.
         fn expected_episode_keys_v1(episode: &EpisodeWireV1) -> Vec<&'static str> {
             let mut keys = BASE_EPISODE_KEYS_V1.to_vec();
             if episode.opponent_population_slot.is_some() {
                 keys.push("opponent_population_slot");
+            }
+            if episode.opponent_occupant_class.is_some() {
+                keys.push("opponent_occupant_class");
             }
             if episode.opponent_run_sha256.is_some() {
                 keys.push("opponent_run_sha256");
             }
             if episode.opponent_checkpoint_manifest_sha256.is_some() {
                 keys.push("opponent_checkpoint_manifest_sha256");
+            }
+            if episode.opponent_search_tier.is_some() {
+                keys.push("opponent_search_tier");
+            }
+            if episode.opponent_search_authority_sha256.is_some() {
+                keys.push("opponent_search_authority_sha256");
             }
             if episode.scoring_weight_version.is_some() {
                 keys.push("scoring_weight_version");
@@ -3805,6 +3944,12 @@ mod tests {
             if let Some(slot) = episode.opponent_population_slot {
                 object.insert("opponent_population_slot".to_owned(), Value::from(slot));
             }
+            if let Some(occupant_class) = &episode.opponent_occupant_class {
+                object.insert(
+                    "opponent_occupant_class".to_owned(),
+                    Value::from(occupant_class.clone()),
+                );
+            }
             if let Some(run_sha256) = &episode.opponent_run_sha256 {
                 object.insert(
                     "opponent_run_sha256".to_owned(),
@@ -3815,6 +3960,18 @@ mod tests {
                 object.insert(
                     "opponent_checkpoint_manifest_sha256".to_owned(),
                     Value::from(checkpoint_manifest_sha256.clone()),
+                );
+            }
+            if let Some(search_tier) = &episode.opponent_search_tier {
+                object.insert(
+                    "opponent_search_tier".to_owned(),
+                    Value::from(search_tier.clone()),
+                );
+            }
+            if let Some(search_authority_sha256) = &episode.opponent_search_authority_sha256 {
+                object.insert(
+                    "opponent_search_authority_sha256".to_owned(),
+                    Value::from(search_authority_sha256.clone()),
                 );
             }
             if let Some(scoring_weight_version) = episode.scoring_weight_version {
@@ -4011,6 +4168,186 @@ mod tests {
         assert_eq!(
             reencoded, group_bytes,
             "a population-opponent record must round-trip byte for byte"
+        );
+
+        // A freshly built checkpoint-occupied record (current code) always
+        // carries occupant_class == "policy" now, and never the
+        // search-identity fields. Additive backward compatibility itself
+        // (an old record written *before* this field existed, with
+        // occupant_class entirely absent from the JSON, still decoding and
+        // round-tripping unchanged) is proven separately by this same
+        // file's pre-existing frozen-fixture tests
+        // (`legacy_update_group_matches_pre_c2_projection_with_linux_gnu_full_byte_pin`,
+        // `sync_path_reproduces_mains_golden_store_hash`), which decode real
+        // historical bytes predating this change and are untouched by it.
+        for episode in episodes {
+            assert_eq!(episode.opponent_occupant_class.as_deref(), Some("policy"));
+            assert_eq!(episode.opponent_search_tier, None);
+            assert_eq!(episode.opponent_search_authority_sha256, None);
+        }
+    }
+
+    /// Search-occupied-slot analog of the test above (coordinator ruling
+    /// extending CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 5
+    /// to Store persistence, commit 1d817d7 precedent): a real
+    /// search-occupied population slot's episode identity round-trips
+    /// through the actual written record, and the same record fails closed
+    /// under format-level tampering or a missing/partial identity, exactly
+    /// as the pre-existing checkpoint-identity fields already do.
+    #[test]
+    fn search_slot_opponent_identity_round_trips_and_rejects_tampering() {
+        use crate::kernel_native_search_opponent_v1::{
+            KernelNativeSearchAuthorityV1, KernelNativeSearchOpponentV1,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1,
+        };
+        use crate::native_population_opponent_v1::{
+            checkpoint_inference_handles_for_test_v1, population_slot_for_episode_v1,
+            PopulationOpponentEngineV1, PopulationSlotOccupantV1, PopulationWeightVectorV1,
+        };
+        use std::sync::Arc;
+
+        // The shared fixture's frozen scheduler_timeout_ms (30s) is sized
+        // for cheap checkpoint-scored episodes and is too short for two real
+        // T2048 search episodes (2,048 simulations/decision).
+        // build_update_group_v1's validate_prepared_execution_config_v1
+        // requires the executor's scheduler_timeout to match the run
+        // record's own declared value exactly, so it cannot be widened
+        // independently; instead the run record itself is rebuilt from the
+        // same fixture with only that one field raised (self-contained JSON
+        // mutation + re-decode; the shared fixture bytes other tests rely on
+        // are untouched).
+        let run_bytes = {
+            let mut value: Value = serde_json::from_slice(&test_fixture_bytes_v2()).unwrap();
+            value["topology"]["scheduler_timeout_ms"] = serde_json::json!(1_800_000);
+            to_canonical_json_bytes_v1(&value, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+        };
+        let run = decode_train_run_v2(&run_bytes).unwrap();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        // Unlike the NativeTrainerStateV2-based acceptance tests in
+        // native_trainer_v1.rs, this executor's build_update_group_v1
+        // cross-checks the prepared config's scheduler_timeout (and every
+        // other topology/schedule field) exactly against the run record's
+        // own declared values (validate_prepared_execution_config_v1); an
+        // independent override here is a self-inflicted RunBinding
+        // mismatch, not a real fix, so execution_config_v1(&run) is used
+        // completely unmodified.
+        let mut executor = NativeTrainingExecutorV1::from_common_model_snapshot_v1(
+            execution_config_v1(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+        )
+        .unwrap();
+
+        let authority = KernelNativeSearchAuthorityV1::current(
+            KernelNativeSearchTierV1::T2048,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+        )
+        .unwrap();
+        let expected_digest = authority.digest().unwrap();
+        let searcher = Arc::new(KernelNativeSearchOpponentV1::new(authority).unwrap());
+        // All weight on slot 6 (search-occupied): every episode this run
+        // trains draws the search slot deterministically.
+        let weights = PopulationWeightVectorV1::new_v1([0, 0, 0, 0, 0, 0, 1, 0], 1).unwrap();
+        let mut checkpoint_handles = checkpoint_inference_handles_for_test_v1::<7>().into_iter();
+        let handles: [PopulationSlotOccupantV1; 8] = std::array::from_fn(|index| {
+            if index == 6 {
+                PopulationSlotOccupantV1::Search(Arc::clone(&searcher))
+            } else {
+                PopulationSlotOccupantV1::Checkpoint(checkpoint_handles.next().unwrap())
+            }
+        });
+        let population = Arc::new(PopulationOpponentEngineV1::new_v1(weights, handles));
+        executor.set_population_opponent_v1(Some(population.clone()));
+
+        let genesis_candidate = executor.checkpoint_candidate_v1().unwrap();
+        let genesis_payload = genesis_candidate.payload().to_vec();
+        let genesis = build_genesis_checkpoint_manifest_v3(&run, &genesis_payload).unwrap();
+        let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let prepared = executor.prepare_update_v2().unwrap();
+        let (group, _advanced_context) = build_update_group_v1(&run, context, &prepared)
+            .unwrap()
+            .into_parts();
+        let group_bytes = group.canonical_bytes().to_vec();
+
+        // Positive case: a real search-occupied episode's identity round-trips
+        // through the actual written record.
+        let decode_context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+        let decoded = decode_update_group_v1(&run, decode_context, &group_bytes)
+            .expect("the search-occupied population group decodes");
+        let episodes = &decoded.group().wire.evidence.episodes;
+        assert!(!episodes.is_empty());
+        for episode in episodes {
+            let slot = episode
+                .opponent_population_slot
+                .expect("a population opponent must record its slot");
+            let expected_slot =
+                population_slot_for_episode_v1(run.record().schedule.base_seed, episode.episode_index, &weights)
+                    .unwrap();
+            assert_eq!(slot, u32::from(expected_slot.index_v1() as u8));
+            assert_eq!(
+                episode.opponent_occupant_class.as_deref(),
+                Some(KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1)
+            );
+            assert_eq!(episode.opponent_run_sha256, None);
+            assert_eq!(episode.opponent_checkpoint_manifest_sha256, None);
+            assert_eq!(episode.opponent_search_tier.as_deref(), Some("t2048"));
+            let expected_digest_hex = lower_hex_raw32_v1(expected_digest);
+            assert_eq!(
+                episode.opponent_search_authority_sha256.as_deref(),
+                Some(expected_digest_hex.as_str())
+            );
+        }
+        let reencoded = to_canonical_json_bytes_v1(&decoded.group().wire, GROUP_NULL_POLICY_V1)
+            .expect("the decoded group re-serializes");
+        assert_eq!(
+            reencoded, group_bytes,
+            "a search-occupied population record must round-trip byte for byte"
+        );
+
+        // Negative cases: format-level tampering or a partial/missing
+        // identity must fail closed, mirroring the pre-existing
+        // checkpoint-identity tamper contract exactly.
+        let mutate = |mutation: &dyn Fn(&mut Value)| -> bool {
+            let mut value: Value = serde_json::from_slice(&group_bytes).unwrap();
+            let episode = &mut value["evidence"]["episodes"][0];
+            mutation(episode);
+            let Ok(bytes) = to_canonical_json_bytes_v1(&value, GROUP_NULL_POLICY_V1) else {
+                return false;
+            };
+            let context = begin_update_evidence_chain_v1(&run, &genesis).unwrap();
+            decode_update_group_v1(&run, context, &bytes).is_ok()
+        };
+        assert!(
+            !mutate(&|episode| episode["opponent_search_tier"] = serde_json::json!("t99999")),
+            "an unregistered tier string must fail closed"
+        );
+        assert!(
+            !mutate(&|episode| episode["opponent_search_authority_sha256"] =
+                serde_json::json!("not-a-hex-digest")),
+            "a malformed authority digest must fail closed"
+        );
+        assert!(
+            !mutate(&|episode| {
+                episode
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("opponent_search_authority_sha256");
+            }),
+            "search tier present without the authority digest (partial identity) must fail closed"
+        );
+        assert!(
+            !mutate(&|episode| episode["opponent_occupant_class"] = serde_json::json!("policy")),
+            "occupant_class must match which identity pair is actually present"
+        );
+        assert!(
+            !mutate(&|episode| {
+                episode
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("opponent_occupant_class");
+            }),
+            "a search-occupied episode has no legacy exemption: occupant_class is required there"
         );
     }
 
