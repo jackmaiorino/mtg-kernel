@@ -708,4 +708,98 @@ mod tests {
         // Store and a genuine searcher draw, which is stronger evidence
         // than a synthetic unit test could provide here anyway.
     }
+
+    /// Diagnostic aid (not a gate): the real refresh-19 launch failed at
+    /// this module's resolver with a bare `RunInvalid`, which does not say
+    /// which of the 8 real slot roots is the offender. Manually replicates
+    /// `resolve_population_tranche_refresh_handles_v2`'s own loop against
+    /// the real, on-disk manifest index 18 and the real 8 slot roots the
+    /// launcher supplies, printing a per-slot outcome instead of failing
+    /// closed on the first problem. Run explicitly with --nocapture;
+    /// skips (does not fail) if the real paths are absent on this host.
+    #[test]
+    #[ignore = "diagnostic aid: run explicitly with --nocapture"]
+    fn diagnose_refresh19_opponent_pool_resolution_v1() {
+        let manifest_path =
+            r"E:\mtg-kernel-population-v2-cycle3\refresh-manifests\population-v3-refresh-018.json";
+        let Ok(bytes) = fs::read(manifest_path) else {
+            eprintln!("skipping: {manifest_path} not present on this host");
+            return;
+        };
+        let manifest = crate::native_population_refresh_manifest_v1::decode_population_tranche_refresh_manifest_v2(&bytes, None)
+            .expect("manifest index 18 must decode standalone");
+
+        let slot_roots: [&str; 8] = [
+            r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary",
+            r"D:\mtg-kernel-scaled-selfplay-population-v1\replay\three-lineage-replay\attempt-001\wave-00-seed-970002-gpu1\run-0\store",
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971221\denovo-1024-screen-build\attempt-001\denovo-1024-store\run-0\store",
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971223\denovo-1024-screen-build\attempt-002\denovo-1024-store\run-0\store",
+            r"D:\throughput-remeasure-20260825\v2-resume-walk\store-depth2048-cycle2",
+            r"E:\mtg-kernel-population-v2-cycle3\parent-import\current-1-seed-975002-store\run-0\store",
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971222\denovo-1024-screen-build\attempt-001\denovo-1024-store\run-0\store",
+            r"D:\mtg-kernel-denovo-campaign-v1\seed-971221\denovo-1024-screen-build\attempt-001\denovo-1024-store\run-0\store",
+        ];
+
+        for (i, (slot, root)) in manifest.slots_v2().iter().zip(slot_roots.iter()).enumerate() {
+            let store_root = PathBuf::from(root);
+            let outcome = (|| -> Result<()> {
+                let run_bytes = fs::read(store_root.join("run.json")).map_err(|_| {
+                    PopulationRuntimeResolutionErrorV1::new(
+                        PopulationRuntimeResolutionErrorKindV1::RunRead,
+                    )
+                })?;
+                let run = decode_train_run_v2(&run_bytes).map_err(|_| {
+                    PopulationRuntimeResolutionErrorV1::new(
+                        PopulationRuntimeResolutionErrorKindV1::RunInvalid,
+                    )
+                })?;
+                let root_opened = ValidatedNativeTrainingStoreRootV2::open_v2(&store_root)
+                    .map_err(|_| {
+                        PopulationRuntimeResolutionErrorV1::new(
+                            PopulationRuntimeResolutionErrorKindV1::RootInvalid,
+                        )
+                    })?;
+                let boundary =
+                    load_native_training_boundary_v2(&root_opened, &run, slot.source_generation_v2())
+                        .map_err(|_| {
+                            PopulationRuntimeResolutionErrorV1::new(
+                                PopulationRuntimeResolutionErrorKindV1::BoundaryInvalid,
+                            )
+                        })?;
+                let checkpoint = boundary.checkpoint();
+                let matches_authority = run.run_sha256() == slot.run_sha256_v2()
+                    && run.record().schedule.base_seed == slot.source_base_seed_v2()
+                    && checkpoint.generation_index() == slot.source_generation_v2()
+                    && lower_hex_raw32_v1(checkpoint.checkpoint_manifest_sha256())
+                        == slot.checkpoint_manifest_sha256_v2()
+                    && lower_hex_raw32_v1(checkpoint.checkpoint_payload_sha256())
+                        == slot.checkpoint_payload_sha256_v2()
+                    && lower_hex_raw32_v1(checkpoint.model_parameter_sha256())
+                        == slot.model_parameter_sha256_v2();
+                if !matches_authority {
+                    eprintln!(
+                        "slot {i}: run_sha256 match={} base_seed match={} ({} vs {}) generation match={} ({} vs {}) manifest_sha match={} payload_sha match={} model_sha match={}",
+                        run.run_sha256() == slot.run_sha256_v2(),
+                        run.record().schedule.base_seed == slot.source_base_seed_v2(),
+                        run.record().schedule.base_seed,
+                        slot.source_base_seed_v2(),
+                        checkpoint.generation_index() == slot.source_generation_v2(),
+                        checkpoint.generation_index(),
+                        slot.source_generation_v2(),
+                        lower_hex_raw32_v1(checkpoint.checkpoint_manifest_sha256()) == slot.checkpoint_manifest_sha256_v2(),
+                        lower_hex_raw32_v1(checkpoint.checkpoint_payload_sha256()) == slot.checkpoint_payload_sha256_v2(),
+                        lower_hex_raw32_v1(checkpoint.model_parameter_sha256()) == slot.model_parameter_sha256_v2(),
+                    );
+                    return Err(PopulationRuntimeResolutionErrorV1::new(
+                        PopulationRuntimeResolutionErrorKindV1::AuthorityMismatch,
+                    ));
+                }
+                Ok(())
+            })();
+            match outcome {
+                Ok(()) => println!("slot {i} ({}): OK", slot.role_v2()),
+                Err(error) => println!("slot {i} ({}): FAILED kind={:?}", slot.role_v2(), error.kind_v1()),
+            }
+        }
+    }
 }
