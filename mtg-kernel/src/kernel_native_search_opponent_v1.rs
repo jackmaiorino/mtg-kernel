@@ -46,6 +46,24 @@ pub const KERNEL_NATIVE_SEARCH_DEPTH_CAP_V1: u16 = 64;
 pub const KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1: [u64; 4] =
     [1_987_001, 1_988_001, 1_989_001, 1_990_001];
 
+/// Cycle-3 population-pool authorized base_seed
+/// (CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md, countersigned 6a0db07d,
+/// Section 3 / Section 5 layer 1), added as its own one-element array per
+/// lineage/purpose, the same pattern as
+/// `RESPONSE_EXPLOITER_AUTHORIZED_DENOVO_SEEDS_V1` /
+/// `..._DENOVO_512_SEEDS_V1` (`native_training_store_run_v2.rs`), never
+/// merged into the calibration-only array above.
+///
+/// PLACEHOLDER, per the sheet's own Section 13 open item: this literal is
+/// NOT the real cycle-3 launch base_seed. That value is Jack's own
+/// launch-parameter decision and is not assigned by the countersigned
+/// sheet. This placeholder exists only so the rest of the pool-registration
+/// mechanism (this file's `validate`, the manifest schema, resolution, and
+/// every acceptance-gate test) can be built and exercised now; replace it
+/// with the real, separately authorized value before any real cycle-3
+/// training run is launched.
+pub const KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1: [u64; 1] = [2_001_001];
+
 /// Diagnostic candidate-generation allowlist for the throughput screen and
 /// calibration panels (design "Calibration after implementation"): the
 /// search authority has no checkpoint generation to select, so its analog
@@ -146,7 +164,8 @@ impl KernelNativeSearchAuthorityV1 {
             || self.card_db_hash != KERNEL_CARDDB_HASH
             || self.runtime_deck_catalog_sha256 != RUNTIME_DECK_CATALOG_FILE_SHA256
             || !valid_diagnostic
-            || !KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1.contains(&self.action_seed)
+            || !(KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1.contains(&self.action_seed)
+                || KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1.contains(&self.action_seed))
         {
             return Err(KernelNativeSearchErrorV1::InvalidAuthority);
         }
@@ -1665,6 +1684,54 @@ mod tests {
         assert!(
             KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1.contains(&eval_seed),
             "diagnostic eval seed must be one of the four countersigned calibration seeds"
+        );
+    }
+
+    /// Pool-scoped sibling of the test above
+    /// (CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md, countersigned 6a0db07d,
+    /// Section 5 layer 7 / Section 10 gate 1). Needs no real Store and runs
+    /// no rollout, only the manifest-shaped `(tier, action_seed)` allowlist
+    /// check a pool-registration arm script resolves against
+    /// (`run-pool-registration-smoke.ps1`). Correction from an earlier
+    /// implementation pass: `#[ignore]`-gated after all, same as its
+    /// run-level sibling above -- not because it needs a Store or a panel
+    /// (it needs neither), but because it is env-var-driven, and an
+    /// un-ignored env-var-required test fails by default in every ordinary
+    /// `cargo test` run that does not happen to set those two variables.
+    #[test]
+    #[ignore]
+    fn kernel_native_search_pool_env_surface_is_registered_and_fails_closed() {
+        fn required_env_v1(name: &str) -> String {
+            std::env::var(name).unwrap_or_else(|_| panic!("{name} must be set"))
+        }
+        let tier_name = required_env_v1("KERNEL_SEARCH_POOL_TIER");
+        // Only T2048 is an enabled pool tier (Section 4/9.2); T8192 is
+        // reserved but not enabled (Section 9.3), and T512/T32768 are never
+        // pool-eligible. Every one of the four run-level tier names is
+        // still parsed here (so a typo reads as "not T2048", not "unknown
+        // enum variant"), but only `T2048` passes the allowlist check below.
+        let tier = match tier_name.as_str() {
+            "T512" => KernelNativeSearchTierV1::T512,
+            "T2048" => KernelNativeSearchTierV1::T2048,
+            "T8192" => KernelNativeSearchTierV1::T8192,
+            "T32768" => KernelNativeSearchTierV1::T32768,
+            _ => panic!("KERNEL_SEARCH_POOL_TIER must name one of the four registered tiers"),
+        };
+        assert_eq!(
+            tier,
+            KernelNativeSearchTierV1::T2048,
+            "pool registration admits only T2048; T8192/T512/T32768 fail closed exactly like an unregistered tier"
+        );
+        let action_seed: u64 = required_env_v1("KERNEL_SEARCH_POOL_ACTION_SEED")
+            .parse()
+            .expect("KERNEL_SEARCH_POOL_ACTION_SEED");
+        assert!(
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1.contains(&action_seed),
+            "pool action_seed must be on the pool-specific authorized-seed array, never a calibration seed"
+        );
+        assert!(
+            !KERNEL_NATIVE_SEARCH_AUTHORIZED_SEEDS_V1.contains(&action_seed),
+            "a calibration seed must never double as a pool production seed"
         );
     }
 }

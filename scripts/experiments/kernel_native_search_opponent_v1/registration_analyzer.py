@@ -41,6 +41,20 @@ AUTHORIZED_SEEDS = (1_987_001, 1_988_001, 1_989_001, 1_990_001)
 # Mirrors KERNEL_NATIVE_SEARCH_DIAGNOSTIC_TIER_ALLOWLIST_V1.
 REGISTERED_TIERS = ("T512", "T2048", "T8192", "T32768")
 
+# CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md (countersigned 6a0db07d),
+# Section 5 layer 6 / Section 9.2-9.3. Pool registration is a NARROWER,
+# separate surface from the calibration allowlists above: only T2048 is an
+# enabled pool tier (T8192 is reserved but not enabled, Section 9.3;
+# T512/T32768 are never pool-eligible, Section 4), and the pool action_seed
+# is its own array, mirroring KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1
+# (kernel_native_search_opponent_v1.rs), never one of the four calibration
+# seeds above. PLACEHOLDER, per the sheet's Section 13 open item: 2001001 is
+# not the real cycle-3 launch base_seed; keep this literal and the matching
+# Rust array in sync, and replace both with the real, separately authorized
+# value before any real cycle-3 training run.
+POOL_ENABLED_TIERS = ("T2048",)
+POOL_AUTHORIZED_ACTION_SEEDS = (2_001_001,)
+
 
 def validate_env_record(record: dict) -> list[str]:
     """Returns a list of violations; empty means the record is registered-valid."""
@@ -57,18 +71,50 @@ def validate_env_record(record: dict) -> list[str]:
     return violations
 
 
+def validate_pool_record(record: dict) -> list[str]:
+    """Returns a list of violations; empty means the pool record is
+    registered-valid. Pool records use a distinct schema
+    ({tier, action_seed}, no pair_count/evaluation_seed): population-pool
+    slots are trained continuously, not run as a fixed-pair panel."""
+    violations = []
+    tier = record.get("tier")
+    if tier not in POOL_ENABLED_TIERS:
+        violations.append(
+            f"pool tier {tier!r} is not enabled; only {POOL_ENABLED_TIERS} may occupy a pool slot "
+            "(T8192 is reserved but not yet enabled; see Section 9.3)"
+        )
+    seed = record.get("action_seed")
+    if seed not in POOL_AUTHORIZED_ACTION_SEEDS:
+        violations.append(
+            f"pool action_seed {seed!r} is not one of the pool-authorized seeds {POOL_AUTHORIZED_ACTION_SEEDS}"
+        )
+    if seed in AUTHORIZED_SEEDS:
+        violations.append(
+            f"pool action_seed {seed!r} reuses a calibration seed; the pool and the ruler must never share one"
+        )
+    return violations
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("record_json", type=Path, help="path to a {tier, evaluation_seed, pair_count} JSON record")
+    parser.add_argument(
+        "--pool",
+        action="store_true",
+        help="validate record_json as a pool-registration {tier, action_seed} record instead",
+    )
     args = parser.parse_args()
 
     record = json.loads(args.record_json.read_text(encoding="utf-8"))
-    violations = validate_env_record(record)
+    violations = validate_pool_record(record) if args.pool else validate_env_record(record)
     if violations:
         for violation in violations:
             print(f"REJECTED: {violation}", file=sys.stderr)
         return 1
-    print("registered-valid: tier and seed are on the countersigned allowlists")
+    if args.pool:
+        print("pool-registered-valid: tier and action_seed are on the pool-specific allowlists")
+    else:
+        print("registered-valid: tier and seed are on the countersigned allowlists")
     return 0
 
 

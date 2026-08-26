@@ -5,11 +5,13 @@
 //! named generation and every digest recorded by the refresh manifest are
 //! checked before checkpoint inference is constructed.
 
-use crate::native_checkpoint_inference_v1::{
-    load_native_checkpoint_inference_v1, NativeCheckpointInferenceV1,
+use crate::kernel_native_search_opponent_v1::{
+    KernelNativeSearchOpponentV1, KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1,
 };
+use crate::native_checkpoint_inference_v1::load_native_checkpoint_inference_v1;
 use crate::native_population_opponent_v1::{
-    PopulationOpponentEngineV1, PopulationWeightVectorV1, POPULATION_OPPONENT_SLOT_COUNT_V1,
+    PopulationOpponentEngineV1, PopulationSlotOccupantV1, PopulationWeightVectorV1,
+    POPULATION_OPPONENT_SLOT_COUNT_V1,
 };
 use crate::native_population_refresh_manifest_v1::PopulationRefreshManifestV1;
 use crate::native_training_store_digest_v1::lower_hex_raw32_v1;
@@ -20,6 +22,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PopulationRuntimeResolutionErrorKindV1 {
@@ -31,6 +34,13 @@ pub(crate) enum PopulationRuntimeResolutionErrorKindV1 {
     AuthorityMismatch,
     InferenceInvalid,
     WeightInvalid,
+    // CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 3: a
+    // search-occupied slot's declared config fails its own two-check
+    // re-verification (`.validate()` plus `matches_fresh_reconstruction_v1()`)
+    // at resolution time, re-run here the same way a Store slot's SHA
+    // fields are re-checked against the actually-loaded artifact, not just
+    // trusted from manifest decode.
+    SearchAuthorityInvalid,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,7 +113,7 @@ pub(crate) fn resolve_population_response_target_pairwise_v1(
 fn resolve_population_handles_v1(
     manifest: &PopulationRefreshManifestV1,
     slot_store_roots: &[PathBuf],
-) -> Result<[NativeCheckpointInferenceV1; POPULATION_OPPONENT_SLOT_COUNT_V1]> {
+) -> Result<[PopulationSlotOccupantV1; POPULATION_OPPONENT_SLOT_COUNT_V1]> {
     if slot_store_roots.len() != POPULATION_OPPONENT_SLOT_COUNT_V1
         || manifest.slots_v1().len() != POPULATION_OPPONENT_SLOT_COUNT_V1
     {
@@ -114,6 +124,33 @@ fn resolve_population_handles_v1(
 
     let mut handles = Vec::with_capacity(POPULATION_OPPONENT_SLOT_COUNT_V1);
     for (slot, store_root) in manifest.slots_v1().iter().zip(slot_store_roots) {
+        // CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 3: a
+        // search-occupied slot never reads a Store, never resolves a
+        // generation, and positively confirms its own kind rather than ever
+        // falling through to a Store read for that index. `store_root` is
+        // present (fixed slot-count shape, unchanged) but deliberately never
+        // touched in this branch.
+        if slot.occupant_class_v1() == KERNEL_NATIVE_SEARCH_AUTHORITY_KIND_V1 {
+            let _ = store_root;
+            let search_authority = slot.search_authority_v1().ok_or_else(|| {
+                PopulationRuntimeResolutionErrorV1::new(
+                    PopulationRuntimeResolutionErrorKindV1::SearchAuthorityInvalid,
+                )
+            })?;
+            let authority = search_authority.to_authority_v1();
+            if authority.validate().is_err() || !authority.matches_fresh_reconstruction_v1() {
+                return Err(PopulationRuntimeResolutionErrorV1::new(
+                    PopulationRuntimeResolutionErrorKindV1::SearchAuthorityInvalid,
+                ));
+            }
+            let searcher = KernelNativeSearchOpponentV1::new(authority).map_err(|_| {
+                PopulationRuntimeResolutionErrorV1::new(
+                    PopulationRuntimeResolutionErrorKindV1::SearchAuthorityInvalid,
+                )
+            })?;
+            handles.push(PopulationSlotOccupantV1::Search(Arc::new(searcher)));
+            continue;
+        }
         let run_bytes = fs::read(store_root.join("run.json")).map_err(|_| {
             PopulationRuntimeResolutionErrorV1::new(PopulationRuntimeResolutionErrorKindV1::RunRead)
         })?;
@@ -149,7 +186,7 @@ fn resolve_population_handles_v1(
                 PopulationRuntimeResolutionErrorKindV1::AuthorityMismatch,
             ));
         }
-        handles.push(
+        handles.push(PopulationSlotOccupantV1::Checkpoint(
             load_native_checkpoint_inference_v1(&run, checkpoint, boundary.payload()).map_err(
                 |_| {
                     PopulationRuntimeResolutionErrorV1::new(
@@ -157,7 +194,7 @@ fn resolve_population_handles_v1(
                     )
                 },
             )?,
-        );
+        ));
     }
 
     handles.try_into().map_err(|_| {

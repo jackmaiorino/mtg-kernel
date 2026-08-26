@@ -1111,13 +1111,20 @@ mod tests {
 
     #[test]
     fn one_group_continuation_closed_maximum_matches_frozen_recurrence() {
+        // Re-baselined for the three new opponent-identity fields
+        // (coordinator ruling extending CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md
+        // Section 6 item 5 to Store persistence): the wrapped group's own
+        // per-episode component moved +195 bytes (see
+        // native_training_store_update_group_v1.rs's
+        // update_group_closed_maximum_matches_frozen_recurrence), and this
+        // continuation's fixed +730-byte wrapper overhead is untouched.
         assert_eq!(
             maximum_one_group_continuation_cj_bytes_v2(1, 1, 1).unwrap(),
-            4_915 + 730
+            5_110 + 730
         );
         assert_eq!(
             maximum_one_group_continuation_cj_bytes_v2(2, 65_536, 131_072).unwrap(),
-            36_509_934
+            36_510_324
         );
     }
 
