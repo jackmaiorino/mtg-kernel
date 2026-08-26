@@ -90,20 +90,46 @@ PACKAGE_COMMIT_V2 = "10ac4b7f24b6ff1fd7b40522b7a7a379b4f6f723"
 DOC_SHA_PROPOSED = "c3540f385cf2c8d7dae922deb3be10af913a006076077817cc61da109cfd6d88"
 
 # ---------------------------------------------------------------------
+# Indices 0-2: REAL tranche-1 genesis links, located at
+# D:\mtg-kernel-population-v2-tranche1\refresh\ (coordinator-supplied
+# pointer; the 8/25 cleanup relocated some C:\ evidence roots to E:\
+# archive paths but D:\ retains full campaign trees, including this one --
+# an earlier pass of this script wrongly concluded these were missing and
+# built a disclosed synthetic bridge instead; superseded here by the real
+# files). Copied byte-for-byte, chain continuity verified against each
+# file's own declared previous_manifest_sha256 before trusting it.
+# ---------------------------------------------------------------------
+TRANCHE1_PATHS = {
+    0: r"D:\mtg-kernel-population-v2-tranche1\refresh\population-v2-refresh-initial\attempt-001\population-v2-refresh-000.json",
+    1: r"D:\mtg-kernel-population-v2-tranche1\refresh\population-v2-refresh-0128\attempt-001\population-v2-refresh-001.json",
+    2: r"D:\mtg-kernel-population-v2-tranche1\refresh\population-v2-refresh-0256\attempt-001\population-v2-refresh-002.json",
+}
+for idx in (0, 1, 2):
+    src = TRANCHE1_PATHS[idx]
+    with open(src, "rb") as f:
+        raw = f.read()
+    obj = json.loads(raw.decode("utf-8"))
+    assert obj["refresh_index"] == idx, (obj["refresh_index"], idx)
+    if idx > 0:
+        assert obj["previous_manifest_sha256"] == chain_hash[idx - 1], (
+            "chain break at tranche-1 idx", idx, obj["previous_manifest_sha256"], chain_hash[idx - 1]
+        )
+    h = sha256_bytes(raw)
+    dst = os.path.join(OUT_DIR, f"population-v3-refresh-{idx:03d}.json")
+    with open(dst, "wb") as f:
+        f.write(raw)
+    chain_hash[idx] = h
+    chain_obj[idx] = obj
+    print(f"[real tranche-1, verbatim] idx={idx} gen={obj['global_generation']} sha256={h} -> {dst}")
+
+# ---------------------------------------------------------------------
 # Indices 3-18: REAL cycle-2 archive, byte-for-byte AS-ARCHIVED (copied
 # verbatim, not re-serialized), so their own manifest_sha256 (computed
 # from the exact archived bytes) is the genuine, real value cycle-2's own
-# real campaign sealed -- not a value this authoring pass invents.
-# Indices 0-2 (tranche-1's own genesis) are NOT archived on this host
-# (confirmed: no tranche-1 archive directory exists anywhere searched);
-# consequently these real files cannot be chain-validated back to
-# refresh_index 0 through the production decoder in this environment.
-# Decoded here via the test-only evaluation path
-# (decode_population_tranche_refresh_manifest_v2_current_only) purely to
-# confirm they are real, valid, byte-exact links -- NOT claimed as a
-# complete production chain walk. Disclosed as a genuine, unresolved gap
-# for a fully literal from-index-0 production chain walk (see the
-# implementation report).
+# real campaign sealed -- not a value this authoring pass invents. Chain
+# continuity verified against index 2's own real hash above (a chain
+# break here would mean either the tranche-1 or cycle-2 archive is not
+# what it claims to be).
 # ---------------------------------------------------------------------
 for gen in ARCHIVE_GENS:
     idx = (gen - 384)//128 + 3
@@ -112,6 +138,9 @@ for gen in ARCHIVE_GENS:
         raw = f.read()
     obj = json.loads(raw.decode("utf-8"))
     assert obj["refresh_index"] == idx, (obj["refresh_index"], idx)
+    assert obj["previous_manifest_sha256"] == chain_hash[idx - 1], (
+        "chain break at cycle-2 idx", idx, obj["previous_manifest_sha256"], chain_hash[idx - 1]
+    )
     h = sha256_bytes(raw)
     dst = os.path.join(OUT_DIR, f"population-v3-refresh-{idx:03d}.json")
     with open(dst, "wb") as f:
@@ -156,7 +185,13 @@ SEARCH_AUTHORITY_REAL = {
     "action_seed": 2026082601,
     "private_diagnostic_identity": "fnv1a64-serde-json-game-state-envelope-v9",
     "evaluator_sha256": "4d32da6c4ff64b229a82cc6063b91980864a06499f93bddd62ebe7df3587a5e9",
-    "engine_commit": "2d4c23aa15937b60018641d6c4fbcf6227563846",
+    # Re-printed at the FINAL commit before the real preflight run
+    # (fac47bdc..., "cycle-3 Task 7: preflight walks the complete real
+    # chain from refresh_index 0"); must match whatever build's git HEAD
+    # actually runs the preflight/launch, since matches_fresh_reconstruction_v1()
+    # independently rebuilds this field from the live build and rejects a
+    # stale value.
+    "engine_commit": "fac47bdc9f8ab1ed6b6332a474a3a9b4c626c3ae",
     "card_db_hash": 7262100742335860506,
     "runtime_deck_catalog_sha256": "68e7602f3a4df6217119406973954630800c358a10fca9f28e6cf9f20fd3b851",
 }
