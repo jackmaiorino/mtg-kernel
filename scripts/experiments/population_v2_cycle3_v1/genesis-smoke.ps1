@@ -30,8 +30,22 @@ $evidenceRoot = (New-Item -ItemType Directory -Force -Path $evidenceRoot).FullNa
 $exe = Get-ReleaseTestExecutableCycle3V1 -EvidenceRoot $evidenceRoot -Label 'genesis-smoke'
 Write-Output "RESOLVED_EXE=$exe"
 
-$expectedResumeGeneration = if ($null -eq $StopAfterGeneration) { $null } else { [Nullable[uint64]]0 }
-$saved = Set-Cycle3NativeEnvironment -Seed $Seed -Updates $Updates -StoreParent $StoreParent -GpuOrdinal 0 -StopAfterGeneration $StopAfterGeneration -ExpectedResumeGeneration $expectedResumeGeneration
+# FIX (caught 2026-08-26, real error surfaced via added diagnostics):
+# ExpectedResumeGeneration must stay unset (null) for a fresh genesis
+# build. native_science_loop_v1.rs has an explicit, deliberate guard
+# ("if expected_resume_generation.is_some() && genesis_required { return
+# Err(InputInvalid) }") that rejects supplying an expected-resume
+# generation together with a store that still needs genesis published --
+# by design, since there is nothing yet to "resume from" at generation 0;
+# genesis IS the creation of that state, not a resume of it. An earlier
+# revision of this fix wrongly also set ExpectedResumeGeneration=0
+# whenever StopAfterGeneration was supplied, which made every real
+# genesis attempt fail this guard (empirically confirmed twice). Only
+# StopAfterGeneration is needed: the loop's own
+# "stop_after_generation == Some(parent_generation)" check (independent
+# of expected_resume_generation) still breaks immediately once genesis
+# publishes generation 0.
+$saved = Set-Cycle3NativeEnvironment -Seed $Seed -Updates $Updates -StoreParent $StoreParent -GpuOrdinal 0 -StopAfterGeneration $StopAfterGeneration
 $logPath = Join-Path $evidenceRoot 'genesis-smoke.log'
 try {
     $previous = $ErrorActionPreference
