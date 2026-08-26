@@ -1888,6 +1888,16 @@ pub struct NativeTrainerEpisodeEvidenceV1 {
     pub opponent_population_slot: Option<u8>,
     pub opponent_run_sha256: Option<[u8; 32]>,
     pub opponent_checkpoint_manifest_sha256: Option<[u8; 32]>,
+    /// The search-occupied-slot analog of the two fields above (commit
+    /// `1d817d7` precedent, extended by
+    /// CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 5): tier
+    /// and canonical authority digest, recorded the way a Store-backed slot
+    /// records `run_sha256`. `Some` only when `opponent_population_slot`
+    /// names a search-occupied slot; `None` whenever the two Store-identity
+    /// fields above are `Some`, and whenever no population opponent (or no
+    /// search-occupied slot) is installed.
+    pub opponent_search_tier: Option<crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1>,
+    pub opponent_search_authority_sha256: Option<[u8; 32]>,
     /// Bounded-staleness async-inference provenance, stamped only by the
     /// opt-in async production integration
     /// (`bounded_staleness_async_production_v1`) after this evidence is
@@ -3619,11 +3629,34 @@ fn attach_population_opponent_identity_v1(
                     "population opponent slot recomputation failed",
                 )
             })?;
-        let (run_sha256, checkpoint_manifest_sha256) =
-            population_opponent.checkpoint_identity_for_slot_v1(slot);
         episode.opponent_population_slot = Some(slot.index_v1() as u8);
-        episode.opponent_run_sha256 = Some(run_sha256);
-        episode.opponent_checkpoint_manifest_sha256 = Some(checkpoint_manifest_sha256);
+        // CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 5
+        // (commit `1d817d7` precedent): exactly one of the two identity
+        // pairs is populated, matching `slot_kind_v1`. Pure recomputation
+        // after the episode already exists; no new inference, no shared
+        // state, cannot influence gameplay or learning.
+        match (
+            population_opponent.checkpoint_identity_for_slot_v1(slot),
+            population_opponent.search_authority_identity_for_slot_v1(slot),
+        ) {
+            (Some((run_sha256, checkpoint_manifest_sha256)), None) => {
+                episode.opponent_run_sha256 = Some(run_sha256);
+                episode.opponent_checkpoint_manifest_sha256 = Some(checkpoint_manifest_sha256);
+                episode.opponent_search_tier = None;
+                episode.opponent_search_authority_sha256 = None;
+            }
+            (None, Some((tier, authority_sha256))) => {
+                episode.opponent_run_sha256 = None;
+                episode.opponent_checkpoint_manifest_sha256 = None;
+                episode.opponent_search_tier = Some(tier);
+                episode.opponent_search_authority_sha256 = Some(authority_sha256);
+            }
+            (None, None) | (Some(_), Some(_)) => {
+                return Err(NativeTrainerErrorV1::GroupingInvariant(
+                    "population slot occupant identity is neither exactly checkpoint nor exactly search",
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -3696,6 +3729,8 @@ fn train_grouped_candidate_v1(
             opponent_population_slot: None,
             opponent_run_sha256: None,
             opponent_checkpoint_manifest_sha256: None,
+            opponent_search_tier: None,
+            opponent_search_authority_sha256: None,
             scoring_weight_version: None,
             consuming_update_version: None,
         });
@@ -3963,6 +3998,8 @@ fn train_grouped_candidate_wide_v1(
             opponent_population_slot: None,
             opponent_run_sha256: None,
             opponent_checkpoint_manifest_sha256: None,
+            opponent_search_tier: None,
+            opponent_search_authority_sha256: None,
             scoring_weight_version: None,
             consuming_update_version: None,
         });
@@ -4230,6 +4267,10 @@ fn changed_non_gauge_parameters_v1(
 mod tests {
     use super::*;
     use crate::async_flat_scored_rollout_v1::acquire_async_flat_scored_test_lock_v1;
+    use crate::kernel_native_search_opponent_v1::{
+        KernelNativeSearchAuthorityV1, KernelNativeSearchOpponentV1, KernelNativeSearchTierV1,
+        KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1,
+    };
     use crate::common_model_snapshot_v1::{
         common_model_snapshot_paths_v1, BASE_SEED_V1 as SNAPSHOT_AUTHORITY_BASE_SEED_V1,
         MODEL_INIT_SEED_V1 as SNAPSHOT_MODEL_INIT_SEED_V1, SNAPSHOT_IDENTITY_V1,
@@ -6055,6 +6096,233 @@ mod tests {
             ),
             "native terminal trajectory receipt does not match its terminal",
             "a duplicate episode receipt must reject"
+        );
+    }
+
+    // CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md acceptance gates (countersigned
+    // 6a0db07d). These two tests exercise the pool-registration mechanism
+    // through the real in-memory training path
+    // (`NativeTrainerStateV2::run_even_batch_update_v2`, real rollout, real
+    // terminal resolution -- this path has no synthetic-terminal code path,
+    // so "terminals natural" is inherent, not separately asserted). They
+    // deliberately stop short of `build_update_group_v1`/Store persistence:
+    // that layer's own wire schema (`EpisodeWireV1`,
+    // `native_training_store_update_group_v1.rs`) does not yet carry the two
+    // new opponent-identity fields this sheet's Section 6 item 5 adds to
+    // `NativeTrainerEpisodeEvidenceV1`, a materially larger, pinned-contract-
+    // hash-bearing surface (`UPDATE_GROUP_RECORD_CONTRACT_SHA256_V1`,
+    // `maximum_update_group_json_shape_v2`) the countersigned sheet did not
+    // name and this pass does not touch. See the implementation report for
+    // the full gap description; closing it is follow-up work requiring its
+    // own review, not something to do unilaterally here (no silent pinned-
+    // hash recomputation).
+
+    fn search_pool_test_authority_v1() -> KernelNativeSearchAuthorityV1 {
+        KernelNativeSearchAuthorityV1::current(
+            KernelNativeSearchTierV1::T2048,
+            KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1[0],
+            crate::state::DIAGNOSTIC_STATE_HASH_ALGORITHM,
+        )
+        .expect("the pool-registration placeholder seed and T2048 tier must construct a valid authority")
+    }
+
+    /// Registration smoke (Section 10 gate 1): a search-occupied population
+    /// slot's episode is deterministic on repeat (bit-identical evidence,
+    /// full derived struct equality modulo timing), and its recorded
+    /// opponent identity is the search tier and authority digest, never
+    /// Store identity (Section 6 item 5, commit `1d817d7` precedent).
+    #[test]
+    fn population_pool_search_slot_is_deterministic_and_records_identity_v1() {
+        use crate::native_population_opponent_v1::{
+            checkpoint_inference_handles_for_test_v1, PopulationOpponentEngineV1,
+            PopulationSlotOccupantV1, PopulationWeightVectorV1,
+        };
+
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+
+        fn build_population_v1() -> Arc<PopulationOpponentEngineV1> {
+            let searcher = Arc::new(
+                KernelNativeSearchOpponentV1::new(search_pool_test_authority_v1()).unwrap(),
+            );
+            // All weight on slot 6 (the search-occupied exploiter slot,
+            // Section 7): every episode this run trains draws the search
+            // slot deterministically, isolating the mechanism under test.
+            // The engine layer enforces no manifest-shaped weight cap (that
+            // is the schema validator's own job, tested separately in
+            // `native_population_refresh_manifest_v1.rs`); this skewed
+            // vector is test-only, never a production configuration.
+            let weights = PopulationWeightVectorV1::new_v1([0, 0, 0, 0, 0, 0, 1, 0], 1).unwrap();
+            let mut checkpoint_handles =
+                checkpoint_inference_handles_for_test_v1::<7>().into_iter();
+            let handles: [PopulationSlotOccupantV1; 8] = std::array::from_fn(|index| {
+                if index == 6 {
+                    PopulationSlotOccupantV1::Search(Arc::clone(&searcher))
+                } else {
+                    PopulationSlotOccupantV1::Checkpoint(checkpoint_handles.next().unwrap())
+                }
+            });
+            Arc::new(PopulationOpponentEngineV1::new_v1(weights, handles))
+        }
+
+        let expected_digest = search_pool_test_authority_v1().digest().unwrap();
+        // batch_episodes must be even (`validate_batch_episodes_v2`, seat-
+        // swapped pairing); 2 is the smallest legal value. All weight is on
+        // slot 6, so both episodes in the pair draw the search slot.
+        // Real T2048 search is compute-heavy (2,048 simulations/decision);
+        // widen the scheduler timeout well past the 600s default so this
+        // stays robust under a slow (e.g. debug-profile) build, matching
+        // this crate's own `--release` recommendation for search-bearing
+        // work.
+        let mut config = burn_even_batch_config_v2(2, 1, 1, 1);
+        config.scheduler_timeout = Duration::from_secs(1800);
+
+        let mut first_trainer = trainer_v2(2);
+        first_trainer.set_population_opponent_v1(Some(build_population_v1()));
+        let first = first_trainer
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
+
+        let mut second_trainer = trainer_v2(2);
+        second_trainer.set_population_opponent_v1(Some(build_population_v1()));
+        let second = second_trainer
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
+
+        // Deterministic repeat, bit-identical (Section 8): two fresh,
+        // independently constructed population engines and trainers,
+        // identical seeds, must reproduce byte-identical evidence.
+        assert_eq!(
+            without_observed_timing_v2(first.clone()),
+            without_observed_timing_v2(second)
+        );
+
+        assert_eq!(first.episodes.len(), 2);
+        for episode in &first.episodes {
+            assert_eq!(
+                episode.opponent_population_slot,
+                Some(6),
+                "the all-weight-on-slot-6 vector must always draw the search slot"
+            );
+            assert_eq!(
+                episode.opponent_run_sha256, None,
+                "a search-occupied slot must not record Store identity"
+            );
+            assert_eq!(episode.opponent_checkpoint_manifest_sha256, None);
+            assert_eq!(
+                episode.opponent_search_tier,
+                Some(KernelNativeSearchTierV1::T2048)
+            );
+            assert_eq!(
+                episode.opponent_search_authority_sha256,
+                Some(expected_digest)
+            );
+        }
+    }
+
+    /// Full-mixture rollout smoke (Section 10 gate 4): a real eight-slot
+    /// mixture with the searcher live at T2048 alongside seven checkpoint
+    /// slots. Every episode's recorded identity is independently
+    /// recomputed and checked exactly (mirroring
+    /// `native_training_store_update_group_v1::tests::
+    /// population_opponent_identity_round_trips_through_the_written_record`'s
+    /// per-episode verification style), and the run is required to actually
+    /// exercise both occupant kinds within its episode window, not just the
+    /// search slot in isolation.
+    #[test]
+    fn population_pool_full_mixture_rollout_exercises_both_occupant_kinds_v1() {
+        use crate::native_population_opponent_v1::{
+            checkpoint_inference_handles_for_test_v1, population_slot_for_episode_v1,
+            PopulationOpponentEngineV1, PopulationSlotOccupantV1, PopulationWeightVectorV1,
+        };
+
+        let _lock = acquire_async_flat_scored_test_lock_v1();
+
+        let searcher =
+            Arc::new(KernelNativeSearchOpponentV1::new(search_pool_test_authority_v1()).unwrap());
+        // Test-only weights, roughly half on the search slot (index 6) and
+        // half spread across the seven checkpoint slots, chosen so a small
+        // episode batch exercises both occupant kinds with overwhelming
+        // probability (not a production weight: Section 7's real cap is
+        // 20,000/1,000,000 at T2048, enforced at the manifest-schema layer,
+        // tested separately).
+        let weights = PopulationWeightVectorV1::new_v1(
+            [71_429, 71_429, 71_429, 71_429, 71_429, 71_429, 499_997, 71_429],
+            1_000_000,
+        )
+        .unwrap();
+        let mut checkpoint_handles = checkpoint_inference_handles_for_test_v1::<7>().into_iter();
+        let handles: [PopulationSlotOccupantV1; 8] = std::array::from_fn(|index| {
+            if index == 6 {
+                PopulationSlotOccupantV1::Search(Arc::clone(&searcher))
+            } else {
+                PopulationSlotOccupantV1::Checkpoint(checkpoint_handles.next().unwrap())
+            }
+        });
+        let population = Arc::new(PopulationOpponentEngineV1::new_v1(weights, handles));
+
+        // Base seed 71,501 (`trainer_v2`'s fixed seed) with this weight
+        // vector deterministically draws slot 6 (search) at episodes 0, 1,
+        // 3 and slot 0 (checkpoint) at episode 2 (independently confirmed
+        // via `population_slot_for_episode_v1` before choosing this episode
+        // count, and batch_episodes must be even per
+        // `validate_batch_episodes_v2`'s seat-swapped pairing): 4 is the
+        // smallest even window that exercises both occupant kinds for this
+        // exact seed.
+        let mut trainer = trainer_v2(4);
+        trainer.set_population_opponent_v1(Some(population.clone()));
+        // See the sibling test's comment: widened past the 600s default for
+        // slow-build robustness with three real T2048 search episodes.
+        let mut config = burn_even_batch_config_v2(4, 1, 1, 1);
+        config.scheduler_timeout = Duration::from_secs(1800);
+        let evidence = trainer
+            .run_even_batch_update_v2(&config, NativeRunEnvironmentTrajectoryContractV1::LegacyV1)
+            .unwrap();
+        assert_eq!(evidence.episodes.len(), 4);
+
+        let mut observed_checkpoint = false;
+        let mut observed_search = false;
+        for episode in &evidence.episodes {
+            let expected_slot =
+                population_slot_for_episode_v1(71_501, episode.episode_index, &weights).unwrap();
+            assert_eq!(
+                episode.opponent_population_slot,
+                Some(expected_slot.index_v1() as u8),
+                "recorded slot must match the deterministic selection the rollout used"
+            );
+            match (
+                population.checkpoint_identity_for_slot_v1(expected_slot),
+                population.search_authority_identity_for_slot_v1(expected_slot),
+            ) {
+                (Some((run_sha256, checkpoint_manifest_sha256)), None) => {
+                    assert_eq!(episode.opponent_run_sha256, Some(run_sha256));
+                    assert_eq!(
+                        episode.opponent_checkpoint_manifest_sha256,
+                        Some(checkpoint_manifest_sha256)
+                    );
+                    assert_eq!(episode.opponent_search_tier, None);
+                    assert_eq!(episode.opponent_search_authority_sha256, None);
+                    observed_checkpoint = true;
+                }
+                (None, Some((tier, authority_sha256))) => {
+                    assert_eq!(episode.opponent_run_sha256, None);
+                    assert_eq!(episode.opponent_checkpoint_manifest_sha256, None);
+                    assert_eq!(episode.opponent_search_tier, Some(tier));
+                    assert_eq!(
+                        episode.opponent_search_authority_sha256,
+                        Some(authority_sha256)
+                    );
+                    observed_search = true;
+                }
+                other => panic!(
+                    "slot {} must resolve to exactly one occupant kind, got {other:?}",
+                    expected_slot.index_v1()
+                ),
+            }
+        }
+        assert!(
+            observed_checkpoint && observed_search,
+            "this mixture smoke test must exercise both occupant kinds within 16 episodes; \
+             checkpoint={observed_checkpoint} search={observed_search}"
         );
     }
 }
