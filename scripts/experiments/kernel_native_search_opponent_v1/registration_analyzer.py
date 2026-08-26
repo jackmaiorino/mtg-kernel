@@ -48,12 +48,12 @@ REGISTERED_TIERS = ("T512", "T2048", "T8192", "T32768")
 # T512/T32768 are never pool-eligible, Section 4), and the pool action_seed
 # is its own array, mirroring KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1
 # (kernel_native_search_opponent_v1.rs), never one of the four calibration
-# seeds above. PLACEHOLDER, per the sheet's Section 13 open item: 2001001 is
-# not the real cycle-3 launch base_seed; keep this literal and the matching
-# Rust array in sync, and replace both with the real, separately authorized
-# value before any real cycle-3 training run.
+# seeds above. Real cycle-3 launch value: 2026082601 (Jack's own
+# launch-parameter decision, CLAUDE #345), replacing the prior 2001001
+# build-time placeholder; keep this literal and the matching Rust array
+# and PowerShell ValidateSet in sync.
 POOL_ENABLED_TIERS = ("T2048",)
-POOL_AUTHORIZED_ACTION_SEEDS = (2_001_001,)
+POOL_AUTHORIZED_ACTION_SEEDS = (2_026_082_601,)
 
 
 def validate_env_record(record: dict) -> list[str]:

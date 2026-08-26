@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Executable,
     [Parameter(Mandatory = $true)][ValidateSet('T2048')][string]$Tier,
-    [Parameter(Mandatory = $true)][ValidateSet(2001001)][uint64]$PoolActionSeed,
+    [Parameter(Mandatory = $true)][ValidateSet(2026082601)][uint64]$PoolActionSeed,
     [Parameter(Mandatory = $true)][string]$StdoutPath,
     [Parameter(Mandatory = $true)][string]$StderrPath
 )
@@ -27,12 +27,12 @@ param(
 # never pool-eligible (Section 4). The `-PoolActionSeed` ValidateSet is the
 # pool seed whitelist itself, mirroring
 # run-diagnostic-registration-smoke.ps1's own `-EvaluationSeed` pattern, but
-# naming the pool-specific placeholder literal
+# naming the pool-specific launch literal
 # (`KERNEL_NATIVE_SEARCH_AUTHORIZED_POOL_SEEDS_V1`), never one of the four
-# calibration seeds. PLACEHOLDER, per the sheet's Section 13 open item: 2001001
-# is not the real cycle-3 launch base_seed; replace this literal (and the
-# matching Rust array) with the real, separately authorized value before any
-# real cycle-3 training run.
+# calibration seeds. Real cycle-3 launch value: 2026082601 (Jack's own
+# launch-parameter decision, CLAUDE #345), replacing the prior 2001001
+# build-time placeholder in lockstep with the matching Rust array and the
+# Python POOL_AUTHORIZED_ACTION_SEEDS tuple.
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
