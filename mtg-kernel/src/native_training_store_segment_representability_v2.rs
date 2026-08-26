@@ -973,15 +973,21 @@ mod tests {
         assert_eq!(first.max_physical_terms_per_segment_v2(), 262_144);
         assert_eq!(first.max_gauge_bounds_per_segment_v2(), 524_288);
         assert_eq!(first.max_logical_rows_per_update_v2(), 196_611);
-        assert_eq!(first.max_update_group_json_token_bytes_v2(), 36_509_204);
+        // Re-baselined for the three new opponent-identity fields
+        // (coordinator ruling extending CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md
+        // Section 6 item 5 to Store persistence; see
+        // native_training_store_update_group_v1.rs's own
+        // update_group_closed_maximum_matches_frozen_recurrence for the
+        // +195-byte-per-episode source measurement).
+        assert_eq!(first.max_update_group_json_token_bytes_v2(), 36_509_594);
         assert_eq!(
             first.max_segment_update_group_json_token_bytes_v2(),
-            146_036_816
+            146_038_376
         );
-        assert_eq!(first.max_update_group_cj_bytes_v2(), 36_509_205);
-        assert_eq!(first.max_segment_update_group_cj_bytes_v2(), 146_036_820);
-        assert_eq!(first.max_one_group_continuation_cj_bytes_v2(), 36_509_934);
-        assert_eq!(first.max_segment_continuation_cj_bytes_v2(), 146_039_736);
+        assert_eq!(first.max_update_group_cj_bytes_v2(), 36_509_595);
+        assert_eq!(first.max_segment_update_group_cj_bytes_v2(), 146_038_380);
+        assert_eq!(first.max_one_group_continuation_cj_bytes_v2(), 36_510_324);
+        assert_eq!(first.max_segment_continuation_cj_bytes_v2(), 146_041_296);
         assert_eq!(first.max_trained_segment_manifest_cj_bytes_v2(), 4_144);
         assert_eq!(first.max_genesis_segment_manifest_cj_bytes_v2(), 1_401);
         assert_eq!(first.max_checkpoint_manifest_cj_bytes_v2(), 2_204);
