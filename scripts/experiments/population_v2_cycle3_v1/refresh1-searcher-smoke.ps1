@@ -1,5 +1,10 @@
 param(
-    [string]$StoreParent = 'E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-001',
+    # real-attempt-001 (smoke-scale, 4-update schedule) and real-attempt-002
+    # (killed mid-build while chasing the genesis stop_after_generation fix)
+    # are both deleted; real-attempt-003 is the genuine campaign genesis
+    # (requested_successful_updates=2048, generation_index=0, GEN0
+    # model_parameter_sha256 confirmed matching the pinned parent).
+    [string]$StoreParent = 'E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003',
     [uint64]$Seed = 977002,
     [ValidateSet('Both', 'Item2Only', 'Item3Only')]
     [string]$Phase = 'Both'
