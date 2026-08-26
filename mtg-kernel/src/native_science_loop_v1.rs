@@ -791,6 +791,15 @@ fn run_native_science_loop_with_opponents_v1(
             execution_config.clone(),
             continuation_session.take(),
         )
+        .map_err(|error| {
+            #[cfg(test)]
+            eprintln!(
+                "science-loop resume failure: kind={:?} code={}",
+                error.kind(),
+                error.code()
+            );
+            error
+        })
         .map_err(map_busy_v1(
             NativeScienceLoopV1ErrorKind::TrainFailed,
             |error: &crate::native_training_store_resume_v2::NativeTrainingStoreResumeV2Error| {
