@@ -4354,11 +4354,25 @@ mod tests {
     /// TAU_N / TAU_S MEASUREMENT (CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md
     /// Section 10/13 open item; coordinator-directed, 2026-08-26). Measures
     /// mean per-episode wall-clock for a checkpoint-occupied ("neural")
-    /// population slot and a search-occupied slot at T2048, on the real
-    /// production-shaped path (NativeTrainingExecutorV1::prepare_update_v2,
-    /// the same entry point `search_slot_opponent_identity_round_trips_and_
-    /// rejects_tampering` and `population_opponent_identity_round_trips_
-    /// through_the_written_record` exercise), single-threaded
+    /// population slot and a search-occupied slot at T2048, via
+    /// `NativeTrainingExecutorV1::run_update_v2`. That method is the
+    /// non-persisting diagnostics wrapper, documented at its own definition
+    /// (`native_training_executor_v1.rs:1804-1809`) as being "for
+    /// non-persisting runners and diagnostics" with durable callers required
+    /// to use `prepare_update_v2` instead; it is one line over the same
+    /// shared training core, `NativeTrainerStateV2::run_even_batch_update_v2`
+    /// (`native_training_executor_v1.rs:1820`), that `prepare_update_v2`
+    /// itself calls via `prepare_transition_v2`
+    /// (`native_training_executor_v1.rs:1333`). This harness deliberately
+    /// times that shared core through the wrapper rather than through
+    /// `prepare_update_v2` (the entry point
+    /// `search_slot_opponent_identity_round_trips_and_rejects_tampering` and
+    /// `population_opponent_identity_round_trips_through_the_written_record`
+    /// use), so the loop is not confounded by `prepare_update_v2`'s own
+    /// per-update predecessor/successor re-derivation and checkpoint-export
+    /// bookkeeping; CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md amendment 1
+    /// (A1.1, A1.8) states this plainly and bounds what that bookkeeping
+    /// would add. Single-threaded
     /// (worker_count/sessions_per_worker/broker_batch_target = 1) so wall
     /// time divided by episode count is a genuine serial per-episode mean,
     /// not confounded by cross-episode parallelism -- matching exactly what
