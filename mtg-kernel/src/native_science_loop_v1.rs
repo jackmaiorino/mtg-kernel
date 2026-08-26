@@ -1373,6 +1373,7 @@ mod windows_science_loop_tests {
     fn multirun_pilot_v1() {
         use crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1;
         use crate::native_training_store_run_v2::{
+            test_fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2,
             test_fixture_bytes_with_schedule_and_base_seed_population_environment_v2,
             test_fixture_bytes_with_schedule_and_base_seed_v2,
         };
@@ -1425,6 +1426,15 @@ mod windows_science_loop_tests {
         // unset) is completely untouched.
         let ladder_enabled = env_knob_v1("MULTIRUN_LADDER", 0) != 0;
         let population_authority_enabled = env_knob_v1("MULTIRUN_POPULATION_AUTHORITY", 0) != 0;
+        // Cycle-3 sheet Amendment 2 A2.2: a separate stamping knob, since
+        // MULTIRUN_POPULATION_AUTHORITY stays hard-locked to tranche-1
+        // parameters (the assert below requires updates == 1_536) and is not
+        // reused. Stamps `population_program_v2_cycle3` instead of
+        // `population_program_v1`; shares the same generic
+        // MULTIRUN_POPULATION_RUNTIME pool-resolution machinery, which is not
+        // tranche-1-specific.
+        let population_cycle3_authority_enabled =
+            env_knob_v1("MULTIRUN_POPULATION_CYCLE3_AUTHORITY", 0) != 0;
         let population_runtime_enabled = env_knob_v1("MULTIRUN_POPULATION_RUNTIME", 0) != 0;
         let response_exploiter_runtime_enabled =
             env_knob_v1("MULTIRUN_RESPONSE_EXPLOITER_RUNTIME", 0) != 0;
@@ -1558,8 +1568,14 @@ mod windows_science_loop_tests {
             "MULTIRUN_POPULATION_AUTHORITY=1 requires the exact ladder, envrand-v2, parent-init, and global-1536 Run"
         );
         assert!(
-            !population_runtime_enabled || population_authority_enabled,
-            "MULTIRUN_POPULATION_RUNTIME=1 requires MULTIRUN_POPULATION_AUTHORITY=1"
+            !(population_authority_enabled && population_cycle3_authority_enabled),
+            "MULTIRUN_POPULATION_AUTHORITY and MULTIRUN_POPULATION_CYCLE3_AUTHORITY are mutually exclusive stamping knobs"
+        );
+        assert!(
+            !population_runtime_enabled
+                || population_authority_enabled
+                || population_cycle3_authority_enabled,
+            "MULTIRUN_POPULATION_RUNTIME=1 requires MULTIRUN_POPULATION_AUTHORITY=1 or MULTIRUN_POPULATION_CYCLE3_AUTHORITY=1"
         );
         assert!(
             !(population_runtime_enabled && response_exploiter_runtime_enabled),
@@ -1688,12 +1704,17 @@ mod windows_science_loop_tests {
             !(wide_enabled && population_authority_enabled),
             "population authority is fixed to the narrow Net8 runtime"
         );
+        assert!(
+            !(wide_enabled && population_cycle3_authority_enabled),
+            "population authority is fixed to the narrow Net8 runtime"
+        );
         println!(
             "MULTIRUN CONFIG runs={run_count} updates={updates} topology={workers}x{sessions} \
              broker_target={broker_target} base_seed={base_seed} seed_offset={seed_offset} \
              record_only={record_only} ladder={ladder_enabled} \
              ladder_init={} wide={wide_enabled} envrand_v2={environment_randomization_v2} \
              population_authority={population_authority_enabled} \
+             population_cycle3_authority={population_cycle3_authority_enabled} \
              population_runtime={population_runtime_enabled} \
              response_exploiter_runtime={response_exploiter_runtime_enabled} \
              response_exploiter_denovo={response_exploiter_denovo_enabled} \
@@ -1783,6 +1804,27 @@ mod windows_science_loop_tests {
                             ladder_init_section
                                 .as_ref()
                                 .expect("population Run requires parent initialization")
+                                .clone(),
+                        )
+                    } else if population_cycle3_authority_enabled {
+                        test_fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2(
+                            NativeTrainingNumericalBackendV1::CudaBurnDense,
+                            64,
+                            4,
+                            updates,
+                            workers,
+                            sessions,
+                            broker_target,
+                            1_024,
+                            2_048,
+                            run_seed,
+                            ladder_pool
+                                .as_ref()
+                                .expect("population cycle-3 Run requires ladder pool")
+                                .clone(),
+                            ladder_init_section
+                                .as_ref()
+                                .expect("population cycle-3 Run requires parent initialization")
                                 .clone(),
                         )
                     } else if wide_enabled {

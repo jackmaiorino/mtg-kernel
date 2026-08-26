@@ -1125,6 +1125,21 @@ const POPULATION_CYCLE3_PARENT_MODEL_PARAMETER_SHA256_V1: &str =
     "67c5d0a2c506c0514623f3f4ea0f273b904662cbdae4f6ddc89c44e255b9a70d";
 const POPULATION_CYCLE3_PARENT_BASE_SEED_V1: u64 = 972_002;
 const POPULATION_CYCLE3_PARENT_LOCAL_GENERATION_V1: u64 = 2_048;
+// Not checked by validate_population_program_v2_cycle3_parent_lineage_v1's
+// six fields (Layer 1 does not gate these two), but real, independently
+// computed values from the same live extraction, used when authoring a real
+// genesis record (Task 2/3): run_sha256 is the parent store's own recomputed
+// run.json identity (matches the checkpoint's own embedded run_sha256 field
+// and the existing test fixture's long-standing value); store_tree_sha256 is
+// computed via the project's existing `Get-StoreTreeHash` convention
+// (scripts/experiments/regularized_continuation_retest_v1/common.ps1) over
+// the full parent-import store root, independently cross-verified by running
+// that exact PowerShell function against the same store (bit-identical
+// result) -- see the implementation report.
+const POPULATION_CYCLE3_PARENT_RUN_SHA256_V1: &str =
+    "8d9a8287ef57651d5744d26275d2a8c0dc74cfb69cb7e1b2dd22691b5bd8a504";
+const POPULATION_CYCLE3_PARENT_STORE_TREE_SHA256_V1: &str =
+    "06d9e67a3bb56fb716d5d0208c7adf8897c6f996851c6883418563f2fa143a79";
 
 /// Amendment 2 (2026-08-26) A2.1 Layer 1: whenever `validate_decoded_train_run_v2`
 /// accepts a run whose contracts carry `population_program_v2_cycle3`, it
@@ -4062,6 +4077,43 @@ pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_population_environm
     )
 }
 
+/// Cycle-3 sheet Amendment 2 A2.2, Task 2 (genesis stamping): the cycle-3
+/// sibling of
+/// [`test_fixture_bytes_with_schedule_and_base_seed_population_environment_v2`]
+/// immediately above, called from `native_science_loop_v1`'s
+/// `MULTIRUN_POPULATION_CYCLE3_AUTHORITY` dispatch branch.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn test_fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2(
+    backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+    batch_episodes: u64,
+    checkpoint_segment_updates: u64,
+    requested_successful_updates: u64,
+    worker_count: u64,
+    sessions_per_worker: u64,
+    broker_batch_target: u64,
+    max_physical_decisions: u64,
+    max_policy_steps: u64,
+    base_seed: u64,
+    pool: OpponentLadderPoolContractV1,
+    initialization: OpponentLadderInitializationContractV1,
+) -> Vec<u8> {
+    tests::fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2(
+        backend,
+        batch_episodes,
+        checkpoint_segment_updates,
+        requested_successful_updates,
+        worker_count,
+        sessions_per_worker,
+        broker_batch_target,
+        max_physical_decisions,
+        max_policy_steps,
+        base_seed,
+        pool,
+        initialization,
+    )
+}
+
 /// Exact program-update-1024 response-exploiter RunV2 authority. It composes
 /// the existing ladder-init plus environment-v2 carrier, then adds only the
 /// response contract before reminting the derived digests.
@@ -5477,6 +5529,54 @@ mod tests {
         let mut record = TrainRunV2::from(wire);
         record.contracts.population_program_v1 =
             Some(population_program_fixture_for_seed(base_seed));
+        refresh_derived(&mut record);
+        to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
+    }
+
+    /// Cycle-3 sheet Amendment 2 A2.2, Task 2 (genesis stamping): the
+    /// cycle-3 sibling of
+    /// [`fixture_bytes_with_schedule_and_base_seed_population_environment_v2`]
+    /// immediately above. Identical composition (ladder + envrand-v2 +
+    /// caller-supplied ladder-init section), but stamps
+    /// `population_program_v2_cycle3` (via
+    /// `population_program_v2_cycle3_contract_for_launch_v1`) instead of the
+    /// tranche-1-locked `population_program_v1`. Deliberately does not reuse
+    /// `population_program_fixture_for_seed`/`MULTIRUN_POPULATION_AUTHORITY`:
+    /// per Amendment 2 A2.2, that stamping stays hard-locked to tranche-1
+    /// parameters.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn fixture_bytes_with_schedule_and_base_seed_population_cycle3_environment_v2(
+        backend: crate::native_policy_train_step_v1::NativeTrainingNumericalBackendV1,
+        batch_episodes: u64,
+        checkpoint_segment_updates: u64,
+        requested_successful_updates: u64,
+        worker_count: u64,
+        sessions_per_worker: u64,
+        broker_batch_target: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        base_seed: u64,
+        pool: OpponentLadderPoolContractV1,
+        initialization: OpponentLadderInitializationContractV1,
+    ) -> Vec<u8> {
+        let base = fixture_bytes_with_schedule_and_base_seed_ladder_init_environment_v2(
+            backend,
+            batch_episodes,
+            checkpoint_segment_updates,
+            requested_successful_updates,
+            worker_count,
+            sessions_per_worker,
+            broker_batch_target,
+            max_physical_decisions,
+            max_policy_steps,
+            base_seed,
+            pool,
+            initialization,
+        );
+        let wire: TrainRunWireV2 = serde_json::from_slice(&base).unwrap();
+        let mut record = TrainRunV2::from(wire);
+        record.contracts.population_program_v2_cycle3 =
+            Some(population_program_v2_cycle3_contract_for_launch_v1(base_seed));
         refresh_derived(&mut record);
         to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap()
     }
@@ -9033,6 +9133,57 @@ mod tests {
                 model_parameter_sha256:
                     "67c5d0a2c506c0514623f3f4ea0f273b904662cbdae4f6ddc89c44e255b9a70d"
                         .to_owned(),
+            },
+        }
+    }
+
+    /// Task 2 (genesis stamping), real production authoring: the
+    /// non-placeholder sibling of `population_program_v2_cycle3_fixture`,
+    /// carrying `store_tree_sha256`/`run_sha256` from the same real
+    /// extraction (`POPULATION_CYCLE3_PARENT_*_V1`) instead of that fixture's
+    /// deliberate structural placeholders. `expected_base_seed` is the one
+    /// field left as a caller-supplied parameter, mirroring
+    /// `population_program_fixture_for_seed`'s own single-parameter pattern;
+    /// every other field is the sheet-pinned/frozen value, reused verbatim
+    /// from the family's existing constants (`POPULATION_PACKAGE_COMMIT_V1`,
+    /// `POPULATION_RETEST_MANIFEST_SHA256_V1`, `POPULATION_REWARD_IDENTITY_V1`,
+    /// `POPULATION_REFRESH_MANIFEST_IDENTITY_V1`,
+    /// `POPULATION_RETEST_BETA_F32_BITS_V1`, `POPULATION_POOL_IDENTITY_V1`),
+    /// so the two documents (this contract and the base/cycle-2 ones) carry
+    /// one set of shared literals rather than independently re-derived
+    /// copies. `program_document_sha256` is the cycle-3 sheet's own
+    /// countersigned SHA (CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md, verified
+    /// 1efa40979...), mirroring how each cycle's contract pins its own
+    /// governing document (cycle-2's real record pins a different SHA, its
+    /// own sheet's).
+    pub(crate) fn population_program_v2_cycle3_contract_for_launch_v1(
+        expected_base_seed: u64,
+    ) -> PopulationProgramContractV2Cycle3 {
+        PopulationProgramContractV2Cycle3 {
+            identity: "mtg-kernel-native-scaled-selfplay-population/v2-cycle3".to_owned(),
+            package_commit: POPULATION_PACKAGE_COMMIT_V1.to_owned(),
+            program_document_sha256:
+                "1efa40979de0d4e8f3105d1c266b676b0c2a57c320994703b355a1989cdd1c0a".to_owned(),
+            retest_manifest_sha256: POPULATION_RETEST_MANIFEST_SHA256_V1.to_owned(),
+            global_generation_offset: 2_304,
+            local_updates_total: 2_048,
+            refresh_interval: POPULATION_REFRESH_INTERVAL_V1,
+            slot_count: POPULATION_SLOT_COUNT_V1,
+            reward_identity: POPULATION_REWARD_IDENTITY_V1.to_owned(),
+            refresh_manifest_identity: POPULATION_REFRESH_MANIFEST_IDENTITY_V1.to_owned(),
+            retest_beta_f32_bits: POPULATION_RETEST_BETA_F32_BITS_V1.to_owned(),
+            expected_base_seed,
+            pool_identity: POPULATION_POOL_IDENTITY_V1.to_owned(),
+            parent_store_local_generation: POPULATION_CYCLE3_PARENT_LOCAL_GENERATION_V1,
+            parent_lineage: PopulationSourceLineageV1 {
+                base_seed: POPULATION_CYCLE3_PARENT_BASE_SEED_V1,
+                store_tree_sha256: POPULATION_CYCLE3_PARENT_STORE_TREE_SHA256_V1.to_owned(),
+                run_sha256: POPULATION_CYCLE3_PARENT_RUN_SHA256_V1.to_owned(),
+                checkpoint_sha256: POPULATION_CYCLE3_PARENT_CHECKPOINT_SHA256_V1.to_owned(),
+                sidecar_sha256: POPULATION_CYCLE3_PARENT_SIDECAR_SHA256_V1.to_owned(),
+                state_sha256: POPULATION_CYCLE3_PARENT_STATE_SHA256_V1.to_owned(),
+                model_parameter_sha256: POPULATION_CYCLE3_PARENT_MODEL_PARAMETER_SHA256_V1
+                    .to_owned(),
             },
         }
     }
