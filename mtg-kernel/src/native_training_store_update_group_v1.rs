@@ -3927,7 +3927,7 @@ mod tests {
     fn population_opponent_identity_round_trips_through_the_written_record() {
         use crate::native_population_opponent_v1::{
             checkpoint_inference_handles_for_test_v1, population_slot_for_episode_v1,
-            PopulationOpponentEngineV1, PopulationWeightVectorV1,
+            PopulationOpponentEngineV1, PopulationSlotOccupantV1, PopulationWeightVectorV1,
         };
         use std::sync::Arc;
 
@@ -3942,7 +3942,12 @@ mod tests {
         .unwrap();
 
         let weights = PopulationWeightVectorV1::new_v1([1, 1, 1, 1, 1, 1, 1, 1], 8).unwrap();
-        let handles = checkpoint_inference_handles_for_test_v1::<8>();
+        // Pool-registration change (CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md
+        // Section 6 item 2): the handle array is now slot-kind-tagged. This
+        // fixture predates search-slot support and stays all-Checkpoint,
+        // unchanged in behavior.
+        let handles = checkpoint_inference_handles_for_test_v1::<8>()
+            .map(PopulationSlotOccupantV1::Checkpoint);
         let population = Arc::new(PopulationOpponentEngineV1::new_v1(weights, handles));
         executor.set_population_opponent_v1(Some(population.clone()));
 
@@ -3988,8 +3993,9 @@ mod tests {
                 u32::from(expected_slot.index_v1() as u8),
                 "the recorded slot must match the deterministic selection the rollout used"
             );
-            let (expected_run_sha256, expected_checkpoint_manifest_sha256) =
-                population.checkpoint_identity_for_slot_v1(expected_slot);
+            let (expected_run_sha256, expected_checkpoint_manifest_sha256) = population
+                .checkpoint_identity_for_slot_v1(expected_slot)
+                .expect("this fixture's population engine is all-checkpoint-occupied");
             assert_eq!(run_sha256, lower_hex_raw32_v1(expected_run_sha256));
             assert_eq!(
                 checkpoint_manifest_sha256,

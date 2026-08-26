@@ -7,10 +7,12 @@
 //! K4 ladder module remains unchanged.
 
 use crate::flat_policy_v2::FlatScoringDecisionViewV2;
+use crate::kernel_native_search_opponent_v1::KernelNativeSearchOpponentV1;
 use crate::native_checkpoint_inference_v1::NativeCheckpointInferenceV1;
 use crate::native_ladder_opponent_v1::softmax_sample_temperature_one_v1;
 use crate::native_trainer_schedule_v2::derive_native_trainer_opponent_pool_choice_seed_v2;
 use core::fmt;
+use std::sync::Arc;
 #[cfg(test)]
 use std::sync::Mutex;
 
@@ -20,6 +22,24 @@ pub(crate) const POPULATION_OPPONENT_IDENTITY_V1: &str = "mtg-kernel-native-popu
 /// The population runtime has exactly eight policy slots.
 pub(crate) const POPULATION_OPPONENT_SLOT_COUNT_V1: usize = 8;
 
+/// One population slot's occupant. `Checkpoint` is the original, unchanged
+/// Store-backed behavior. `Search` is the new non-Store kernel-native search
+/// authority (CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 2).
+/// This type enforces nothing about which slots or tiers may hold a
+/// `Search` occupant; that restriction is the manifest validator's job
+/// (`native_population_refresh_manifest_v1.rs::validate_search_occupant_v1`),
+/// enforced before a manifest ever reaches resolution.
+pub(crate) enum PopulationSlotOccupantV1 {
+    Checkpoint(NativeCheckpointInferenceV1),
+    Search(Arc<KernelNativeSearchOpponentV1>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PopulationSlotKindV1 {
+    Checkpoint,
+    Search,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PopulationOpponentErrorV1 {
     InvalidWeightTotal,
@@ -28,6 +48,7 @@ pub(crate) enum PopulationOpponentErrorV1 {
     InvalidSlot,
     Inference,
     Softmax,
+    WrongOccupantKind,
 }
 
 impl fmt::Display for PopulationOpponentErrorV1 {
@@ -39,6 +60,9 @@ impl fmt::Display for PopulationOpponentErrorV1 {
             Self::InvalidSlot => "population slot is invalid",
             Self::Inference => "population checkpoint inference rejected the decision",
             Self::Softmax => "population temperature-one softmax selection failed",
+            Self::WrongOccupantKind => {
+                "population slot occupant kind does not match the requested dispatch"
+            }
         })
     }
 }
@@ -149,11 +173,12 @@ fn grouped_population_slot_for_episode_v1(
 /// Runtime bridge for one validated eight-slot population snapshot.
 ///
 /// The array is the only model-handle field and contains exactly eight
-/// immutable `NativeCheckpointInferenceV1` values. Handles are selected by
-/// slot ordinal and are never mutated by this type.
+/// immutable `PopulationSlotOccupantV1` values (Store-backed checkpoint or
+/// non-Store search authority). Handles are selected by slot ordinal and
+/// are never mutated by this type.
 pub(crate) struct PopulationOpponentEngineV1 {
     weights: PopulationWeightVectorV1,
-    handles: [NativeCheckpointInferenceV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
+    handles: [PopulationSlotOccupantV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
     selection_group_size: u64,
     #[cfg(test)]
     selected_episode_slots: Mutex<Vec<(u64, u64, usize)>>,
@@ -174,7 +199,7 @@ impl fmt::Debug for PopulationOpponentEngineV1 {
 impl PopulationOpponentEngineV1 {
     pub(crate) fn new_v1(
         weights: PopulationWeightVectorV1,
-        handles: [NativeCheckpointInferenceV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
+        handles: [PopulationSlotOccupantV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
     ) -> Self {
         Self {
             weights,
@@ -191,7 +216,7 @@ impl PopulationOpponentEngineV1 {
     #[cfg(test)]
     pub(crate) fn new_pairwise_eval_v1(
         weights: PopulationWeightVectorV1,
-        handles: [NativeCheckpointInferenceV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
+        handles: [PopulationSlotOccupantV1; POPULATION_OPPONENT_SLOT_COUNT_V1],
     ) -> Self {
         Self {
             weights,
@@ -232,30 +257,93 @@ impl PopulationOpponentEngineV1 {
             .clone()
     }
 
+    /// Which kind of occupant is installed at `slot`. Callers branch on this
+    /// BEFORE deciding whether to build a checkpoint scoring view at all
+    /// (CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md Section 6 item 4), the
+    /// same way the pre-existing bare-search dispatch arm
+    /// (`async_flat_scored_rollout_v1.rs`'s `(None, None, true)` case) skips
+    /// packet encoding entirely rather than building one and discarding it.
+    pub(crate) fn slot_kind_v1(&self, slot: PopulationSlotV1) -> PopulationSlotKindV1 {
+        match &self.handles[slot.index_v1()] {
+            PopulationSlotOccupantV1::Checkpoint(_) => PopulationSlotKindV1::Checkpoint,
+            PopulationSlotOccupantV1::Search(_) => PopulationSlotKindV1::Search,
+        }
+    }
+
     /// The immutable `(run_sha256, checkpoint_manifest_sha256)` identity
-    /// installed at `slot`. Read-only: it performs no inference and mutates
-    /// nothing, so callers may use it purely to record which opponent
-    /// checkpoint a training episode's `slot_for_episode_v1` result names.
+    /// installed at `slot`, or `None` when `slot` is search-occupied.
+    /// Read-only: it performs no inference and mutates nothing, so callers
+    /// may use it purely to record which opponent checkpoint a training
+    /// episode's `slot_for_episode_v1` result names.
     pub(crate) fn checkpoint_identity_for_slot_v1(
         &self,
         slot: PopulationSlotV1,
-    ) -> ([u8; 32], [u8; 32]) {
-        let handle = &self.handles[slot.index_v1()];
-        (handle.run_sha256(), handle.checkpoint_manifest_sha256())
+    ) -> Option<([u8; 32], [u8; 32])> {
+        match &self.handles[slot.index_v1()] {
+            PopulationSlotOccupantV1::Checkpoint(handle) => {
+                Some((handle.run_sha256(), handle.checkpoint_manifest_sha256()))
+            }
+            PopulationSlotOccupantV1::Search(_) => None,
+        }
+    }
+
+    /// The declared tier and canonical authority digest installed at
+    /// `slot`, or `None` when `slot` is checkpoint-occupied. This is the
+    /// search-slot analog of `checkpoint_identity_for_slot_v1`: episode
+    /// identity recording uses it to record tier and config the way
+    /// Store-backed slots record `run_sha256` (commit `1d817d7` precedent;
+    /// Section 6 item 5). Read-only: no inference, no mutation.
+    pub(crate) fn search_authority_identity_for_slot_v1(
+        &self,
+        slot: PopulationSlotV1,
+    ) -> Option<(crate::kernel_native_search_opponent_v1::KernelNativeSearchTierV1, [u8; 32])> {
+        match &self.handles[slot.index_v1()] {
+            PopulationSlotOccupantV1::Search(searcher) => {
+                let authority = searcher.authority();
+                let digest = authority.digest().ok()?;
+                Some((authority.tier, digest))
+            }
+            PopulationSlotOccupantV1::Checkpoint(_) => None,
+        }
+    }
+
+    /// The installed search authority handle at `slot`, or `None` when
+    /// `slot` is checkpoint-occupied. Used by the standard opponent dispatch
+    /// (`async_flat_scored_rollout_v1.rs`) to call `select_action(session,
+    /// decision)` directly for a search-occupied slot, reusing the exact
+    /// call already present for a bare, run-level search opponent.
+    pub(crate) fn search_authority_for_slot_v1(
+        &self,
+        slot: PopulationSlotV1,
+    ) -> Option<&Arc<KernelNativeSearchOpponentV1>> {
+        match &self.handles[slot.index_v1()] {
+            PopulationSlotOccupantV1::Search(searcher) => Some(searcher),
+            PopulationSlotOccupantV1::Checkpoint(_) => None,
+        }
     }
 
     /// Scores one decision with the selected immutable checkpoint and reuses
-    /// the K4 ladder's temperature-one softmax sampler unchanged.
+    /// the K4 ladder's temperature-one softmax sampler unchanged. Fails
+    /// closed with `WrongOccupantKind` if `slot` is search-occupied: this
+    /// method's contract is checkpoint-scored decisions only; a
+    /// search-occupied slot is dispatched through
+    /// `search_authority_for_slot_v1` and `select_action` instead.
     pub(crate) fn select_policy_action_v1(
         &self,
         slot: PopulationSlotV1,
         decision: FlatScoringDecisionViewV2<'_>,
         policy_substep_seed: u64,
     ) -> Result<u32, PopulationOpponentErrorV1> {
-        let handle = self
+        let handle = match self
             .handles
             .get(slot.index_v1())
-            .ok_or(PopulationOpponentErrorV1::InvalidSlot)?;
+            .ok_or(PopulationOpponentErrorV1::InvalidSlot)?
+        {
+            PopulationSlotOccupantV1::Checkpoint(handle) => handle,
+            PopulationSlotOccupantV1::Search(_) => {
+                return Err(PopulationOpponentErrorV1::WrongOccupantKind)
+            }
+        };
         let output = handle
             .score_decision_v1(decision)
             .map_err(|_| PopulationOpponentErrorV1::Inference)?;
