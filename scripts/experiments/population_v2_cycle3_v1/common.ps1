@@ -26,18 +26,20 @@ $script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..
 # Sheet-bound identities
 # ---------------------------------------------------------------------------
 $script:Cycle3SheetPath = 'C:\Users\Jack\IdeaProjects\collab\CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md'
-# Updated to the current countersigned SHA after Amendment 7 (v2,
-# FIX-FIRST: A7.3 gate mechanisms correctly and distinctly named -- range/
-# alignment gates are assert!/assert_eq! panics, store-position gate is the
-# existing guard's InputInvalid Result, none RunBinding-typed -- plus the
-# cfg(test) documentation note and the corrected Task 1 kill-evidence
-# preamble): 0b857412...; superseded the Amendment-6-v2-era 394699e7... pin
-# (pinned SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1 constant, manifest-derived
-# searcher_active_v1, no operator-suppliable override value), which itself
-# superseded the Amendment-5-era 005d9500... pin, which superseded the
-# Amendment-4-era 00affe6a... pin, which superseded the original
-# Amendment-3-era 1efa4097... pin the launch stack was first built against.
-$script:Cycle3SheetSha256 = '0b857412ec5cec70e04e1dc5c447835035f9b7dec9dcdf8d45132ab6d45abce4'
+# Updated to the current countersigned SHA after Amendment 8 (countersigned
+# 96a65dce..., first round, zero discrepancies; plus its post-countersign
+# implementation-record entry noting the chain-decode gate's own HEAVY
+# constant -- native_population_refresh_manifest_v1.rs:2332 -- as a third,
+# compiled notation of the heavy-window schedule, updated
+# [20,25,29,34]->[20,25,29,33] at commit fd8540b to implement the repair):
+# eca69e0a...; superseded the Amendment-7-v2-era 0b857412... pin (A7.3 gate
+# mechanisms correctly and distinctly named, cfg(test) documentation note,
+# corrected Task 1 kill-evidence preamble), which superseded the
+# Amendment-6-v2-era 394699e7... pin, which superseded the Amendment-5-era
+# 005d9500... pin, which superseded the Amendment-4-era 00affe6a... pin,
+# which superseded the original Amendment-3-era 1efa4097... pin the launch
+# stack was first built against.
+$script:Cycle3SheetSha256 = 'eca69e0a410b790efe6a75a88598f83201392337e5e3a562f282259b0ee63c07'
 $script:SearcherPoolAuthoritySheetPath = 'C:\Users\Jack\IdeaProjects\collab\CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md'
 $script:SearcherPoolAuthoritySheetSha256 = '87a3ef08df86e7b0f8b0b3e2674bcd890a8c09953718646d10193b6fd7c4ea34'
 
