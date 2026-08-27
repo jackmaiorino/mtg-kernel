@@ -119,10 +119,20 @@ function Invoke-Cycle3Refresh {
     finally {
         Restore-Cycle3NativeEnvironment -Saved $saved
     }
-    Write-Output "$Label EXIT_CODE=$exitCode"
+    # FIX (caught 2026-08-26: refresh-19's own first genuinely successful
+    # real run was misreported as a failure): Write-Output inside a
+    # function whose result is captured via `$x = Invoke-Foo` becomes
+    # part of the RETURN VALUE itself (an array: the written strings plus
+    # the final `return`), not just console noise -- `$exit19 -ne 0` on
+    # that array then filters to the non-zero-looking STRING element
+    # ("refresh-19 EXIT_CODE=0"), which is truthy as a non-empty array,
+    # triggering the caller's `throw` even on a real exit code 0. Write-Host
+    # writes straight to the console without polluting the pipeline/return
+    # value, exactly like every other status line in this script family.
+    Write-Host "$Label EXIT_CODE=$exitCode"
     if ($exitCode -ne 0) {
-        Write-Output "--- $Label log tail ---"
-        Get-Content -LiteralPath $logPath -Tail 80
+        Write-Host "--- $Label log tail ---"
+        Get-Content -LiteralPath $logPath -Tail 80 | ForEach-Object { Write-Host $_ }
     }
     return $exitCode
 }
