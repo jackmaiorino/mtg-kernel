@@ -148,7 +148,11 @@ function Invoke-Cycle3Refresh {
 # is index 19 re-sealed with its REAL resulting slot-5 hashes and used as the
 # resume-parent for refresh-20's own launch.
 
-if ($Phase -ne 'Item3Only') {
+# FIX (caught 2026-08-26: Item4Only re-ran refresh-19 against a store
+# already at local generation 256, burning ~20 real minutes on a doomed
+# InputInvalid before failing): this must skip refresh-19 for EVERY phase
+# except 'Both'/'Item2Only', not just 'Item3Only'.
+if ($Phase -eq 'Both' -or $Phase -eq 'Item2Only') {
     # Task 7 item 2: the real refresh-19 run, resuming the authored genesis
     # (local generation 0) to local generation 128, against the real
     # already-sealed chain (indices 0-18, ending at cycle-2's real terminal).
