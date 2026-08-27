@@ -7,7 +7,13 @@ param(
     [string]$StoreParent = 'E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003',
     [uint64]$Seed = 977002,
     [ValidateSet('Both', 'Item2Only', 'Item3Only', 'Item4Only')]
-    [string]$Phase = 'Both'
+    [string]$Phase = 'Both',
+    # Resume point for Item4Only (refresh-21) if a prior attempt was
+    # interrupted mid-run (the store is checkpoint-segment-durable, so a
+    # partial run leaves a real, valid, resumable local generation).
+    # Defaults to 256 (the real refresh-21's own fresh-start point,
+    # unchanged from before this parameter existed).
+    [uint64]$Item4ResumeFromLocal = 256
 )
 
 $ErrorActionPreference = 'Stop'
@@ -197,7 +203,7 @@ if ($Phase -eq 'Item2Only' -or $Phase -eq 'Item3Only') {
 # T2048, 80,000 weight units), so THIS is the launch where the searcher
 # opponent is actually resolved and drawn into the live opponent pool for
 # real, not refresh-20 itself.
-$exit21 = Invoke-Cycle3Refresh -ChainThroughIndex 20 -ExpectedResumeLocal 256 -StopAfterLocal 384 -Label 'refresh-21-searcher-smoke'
+$exit21 = Invoke-Cycle3Refresh -ChainThroughIndex 20 -ExpectedResumeLocal $Item4ResumeFromLocal -StopAfterLocal 384 -Label 'refresh-21-searcher-smoke'
 if ($exit21 -ne 0) { throw "refresh-21 searcher smoke failed with exit code $exit21" }
 Assert-WarmStartGenZeroCycle3V1 -StoreParent $StoreParent | Out-Null
 Write-Output 'TASK7_ITEM3_REFRESH21_SEARCHER_SMOKE_PASSED'
