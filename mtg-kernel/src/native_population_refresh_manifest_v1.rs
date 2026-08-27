@@ -2329,7 +2329,19 @@ mod tests {
             assert_eq!(previous.refresh_index_v2(), 0);
             assert_eq!(previous.global_generation_v2(), 0);
 
-            const HEAVY: [u64; 4] = [20, 25, 29, 34];
+            // Amendment 8 (collab/CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md,
+            // countersigned 96a65dce17a6546439f09e146d3dc88477d7d9a9b6adf726a2d22cf5a1d9d461):
+            // idx 34's own local_gen=2048 is the schedule's terminal point,
+            // consumed by no launch under the exercised consumption
+            // arithmetic (local_gen(ChainThroughIndex) == ExpectedResumeLocal,
+            // proven by seven real launches) -- searcher occupancy relocated
+            // to idx 33 (local_gen=1920, consumed by launch 16, the cycle's
+            // own final launch). This constant is itself the code-side
+            // enforcement of the heavy-window schedule; it was the gate that
+            // discovered A8's own resulting windows had not yet been wired
+            // in here (grep-confirmed the sole site in the codebase with
+            // this literal).
+            const HEAVY: [u64; 4] = [20, 25, 29, 33];
             for idx in 1_u64..=34 {
                 let path = format!("{dir}\\population-v3-refresh-{idx:03}.json");
                 let bytes = std::fs::read(&path)
