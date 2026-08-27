@@ -106,6 +106,13 @@ function Invoke-Cycle3Refresh {
     # (population_program_v2_cycle3_contract_for_launch_v1's own field),
     # unchanged across every one of the 16 refreshes; only
     # StopAfterGeneration/ExpectedResumeGeneration (both LOCAL) move.
+    # Amendment 7 A7.2 item 4: Layer 2 cross-check, before dispatch. Same
+    # facts the in-code Check 1/2/3 (native_science_loop_v1.rs) will
+    # independently re-derive and enforce once the process starts; this
+    # hard-stops here instead, before spending any process/wall-clock
+    # budget on a launch already known to be doomed.
+    Assert-ResumePositionMatchesStoreCycle3V1 -StoreParent $StoreParent -ExpectedResumeGeneration $ExpectedResumeLocal | Out-Null
+
     $saved = Set-Cycle3NativeEnvironment -Seed $Seed -Updates 2048 `
         -StoreParent $StoreParent -GpuOrdinal 0 -ResumeExistingStore `
         -StopAfterGeneration $StopAfterLocal -ExpectedResumeGeneration $ExpectedResumeLocal `

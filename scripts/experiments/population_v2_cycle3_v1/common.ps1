@@ -276,3 +276,41 @@ function Assert-WarmStartGenZeroCycle3V1 {
     }
     return [ordered]@{ store_parent = $StoreParent; checkpoint = $checkpoint; model_parameter_sha256 = $actual }
 }
+
+function Assert-ResumePositionMatchesStoreCycle3V1 {
+    # Amendment 7 (collab/CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md), A7.2
+    # item 4: a launcher-side (Layer 2) mirror of the in-code
+    # store-position check -- the existing, unmodified resume-generation
+    # guard Amendment 7 cites rather than duplicates
+    # (native_science_loop_v1.rs:814-843, the Complete/Continue match
+    # arms' resume_generation_checked logic). Reads the store's own
+    # on-disk latest.json generation_index and hard-stops BEFORE the
+    # process even starts if it disagrees with the caller-supplied resume
+    # point, avoiding exactly the doomed-launch cost the 2026-08-26
+    # refresh-19 re-run already paid once for real (~20 minutes burned on
+    # an InputInvalid discovered only after the process was already
+    # running; see refresh1-searcher-smoke.ps1's own FIX comment
+    # immediately above its Item4Only phase gate). Same "two layers, same
+    # facts, independent" discipline as Assert-WarmStartGenZeroCycle3V1
+    # above (Amendment 2 A2.1), but checked before dispatch rather than
+    # after.
+    param(
+        [Parameter(Mandatory = $true)][string]$StoreParent,
+        [Parameter(Mandatory = $true)][uint64]$ExpectedResumeGeneration
+    )
+    $latestPath = Join-Path $StoreParent 'run-0\store\latest.json'
+    if (-not (Test-Path -LiteralPath $latestPath)) {
+        throw "Amendment 7 A7.2 item 4 assertion: store latest.json not found at $latestPath -- this script always resumes an existing store (-ResumeExistingStore); a missing latest.json means the store is not yet in the state this launch expects"
+    }
+    $latest = $null
+    foreach ($attempt in 1..3) {
+        try { $latest = Get-Content -LiteralPath $latestPath -Raw | ConvertFrom-Json; break }
+        catch { Start-Sleep -Seconds 3 }
+    }
+    if ($null -eq $latest) { throw "Amendment 7 A7.2 item 4 assertion: latest.json unreadable at $latestPath" }
+    $actual = [uint64]$latest.generation_index
+    if ($actual -ne $ExpectedResumeGeneration) {
+        throw "Amendment 7 A7.2 item 4 assertion FAILED: store's actual generation_index ($actual) at $latestPath does not equal the caller-supplied resume point ($ExpectedResumeGeneration) -- hard-stopping before starting the process"
+    }
+    return [ordered]@{ store_parent = $StoreParent; latest_path = $latestPath; generation_index = $actual }
+}

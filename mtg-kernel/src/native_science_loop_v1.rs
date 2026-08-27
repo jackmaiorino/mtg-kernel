@@ -1804,15 +1804,59 @@ mod windows_science_loop_tests {
             // directly against a local env-var value, as an earlier draft
             // of this arm did, would have failed this assert on every real
             // launch; caught here before any real run was attempted.
+            // Amendment 7 (collab/CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md,
+            // A7.1/A7.2): the manifest chain's own anchor is a CHAIN fact,
+            // fixed for this refresh regardless of how far training has
+            // actually progressed within the interval; the launch's own
+            // resume expectation is a STORE fact, which legitimately
+            // differs from the anchor on any launch resuming a
+            // partially-completed interval. The two are checked separately
+            // rather than conflated into one assertion -- the pre-A7
+            // defect (`active.global_generation_v2() ==
+            // expected_start_local + OFFSET`) rejected every honest
+            // mid-interval resume as if it were a corrupt input
+            // (refresh-21's real 328 resume: left 2_560, right 2_632).
+            let anchor_global = active.global_generation_v2();
+            let anchor_local = anchor_global
+                .checked_sub(POPULATION_V2_CYCLE3_GLOBAL_GENERATION_OFFSET_V1)
+                .expect("cycle-3 generation offset underflow");
             let expected_start_local = expected_resume_generation
                 .expect("v2-cycle3 population runtime requires MULTIRUN_EXPECT_RESUME_GENERATION");
-            let expected_start_global = expected_start_local
-                .checked_add(POPULATION_V2_CYCLE3_GLOBAL_GENERATION_OFFSET_V1)
-                .expect("cycle-3 generation offset overflow");
-            let expected_stop_local = expected_start_local
-                .checked_add(128)
-                .expect("population interval generation overflow");
-            assert_eq!(active.global_generation_v2(), expected_start_global);
+            // Checks 1 and 2 of 3 (A7.2 item 2: interval-range, then
+            // checkpoint-segment alignment) plus expected_stop_local
+            // (A7.2 item 3: always anchor_local + 128) are extracted to
+            // [`cycle3_population_dispatch_resume_expectation_v1`] just
+            // below `multirun_pilot_v1`, so Amendment 7's A7.3 unit tests
+            // (gates 1-5) can exercise this exact arithmetic directly,
+            // without a live store or a GPU/CUDA feature.
+            //
+            // `4` here is the same checkpoint_segment_updates literal
+            // every fixture-constructor call in this function's
+            // per-ordinal closure below already passes
+            // (test_fixture_bytes_with_schedule_and_base_seed_*_v2, ~10
+            // call sites, all `64, 4, updates, ...`) -- named here rather
+            // than left a second, disconnected literal. It is not
+            // threaded from a live decoded `run` object: no such object
+            // exists yet at this point in the dispatch -- `run` is
+            // decoded per-ordinal, inside the very closures that already
+            // hardcode this same `4`, roughly 250 lines below.
+            // Reconstructing a run record this early, before the
+            // per-ordinal loop, to read the value dynamically would be a
+            // materially larger restructuring than Amendment 7
+            // authorizes; flagged here rather than done silently.
+            const CYCLE3_CHECKPOINT_SEGMENT_UPDATES_V1: u64 = 4;
+            let expected_stop_local = cycle3_population_dispatch_resume_expectation_v1(
+                anchor_local,
+                expected_start_local,
+                CYCLE3_CHECKPOINT_SEGMENT_UPDATES_V1,
+            );
+            // Check 3 of 3 (A7.2 item 2, cited not duplicated): that the
+            // store's actual generation_index equals expected_start_local
+            // is already enforced by the existing resume-generation guard
+            // in run_native_science_loop_with_opponents_v1
+            // (native_science_loop_v1.rs:814-843, the Complete/Continue
+            // match arms' own resume_generation_checked logic) -- untouched
+            // by this amendment. A7.3 gate 6 exercises it directly.
             assert_eq!(stop_after_generation, Some(expected_stop_local));
             // Amendment 4 A4.4: the manifest chain and the run-level
             // population_program_v2_cycle3 contract authenticate each
@@ -2471,6 +2515,160 @@ mod windows_science_loop_tests {
             "MULTIRUN AGGREGATE runs={run_count} episodes={total_episodes} \
              wall={aggregate_wall:.1}s eps_per_s={:.2} (non-evidence){wide_label}",
             total_episodes as f64 / aggregate_wall
+        );
+    }
+
+    /// Amendment 7 (collab/CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md, A7.2):
+    /// the cycle-3 population dispatch's mid-interval resume arithmetic,
+    /// extracted to a pure function so A7.3's unit tests can exercise it
+    /// directly, without a live store, GPU/CUDA feature, or the
+    /// `multirun_pilot_v1` env-var surface. Called from the real dispatch
+    /// (`multirun_pilot_v1`'s `population_v2_cycle3_active_dispatch`
+    /// branch) with the same three values it computes there.
+    ///
+    /// Panics via `assert!`/`assert_eq!` on the two invalid-input gates
+    /// (this dispatch arm's own pre-existing idiom); returns
+    /// `expected_stop_local` (always `anchor_local + 128`, A7.2 item 3) on
+    /// success. The store-position check -- whether the store's actual
+    /// `generation_index` equals `expected_start_local` -- is deliberately
+    /// NOT part of this function: it is the existing, unmodified guard in
+    /// `run_native_science_loop_with_opponents_v1`
+    /// (`native_science_loop_v1.rs:814-843`, the `Complete`/`Continue`
+    /// match arms' own `resume_generation_checked` logic), cited here
+    /// rather than duplicated (A7.2 item 2; A7.3 gate 6 exercises it
+    /// directly).
+    fn cycle3_population_dispatch_resume_expectation_v1(
+        anchor_local: u64,
+        expected_start_local: u64,
+        checkpoint_segment_updates: u64,
+    ) -> u64 {
+        assert!(
+            expected_start_local >= anchor_local
+                && expected_start_local < anchor_local + 128,
+            "resume point must fall within this interval's own \
+             128-generation window (anchor_local={anchor_local}, \
+             expected_start_local={expected_start_local})"
+        );
+        assert_eq!(
+            expected_start_local % checkpoint_segment_updates,
+            0,
+            "resume point must land on a checkpoint-segment boundary \
+             (expected_start_local={expected_start_local}, \
+             checkpoint_segment_updates={checkpoint_segment_updates})"
+        );
+        anchor_local
+            .checked_add(128)
+            .expect("population interval generation overflow")
+    }
+
+    /// A7.3 gate 1: a fresh interval start (`expected_start_local ==
+    /// anchor_local`, true of every real cycle-3 launch to date except the
+    /// refresh-21 328 resume) validates and reduces to bit-for-bit the
+    /// pre-Amendment-7 behavior -- A7.2 item 5's explicit acceptance gate.
+    #[test]
+    fn cycle3_resume_expectation_fresh_start_reduces_to_pre_amendment7_behavior_v1() {
+        assert_eq!(
+            cycle3_population_dispatch_resume_expectation_v1(256, 256, 4),
+            384
+        );
+    }
+
+    /// A7.3 gate 2: the real refresh-21 case -- resuming at local
+    /// generation 328 within the 256-anchored interval -- validates and
+    /// produces the same `expected_stop_local = 384` a fresh 256-start
+    /// would (not 456, the pre-Amendment-7 defect's answer).
+    #[test]
+    fn cycle3_resume_expectation_valid_mid_interval_resume_passes_v1() {
+        assert_eq!(
+            cycle3_population_dispatch_resume_expectation_v1(256, 328, 4),
+            384
+        );
+    }
+
+    /// A7.3 gate 3: a resume point below the interval's own anchor fails
+    /// closed on the range check's lower bound.
+    #[test]
+    #[should_panic(expected = "resume point must fall within this interval's own")]
+    fn cycle3_resume_expectation_start_below_anchor_rejects_v1() {
+        let _ = cycle3_population_dispatch_resume_expectation_v1(256, 255, 4);
+    }
+
+    /// A7.3 gate 4: a resume point at (or past) the *next* interval's own
+    /// anchor fails closed on the range check's upper bound -- `384` is
+    /// the next interval's anchor, not a valid resume point for this one.
+    #[test]
+    #[should_panic(expected = "resume point must fall within this interval's own")]
+    fn cycle3_resume_expectation_start_at_next_interval_rejects_v1() {
+        let _ = cycle3_population_dispatch_resume_expectation_v1(256, 384, 4);
+    }
+
+    /// A7.3 gate 5: a resume point otherwise within range but not
+    /// checkpoint-segment-aligned fails closed on the alignment check --
+    /// a distinct panic site from gates 3/4's range check.
+    #[test]
+    #[should_panic(expected = "resume point must land on a checkpoint-segment boundary")]
+    fn cycle3_resume_expectation_non_segment_aligned_start_rejects_v1() {
+        let _ = cycle3_population_dispatch_resume_expectation_v1(256, 329, 4);
+    }
+
+    /// A7.3 gate 6: the store-position guard this amendment cites rather
+    /// than duplicates (native_science_loop_v1.rs:814-843, the
+    /// `Complete`/`Continue` match arms' `resume_generation_checked`
+    /// logic) still fails closed -- a `Result`, not a panic -- when the
+    /// launch's expected resume point disagrees with the store's actual
+    /// `generation_index`. Uses the same Sequential/no-CUDA lightweight
+    /// run as `historical_catalog_profile_is_rejected_before_bootstrap`:
+    /// the first call trains the run to its own completion with no resume
+    /// expectation set (establishing real store state); the second call,
+    /// same store, asserts an impossible `expected_resume_generation`
+    /// (`u64::MAX`) and must fail closed with `InputInvalid` via the cited
+    /// guard. `MULTIRUN_EXPECT_RESUME_GENERATION` is process-global (read
+    /// via `std::env::var`, not threaded as a parameter); no other
+    /// non-`#[ignore]`d test in this module reads it, so this does not
+    /// race concurrently-running tests under default `cargo test`
+    /// parallelism, and it is removed immediately after use on every exit
+    /// path (including a panic in the call itself, via `catch_unwind`).
+    #[test]
+    fn cycle3_store_position_resume_mismatch_is_rejected_by_the_existing_guard_v1() {
+        let run = one_segment_run_v1();
+        let (snapshot_manifest, snapshot_payload) = common_model_snapshot_paths_v1();
+        let parent = TestParentV1::new("a7-gate6-store-position-mismatch");
+
+        let first = run_native_science_loop_v1(
+            &parent.parent,
+            "store",
+            &run,
+            test_execution_config_v2(&run),
+            &snapshot_manifest,
+            &snapshot_payload,
+            runner_config_v1(),
+            None,
+            None,
+        );
+        assert!(first.is_ok(), "setup call must reach real store state: {first:?}");
+
+        std::env::set_var("MULTIRUN_EXPECT_RESUME_GENERATION", u64::MAX.to_string());
+        let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_native_science_loop_v1(
+                &parent.parent,
+                "store",
+                &run,
+                test_execution_config_v2(&run),
+                &snapshot_manifest,
+                &snapshot_payload,
+                runner_config_v1(),
+                None,
+                None,
+            )
+        }));
+        std::env::remove_var("MULTIRUN_EXPECT_RESUME_GENERATION");
+        let second = second.expect("resume-mismatch call must not panic, only Err");
+
+        assert_eq!(
+            second.unwrap_err().kind(),
+            NativeScienceLoopV1ErrorKind::InputInvalid,
+            "an impossible expected_resume_generation must fail closed via the \
+             existing, unmodified resume-generation guard"
         );
     }
 
