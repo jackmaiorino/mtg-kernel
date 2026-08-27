@@ -26,12 +26,14 @@ $script:RepoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..
 # Sheet-bound identities
 # ---------------------------------------------------------------------------
 $script:Cycle3SheetPath = 'C:\Users\Jack\IdeaProjects\collab\CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md'
-# Updated to the current countersigned SHA after Amendment 5 (the
-# denovo-1024 seed-family port + authorized_denovo_512_seeds widening
-# addendum): 005d9500...; superseded the Amendment-4-era 00affe6a... pin,
-# which itself superseded the original Amendment-3-era 1efa4097... pin the
-# launch stack was first built against.
-$script:Cycle3SheetSha256 = '005d9500ff10249dda7d725ad2e2ea35b211d68a654c1c7d60022520528e43d7'
+# Updated to the current countersigned SHA after Amendment 6 (v2,
+# FIX-FIRST: pinned SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1 constant,
+# manifest-derived searcher_active_v1, no operator-suppliable override
+# value): 394699e7...; superseded the Amendment-5-era 005d9500... pin,
+# which itself superseded the Amendment-4-era 00affe6a... pin, which
+# superseded the original Amendment-3-era 1efa4097... pin the launch
+# stack was first built against.
+$script:Cycle3SheetSha256 = '394699e7b610c0cdf56ac38794d69bc3f3b55ab9a72d8e6d863bd21c88a8b226'
 $script:SearcherPoolAuthoritySheetPath = 'C:\Users\Jack\IdeaProjects\collab\CLAUDE-SEARCHER-POOL-AUTHORITY-SHEET-V1.md'
 $script:SearcherPoolAuthoritySheetSha256 = '87a3ef08df86e7b0f8b0b3e2674bcd890a8c09953718646d10193b6fd7c4ea34'
 
