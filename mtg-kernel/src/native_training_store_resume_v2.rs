@@ -1411,6 +1411,7 @@ pub(crate) fn test_execution_config_v2(
         learning_rate_bits: 0.001_f32.to_bits(),
         numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
         backward_worker_limit: 1,
+        searcher_active_v1: false,
     }
 }
 

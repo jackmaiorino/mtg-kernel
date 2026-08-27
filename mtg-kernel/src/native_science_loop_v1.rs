@@ -2321,6 +2321,35 @@ mod windows_science_loop_tests {
                     let mut execution_config = test_execution_config_v2(&run);
                     execution_config.numerical_backend =
                         NativeTrainingNumericalBackendV1::CudaBurnDense;
+                    // CLAUDE-POPULATION-V2-CYCLE3-SHEET-V1.md Amendment 6
+                    // (v2, countersigned 394699e7): the ONLY site that ever
+                    // sets `searcher_active_v1`/widens `scheduler_timeout`,
+                    // derived directly from the active population manifest's
+                    // own slot 6 (exploiter-0) occupant class -- never from
+                    // an operator-supplied value. Every other launch path
+                    // (v1, response-exploiter, non-cycle-3) leaves
+                    // `searcher_active_v1` at its default `false`, so
+                    // `scheduler_timeout` stays the frozen recorded value.
+                    let searcher_active = population_engine
+                        .as_ref()
+                        .and_then(|engine| {
+                            crate::native_population_opponent_v1::PopulationSlotV1::from_index_v1(
+                                6,
+                            )
+                            .map(|slot| {
+                                engine.slot_kind_v1(slot)
+                                    == crate::native_population_opponent_v1::PopulationSlotKindV1::Search
+                            })
+                        })
+                        .unwrap_or(false);
+                    execution_config.searcher_active_v1 = searcher_active;
+                    execution_config.scheduler_timeout = if searcher_active {
+                        std::time::Duration::from_millis(
+                            crate::native_training_executor_v1::SEARCHER_SCHEDULER_TIMEOUT_OVERRIDE_MS_V1,
+                        )
+                    } else {
+                        std::time::Duration::from_millis(run.record().topology.scheduler_timeout_ms)
+                    };
                     let (parent_path, _ephemeral_guard) = match durable_parent {
                         Some(dir) => {
                             let path = std::path::PathBuf::from(dir)
@@ -5084,6 +5113,7 @@ mod live_c2_genesis_tests {
             learning_rate_bits: parse_bits(&record.optimization.learning_rate_f32_bits),
             numerical_backend: NativeTrainingNumericalBackendV1::Sequential,
             backward_worker_limit: 1,
+            searcher_active_v1: false,
         }
     }
 
