@@ -6,7 +6,7 @@ param(
     # model_parameter_sha256 confirmed matching the pinned parent).
     [string]$StoreParent = 'E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003',
     [uint64]$Seed = 977002,
-    [ValidateSet('Both', 'Item2Only', 'Item3Only')]
+    [ValidateSet('Both', 'Item2Only', 'Item3Only', 'Item4Only')]
     [string]$Phase = 'Both'
 )
 
@@ -163,15 +163,37 @@ if ($Phase -eq 'Item2Only') {
     return
 }
 
-if ($Phase -eq 'Item3Only') {
-    Write-Output 'PHASE_ITEM3ONLY_ASSUMES_MANIFEST_019_ALREADY_REAL_SEALED'
+if ($Phase -eq 'Item3Only' -or $Phase -eq 'Item4Only') {
+    Write-Output 'PHASE_SKIPS_EARLIER_ITEMS_ASSUMES_THEIR_MANIFESTS_ALREADY_REAL_SEALED'
 }
 
-# Task 7 item 3: the index-20-shaped searcher smoke, continuing local
-# generation 128 to 256, against the real chain (indices 0-19, ending at
-# the now-really-sealed index 19), landing on index 20 -- cycle-3's own
-# refresh 2, a scheduled searcher-heavy window.
-$exit20 = Invoke-Cycle3Refresh -ChainThroughIndex 19 -ExpectedResumeLocal 128 -StopAfterLocal 256 -Label 'refresh-20-searcher-smoke'
-if ($exit20 -ne 0) { throw "refresh-20 searcher smoke (Task 7 item 3) failed with exit code $exit20" }
+if ($Phase -ne 'Item4Only') {
+    # Task 7 item 3: refresh-20, continuing local generation 128 to 256,
+    # against the real chain (indices 0-19, ending at the now-really-sealed
+    # index 19). NOTE (corrected 2026-08-26): "active" for THIS launch is
+    # index 19 (non-heavy) -- index 20's own heavy/searcher declaration is
+    # not exercised by refresh-20 itself, only by whichever refresh resumes
+    # FROM index 20 (refresh-21, below). Kept the original label for
+    # continuity with earlier evidence logs.
+    $exit20 = Invoke-Cycle3Refresh -ChainThroughIndex 19 -ExpectedResumeLocal 128 -StopAfterLocal 256 -Label 'refresh-20-searcher-smoke'
+    if ($exit20 -ne 0) { throw "refresh-20 (Task 7 item 3) failed with exit code $exit20" }
+    Assert-WarmStartGenZeroCycle3V1 -StoreParent $StoreParent | Out-Null
+    Write-Output 'TASK7_ITEM3_REFRESH20_PASSED'
+}
+
+if ($Phase -eq 'Item2Only' -or $Phase -eq 'Item3Only') {
+    Write-Output 'PHASE_DONE_AWAITING_NEXT_MANIFEST_RESEAL'
+    return
+}
+
+# Task 7 item 3 (real searcher exercise): refresh-21, continuing local
+# generation 256 to 384, against the real chain (indices 0-20, ending at
+# the now-really-sealed index 20) -- index 20 is cycle-3's own refresh 2, a
+# scheduled searcher-heavy window (search authority seed 2026082601, tier
+# T2048, 80,000 weight units), so THIS is the launch where the searcher
+# opponent is actually resolved and drawn into the live opponent pool for
+# real, not refresh-20 itself.
+$exit21 = Invoke-Cycle3Refresh -ChainThroughIndex 20 -ExpectedResumeLocal 256 -StopAfterLocal 384 -Label 'refresh-21-searcher-smoke'
+if ($exit21 -ne 0) { throw "refresh-21 searcher smoke failed with exit code $exit21" }
 Assert-WarmStartGenZeroCycle3V1 -StoreParent $StoreParent | Out-Null
-Write-Output 'TASK7_ITEM3_REFRESH20_SEARCHER_SMOKE_PASSED'
+Write-Output 'TASK7_ITEM3_REFRESH21_SEARCHER_SMOKE_PASSED'
