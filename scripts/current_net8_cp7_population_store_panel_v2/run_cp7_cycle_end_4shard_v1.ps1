@@ -38,7 +38,27 @@
 # launched) but the OUTER invocation of this script must be detached so the
 # calling session is not blocked for the read's full duration.
 #
-# FIX (this revision, post-incident): the first real launch of this script
+# AMENDMENT 4 A4.2 (this revision, 2026-08-28): void-cap accounting moved
+# from per-shard (2% of 128 pairs, historical) to per-read (2% of the full
+# 512-pair read = 10 voided pairs per model, Jack's ruling on
+# CLAUDE-QUALIFIED-SCORER-DECODE-WIDENING-PORT-PLAN-V1.md Amendment 4).
+# `run_cp7_store_panel_v2.py` itself only ever sees one shard at a time, so
+# it now enforces only a per-shard SANITY CEILING (--read-pairs 512, fails
+# fast if a single shard alone already exceeds the read-level cap; this
+# reuses the existing per-shard PANEL_FAILED.json path below unchanged,
+# since that IS a genuine, correctly-attributed shard failure). The real
+# per-read cap is enforced HERE: after every shard, this wrapper reads that
+# shard's own panel-summary.json void counts, accumulates a running
+# per-model total across all shards completed so far, and stops with a
+# distinctly-shaped marker (PANEL_FAILED.json, stage="read_level_void_cap")
+# if any model's accumulated total crosses $readVoidCap -- never confused
+# with a single shard's own crash/exit-code failure (stage="shard_failure"
+# below). $readVoidCap must match run_cp7_store_panel_v2.py's own
+# VOID_CAP_FRACTION_NUMERATOR/_DENOMINATOR arithmetic at $readPairs exactly
+# (2 * 512 / 100 = 10.24, floor 10); this is intentionally duplicated
+# across Python and PowerShell and must be kept in sync by hand.
+#
+# FIX (earlier revision, post-incident): the first real launch of this script
 # (shard-000, 2026-08-28 08:38-08:47) crashed the whole wrapper WITHOUT
 # writing PANEL_FAILED.json, because `& $pythonExe ... > $stdout 2> $stderr`
 # is a native-command invocation whose stderr PowerShell 5.1 maps onto the
@@ -67,6 +87,8 @@ $scorerExe = "D:\cargo-target-throughput-remeasure-v1\release\checkpoint_shadow_
 $mageRepo = "C:\Users\Jack\IdeaProjects\mage-kernel-anchor-spike-v1-a1d4be43-pin"
 $sourceDatabase = "E:\mtg-kernel-population-v2-cycle3-cp7-anchor-reads\carddb-staging\cards.h2.mv.db"
 $maven = "C:\Program Files\apache-maven-3.9.8\bin\mvn.cmd"
+$readPairs = 512
+$readVoidCap = 10
 
 $focalModel = "focal=population:2048:E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003\run-0\store"
 $referenceModel = "reference=population:2048:E:\mtg-kernel-population-v2-cycle3\parent-import\current-1-seed-975002-store\run-0\store"
@@ -79,6 +101,7 @@ Push-Location $scriptDir
 "wrapper start $(Get-Date -Format o)" | Out-File -FilePath $logPath -Encoding utf8 -Append
 
 $shardOffsets = @(0, 128, 256, 384)
+$voidTotals = [ordered]@{ focal = 0; reference = 0; anchor = 0 }
 
 for ($i = 0; $i -lt $shardOffsets.Length; $i++) {
     $offset = $shardOffsets[$i]
@@ -101,6 +124,7 @@ for ($i = 0; $i -lt $shardOffsets.Length; $i++) {
             + " --base-seed $baseSeed" `
             + " --pair-start $offset" `
             + " --pairs 128" `
+            + " --read-pairs $readPairs" `
             + " --workers 8" `
             + " --task-pairs 32" `
             + " --scorer-exe `"$scorerExe`"" `
@@ -128,6 +152,7 @@ for ($i = 0; $i -lt $shardOffsets.Length; $i++) {
     if ($exitCode -ne 0 -or -not $summaryExists) {
         $failRecord = [ordered]@{
             status = "FAILED"
+            stage = "shard_failure"
             failed_shard = $shardName
             pair_start = $offset
             exit_code = $exitCode
@@ -140,7 +165,51 @@ for ($i = 0; $i -lt $shardOffsets.Length; $i++) {
         } catch {
             "FATAL: could not write PANEL_FAILED.json: $($_.Exception.Message)" | Out-File -FilePath $logPath -Encoding utf8 -Append
         }
-        "STOP: $shardName failed; not proceeding to remaining shards." | Out-File -FilePath $logPath -Encoding utf8 -Append
+        "STOP: $shardName failed (stage=shard_failure); not proceeding to remaining shards." | Out-File -FilePath $logPath -Encoding utf8 -Append
+        Pop-Location
+        exit 1
+    }
+
+    # AMENDMENT 4 A4.2: accumulate this shard's own per-model void counts
+    # (panel-summary.json's existing voids.per_model shape, unchanged by
+    # this amendment) into the running read-level total, then enforce the
+    # real per-read cap here -- run_cp7_store_panel_v2.py's own per-shard
+    # sanity ceiling above cannot see prior shards, so this accumulation is
+    # the only place the read-level cap is actually enforced.
+    $shardSummary = Get-Content (Join-Path $shardRoot "panel-summary.json") -Raw | ConvertFrom-Json
+    foreach ($label in @($voidTotals.Keys)) {
+        $perModel = $shardSummary.voids.per_model.$label
+        if ($null -eq $perModel) {
+            "FATAL: $shardName panel-summary.json has no voids.per_model entry for '$label'." | Out-File -FilePath $logPath -Encoding utf8 -Append
+            Pop-Location
+            exit 1
+        }
+        $voidTotals[$label] += [int]$perModel.voided_pairs
+    }
+    "shard $shardName void totals so far: $((@($voidTotals.Keys) | ForEach-Object { "$_=$($voidTotals[$_])" }) -join ', ')" | Out-File -FilePath $logPath -Encoding utf8 -Append
+
+    # readVoidCap*100 > readPairs*2 is the exact VOID_CAP_FRACTION_NUMERATOR/
+    # _DENOMINATOR arithmetic run_cp7_store_panel_v2.py's own
+    # void_cap_breaches() implements; kept identical here by hand (see the
+    # amendment note at the top of this file).
+    $breachingModels = @($voidTotals.Keys) | Where-Object { ($voidTotals[$_] * 100) -gt ($readPairs * 2) }
+    if ($breachingModels.Count -gt 0) {
+        $readFailRecord = [ordered]@{
+            status = "FAILED"
+            stage = "read_level_void_cap"
+            failed_after_shard = $shardName
+            read_pairs = $readPairs
+            read_void_cap = $readVoidCap
+            void_totals = $voidTotals
+            breaching_models = $breachingModels
+            completed_at = (Get-Date -Format o)
+        }
+        try {
+            $readFailRecord | ConvertTo-Json | Out-File -FilePath (Join-Path $parentEvidenceRoot "PANEL_FAILED.json") -Encoding utf8
+        } catch {
+            "FATAL: could not write PANEL_FAILED.json: $($_.Exception.Message)" | Out-File -FilePath $logPath -Encoding utf8 -Append
+        }
+        "STOP: read-level void cap breached after $shardName (stage=read_level_void_cap): $($breachingModels -join ', '); not proceeding to remaining shards." | Out-File -FilePath $logPath -Encoding utf8 -Append
         Pop-Location
         exit 1
     }
@@ -153,6 +222,12 @@ $doneRecord = [ordered]@{
     pair_start_offsets = $shardOffsets
     pairs_per_shard = 128
     total_pairs = 512
+    # AMENDMENT 4 A4.2: the final per-model accumulated void tally over the
+    # full read, read back from the completion marker directly rather than
+    # re-derived by hand from all 4 shards' own panel-summary.json files.
+    read_pairs = $readPairs
+    read_void_cap = $readVoidCap
+    void_totals = $voidTotals
     completed_at = (Get-Date -Format o)
 }
 $doneRecord | ConvertTo-Json | Out-File -FilePath (Join-Path $parentEvidenceRoot "PANEL_DONE.json") -Encoding utf8

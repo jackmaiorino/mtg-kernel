@@ -150,6 +150,30 @@ def fail(message: str) -> None:
     raise ValueError(message)
 
 
+def void_cap_breaches(
+    model_void_counts: dict[str, int], total_pairs: int,
+) -> list[tuple[str, int]]:
+    """Every model whose void count exceeds the 2% cap over `total_pairs`.
+
+    Checks every model unconditionally and returns every breach, not just
+    the first found (Amendment 4's own loop-order fix: an earlier caller
+    that `fail()`ed on the first breach in dict order could mask a worse
+    breach in a model checked later). `total_pairs` is the accounting
+    scope: a single shard's own `--pairs` for the historical per-shard
+    cap, or a `--read-pairs`-supplied full-read total for the per-shard
+    sanity ceiling introduced in Amendment 4 A4.2 (the wrapper's own
+    cross-shard accumulation, not this function, is what enforces the
+    real read-level cap; this function only ever sees one shard's own
+    void counts). The arithmetic itself
+    (`VOID_CAP_FRACTION_NUMERATOR`/`_DENOMINATOR`) is unchanged either
+    way -- only what `total_pairs` means differs by caller.
+    """
+    return [
+        (label, voided) for label, voided in model_void_counts.items()
+        if voided * VOID_CAP_FRACTION_DENOMINATOR > total_pairs * VOID_CAP_FRACTION_NUMERATOR
+    ]
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -1010,6 +1034,11 @@ def build_launch_plan(args: argparse.Namespace, identities: dict[str, dict[str, 
             "task_timeout_seconds": args.task_timeout_seconds,
             "tolerate_engine_faults": args.tolerate_engine_faults,
             "void_cap_fraction": VOID_CAP_FRACTION_NUMERATOR / VOID_CAP_FRACTION_DENOMINATOR,
+            # Amendment 4 A4.2: the full read's total pair count this
+            # shard's own per-shard sanity ceiling is scoped against
+            # (null when omitted, reducing to the historical per-shard
+            # cap). The real per-read cap is enforced by the wrapper.
+            "read_pairs": args.read_pairs,
             "tasks": tasks,
         },
         "toolchain": {
@@ -1097,11 +1126,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             all_voids.append(void_record)
             model_void_counts[result["label"]] += 1
 
-    for label in identities:
-        voided = model_void_counts[label]
-        if voided * VOID_CAP_FRACTION_DENOMINATOR > args.pairs * VOID_CAP_FRACTION_NUMERATOR:
-            fail(f"void rate for model {label} exceeds the "
-                 f"{VOID_CAP_FRACTION_NUMERATOR}% cap: {voided}/{args.pairs} pairs voided")
+    # Amendment 4 A4.2: the real per-read cap (2% of the full multi-shard
+    # read, not this one shard) is enforced by the wrapper, which
+    # accumulates each shard's own model_void_counts across the whole
+    # read (see run_cp7_cycle_end_4shard_v1.ps1). This check is the
+    # per-shard SANITY CEILING only: a fail-fast guard for the case where
+    # a single shard alone already exceeds the read-level cap, so the
+    # remaining shards are never launched needlessly. `--read-pairs`
+    # (the full read's total pair count) sets the scope; when omitted,
+    # this reduces exactly to the historical per-shard-only cap
+    # (read_pairs == args.pairs), unchanged from before this amendment.
+    read_pairs = args.read_pairs if args.read_pairs is not None else args.pairs
+    breaches = void_cap_breaches(model_void_counts, read_pairs)
+    if breaches:
+        detail = "; ".join(
+            f"{label} {voided}/{read_pairs}" for label, voided in breaches)
+        fail(f"void rate exceeds the {VOID_CAP_FRACTION_NUMERATOR}% "
+             f"per-shard sanity ceiling (scope: {read_pairs} read pairs): {detail}")
 
     # Every segment's outcome rows for a given model are validated against the
     # same mode-derived expected_schema_version (original -> v1, population and
@@ -1153,6 +1194,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "voids": {
             "schema": "mtg-kernel-cp7-panel-pair-void/v1",
             "cap_fraction": VOID_CAP_FRACTION_NUMERATOR / VOID_CAP_FRACTION_DENOMINATOR,
+            # Amendment 4 A4.2: the full read's total pair count this
+            # shard's own sanity ceiling was scoped against (null when
+            # --read-pairs was omitted). The real per-read cap accounting
+            # lives in the wrapper, not this per-shard manifest.
+            "read_pairs": read_pairs,
             "per_model": void_summary,
             "records": all_voids,
             "bias_caveat": (
@@ -1162,7 +1208,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "of a voided pair counts as a win, loss, or draw for any model. If "
                 "per_model voided_pairs counts are asymmetric across models, that "
                 "asymmetry is a bias caveat on this panel and any near-margin "
-                "cross-model comparison should be treated with additional scrutiny."
+                "cross-model comparison should be treated with additional scrutiny. "
+                "Amendment 4 A4.3: the great majority of observed voids trace to a "
+                "single, pre-existing, XMage-side engine defect in Chain Lightning's "
+                "own spell-copy resolution, unrelated to the Rust kernel. Voided "
+                "pairs therefore correlate with games that reach a Chain-Lightning-"
+                "copy decision state, which is not a uniformly random subset of a "
+                "read's games -- a model whose own policy more often triggers that "
+                "decision will show a higher void rate under this same external "
+                "defect, independent of underlying play quality. Per-model void-rate "
+                "differences must not be read as a playing-strength signal on their "
+                "own."
             ),
         },
         "non_claims": ["terminal win/loss/draw is the only playing-strength outcome",
@@ -1243,6 +1299,13 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--base-seed", type=int)
     value.add_argument("--pair-start", type=int, default=0)
     value.add_argument("--pairs", type=int)
+    value.add_argument("--read-pairs", type=int, default=None,
+                       help="Amendment 4 A4.2: the full multi-shard read's"
+                            " total pair count, scoping this shard's own"
+                            " void-cap sanity ceiling. Omit for the"
+                            " historical per-shard-only cap (unchanged"
+                            " behavior); the real per-read cap is enforced"
+                            " by the wrapper across all shards.")
     value.add_argument("--workers", type=int, choices=(1, 8), default=8)
     value.add_argument("--task-pairs", type=int, default=32)
     value.add_argument("--task-timeout-seconds", type=int, default=1800)
@@ -1319,7 +1382,8 @@ def main(argv: list[str] | None = None) -> int:
     if (any(value is None for value in required)
             or not 0 <= args.base_seed <= 0x7FFF_FFFF_FFFF_FFFF
             or args.pair_start < 0 or not 1 <= args.task_pairs <= 128
-            or args.task_timeout_seconds < 60):
+            or args.task_timeout_seconds < 60
+            or (args.read_pairs is not None and args.read_pairs < args.pairs)):
         fail("missing or invalid panel arguments")
     parsed: list[tuple[str, str, int | None, Path]] = [
         parse_model_spec(spec) for spec in args.model_specs]

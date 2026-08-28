@@ -210,6 +210,18 @@ class PanelRunnerTest(unittest.TestCase):
             panel.main(common + ["--model", "one=root", "--model", "two=root",
                                  "--model", "three=other"])
 
+    def test_read_pairs_below_this_shards_own_pairs_is_rejected(self) -> None:
+        # Amendment 4 A4.2: --read-pairs is the full multi-shard read's
+        # total pair count, so it can never be smaller than this one
+        # shard's own --pairs; caught before any store access, same as the
+        # other basic CLI validations above.
+        common = ["--evidence-root", "new", "--generation", "1024", "--mode", "formal",
+                  "--base-seed", "1", "--pairs", "128", "--scorer-exe", "scorer",
+                  "--mage-repo", "mage", "--source-database", "cards", "--maven", "mvn",
+                  "--model", "one=root1", "--model", "two=root2", "--model", "three=root3"]
+        with self.assertRaises(ValueError):
+            panel.main(common + ["--read-pairs", "127"])
+
     # -- new: structured void-line / void-stop-line parsing -------------------
 
     def test_parse_void_line_round_trips_fields(self) -> None:
@@ -317,6 +329,53 @@ class PanelRunnerTest(unittest.TestCase):
         # Exactly 2% (e.g. 2/100) must not itself exceed the cap.
         self.assertFalse(exceeds(2, 100))
         self.assertTrue(exceeds(3, 100))
+
+    # -- Amendment 4 A4.2/A4.4: void_cap_breaches (read-level accounting) -----
+
+    def test_void_cap_breaches_reports_every_model_not_just_the_first(self) -> None:
+        # The loop-order fix: attempt-004's own real shape was focal 3/128,
+        # anchor 4/128, reference 1/128 -- the old fail()-on-first-breach
+        # loop (iterating focal, reference, anchor in CLI order) reported
+        # only focal and never reached anchor's own, worse breach. The new
+        # function must return every breach, regardless of dict order, so a
+        # worse breach is never masked behind an earlier, lesser one.
+        counts = {"focal": 3, "reference": 1, "anchor": 4}
+        breaches = panel.void_cap_breaches(counts, 128)
+        self.assertEqual(set(breaches), {("focal", 3), ("anchor", 4)})
+        self.assertNotIn(("reference", 1), breaches)
+
+    def test_void_cap_breaches_per_shard_pass_through_at_read_level_scope(self) -> None:
+        # A shard's own void count that was fatal under the historical
+        # per-shard-128 cap (3 or 4) must pass cleanly once scoped against
+        # the full 512-pair read -- this is the per-shard sanity ceiling's
+        # own pass-through behavior, not the wrapper's cross-shard
+        # accumulation (tested separately below).
+        counts = {"focal": 3, "anchor": 4, "reference": 1}
+        self.assertEqual(panel.void_cap_breaches(counts, 512), [])
+
+    def test_void_cap_breaches_ten_cap_boundary_at_512_pairs(self) -> None:
+        # 10*100=1000 <= 512*2=1024 (allowed, exactly the floor); 11*100=1100
+        # > 1024 (breach) -- the exact-arithmetic boundary Amendment 4 A4.2
+        # derives cap=10 from, matching the existing 2%-cap convention.
+        self.assertEqual(panel.void_cap_breaches({"m": 10}, 512), [])
+        self.assertEqual(panel.void_cap_breaches({"m": 11}, 512), [("m", 11)])
+
+    def test_void_cap_breaches_read_level_accumulation_scenario(self) -> None:
+        # Simulates the wrapper's own cross-shard accumulation contract:
+        # four shards each individually under the per-shard sanity ceiling
+        # (3 < 10, so no single shard's own --read-pairs-scoped check ever
+        # fires) whose SUMMED total over the full read breaches the
+        # read-level cap. The wrapper computes this exact sum-then-compare
+        # using the same VOID_CAP_FRACTION_NUMERATOR/_DENOMINATOR
+        # arithmetic this function implements; asserting it here pins the
+        # formula the wrapper's own PowerShell accumulation must match.
+        per_shard_counts = [3, 3, 3, 3]
+        for shard_count in per_shard_counts:
+            self.assertEqual(panel.void_cap_breaches({"focal": shard_count}, 512), [])
+        accumulated = sum(per_shard_counts)
+        self.assertEqual(accumulated, 12)
+        self.assertEqual(panel.void_cap_breaches({"focal": accumulated}, 512),
+                         [("focal", 12)])
 
     # -- new: run_task's segment-chaining loop (mocked subprocess) ------------
 
