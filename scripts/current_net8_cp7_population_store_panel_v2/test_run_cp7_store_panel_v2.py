@@ -46,7 +46,7 @@ class PanelRunnerTest(unittest.TestCase):
             "sampler_identity": panel.SAMPLER_IDENTITY,
             "sampler_contract_sha256": panel.SAMPLER_CONTRACT,
         }
-        self.model = {"root": "store", "checkpoint": self.checkpoint}
+        self.model = {"root": "store", "generation": 1024, "checkpoint": self.checkpoint}
 
     def _terminal(self, pair: int, seat: str, ordinal: int) -> dict[str, object]:
         episode = pair * 2 + int(seat[1])
@@ -398,29 +398,33 @@ class PanelRunnerTest(unittest.TestCase):
     def test_model_spec_defaults_to_population_mode_unprefixed(self) -> None:
         # The exact bareword shape every existing invocation (including the
         # live cells-1/2 driver) already uses must keep parsing identically.
-        label, mode, root = panel.parse_model_spec(
+        label, mode, generation, root = panel.parse_model_spec(
             r"seed-970001=D:\mtg-kernel-scaled-selfplay-population-v1\store")
         self.assertEqual(label, "seed-970001")
         self.assertEqual(mode, "population")
+        self.assertIsNone(generation)
         self.assertEqual(root, Path(r"D:\mtg-kernel-scaled-selfplay-population-v1\store"))
 
     def test_model_spec_windows_drive_letter_colon_is_not_a_mode_prefix(self) -> None:
         # "D:" must never be mistaken for a "population:"/"original:" prefix.
-        label, mode, root = panel.parse_model_spec(r"promoted2=D:\pool3\primary")
+        label, mode, generation, root = panel.parse_model_spec(r"promoted2=D:\pool3\primary")
         self.assertEqual(mode, "population")
+        self.assertIsNone(generation)
         self.assertEqual(root, Path(r"D:\pool3\primary"))
 
     def test_model_spec_explicit_population_prefix(self) -> None:
-        label, mode, root = panel.parse_model_spec(
+        label, mode, generation, root = panel.parse_model_spec(
             r"denovo-256=population:D:\denovo-store\run-0\store")
         self.assertEqual(mode, "population")
+        self.assertIsNone(generation)
         self.assertEqual(root, Path(r"D:\denovo-store\run-0\store"))
 
     def test_model_spec_explicit_original_prefix(self) -> None:
-        label, mode, root = panel.parse_model_spec(
+        label, mode, generation, root = panel.parse_model_spec(
             r"promoted2=original:D:\mtg-kernel-ladder-pilot-20260725\pool3\primary")
         self.assertEqual(label, "promoted2")
         self.assertEqual(mode, "original")
+        self.assertIsNone(generation)
         self.assertEqual(root, Path(r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary"))
 
     def test_model_spec_rejects_empty_root_and_bad_label(self) -> None:
@@ -431,6 +435,31 @@ class PanelRunnerTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             panel.parse_model_spec("no-equals-sign")
 
+    # -- new: per-model GENERATION spec parsing --------------------------------
+
+    def test_model_spec_explicit_generation_with_mode(self) -> None:
+        label, mode, generation, root = panel.parse_model_spec(
+            r"promoted2=original:384:D:\mtg-kernel-ladder-pilot-20260725\pool3\primary")
+        self.assertEqual(mode, "original")
+        self.assertEqual(generation, 384)
+        self.assertEqual(root, Path(r"D:\mtg-kernel-ladder-pilot-20260725\pool3\primary"))
+
+    def test_model_spec_explicit_generation_without_mode_defaults_population(self) -> None:
+        label, mode, generation, root = panel.parse_model_spec(
+            r"denovo-256=256:D:\denovo-store\run-0\store")
+        self.assertEqual(mode, "population")
+        self.assertEqual(generation, 256)
+        self.assertEqual(root, Path(r"D:\denovo-store\run-0\store"))
+
+    def test_model_spec_generation_digits_never_mistaken_for_a_path(self) -> None:
+        # A three-digit generation immediately followed by a drive-letter
+        # colon must not be swallowed into the root or misparsed: digits are
+        # never a valid Windows drive letter, so "NNN:D:\..." is unambiguous.
+        label, mode, generation, root = panel.parse_model_spec(
+            r"denovo-512=population:512:D:\denovo-512-store\run-0\store")
+        self.assertEqual(generation, 512)
+        self.assertEqual(root, Path(r"D:\denovo-512-store\run-0\store"))
+
     def test_load_store_identity_rejects_invalid_mode(self) -> None:
         with self.assertRaises(ValueError):
             panel.load_store_identity(Path("."), 0, mode="bogus")
@@ -438,8 +467,10 @@ class PanelRunnerTest(unittest.TestCase):
     def test_anchor_command_selects_flag_by_mode(self) -> None:
         args = types.SimpleNamespace(mage_repo=Path("mage"), scorer_exe=Path("scorer"),
                                      generation=384, base_seed=7, maven=Path("mvn"))
-        population_model = {"root": "store", "mode": "population", "checkpoint": self.checkpoint}
-        original_model = {"root": "store", "mode": "original", "checkpoint": self.checkpoint}
+        population_model = {"root": "store", "mode": "population", "generation": 384,
+                            "checkpoint": self.checkpoint}
+        original_model = {"root": "store", "mode": "original", "generation": 384,
+                          "checkpoint": self.checkpoint}
         population_command = panel.anchor_command(args, population_model, 0, 1, Path("o.jsonl"))
         original_command = panel.anchor_command(args, original_model, 0, 1, Path("o.jsonl"))
         self.assertIn("--population-store-root", population_command[-1])
@@ -448,9 +479,79 @@ class PanelRunnerTest(unittest.TestCase):
         # A model dict with no "mode" key at all (the shape every pre-existing
         # caller and fixture uses) must still default to population, exactly
         # as before this change.
-        legacy_model = {"root": "store", "checkpoint": self.checkpoint}
+        legacy_model = {"root": "store", "generation": 384, "checkpoint": self.checkpoint}
         legacy_command = panel.anchor_command(args, legacy_model, 0, 1, Path("o.jsonl"))
         self.assertIn("--population-store-root", legacy_command[-1])
+
+    def test_anchor_command_uses_the_models_own_generation_not_the_shared_one(self) -> None:
+        # The whole point of per-model GENERATION: a group built from
+        # per-spec generations can legitimately differ model to model, and
+        # anchor_command must never fall back to args.generation once a
+        # model dict carries its own.
+        args = types.SimpleNamespace(mage_repo=Path("mage"), scorer_exe=Path("scorer"),
+                                     generation=None, base_seed=7, maven=Path("mvn"))
+        denovo_256 = {"root": "store256", "mode": "population", "generation": 256,
+                     "checkpoint": self.checkpoint}
+        denovo_512 = {"root": "store512", "mode": "population", "generation": 512,
+                     "checkpoint": self.checkpoint}
+        command_256 = panel.anchor_command(args, denovo_256, 0, 1, Path("o.jsonl"))
+        command_512 = panel.anchor_command(args, denovo_512, 0, 1, Path("o.jsonl"))
+        self.assertIn("--generation 256", command_256[-1])
+        self.assertIn("--generation 512", command_512[-1])
+
+    # -- new: main()'s --generation / per-spec GENERATION mixing rule ---------
+
+    def _main_common_args(self, evidence_root: str) -> list[str]:
+        return ["--evidence-root", evidence_root, "--mode", "smoke", "--base-seed", "1",
+                "--pairs", "1", "--scorer-exe", "scorer", "--mage-repo", "mage",
+                "--source-database", "cards", "--maven", "mvn"]
+
+    def test_main_requires_generation_when_no_spec_carries_one(self) -> None:
+        argv = self._main_common_args("new1") + [
+            "--model", "one=root-one", "--model", "two=root-two", "--model", "three=root-three"]
+        with self.assertRaises(ValueError):
+            panel.main(argv)
+
+    def test_main_rejects_shared_generation_mixed_with_per_spec_generation(self) -> None:
+        # All three specs carry their own GENERATION (isolating this from the
+        # separate "partial" mixing case below) while --generation is ALSO
+        # given: must fail even though every value would agree, because
+        # which one is authoritative must never be a judgment call.
+        argv = self._main_common_args("new2") + [
+            "--generation", "384",
+            "--model", "one=original:384:root-one",
+            "--model", "two=population:384:root-two",
+            "--model", "three=population:384:root-three"]
+        with self.assertRaises(ValueError):
+            panel.main(argv)
+
+    def test_main_rejects_partial_per_spec_generation(self) -> None:
+        # Two specs carry their own GENERATION, one relies on nothing (no
+        # --generation given either): this must fail closed, not silently
+        # treat the third model as an error only once store access is
+        # attempted.
+        argv = self._main_common_args("new3") + [
+            "--model", "one=original:384:root-one",
+            "--model", "two=population:256:root-two",
+            "--model", "three=population:root-three"]
+        with self.assertRaises(ValueError):
+            panel.main(argv)
+
+    def test_main_accepts_per_spec_generation_with_no_shared_generation(self) -> None:
+        # This is cell 3's exact shape: three different generations, no
+        # panel-level --generation. What matters here is that parsing and
+        # the mixing check let it through cleanly; it then fails later, at
+        # source-database/store access against paths that do not exist in
+        # this synthetic test (a FileNotFoundError, not the ValueError the
+        # mixing/required checks themselves raise), which is exactly the
+        # evidence that it got past the spec-shape validation.
+        argv = self._main_common_args("new4") + [
+            "--model", "one=original:384:root-one",
+            "--model", "two=population:256:root-two",
+            "--model", "three=population:512:root-three"]
+        with self.assertRaises((ValueError, OSError)) as caught:
+            panel.main(argv)
+        self.assertNotIsInstance(caught.exception, ValueError)
 
     def test_environment_omits_population_maven_opts_for_original_mode(self) -> None:
         original_model = {"root": "store", "mode": "original", "checkpoint": self.checkpoint}
@@ -472,6 +573,137 @@ class PanelRunnerTest(unittest.TestCase):
         self.assertEqual(panel.ENVIRONMENT_CONTRACT_ORIGINAL, "legacy-v1")
         self.assertNotEqual(panel.AUTHORITY_KIND, panel.AUTHORITY_KIND_ORIGINAL)
         self.assertNotEqual(panel.ENVIRONMENT_CONTRACT, panel.ENVIRONMENT_CONTRACT_ORIGINAL)
+
+    # -- new: third authority mode, fixedstate (XmageCp7OutcomeDerivative) ----
+
+    def test_model_spec_fixedstate_with_generation(self) -> None:
+        label, mode, generation, root = panel.parse_model_spec(
+            r"denovo-256=fixedstate:256:D:\staging\denovo-256")
+        self.assertEqual(mode, "fixedstate")
+        self.assertEqual(generation, 256)
+        self.assertEqual(root, Path(r"D:\staging\denovo-256"))
+
+    @staticmethod
+    def _write_fixed_native_state(staging_root: Path, *, generation: int,
+                                  authority_kind: str = "test-fixed-native-state-v1",
+                                  byte_count: int = 32, tamper_payload: bool = False,
+                                  tamper_adam_step: bool = False) -> dict[str, object]:
+        staging_root.mkdir(parents=True)
+        payload_bytes = bytes(range(byte_count)) if not tamper_payload else b"\x00" * byte_count
+        import hashlib
+        payload_sha = hashlib.sha256(payload_bytes).hexdigest()
+        manifest = {
+            "schema": panel.FIXED_NATIVE_STATE_SCHEMA,
+            "authority_kind": authority_kind,
+            "source_result_sha256": "7" * 64,
+            "payload": {
+                "filename": panel.FIXED_NATIVE_STATE_PAYLOAD_FILENAME,
+                "byte_count": byte_count,
+                "adam_step": generation + (1 if tamper_adam_step else 0),
+                "scorer_bias_anchor_f32_bits": 3141403366,
+                "payload_sha256": payload_sha,
+                "parameters_sha256": "1" * 64,
+                "first_moments_sha256": "2" * 64,
+                "second_moments_sha256": "3" * 64,
+                "model_parameter_sha256": "4" * 64,
+                "native_state_sha256": "5" * 64,
+            },
+            "non_claims": list(panel.FIXED_NATIVE_STATE_NON_CLAIMS),
+        }
+        manifest_bytes = (json.dumps(manifest, indent=2) + "\n").encode("ascii")
+        (staging_root / panel.FIXED_NATIVE_STATE_MANIFEST_FILENAME).write_bytes(manifest_bytes)
+        (staging_root / panel.FIXED_NATIVE_STATE_PAYLOAD_FILENAME).write_bytes(payload_bytes)
+        return manifest
+
+    def test_load_fixed_native_state_identity_accepts_a_well_formed_package(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            self._write_fixed_native_state(root, generation=256)
+            identity = panel.load_store_identity(root, 256, mode="fixedstate")
+            self.assertEqual(identity["mode"], "fixedstate")
+            checkpoint = identity["checkpoint"]
+            self.assertEqual(checkpoint["authority_kind"], "test-fixed-native-state-v1")
+            self.assertEqual(checkpoint["loaded_generation"], 256)
+            # The six promoted(2) anchor fields are always the fixed constants,
+            # never derived from this package's own content.
+            self.assertEqual(checkpoint["source_run_sha256"],
+                             panel.FIXED_NATIVE_STATE_SOURCE_RUN_SHA256)
+            self.assertEqual(checkpoint["source_generation"], 384)
+            self.assertEqual(checkpoint["loaded_run_sha256"],
+                             panel.FIXED_NATIVE_STATE_SOURCE_RUN_SHA256)
+            self.assertEqual(checkpoint["environment_trajectory_contract"],
+                             "environment-randomization-v2")
+
+    def test_load_fixed_native_state_identity_rejects_generation_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            self._write_fixed_native_state(root, generation=256, tamper_adam_step=True)
+            with self.assertRaises(ValueError):
+                panel.load_store_identity(root, 256, mode="fixedstate")
+
+    def test_load_fixed_native_state_identity_rejects_payload_tamper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            manifest = self._write_fixed_native_state(root, generation=256)
+            # Corrupt the payload bytes in place without touching the manifest's
+            # own recorded digest, exactly the tamper the Rust loader's own test
+            # exercises (fixed_native_state_package_loads_dotted_authority_and_
+            # rejects_payload_tamper_v1).
+            payload_path = root / panel.FIXED_NATIVE_STATE_PAYLOAD_FILENAME
+            corrupted = bytearray(payload_path.read_bytes())
+            corrupted[0] ^= 1
+            payload_path.write_bytes(bytes(corrupted))
+            with self.assertRaises(ValueError):
+                panel.load_store_identity(root, 256, mode="fixedstate")
+
+    def test_load_fixed_native_state_identity_rejects_extra_files_in_staging_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            self._write_fixed_native_state(root, generation=256)
+            (root / "stray-extra-file.txt").write_text("should not be here", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                panel.load_store_identity(root, 256, mode="fixedstate")
+
+    def test_load_fixed_native_state_identity_rejects_wrong_non_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "denovo-256"
+            manifest = self._write_fixed_native_state(root, generation=256)
+            manifest["non_claims"] = ["something else entirely"]
+            manifest_bytes = (json.dumps(manifest, indent=2) + "\n").encode("ascii")
+            (root / panel.FIXED_NATIVE_STATE_MANIFEST_FILENAME).write_bytes(manifest_bytes)
+            with self.assertRaises(ValueError):
+                panel.load_store_identity(root, 256, mode="fixedstate")
+
+    def test_anchor_command_fixedstate_uses_outcome_root_with_no_generation_flag(self) -> None:
+        args = types.SimpleNamespace(mage_repo=Path("mage"), scorer_exe=Path("scorer"),
+                                     generation=None, base_seed=7, maven=Path("mvn"))
+        fixedstate_model = {"root": "staging-dir", "mode": "fixedstate", "generation": 256,
+                            "checkpoint": self.checkpoint}
+        command = panel.anchor_command(args, fixedstate_model, 0, 1, Path("o.jsonl"))
+        self.assertIn("--outcome-root staging-dir", command[-1])
+        self.assertNotIn("--generation", command[-1])
+        self.assertNotIn("--population-store-root", command[-1])
+        self.assertNotIn("--store-root", command[-1])
+
+    def test_environment_uses_cp7_outcome_maven_opts_for_fixedstate(self) -> None:
+        fixedstate_model = {"root": "staging-dir", "mode": "fixedstate",
+                            "checkpoint": self.checkpoint}
+        env = panel.environment(Path("db"), fixedstate_model, tolerate_engine_faults=False)
+        self.assertIn("MAVEN_OPTS", env)
+        self.assertIn("xmage.rally.cp7Outcome.authorityKind", env["MAVEN_OPTS"])
+        self.assertNotIn("xmage.rally.populationStore", env["MAVEN_OPTS"])
+
+    def test_fixed_native_state_source_constants_match_promoted2_run_json(self) -> None:
+        # Cross-checked against promoted(2)'s own run.json-embedded
+        # opponent_ladder_initialization block (independent source from the
+        # same identity, read once during the original diagnosis): every
+        # field here must agree with what that block already carries.
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_RUN_SHA256), 64)
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_CHECKPOINT_SHA256), 64)
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_SIDECAR_SHA256), 64)
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_PAYLOAD_SHA256), 64)
+        self.assertEqual(len(panel.FIXED_NATIVE_STATE_SOURCE_TRAIN_STATE_SHA256), 64)
+        self.assertEqual(panel.FIXED_NATIVE_STATE_SOURCE_GENERATION, 384)
 
 
 if __name__ == "__main__":
