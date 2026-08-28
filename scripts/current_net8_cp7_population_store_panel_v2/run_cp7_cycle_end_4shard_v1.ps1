@@ -61,7 +61,7 @@ $ErrorActionPreference = "Stop"
 
 $pythonExe = "C:\Users\Jack\AppData\Local\Microsoft\WindowsApps\python3.exe"
 $scriptDir = "C:\Users\Jack\IdeaProjects\mtg-kernel-cycle3-campaign-fable\scripts\current_net8_cp7_population_store_panel_v2"
-$parentEvidenceRoot = "E:\mtg-kernel-population-v2-cycle3-cp7-anchor-reads\cycle-end-g2048"
+$parentEvidenceRoot = "E:\mtg-kernel-population-v2-cycle3-cp7-anchor-reads\cycle-end-g2048-attempt-002"
 $baseSeed = "2026082803"
 $scorerExe = "D:\cargo-target-throughput-remeasure-v1\release\checkpoint_shadow_stdio_v1.exe"
 $mageRepo = "C:\Users\Jack\IdeaProjects\mage-kernel-anchor-spike-v1"
