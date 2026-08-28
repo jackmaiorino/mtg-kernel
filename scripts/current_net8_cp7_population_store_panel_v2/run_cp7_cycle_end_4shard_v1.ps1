@@ -89,6 +89,18 @@ $sourceDatabase = "E:\mtg-kernel-population-v2-cycle3-cp7-anchor-reads\carddb-st
 $maven = "C:\Program Files\apache-maven-3.9.8\bin\mvn.cmd"
 $readPairs = 512
 $readVoidCap = 10
+# Jack's ruling (relayed by the coordinator, this session; no
+# independently located written record in collab at implementation time --
+# cited as relayed, not verified against a source document): "the void cap
+# is waived for the three registered CP7 reads under full disclosure;
+# accounting and reporting stay mandatory, enforcement becomes report-only
+# for these reads." This wrapper is scoped exactly to those registered
+# reads, so it always passes "report": accounting (per-shard sanity
+# ceiling data, per-model void counts, the read-level running total) is
+# computed and recorded identically either way; only whether a breach
+# stops the read differs. A fresh future wrapper for non-registered reads
+# should default this to "enforce".
+$voidCapMode = "report"
 
 $focalModel = "focal=population:2048:E:\mtg-kernel-population-v2-cycle3\lineage\real-attempt-003\run-0\store"
 $referenceModel = "reference=population:2048:E:\mtg-kernel-population-v2-cycle3\parent-import\current-1-seed-975002-store\run-0\store"
@@ -102,6 +114,7 @@ Push-Location $scriptDir
 
 $shardOffsets = @(0, 128, 256, 384)
 $voidTotals = [ordered]@{ focal = 0; reference = 0; anchor = 0 }
+$everBreachedModels = @()
 
 for ($i = 0; $i -lt $shardOffsets.Length; $i++) {
     $offset = $shardOffsets[$i]
@@ -125,6 +138,7 @@ for ($i = 0; $i -lt $shardOffsets.Length; $i++) {
             + " --pair-start $offset" `
             + " --pairs 128" `
             + " --read-pairs $readPairs" `
+            + " --void-cap-mode $voidCapMode" `
             + " --workers 8" `
             + " --task-pairs 32" `
             + " --scorer-exe `"$scorerExe`"" `
@@ -194,24 +208,33 @@ for ($i = 0; $i -lt $shardOffsets.Length; $i++) {
     # amendment note at the top of this file).
     $breachingModels = @($voidTotals.Keys) | Where-Object { ($voidTotals[$_] * 100) -gt ($readPairs * 2) }
     if ($breachingModels.Count -gt 0) {
-        $readFailRecord = [ordered]@{
-            status = "FAILED"
-            stage = "read_level_void_cap"
-            failed_after_shard = $shardName
-            read_pairs = $readPairs
-            read_void_cap = $readVoidCap
-            void_totals = $voidTotals
-            breaching_models = $breachingModels
-            completed_at = (Get-Date -Format o)
+        foreach ($label in $breachingModels) {
+            if ($everBreachedModels -notcontains $label) { $everBreachedModels += $label }
         }
-        try {
-            $readFailRecord | ConvertTo-Json | Out-File -FilePath (Join-Path $parentEvidenceRoot "PANEL_FAILED.json") -Encoding utf8
-        } catch {
-            "FATAL: could not write PANEL_FAILED.json: $($_.Exception.Message)" | Out-File -FilePath $logPath -Encoding utf8 -Append
+        if ($voidCapMode -eq "enforce") {
+            $readFailRecord = [ordered]@{
+                status = "FAILED"
+                stage = "read_level_void_cap"
+                failed_after_shard = $shardName
+                read_pairs = $readPairs
+                read_void_cap = $readVoidCap
+                void_totals = $voidTotals
+                breaching_models = $breachingModels
+                completed_at = (Get-Date -Format o)
+            }
+            try {
+                $readFailRecord | ConvertTo-Json | Out-File -FilePath (Join-Path $parentEvidenceRoot "PANEL_FAILED.json") -Encoding utf8
+            } catch {
+                "FATAL: could not write PANEL_FAILED.json: $($_.Exception.Message)" | Out-File -FilePath $logPath -Encoding utf8 -Append
+            }
+            "STOP: read-level void cap breached after $shardName (stage=read_level_void_cap): $($breachingModels -join ', '); not proceeding to remaining shards." | Out-File -FilePath $logPath -Encoding utf8 -Append
+            Pop-Location
+            exit 1
         }
-        "STOP: read-level void cap breached after $shardName (stage=read_level_void_cap): $($breachingModels -join ', '); not proceeding to remaining shards." | Out-File -FilePath $logPath -Encoding utf8 -Append
-        Pop-Location
-        exit 1
+        # void-cap-mode=report: Jack's ruling waives enforcement for the
+        # registered reads. Recorded (this log line, plus $everBreachedModels
+        # carried into PANEL_DONE.json below), never stops the read.
+        "NOTE (void-cap-mode=report, not enforced): read-level void cap breached after ${shardName}: $($breachingModels -join ', ') -- continuing." | Out-File -FilePath $logPath -Encoding utf8 -Append
     }
 }
 
@@ -228,6 +251,11 @@ $doneRecord = [ordered]@{
     read_pairs = $readPairs
     read_void_cap = $readVoidCap
     void_totals = $voidTotals
+    void_cap_mode = $voidCapMode
+    # Every model that ever crossed the read-level cap during accumulation,
+    # even though void-cap-mode=report never stopped the read for it --
+    # Jack's ruling requires accounting/reporting to stay mandatory.
+    read_level_cap_breached_models = $everBreachedModels
     completed_at = (Get-Date -Format o)
 }
 $doneRecord | ConvertTo-Json | Out-File -FilePath (Join-Path $parentEvidenceRoot "PANEL_DONE.json") -Encoding utf8

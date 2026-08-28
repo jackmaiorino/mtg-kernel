@@ -1039,6 +1039,10 @@ def build_launch_plan(args: argparse.Namespace, identities: dict[str, dict[str, 
             # (null when omitted, reducing to the historical per-shard
             # cap). The real per-read cap is enforced by the wrapper.
             "read_pairs": args.read_pairs,
+            # Jack's ruling (relayed, this session): "report" waives
+            # enforcement for the three registered CP7 reads under full
+            # disclosure; "enforce" (default) is Amendment 4 A4.2 unchanged.
+            "void_cap_mode": args.void_cap_mode,
             "tasks": tasks,
         },
         "toolchain": {
@@ -1141,8 +1145,22 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if breaches:
         detail = "; ".join(
             f"{label} {voided}/{read_pairs}" for label, voided in breaches)
-        fail(f"void rate exceeds the {VOID_CAP_FRACTION_NUMERATOR}% "
-             f"per-shard sanity ceiling (scope: {read_pairs} read pairs): {detail}")
+        message = (f"void rate exceeds the {VOID_CAP_FRACTION_NUMERATOR}% "
+                   f"per-shard sanity ceiling (scope: {read_pairs} read pairs): {detail}")
+        # Jack's ruling (relayed by the coordinator, this session; no
+        # independently located written record in collab at amendment
+        # time -- cited as relayed, not verified against a source
+        # document): "the void cap is waived for the three registered CP7
+        # reads under full disclosure; accounting and reporting stay
+        # mandatory, enforcement becomes report-only for these reads."
+        # --void-cap-mode report keeps every count/record/breach computed
+        # and recorded exactly as in enforce mode (nothing above this
+        # point changes); only whether a breach raises differs.
+        if args.void_cap_mode == "enforce":
+            fail(message)
+        print(f"void-cap-mode={args.void_cap_mode}: {message}"
+             + ("" if args.void_cap_mode == "enforce" else " (NOT enforced, recorded only)"),
+             file=sys.stderr)
 
     # Every segment's outcome rows for a given model are validated against the
     # same mode-derived expected_schema_version (original -> v1, population and
@@ -1199,6 +1217,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             # --read-pairs was omitted). The real per-read cap accounting
             # lives in the wrapper, not this per-shard manifest.
             "read_pairs": read_pairs,
+            "void_cap_mode": args.void_cap_mode,
+            # Recorded regardless of mode ("accounting and reporting stay
+            # mandatory" per Jack's ruling): the sanity-ceiling breach this
+            # shard's own void counts would trigger, whether or not
+            # --void-cap-mode actually enforced it. Empty when clean.
+            "sanity_ceiling_breaches": [
+                {"label": label, "voided": voided, "read_pairs": read_pairs}
+                for label, voided in breaches
+            ],
             "per_model": void_summary,
             "records": all_voids,
             "bias_caveat": (
@@ -1306,6 +1333,15 @@ def parser() -> argparse.ArgumentParser:
                             " historical per-shard-only cap (unchanged"
                             " behavior); the real per-read cap is enforced"
                             " by the wrapper across all shards.")
+    value.add_argument("--void-cap-mode", choices=("enforce", "report"), default="enforce",
+                       help="'enforce' (default) fails this shard if the"
+                            " per-shard sanity ceiling is breached (Amendment"
+                            " 4 A4.2). 'report' still computes and records"
+                            " the identical breach data but never fails the"
+                            " run on it -- Jack's ruling waiving the void cap"
+                            " for the three registered CP7 reads under full"
+                            " disclosure; accounting and reporting stay"
+                            " mandatory either way.")
     value.add_argument("--workers", type=int, choices=(1, 8), default=8)
     value.add_argument("--task-pairs", type=int, default=32)
     value.add_argument("--task-timeout-seconds", type=int, default=1800)
