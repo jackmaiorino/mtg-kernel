@@ -1245,6 +1245,26 @@ const CHAIN_COPY_COST: Cost = Cost {
     x_count: 0,
 };
 
+// Scorer-build-only parity patch (CLAUDE-QUALIFIED-SCORER-DECODE-WIDENING-PORT-PLAN-V1.md
+// Amendment 3, A3.1, countersigned at whole-file SHA-256 13093a49...): restores
+// d1e752a's CHAIN_COPY_PARTIAL_COST best-effort partial payment, removed by
+// mainline commit 254be1f52dc26cecc350c8179ed7494f23cb8baf. Verified by a
+// same-session, single-hunk-varied two-build test against the real bridge
+// pinned at mage commit a1d4be434b8012e4d9a2e26e6b5f8d067158b847: the
+// unmodified mainline tree (scorer SHA-256 fd17f3801e8728fcf54745d55832a9358165ed7a2d1a53f71f6035ee3bf0f03b)
+// crashes at pair 12 with a kernel-vs-XMage seat-desync; the identical tree
+// with only this hunk reverted (scorer SHA-256 b50eeed4117c6e097020d63d3e0d1bf4bce3affecb01fc2a6e5e8b225c9d43d5)
+// passes cleanly. This empirically falsifies mainline's own comment below
+// about XMage's real behavior; d1e752a's account is the one the real bridge
+// exhibits. Scope: evaluation-only per Amendment 3 A3.3 -- this does not
+// decide mainline's own training-time engine behavior, a separate Jack/Codex
+// question this patch does not touch.
+const CHAIN_COPY_PARTIAL_COST: Cost = Cost {
+    pips: &[mana::Pip::Colored(mana::ManaColor::R)],
+    generic: 0,
+    x_count: 0,
+};
+
 /// Whether the player in the live Chain Lightning payment continuation can
 /// currently pay {R}{R}. The engine still presents the payment decision even
 /// when this is false, matching XMage's effect order; parity drivers use this
@@ -12054,8 +12074,16 @@ fn apply_choose_spell_copy_payment(state: &mut GameState, pay: bool) -> Result<(
         return finish_pending_spell_copy_resolution(state, &pending);
     }
     let Some(plan) = mana::can_pay(&CHAIN_COPY_COST, 0, pending.player, state) else {
-        // XMage asks first, then lets the real payment attempt fail without
-        // creating a copy. The resolution still finishes normally.
+        // XMage's Chain Lightning path calls Cost.pay directly rather than
+        // payOrRollback. An unaffordable {R}{R} attempt therefore still
+        // consumes its first payable red pip before the second pip fails.
+        // Keep this best-effort side effect local to the copy continuation;
+        // ordinary spell and ability payments remain transactional. Restored
+        // per Amendment 3 A3.1's verified-by-revert finding (see the
+        // CHAIN_COPY_PARTIAL_COST comment above).
+        if let Some(partial) = mana::can_pay(&CHAIN_COPY_PARTIAL_COST, 0, pending.player, state) {
+            pay_plan(state, pending.player, &partial);
+        }
         return finish_pending_spell_copy_resolution(state, &pending);
     };
     pay_plan(state, pending.player, &plan);
