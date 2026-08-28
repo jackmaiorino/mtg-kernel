@@ -37,6 +37,25 @@
 # (each shard runs to completion, checked via $LASTEXITCODE, before the next is
 # launched) but the OUTER invocation of this script must be detached so the
 # calling session is not blocked for the read's full duration.
+#
+# FIX (this revision, post-incident): the first real launch of this script
+# (shard-000, 2026-08-28 08:38-08:47) crashed the whole wrapper WITHOUT
+# writing PANEL_FAILED.json, because `& $pythonExe ... > $stdout 2> $stderr`
+# is a native-command invocation whose stderr PowerShell 5.1 maps onto the
+# error stream regardless of the `2>` file redirect; with
+# $ErrorActionPreference="Stop", any non-empty stderr line from the native
+# process (here, a real engine fault the python panel runner reported on its
+# own stderr) became a terminating NativeCommandError that unwound the
+# script before the exit-code-check/PANEL_FAILED.json logic below ever ran.
+# Fixed by invoking through `cmd.exe /c` with an explicit quoted command
+# line: cmd.exe performs the `>`/`2>` redirection itself at the OS level, so
+# PowerShell never sees the native process's stderr as its own error stream
+# at all, and $LASTEXITCODE is read reliably afterward (the same fix this
+# session already adopted for exit-code retrieval elsewhere, for the same
+# underlying PS 5.1 behavior). The whole per-shard body is additionally
+# wrapped in try/catch as defense in depth, so ANY unexpected PowerShell-level
+# exception (not just this specific one) still results in a PANEL_FAILED.json
+# write before the script exits, never a silent, marker-less death.
 
 $ErrorActionPreference = "Stop"
 
@@ -70,25 +89,38 @@ for ($i = 0; $i -lt $shardOffsets.Length; $i++) {
 
     "launching $shardName pair-start=$offset at $(Get-Date -Format o)" | Out-File -FilePath $logPath -Encoding utf8 -Append
 
-    & $pythonExe "run_cp7_store_panel_v2.py" `
-        --evidence-root $shardRoot `
-        --model $focalModel `
-        --model $referenceModel `
-        --model $anchorModel `
-        --mode formal `
-        --base-seed $baseSeed `
-        --pair-start $offset `
-        --pairs 128 `
-        --workers 8 `
-        --task-pairs 32 `
-        --scorer-exe $scorerExe `
-        --mage-repo $mageRepo `
-        --source-database $sourceDatabase `
-        --maven $maven `
-        --tolerate-engine-faults `
-        > $shardStdout 2> $shardStderr
+    $exitCode = $null
+    $caughtException = $null
+    try {
+        $cmdLine = "`"$pythonExe`" `"run_cp7_store_panel_v2.py`"" `
+            + " --evidence-root `"$shardRoot`"" `
+            + " --model `"$focalModel`"" `
+            + " --model `"$referenceModel`"" `
+            + " --model `"$anchorModel`"" `
+            + " --mode formal" `
+            + " --base-seed $baseSeed" `
+            + " --pair-start $offset" `
+            + " --pairs 128" `
+            + " --workers 8" `
+            + " --task-pairs 32" `
+            + " --scorer-exe `"$scorerExe`"" `
+            + " --mage-repo `"$mageRepo`"" `
+            + " --source-database `"$sourceDatabase`"" `
+            + " --maven `"$maven`"" `
+            + " --tolerate-engine-faults" `
+            + " > `"$shardStdout`" 2> `"$shardStderr`""
+        # cmd.exe performs the redirection itself; PowerShell never sees the
+        # native process's stderr as its own error stream, so a real engine
+        # fault reported on stderr cannot become a terminating
+        # NativeCommandError here (see FIX note above).
+        cmd.exe /c $cmdLine
+        $exitCode = $LASTEXITCODE
+    } catch {
+        $caughtException = $_.Exception.Message
+        $exitCode = -1
+        "shard $shardName raised a PowerShell exception (not a normal nonzero exit): $caughtException" | Out-File -FilePath $logPath -Encoding utf8 -Append
+    }
 
-    $exitCode = $LASTEXITCODE
     $summaryExists = Test-Path (Join-Path $shardRoot "panel-summary.json")
 
     "shard $shardName exit=$exitCode summary_present=$summaryExists at $(Get-Date -Format o)" | Out-File -FilePath $logPath -Encoding utf8 -Append
@@ -100,9 +132,14 @@ for ($i = 0; $i -lt $shardOffsets.Length; $i++) {
             pair_start = $offset
             exit_code = $exitCode
             summary_present = $summaryExists
+            powershell_exception = $caughtException
             completed_at = (Get-Date -Format o)
         }
-        $failRecord | ConvertTo-Json | Out-File -FilePath (Join-Path $parentEvidenceRoot "PANEL_FAILED.json") -Encoding utf8
+        try {
+            $failRecord | ConvertTo-Json | Out-File -FilePath (Join-Path $parentEvidenceRoot "PANEL_FAILED.json") -Encoding utf8
+        } catch {
+            "FATAL: could not write PANEL_FAILED.json: $($_.Exception.Message)" | Out-File -FilePath $logPath -Encoding utf8 -Append
+        }
         "STOP: $shardName failed; not proceeding to remaining shards." | Out-File -FilePath $logPath -Encoding utf8 -Append
         Pop-Location
         exit 1
