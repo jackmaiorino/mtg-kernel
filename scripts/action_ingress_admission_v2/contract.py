@@ -19,7 +19,8 @@ from typing import Any, Iterable, Mapping, NoReturn
 
 
 LABEL = "ACTION-INGRESS-ADMISSION-V2-DIAGNOSTIC-NON-EVIDENCE"
-MANIFEST_RELATIVE_PATH = Path("ACTION_INGRESS_ADMISSION_V2.md")
+MANIFEST_RELATIVE_PATH = Path("docs/contracts/ACTION_INGRESS_ADMISSION_V2.md")
+V2_MANIFEST_GIT_PATH = Path("ACTION_INGRESS_ADMISSION_V2.md")
 ARTIFACT_ROOT_WINDOWS = r"D:\mtg-kernel-action-ingress-admission-v2-20260727"
 TARGET_DIR_WINDOWS = r"E:\cargo-target-action-ingress-admission-v2-20260727"
 PRESERVED_V1_ARTIFACT_ROOT_WINDOWS = (
@@ -164,14 +165,14 @@ ACTION_GOLDEN_SHA256 = (
 )
 
 FROZEN_INPUTS = {
-    "ACTION_INGRESS_ADMISSION_EXECUTION_V1_INVALID.md": (
+    "docs/archive/ACTION_INGRESS_ADMISSION_EXECUTION_V1_INVALID.md": (
         "f299657ab4e4e6ca9906ddc0f06b0eb538c781f53348eaa0d7dd21f5d77f8688"
     ),
-    "ACTION_INGRESS_ADMISSION_V1.md": (
+    "docs/contracts/ACTION_INGRESS_ADMISSION_V1.md": (
         "9317e5504a72acaced0100aea889a36c50539f6ce7f46912170ca2a562fbb88f"
     ),
-    "ACTION_INGRESS_ADMISSION_V2.md": V2_MANIFEST_SHA256,
-    "OBSERVATION_DIAGNOSTICS_RESULT_V1.md": (
+    "docs/contracts/ACTION_INGRESS_ADMISSION_V2.md": V2_MANIFEST_SHA256,
+    "docs/reports/OBSERVATION_DIAGNOSTICS_RESULT_V1.md": (
         "a728aafcba53f42b9d78f7f5db468c5fe0dc87c325168cacec94926aa9ff63f3"
     ),
     "rust-toolchain.toml": (
@@ -223,6 +224,13 @@ FROZEN_INPUTS = {
         "4a8337b7c140333fa763981ed5670d37bc0f7a965c250267c4463b4da4bcfbbe"
     ),
 }
+CURRENT_FROZEN_INPUT_HASH_OVERRIDES = {
+    # The historical v1 blob remains frozen above. The current copy differs only
+    # in repository-relative documentation paths after the root cleanup.
+    "scripts/action_ingress_admission_v1/contract.py": (
+        "0abbb7391bdddb9c58bfcb8b121047dc7a4ba1f2f0727682b47f078688914ae6"
+    ),
+}
 V1_PACKAGE_RELATIVE_PATHS = tuple(
     sorted(
         relative
@@ -260,7 +268,7 @@ V2_RUST_MODULE_RELATIVE_PATH = Path(
     "checkpoint_reliance_probe_v1/action_ingress_admission_v2.rs"
 )
 LICENSED_RETRY_DIFF = (
-    ("A", "ACTION_INGRESS_ADMISSION_V2.md"),
+    ("A", V2_MANIFEST_GIT_PATH.as_posix()),
     ("M", PARENT_PROBE_RELATIVE_PATH.as_posix()),
     ("A", V2_RUST_MODULE_RELATIVE_PATH.as_posix()),
     *(
@@ -772,9 +780,15 @@ def verify_frozen_inputs(repo: Path) -> dict[str, str]:
                     f"declared v1 frozen hash is not the {FAILED_V1_IMPLEMENTATION_COMMIT} "
                     f"blob: {relative}: expected={expected} actual={frozen_digest}"
                 )
+        current_expected = CURRENT_FROZEN_INPUT_HASH_OVERRIDES.get(
+            relative, expected
+        )
         digest = sha256_file(repo / relative)
-        if digest != expected:
-            fail(f"frozen input drift: {relative}: expected={expected} actual={digest}")
+        if digest != current_expected:
+            fail(
+                f"frozen input drift: {relative}: "
+                f"expected={current_expected} actual={digest}"
+            )
         actual[relative] = digest
     return actual
 
@@ -814,13 +828,12 @@ def implementation_source_records(repo: Path) -> list[dict[str, str]]:
 def verify_licensed_retry_diff(repo: Path) -> dict[str, Any]:
     """Require HEAD to contain only the predeclared v2 retry surface."""
 
-    manifest_relative = Path("ACTION_INGRESS_ADMISSION_V2.md")
     manifest_blob = checked_git_bytes(
         repo,
         "show",
-        f"{V2_MANIFEST_COMMIT}:{manifest_relative.as_posix()}",
+        f"{V2_MANIFEST_COMMIT}:{V2_MANIFEST_GIT_PATH.as_posix()}",
     )
-    manifest_path = repo / manifest_relative
+    manifest_path = repo / MANIFEST_RELATIVE_PATH
     try:
         current_manifest = manifest_path.read_bytes()
     except OSError as error:
@@ -839,9 +852,11 @@ def verify_licensed_retry_diff(repo: Path) -> dict[str, Any]:
         "--no-renames",
         V2_MANIFEST_COMMIT,
     ).splitlines()
-    if manifest_commit_rows != ["A\tACTION_INGRESS_ADMISSION_V2.md"]:
+    expected_manifest_commit_row = f"A\t{V2_MANIFEST_GIT_PATH.as_posix()}"
+    if manifest_commit_rows != [expected_manifest_commit_row]:
         fail(
-            "v2 manifest commit must add only ACTION_INGRESS_ADMISSION_V2.md"
+            "v2 manifest commit must add only "
+            f"{V2_MANIFEST_GIT_PATH.as_posix()}"
         )
     checked_git(
         repo,

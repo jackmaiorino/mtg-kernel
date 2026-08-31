@@ -9,12 +9,12 @@ This repository is an independent extraction of kernel work formerly developed i
 - `mtg-kernel/`: the Rust rules engine, JSONL environment, and diagnostic examples
 - `python/mtg_kernel_rl/`: the Python client, feature encoder, model, trainer, and evaluators
 - `scripts/`: experiment runners and qualification tooling, including `scripts/experiments/`
-- `docs/`: `contracts/` (frozen specs and manifests), `reports/` (experiment results), `design/` (design drafts), `archive/` (superseded notes)
+- `docs/`: research documentation, indexed in [`docs/README.md`](docs/README.md), with `contracts/` (frozen specs and manifests), `reports/` (experiment results), `design/` (design drafts), and `archive/` (superseded notes)
 - `data/`: the card registry, deck manifests, and generated goldens
 - `oracle/xmage/`: XMage reference material used for external anchoring
 - `qualification/`: vendored forks pinned for reproducible builds
 
-A handful of manifests and result records with pinned SHA-256 hashes in `scripts/` (for example `ACTION_INGRESS_ADMISSION_V1.md`, `ACTION_INGRESS_ADMISSION_V2.md`, `OBSERVATION_DIAGNOSTICS_EXECUTION_V2.md`) stay at the repository root because audit tooling reads them from that exact path; moving them would break the hash-pinned verification chain.
+The repository root is reserved for project-level entry points such as this README and `ROADMAP.md`. Hash-pinned research records live under `docs/`; their bytes remain unchanged, while path-aware audit tooling resolves their current locations and preserves checks against their original Git paths.
 
 ## Build and test
 

@@ -17,7 +17,7 @@ from typing import Any, Iterable, Mapping, NoReturn
 
 
 LABEL = "ACTION-INGRESS-ADMISSION-DIAGNOSTIC-NON-EVIDENCE"
-MANIFEST_RELATIVE_PATH = Path("ACTION_INGRESS_ADMISSION_V1.md")
+MANIFEST_RELATIVE_PATH = Path("docs/contracts/ACTION_INGRESS_ADMISSION_V1.md")
 ARTIFACT_ROOT_WINDOWS = r"D:\mtg-kernel-action-ingress-admission-v1-20260726"
 TARGET_DIR_WINDOWS = r"E:\cargo-target-action-ingress-admission-v1"
 WORKTREE_WINDOWS = (
@@ -128,7 +128,7 @@ ACTION_GOLDEN_SHA256 = (
 )
 
 FROZEN_INPUTS = {
-    "OBSERVATION_DIAGNOSTICS_RESULT_V1.md": (
+    "docs/reports/OBSERVATION_DIAGNOSTICS_RESULT_V1.md": (
         "a728aafcba53f42b9d78f7f5db468c5fe0dc87c325168cacec94926aa9ff63f3"
     ),
     "rust-toolchain.toml": (

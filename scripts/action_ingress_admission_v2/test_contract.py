@@ -103,11 +103,13 @@ class ContractTests(unittest.TestCase):
         ).encode()
         base_parent = b"fixture\nmod action_ingress_admission_v1;\n"
         manifest_bytes = (
-            Path(__file__).resolve().parents[2] / "ACTION_INGRESS_ADMISSION_V2.md"
+            Path(__file__).resolve().parents[2] / contract.MANIFEST_RELATIVE_PATH
         ).read_bytes()
         with tempfile.TemporaryDirectory() as temporary:
             repo = Path(temporary)
-            (repo / "ACTION_INGRESS_ADMISSION_V2.md").write_bytes(manifest_bytes)
+            manifest_path = repo / contract.MANIFEST_RELATIVE_PATH
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_bytes(manifest_bytes)
             parent = repo / contract.PARENT_PROBE_RELATIVE_PATH
             parent.parent.mkdir(parents=True)
             parent.write_bytes(
@@ -121,7 +123,7 @@ class ContractTests(unittest.TestCase):
                     return (
                         manifest_bytes
                         if arguments[-1].endswith(
-                            ":ACTION_INGRESS_ADMISSION_V2.md"
+                            f":{contract.V2_MANIFEST_GIT_PATH.as_posix()}"
                         )
                         else base_parent
                     )
@@ -129,7 +131,7 @@ class ContractTests(unittest.TestCase):
 
             def fake_git(_repo: Path, *arguments: str) -> str:
                 if arguments[0] == "show":
-                    return "A\tACTION_INGRESS_ADMISSION_V2.md"
+                    return f"A\t{contract.V2_MANIFEST_GIT_PATH.as_posix()}"
                 if arguments[:2] == ("merge-base", "--is-ancestor"):
                     return ""
                 raise AssertionError(arguments)
@@ -148,6 +150,14 @@ class ContractTests(unittest.TestCase):
                 )
                 with self.assertRaises(contract.AdmissionError):
                     contract.verify_licensed_retry_diff(repo)
+
+    def test_relocated_v1_contract_preserves_historical_hash(self) -> None:
+        relative = "scripts/action_ingress_admission_v1/contract.py"
+        root = Path(__file__).resolve().parents[2]
+        historical = contract.FROZEN_INPUTS[relative]
+        current = contract.CURRENT_FROZEN_INPUT_HASH_OVERRIDES[relative]
+        self.assertNotEqual(current, historical)
+        self.assertEqual(contract.sha256_file(root / relative), current)
 
     def test_unittest_summary_accepts_lf_and_windows_crlf_only(self) -> None:
         for ending in (b"\n", b"\r\n"):
