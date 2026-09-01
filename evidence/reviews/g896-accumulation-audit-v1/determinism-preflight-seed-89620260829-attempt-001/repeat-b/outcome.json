@@ -1,0 +1,71 @@
+{
+  "candidate": {
+    "checkpoint_manifest_sha256": "5bdebb31fa9e916121c8138f1a1b854a514c491f3398f4f2a13b9333d3df7545",
+    "checkpoint_payload_sha256": "e965e958f57de41bc60b3107195f7bca0d1c0c6f43e404d93347152093085580",
+    "generation": 896,
+    "identity_bundle_sha256": "186b1a0c1665bd455ab67a665e80aad35d859b45ee30018093330d8f5987d95c",
+    "model_parameter_sha256": "97683d41dc35d1b0884c053b069d0b34ea5a4f600f1a1f5ea9bd9e72cf067578",
+    "run_sha256": "f25a63d0a2968016c2d44220b02d46b642fad5c4d524cd7ed82d699dbfda83a1"
+  },
+  "episode_count": 2,
+  "episodes": [
+    {
+      "deck_hashes_u64": [
+        909447583901160127,
+        909447583901160127
+      ],
+      "environment_seed": 3833496754376511690,
+      "episode_index": 0,
+      "learner_seat": "P0",
+      "opponent_pool_member": "Primary",
+      "pair_index": 0,
+      "terminal_order_rank": 1
+    },
+    {
+      "deck_hashes_u64": [
+        909447583901160127,
+        909447583901160127
+      ],
+      "environment_seed": 3833496754376511690,
+      "episode_index": 1,
+      "learner_seat": "P1",
+      "opponent_pool_member": "Primary",
+      "pair_index": 0,
+      "terminal_order_rank": 1
+    }
+  ],
+  "evaluation_base_seed": 89620260829,
+  "learner_outcomes": {
+    "P0": {
+      "draws": 0,
+      "losses": 0,
+      "wins": 1
+    },
+    "P1": {
+      "draws": 0,
+      "losses": 0,
+      "wins": 1
+    },
+    "overall": {
+      "draws": 0,
+      "losses": 0,
+      "wins": 2
+    }
+  },
+  "opponent": {
+    "checkpoint_manifest_sha256": "4bd38cf3a9af3fb03fb04428fbc4286d4635007e848c7b9f0740122e430cbba8",
+    "checkpoint_payload_sha256": "a6c87366b2da9fc33923abab3c0e22d70c884cd9420477df3a475117be6beb99",
+    "generation": 384,
+    "model_parameter_sha256": "db58dbe3f1f76b5bdf3bae4de657711dc818393b2bf1eeae88c02d8866b4d01d",
+    "run_sha256": "2c9b7423004428c0e2bb138afafc15ec65957f6bd98c4587bea704fbf9549aae"
+  },
+  "pair_count": 1,
+  "runtime": {
+    "all_natural": true,
+    "broker_batch_target": 16,
+    "environment_randomization_v2": true,
+    "sessions_per_worker": 32,
+    "worker_count": 2
+  },
+  "schema": "mtg-kernel-head-to-head-terminal-stream/v1"
+}
