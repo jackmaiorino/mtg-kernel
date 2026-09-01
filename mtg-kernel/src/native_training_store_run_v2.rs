@@ -464,8 +464,7 @@ const CYCLE4_TRAINER_V4_NUMERICAL_BACKEND_V1: &str = "cuda-burn-dense";
 // `OX_CYCLE4_PREREG_SKETCH_V2.md` (SHA `c49bffd6`).
 const CYCLE4_PREREG_SHA256_V1: &str =
     "c49bffd62084285328a24b11531d80d148cba0f5bad8083349b7d24856326481";
-const CYCLE4_REFRESH_MANIFEST_SCHEMA_V1: &str =
-    "mtg-kernel-population-refresh-manifest-cycle4/v1";
+const CYCLE4_REFRESH_MANIFEST_SCHEMA_V1: &str = "mtg-kernel-population-refresh-manifest-cycle4/v1";
 const CYCLE4_TRAINEE_START_GENERATION_V1: u64 = 896;
 const CYCLE4_TRAINEE_STOP_GENERATION_V1: u64 = 2_944;
 const CYCLE4_REFRESH_INTERVAL_V1: u64 = 128;
@@ -3849,6 +3848,21 @@ pub(crate) fn test_fixture_bytes_historical_v1() -> Vec<u8> {
 #[cfg(test)]
 pub(crate) fn test_fixture_bytes_environment_randomization_v2() -> Vec<u8> {
     tests::coherent_v2_bytes()
+}
+
+/// A coherent record widened with `trainer_v4_candidate` (and the matching
+/// top-level `loss.identity`). Test-only: lets other modules' evidence-
+/// dispatch tests (`native_training_store_update_group_v1`) decode a
+/// `ValidatedTrainRunV2` whose `trainer_loss_identity_v2()` is
+/// `TrainerLossIdentityV2::V4Candidate` without duplicating this module's
+/// fixture-construction machinery.
+#[cfg(test)]
+pub(crate) fn test_fixture_bytes_trainer_v4_candidate_v1() -> Vec<u8> {
+    to_canonical_json_bytes_v1(
+        &tests::trainer_v4_candidate_record(),
+        CanonicalJsonNullPolicyV1::Forbid,
+    )
+    .unwrap()
 }
 
 /// Backend-parametrized fixture: the matched runtime tuple and train-step
@@ -9559,5 +9573,270 @@ mod tests {
             validated.record().model_snapshot.parameter_element_count,
             2_750_754
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Cycle-4 run-contract widening
+    // (`docs/native_cycle4_arm_launcher_v1.md` Section 1)
+    // ------------------------------------------------------------------
+
+    fn trainer_v4_candidate_fixture_v1() -> TrainerV4CandidateContractV1 {
+        TrainerV4CandidateContractV1 {
+            loss_identity: CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1.to_owned(),
+            baseline_schema: NATIVE_BASELINE_STATE_SCHEMA_V4.to_owned(),
+            beta_f32_bits: CYCLE4_TRAINER_V4_BETA_F32_BITS_V1.to_owned(),
+            cell_cap: CYCLE4_TRAINER_V4_CELL_CAP_V1,
+            contract_document_sha256: ZERO_SHA256.to_owned(),
+            numerical_backend: CYCLE4_TRAINER_V4_NUMERICAL_BACKEND_V1.to_owned(),
+        }
+    }
+
+    /// A coherent-V2 record widened with `trainer_v4_candidate` and the
+    /// matching top-level `loss.identity`. No schedule/opponent-pool
+    /// requirements: unlike `population_program_v1`/`response_exploiter_v1`,
+    /// this section carries no cross-binding into `schedule`.
+    pub(super) fn trainer_v4_candidate_record() -> TrainRunV2 {
+        let mut record = coherent_v2_record();
+        record.contracts.loss.identity = CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1.to_owned();
+        record.contracts.trainer_v4_candidate = Some(trainer_v4_candidate_fixture_v1());
+        refresh_derived(&mut record);
+        record
+    }
+
+    fn population_program_v2_cycle4_fixture_v1(
+        arm_kind: &str,
+        static_pool: bool,
+    ) -> PopulationProgramContractV2Cycle4 {
+        PopulationProgramContractV2Cycle4 {
+            prereg_sha256: CYCLE4_PREREG_SHA256_V1.to_owned(),
+            refresh_manifest_schema: CYCLE4_REFRESH_MANIFEST_SCHEMA_V1.to_owned(),
+            arm_kind: arm_kind.to_owned(),
+            trainee_start_generation: CYCLE4_TRAINEE_START_GENERATION_V1,
+            trainee_stop_generation: CYCLE4_TRAINEE_STOP_GENERATION_V1,
+            refresh_interval: CYCLE4_REFRESH_INTERVAL_V1,
+            static_pool,
+        }
+    }
+
+    /// A coherent record carrying `population_program_v2_cycle4` for the
+    /// requested arm kind, with the paired `trainer_v4_candidate`
+    /// presence/absence and `static_pool` flag the arm-kind consistency
+    /// rule requires (`docs/native_cycle4_arm_launcher_v1.md` Section 1):
+    /// CONTROL-R carries neither `trainer_v4_candidate` nor `static_pool`;
+    /// STATIC-RB and TREATMENT-RB both carry `trainer_v4_candidate`, and
+    /// only STATIC-RB sets `static_pool`.
+    fn population_program_v2_cycle4_record(arm_kind: &str) -> TrainRunV2 {
+        let mut record = if arm_kind == CYCLE4_ARM_KIND_CONTROL_R_V1 {
+            coherent_v2_record()
+        } else {
+            trainer_v4_candidate_record()
+        };
+        let static_pool = arm_kind == CYCLE4_ARM_KIND_STATIC_RB_V1;
+        record.contracts.population_program_v2_cycle4 = Some(
+            population_program_v2_cycle4_fixture_v1(arm_kind, static_pool),
+        );
+        refresh_derived(&mut record);
+        record
+    }
+
+    #[test]
+    fn trainer_v4_candidate_valid_record_decodes_and_validates() {
+        let record = trainer_v4_candidate_record();
+        let bytes = to_canonical_json_bytes_v1(&record, CanonicalJsonNullPolicyV1::Forbid).unwrap();
+        let validated = decode_train_run_v2(&bytes).expect("v4-candidate record must validate");
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.record().contracts().trainer_loss_identity_v2(),
+            TrainerLossIdentityV2::V4Candidate
+        );
+        assert!(validated
+            .record()
+            .contracts()
+            .trainer_v4_candidate
+            .is_some());
+    }
+
+    #[test]
+    fn trainer_v4_candidate_literal_violations_fail_closed() {
+        let mutations: &[fn(&mut TrainerV4CandidateContractV1)] = &[
+            |t| t.loss_identity = "terminal_reinforce_value/v3".to_owned(),
+            |t| t.baseline_schema = "wrong-schema/v1".to_owned(),
+            |t| t.beta_f32_bits = "00000000".to_owned(),
+            |t| t.cell_cap = 255,
+            |t| t.cell_cap = 257,
+            |t| {
+                t.contract_document_sha256 =
+                    "not-hex-not-hex-not-hex-not-hex-not-hex-not-hex-not-hex-not-he".to_owned()
+            },
+            |t| t.contract_document_sha256 = "0".repeat(63),
+            |t| t.numerical_backend = "cpu-sequential".to_owned(),
+        ];
+        for mutate in mutations {
+            let mut record = trainer_v4_candidate_record();
+            mutate(record.contracts.trainer_v4_candidate.as_mut().unwrap());
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
+    /// The `trainer_v4_candidate` section's own `loss_identity` field and
+    /// the top-level `contracts.loss.identity` are two independent literal
+    /// pins that must agree: `validate_trainer_v4_candidate_v1` checks the
+    /// former, `validate_contracts_v2`'s loss-identity swap checks the
+    /// latter. This proves the swap itself, holding the section's own field
+    /// correct while the top-level field regresses to the v3 literal.
+    #[test]
+    fn trainer_v4_candidate_present_requires_matching_top_level_loss_identity() {
+        let mut record = trainer_v4_candidate_record();
+        record.contracts.loss.identity = FROZEN_LOSS_IDENTITY_V2.to_owned();
+        refresh_derived(&mut record);
+        assert!(validate_train_run_record_v2(record).is_err());
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_valid_for_each_arm_kind() {
+        for arm_kind in [
+            CYCLE4_ARM_KIND_CONTROL_R_V1,
+            CYCLE4_ARM_KIND_STATIC_RB_V1,
+            CYCLE4_ARM_KIND_TREATMENT_RB_V1,
+        ] {
+            let record = population_program_v2_cycle4_record(arm_kind);
+            let validated = validate_train_run_record_v2(record)
+                .unwrap_or_else(|error| panic!("{arm_kind} must validate: {error:?}"));
+            assert_eq!(
+                validated
+                    .record()
+                    .contracts()
+                    .population_program_v2_cycle4
+                    .as_ref()
+                    .unwrap()
+                    .arm_kind,
+                arm_kind
+            );
+        }
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_literal_violations_fail_closed() {
+        let mutations: &[fn(&mut PopulationProgramContractV2Cycle4)] = &[
+            |p| p.prereg_sha256 = ZERO_SHA256.to_owned(),
+            |p| p.refresh_manifest_schema = "wrong-schema/v1".to_owned(),
+            |p| p.trainee_start_generation = 897,
+            |p| p.trainee_stop_generation = 2_945,
+            |p| p.refresh_interval = 129,
+        ];
+        for mutate in mutations {
+            let mut record = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_TREATMENT_RB_V1);
+            mutate(
+                record
+                    .contracts
+                    .population_program_v2_cycle4
+                    .as_mut()
+                    .unwrap(),
+            );
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_arm_kind_consistency_fails_closed() {
+        // CONTROL-R must not carry trainer_v4_candidate.
+        let mut control_with_trainer =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        control_with_trainer.contracts.trainer_v4_candidate =
+            Some(trainer_v4_candidate_fixture_v1());
+        control_with_trainer.contracts.loss.identity =
+            CYCLE4_TRAINER_V4_LOSS_IDENTITY_V1.to_owned();
+        refresh_derived(&mut control_with_trainer);
+        assert!(validate_train_run_record_v2(control_with_trainer).is_err());
+
+        // STATIC-RB and TREATMENT-RB must both carry trainer_v4_candidate.
+        for arm_kind in [
+            CYCLE4_ARM_KIND_STATIC_RB_V1,
+            CYCLE4_ARM_KIND_TREATMENT_RB_V1,
+        ] {
+            let mut record = population_program_v2_cycle4_record(arm_kind);
+            record.contracts.trainer_v4_candidate = None;
+            record.contracts.loss.identity = FROZEN_LOSS_IDENTITY_V2.to_owned();
+            refresh_derived(&mut record);
+            assert!(validate_train_run_record_v2(record).is_err());
+        }
+
+        // static_pool must be true iff arm_kind == "static-rb".
+        let mut static_without_flag =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_STATIC_RB_V1);
+        static_without_flag
+            .contracts
+            .population_program_v2_cycle4
+            .as_mut()
+            .unwrap()
+            .static_pool = false;
+        refresh_derived(&mut static_without_flag);
+        assert!(validate_train_run_record_v2(static_without_flag).is_err());
+
+        let mut treatment_with_flag =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_TREATMENT_RB_V1);
+        treatment_with_flag
+            .contracts
+            .population_program_v2_cycle4
+            .as_mut()
+            .unwrap()
+            .static_pool = true;
+        refresh_derived(&mut treatment_with_flag);
+        assert!(validate_train_run_record_v2(treatment_with_flag).is_err());
+
+        // An unrecognized arm_kind string fails closed regardless of shape.
+        let mut unknown_arm = population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        unknown_arm
+            .contracts
+            .population_program_v2_cycle4
+            .as_mut()
+            .unwrap()
+            .arm_kind = "unknown-arm".to_owned();
+        refresh_derived(&mut unknown_arm);
+        assert!(validate_train_run_record_v2(unknown_arm).is_err());
+    }
+
+    #[test]
+    fn population_program_v2_cycle4_mutually_exclusive_with_v1_programs() {
+        let mut with_population_v1 =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        with_population_v1.contracts.population_program_v1 = Some(population_program_fixture());
+        refresh_derived(&mut with_population_v1);
+        assert!(validate_train_run_record_v2(with_population_v1).is_err());
+
+        let mut with_response_exploiter =
+            population_program_v2_cycle4_record(CYCLE4_ARM_KIND_CONTROL_R_V1);
+        with_response_exploiter.contracts.response_exploiter_v1 =
+            Some(response_exploiter_fixture_for_seed(970_001));
+        refresh_derived(&mut with_response_exploiter);
+        assert!(validate_train_run_record_v2(with_response_exploiter).is_err());
+    }
+
+    /// House style: "never mutate frozen behavior for existing v3 runs
+    /// (byte-identical when the new contract sections are absent)". A
+    /// pre-cycle-4 record carries neither new section, decodes to
+    /// `TrainerLossIdentityV2::V3`, and re-encodes byte-for-byte identical
+    /// to what it decoded from.
+    #[test]
+    fn v3_fixture_round_trips_byte_identically_with_cycle4_sections_absent() {
+        let bytes = fixture_bytes();
+        let validated = decode_train_run_v2(&bytes).expect("v3 fixture must still validate");
+        assert_eq!(validated.canonical_bytes(), bytes.as_slice());
+        assert_eq!(
+            validated.record().contracts().trainer_loss_identity_v2(),
+            TrainerLossIdentityV2::V3
+        );
+        assert!(validated
+            .record()
+            .contracts()
+            .trainer_v4_candidate
+            .is_none());
+        assert!(validated
+            .record()
+            .contracts()
+            .population_program_v2_cycle4
+            .is_none());
     }
 }

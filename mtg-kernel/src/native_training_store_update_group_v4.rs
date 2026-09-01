@@ -426,6 +426,36 @@ pub(crate) struct UpdateBaselineEpisodeViewV4<'a> {
 }
 
 // ---------------------------------------------------------------------
+// Sidecar source (round A: an injected pure source; the launcher-level
+// chain-directory reader is round B's job -- see
+// `docs/native_cycle4_arm_launcher_v1.md` Sections 2-3)
+// ---------------------------------------------------------------------
+
+/// Supplies the raw canonical-JSON bytes of the `baseline_v4` sidecar record
+/// for one update index (`docs/native_cycle4_arm_launcher_v1.md` Section 2:
+/// `baseline-update-<8-digit index>.record.json`, published atomically
+/// right after the Store commits that update and before the next one
+/// begins). `None` means no sidecar was found for that index -- the
+/// evidence-dispatch caller (`native_training_store_update_group_v1`) fails
+/// closed on that, exactly as the doc's "a missing or unbound sidecar fails
+/// closed" requires.
+///
+/// This module, and everything downstream of it, stay pure over the bytes
+/// an implementation returns: no file I/O happens in the validation path
+/// itself. A production implementation (round B, the launcher-level chain
+/// reader) reads the sidecar file for `update_index` and returns its bytes;
+/// tests use the blanket closure impl below.
+pub(crate) trait BaselineSidecarSourceV4 {
+    fn sidecar_record_bytes_v4(&self, update_index: u64) -> Option<Vec<u8>>;
+}
+
+impl<F: Fn(u64) -> Option<Vec<u8>>> BaselineSidecarSourceV4 for F {
+    fn sidecar_record_bytes_v4(&self, update_index: u64) -> Option<Vec<u8>> {
+        self(update_index)
+    }
+}
+
+// ---------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------
 
