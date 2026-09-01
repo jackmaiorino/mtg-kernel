@@ -119,16 +119,26 @@ Baseline-state persistence (crash-consistent by construction):
   with a fail-closed cap of 256 cells. `train_state_sha256` (v4) therefore
   covers the baseline, and `logical_state_sha256`'s atom list is unchanged
   because it already folds `train_state_sha256`.
-- Persisting the snapshot's new fields requires the checkpoint-manifest v4
-  sibling schema (`mtg_kernel_native_train_checkpoint/v4`); the payload's
-  frozen three-section `f32le` layout is unchanged. All `deny_unknown_fields`
-  wire structs, publish schedule, resume read set, and leaf grammar keep
-  their v3 forms for v3 stores; v4 stores use the sibling decode family.
-- The atomic commit needs no new mechanism: the baseline rides the same
-  per-generation publish set, and the `latest.json` pointer swap remains the
-  single commit point. Resume loads it at the existing choke point
-  `reconstruct_executor_v2` (`native_training_store_resume_v2.rs:1305-1387`)
-  together with model and optimizer.
+- Persisting the composed snapshot uses the checkpoint-manifest v4 sibling
+  schema (`mtg_kernel_native_train_checkpoint/v4`); the payload's frozen
+  three-section `f32le` layout is unchanged. There is no "v4 store": v4
+  manifests live only in the launcher-level chain described next, and every
+  StoreV2 wire struct, publish schedule, resume read set, and leaf-grammar
+  form stays exactly v3.
+- Persistence architecture (pinned after the v4 core landed): the frozen
+  StoreV2 publish, resume, leaf-grammar, and tip-proof surfaces are NOT
+  extended. The arm's model and optimizer live in an unchanged v3 Store; the
+  baseline persists as a launcher-level hash-chained artifact stream of
+  checkpoint-manifest v4 records (one per checkpoint boundary), each binding
+  the Store generation, the payload-derived core snapshot hash, the baseline
+  cells, and the previous record's SHA-256, published with the same
+  create-new atomic move primitives the Store uses. Crash consistency comes
+  from the generation-pairing rule: resume validates that the newest chain
+  record's generation and composed hash agree with the Store's checkpoint at
+  that generation, and on any mismatch falls back to the newest agreeing
+  pair; a mixed state (new parameters with stale `c`, or the reverse) is
+  never resumable. This is the same launcher-chain pattern the g896
+  structured and policy-only formal lanes used for their checkpoint chains.
 
 Cell labeling at gradient time (pinned from the opponent-identity trace):
 
