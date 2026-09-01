@@ -255,6 +255,12 @@ pub mod native_training_store_checkpoint_v3;
 // baseline to the checkpoint-v3 wire shape.
 #[allow(dead_code)]
 pub(crate) mod native_training_store_checkpoint_v4;
+// Launcher-level, hash-chained baseline checkpoint chain for
+// terminal_reinforce_value/v4: the arm's v3 Store stays untouched, and the
+// baseline persists as its own append-only stream of checkpoint-manifest v4
+// records outside the Store.
+#[allow(dead_code)]
+pub(crate) mod native_baseline_checkpoint_chain_v4;
 // Pure complete-chain continuation-v2 authority. Largest-prefix partitioning
 // is never claimed from one file in isolation.
 pub mod native_training_store_segment_continuation_v2;
