@@ -198,6 +198,10 @@ pub(crate) mod native_ladder_opponent_v1;
 // Eight-slot population-opponent runtime primitive.
 #[allow(dead_code)]
 pub(crate) mod native_population_opponent_v1;
+// Cycle-4 successor refresh authority: content-resolving panel binding,
+// placeholder-hash rejection, and the ratified cycle-4 roster.
+#[allow(dead_code)]
+pub(crate) mod native_population_refresh_manifest_cycle4_v1;
 // Canonical hash-linked authority for each eight-slot population refresh.
 #[allow(dead_code)]
 pub(crate) mod native_population_refresh_manifest_v1;
