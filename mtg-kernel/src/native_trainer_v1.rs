@@ -2494,6 +2494,15 @@ impl NativeTrainerStateV2 {
                 Ok(evidence)
             }
             NativeTrainerModelStateV2::Wide(_) => {
+                // v4 fail-closed gate (review finding P1): the contract
+                // excludes the wide model, and the wide grouping path forces
+                // every baseline_bits to zero, so silently proceeding would
+                // train the v3 objective while a baseline is installed.
+                if self.baseline_state.is_some() {
+                    return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                        "baseline_v4_unsupported_on_wide_model",
+                    ));
+                }
                 self.run_even_batch_update_wide_inner_v2(config, environment, phase_recorder)
             }
         }
@@ -2527,6 +2536,19 @@ impl NativeTrainerStateV2 {
         let test_physical_substep_count_mutation =
             std::mem::take(&mut self.pending_test_physical_substep_count_mutation);
         validate_update_config_v2(config)?;
+        // v4 fail-closed gate (review finding P1): the v4 RUN MODE itself is
+        // CUDA-only, regardless of the current numerical baseline values. A
+        // v4 run whose baseline happens to be all-zero (genesis, or only
+        // new/positive-zero cells) must not silently execute on a CPU
+        // backend; the kernel-level nonzero-bits gate stays as defense in
+        // depth. Mirrors the policy-anchor gate below.
+        if self.baseline_state.is_some()
+            && config.numerical_backend != NativeTrainingNumericalBackendV1::CudaBurnDense
+        {
+            return Err(NativeTrainerErrorV1::InvalidUpdateConfig(
+                "baseline_v4_requires_cuda_burn_dense",
+            ));
+        }
         #[cfg(test)]
         if self.policy_anchor.is_some()
             && config.numerical_backend != NativeTrainingNumericalBackendV1::CudaBurnDense

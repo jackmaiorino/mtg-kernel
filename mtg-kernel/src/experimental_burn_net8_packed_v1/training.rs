@@ -1954,7 +1954,11 @@ fn dense_group_loss_with_policy_anchor_v1(
             IndexingUpdateOp::Add,
         );
     let group_values = values.select(0, plan.group_first_gather.clone());
-    let advantage = plan.targets.clone() - group_values.clone().detach();
+    // v4 lockstep (review finding P2): this test-only anchor loss must use
+    // the same baseline-subtracted advantage as `dense_group_loss_v1`, or a
+    // test combining the anchor with a nonzero baseline would optimize a
+    // different objective than the bridge reconstructs as evidence.
+    let advantage = plan.targets.clone() - group_values.clone().detach() - plan.baseline.clone();
     let policy_sum = joint_log_probabilities
         .mul(advantage)
         .mul_scalar(-1.0)

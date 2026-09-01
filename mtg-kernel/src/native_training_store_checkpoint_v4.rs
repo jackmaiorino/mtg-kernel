@@ -226,6 +226,7 @@ pub(crate) enum CheckpointManifestV4ErrorKind {
     InvalidBaseline(NativeBaselineErrorKindV4),
     InvalidDigest,
     InvalidScalar,
+    ComposedStateDigestMismatch,
     LogicalStateDigestMismatch,
 }
 
@@ -239,6 +240,9 @@ impl CheckpointManifestV4ErrorKind {
             Self::InvalidBaseline(_) => "native_train_checkpoint_v4_invalid_baseline",
             Self::InvalidDigest => "native_train_checkpoint_v4_invalid_digest",
             Self::InvalidScalar => "native_train_checkpoint_v4_invalid_scalar",
+            Self::ComposedStateDigestMismatch => {
+                "native_train_checkpoint_v4_composed_state_digest_mismatch"
+            }
             Self::LogicalStateDigestMismatch => {
                 "native_train_checkpoint_v4_logical_state_digest_mismatch"
             }
@@ -352,17 +356,24 @@ fn build_wire_v4(parts: CheckpointManifestPartsV4) -> Result<CheckpointManifestW
 pub(crate) fn build_checkpoint_manifest_v4(
     parts: CheckpointManifestPartsV4,
 ) -> Result<CheckpointManifestV4> {
+    let core_state_sha256 = parts.core_state_sha256;
     let wire = build_wire_v4(parts)?;
     let canonical_bytes = to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid)?;
-    decode_checkpoint_manifest_v4(&canonical_bytes)
+    decode_checkpoint_manifest_v4(&canonical_bytes, core_state_sha256)
 }
 
 /// Decodes and fully validates a checkpoint-v4 authority: size cap,
 /// canonical-JSON round trip (byte-identical re-encode), outer and
 /// train-state schema strings, baseline schema and cell order/format/cap
 /// (via `NativeBaselineStateV4::from_wire_v4`), digest encodings, scalar
-/// bounds, and the logical-state digest recomputation.
-pub(crate) fn decode_checkpoint_manifest_v4(manifest_cj: &[u8]) -> Result<CheckpointManifestV4> {
+/// bounds, the COMPOSED train-state digest recomputation against the
+/// caller-supplied payload-derived core snapshot hash (so a mutated
+/// `baseline_cells` array can never ride under an unchanged declared hash),
+/// and the logical-state digest recomputation.
+pub(crate) fn decode_checkpoint_manifest_v4(
+    manifest_cj: &[u8],
+    core_state_sha256: [u8; 32],
+) -> Result<CheckpointManifestV4> {
     if manifest_cj.len() > CHECKPOINT_MANIFEST_MAX_BYTES_V4 {
         return Err(CheckpointManifestV4Error::new(
             CheckpointManifestV4ErrorKind::RecordTooLarge,
@@ -433,6 +444,17 @@ pub(crate) fn decode_checkpoint_manifest_v4(manifest_cj: &[u8]) -> Result<Checkp
 
     validate_all_digest_encodings_v4(&wire)?;
     let train_state_sha256 = parse_digest_v4(&wire.train_state.state_sha256)?;
+    // Composed-hash recomputation (review finding P1): the declared
+    // train-state digest must equal the composition of the caller-supplied
+    // payload-derived core hash with THIS manifest's own baseline cells;
+    // trusting the declaration would let a mutated cell array escape
+    // train-state coverage.
+    let recomputed_composed = baseline_state.compose_train_state_sha256_v4(core_state_sha256);
+    if recomputed_composed != train_state_sha256 {
+        return Err(CheckpointManifestV4Error::new(
+            CheckpointManifestV4ErrorKind::ComposedStateDigestMismatch,
+        ));
+    }
     let model_parameter_sha256 = parse_digest_v4(&wire.train_state.model_parameter_sha256)?;
     let logical_state_sha256 = logical_state_sha256_v4(
         &wire.run_sha256,
@@ -640,7 +662,8 @@ mod tests {
         assert_eq!(manifest.baseline_state().cell_count_v4(), 2);
         assert_eq!(manifest.train_state().baseline_cells().len(), 2);
 
-        let redecoded = decode_checkpoint_manifest_v4(manifest.canonical_bytes()).expect("decode");
+        let redecoded =
+            decode_checkpoint_manifest_v4(manifest.canonical_bytes(), [0x99; 32]).expect("decode");
         assert_eq!(redecoded.canonical_bytes(), manifest.canonical_bytes());
         assert_eq!(
             redecoded.train_state_sha256(),
@@ -669,7 +692,8 @@ mod tests {
         // when the baseline is empty (domain separation).
         assert_ne!(manifest.train_state_sha256(), core);
 
-        let redecoded = decode_checkpoint_manifest_v4(manifest.canonical_bytes()).expect("decode");
+        let redecoded =
+            decode_checkpoint_manifest_v4(manifest.canonical_bytes(), [0x99; 32]).expect("decode");
         assert_eq!(redecoded.canonical_bytes(), manifest.canonical_bytes());
     }
 
@@ -691,7 +715,7 @@ mod tests {
         let baseline = baseline_with_two_cells_v4();
         let manifest = build_checkpoint_manifest_v4(sample_parts_v4(baseline, 4)).expect("build");
         let bytes_a = manifest.canonical_bytes().to_vec();
-        let redecoded = decode_checkpoint_manifest_v4(&bytes_a).expect("redecode");
+        let redecoded = decode_checkpoint_manifest_v4(&bytes_a, [0x99; 32]).expect("redecode");
         assert_eq!(redecoded.canonical_bytes(), bytes_a.as_slice());
     }
 
@@ -704,7 +728,7 @@ mod tests {
         wire.schema = CHECKPOINT_MANIFEST_SCHEMA_V3.to_owned();
         let bytes =
             to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid).expect("encode");
-        let error = decode_checkpoint_manifest_v4(&bytes).expect_err("schema mismatch");
+        let error = decode_checkpoint_manifest_v4(&bytes, [0x99; 32]).expect_err("schema mismatch");
         assert_eq!(error.kind(), CheckpointManifestV4ErrorKind::InvalidSchema);
     }
 
@@ -734,7 +758,7 @@ mod tests {
             .expect("object")
             .insert("unexpected_field_v4".to_owned(), Value::Bool(true));
         let bytes = serde_json::to_vec(&document).expect("reserialize");
-        let error = decode_checkpoint_manifest_v4(&bytes).expect_err("unknown field");
+        let error = decode_checkpoint_manifest_v4(&bytes, [0x99; 32]).expect_err("unknown field");
         assert!(matches!(
             error.kind(),
             CheckpointManifestV4ErrorKind::CanonicalJson(_)
@@ -749,7 +773,7 @@ mod tests {
         wire.train_state.baseline_cells.reverse();
         let bytes =
             to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid).expect("encode");
-        let error = decode_checkpoint_manifest_v4(&bytes).expect_err("out of order");
+        let error = decode_checkpoint_manifest_v4(&bytes, [0x99; 32]).expect_err("out of order");
         assert_eq!(
             error.kind(),
             CheckpointManifestV4ErrorKind::InvalidBaseline(NativeBaselineErrorKindV4::InvalidWire)
@@ -763,10 +787,45 @@ mod tests {
         wire.train_state.baseline_schema = "wrong-baseline-schema/v1".to_owned();
         let bytes =
             to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid).expect("encode");
-        let error = decode_checkpoint_manifest_v4(&bytes).expect_err("baseline schema mismatch");
+        let error = decode_checkpoint_manifest_v4(&bytes, [0x99; 32])
+            .expect_err("baseline schema mismatch");
         assert_eq!(
             error.kind(),
             CheckpointManifestV4ErrorKind::InvalidBaselineSchema
+        );
+    }
+
+    /// Review finding P1: the decoder must recompute the composed hash, not
+    /// trust the declaration. Wrong caller-supplied core hash fails closed.
+    #[test]
+    fn wrong_core_hash_rejected_by_composed_recomputation_v4() {
+        let baseline = baseline_with_two_cells_v4();
+        let manifest = build_checkpoint_manifest_v4(sample_parts_v4(baseline, 4)).expect("build");
+        let error = decode_checkpoint_manifest_v4(manifest.canonical_bytes(), [0x98; 32])
+            .expect_err("wrong core");
+        assert_eq!(
+            error.kind(),
+            CheckpointManifestV4ErrorKind::ComposedStateDigestMismatch
+        );
+    }
+
+    /// Review finding P1, the escape it closes: mutating a baseline cell
+    /// while leaving the declared train-state and logical hashes untouched
+    /// must be caught by the composed-hash recomputation.
+    #[test]
+    fn tampered_baseline_cell_rejected_by_composed_recomputation_v4() {
+        let baseline = baseline_with_two_cells_v4();
+        let mut wire = build_wire_v4(sample_parts_v4(baseline, 4)).expect("wire");
+        let original_bits = wire.train_state.baseline_cells[0].c_f32_bits.clone();
+        let tampered_bits = format!("{:08x}", 0.75_f32.to_bits());
+        assert_ne!(original_bits, tampered_bits);
+        wire.train_state.baseline_cells[0].c_f32_bits = tampered_bits;
+        let bytes =
+            to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid).expect("encode");
+        let error = decode_checkpoint_manifest_v4(&bytes, [0x99; 32]).expect_err("tampered cell");
+        assert_eq!(
+            error.kind(),
+            CheckpointManifestV4ErrorKind::ComposedStateDigestMismatch
         );
     }
 }

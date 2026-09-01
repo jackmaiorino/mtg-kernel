@@ -53,9 +53,18 @@ Per update `t`, in order, matching the audit consult's required transaction:
 
    with `BETA = 0.05` (ratified), f32 arithmetic, terms accumulated in batch
    order into an f64 sum then rounded once to f32 at the division; cells not
-   observed in update `t` carry `c_{t+1} = c_t` unchanged. `value_pretrain`
-   is the value prediction the batch actually trained against (the same
-   number entering the policy term), not a post-update re-evaluation.
+   observed in update `t` carry `c_{t+1} = c_t` unchanged.
+
+   `value_pretrain` is pinned to the CPU-CANONICAL transported value bits
+   (the pre-update rollout value recorded per physical term in evidence),
+   NOT a post-update re-evaluation and NOT the CUDA device forward output.
+   Rationale (amendment after implementation review): the store validator
+   must recompute the exact EMA trajectory from persisted evidence alone,
+   which requires `c_{t+1}` to derive from evidence bits; and the CUDA lane
+   already accepts a bounded tolerance between the transported bits and the
+   device forward for every v3 evidence quantity, so the same bounded
+   discrepancy between the optimized objective's value and the
+   baseline-derivation value is the established acceptance, not a new one.
 5. Atomically commit model, optimizer, `c_{t+1}`, per-cell decision and
    episode counts, old and new f32 bit patterns, and the source batch digest.
    A crash exposes the complete old state or the complete new state, never a
