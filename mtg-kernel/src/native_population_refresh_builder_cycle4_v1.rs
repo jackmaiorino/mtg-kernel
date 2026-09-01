@@ -51,8 +51,13 @@ const EXPECTED_ROLES_V1: [&str; CYCLE4_SLOT_COUNT_V1] = [
 ];
 
 /// One slot's five-hash occupant identity for the boundary being built, as
-/// produced by the wrapper from the Store heads.
+/// produced by the wrapper from the Store heads. This schema is fully owned
+/// by this module (unlike the panel document, which is a much larger
+/// externally-produced file this module only reads a slice of), so it is
+/// deny-unknown-fields: fail closed on a typo'd or stale field name rather
+/// than silently ignoring it.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Cycle4SlotIdentityInputV1 {
     pub slot_index: u64,
     pub source_base_seed: u64,
@@ -65,6 +70,7 @@ pub struct Cycle4SlotIdentityInputV1 {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Cycle4SlotIdentitiesFileV1 {
     schema: String,
     slots: Vec<Cycle4SlotIdentityInputV1>,
@@ -155,8 +161,7 @@ fn ordered_slot_identities_v1(
 ) -> Result<[Cycle4SlotIdentityInputV1; CYCLE4_SLOT_COUNT_V1]> {
     let file: Cycle4SlotIdentitiesFileV1 =
         serde_json::from_slice(json_bytes).map_err(|_| invalid_slot_identities_v1())?;
-    if file.schema != CYCLE4_SLOT_IDENTITIES_SCHEMA_V1 || file.slots.len() != CYCLE4_SLOT_COUNT_V1
-    {
+    if file.schema != CYCLE4_SLOT_IDENTITIES_SCHEMA_V1 || file.slots.len() != CYCLE4_SLOT_COUNT_V1 {
         return Err(invalid_slot_identities_v1());
     }
     let mut ordered: [Option<Cycle4SlotIdentityInputV1>; CYCLE4_SLOT_COUNT_V1] =
@@ -240,8 +245,14 @@ pub fn build_cycle4_genesis_refresh_v1(
     let identities = ordered_slot_identities_v1(slot_identities_json)?;
     let weight_units = [CYCLE4_GENESIS_SLOT_WEIGHT_UNITS_V1; CYCLE4_SLOT_COUNT_V1];
     let slots = build_slot_records_v1(&identities, &weight_units);
-    let manifest =
-        build_cycle4_refresh_manifest_v1(0, None, None, trainee_run_sha256, trainee_base_seed, slots)?;
+    let manifest = build_cycle4_refresh_manifest_v1(
+        0,
+        None,
+        None,
+        trainee_run_sha256,
+        trainee_base_seed,
+        slots,
+    )?;
     Ok(Cycle4RefreshBuildResultV1 {
         canonical_bytes: manifest.canonical_bytes_v1().to_vec(),
         manifest_sha256: lower_hex_raw32_v1(manifest.manifest_sha256_v1()),
@@ -301,9 +312,11 @@ pub fn build_cycle4_next_refresh_v1(
 mod tests {
     use super::*;
     use crate::native_population_refresh_manifest_cycle4_v1::{
-        CYCLE4_CYCLE3_LINEAGE_BASE_SEED_V1, CYCLE4_CYCLE3_LINEAGE_RUN_SHA256_V1,
-        CYCLE4_HISTORICAL_LAG_V1, CYCLE4_ROLE_FLOOR_UNITS_V1, CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1,
-        CYCLE4_WEIGHT_TOTAL_UNITS_V1,
+        FrozenOccupantIdentityCycle4V1, CYCLE4_ANCHOR_0_V1, CYCLE4_ANCHOR_1_V1,
+        CYCLE4_CURRENT_0_V1, CYCLE4_CYCLE3_LINEAGE_BASE_SEED_V1,
+        CYCLE4_CYCLE3_LINEAGE_RUN_SHA256_V1, CYCLE4_EXPLOITER_0_V1, CYCLE4_EXPLOITER_1_V1,
+        CYCLE4_HISTORICAL_1_ROTATION_V1, CYCLE4_HISTORICAL_LAG_V1, CYCLE4_ROLE_FLOOR_UNITS_V1,
+        CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1, CYCLE4_WEIGHT_TOTAL_UNITS_V1,
     };
 
     const TEST_TRAINEE_RUN: &str = CYCLE4_CYCLE3_LINEAGE_RUN_SHA256_V1;
@@ -313,66 +326,96 @@ mod tests {
         format!("cd{:062x}", u64::from(tag))
     }
 
+    /// Frozen slots (anchor-0/1, historical-1, current-0, exploiter-0/1) are
+    /// checked by the manifest module against its own pinned five-hash
+    /// identity constants (`slot_matches_frozen_v1`), not merely by seed and
+    /// generation, so this test module must emit exactly those hashes -- a
+    /// synthetic stand-in hash would always be rejected as `InvalidSlots`.
+    fn frozen_identity_json_v1(
+        slot_index: u64,
+        frozen: &FrozenOccupantIdentityCycle4V1,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "slot_index": slot_index,
+            "source_base_seed": frozen.source_base_seed,
+            "source_run_sha256": frozen.source_run_sha256,
+            "source_generation": frozen.source_generation,
+            "checkpoint_manifest_sha256": frozen.checkpoint_manifest_sha256,
+            "checkpoint_payload_sha256": frozen.checkpoint_payload_sha256,
+            "model_parameter_sha256": frozen.model_parameter_sha256,
+            "train_state_sha256": frozen.train_state_sha256,
+        })
+    }
+
+    /// A trainee-bound slot (historical-0 from refresh index 4 onward,
+    /// current-1 always) only pins `source_run_sha256`/`source_base_seed`/
+    /// `source_generation`; the sidecar hashes are free, so synthetic
+    /// distinct values are fine there.
+    fn trainee_bound_identity_json_v1(
+        slot_index: u64,
+        run: &str,
+        seed: u64,
+        generation: u64,
+        hash_tag: u8,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "slot_index": slot_index,
+            "source_base_seed": seed,
+            "source_run_sha256": run,
+            "source_generation": generation,
+            "checkpoint_manifest_sha256": hash_tag_v1(hash_tag),
+            "checkpoint_payload_sha256": hash_tag_v1(hash_tag + 1),
+            "model_parameter_sha256": hash_tag_v1(hash_tag + 2),
+            "train_state_sha256": hash_tag_v1(hash_tag + 3),
+        })
+    }
+
     /// Builds a boundary's slot-identities document. `refresh_index`
     /// controls the two trainee-bound slots' `source_generation` (matching
     /// what a real wrapper would compute from the Store heads at that
     /// boundary); `trainee_run`/`trainee_seed` MUST equal whatever is passed
     /// as the build call's own `trainee_run_sha256`/`trainee_base_seed`,
     /// since the manifest module binds slot 5 (and, from refresh index 4
-    /// onward, slot 2) to that exact pair.
-    fn slot_identities_json_v1(refresh_index: u64, trainee_run: &str, trainee_seed: u64) -> Vec<u8> {
+    /// onward, slot 2) to that exact pair. The frozen slots (0, 1, 3, 4, 6,
+    /// 7) always carry the real ratified identities regardless of
+    /// `refresh_index`/`trainee_run`, matching the manifest contract's own
+    /// pinned roster.
+    fn slot_identities_json_v1(
+        refresh_index: u64,
+        trainee_run: &str,
+        trainee_seed: u64,
+    ) -> Vec<u8> {
         let local_generation = CYCLE4_TRAINEE_START_LOCAL_GENERATION_V1 + refresh_index * 128;
         let historical_0_generation = local_generation - CYCLE4_HISTORICAL_LAG_V1;
-        let (historical_0_run, historical_0_seed) = if refresh_index <= 3 {
-            (
-                CYCLE4_CYCLE3_LINEAGE_RUN_SHA256_V1.to_owned(),
+        let rotation = usize::try_from(refresh_index % 3).expect("rotation fits usize");
+        let historical_0 = if refresh_index <= 3 {
+            trainee_bound_identity_json_v1(
+                2,
+                CYCLE4_CYCLE3_LINEAGE_RUN_SHA256_V1,
                 CYCLE4_CYCLE3_LINEAGE_BASE_SEED_V1,
+                historical_0_generation,
+                16,
             )
         } else {
-            (trainee_run.to_owned(), trainee_seed)
-        };
-        let rotation = refresh_index % 3;
-        let frozen = |slot_index: u64, tag: u8, seed: u64, generation: u64| {
-            serde_json::json!({
-                "slot_index": slot_index,
-                "source_base_seed": seed,
-                "source_run_sha256": hash_tag_v1(tag),
-                "source_generation": generation,
-                "checkpoint_manifest_sha256": hash_tag_v1(tag + 1),
-                "checkpoint_payload_sha256": hash_tag_v1(tag + 2),
-                "model_parameter_sha256": hash_tag_v1(tag + 3),
-                "train_state_sha256": hash_tag_v1(tag + 4),
-            })
+            trainee_bound_identity_json_v1(
+                2,
+                trainee_run,
+                trainee_seed,
+                historical_0_generation,
+                16,
+            )
         };
         let doc = serde_json::json!({
             "schema": CYCLE4_SLOT_IDENTITIES_SCHEMA_V1,
             "slots": [
-                frozen(0, 10, 920_012, 384),
-                frozen(1, 20, 970_002, 1536),
-                serde_json::json!({
-                    "slot_index": 2,
-                    "source_base_seed": historical_0_seed,
-                    "source_run_sha256": historical_0_run,
-                    "source_generation": historical_0_generation,
-                    "checkpoint_manifest_sha256": hash_tag_v1(31),
-                    "checkpoint_payload_sha256": hash_tag_v1(32),
-                    "model_parameter_sha256": hash_tag_v1(33),
-                    "train_state_sha256": hash_tag_v1(34),
-                }),
-                frozen(3, 40 + u8::try_from(rotation).expect("rotation fits u8"), 970_001 + rotation, 1024),
-                frozen(4, 50, 975_002, 2048),
-                serde_json::json!({
-                    "slot_index": 5,
-                    "source_base_seed": trainee_seed,
-                    "source_run_sha256": trainee_run,
-                    "source_generation": local_generation,
-                    "checkpoint_manifest_sha256": hash_tag_v1(61),
-                    "checkpoint_payload_sha256": hash_tag_v1(62),
-                    "model_parameter_sha256": hash_tag_v1(63),
-                    "train_state_sha256": hash_tag_v1(64),
-                }),
-                frozen(6, 70, 971_222, 1024),
-                frozen(7, 80, 971_221, 512),
+                frozen_identity_json_v1(0, &CYCLE4_ANCHOR_0_V1),
+                frozen_identity_json_v1(1, &CYCLE4_ANCHOR_1_V1),
+                historical_0,
+                frozen_identity_json_v1(3, &CYCLE4_HISTORICAL_1_ROTATION_V1[rotation]),
+                frozen_identity_json_v1(4, &CYCLE4_CURRENT_0_V1),
+                trainee_bound_identity_json_v1(5, trainee_run, trainee_seed, local_generation, 32),
+                frozen_identity_json_v1(6, &CYCLE4_EXPLOITER_0_V1),
+                frozen_identity_json_v1(7, &CYCLE4_EXPLOITER_1_V1),
             ],
         });
         serde_json::to_vec(&doc).expect("slot identities json")
@@ -393,9 +436,10 @@ mod tests {
 
     #[test]
     fn genesis_builds_with_uniform_weights_v1() {
-        let identities = slot_identities_json_v1(0);
-        let result = build_cycle4_genesis_refresh_v1(TEST_TRAINEE_RUN, TEST_TRAINEE_SEED, &identities)
-            .expect("genesis build");
+        let identities = slot_identities_json_v1(0, TEST_TRAINEE_RUN, TEST_TRAINEE_SEED);
+        let result =
+            build_cycle4_genesis_refresh_v1(TEST_TRAINEE_RUN, TEST_TRAINEE_SEED, &identities)
+                .expect("genesis build");
         assert_eq!(result.refresh_index, 0);
         assert_eq!(result.trainee_local_generation, 896);
         assert_eq!(
@@ -437,16 +481,20 @@ mod tests {
 
     #[test]
     fn next_refresh_moves_weight_toward_winners_within_constraints_v1() {
-        let genesis_identities = slot_identities_json_v1(0);
-        let genesis = build_cycle4_genesis_refresh_v1(TEST_TRAINEE_RUN, TEST_TRAINEE_SEED, &genesis_identities)
-            .expect("genesis build");
+        let genesis_identities = slot_identities_json_v1(0, TEST_TRAINEE_RUN, TEST_TRAINEE_SEED);
+        let genesis = build_cycle4_genesis_refresh_v1(
+            TEST_TRAINEE_RUN,
+            TEST_TRAINEE_SEED,
+            &genesis_identities,
+        )
+        .expect("genesis build");
         // Slot 0 (anchor-0) sweeps its role pair; slot 1 (anchor-1) loses it;
         // everyone else is even. `u_i` values are each policy's own signed
         // sum over 7 * 256-game matchups (bounded by +/- 1792), matching
         // `panel_score_fraction_cycle4_v1`'s accepted range.
         let rank_sums = [900_i64, -900, 0, 0, 0, 0, 0, 0];
         let panel = panel_json_v1(rank_sums);
-        let next_identities = slot_identities_json_v1(1);
+        let next_identities = slot_identities_json_v1(1, TEST_TRAINEE_RUN, TEST_TRAINEE_SEED);
         let next = build_cycle4_next_refresh_v1(
             &genesis.canonical_bytes,
             &panel,
@@ -485,20 +533,22 @@ mod tests {
         // describe: the chain-linkage check inside
         // `build_cycle4_refresh_manifest_v1` rejects it before the manifest
         // is ever written.
-        let genesis_identities = slot_identities_json_v1(0);
-        let genesis_a = build_cycle4_genesis_refresh_v1(TEST_TRAINEE_RUN, TEST_TRAINEE_SEED, &genesis_identities)
-            .expect("genesis a");
-        // A second, distinct genesis-shaped manifest (different trainee run)
-        // stands in for "the wrong previous manifest".
+        // A genesis-shaped manifest under a DIFFERENT trainee run stands in
+        // for "the wrong previous manifest": its own slot-identities document
+        // must bind that same run at slot 5 (current-1) or genesis_b itself
+        // would fail slot validation before the scenario under test ever
+        // runs.
         let other_run = hash_tag_v1(200);
+        let genesis_b_identities = slot_identities_json_v1(0, &other_run, TEST_TRAINEE_SEED);
         let genesis_b =
-            build_cycle4_genesis_refresh_v1(&other_run, TEST_TRAINEE_SEED, &genesis_identities)
+            build_cycle4_genesis_refresh_v1(&other_run, TEST_TRAINEE_SEED, &genesis_b_identities)
                 .expect("genesis b");
         let panel = panel_json_v1([0_i64; CYCLE4_SLOT_COUNT_V1]);
-        let next_identities = slot_identities_json_v1(1);
-        // Build refresh 1 for genesis_a, then try to reuse ITS panel bytes
-        // (fine, self-consistent) but chain it off genesis_b's bytes: the
-        // trainee-run binding drift must be rejected.
+        let next_identities = slot_identities_json_v1(1, TEST_TRAINEE_RUN, TEST_TRAINEE_SEED);
+        // Try to build refresh 1 for TEST_TRAINEE_RUN but chained off
+        // genesis_b's bytes (a different trainee run): the trainee-run
+        // binding drift must be rejected before the manifest is ever
+        // written.
         let error = build_cycle4_next_refresh_v1(
             &genesis_b.canonical_bytes,
             &panel,
@@ -516,11 +566,15 @@ mod tests {
 
     #[test]
     fn next_refresh_rejects_malformed_panel_document_v1() {
-        let genesis_identities = slot_identities_json_v1(0);
-        let genesis = build_cycle4_genesis_refresh_v1(TEST_TRAINEE_RUN, TEST_TRAINEE_SEED, &genesis_identities)
-            .expect("genesis build");
+        let genesis_identities = slot_identities_json_v1(0, TEST_TRAINEE_RUN, TEST_TRAINEE_SEED);
+        let genesis = build_cycle4_genesis_refresh_v1(
+            TEST_TRAINEE_RUN,
+            TEST_TRAINEE_SEED,
+            &genesis_identities,
+        )
+        .expect("genesis build");
         let bad_panel = b"{\"schema\":\"wrong\"}".to_vec();
-        let next_identities = slot_identities_json_v1(1);
+        let next_identities = slot_identities_json_v1(1, TEST_TRAINEE_RUN, TEST_TRAINEE_SEED);
         let error = build_cycle4_next_refresh_v1(
             &genesis.canonical_bytes,
             &bad_panel,
@@ -538,13 +592,17 @@ mod tests {
 
     #[test]
     fn next_refresh_rejects_out_of_range_rank_sum_v1() {
-        let genesis_identities = slot_identities_json_v1(0);
-        let genesis = build_cycle4_genesis_refresh_v1(TEST_TRAINEE_RUN, TEST_TRAINEE_SEED, &genesis_identities)
-            .expect("genesis build");
+        let genesis_identities = slot_identities_json_v1(0, TEST_TRAINEE_RUN, TEST_TRAINEE_SEED);
+        let genesis = build_cycle4_genesis_refresh_v1(
+            TEST_TRAINEE_RUN,
+            TEST_TRAINEE_SEED,
+            &genesis_identities,
+        )
+        .expect("genesis build");
         let mut rank_sums = [0_i64; CYCLE4_SLOT_COUNT_V1];
         rank_sums[0] = 2_000; // exceeds the 7*256=1792 game bound
         let panel = panel_json_v1(rank_sums);
-        let next_identities = slot_identities_json_v1(1);
+        let next_identities = slot_identities_json_v1(1, TEST_TRAINEE_RUN, TEST_TRAINEE_SEED);
         let error = build_cycle4_next_refresh_v1(
             &genesis.canonical_bytes,
             &panel,
@@ -565,9 +623,10 @@ mod tests {
         // Genesis takes no panel argument at all in this module's API --
         // this test documents/pins that shape rather than exercising a
         // runtime branch.
-        let identities = slot_identities_json_v1(0);
-        let result = build_cycle4_genesis_refresh_v1(TEST_TRAINEE_RUN, TEST_TRAINEE_SEED, &identities)
-            .expect("genesis build");
+        let identities = slot_identities_json_v1(0, TEST_TRAINEE_RUN, TEST_TRAINEE_SEED);
+        let result =
+            build_cycle4_genesis_refresh_v1(TEST_TRAINEE_RUN, TEST_TRAINEE_SEED, &identities)
+                .expect("genesis build");
         assert_eq!(result.refresh_index, 0);
     }
 }

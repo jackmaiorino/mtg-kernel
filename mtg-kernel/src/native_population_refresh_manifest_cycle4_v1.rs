@@ -397,7 +397,9 @@ pub(crate) fn decode_cycle4_refresh_manifest_v1(
 /// SECURITY: never call this on a manifest from an untrusted source. Every
 /// caller in this codebase uses it only to reload a file this same pipeline
 /// produced moments (or one refresh interval) earlier.
-pub(crate) fn reload_trusted_cycle4_refresh_manifest_v1(bytes: &[u8]) -> Result<Cycle4RefreshManifestV1> {
+pub(crate) fn reload_trusted_cycle4_refresh_manifest_v1(
+    bytes: &[u8],
+) -> Result<Cycle4RefreshManifestV1> {
     let wire: Cycle4RefreshManifestWireV1 =
         from_canonical_json_bytes_v1(bytes, CanonicalJsonNullPolicyV1::Forbid)?;
     let reencoded = to_canonical_json_bytes_v1(&wire, CanonicalJsonNullPolicyV1::Forbid)?;

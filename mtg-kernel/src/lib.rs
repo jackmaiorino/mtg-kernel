@@ -206,6 +206,14 @@ pub(crate) mod native_population_opponent_v1;
 // placeholder-hash rejection, and the ratified cycle-4 roster.
 #[allow(dead_code)]
 pub(crate) mod native_population_refresh_manifest_cycle4_v1;
+// Thin, pure builder wrapping the cycle-4 refresh manifest authority for the
+// one-shot `cycle4_refresh_build_v1` bin: panel-document and slot-identities
+// parsing, the MW update over the previous manifest's weights, and manifest
+// assembly. `pub` (not `pub(crate)`) because the bin, a separate crate in
+// this package, calls it directly; its own public surface never names the
+// manifest module's `pub(crate)` types.
+#[allow(dead_code)]
+pub mod native_population_refresh_builder_cycle4_v1;
 // Canonical hash-linked authority for each eight-slot population refresh.
 #[allow(dead_code)]
 pub(crate) mod native_population_refresh_manifest_v1;
