@@ -251,6 +251,10 @@ pub mod native_store_production_capture_v2;
 pub mod native_training_store_boundary_v2;
 // Pure checkpoint-v3 authority for genesis and evidence-bound trained state.
 pub mod native_training_store_checkpoint_v3;
+// Checkpoint-manifest v4 sibling schema: adds the cell-centered advantage
+// baseline to the checkpoint-v3 wire shape.
+#[allow(dead_code)]
+pub(crate) mod native_training_store_checkpoint_v4;
 // Pure complete-chain continuation-v2 authority. Largest-prefix partitioning
 // is never claimed from one file in isolation.
 pub mod native_training_store_segment_continuation_v2;
