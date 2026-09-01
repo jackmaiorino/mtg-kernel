@@ -114,6 +114,10 @@ pub(crate) enum UpdateBaselineV4ErrorKind {
     /// The declared `declared_policy_sum_f32_bits` disagrees with the v4
     /// policy sum recomputed in batch order.
     PolicySumMismatch,
+    /// The record's `update_index`/`update_evidence_sha256` disagree with
+    /// the caller's expected source update (a replayed or mislabeled
+    /// sidecar).
+    SourceUpdateMismatch,
 }
 
 impl UpdateBaselineV4ErrorKind {
@@ -136,6 +140,7 @@ impl UpdateBaselineV4ErrorKind {
             Self::BaselineApply(_) => "native_train_update_baseline_v4_baseline_apply_rejected",
             Self::CNextMismatch => "native_train_update_baseline_v4_c_next_mismatch",
             Self::PolicySumMismatch => "native_train_update_baseline_v4_policy_sum_mismatch",
+            Self::SourceUpdateMismatch => "native_train_update_baseline_v4_source_update_mismatch",
         }
     }
 }
@@ -452,7 +457,17 @@ pub(crate) fn validate_update_baseline_v4(
     episodes: &[UpdateBaselineEpisodeViewV4<'_>],
     record: &UpdateBaselineRecordV4,
     prior_state: &NativeBaselineStateV4,
+    expected_update_index: u64,
+    expected_update_evidence_sha256: [u8; 32],
 ) -> Result<NativeBaselineStateV4> {
+    // Source-update binding (review finding P1): a record replayed against a
+    // different update, even one with identical terms and prior state, must
+    // fail closed here rather than returning a successor.
+    if record.update_index() != expected_update_index
+        || record.update_evidence_sha256() != expected_update_evidence_sha256
+    {
+        return Err(error_v4(UpdateBaselineV4ErrorKind::SourceUpdateMismatch));
+    }
     // (b) Strict lag: every declared c_t must equal the prior committed
     // value for that cell (0.0 for a cell the prior state never observed).
     for cell in &record.cells {
@@ -744,7 +759,14 @@ mod tests {
         let record =
             build_record_from_truth_v4(&prior_state, &observations, policy_sum, &successor);
 
-        let result = validate_update_baseline_v4(&episodes, &record, &prior_state).expect("valid");
+        let result = validate_update_baseline_v4(
+            &episodes,
+            &record,
+            &prior_state,
+            record.update_index(),
+            record.update_evidence_sha256(),
+        )
+        .expect("valid");
         assert_eq!(result, successor);
         assert_eq!(result.cell_count_v4(), 2);
     }
@@ -768,8 +790,14 @@ mod tests {
         for cell in record.cells() {
             assert_eq!(cell.c_t_bits(), 0.0_f32.to_bits());
         }
-        let result =
-            validate_update_baseline_v4(&episodes, &record, &prior_state).expect("genesis valid");
+        let result = validate_update_baseline_v4(
+            &episodes,
+            &record,
+            &prior_state,
+            record.update_index(),
+            record.update_evidence_sha256(),
+        )
+        .expect("genesis valid");
         assert_eq!(result.cell_count_v4(), 2);
     }
 
@@ -786,8 +814,22 @@ mod tests {
         let record =
             build_record_from_truth_v4(&prior_state, &observations, policy_sum, &successor);
 
-        let first = validate_update_baseline_v4(&episodes, &record, &prior_state).expect("first");
-        let second = validate_update_baseline_v4(&episodes, &record, &prior_state).expect("second");
+        let first = validate_update_baseline_v4(
+            &episodes,
+            &record,
+            &prior_state,
+            record.update_index(),
+            record.update_evidence_sha256(),
+        )
+        .expect("first");
+        let second = validate_update_baseline_v4(
+            &episodes,
+            &record,
+            &prior_state,
+            record.update_index(),
+            record.update_evidence_sha256(),
+        )
+        .expect("second");
         assert_eq!(first.canonical_bytes_v4(), second.canonical_bytes_v4());
         let core = [0x11_u8; 32];
         assert_eq!(
@@ -864,8 +906,14 @@ mod tests {
         let tampered = tamper_cell_v4(&fixture.record, 0, |cell| {
             cell.residual_sum_f64 += 1.0;
         });
-        let error = validate_update_baseline_v4(&fixture.episodes, &tampered, &fixture.prior_state)
-            .expect_err("wrong residual");
+        let error = validate_update_baseline_v4(
+            &fixture.episodes,
+            &tampered,
+            &fixture.prior_state,
+            tampered.update_index(),
+            tampered.update_evidence_sha256(),
+        )
+        .expect_err("wrong residual");
         assert_eq!(error.kind(), UpdateBaselineV4ErrorKind::ResidualSumMismatch);
     }
 
@@ -875,8 +923,14 @@ mod tests {
         let tampered = tamper_cell_v4(&fixture.record, 0, |cell| {
             cell.decision_count += 1;
         });
-        let error = validate_update_baseline_v4(&fixture.episodes, &tampered, &fixture.prior_state)
-            .expect_err("wrong count");
+        let error = validate_update_baseline_v4(
+            &fixture.episodes,
+            &tampered,
+            &fixture.prior_state,
+            tampered.update_index(),
+            tampered.update_evidence_sha256(),
+        )
+        .expect_err("wrong count");
         assert_eq!(error.kind(), UpdateBaselineV4ErrorKind::CountMismatch);
     }
 
@@ -890,8 +944,14 @@ mod tests {
             // count-mismatch check runs.
             cell.decision_count += 1;
         });
-        let error = validate_update_baseline_v4(&fixture.episodes, &tampered, &fixture.prior_state)
-            .expect_err("wrong episode count");
+        let error = validate_update_baseline_v4(
+            &fixture.episodes,
+            &tampered,
+            &fixture.prior_state,
+            tampered.update_index(),
+            tampered.update_evidence_sha256(),
+        )
+        .expect_err("wrong episode count");
         assert_eq!(error.kind(), UpdateBaselineV4ErrorKind::CountMismatch);
     }
 
@@ -901,8 +961,14 @@ mod tests {
         let tampered = tamper_cell_v4(&fixture.record, 0, |cell| {
             cell.c_t_bits = 0.5_f32.to_bits();
         });
-        let error = validate_update_baseline_v4(&fixture.episodes, &tampered, &fixture.prior_state)
-            .expect_err("lag violation");
+        let error = validate_update_baseline_v4(
+            &fixture.episodes,
+            &tampered,
+            &fixture.prior_state,
+            tampered.update_index(),
+            tampered.update_evidence_sha256(),
+        )
+        .expect_err("lag violation");
         assert_eq!(error.kind(), UpdateBaselineV4ErrorKind::StrictLagMismatch);
     }
 
@@ -912,8 +978,14 @@ mod tests {
         let tampered = tamper_cell_v4(&fixture.record, 0, |cell| {
             cell.c_next_bits = 0.99_f32.to_bits();
         });
-        let error = validate_update_baseline_v4(&fixture.episodes, &tampered, &fixture.prior_state)
-            .expect_err("wrong c_next");
+        let error = validate_update_baseline_v4(
+            &fixture.episodes,
+            &tampered,
+            &fixture.prior_state,
+            tampered.update_index(),
+            tampered.update_evidence_sha256(),
+        )
+        .expect_err("wrong c_next");
         assert_eq!(error.kind(), UpdateBaselineV4ErrorKind::CNextMismatch);
     }
 
@@ -943,8 +1015,14 @@ mod tests {
             declared_policy_sum_bits: 1.2345_f32.to_bits(),
         })
         .expect("build tampered record");
-        let error = validate_update_baseline_v4(&fixture.episodes, &tampered, &fixture.prior_state)
-            .expect_err("wrong policy sum");
+        let error = validate_update_baseline_v4(
+            &fixture.episodes,
+            &tampered,
+            &fixture.prior_state,
+            tampered.update_index(),
+            tampered.update_evidence_sha256(),
+        )
+        .expect_err("wrong policy sum");
         assert_eq!(error.kind(), UpdateBaselineV4ErrorKind::PolicySumMismatch);
     }
 
@@ -990,8 +1068,14 @@ mod tests {
             declared_policy_sum_bits: fixture.record.declared_policy_sum_bits(),
         })
         .expect("build swapped record");
-        let error = validate_update_baseline_v4(&fixture.episodes, &tampered, &fixture.prior_state)
-            .expect_err("misattributed cell");
+        let error = validate_update_baseline_v4(
+            &fixture.episodes,
+            &tampered,
+            &fixture.prior_state,
+            tampered.update_index(),
+            tampered.update_evidence_sha256(),
+        )
+        .expect_err("misattributed cell");
         // Either the residual sum or the counts disagree once swapped
         // (the two cells here have different decision/episode counts).
         assert!(matches!(
@@ -1032,8 +1116,14 @@ mod tests {
             &digest1,
         );
 
-        let error = validate_update_baseline_v4(&tampered_episodes, &record, &prior_state)
-            .expect_err("term/episode return mismatch");
+        let error = validate_update_baseline_v4(
+            &tampered_episodes,
+            &record,
+            &prior_state,
+            record.update_index(),
+            record.update_evidence_sha256(),
+        )
+        .expect_err("term/episode return mismatch");
         assert_eq!(error.kind(), UpdateBaselineV4ErrorKind::TermReturnMismatch);
     }
 
@@ -1073,8 +1163,14 @@ mod tests {
             declared_policy_sum_bits: fixture.record.declared_policy_sum_bits(),
         })
         .expect("build record with extra cell");
-        let error = validate_update_baseline_v4(&fixture.episodes, &tampered, &fixture.prior_state)
-            .expect_err("extra cell");
+        let error = validate_update_baseline_v4(
+            &fixture.episodes,
+            &tampered,
+            &fixture.prior_state,
+            tampered.update_index(),
+            tampered.update_evidence_sha256(),
+        )
+        .expect_err("extra cell");
         assert_eq!(error.kind(), UpdateBaselineV4ErrorKind::CellSetMismatch);
     }
 
@@ -1135,5 +1231,36 @@ mod tests {
         .expect("encode");
         let error = decode_update_baseline_record_v4(&bytes).expect_err("schema");
         assert_eq!(error.kind(), UpdateBaselineV4ErrorKind::InvalidSchema);
+    }
+
+    /// Review finding P1: a record replayed against a different source
+    /// update fails closed on the index and digest bindings.
+    #[test]
+    fn source_update_binding_fails_closed_v4() {
+        let fixture = tamper_fixture_v4();
+        let wrong_index = validate_update_baseline_v4(
+            &fixture.episodes,
+            &fixture.record,
+            &fixture.prior_state,
+            fixture.record.update_index() + 1,
+            fixture.record.update_evidence_sha256(),
+        )
+        .expect_err("wrong index");
+        assert_eq!(
+            wrong_index.kind(),
+            UpdateBaselineV4ErrorKind::SourceUpdateMismatch
+        );
+        let wrong_digest = validate_update_baseline_v4(
+            &fixture.episodes,
+            &fixture.record,
+            &fixture.prior_state,
+            fixture.record.update_index(),
+            [0xEE_u8; 32],
+        )
+        .expect_err("wrong digest");
+        assert_eq!(
+            wrong_digest.kind(),
+            UpdateBaselineV4ErrorKind::SourceUpdateMismatch
+        );
     }
 }

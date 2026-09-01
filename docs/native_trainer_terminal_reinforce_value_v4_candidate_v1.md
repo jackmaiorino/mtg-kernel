@@ -53,7 +53,10 @@ Per update `t`, in order, matching the audit consult's required transaction:
 
    with `BETA = 0.05` (ratified), f32 arithmetic, terms accumulated in batch
    order into an f64 sum then rounded once to f32 at the division; cells not
-   observed in update `t` carry `c_{t+1} = c_t` unchanged.
+   observed in update `t` carry `c_{t+1} = c_t` unchanged. The per-term
+   residual is normatively the F32 subtraction widened to f64
+   (`f64::from(target_f32 - value_f32)`), never an f64 subtraction of widened
+   operands; producer and validator match this bit for bit.
 
    `value_pretrain` is pinned to the CPU-CANONICAL transported value bits
    (the pre-update rollout value recorded per physical term in evidence),

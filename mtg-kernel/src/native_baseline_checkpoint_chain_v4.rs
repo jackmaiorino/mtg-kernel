@@ -124,6 +124,15 @@ pub(crate) enum BaselineChainErrorKindV4 {
     StoreCheckpointMissingForGeneration,
     StalePreviousRecord,
     NonMonotonicGeneration,
+    /// The published generation is greater than the tip but is not the tip
+    /// plus the manifest's own `checkpoint_segment_updates`: a skipped Store
+    /// boundary, which resume would later reject as `GapOrTamper` with no
+    /// append-only repair possible (review finding P1).
+    GenerationNotNextBoundary,
+    /// A final manifest file already exists at this generation with
+    /// DIFFERENT bytes than the one being published; identical bytes are
+    /// silently reused (the crash-replay path, review finding P1).
+    PublishedManifestConflict,
     UnsortedStoreCheckpoints,
     EmptyStoreCheckpoints,
     ChainAheadOfStore,
@@ -152,6 +161,12 @@ impl BaselineChainErrorKindV4 {
             }
             Self::StalePreviousRecord => "native_baseline_chain_v4_stale_previous_record",
             Self::NonMonotonicGeneration => "native_baseline_chain_v4_non_monotonic_generation",
+            Self::GenerationNotNextBoundary => {
+                "native_baseline_chain_v4_generation_not_next_boundary"
+            }
+            Self::PublishedManifestConflict => {
+                "native_baseline_chain_v4_published_manifest_conflict"
+            }
             Self::UnsortedStoreCheckpoints => "native_baseline_chain_v4_unsorted_store_checkpoints",
             Self::EmptyStoreCheckpoints => "native_baseline_chain_v4_empty_store_checkpoints",
             Self::ChainAheadOfStore => "native_baseline_chain_v4_chain_ahead_of_store",
@@ -419,8 +434,32 @@ pub(crate) fn publish_baseline_record_v4(
                     BaselineChainErrorKindV4::NonMonotonicGeneration,
                 ));
             }
+            // Succession discipline (review finding P1): the next record
+            // must land at exactly the next Store checkpoint boundary, tip
+            // plus the manifest's own cadence; skipping a boundary would
+            // publish a chain resume can only classify as GapOrTamper, with
+            // no append-only repair. Genesis remains launcher-declared; its
+            // pairing against the Store list is enforced at resume before
+            // any training continues.
+            let interval = manifest.checkpoint_segment_updates();
+            if interval == 0
+                || generation_index
+                    != tip_generation.checked_add(interval).ok_or_else(|| {
+                        BaselineChainErrorV4::new(BaselineChainErrorKindV4::InvalidGeneration)
+                    })?
+            {
+                return Err(BaselineChainErrorV4::new(
+                    BaselineChainErrorKindV4::GenerationNotNextBoundary,
+                ));
+            }
             let tip_bytes = read_record_bytes_v4(dir, tip_generation)?;
             let tip_sha256 = sha256_v1(&tip_bytes);
+            // The tip assertion is advisory rather than an atomic CAS, and
+            // that is sufficient: the succession rule above forces any two
+            // concurrent publishers to target the SAME next generation, so
+            // the loser stops on the no-replace record move (or on
+            // PublishedManifestConflict for divergent content) instead of
+            // forking the chain (review finding P2).
             if record_parts.expected_previous_record_sha256 != Some(tip_sha256) {
                 return Err(BaselineChainErrorV4::new(
                     BaselineChainErrorKindV4::StalePreviousRecord,
@@ -442,18 +481,36 @@ pub(crate) fn publish_baseline_record_v4(
     fs::create_dir_all(dir).map_err(io_err_v4)?;
     let parent = capture_existing_publication_parent_v1(dir).map_err(publication_err_v4)?;
 
+    // Crash-window repair (review finding P1): a crash between the manifest
+    // move and the record move leaves an orphan manifest that every read
+    // path ignores; replaying the boundary must reuse it when byte-identical
+    // (and only then) instead of dying on a final-name collision. Stale
+    // stage files from an interrupted stage-write are never authoritative
+    // and are removed before staging.
     let manifest_bytes = manifest.canonical_bytes();
-    let manifest_expectation =
-        DurableFileExpectationV1::from_bytes(manifest_bytes).map_err(publication_err_v4)?;
-    publish_immutable_file_by_move_v2(
-        &parent,
-        stage_name_v4(&manifest_final_name),
-        &manifest_final_name,
-        manifest_bytes,
-        manifest_expectation,
-    )
-    .map_err(publication_err_v4)?;
+    remove_stale_stage_v4(dir, &stage_name_v4(&manifest_final_name))?;
+    let manifest_final_path = dir.join(&manifest_final_name);
+    if manifest_final_path.exists() {
+        let existing_bytes = fs::read(&manifest_final_path).map_err(io_err_v4)?;
+        if existing_bytes != manifest_bytes {
+            return Err(BaselineChainErrorV4::new(
+                BaselineChainErrorKindV4::PublishedManifestConflict,
+            ));
+        }
+    } else {
+        let manifest_expectation =
+            DurableFileExpectationV1::from_bytes(manifest_bytes).map_err(publication_err_v4)?;
+        publish_immutable_file_by_move_v2(
+            &parent,
+            stage_name_v4(&manifest_final_name),
+            &manifest_final_name,
+            manifest_bytes,
+            manifest_expectation,
+        )
+        .map_err(publication_err_v4)?;
+    }
 
+    remove_stale_stage_v4(dir, &stage_name_v4(&record_final_name))?;
     let record_expectation =
         DurableFileExpectationV1::from_bytes(&record_bytes).map_err(publication_err_v4)?;
     publish_immutable_file_by_move_v2(
@@ -466,6 +523,17 @@ pub(crate) fn publish_baseline_record_v4(
     .map_err(publication_err_v4)?;
 
     Ok(sha256_v1(&record_bytes))
+}
+
+/// Removes a leftover stage file from an interrupted publication. Stage
+/// files are never authoritative (only the atomic move to the final name
+/// publishes), so deleting one can never discard committed state.
+fn remove_stale_stage_v4(dir: &Path, stage_name: &str) -> Result<()> {
+    match fs::remove_file(dir.join(stage_name)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(io_err_v4(error)),
+    }
 }
 
 /// The outcome of walking the chain against the Store's own checkpoint
@@ -1226,6 +1294,117 @@ mod tests {
         assert_eq!(
             BASELINE_CHAIN_RECORD_SCHEMA_V4,
             "mtg-kernel-baseline-chain-record/v1"
+        );
+    }
+
+    /// Review finding P1: a publish that skips the next Store boundary
+    /// (tip + checkpoint_segment_updates) fails closed at publish time.
+    #[test]
+    fn skipped_boundary_publish_fails_closed_v4() {
+        let dir = TestChainDirV4::new("skip-boundary");
+        let run_sha256 = run_sha256_v4();
+        let baseline_0 = NativeBaselineStateV4::empty_v4();
+        let core_0 = fake_digest_v4(0xa0);
+        let sha_0 = publish_baseline_record_v4(
+            dir.path(),
+            BaselineChainRecordPartsV4::default(),
+            sample_manifest_parts_v4(run_sha256.clone(), 0, core_0, baseline_0.clone()),
+        )
+        .expect("publish genesis");
+        // Cadence is 4 (sample manifest parts); publishing generation 8
+        // directly after 0 must be rejected before any file is written.
+        let baseline_8 = baseline_at_boundary_v4(&baseline_0, 1, 8.0);
+        let error = publish_baseline_record_v4(
+            dir.path(),
+            BaselineChainRecordPartsV4 {
+                expected_previous_record_sha256: Some(sha_0),
+            },
+            sample_manifest_parts_v4(run_sha256, 8, fake_digest_v4(0xa8), baseline_8),
+        )
+        .expect_err("skipped boundary");
+        assert_eq!(
+            error.kind(),
+            BaselineChainErrorKindV4::GenerationNotNextBoundary
+        );
+        assert!(!dir.path().join("baseline-00000008.record.json").exists());
+        assert!(!dir.path().join("baseline-00000008.manifest.json").exists());
+    }
+
+    /// Review finding P1: replaying a boundary after a crash between the
+    /// manifest move and the record move reuses the byte-identical orphan
+    /// manifest and completes the publication; a conflicting orphan fails
+    /// closed; a stale stage file is cleaned up rather than colliding.
+    #[test]
+    fn crash_windows_are_replayable_v4() {
+        let dir = TestChainDirV4::new("crash-replay");
+        let run_sha256 = run_sha256_v4();
+        let baseline_0 = NativeBaselineStateV4::empty_v4();
+        let core_0 = fake_digest_v4(0xa0);
+        let sha_0 = publish_baseline_record_v4(
+            dir.path(),
+            BaselineChainRecordPartsV4::default(),
+            sample_manifest_parts_v4(run_sha256.clone(), 0, core_0, baseline_0.clone()),
+        )
+        .expect("publish genesis");
+
+        // Simulate the crash window: the generation-4 manifest reached its
+        // final name but the record did not. Also leave a stale stage file.
+        let baseline_4 = baseline_at_boundary_v4(&baseline_0, 1, 20.0);
+        let core_4 = fake_digest_v4(0xa4);
+        let manifest_parts =
+            sample_manifest_parts_v4(run_sha256.clone(), 4, core_4, baseline_4.clone());
+        let manifest = build_checkpoint_manifest_v4(sample_manifest_parts_v4(
+            run_sha256.clone(),
+            4,
+            core_4,
+            baseline_4.clone(),
+        ))
+        .expect("manifest");
+        std::fs::write(
+            dir.path().join("baseline-00000004.manifest.json"),
+            manifest.canonical_bytes(),
+        )
+        .expect("write orphan manifest");
+        std::fs::write(
+            dir.path()
+                .join(stage_name_v4("baseline-00000004.record.json")),
+            b"stale stage bytes",
+        )
+        .expect("write stale stage");
+
+        let sha_4 = publish_baseline_record_v4(
+            dir.path(),
+            BaselineChainRecordPartsV4 {
+                expected_previous_record_sha256: Some(sha_0),
+            },
+            manifest_parts,
+        )
+        .expect("replayed publish succeeds");
+
+        let store_checkpoints = [(0, core_0), (4, core_4)];
+        let resumed = resume_baseline_chain_v4(dir.path(), &run_sha256, &store_checkpoints)
+            .expect("resume after replay");
+        assert_eq!(resumed.generation_index(), Some(4));
+
+        // A conflicting orphan manifest at the NEXT boundary fails closed.
+        let baseline_8 = baseline_at_boundary_v4(&baseline_4, 2, -4.0);
+        let core_8 = fake_digest_v4(0xa8);
+        std::fs::write(
+            dir.path().join("baseline-00000008.manifest.json"),
+            b"not the manifest",
+        )
+        .expect("write conflicting orphan");
+        let error = publish_baseline_record_v4(
+            dir.path(),
+            BaselineChainRecordPartsV4 {
+                expected_previous_record_sha256: Some(sha_4),
+            },
+            sample_manifest_parts_v4(run_sha256, 8, core_8, baseline_8),
+        )
+        .expect_err("conflicting orphan");
+        assert_eq!(
+            error.kind(),
+            BaselineChainErrorKindV4::PublishedManifestConflict
         );
     }
 }

@@ -19,7 +19,27 @@ class BtRatingTests(unittest.TestCase):
         result = fit_bt_ratings(doc([pair("ref", "x", 50, 50)]))
         self.assertAlmostEqual(result["ratings_log_units"]["ref"], 0.0)
         self.assertAlmostEqual(result["ratings_log_units"]["x"], 0.0, places=9)
-        self.assertAlmostEqual(result["expected_scores"]["ref|x"], 0.5, places=9)
+        entry = result["expected_scores"][0]
+        self.assertEqual((entry["a_id"], entry["b_id"]), ("ref", "x"))
+        self.assertAlmostEqual(entry["expected_a_score"], 0.5, places=9)
+
+    def test_near_separated_full_panel_converges(self):
+        # Review finding: the real 8-policy 28-matchup G=256 shape with every
+        # result 256-0 except one 255-1 pair has a finite MLE and must
+        # converge under the log-space criterion.
+        ids = [f"m{i}" for i in range(7)] + ["ref"]
+        pairs = []
+        for i in range(8):
+            for j in range(i + 1, 8):
+                if (i, j) == (0, 7):
+                    pairs.append(pair(ids[i], ids[j], 255, 1))
+                else:
+                    pairs.append(pair(ids[i], ids[j], 256, 0))
+        result = fit_bt_ratings(doc(pairs))
+        ratings = result["ratings_log_units"]
+        self.assertGreater(ratings["m0"], ratings["m1"])
+        self.assertGreater(ratings["m6"], ratings["ref"])
+        self.assertEqual(len(result["expected_scores"]), 28)
 
     def test_known_two_model_rate_recovers_log_odds(self):
         # 75/25 implies strength ratio 3, rating log(3).

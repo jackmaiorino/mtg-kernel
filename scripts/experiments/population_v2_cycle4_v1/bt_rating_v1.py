@@ -33,8 +33,13 @@ import sys
 from dataclasses import dataclass
 
 SCHEMA_V1 = "mtg-kernel-bt-rating-input/v1"
-MAX_ITERATIONS = 10_000
-CONVERGENCE_EPSILON = 1e-12
+# Convergence is judged in LOG space (max |log(updated) - log(old)|), so
+# near-separated panels with a finite but extreme MLE converge instead of
+# chasing an absolute-strength epsilon they can never satisfy (review
+# finding). The iteration cap is generous because each MM sweep over an
+# 8-model, 28-pair panel is microseconds.
+MAX_ITERATIONS = 200_000
+LOG_CONVERGENCE_EPSILON = 1e-10
 
 
 class BtRatingError(ValueError):
@@ -142,10 +147,11 @@ def fit_bt_ratings(document: dict) -> dict:
         normalizer = updated[reference_id]
         updated = {model_id: value / normalizer for model_id, value in updated.items()}
         delta = max(
-            abs(updated[model_id] - strengths[model_id]) for model_id in ids
+            abs(math.log(updated[model_id]) - math.log(strengths[model_id]))
+            for model_id in ids
         )
         strengths = updated
-        if delta < CONVERGENCE_EPSILON:
+        if delta < LOG_CONVERGENCE_EPSILON:
             break
     else:
         raise BtRatingError("MM iteration did not converge")
@@ -153,17 +159,24 @@ def fit_bt_ratings(document: dict) -> dict:
     ratings = {
         model_id: math.log(strengths[model_id]) for model_id in ids
     }
-    expected = {
-        f"{pair.a_id}|{pair.b_id}": strengths[pair.a_id]
-        / (strengths[pair.a_id] + strengths[pair.b_id])
-        for pair in pairs
-    }
+    # Structured pair entries rather than delimiter-joined keys: model ids
+    # are opaque strings, so any joined encoding risks collisions (review
+    # finding).
+    expected = [
+        {
+            "a_id": pair.a_id,
+            "b_id": pair.b_id,
+            "expected_a_score": strengths[pair.a_id]
+            / (strengths[pair.a_id] + strengths[pair.b_id]),
+        }
+        for pair in sorted(pairs, key=lambda entry: (entry.a_id, entry.b_id))
+    ]
     return {
         "schema": "mtg-kernel-bt-rating-result/v1",
         "reference_id": reference_id,
         "iterations": iterations,
         "ratings_log_units": {key: ratings[key] for key in sorted(ratings)},
-        "expected_scores": {key: expected[key] for key in sorted(expected)},
+        "expected_scores": expected,
         "non_claims": [
             "derived non-gating metric; not a promotion or transfer result",
             "ratings are relative to the declared reference identity only",

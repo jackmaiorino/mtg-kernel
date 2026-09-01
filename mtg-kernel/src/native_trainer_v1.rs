@@ -3856,9 +3856,12 @@ fn build_baseline_observations_v4(
         term_offset += group_count;
         let entry = sums.entry(key).or_insert((0.0_f64, 0_u64, 0_u64));
         for term in terms {
-            let target = f64::from(f32::from(term.terminal_return));
-            let value = f64::from(f32::from_bits(term.value_bits));
-            entry.0 += target - value;
+            // Contract-pinned f32 residual form (review finding P1): the
+            // per-term residual is computed as an f32 subtraction, then
+            // widened for the f64 accumulation, matching the v4 evidence
+            // validator's arithmetic bit for bit.
+            let residual = f32::from(term.terminal_return) - f32::from_bits(term.value_bits);
+            entry.0 += f64::from(residual);
             entry.1 = entry
                 .1
                 .checked_add(1)
@@ -6715,6 +6718,30 @@ mod tests {
         assert_eq!(cell_b.residual_sum_f64.to_bits(), (-1.125_f64).to_bits());
         assert_eq!(cell_b.decision_count, 1);
         assert_eq!(cell_b.episode_count, 1);
+    }
+
+    /// Review finding P1 regression: the per-term residual is the F32
+    /// subtraction widened to f64, never an f64 subtraction of widened
+    /// operands. The vector value 0.2f32 discriminates the two forms.
+    #[test]
+    fn build_baseline_observations_v4_uses_f32_residual_form() {
+        let f32_form = f64::from(1.0_f32 - 0.2_f32);
+        let f64_form = f64::from(1.0_f32) - f64::from(0.2_f32);
+        assert_ne!(f32_form.to_bits(), f64_form.to_bits());
+
+        let episodes = vec![synthetic_episode_evidence_for_baseline_test_v4(
+            0,
+            PlayerSeatV1::P0,
+            1,
+            [0xAA_u8; 32],
+        )];
+        let physical_terms = vec![synthetic_physical_term_for_baseline_test_v4(1, 0.2)];
+        let observations =
+            build_baseline_observations_v4(&episodes, &physical_terms).expect("observations");
+        assert_eq!(
+            observations[0].residual_sum_f64.to_bits(),
+            f32_form.to_bits()
+        );
     }
 
     #[test]
