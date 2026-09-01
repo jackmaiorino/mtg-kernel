@@ -702,6 +702,11 @@ pub(crate) struct NativePolicySubstepV1<'a> {
 pub(crate) struct NativePolicyPhysicalDecisionV1<'a> {
     pub(crate) substeps: &'a [NativePolicySubstepV1<'a>],
     pub(crate) terminal_return: i8,
+    /// v4-candidate cell baseline `c_t`, as an f32 bit pattern (0 means no
+    /// baseline: v3 behavior). `docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    /// section 1. CPU backends fail closed whenever any group's value is
+    /// nonzero; only the CudaBurnDense bridge subtracts it.
+    pub(crate) baseline_bits: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -779,6 +784,14 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     InvalidTerminalReturn {
         group_index: usize,
         value: i8,
+    },
+    /// v4-candidate cell baseline present on a CPU backend
+    /// (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    /// section 5: only the CudaBurnDense backend admits v4). Any group with a
+    /// nonzero `baseline_bits` fails the whole batch closed before any
+    /// forward or backward work runs, so v3 CPU arithmetic stays untouched.
+    BaselineUnsupportedBackend {
+        group_index: usize,
     },
     SelectedActionOutOfRange {
         group_index: usize,
@@ -1253,6 +1266,13 @@ impl NativePolicyValueTrainStateV1 {
         }
         if groups.is_empty() {
             return Err(NativePolicyTrainErrorV1::EmptyBatch);
+        }
+        // v4 fail-closed gate (contract section 5): CPU backends (Sequential,
+        // FixedFourPartitions) admit only v3 batches. Checked before any
+        // forward/backward work so a nonzero baseline never reaches the CPU
+        // advantage arithmetic below, which stays byte-identical to v3.
+        if let Some(group_index) = groups.iter().position(|group| group.baseline_bits != 0) {
+            return Err(NativePolicyTrainErrorV1::BaselineUnsupportedBackend { group_index });
         }
         if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
@@ -4872,6 +4892,7 @@ mod tests {
             .map(|(group, substeps)| NativePolicyPhysicalDecisionV1 {
                 substeps,
                 terminal_return: group.terminal_return,
+                baseline_bits: 0,
             })
             .collect()
     }
@@ -5840,6 +5861,7 @@ mod tests {
         let groups = [NativePolicyPhysicalDecisionV1 {
             substeps: &substeps,
             terminal_return: 1,
+            baseline_bits: 0,
         }];
 
         let scalar_count_before = packed_actual_recompute_call_count_for_test_v1();
@@ -5946,6 +5968,7 @@ mod tests {
         let valid_shape_groups = [NativePolicyPhysicalDecisionV1 {
             substeps: &substeps,
             terminal_return: 1,
+            baseline_bits: 0,
         }];
 
         let mut first_error_state = baseline.clone();
@@ -6060,6 +6083,7 @@ mod tests {
         let fallback_order_groups = [NativePolicyPhysicalDecisionV1 {
             substeps: &fallback_order_substeps,
             terminal_return: 1,
+            baseline_bits: 0,
         }];
         let fallback_order_control = PackedRecomputeTestControlV1::new_v1(Some(1), Vec::new());
         let mut fallback_order_state = baseline.clone();
@@ -6106,6 +6130,7 @@ mod tests {
         let invalid_shape_groups = [NativePolicyPhysicalDecisionV1 {
             substeps: &substeps,
             terminal_return: 2,
+            baseline_bits: 0,
         }];
         let mut invalid_shape_state = baseline;
         let fallback_count_before = packed_actual_recompute_call_count_for_test_v1();
@@ -6132,6 +6157,7 @@ mod tests {
         let empty_groups = [NativePolicyPhysicalDecisionV1 {
             substeps: &empty_substeps,
             terminal_return: 0,
+            baseline_bits: 0,
         }];
         assert_eq!(
             invalid_shape_state.train_step_with_recompute_workers_v1(
@@ -6196,6 +6222,7 @@ mod tests {
         let groups = [NativePolicyPhysicalDecisionV1 {
             substeps: &substeps,
             terminal_return: 1,
+            baseline_bits: 0,
         }];
         let scalar_result = scalar_state
             .train_step_v1(
@@ -6851,6 +6878,7 @@ mod tests {
                 substeps,
                 terminal_return: base_step.groups[group_index % rung.provenance.base_group_count]
                     .terminal_return,
+                baseline_bits: 0,
             })
             .collect::<Vec<_>>();
         let result = state
@@ -7788,6 +7816,7 @@ mod tests {
         let empty = NativePolicyPhysicalDecisionV1 {
             substeps: &[],
             terminal_return: 0,
+            baseline_bits: 0,
         };
         assert_eq!(
             state.train_step_v1(
@@ -7815,6 +7844,7 @@ mod tests {
         let bad_group = [NativePolicyPhysicalDecisionV1 {
             substeps: &bad_selected,
             terminal_return: 1,
+            baseline_bits: 0,
         }];
         assert!(matches!(
             state.train_step_v1(
@@ -7851,6 +7881,7 @@ mod tests {
         let malformed_groups = [NativePolicyPhysicalDecisionV1 {
             substeps: &malformed_substeps,
             terminal_return: 0,
+            baseline_bits: 0,
         }];
         assert!(matches!(
             state.train_step_v1(
@@ -7871,6 +7902,7 @@ mod tests {
         let invalid_return = [NativePolicyPhysicalDecisionV1 {
             substeps: &valid_substeps,
             terminal_return: 2,
+            baseline_bits: 0,
         }];
         assert_eq!(
             state.train_step_v1(
@@ -7888,6 +7920,7 @@ mod tests {
         let valid_groups = [NativePolicyPhysicalDecisionV1 {
             substeps: &valid_substeps,
             terminal_return: 1,
+            baseline_bits: 0,
         }];
         assert_eq!(
             state.train_step_v1(&valid_groups, 0.0, golden.optimizer.learning_rate),
@@ -7932,5 +7965,96 @@ mod tests {
             &invalid_second,
             0,
         );
+    }
+
+    /// v4 contract (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    /// section 5): CPU backends (Sequential, FixedFourPartitions) admit only
+    /// v3 batches. Any group with a nonzero `baseline_bits` is rejected at
+    /// entry, before any forward/backward work, on both CPU entry points;
+    /// the state is left byte-unchanged and the offending group index is
+    /// reported even when it is not the first group.
+    #[test]
+    fn nonzero_baseline_bits_fail_closed_on_cpu_backends_v4() {
+        let (forward, golden) = fixtures();
+        let model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        let mut state = NativePolicyValueTrainStateV1::new_v1(model).unwrap();
+        let parameters = state.model_v1().parameter_snapshot_v1();
+        let first = state.first_moment_snapshot_v1();
+        let second = state.second_moment_snapshot_v1();
+
+        let case = case_by_name(&forward, "ordered_edges_and_action_refs");
+        let case_output = state.model_v1().forward_v1(encoded(case)).unwrap();
+        let case_logit_bits = case_output
+            .logits
+            .iter()
+            .map(|logit| logit.to_bits())
+            .collect::<Vec<_>>();
+        let substeps = [NativePolicySubstepV1 {
+            forward: NativePolicyForwardInputV1::Encoded(Box::new(encoded(case))),
+            selected_action_index: 1,
+            expected_raw_action_logit_bits: &case_logit_bits,
+            expected_value_bits: case_output.value.to_bits(),
+        }];
+        let baselined_group = NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 1,
+            baseline_bits: 0x3f00_0000, // f32::from_bits(0x3f00_0000) == 0.5
+        };
+        let groups = [baselined_group];
+
+        assert_eq!(
+            state.train_step_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            ),
+            Err(NativePolicyTrainErrorV1::BaselineUnsupportedBackend { group_index: 0 })
+        );
+        assert_state_unchanged(&state, &parameters, &first, &second, 0);
+
+        // The FixedFourPartitions CPU backend shares the same entry-point
+        // gate.
+        assert_eq!(
+            state.train_step_with_fixed_partition_parallel_backward_v1(
+                &groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+                1,
+                1,
+            ),
+            Err(NativePolicyTrainErrorV1::BaselineUnsupportedBackend { group_index: 0 })
+        );
+        assert_state_unchanged(&state, &parameters, &first, &second, 0);
+
+        // Only the second group carries a baseline; the rejection still
+        // fires and names the actual offending index, not just index 0.
+        let zero_group = NativePolicyPhysicalDecisionV1 {
+            substeps: &substeps,
+            terminal_return: 1,
+            baseline_bits: 0,
+        };
+        let mixed_groups = [zero_group, baselined_group];
+        assert_eq!(
+            state.train_step_v1(
+                &mixed_groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            ),
+            Err(NativePolicyTrainErrorV1::BaselineUnsupportedBackend { group_index: 1 })
+        );
+        assert_state_unchanged(&state, &parameters, &first, &second, 0);
+
+        // All-zero baselines are v3 and must still succeed on the CPU
+        // backend (the fail-closed gate is precise, not blanket-hostile).
+        let all_zero_groups = [zero_group, zero_group];
+        assert!(state
+            .train_step_v1(
+                &all_zero_groups,
+                golden.value_coefficient,
+                golden.optimizer.learning_rate,
+            )
+            .is_ok());
     }
 }

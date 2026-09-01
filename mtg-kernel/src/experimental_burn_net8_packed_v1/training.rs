@@ -1621,6 +1621,12 @@ pub(crate) struct DenseGroupLossPlanV1 {
     group_scatter: Tensor<CudaAutodiffBackendV1, 1, Int>,
     group_first_gather: Tensor<CudaAutodiffBackendV1, 1, Int>,
     targets: Tensor<CudaAutodiffBackendV1, 1>,
+    /// v4-candidate per-group cell baseline `c_t`
+    /// (`docs/native_trainer_terminal_reinforce_value_v4_candidate_v1.md`
+    /// section 5), built exactly as `targets` is: one f32 per group, in the
+    /// same group order. All-zero reproduces v3 exactly (subtracting exact
+    /// zeros changes no bit).
+    baseline: Tensor<CudaAutodiffBackendV1, 1>,
     substeps: usize,
     group_count: usize,
     max_actions: usize,
@@ -1633,6 +1639,10 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     substep_group_indices: &[usize],
     group_first_substeps: &[usize],
     terminal_returns: &[i8],
+    // v4-candidate per-group baseline `c_t` f32s, same order and cardinality
+    // as `terminal_returns`. All zero for a v3 (or v4-with-no-observed-cell)
+    // batch.
+    baselines: &[f32],
     device: &burn_cuda::CudaDevice,
     #[cfg(test)] anchor_target_probability_rows: Option<&[&[f32]]>,
     #[cfg(test)] policy_anchor_coefficient: Option<f32>,
@@ -1643,6 +1653,7 @@ pub(crate) fn build_dense_group_loss_plan_v1(
         || group_count == 0
         || substep_group_indices.len() != substeps
         || group_first_substeps.len() != group_count
+        || baselines.len() != group_count
         || host.action_offsets.len() != substeps + 1
     {
         return Err(training_error("dense group plan cardinality mismatch"));
@@ -1762,11 +1773,13 @@ pub(crate) fn build_dense_group_loss_plan_v1(
     }
     let mut group_first_gather = Vec::with_capacity(group_count);
     let mut targets = Vec::with_capacity(group_count);
+    let mut baseline = Vec::with_capacity(group_count);
     for group in 0..group_count {
         let first = group_first_substeps[group];
         if first >= substeps
             || substep_group_indices[first] != group
             || !matches!(terminal_returns[group], -1..=1)
+            || !baselines[group].is_finite()
         {
             return Err(training_error(format!(
                 "dense group plan group {group} is invalid"
@@ -1774,6 +1787,7 @@ pub(crate) fn build_dense_group_loss_plan_v1(
         }
         group_first_gather.push(i32::try_from(first)?);
         targets.push(f32::from(terminal_returns[group]));
+        baseline.push(baselines[group]);
     }
     Ok(DenseGroupLossPlanV1 {
         pad_gather: Tensor::from_data(
@@ -1798,6 +1812,7 @@ pub(crate) fn build_dense_group_loss_plan_v1(
             device,
         ),
         targets: Tensor::from_data(TensorData::new(targets, [group_count]), device),
+        baseline: Tensor::from_data(TensorData::new(baseline, [group_count]), device),
         substeps,
         group_count,
         max_actions,
@@ -1865,7 +1880,11 @@ fn dense_group_loss_v1(
             IndexingUpdateOp::Add,
         );
     let group_values = values.select(0, plan.group_first_gather.clone());
-    let advantage = plan.targets.clone() - group_values.clone().detach();
+    // v4-candidate: subtract the per-group cell baseline (contract section
+    // 1). `plan.baseline` is a plain constant tensor (built the same way as
+    // `plan.targets`, never `.require_grad()`), so it carries no gradient
+    // history; subtracting exact zeros here changes no bit versus v3.
+    let advantage = plan.targets.clone() - group_values.clone().detach() - plan.baseline.clone();
     let policy_sum = joint_log_probabilities
         .mul(advantage)
         .mul_scalar(-1.0)
@@ -2201,6 +2220,7 @@ fn cpu_train_step_v1(
             |(substep, terminal_return)| NativePolicyPhysicalDecisionV1 {
                 substeps: std::slice::from_ref(substep),
                 terminal_return,
+                baseline_bits: 0,
             },
         )
         .collect::<Vec<_>>();
@@ -2404,6 +2424,7 @@ fn run_bridge_parity_v1(
             |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
                 substeps,
                 terminal_return,
+                baseline_bits: 0,
             },
         )
         .collect::<Vec<_>>();
@@ -3892,6 +3913,7 @@ mod tests {
             &[0, 1, 2],
             &[0, 1, 2],
             &[0, 0, 0],
+            &[0.0, 0.0, 0.0],
             &device,
             Some(&anchor_rows),
             Some(POLICY_ANCHOR_COEFFICIENT_V1),
@@ -4255,6 +4277,7 @@ mod tests {
                     |(substeps, terminal_return)| NativePolicyPhysicalDecisionV1 {
                         substeps,
                         terminal_return,
+                        baseline_bits: 0,
                     },
                 )
                 .collect::<Vec<_>>();
@@ -4429,6 +4452,7 @@ mod tests {
                     |(substep, terminal_return)| NativePolicyPhysicalDecisionV1 {
                         substeps: std::slice::from_ref(substep),
                         terminal_return,
+                        baseline_bits: 0,
                     },
                 )
                 .collect::<Vec<_>>();
@@ -4532,12 +4556,14 @@ mod tests {
                 let terminal_returns = (substep_begin..substep_end)
                     .map(|index| [-1_i8, 0, 1][index % 3])
                     .collect::<Vec<_>>();
+                let baselines = vec![0.0_f32; chunk_size];
                 let plan = build_dense_group_loss_plan_v1(
                     &chunk_workspace,
                     &selected,
                     &group_indices,
                     &group_first_substeps,
                     &terminal_returns,
+                    &baselines,
                     &device,
                     None,
                     None,
