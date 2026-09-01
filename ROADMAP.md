@@ -5,6 +5,10 @@ Roadmap baseline: standalone commit `2f63aec4de0dbed6a5ee9b01933decfe630c07ec` (
 Repository status: standalone cutover complete; this repository is now the active development line. See `docs/archive/EXTRACTION_PROVENANCE.md` for the exact Mage-to-kernel checkpoint mapping.
 Scope: the nine canonical Pauper decks below in best-of-one play. Sideboarding and best-of-three are a separate, deferred gate.
 
+## Project laws
+
+- **Optimize for wall-clock progress:** maximize validated learning and completed gate decisions per elapsed hour whenever the experiment contract permits. Parallelize independent work, batch or vectorize hot paths, and treat avoidable serial execution, idle compute, and validation work that cannot change a decision as defects. Preserve deterministic seed assignment, reproducibility, matched comparisons, and declared formal gates. If a speedup changes the algorithm, trajectory order, or training distribution, version and evaluate that change explicitly.
+
 ## Decision summary
 
 The kernel is science-ready when it can train and evaluate policies over all nine pinned BO1 decks without unsupported cards or mechanics, reproduce every accepted run from a clean clone on its designated hardware under its published runtime compatibility tuple and versioned hardware record, and publish a complete seat-balanced 9x9 matchup matrix whose primary result uses sampled policy actions. Greedy evaluation remains a required secondary diagnostic, not the promotion result.
