@@ -178,6 +178,17 @@ pub struct PaymentPlan {
     pub life_paid: i32,
 }
 
+/// Rule 119.4: a player may pay life only if their life total is at least
+/// the amount paid, and paying zero life is always allowed. The naive
+/// `life_paid <= life` comparison wrongly rejected every zero-life payment
+/// plan once a player's life went negative mid-resolution (Chain Lightning's
+/// copy payment after lethal damage, before state-based actions), which made
+/// the kernel finish resolution and reach lethal SBA while XMage was still
+/// waiting on the copy retarget: the dominant CP7 panel void class.
+pub(crate) fn life_payment_affordable(life_paid: i32, life: i32) -> bool {
+    life_paid == 0 || life_paid <= life
+}
+
 /// Gathers `player`'s floating pool and untapped mana sources from `state`
 /// and calls `solve`.
 pub fn can_pay(
@@ -189,7 +200,7 @@ pub fn can_pay(
     let sources = gather_sources(player, state);
     let pool = state.players[player.index()].mana_pool;
     solve(cost, x_value, pool, &sources)
-        .filter(|plan| plan.life_paid <= state.players[player.index()].life)
+        .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))
 }
 
 /// Owned-pip counterpart to `can_pay` for serialized resolution-time costs.
@@ -217,7 +228,7 @@ pub fn can_pay_owned(
     {
         return None;
     }
-    (plan.life_paid <= state.players[player.index()].life).then_some(plan)
+    life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
 /// Like `can_pay`, but checks/solves 2+ costs *together* against the same
@@ -260,7 +271,7 @@ pub fn can_pay_combined(
     ) {
         return None;
     }
-    (plan.life_paid <= state.players[player.index()].life).then_some(plan)
+    life_payment_affordable(plan.life_paid, state.players[player.index()].life).then_some(plan)
 }
 
 pub fn gather_sources(player: PlayerId, state: &GameState) -> Vec<ManaSource> {
@@ -309,7 +320,7 @@ pub fn can_pay_excluding_sources(
         state.players[player.index()].mana_pool,
         &sources,
     )
-    .filter(|plan| plan.life_paid <= state.players[player.index()].life)
+    .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))
 }
 
 /// One-source convenience wrapper for paid mana abilities whose own tap cost

@@ -17055,6 +17055,57 @@ mod tests {
         assert_eq!(state.stack[0].targets, vec![Target::Player(PlayerId::P0)]);
     }
 
+    /// Regression for the dominant CP7 panel void class (2026-09-01): a
+    /// player taken to negative life by Chain Lightning must still be able to
+    /// pay the zero-life `{R}{R}` copy cost (rule 119.4: paying zero life is
+    /// always allowed) and reach the retarget decision before lethal SBA.
+    /// The kernel previously rejected the payment plan because
+    /// `0 <= -1` is false, finished resolution, and reported a terminal
+    /// while XMage was still waiting on the retarget.
+    #[test]
+    fn chain_lightning_copy_payment_is_allowed_at_negative_life() {
+        let mut state = ready_game_in_main1(1);
+        let bolt = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        put_on_battlefield(&mut state, PlayerId::P1, "Great Furnace");
+        state.players[1].life = 2;
+
+        step(&mut state, Action::CastSpell(bolt)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        assert_eq!(
+            state.players[1].life, -1,
+            "damage lands before the copy offer"
+        );
+        assert!(
+            !state.players[1].has_lost,
+            "SBA must not fire mid-resolution"
+        );
+
+        step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        match advance_until_decision(&mut state) {
+            Decision::ChooseSpellCopyRetarget {
+                player: PlayerId::P1,
+                ..
+            } => {}
+            other => panic!("expected the copy retarget decision, got {other:?}"),
+        }
+        assert!(
+            !state.players[1].has_lost,
+            "the payment succeeded at negative life; no terminal yet"
+        );
+    }
+
     #[test]
     fn chain_lightning_copy_of_copy_uses_fresh_ids_and_alternating_controllers() {
         let mut state = ready_game_in_main1(0);
