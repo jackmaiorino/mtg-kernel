@@ -175,6 +175,10 @@ pub mod native_opponent_sampler_v1;
 pub mod native_opponent_policy_v2;
 #[cfg(test)]
 pub(crate) mod native_policy_anchor_v1;
+// Cell-centered advantage-baseline state for terminal_reinforce_value/v4:
+// strict-lag EMA, canonical hashing, and the checkpoint wire form.
+#[allow(dead_code)]
+pub(crate) mod native_policy_baseline_state_v4;
 #[allow(dead_code)]
 pub(crate) mod native_policy_train_step_v1;
 // Headerless, deterministic full model/Adam state payload codec. Store and CLI
